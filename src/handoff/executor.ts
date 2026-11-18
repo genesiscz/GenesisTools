@@ -1,22 +1,23 @@
 import type { Database } from "bun:sqlite";
-import { STAMP_FACETS, whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
-import { toRuntimeContext } from "@genesiscz/utils/agent/identity";
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { attachmentFilePath, ingestAttachmentBytes, ingestAttachmentFromPath } from "./attachments";
-import {
-    applyHandoffEvent,
-    CANCELLED_INFO,
-    claimMatches,
-    DONE_INFO,
-    isHumanOwner,
-    sessionIdMatches,
-    targetMatchesSession,
-} from "./fold";
+import { applyHandoffEvent, targetMatchesSession } from "./fold";
 import { generateEditId, generateEventUid, generateHandoffId, normalizeEditId, normalizeHandoffId } from "./ids";
-import { isEventsOnlyInclude, type ProjectedHandoff, parseIncludeSections, projectHandoff } from "./project";
+import { type ProjectedHandoff, parseIncludeSections, projectHandoff } from "./project";
 import { resolveHandoffProject } from "./project-ref";
+import {
+    buildBy,
+    type GetClaim,
+    HandoffReader,
+    isClaimedBy,
+    type PublicHandoff,
+    publicHandoff,
+    resolveHandoffRef as resolveRef,
+    stateInfo,
+    withDb,
+} from "./reader";
 import {
     catchUpHandoffs,
     commitHandoffEvents,
@@ -25,10 +26,8 @@ import {
     getHandoffById,
     listHandoffEvents,
     listHandoffRows,
-    openHandoffModel,
 } from "./read-model";
 import {
-    agentFilterMatches,
     canonicalAgent,
     HANDOFF_AGENTS_LIST,
     type HandoffAgent,
@@ -37,7 +36,6 @@ import {
     normalizeHandoffName,
     normalizeTargetInput,
     recipientCheck,
-    sessionFilterMatches,
 } from "./targeting";
 import type {
     Handoff,
@@ -45,7 +43,6 @@ import type {
     HandoffActionResult,
     HandoffEvent,
     HandoffEventBy,
-    HandoffListRow,
     HandoffProof,
     HandoffPublicEvent,
     HandoffTarget,
@@ -57,7 +54,7 @@ const log = logger.child({ component: "handoff:executor" });
 export interface HandoffDeps {
     /** Log + attachment store base dir override (tests). */
     base?: string;
-    /** qa.db path override (tests). */
+    /** Work database path override (tests). */
     dbPath?: string;
     /** AgentRuntimeContext overrides (tests / explicit session). */
     ctx?: Partial<AgentRuntimeContext>;
@@ -88,125 +85,13 @@ export const DASHBOARD_ACTOR: HandoffEventBy = {
     via: "dashboard",
 };
 
-function buildBy(deps: HandoffDeps): HandoffEventBy {
-    if (deps.by !== undefined) {
-        return deps.by;
-    }
-
-    const ctx = toRuntimeContext(whoIsCallingHere({ facets: STAMP_FACETS, overrides: deps.ctx }));
-    return {
-        sessionId: ctx.sessionId,
-        sessionTitle: ctx.sessionTitle,
-        agent: ctx.agent,
-        aiAgent: ctx.aiAgent,
-        branch: ctx.branch,
-        cwd: ctx.cwd,
-        repoRoot: ctx.repoRoot,
-        project: ctx.project,
-        commitSha: ctx.commitSha,
-        isWorktree: ctx.isWorktree,
-    };
-}
-
 /** The poster credential of a handoff, for a write the owner makes through the work store. */
 export function posterEditId(id: string, deps: HandoffDeps = {}): string | undefined {
     return withDb(deps, (db) => getHandoffById(db, id)?.editId);
 }
 
-function withDb<T>(deps: HandoffDeps, fn: (db: Database) => T): T {
-    const db = openHandoffModel(deps.dbPath);
-
-    try {
-        return fn(db);
-    } finally {
-        db.close();
-    }
-}
-
 function nowIso(deps: HandoffDeps): string {
     return deps.nowIso !== undefined ? deps.nowIso() : new Date().toISOString();
-}
-
-/** The response-facing handoff: editId stripped (returned separately, only when entitled). */
-export type PublicHandoff = Omit<Handoff, "editId"> & {
-    attachments: (Handoff["attachments"][number] & { path?: string })[];
-};
-
-function publicHandoff(h: Handoff, base?: string): PublicHandoff {
-    const { editId: _editId, ...rest } = h;
-    return {
-        ...rest,
-        attachments: h.attachments.map((a) =>
-            a.missing === true ? { ...a } : { ...a, path: attachmentFilePath(h.id, a.attachmentId, a.filename, base) }
-        ),
-    };
-}
-
-function isClaimedBy(h: Handoff, by: HandoffEventBy): boolean {
-    return h.claimedBy.some((c) => claimMatches(c, by));
-}
-
-function isPosterSession(h: Handoff, by: HandoffEventBy): boolean {
-    return sessionIdMatches(h.postedBy.sessionId, by.sessionId);
-}
-
-function progress(h: Handoff): { resolved: number; total: number; denied: number } {
-    const denied = h.tasks.filter((t) => t.denied).length;
-    const resolved = h.tasks.filter((t) => t.checked || t.denied).length;
-    return { resolved, total: h.tasks.length, denied };
-}
-
-function claimantNames(h: Handoff, excludeBy?: HandoffEventBy): string[] {
-    return h.claimedBy
-        .filter((c) => excludeBy === undefined || !sessionIdMatches(c.sessionId, excludeBy.sessionId))
-        .map((c) => c.sessionName ?? c.sessionId ?? "unnamed session");
-}
-
-/** State-aware info lines (§5) — every response gets ≥1 line ending in the ONE next step. */
-function stateInfo(h: Handoff, by: HandoffEventBy): string[] {
-    const lines: string[] = [];
-
-    if (h.status === "done") {
-        lines.push(DONE_INFO);
-        return lines;
-    }
-
-    if (h.status === "cancelled") {
-        lines.push(CANCELLED_INFO);
-        return lines;
-    }
-
-    const mine = isClaimedBy(h, by);
-
-    if (h.claimedBy.length === 0) {
-        lines.push(
-            `NOT claimed — claim it with handoff_get { id: "${h.id}", claim: true } (or include { action: "claim" } first in handoff_action) before working.`
-        );
-
-        if (
-            h.target?.sessionName != null &&
-            by.sessionTitle != null &&
-            h.target.sessionName === by.sessionTitle &&
-            !mine
-        ) {
-            lines.push(
-                `This handoff targets sessionName "${h.target.sessionName}" — that matches this session's name, but names aren't unique so it never auto-claims; claim explicitly.`
-            );
-        }
-    } else if (mine) {
-        const others = claimantNames(h, by);
-        lines.push(others.length === 0 ? "Claimed by you." : `Claimed by you and ${others.join(", ")} (co-owned).`);
-    } else {
-        lines.push(`Claimed by ${claimantNames(h).join(", ")} — claiming too will co-own it.`);
-    }
-
-    const p = progress(h);
-
-    if (p.total > 0 && p.resolved === p.total) {
-        lines.push('All tasks resolved — call handoff_action { actions: ["finish_handoff"] }.');
-    }
-
-    return lines;
 }
 
 function pasteAgentText(id: string): string {
@@ -222,76 +107,10 @@ function pasteAgentText(id: string): string {
     );
 }
 
-const REF_REQUIRED =
-    'Pass id or name — e.g. handoff_get { id: "h_x1y2z3ab" } or handoff_get { name: "fix-active-filter" }.';
+const legacyQueries = { getHandoffById, findHandoffsByName, listHandoffRows, listHandoffEvents };
 
-/**
- * Resolve a handoff from an id, a readable name, or an `id` field that holds
- * either. Deterministic on purpose: an id always wins, a unique name resolves,
- * and an ambiguous name is refused WITH its candidates. Picking the newest of
- * several same-named handoffs would silently work the wrong one.
- */
 function resolveHandoffRef(db: Database, input: { id?: string; name?: string }): Handoff {
-    const rawId = typeof input.id === "string" ? input.id.trim() : "";
-    const rawName = typeof input.name === "string" ? input.name.trim() : "";
-
-    if (rawId.length === 0 && rawName.length === 0) {
-        throw new Error(REF_REQUIRED);
-    }
-
-    const byId = rawId.length > 0 ? getHandoffById(db, normalizeHandoffId(rawId)) : null;
-
-    if (byId !== null) {
-        const wanted = normalizeHandoffName(rawName);
-
-        if (wanted !== undefined && byId.name !== wanted) {
-            throw new Error(
-                `The id and the name point at different handoffs: ${byId.id} is called "${byId.name ?? "(unnamed)"}", not "${wanted}". Pass one of them, not both.`
-            );
-        }
-
-        return byId;
-    }
-
-    // An `h_`-prefixed value is an id claim (no slug can carry an underscore). Beside a
-    // name it must resolve as an id: a stale id never falls back to whatever the name finds.
-    if (rawId.startsWith("h_") && rawName.length > 0) {
-        throw new Error(
-            `No handoff ${rawId} — the id does not resolve, so the name "${rawName}" is not used. Re-call with just the one you mean.`
-        );
-    }
-
-    // The `id` field also accepts a name, so a paste of either resolves.
-    const lookup = normalizeHandoffName(rawName.length > 0 ? rawName : rawId);
-    const matches = lookup !== undefined ? findHandoffsByName(db, lookup) : [];
-
-    if (matches.length === 1) {
-        // Both fields were names: the one not used for the lookup must name the same handoff.
-        const other = rawName.length > 0 && rawId.length > 0 ? normalizeHandoffName(rawId) : undefined;
-
-        if (other !== undefined && other !== lookup) {
-            throw new Error(
-                `The id and the name point at different handoffs: "${rawId}" is not "${lookup}". Pass one of them, not both.`
-            );
-        }
-
-        return matches[0];
-    }
-
-    if (matches.length > 1) {
-        const candidates = matches.map((h) => `${h.id} (${h.status}, updated ${h.updatedTs}) "${h.title}"`).join("; ");
-        throw new Error(
-            `Name "${lookup}" is ambiguous — ${matches.length} handoffs carry it: ${candidates}. Re-call with the id of the one you mean.`
-        );
-    }
-
-    if (rawId.length > 0) {
-        throw new Error(
-            `No handoff ${normalizeHandoffId(rawId)} — re-check the paste block or call handoff_list to find it.`
-        );
-    }
-
-    throw new Error(`No handoff named "${lookup ?? rawName}" — call handoff_list to see what exists.`);
+    return resolveRef({ db, input, queries: legacyQueries });
 }
 
 // ---------------------------------------------------------------------------
@@ -495,357 +314,96 @@ export function postHandoff(input: PostHandoffInput, deps: HandoffDeps = {}): Po
     });
 }
 
-// ---------------------------------------------------------------------------
-// handoff_get
-// ---------------------------------------------------------------------------
+/** A get may claim or unclaim. These writes must still go through the fold and its log echo. */
+export function applyGetClaim({ db, existing, by, input, deps, recipientAgent }: GetClaim): string[] {
+    const id = existing.id;
+    const events: HandoffEvent[] = [];
+    const extraInfo: string[] = [];
+    let autoClaimUid: string | undefined;
+    let claimUid: string | undefined;
+    let unclaimUid: string | undefined;
 
-export interface GetHandoffInput {
-    /** Handoff id, or a readable name — both resolve here. */
-    id?: string;
-    /** Readable name, when you would rather not overload `id`. */
-    name?: string;
-    claim?: boolean;
-    unclaim?: boolean;
-    /** MCP section scoping. Omit → full PublicHandoff (HTTP). MCP handlers default to ["tasks"]. */
-    include?: string[];
-}
+    const addressedToThisSession =
+        existing.target?.sessionId !== undefined &&
+        targetMatchesSession(existing.target.sessionId, by.sessionId) &&
+        !isClaimedBy(existing, by) &&
+        (existing.status === "open" || existing.status === "claimed");
 
-export type GetHandoffFullResponse = {
-    handoff: PublicHandoff;
-    editId?: string;
-    info: string[];
-    /** Recipient warnings for the CALLING session — absent when there is nothing to say. */
-    warnings?: string[];
-};
+    // A session-id hit under a harness the handoff is NOT addressed to must not
+    // claim silently: the poster named two recipients and only one of them is us.
+    const autoClaim = input.unclaim !== true && addressedToThisSession && recipientAgent !== "mismatch";
 
-export type GetHandoffScopedResponse =
-    | {
-          handoff: ProjectedHandoff;
-          editId?: string;
-          info: string[];
-          warnings?: string[];
-      }
-    | {
-          events: HandoffPublicEvent[];
-          info: string[];
-          warnings?: string[];
-      };
-
-export type GetHandoffResponse = GetHandoffFullResponse | GetHandoffScopedResponse;
-
-export function getHandoff(
-    input: GetHandoffInput & { include: string[] },
-    deps?: HandoffDeps
-): GetHandoffScopedResponse;
-export function getHandoff(input: Omit<GetHandoffInput, "include">, deps?: HandoffDeps): GetHandoffFullResponse;
-export function getHandoff(input: GetHandoffInput, deps: HandoffDeps = {}): GetHandoffResponse {
-    if (input.claim === true && input.unclaim === true) {
-        throw new Error(
-            `Pass either claim: true or unclaim: true, not both — e.g. handoff_get { id: "${input.id ?? input.name}", claim: true }.`
+    if (input.unclaim !== true && addressedToThisSession && recipientAgent === "mismatch") {
+        extraInfo.push(
+            `NOT auto-claimed: the target sessionId names this session, but the handoff is addressed to harness "${existing.target?.agent}". Claim explicitly only if your user asks you to.`
         );
     }
 
-    const parsed = input.include !== undefined ? parseIncludeSections(input.include) : null;
-    // include ["full"] is the old whole shape, the same as no include at all.
-    const sections = parsed?.includes("full") ? null : parsed;
-    const by = buildBy(deps);
+    if (autoClaim) {
+        autoClaimUid = generateEventUid();
+        events.push({ ev: "claim", ts: nowIso(deps), uid: autoClaimUid, id, via: "target-match", by });
+    }
 
-    return withDb(deps, (db) => {
-        catchUpHandoffs(db, deps.base);
-        const existing = resolveHandoffRef(db, input);
-        const id = existing.id;
-        const recipient = recipientCheck({ target: existing.target, by });
+    if (input.claim === true && !autoClaim) {
+        claimUid = generateEventUid();
+        events.push({ ev: "claim", ts: nowIso(deps), uid: claimUid, id, via: "explicit", by });
+    }
 
-        const events: HandoffEvent[] = [];
-        const extraInfo: string[] = [];
-        let autoClaimUid: string | undefined;
-        let claimUid: string | undefined;
-        let unclaimUid: string | undefined;
+    if (input.unclaim === true) {
+        unclaimUid = generateEventUid();
+        events.push({ ev: "unclaim", ts: nowIso(deps), uid: unclaimUid, id, by });
+    }
 
-        const addressedToThisSession =
-            existing.target?.sessionId !== undefined &&
-            targetMatchesSession(existing.target.sessionId, by.sessionId) &&
-            !isClaimedBy(existing, by) &&
-            (existing.status === "open" || existing.status === "claimed");
+    if (events.length > 0) {
+        commitHandoffEvents(db, events, deps.base);
+    }
 
-        // A session-id hit under a harness the handoff is NOT addressed to must not
-        // claim silently: the poster named two recipients and only one of them is us.
-        const autoClaim = input.unclaim !== true && addressedToThisSession && recipient.agent !== "mismatch";
+    if (autoClaimUid !== undefined) {
+        const outcome = getEventOutcome(db, autoClaimUid);
 
-        if (input.unclaim !== true && addressedToThisSession && recipient.agent === "mismatch") {
+        if (outcome?.applied === true) {
             extraInfo.push(
-                `NOT auto-claimed: the target sessionId names this session, but the handoff is addressed to harness "${existing.target?.agent}". Claim explicitly only if your user asks you to.`
+                `Auto-claimed: this session IS the handoff's target sessionId. Undo with handoff_get { id: "${id}", unclaim: true }.`
             );
+        } else if (outcome?.error !== undefined) {
+            extraInfo.push(outcome.error);
         }
+    }
 
-        if (autoClaim) {
-            autoClaimUid = generateEventUid();
-            events.push({ ev: "claim", ts: nowIso(deps), uid: autoClaimUid, id, via: "target-match", by });
+    if (claimUid !== undefined) {
+        const outcome = getEventOutcome(db, claimUid);
+
+        if (outcome?.error !== undefined) {
+            extraInfo.push(outcome.error);
+        } else if (outcome?.info !== undefined) {
+            extraInfo.push(...outcome.info);
         }
+    }
 
-        if (input.claim === true && !autoClaim) {
-            claimUid = generateEventUid();
-            events.push({ ev: "claim", ts: nowIso(deps), uid: claimUid, id, via: "explicit", by });
+    if (unclaimUid !== undefined) {
+        const outcome = getEventOutcome(db, unclaimUid);
+
+        if (outcome?.info !== undefined) {
+            extraInfo.push(...outcome.info);
         }
+    }
 
-        if (input.unclaim === true) {
-            unclaimUid = generateEventUid();
-            events.push({ ev: "unclaim", ts: nowIso(deps), uid: unclaimUid, id, by });
-        }
-
-        if (events.length > 0) {
-            commitHandoffEvents(db, events, deps.base);
-        }
-
-        const handoff = getHandoffById(db, id);
-
-        if (handoff === null) {
-            throw new Error(`No handoff ${id} — re-check the paste block or call handoff_list to find it.`);
-        }
-
-        if (autoClaimUid !== undefined) {
-            const outcome = getEventOutcome(db, autoClaimUid);
-
-            if (outcome?.applied === true) {
-                extraInfo.push(
-                    `Auto-claimed: this session IS the handoff's target sessionId. Undo with handoff_get { id: "${id}", unclaim: true }.`
-                );
-            } else if (outcome?.error !== undefined) {
-                extraInfo.push(outcome.error);
-            }
-        }
-
-        if (claimUid !== undefined) {
-            const outcome = getEventOutcome(db, claimUid);
-
-            if (outcome?.error !== undefined) {
-                extraInfo.push(outcome.error);
-            } else if (outcome?.info !== undefined) {
-                extraInfo.push(...outcome.info);
-            }
-        }
-
-        if (unclaimUid !== undefined) {
-            const outcome = getEventOutcome(db, unclaimUid);
-
-            if (outcome?.info !== undefined) {
-                extraInfo.push(...outcome.info);
-            }
-        }
-
-        const info = [...extraInfo, ...stateInfo(handoff, by)];
-        const warnings = recipient.warnings.length > 0 ? { warnings: recipient.warnings } : {};
-
-        if (sections?.includes("rows") && !sections.includes("tasks")) {
-            info.push(
-                'Compact view: include ["description"] adds the body, ["tasks"] the proofs, ["full"] the whole handoff.'
-            );
-        }
-
-        if (sections !== null && isEventsOnlyInclude(sections)) {
-            const { events: publicEvents } = listHandoffEvents({ db, handoffId: id });
-            return { events: publicEvents, info, ...warnings };
-        }
-
-        const full = publicHandoff(handoff, deps.base);
-        let projectedEvents: HandoffPublicEvent[] | undefined;
-
-        if (sections?.includes("events")) {
-            projectedEvents = listHandoffEvents({ db, handoffId: id }).events;
-        }
-
-        const response = {
-            handoff: sections === null ? full : projectHandoff({ handoff: full, sections, events: projectedEvents }),
-            info,
-            ...warnings,
-        } as GetHandoffFullResponse | Extract<GetHandoffScopedResponse, { handoff: unknown }>;
-
-        // editId recovery: ONLY the posting session (or the dashboard owner) ever sees it (§3).
-        if (isPosterSession(handoff, by) || isHumanOwner(by)) {
-            response.editId = handoff.editId;
-        }
-
-        return response;
-    });
+    return extraInfo;
 }
 
-// ---------------------------------------------------------------------------
-// handoff_list
-// ---------------------------------------------------------------------------
-
-export interface ListHandoffsInput {
-    limit?: number;
-    offset?: number;
-    mine?: boolean;
-    open?: boolean;
-    project?: string;
-    /** Opt-in: only handoffs whose INTENDED RECIPIENT harness is this one. Never the poster's. */
-    agent?: string;
-    /** Opt-in: only handoffs whose INTENDED RECIPIENT session is this id (or abbreviation) or name. */
-    session?: string;
-    /** Only `"tasks"` is honored on list rows; other values no-op with an info line. */
-    include?: string[];
-}
-
-/**
- * A task as it appears on a LIST row: the proof is a preview, never the whole
- * thing. `answer` may be clipped, `context` is always dropped, and the id
- * arrays hold at most the first few entries. Call handoff_get for the stored
- * proof — treating this shape as complete loses evidence.
- */
-export type HandoffTaskPreview = Omit<Handoff["tasks"][number], "proof"> & {
-    proof?: Omit<NonNullable<Handoff["tasks"][number]["proof"]>, "context"> & { context?: undefined };
-};
-
-export interface ListHandoffsResponse {
-    handoffs: (HandoffListRow & { taskList?: HandoffTaskPreview[] })[];
-    info: string[];
-}
-
-const PROOF_PREVIEW_CHARS = 200;
-const PROOF_PREVIEW_IDS = 5;
-
-export function listHandoffs(input: ListHandoffsInput = {}, deps: HandoffDeps = {}): ListHandoffsResponse {
-    const by = buildBy(deps);
-    const limit = input.limit !== undefined && input.limit > 0 ? input.limit : 20;
-    const offset = input.offset !== undefined && input.offset > 0 ? input.offset : 0;
-    const sections = input.include !== undefined ? parseIncludeSections(input.include) : [];
-    const wantTasks = sections.includes("tasks");
-    const ignored = sections.filter((s) => s !== "tasks");
-
-    return withDb(deps, (db) => {
-        catchUpHandoffs(db, deps.base);
-        let rows = listHandoffRows(db, {
-            statuses: input.open === true ? ["open", "claimed"] : undefined,
-            project: input.project,
-        });
-
-        if (input.mine === true) {
-            rows = rows.filter(
-                (h) =>
-                    isPosterSession(h, by) ||
-                    isClaimedBy(h, by) ||
-                    targetMatchesSession(h.target?.sessionId ?? null, by.sessionId) ||
-                    (h.target?.sessionName != null &&
-                        by.sessionTitle != null &&
-                        h.target.sessionName === by.sessionTitle)
-            );
-        }
-
-        // Opt-in only: with neither flag the listing stays exactly what it was.
-        const agentFilter = input.agent !== undefined && input.agent.trim().length > 0 ? input.agent.trim() : undefined;
-        const sessionFilter =
-            input.session !== undefined && input.session.trim().length > 0 ? input.session.trim() : undefined;
-
-        if (agentFilter !== undefined) {
-            rows = rows.filter((h) => agentFilterMatches(h.target, agentFilter));
-        }
-
-        if (sessionFilter !== undefined) {
-            rows = rows.filter((h) => sessionFilterMatches(h.target, sessionFilter));
-        }
-
-        const total = rows.length;
-        const page = rows.slice(offset, offset + limit);
-        const now = Date.now();
-        let proofsClipped = false;
-        const handoffs = page.map((h): HandoffListRow & { taskList?: HandoffTaskPreview[] } => {
-            const p = progress(h);
-            const row: HandoffListRow & { taskList?: HandoffTaskPreview[] } = {
-                id: h.id,
-                title: h.title,
-                status: h.status,
-                tasks: `${p.resolved}/${p.total}`,
-                postedBy: { sessionName: h.postedBy.sessionName },
-                project: h.project,
-                ageHours: Math.round(((now - new Date(h.createdTs).getTime()) / 3_600_000) * 10) / 10,
-            };
-
-            if (h.name !== undefined) {
-                row.name = h.name;
-            }
-
-            if (h.target !== undefined) {
-                row.target = h.target;
-                const recipient = recipientCheck({ target: h.target, by });
-
-                if (recipient.warnings.length > 0) {
-                    row.warnings = recipient.warnings;
-                }
-            }
-
-            if (h.claimedBy.length > 0) {
-                row.claimedBy = h.claimedBy.map((c) => ({ sessionId: c.sessionId, sessionName: c.sessionName }));
-                row.progress = `${p.resolved}/${p.total}${p.denied > 0 ? ` (${p.denied} denied)` : ""}`;
-            }
-
-            if (wantTasks) {
-                // List is a browse surface; full proof blobs belong to
-                // handoff_get. Returning them verbatim made a limit:2 list a
-                // token bomb (grok probe 81442272).
-                row.taskList = h.tasks.map((task): HandoffTaskPreview => {
-                    if (task.proof === undefined) {
-                        return { ...task, proof: undefined };
-                    }
-
-                    const clipped = task.proof.answer.length > PROOF_PREVIEW_CHARS;
-                    const idsClipped =
-                        (task.proof.commitIds?.length ?? 0) > PROOF_PREVIEW_IDS ||
-                        (task.proof.attachmentIds?.length ?? 0) > PROOF_PREVIEW_IDS;
-                    proofsClipped ||= clipped || idsClipped || task.proof.context !== undefined;
-                    return {
-                        ...task,
-                        proof: {
-                            ...task.proof,
-                            answer: clipped ? `${task.proof.answer.slice(0, PROOF_PREVIEW_CHARS)}…` : task.proof.answer,
-                            context: undefined,
-                            commitIds: task.proof.commitIds?.slice(0, PROOF_PREVIEW_IDS),
-                            attachmentIds: task.proof.attachmentIds?.slice(0, PROOF_PREVIEW_IDS),
-                        },
-                    };
-                });
-            }
-
-            return row;
-        });
-
-        const shown =
-            offset === 0
-                ? `showing ${page.length}`
-                : page.length === 0
-                  ? `showing none (offset ${offset} is past the last row)`
-                  : `showing rows ${offset + 1}-${offset + page.length} (offset ${offset} skipped the first ${offset})`;
-        const info: string[] = [`${total} handoff${total === 1 ? "" : "s"} matched; ${shown}.`];
-
-        if (agentFilter !== undefined) {
-            info.push(
-                isKnownAgent(agentFilter)
-                    ? `Filtered to handoffs addressed to harness "${agentFilter}" — the intended recipient, not the poster.`
-                    : `agent filter "${agentFilter}" is not a documented harness (${HANDOFF_AGENTS_LIST}) — matched as literal text against target.agent.`
-            );
-        }
-
-        if (sessionFilter !== undefined) {
-            info.push(
-                `Filtered to handoffs addressed to session "${sessionFilter}" — matches target.sessionId (exactly or by leading-segment abbreviation) or target.sessionName.`
-            );
-        }
-
-        if (proofsClipped) {
-            info.push("Task proofs are previews on list — call handoff_get for the full proof.");
-        }
-
-        if (total > offset + page.length) {
-            info.push(`More available — pass offset: ${offset + page.length}.`);
-        }
-
-        if (ignored.length > 0) {
-            info.push(`include sections ignored on list (only "tasks" applies): ${ignored.join(", ")}.`);
-        }
-
-        return { handoffs, info };
-    });
-}
+const legacyReader = new HandoffReader(legacyQueries, applyGetClaim);
+export const getHandoff = legacyReader.getHandoff.bind(legacyReader);
+export const listHandoffs = legacyReader.listHandoffs.bind(legacyReader);
+export type {
+    GetHandoffFullResponse,
+    GetHandoffInput,
+    GetHandoffResponse,
+    GetHandoffScopedResponse,
+    HandoffTaskPreview,
+    ListHandoffsInput,
+    ListHandoffsResponse,
+    PublicHandoff,
+} from "./reader";
 
 // ---------------------------------------------------------------------------
 // handoff_action
