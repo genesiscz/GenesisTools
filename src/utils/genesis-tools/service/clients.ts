@@ -15,6 +15,9 @@ export interface ServiceDoor {
     present(request: PersonRequest, timeoutMs: number): Promise<RequestOutcome>;
 }
 
+/** The service answers `hello` at once; a longer wait means it is wedged. */
+const HELLO_TIMEOUT_MS = 5_000;
+
 export function genesisToolsServiceDir(): string {
     return toolDataDir("genesis-tools");
 }
@@ -37,11 +40,18 @@ export async function connectGenesisToolsService(
         defaultTimeoutMs: 130_000,
         onRequest: options.onRequest,
     });
-    await client.call("hello", {
-        methods: [],
-        caller: isTestProcess() ? "person" : LIVE_FACTS.isAgent() ? "agent" : "person",
-    });
-    return client;
+    try {
+        await client.call(
+            "hello",
+            { methods: [], caller: isTestProcess() ? "person" : LIVE_FACTS.isAgent() ? "agent" : "person" },
+            { timeoutMs: HELLO_TIMEOUT_MS }
+        );
+        return client;
+    } catch (error) {
+        // The caller gets no client to close, so a failed handshake closes its own socket.
+        client.close();
+        throw error;
+    }
 }
 
 /** The service's deadline for one action call: the action's budget plus 10 s, never under 130 s. */

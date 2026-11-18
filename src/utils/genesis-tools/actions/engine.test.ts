@@ -20,9 +20,12 @@ import {
     Need,
     type NeedSpec,
 } from "@genesiscz/utils/genesis-tools/capability/needs";
+import { connectGenesisToolsService } from "@genesiscz/utils/genesis-tools/service/clients";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { appNeedFixture } from "@genesiscz/utils/macos/testing/app-need";
+import { JSON_RPC_ERRORS, RpcError } from "@genesiscz/utils/rpc/errors";
+import { startServiceHost } from "@genesiscz/utils/rpc/service-host";
 import { z } from "zod";
 import { APP_SURFACE_PATH, readAppSurfaceInput, renderAppSurface } from "../../../../scripts/gen-genesis-app-surface";
 
@@ -477,4 +480,38 @@ test("app.hello reports methods to the injected state, and app.rpc returns the r
     expect(state.get("app", "rpcMethods")?.value).toEqual(["rpc.hello"]);
     const reply = await runAreaAction(AREAS, "app.rpc", { method: "rpc.hello" }, injected);
     expect(reply.status === "ran" && reply.value).toEqual(value);
+});
+
+describe("the service client", () => {
+    test("a refused hello closes the socket it opened", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-service-hello-"));
+        const started = await startServiceHost({
+            dir,
+            label: "fixture service",
+            logScope: "fixture",
+            protocol: 1,
+            state: () => ({}),
+            call: async () => {
+                throw new RpcError(JSON_RPC_ERRORS.methodNotFound, "no hello here");
+            },
+            idleMs: 0,
+        });
+
+        if (started.status !== "started") {
+            throw new Error("fixture service did not start");
+        }
+
+        try {
+            await expect(connectGenesisToolsService({ dir })).rejects.toThrow("no hello here");
+            const deadline = Date.now() + 2_000;
+
+            while (started.host.connections.some((connection) => !connection.closed) && Date.now() < deadline) {
+                await Bun.sleep(10);
+            }
+
+            expect(started.host.connections.filter((connection) => !connection.closed)).toEqual([]);
+        } finally {
+            started.host.stop("test");
+        }
+    });
 });
