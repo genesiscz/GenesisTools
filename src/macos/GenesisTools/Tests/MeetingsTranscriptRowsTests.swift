@@ -183,6 +183,38 @@ final class MeetingsTranscriptRowsTests: XCTestCase {
         XCTAssertEqual(TranscriptBlocksPane.namingRange(of: named, in: confirmed)?.id, "c1", "a confirmed range wins")
     }
 
+    /// w_av97ayas: the selection popover's facts are made once per selection change, outside its body, and say what the
+    /// popover said when its body filtered every line and every item on each redraw.
+    func testTheSelectionFactsAreMadeOnceAndSayWhatThePopoverSaid() throws {
+        let all = try items("""
+        [{"id":"i1","kind":"speaker-range","status":"rejected","fromSec":0,"toSec":60,"speaker":"Alice Example","confidence":0.8,"rules":["old-rule"]},
+         {"id":"i3","kind":"speaker-range","status":"suggested","fromSec":5,"toSec":30,"speaker":"Alice Example","confidence":0.8,"rules":["roster-solo"]},
+         {"id":"n1","kind":"note","status":"suggested","fromSec":0,"toSec":60}]
+        """)
+        let entries = [
+            line("Speaker 2", at: 10, confidence: 0.8, suggested: "Alice Example", band: "applied"),
+            line("Speaker 2", at: 20, confidence: 0.8, suggested: "Alice Example", band: "applied"),
+            line("Bob Example", at: 45),
+        ]
+        let shown = TranscriptBlocksPane.shownLines(entries, applyAbove: 70)
+        let built = TranscriptBlock.build(from: shown, durationSec: 60)
+        let ids = built.flatMap(\.lines).map(\.id)
+        XCTAssertEqual(ids.count, 3)
+        let evidence = try JSONDecoder().decode([WindowLineEvidence].self,
+                                                from: Data(#"[{"index":1,"startSec":20,"endSec":21,"callRms":0}]"#.utf8))
+        var input = TranscriptSelectionFacts.Input(open: true, selection: Set(ids.prefix(2)), built: built, shown: shown, entries: entries,
+                                                    evidence: evidence, items: all, ruleNames: ["roster-solo": "Only one person was in the call."])
+        let facts = try XCTUnwrap(TranscriptSelectionFacts.make(input))
+        XCTAssertEqual(facts.lines.map(\.id), Array(ids.prefix(2)), "the selected lines in transcript order")
+        XCTAssertEqual(facts.speakerEvidence, TranscriptBlocksPane.lineEvidence(Array(shown.prefix(2)), items: all, ruleNames: input.ruleNames),
+                       "the speaker ranges taken out once give the sentences the popover gave from every item")
+        XCTAssertEqual(facts.speakerEvidence, ["Named by the speaker range 00:05 to 00:30. Only one person was in the call."])
+        XCTAssertEqual(facts.notes.map(\.id), [ids[1]], "only the line with evidence has notes")
+        XCTAssertEqual(facts.notes.first?.acoustic, ["Call level (RMS): 0.0000"])
+        input.open = false
+        XCTAssertNil(TranscriptSelectionFacts.make(input), "a closed popover makes nothing")
+    }
+
     /// C2, T7: the indicator's reason in words, in the popover too.
     func testTheIndicatorSaysWhyItIsIgnored() {
         XCTAssertEqual(TranscriptLine.Indicator(names: ["Bob Example"], ignored: nil).shownText, "Bob Example")
