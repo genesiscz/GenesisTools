@@ -5,25 +5,72 @@ import UserNotifications
 
 @MainActor
 enum RequestWindowContent {
-    static func build(_ params: RequestPresentParams) -> ApprovalDialogModel {
+    /// `deadline` is when the caller stops waiting; nil counts the request's own seconds from now.
+    static func build(_ params: RequestPresentParams, deadline: Date? = nil) -> ApprovalDialogModel {
         ApprovalDialogModel(
             title: params.title, purpose: params.reason, symbol: "info.circle",
             facts: [ApprovalFact("Request", params.id, monospaced: true)], details: [],
             warning: nil, footnote: "This notice asks for an acknowledgement. It runs no command.",
             rememberChoices: [], rememberNote: nil, allowTitle: "Acknowledge",
-            deadline: Date().addingTimeInterval(params.deadlineSeconds ?? 120), identifier: "request-present", deadlineLabel: "Stops waiting in ")
+            deadline: deadline ?? Date().addingTimeInterval(params.deadlineSeconds ?? 120), identifier: "request-present", deadlineLabel: "Stops waiting in ")
     }
+}
+
+/// The panel a request shows in; tests pass a fake, so no window opens.
+@MainActor
+protocol RequestPanel: AnyObject {
+    func present(_ model: ApprovalDialogModel, reminders: Bool)
+    func close()
+}
+
+extension ApprovalPanelPresenter: RequestPanel {}
+
+/// The time a presenter reads and its timers; tests pass a clock they move by hand.
+struct RequestClock {
+    var now: () -> Date
+    /// Runs `work` on the main actor after `seconds`; the returned closure cancels it.
+    var after: (_ seconds: TimeInterval, _ work: @escaping @MainActor () -> Void) -> () -> Void
+
+    static let live = RequestClock(now: Date.init, after: { seconds, work in
+        let item = DispatchWorkItem { MainActor.assumeIsolated { work() } }
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: item)
+        return { item.cancel() }
+    })
 }
 
 @MainActor
 final class RequestPresenter {
     static let shared = RequestPresenter()
-    private let panel = ApprovalPanelPresenter()
+    /// More notices than this waiting behind the open one are answered `unreachable` at once.
+    static let defaultCapacity = 32
+
+    private struct Entry {
+        let params: RequestPresentParams
+        /// When the caller stops waiting, fixed when the request arrives: time spent in the queue counts.
+        let deadline: Date
+        let completion: (RequestPresentResult) -> Void
+    }
+
+    private let panel: RequestPanel
+    private let clock: RequestClock
+    private let capacity: Int
+    private let activate: () -> Void
     private var active: String?
-    private var pending: [(RequestPresentParams, (RequestPresentResult) -> Void)] = []
-    private var timeout: DispatchWorkItem?
+    /// A FIFO read from `head`, so taking the next one never shifts the rest.
+    private var pending: [Entry] = []
+    private var head = 0
+    private var cancelTimeout: (() -> Void)?
     var onIdle: (() -> Void)?
     var onBusy: (() -> Void)?
+
+    init(panel: RequestPanel? = nil, clock: RequestClock = .live, capacity: Int? = nil, activate: (() -> Void)? = nil) {
+        self.panel = panel ?? ApprovalPanelPresenter()
+        self.clock = clock
+        self.capacity = capacity ?? Self.defaultCapacity
+        self.activate = activate ?? { NSApp.activate(ignoringOtherApps: true) }
+    }
+
+    var waiting: Int { pending.count - head }
 
     func show(_ params: RequestPresentParams) async -> RequestPresentResult {
         await withCheckedContinuation { continuation in
@@ -32,39 +79,68 @@ final class RequestPresenter {
     }
 
     func enqueue(_ params: RequestPresentParams, completion: @escaping (RequestPresentResult) -> Void) {
+        guard waiting < capacity else {
+            completion(RequestPresentResult(id: params.id, status: .value5, reason: "Too many notices are waiting to show; this one was not shown."))
+            return
+        }
         onBusy?()
-        pending.append((params, completion))
+        let seconds = max(0.001, params.deadlineSeconds ?? 120)
+        pending.append(Entry(params: params, deadline: clock.now().addingTimeInterval(seconds), completion: completion))
         showNext()
     }
 
+    private func dequeue() -> Entry? {
+        guard head < pending.count else { return nil }
+        let entry = pending[head]
+        head += 1
+        if head == pending.count {
+            pending.removeAll(keepingCapacity: true)
+            head = 0
+        } else if head >= capacity {
+            pending.removeFirst(head)
+            head = 0
+        }
+        return entry
+    }
+
     private func showNext() {
-        guard active == nil, !pending.isEmpty else { return }
-        let (params, completion) = pending.removeFirst()
+        guard active == nil else { return }
+        while let entry = dequeue() {
+            let remaining = entry.deadline.timeIntervalSince(clock.now())
+            if remaining > 0 {
+                present(entry, for: remaining)
+                return
+            }
+            // The caller stopped waiting while this one queued: a panel now would ask nobody.
+            entry.completion(RequestPresentResult(id: entry.params.id, status: .value4, reason: "The window wait ended before the notice could show; the request stays open."))
+        }
+        onIdle?()
+    }
+
+    private func present(_ entry: Entry, for remaining: TimeInterval) {
+        let params = entry.params
         active = params.id
-        let model = RequestWindowContent.build(params)
+        let model = RequestWindowContent.build(params, deadline: entry.deadline)
         var answered = false
         let finish: (RequestPresentResultStatus, String?) -> Void = { [weak self] status, reason in
             guard !answered, let self else { return }
             answered = true
-            timeout?.cancel()
-            timeout = nil
+            cancelTimeout?()
+            cancelTimeout = nil
             panel.close()
             active = nil
-            completion(RequestPresentResult(id: params.id, status: status, reason: reason))
+            entry.completion(RequestPresentResult(id: params.id, status: status, reason: reason))
             showNext()
-            if pending.isEmpty, active == nil { onIdle?() }
         }
         model.onAllow = { _ in finish(.value0, nil) }
         model.onDeny = { [weak model] in
             let note = model?.denyNote ?? ""
             finish(.value2, note.isEmpty ? nil : note)
         }
-        let deadline = DispatchWorkItem { MainActor.assumeIsolated { finish(.value4, "The window wait ended; the request stays open.") } }
-        timeout = deadline
-        DispatchQueue.main.asyncAfter(deadline: .now() + max(0.001, params.deadlineSeconds ?? 120), execute: deadline)
+        cancelTimeout = clock.after(remaining) { finish(.value4, "The window wait ended; the request stays open.") }
         // The person area owns notice sound/repetition; generic approval reminders would post a second notice.
         panel.present(model, reminders: false)
-        if params.takesFocus ?? true { NSApp.activate(ignoringOtherApps: true) }
+        if params.takesFocus ?? true { activate() }
     }
 }
 
