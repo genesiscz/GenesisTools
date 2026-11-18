@@ -5,7 +5,15 @@ import type { AgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { attachmentFilePath, ingestAttachmentBytes, ingestAttachmentFromPath } from "./attachments";
-import { CANCELLED_INFO, claimMatches, DONE_INFO, isHumanOwner, sessionIdMatches, targetMatchesSession } from "./fold";
+import {
+    applyHandoffEvent,
+    CANCELLED_INFO,
+    claimMatches,
+    DONE_INFO,
+    isHumanOwner,
+    sessionIdMatches,
+    targetMatchesSession,
+} from "./fold";
 import { generateEditId, generateEventUid, generateHandoffId, normalizeEditId, normalizeHandoffId } from "./ids";
 import { isEventsOnlyInclude, type ProjectedHandoff, parseIncludeSections, projectHandoff } from "./project";
 import { resolveHandoffProject } from "./project-ref";
@@ -1044,6 +1052,70 @@ export function executeHandoffActions(input: ExecuteActionsInput, deps: HandoffD
             info: stateInfo(handoff, by),
             ...(recipient.warnings.length > 0 ? { warnings: recipient.warnings } : {}),
         } as ExecuteActionsResponse;
+    });
+}
+
+/**
+ * What `executeHandoffActions` would answer to each batch, folded in memory on the current state: nothing is written.
+ * The work store asks this before it commits a write it will copy into the old log, so a write the old log refuses
+ * never stays in the store (spec P6, the 14 days of double writing). Batches on the same handoff fold one after
+ * the other, as they would be written.
+ */
+export function checkHandoffActions(
+    batches: { id: string; editId?: string; actions: HandoffActionInput[] }[],
+    deps: HandoffDeps = {}
+): HandoffActionResult[][] {
+    const by = buildBy(deps);
+
+    return withDb(deps, (db) => {
+        catchUpHandoffs(db, deps.base);
+        const states = new Map<string, Handoff>();
+
+        return batches.map((batch) => {
+            let state: Handoff = states.get(batch.id) ?? resolveHandoffRef(db, { id: batch.id });
+            const editId = normalizeEditId(batch.editId);
+            const stamp = (): { ts: string; uid: string; id: string; by: HandoffEventBy; editId?: string } => ({
+                ts: nowIso(deps),
+                uid: generateEventUid(),
+                id: state.id,
+                by,
+                ...(editId !== undefined ? { editId } : {}),
+            });
+
+            const results = batch.actions.map((raw, index): HandoffActionResult => {
+                const pending = parseAction(raw, index, state, stamp, deps);
+
+                if (pending.result !== undefined) {
+                    return pending.result;
+                }
+
+                let outcome: { applied: boolean; error?: string } = {
+                    applied: false,
+                    error: "internal: no event built",
+                };
+
+                for (const event of [...(pending.preEvents ?? []), ...(pending.event ? [pending.event] : [])]) {
+                    const folded = applyHandoffEvent(state, event, { base: deps.base });
+
+                    if (folded.outcome.applied && folded.state !== null) {
+                        state = folded.state;
+                    }
+
+                    if (event === pending.event) {
+                        outcome = folded.outcome;
+                    }
+                }
+
+                return {
+                    action: pending.action,
+                    ok: outcome.applied,
+                    ...(outcome.error !== undefined ? { error: outcome.error } : {}),
+                };
+            });
+
+            states.set(state.id, state);
+            return results;
+        });
     });
 }
 

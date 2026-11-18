@@ -30,6 +30,9 @@ const noLegacy: LegacyHandoffs = {
     async write() {
         return { ok: false, error: "no old store in this test" };
     },
+    async check(actions) {
+        return actions.map(() => ({ ok: true }));
+    },
 };
 
 function fakeDelivery(

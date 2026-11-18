@@ -102,7 +102,8 @@ export async function envOf(ctx: WorkContext, request?: string): Promise<WriteEn
 }
 
 /**
- * One write: the store's transaction first, then the writes the old log still owns. Their hook brings the result
+ * One write: the old log's verdict on its part (folded in memory), the store's transaction, then the writes the old
+ * log still owns. Their hook brings the result
  * back into the store, so the reply reads the rows again at the end.
  */
 export async function write(
@@ -111,7 +112,31 @@ export async function write(
     options: { request?: string; dryRun?: boolean } = {}
 ): Promise<Reply<WriteData>> {
     const env = await envOf(ctx, options.request);
-    const result = transact(ctx.db, command, env, { dryRun: options.dryRun });
+    // The old log may refuse what the store accepts (a poster credential, a claim). During the double writing a
+    // write it would refuse must not reach the store, so its actions are checked on a dry run before the commit.
+    // The check folds in memory; it cannot run inside the store's transaction, because the old executor opens the
+    // same database itself.
+    const preview = transact(ctx.db, command, env, { dryRun: true });
+
+    if (!("replay" in preview) && preview.ok && preview.data.legacy.length > 0) {
+        const answers = await ctx.ports.legacy.check(preview.data.legacy);
+        const refused = answers.flatMap((answer, index) =>
+            answer.ok
+                ? []
+                : [
+                      errorDiagnostic(
+                          "LEGACY_REFUSED",
+                          `The old handoff store would refuse ${preview.data.legacy[index]?.action}: ${answer.error ?? "no reason"}. Nothing was written.`
+                      ),
+                  ]
+        );
+
+        if (refused.length > 0) {
+            return failReply(command.verb, refused, preview.next);
+        }
+    }
+
+    const result = options.dryRun ? preview : transact(ctx.db, command, env);
 
     if ("replay" in result) {
         return result.replay as Reply<WriteData>;

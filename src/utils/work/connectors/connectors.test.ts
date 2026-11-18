@@ -37,7 +37,7 @@ function ctx(sessionId: string, kind: Actor["kind"] = "agent"): WorkContext {
         actor: actor(sessionId, kind),
         project: "App",
         ports: {
-            legacy: { write: async () => ({ ok: false }) },
+            legacy: { write: async () => ({ ok: false }), check: async (actions) => actions.map(() => ({ ok: true })) },
             delivery: { place: async () => null, deliver: async () => ({ outcome: "unknown", to: null, at: "" }) },
         },
         random: () => `f${String(n++).padStart(7, "0")}`,

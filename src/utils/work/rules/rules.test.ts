@@ -48,7 +48,7 @@ function ctx(sessionId: string, over: Partial<WorkContext> = {}): WorkContext {
         actor: actor(sessionId),
         project: "App",
         ports: {
-            legacy: { write: async () => ({ ok: false }) },
+            legacy: { write: async () => ({ ok: false }), check: async (actions) => actions.map(() => ({ ok: true })) },
             delivery: { place: async () => null, deliver: async () => ({ outcome: "unknown", to: null, at: "" }) },
         },
         random: () => `r${String(n++).padStart(7, "0")}`,
