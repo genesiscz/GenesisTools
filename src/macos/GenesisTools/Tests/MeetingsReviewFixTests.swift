@@ -433,7 +433,7 @@ final class MeetingsReviewFixTests: XCTestCase {
         detail.reveal(row: "r1", defaults: defaults)
         XCTAssertEqual(detail.tab, .items)
         XCTAssertEqual(detail.itemsFilter, .all)
-        XCTAssertTrue(detail.itemsFilter.rows(rows.rows).contains { $0.id == "r1" })
+        XCTAssertTrue(detail.itemsFilter.rows(rows.rows, atLine: [], applyAbove: 0.5).contains { $0.id == "r1" })
 
         detail.itemsFilter = .questions
         detail.reveal(row: "r1", defaults: defaults)

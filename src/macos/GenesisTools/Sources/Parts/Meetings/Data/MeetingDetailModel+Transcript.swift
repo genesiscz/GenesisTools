@@ -199,7 +199,13 @@ extension MeetingDetailModel {
     func reveal(row id: String, defaults: UserDefaults? = nil) {
         let defaults = defaults ?? self.defaults
         if let row = rows.value?.rows.first(where: { $0.id == id }) {
-            if itemsFilter.rows([row]).isEmpty { itemsFilter = .all }
+            // The Items tab's apply line and its one definition of a suggestion, asked for this row alone.
+            let applyAbove = window?.overview.value?.applyAbove ?? 0.5
+            // Before the record arrives, the row's own confidence decides.
+            let item = record.value?.items.first { $0.id == id }
+            let atLine: Set<String> = item.map { Set(Self.confirmable([$0], atOrAbove: applyAbove).map(\.id)) }
+                ?? ((row.confidence ?? 0) >= applyAbove ? [id] : [])
+            if itemsFilter.rows([row], atLine: atLine, applyAbove: applyAbove).isEmpty { itemsFilter = .all }
         } else {
             // The requested meeting's rows may still be loading.
             itemsFilter = .all

@@ -95,9 +95,12 @@ struct ItemsProjection: Equatable {
     /// The suggestions "Confirm all" takes at the apply line: the count the meeting list shows as "N suggestions at
     /// 50 % or more".
     var atLine = 0
+    /// The open rows that are suggestions (`ItemsFilter.isSuggestion`): the Suggestions filter's count, the same as
+    /// the meeting list's.
+    var suggestions = 0
+    /// The open rows that are no question and below the apply line: they show under All.
+    var belowLine = 0
     var spotCheck: SpotCheckRate?
-
-    var suggestions: Int { open - questions }
 
     /// The groups the strip offers, in the order of `ItemsTab.questionGroups`: only those with a question.
     var offeredGroups: [(id: String, title: String, progress: QuestionGroupProgress)] {
@@ -116,18 +119,25 @@ struct ItemsProjection: Equatable {
         projection.ready = true
         let rows = input.rows
         let items = input.items ?? []
+        let atLine = Set(MeetingDetailModel.confirmable(items, atOrAbove: input.applyAbove).map(\.id))
         for row in rows where row.isOpen {
             projection.open += 1
-            if row.isQuestion { projection.questions += 1 }
+            if row.isQuestion {
+                projection.questions += 1
+            } else if atLine.contains(row.id) {
+                projection.suggestions += 1
+            } else {
+                projection.belowLine += 1
+            }
         }
-        projection.kind = ItemsFilter.effective(input.filter, open: projection.open, questions: projection.questions)
+        projection.kind = ItemsFilter.effective(input.filter, questions: projection.questions, suggestions: projection.suggestions)
         projection.groups = QuestionGroupProgress.count(rows: rows, items: input.items)
         let chosen = input.group != "all" && projection.kind != .suggestions && (projection.groups[input.group]?.total ?? 0) > 0
         projection.group = chosen ? input.group : "all"
         let visible = MeetingDetailModel.visibleRows(rows, order: input.order, decided: input.decided, keeping: input.held)
         let grouped = ItemsTab.wordRows(visible.filter { $0.group != "words" } + rows.filter { $0.group == "words" }, items: items)
         let group = projection.group
-        projection.shown = projection.kind.rows(grouped).filter { row in
+        projection.shown = projection.kind.rows(grouped, atLine: atLine, applyAbove: input.applyAbove).filter { row in
             group == "all" || (row.group ?? (row.isQuestion ? "rules" : nil)) == group
         }
         projection.ids = projection.shown.map(\.id)
@@ -150,7 +160,7 @@ struct ItemsProjection: Equatable {
             }
         }
         projection.suggestionsWait = items.contains { $0.status == "suggested" && $0.kind != "question" }
-        projection.atLine = MeetingDetailModel.confirmable(items, atOrAbove: input.applyAbove).count
+        projection.atLine = atLine.count
         projection.spotCheck = SpotCheckRate.of(items)
         return projection
     }
@@ -160,7 +170,7 @@ struct ItemsProjection: Equatable {
             && lhs.group == rhs.group && lhs.shown == rhs.shown && lhs.groups == rhs.groups && lhs.wordItems == rhs.wordItems
             && lhs.dictionaries == rhs.dictionaries && lhs.speakerQuestions == rhs.speakerQuestions
             && lhs.references == rhs.references && lhs.suggestionsWait == rhs.suggestionsWait && lhs.atLine == rhs.atLine
-            && lhs.spotCheck == rhs.spotCheck
+            && lhs.suggestions == rhs.suggestions && lhs.belowLine == rhs.belowLine && lhs.spotCheck == rhs.spotCheck
     }
 }
 
@@ -229,7 +239,7 @@ struct ItemsBar: View {
 
     @ViewBuilder
     private var leading: some View {
-        if ItemsFilter.offered(open: projection.open, questions: projection.questions) {
+        if ItemsFilter.offered(questions: projection.questions, suggestions: projection.suggestions) {
             // Both kinds wait: the counts are the filter. One strip, picked from the room this slot is given (whole
             // points): a `ViewThatFits` of the three built every candidate on each measurement, and the list's insets
             // measure the bar many times per pass (2026-11-11).
@@ -237,12 +247,12 @@ struct ItemsBar: View {
             let shape = ItemsFilter.Bar.pick(room: room, counts: counts, titles: kindsWidth(counts: false))
             HStack(spacing: 10) {
                 kinds(counts: shape == .counts, fills: shape == .shared)
-                    .instantTooltip(atLineWords(compact: false))
-                // The count the meeting list shows, in its words, while the room allows it beside the counts.
-                if shape == .counts, let room, room - counts >= 170 {
-                    Text(verbatim: atLineWords(compact: true))
+                    .instantTooltip(kindsTooltip)
+                // Where the rest of All went, while the room allows it beside the counts.
+                if shape == .counts, projection.belowLine > 0, let room, room - counts >= 120 {
+                    Text(verbatim: "\(projection.belowLine) below \(MeetingsWords.confidence(applyAbove) ?? "")")
                         .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
-                        .accessibilityIdentifier("meetings.items.atLine")
+                        .accessibilityIdentifier("meetings.items.belowLine")
                 }
             }
         } else {
@@ -254,12 +264,9 @@ struct ItemsBar: View {
         }
     }
 
-    /// "181 of 536 suggestions at 50 % or more": the meeting list's count, with the suggestions it is part of.
-    private func atLineWords(compact: Bool) -> String {
-        let line = MeetingsWords.confidence(applyAbove) ?? ""
-        if compact { return "\(projection.atLine) at \(line) or more" }
-        return "\(projection.atLine) of \(Plural.count(projection.suggestions, "suggestion")) at \(line) or more"
-    }
+    /// What the counts mean: suggestions are the items at the apply line, the rest show under All.
+    private var kindsTooltip: String { ItemsTab.kindsTooltip(suggestions: projection.suggestions, belowLine: projection.belowLine,
+                                                             line: MeetingsWords.confidence(applyAbove) ?? "") }
 
     private func words(compact: Bool) -> some View {
         Text(verbatim: ItemsTab.barWords(open: projection.open, atLine: projection.atLine,
