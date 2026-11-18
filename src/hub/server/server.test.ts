@@ -33,6 +33,7 @@ import { ensureHubServer } from "./ensure";
 import { LineBuffer } from "./protocol";
 import { type HubServerHandle, startHubServer } from "./server";
 import { type RowsWorker, type SessionRowsJob, type SessionRowsRequest, SessionRowsRunner } from "./session-rows";
+import { stallObserver } from "./stall-watch";
 
 const echoDoor: CallDoor<string[]> = {
     kind: "call",
@@ -94,6 +95,20 @@ const traceDoor: CallDoor<true> = {
 };
 
 const servers: HubServerHandle[] = [];
+
+it("captures one sustained silence, excludes observer sleep and rate-limits the next sample", () => {
+    const observe = stallObserver();
+    expect(observe(0, 0)).toBeNull();
+    expect(observe(0, 90_000)).toBeNull();
+    const captures: number[] = [];
+    for (let second = 91; second <= 175; second++) {
+        const beat = second < 95 ? second : second < 110 ? 95 : 110;
+        if (observe(beat, second * 1000) !== null) {
+            captures.push(second);
+        }
+    }
+    expect(captures).toEqual([105, 165]);
+});
 
 it("counts missed health probes separately from completed reply latency", () => {
     expect(
