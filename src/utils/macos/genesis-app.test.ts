@@ -45,12 +45,14 @@ it("opening the permissions window in a test returns the engine refusal without 
         const outcome = await openGenesisAppWindow();
         expect(outcome).toMatchObject({
             status: "unreachable",
-            skipped: [{
-                way: "native",
-                code: "in-test",
-                reason: "app.installed: a test process never reaches GenesisTools.app",
-                fix: null,
-            }],
+            skipped: [
+                {
+                    way: "native",
+                    code: "in-test",
+                    reason: "app.installed: a test process never reaches GenesisTools.app",
+                    fix: null,
+                },
+            ],
         });
         expect(spawn).not.toHaveBeenCalled();
     } finally {

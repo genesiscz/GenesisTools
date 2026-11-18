@@ -691,29 +691,34 @@ public enum WindowsOpenParamsWindow: String, Codable, Sendable {
     case value6 = "--meetings"
     case value7 = "--window"
     case value8 = "--requests"
+    case value9 = "--permission-dialog"
 }
 
 public struct WindowsOpenParams: Codable, Sendable {
     public var `window`: WindowsOpenParamsWindow
     public var `args`: [String]?
     public var `activate`: Bool?
-    public init(`window`: WindowsOpenParamsWindow, `args`: [String]? = nil, `activate`: Bool? = nil) {
+    public var `wait`: Bool?
+    public init(`window`: WindowsOpenParamsWindow, `args`: [String]? = nil, `activate`: Bool? = nil, `wait`: Bool? = nil) {
         self.`window` = `window`
         self.`args` = `args`
         self.`activate` = `activate`
+        self.`wait` = `wait`
     }
-    private enum CodingKeys: String, CodingKey { case `window`; case `args`; case `activate` }
+    private enum CodingKeys: String, CodingKey { case `window`; case `args`; case `activate`; case `wait` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`window` = try box.decode(WindowsOpenParamsWindow.self, forKey: .`window`)
         self.`args` = try box.decodeIfPresent([String].self, forKey: .`args`)
         self.`activate` = try box.decodeIfPresent(Bool.self, forKey: .`activate`)
+        self.`wait` = try box.decodeIfPresent(Bool.self, forKey: .`wait`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
         try box.encode(`window`, forKey: .`window`)
         try box.encodeIfPresent(`args`, forKey: .`args`)
         try box.encodeIfPresent(`activate`, forKey: .`activate`)
+        try box.encodeIfPresent(`wait`, forKey: .`wait`)
     }
 }
 
@@ -731,6 +736,7 @@ public enum WindowsOpenResultOption0ValueWindow: String, Codable, Sendable {
     case value6 = "--meetings"
     case value7 = "--window"
     case value8 = "--requests"
+    case value9 = "--permission-dialog"
 }
 
 public enum WindowsOpenResultOption0ValueOpened: Codable, Sendable {
