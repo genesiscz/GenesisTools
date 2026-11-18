@@ -53,6 +53,7 @@ import {
     DEFAULT_LISTEN_BELOW,
     DEFAULT_WORD_MIN_OCCURRENCES,
     heardTimes,
+    presenceAt,
     questionFor,
     questionKey,
     questionRank,
@@ -2605,15 +2606,21 @@ export function suggestItems(options: {
     }
     const strangerQuestions = [...strangerGroups.values()].map((ranges) => {
         const owner = ranges[0]!.evidence?.seatPerson;
+        const fromSec = Math.min(...ranges.map((range) => range.fromSec));
+        // The same presence rule as every other speaker question: nobody outside their stay at the stretch.
+        const { absent } = presenceAt(context.presence, fromSec);
         const choices = [typeof owner === "string" ? owner : "", ...context.candidates].filter(
-            (name, index, names) => name && names.findIndex((other) => sameName(name, other)) === index
+            (name, index, names) =>
+                name &&
+                !absent.some((other) => sameName(name, other)) &&
+                names.findIndex((other) => sameName(name, other)) === index
         );
         return {
             kind: "question" as const,
             status: "suggested" as const,
             about: "speaker" as const,
             group: "rules" as const,
-            fromSec: Math.min(...ranges.map((range) => range.fromSec)),
+            fromSec,
             toSec: Math.max(
                 ...ranges.map((range) =>
                     typeof range.evidence?.endSec === "number" ? range.evidence.endSec : range.toSec
