@@ -395,6 +395,33 @@ public struct WidgetTasksPreferences: Codable, Equatable, Sendable {
     public var handoffs: WidgetHandoffDisplay?
 }
 
+/// A string preference added after the original widget wire format. Older snapshots omit these keys.
+@propertyWrapper
+public struct WidgetInboxPreference: Codable, Equatable, Sendable {
+    public var wrappedValue: String
+    public init(wrappedValue: String) { self.wrappedValue = wrappedValue }
+    public init(from decoder: Decoder) throws {
+        wrappedValue = try decoder.singleValueContainer().decode(String.self)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(wrappedValue)
+    }
+}
+
+private extension KeyedDecodingContainer {
+    func decode(_ type: WidgetInboxPreference.Type, forKey key: Key) throws -> WidgetInboxPreference {
+        if contains(key) { return try WidgetInboxPreference(from: superDecoder(forKey: key)) }
+        let defaults = WidgetPreferences.hubDefaults
+        switch key.stringValue {
+        case "inboxGrouping": return .init(wrappedValue: defaults.inboxGrouping)
+        case "inboxFeedRuns": return .init(wrappedValue: defaults.inboxFeedRuns)
+        case "previewView": return .init(wrappedValue: defaults.previewView)
+        default: throw DecodingError.keyNotFound(key, .init(codingPath: codingPath, debugDescription: "Missing inbox preference"))
+        }
+    }
+}
+
 /// The widget's stored settings. The hub resolves every default before a snapshot leaves it (`widgetPreferencesSchema`
 /// in src/hub/lib/widget/types.ts, `prefault({})` in the state schema), so only the settings the hub keeps optional are
 /// optional here. Writes go through `WidgetPreferencesStore`, by field.
@@ -431,6 +458,7 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     /// Alert summary and compact answer field.
     public var alertSummary: Bool
     public var alertCompactAnswer: Bool
+    @WidgetInboxPreference public var previewView: String = "sessions"
     /// The agents hover list: "needs-you" (default) or "active" (sessions that work now too).
     public var previewFilter: String
     /// The agents hover list's order: "attention" (default), "recent" or "project".
@@ -467,8 +495,9 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var stagedOnLeave: String
     /// Seconds to show a delivered note before a send-and-close folds the panel; 0 keeps it open. Default 2.5.
     public var sendCloseSeconds: Double
-    /// The inbox of every session: "session" (default, grouped under each session) or "list".
-    public var inboxGrouping: String
+    /// The newest-first feed, the grouped session list, or the waiting-first list.
+    @WidgetInboxPreference public var inboxGrouping: String = "feed"
+    @WidgetInboxPreference public var inboxFeedRuns: String = "session"
     /// The filter a session's inbox opens with: "all" (default), "inbox" or "decisions".
     public var inboxFilter: String
     /// The filter the inbox of every session opens with: "all" (default), "needs" or "unread".
@@ -573,7 +602,6 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
             stagedReminder: true,
             stagedOnLeave: "ask",
             sendCloseSeconds: 2.5,
-            inboxGrouping: "session",
             inboxFilter: "all",
             overviewFilter: "all",
             overviewSummary: true,
@@ -757,6 +785,12 @@ public struct WidgetInboxItem: Codable, Equatable, Sendable {
         public var more: Bool?
         public var origin: String?
     }
+    public struct Reply: Codable, Equatable, Sendable {
+        public var question: String
+        public var text: String
+        public var more: Bool?
+    }
+    public var reply: Reply? = nil
     public var message: Message? = nil
     var openTitle: String {
         if message?.origin != nil { return "Read message" }

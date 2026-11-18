@@ -81,6 +81,20 @@ final class WidgetPreferencesStoreTests: XCTestCase {
         XCTAssertEqual(defaults, .hubDefaults, "WidgetPreferences.hubDefaults drifted from widgetPreferencesSchema.parse({})")
     }
 
+    func testInboxDefaultsDecodeFromOlderPreferencesAndKeepSavedOrders() throws {
+        var legacy = WidgetTestPreferences.dictionary(["previewFilter": "active"])
+        for key in ["inboxGrouping", "inboxFeedRuns", "previewView"] { legacy.removeValue(forKey: key) }
+        for order in [nil, "session", "list"] as [String?] {
+            if let order { legacy["inboxGrouping"] = order }
+            let data = try JSONSerialization.data(withJSONObject: legacy)
+            let preferences = try JSONDecoder().decode(WidgetPreferences.self, from: data)
+            XCTAssertEqual(preferences.inboxGrouping, order ?? "feed")
+            XCTAssertEqual(preferences.inboxFeedRuns, "session")
+            XCTAssertEqual(preferences.previewView, "sessions")
+            XCTAssertEqual(preferences.previewFilter, "active")
+        }
+    }
+
     func testAWriteSendsOnlyTheKeyItChanged() async throws {
         let harness = Harness()
         harness.store.write { $0.inboxFilter = "inbox" }
