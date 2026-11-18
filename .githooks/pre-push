@@ -98,7 +98,7 @@ stage_done
 
 # The repo guards from the CI "checks" job (ci.yml, after the TypeScript check). They used to run on
 # CI only, so a pid probe or a hard-coded command name reached every PR of a stack before anything
-# said so (2026-10-09). They run in parallel: about 13 s, the time of check-tool-commands alone.
+# said so (2026-10-09). The full tool-command reference audit runs on demand.
 echo "▶ CI guards (parallel)..."
 guard_dir=$(mktemp -d "${TMPDIR:-/tmp}/gt-pre-push-guards.XXXXXX")
 guard_pids=""
@@ -139,7 +139,6 @@ run_guard pid-safety-guard bash scripts/ci/pid-safety-guard.sh
 run_guard package-boundaries bun scripts/ci/check-package-boundaries.ts
 run_guard plugin-standalone bun scripts/ci/check-plugin-standalone.ts
 run_guard plugin-vendored bun scripts/gen-harness-plugin.ts --check
-run_guard tool-commands bun scripts/ci/check-tool-commands.ts --strict
 run_guard jev-instrumentation bun scripts/ci/jev-instrumentation-guard.ts
 run_guard entrypoint-imports bun scripts/ci/entrypoint-import-guard.ts
 # `wait` reports only the last pid, and under `set -e` a non-zero one would end the hook with no report.

@@ -133,17 +133,33 @@ describe("build info and the CI step", () => {
         }
     });
 
-    it("the CI step passes --base only when the event has a base (a workflow_dispatch run has none)", () => {
+    it("defaults CI to core projects and reserves dashboard and tool-command checks for manual runs", () => {
         const workflow = readFileSync(resolve(import.meta.dir, "../../.github/workflows/ci.yml"), "utf8");
+        type Step = { name: string; if?: string; env?: Record<string, string> };
+        const { on, jobs } = Bun.YAML.parse(workflow) as {
+            on: { workflow_dispatch: { inputs: Record<string, { default: boolean }> } };
+            jobs: { checks: { steps: Step[] } };
+        };
+        expect(on.workflow_dispatch.inputs.dashboards.default).toBe(false);
+        expect(on.workflow_dispatch.inputs.tool_command_guard.default).toBe(false);
+        const steps = new Map(jobs.checks.steps.map((entry) => [entry.name, entry]));
+        expect(steps.get("TypeScript check")?.env?.TYPECHECK_SCOPE).toContain(
+            "github.event_name == 'workflow_dispatch' && inputs.dashboards && '--all' || '--core-only'"
+        );
+        expect(steps.get("Dashboard smoke")?.if).toBe("github.event_name == 'workflow_dispatch' && inputs.dashboards");
+        expect(steps.get("Tool command reference guard")?.if).toBe(
+            "github.event_name == 'workflow_dispatch' && inputs.tool_command_guard"
+        );
         const step = workflow.slice(workflow.indexOf("- name: TypeScript check\n"));
         const run = /\n\s+run: (.+)/.exec(step)?.[1] ?? "";
         expect(run).toStartWith("bun scripts/ci/typecheck.ts");
-        const argv = (base: string) =>
+        const argv = (base: string, scope = "--core-only") =>
             Bun.spawnSync(["bash", "-c", run.replace("bun scripts/ci/typecheck.ts", "printf '[%s]'")], {
-                env: { ...process.env, TYPECHECK_BASE: base },
+                env: { ...process.env, TYPECHECK_BASE: base, TYPECHECK_SCOPE: scope },
             }).stdout.toString();
-        expect(argv("")).toBe("[]");
-        expect(argv("abc123")).toBe("[--base][abc123]");
+        expect(argv("")).toBe("[--core-only]");
+        expect(argv("abc123")).toBe("[--core-only][--base][abc123]");
+        expect(argv("", "--all")).toBe("[--all]");
     });
 });
 

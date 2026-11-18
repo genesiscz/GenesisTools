@@ -25,18 +25,22 @@ export interface Project {
     tsconfig: string;
 }
 
-/** The order `typecheck:all` had; the root project is the large one. */
-export const PROJECTS: Project[] = [
+/** The independent compiler projects the default CI run covers. */
+const CORE_PROJECTS: Project[] = [
     { name: "root", tsconfig: "tsconfig.json" },
+    { name: "fable-replace", tsconfig: "plugins/genesis-tools/skills/fable-replace/scripts/tsconfig.json" },
+    // The @genesiscz/utils package as consumers see it: its own paths and no @app/* alias, so an @app/* import
+    // under src/utils fails here while the root program (which maps @app/*) passes it.
+    { name: "utils", tsconfig: "src/utils/tsconfig.json" },
+];
+
+export const PROJECTS: Project[] = [
+    ...CORE_PROJECTS,
     { name: "claude-history-dashboard", tsconfig: "src/claude-history-dashboard/tsconfig.json" },
     { name: "spotify-ui", tsconfig: "src/spotify/ui/tsconfig.json" },
     { name: "monitor-ui", tsconfig: "src/monitor/ui/tsconfig.json" },
     { name: "clarity-ui", tsconfig: "src/clarity/ui/tsconfig.json" },
     { name: "dev-dashboard-ui", tsconfig: "src/dev-dashboard/ui/tsconfig.json" },
-    { name: "fable-replace", tsconfig: "plugins/genesis-tools/skills/fable-replace/scripts/tsconfig.json" },
-    // The @genesiscz/utils package as consumers see it: its own paths and no @app/* alias, so an @app/* import
-    // under src/utils fails here while the root program (which maps @app/*) passes it.
-    { name: "utils", tsconfig: "src/utils/tsconfig.json" },
 ];
 
 /** What a project can take in: the root project has `allowJs`, so JavaScript inputs count too. */
@@ -349,8 +353,9 @@ async function checkProjects(all: boolean, base: string | null, started: number,
         return diffs.get(sha) ?? null;
     };
 
-    const programs = new Map(PROJECTS.map((project) => [project.name, passedProgram(dir, project)]));
-    const selections = PROJECTS.map((project): Selection => {
+    const projects = process.argv.includes("--core-only") ? CORE_PROJECTS : PROJECTS;
+    const programs = new Map(projects.map((project) => [project.name, passedProgram(dir, project)]));
+    const selections = projects.map((project): Selection => {
         if (all) {
             return { project, reason: "--all" };
         }
@@ -425,7 +430,7 @@ async function checkProjects(all: boolean, base: string | null, started: number,
 
     const failed = outcomes.filter((outcome) => !outcome.ok).length;
     out.println(
-        `typecheck: ${outcomes.length} of ${PROJECTS.length} projects checked, ${failed} failed, ${((performance.now() - started) / 1000).toFixed(1)} s`
+        `typecheck: ${outcomes.length} of ${projects.length} projects checked, ${failed} failed, ${((performance.now() - started) / 1000).toFixed(1)} s`
     );
     process.exitCode = failed > 0 ? 1 : 0;
 }

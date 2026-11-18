@@ -985,6 +985,10 @@ rechecked with the checkout compiler. Automatic repo lint checks the pushed diff
 itself changes. Run full-tree and roster audits explicitly with `bun run lint:rules` and
 `bun scripts/ci/rosters/generate.ts --check --tree`.
 
+Automatic CI checks the root, utils and fable-replace TypeScript projects. The manual CI workflow has separate
+switches for dashboard/UI typechecks and smoke tests, and for the full tool-command reference guard
+(`bun scripts/ci/check-tool-commands.ts --strict`).
+
 ### Adding a tool
 
 Create `src/<name>/index.ts`. That is the whole registration step.
