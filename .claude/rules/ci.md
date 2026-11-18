@@ -71,7 +71,7 @@ generated list of the places that still hold it, which only shrinks. Two kinds:
   its verb in a file that runs the program, as `const TREE_ARGS = […]` and `run(TREE_ARGS)`; `z.enum(verbs)` or
   `runAx(AX_ARGS)` in that file is no finding).
 - A **tree roster** (`rosters/tree.ts`) needs every file at once, so it is not in lint-rules. It runs in
-  `bun scripts/ci/rosters/generate.ts --check --tree` (about 4 s; the pre-push hook and CI's "Tree roster guard"):
+  `bun scripts/ci/rosters/generate.ts --check --tree` on demand. Pushes and CI run the non-roster lint rules:
   - `roster-shared-export-redeclared`: a function named like a two-word export of `src/utils/**`, also with a copy
     affix (`myFoo`, `fooLocal`, `foo2`, `_foo`), declared outside its owner.
   - `roster-function-body-copied`: a function whose body is the body of a `src/utils/**` export, under any name, with

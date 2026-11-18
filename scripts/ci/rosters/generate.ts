@@ -26,6 +26,7 @@ import {
     pluginsDisabledFor,
     targetFiles,
 } from "../lint-rules";
+import { withLocalCheckSlot } from "../local-check-slot";
 import { spawnWithDeadline } from "../spawn-deadline";
 import type { RosterDefinition } from "./define";
 import { parseRosters, ROSTER_DEFINITIONS, ROSTERS_FILE, type Rosters, readRosters, rosterGrowth } from "./index";
@@ -222,7 +223,7 @@ function argValue(flag: string): string | undefined {
     return index >= 0 ? process.argv[index + 1] : undefined;
 }
 
-if (import.meta.main) {
+async function main(): Promise<number> {
     const check = process.argv.includes("--check");
     const only = argValue("--only");
     const base = argValue("--base");
@@ -233,24 +234,13 @@ if (import.meta.main) {
 
     if (definitions.length === 0 && trees.length === 0 && swift.length === 0) {
         console.error(`rosters: no roster named ${only}`);
-        process.exit(2);
+        return 2;
     }
 
     // A scan that cannot read its input stops with the reason and writes nothing: an empty file list would drop every
     // count, and an unread base would pass a manifest edited up.
-    const abort = (error: unknown): never => {
-        console.error(error instanceof Error ? error.message : String(error));
-        process.exit(2);
-    };
-    let baseline: Rosters | null = null;
-
-    try {
-        baseline = base ? baseRosters(base) : null;
-    } catch (error) {
-        abort(error);
-    }
-
-    const files = await targetFiles().catch(abort);
+    const baseline = base ? baseRosters(base) : null;
+    const files = await targetFiles();
     const current = readRosters();
     const found: Record<string, Record<string, number>> = {};
 
@@ -331,7 +321,7 @@ if (import.meta.main) {
             }
         }
 
-        process.exit(problems.length > 0 || changed ? 1 : 0);
+        return problems.length > 0 || changed ? 1 : 0;
     }
 
     if (changed) {
@@ -339,5 +329,14 @@ if (import.meta.main) {
         console.log(`wrote ${ROSTERS_FILE}`);
     }
 
-    process.exit(problems.length > 0 ? 1 : 0);
+    return problems.length > 0 ? 1 : 0;
+}
+
+if (import.meta.main) {
+    try {
+        process.exitCode = await withLocalCheckSlot(main);
+    } catch (error) {
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exitCode = 2;
+    }
 }

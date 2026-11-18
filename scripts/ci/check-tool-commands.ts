@@ -124,6 +124,10 @@ function templateHeadWords(template: ts.TemplateExpression): string {
  * string literals of its `replaceCommand`.
  */
 export function findToolCommandRefs(file: string, text: string): ToolCommandRef[] {
+    // Escaped identifiers still need the parser (e.g. a Unicode escape within a helper name).
+    if (!text.includes("toolCommand") && !text.includes("suggestCommand") && !text.includes("\\u")) {
+        return [];
+    }
     const { source } = parseSource(file.endsWith(".tsx") ? file : `${file.replace(/\.tsx?$/, "")}.ts`, text);
     const constants = toolNameConstants(source);
     const refs: ToolCommandRef[] = [];
@@ -215,6 +219,10 @@ export function findHardcodedToolCommands(
     text: string,
     isTool: (name: string) => boolean
 ): HardcodedCommand[] {
+    // A string escape or line continuation can spell a command that is absent from the raw source.
+    if (!text.includes("tools ") && !text.includes("\\")) {
+        return [];
+    }
     const { source } = parseSource(file.endsWith(".tsx") ? file : `${file.replace(/\.tsx?$/, "")}.ts`, text);
     const hits: HardcodedCommand[] = [];
     const sourceLines = text.split("\n");
@@ -627,6 +635,22 @@ export function buildCommandIndex(root: string): CommandIndex {
 
     const aliases = TOOL_ALIASES;
     const byTool = new Map<string, Registrations>();
+    const byFile = new Map<string, Registrations & { imports: string[] }>();
+    const collect = (file: string, into: Registrations): string[] => {
+        let entry = byFile.get(file);
+        if (!entry) {
+            entry = { words: new Set(), takesArguments: new Set(), imports: [] };
+            entry.imports = scanSourceFile(file, entry);
+            byFile.set(file, entry);
+        }
+        for (const word of entry.words) {
+            into.words.add(word);
+        }
+        for (const word of entry.takesArguments) {
+            into.takesArguments.add(word);
+        }
+        return entry.imports;
+    };
 
     const registrations = (tool: string): Registrations => {
         const cached = byTool.get(tool);
@@ -641,7 +665,7 @@ export function buildCommandIndex(root: string): CommandIndex {
         const utilsFiles = new Set<string>();
 
         for (const file of sourceFiles(join(src, folder))) {
-            for (const specifier of scanSourceFile(file, found)) {
+            for (const specifier of collect(file, found)) {
                 const app = /^@app\/([^/]+)\//.exec(specifier)?.[1];
 
                 if (app && app !== folder) {
@@ -660,19 +684,19 @@ export function buildCommandIndex(root: string): CommandIndex {
         }
 
         for (const file of extraFiles) {
-            scanSourceFile(file, found);
+            collect(file, found);
         }
 
         // A utils module is often a barrel (`index.ts` re-exporting `./commander`): follow its
         // relative imports and re-exports one hop, where the registrations live.
         for (const file of utilsFiles) {
-            for (const specifier of scanSourceFile(file, found)) {
+            for (const specifier of collect(file, found)) {
                 const resolved = specifier.startsWith(".")
                     ? resolveSpecifier({ from: file, specifier, exists: existsSync })
                     : null;
 
                 if (resolved && !utilsFiles.has(resolved)) {
-                    scanSourceFile(resolved, found);
+                    collect(resolved, found);
                 }
             }
         }

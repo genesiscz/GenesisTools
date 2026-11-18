@@ -599,6 +599,15 @@ function appBuildLockPath(): string {
     return join(genesisAppDir(), "build.lock");
 }
 
+export function withAppBuildSlot<T>(run: () => Promise<T>): Promise<T> {
+    return withFileLock(appBuildLockPath(), run, BUILD_LOCK_TIMEOUT_MS);
+}
+
+/** SwiftPM accepts both the short and long jobs option. Preserve a caller's explicit worker budget. */
+export function swiftJobArgs(args: readonly string[]): string[] {
+    return args.some((arg) => /^(--jobs(?:=|$)|-j(?:\d+|$))/.test(arg)) ? [] : ["--jobs", "4"];
+}
+
 export async function buildApp(options?: BuildAppOptions): Promise<BuildResult> {
     // A test never builds the app, and a GENESIS_TOOLS_HOME sandbox has no app of its own: a window launched on one
     // built a second GenesisTools.app inside it, Launch Services registered it, and it ran a link relay (2026-11-07).
@@ -705,8 +714,14 @@ async function buildAppLocked(options?: BuildAppOptions): Promise<BuildResult> {
  * The `swift build` / `swift test` arguments the app build and the app tests share, so both use one scratch tree per
  * parts set and never rebuild each other's targets (`testApp`).
  */
-function appSwiftArgs(parts: readonly string[], scratchPath: string, fileListChanged: boolean): string[] {
+function appSwiftArgs(
+    parts: readonly string[],
+    scratchPath: string,
+    fileListChanged: boolean,
+    args: readonly string[] = []
+): string[] {
     return [
+        ...swiftJobArgs(args),
         "-c",
         "debug",
         "-Xswiftc",
@@ -757,6 +772,10 @@ const APP_TEST_TIMEOUT_MS = 60 * 60_000;
  * (`--filter HubUsageTests`). Returns its exit code.
  */
 export async function testApp(args: readonly string[], timeoutMs = APP_TEST_TIMEOUT_MS): Promise<number> {
+    return withAppBuildSlot(() => testAppLocked(args, timeoutMs));
+}
+
+async function testAppLocked(args: readonly string[], timeoutMs: number): Promise<number> {
     if (!Bun.which("swift")) {
         throw new Error("swift not found. Install Xcode or the Command Line Tools, then re-run.");
     }
@@ -768,7 +787,7 @@ export async function testApp(args: readonly string[], timeoutMs = APP_TEST_TIME
     const fileListMarker = join(scratchPath, "genesis-swift-files.sha256");
     const fileList = swiftFileListHash();
     const fileListChanged = !existsSync(fileListMarker) || readFileSync(fileListMarker, "utf8") !== fileList;
-    const cmd = ["swift", "test", ...appSwiftArgs(parts, scratchPath, fileListChanged), ...args];
+    const cmd = ["swift", "test", ...appSwiftArgs(parts, scratchPath, fileListChanged, args), ...args];
     logger.debug({ cmd, cwd: APP_SOURCE_DIR }, "app tests in the app build's scratch tree");
     const proc = Bun.spawn(cmd, {
         cwd: APP_SOURCE_DIR,
