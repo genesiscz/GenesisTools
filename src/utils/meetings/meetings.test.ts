@@ -301,9 +301,12 @@ describe("meetings config", () => {
         expect(edges.capture.audioRetentionDays).toBe(1);
     });
 
-    test("auto voice workers are half the cores, at least one and at most four; a number is kept", () => {
-        expect([1, 2, 6, 8, 10, 24].map((cores) => voiceWorkerCount("auto", cores))).toEqual([1, 1, 3, 4, 4, 4]);
-        expect(voiceWorkerCount(6, 2)).toBe(6);
+    test("auto voice workers are the free performance cores (cores minus the one-minute load), 1 to 4; a number is kept", () => {
+        const auto = (performanceCores: number, load1: number) => voiceWorkerCount("auto", { performanceCores, load1 });
+        expect([auto(12, 0.5), auto(12, 9.2), auto(12, 10.5), auto(12, 11.9), auto(12, 700), auto(2, 0)]).toEqual([
+            4, 2, 1, 1, 1, 2,
+        ]);
+        expect(voiceWorkerCount(6, { performanceCores: 12, load1: 700 })).toBe(6);
     });
 
     test("a version 1 file moves each key to its axis, and the old places still read", () => {

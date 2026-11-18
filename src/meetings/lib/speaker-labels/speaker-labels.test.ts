@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { existsSync } from "node:fs";
 import type { AreaClients } from "@genesiscz/utils/genesis-tools";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
@@ -17,6 +18,7 @@ import * as labelers from "./index";
 import { mergeLineLabels, proposeSpeakerLabels } from "./index";
 import { seatLabeler } from "./seat";
 import type { LabelContext, LineLabel } from "./types";
+import { voiceWorkerSettings, voiceWorkerStart } from "./voice";
 
 const START = "2026-11-01T10:00:00.000Z";
 const spies: Array<{ mockRestore(): void }> = [];
@@ -658,5 +660,32 @@ describe("speaker-label integration", () => {
         const second = await runSuggest({ store, record: reopened, rules: ["speakers"] });
         expect(second.fresh).toEqual([]);
         expect(new MeetingStore(store.storage).read(record.id)?.items).toEqual(reopened.items);
+    });
+});
+
+describe("voice worker start", () => {
+    test("normal starts Bun directly and clears background in the worker; background is taskpolicy -b", () => {
+        expect(voiceWorkerStart("normal")).toEqual({ prefix: [], clearBackground: true });
+        const background = voiceWorkerStart("background");
+        expect(background.clearBackground).toBe(false);
+        expect(background.prefix).toEqual(existsSync("/usr/sbin/taskpolicy") ? ["/usr/sbin/taskpolicy", "-b"] : []);
+    });
+
+    test("auto workers read the free cores once: a loaded Mac gets one worker, a quiet one up to four", async () => {
+        const config = meetingsConfigSchema.parse({});
+        let reads = 0;
+        const reading = (load1: number) => () => {
+            reads++;
+            return { performanceCores: 12, load1 };
+        };
+        expect((await voiceWorkerSettings(config, reading(0.4))).workers).toBe(4);
+        expect((await voiceWorkerSettings(config, reading(700))).workers).toBe(1);
+        expect(reads).toBe(2);
+        const fixed = meetingsConfigSchema.parse({
+            global: { speakerLabels: { voice: { compute: { priority: "background", workers: 3 } } } },
+        });
+        const settings = await voiceWorkerSettings(fixed, reading(700));
+        expect(settings.workers).toBe(3);
+        expect(settings.clearBackground).toBe(false);
     });
 });

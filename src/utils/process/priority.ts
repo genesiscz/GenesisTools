@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { libSystem } from "@genesiscz/utils/fs/native/libsystem";
 
 /**
  * How macOS schedules a child process:
@@ -34,7 +35,27 @@ export function priorityToolsOnDisk(): PriorityTools {
     return { perl: existsSync(PERL), taskpolicy: existsSync(TASKPOLICY) };
 }
 
-/** The argv that runs `command` through `sh -c` at `priority`. Arguments after it reach the shell as `$0`, `$1`, …. */
+/** `PRIO_DARWIN_PROCESS` of sys/resource.h: `setpriority(4, 0, 0)` takes the calling process out of background. */
+const PRIO_DARWIN_PROCESS = 4;
+
+/**
+ * Takes this process out of darwin background, whatever its parent was (a `ProcessType=Background` launchd job, a
+ * `taskpolicy -b` parent). A Bun child calls it as its first act instead of being started through `perl`: one
+ * process fewer per start. False off macOS or when the call fails.
+ */
+export function clearOwnBackground(): boolean {
+    const symbols = libSystem();
+    return symbols !== null && symbols.setpriority(PRIO_DARWIN_PROCESS, 0, 0) === 0;
+}
+
+/** The argv prefix that runs a program in background QoS (`taskpolicy -b`), or none where taskpolicy is missing. */
+export function backgroundPrefix(onDisk: PriorityTools = priorityToolsOnDisk()): string[] {
+    return onDisk.taskpolicy ? [TASKPOLICY, "-b"] : [];
+}
+
+/**
+ * The argv that runs `command` through `sh -c` at `priority`. `high` keeps the perl wrapper because a shell command
+ * cannot clear its own background state; a Bun child should call `clearOwnBackground` itself instead. Arguments after it reach the shell as `$0`, `$1`, …. */
 export function priorityShellArgv(
     command: string,
     priority: ProcessPriority,

@@ -67,9 +67,11 @@ export async function voiceMeeting(
     const file = join(folder, "voices.json");
     let voice: Awaited<ReturnType<typeof embedVoice>>;
     try {
+        const worker = await voiceWorkerSettings();
         voice = await embedVoice({
             audioPath,
-            workerPrefix: (await voiceWorkerSettings()).prefix,
+            workerPrefix: worker.prefix,
+            clearBackground: worker.clearBackground,
             channel: options.channel,
             fromSec: options.fromSec,
             toSec: options.toSec,
@@ -223,11 +225,13 @@ export async function collectVoiceEvidence(target: AcousticTarget) {
         spans.push({ index: line.index, fromSec: line.startSec, toSec: line.endSec });
         groups.set(channel, spans);
     }
+    const worker = await voiceWorkerSettings();
     for (const [channel, spans] of groups) {
         spans.sort((a, b) => a.fromSec - b.fromSec);
         const embeddings = await embedVoiceLines({
             audioPath,
-            workerPrefix: (await voiceWorkerSettings()).prefix,
+            workerPrefix: worker.prefix,
+            clearBackground: worker.clearBackground,
             spans,
             channels: [{ channel, track: channel === (layout === "left-mic" ? 0 : 1) ? "raw-mic" : "isolated-call" }],
             cachePath: join(folder, "voice-lines.json"),
