@@ -13,7 +13,7 @@ final class MeetingsQuestionRowsTests: XCTestCase {
             impact: .init(lines: 1, words: 45, sameDoubtLines: 3),
             raisedLines: [.init(index: 99, startSec: 60, endSec: 62, speaker: "Bob Example", text: "Raised line")])
     }
-    private func rendered<V: View>(_ view: V, name: String, native: Bool = false) throws -> String {
+    private func rendered<V: View>(_ view: V, name: String, native: Bool = false, afterMount: () -> Void = {}) throws -> String {
         let content = view.frame(width: 460).padding(12).background(Color(white: 0.12)).environment(\.colorScheme, .dark)
         let renderer = ImageRenderer(content: content)
         renderer.scale = 2
@@ -23,7 +23,9 @@ final class MeetingsQuestionRowsTests: XCTestCase {
             let panel = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 484, height: 460), styleMask: [.borderless], backing: .buffered, defer: false)
             panel.isReleasedWhenClosed = false; panel.contentView = host; panel.orderInForSnapshot()
             defer { panel.orderOut(nil); panel.close() }
-            RunLoop.main.run(until: Date().addingTimeInterval(0.2)); host.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+            afterMount()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1)); host.layoutSubtreeIfNeeded()
             let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
             host.cacheDisplay(in: host.bounds, to: bitmap); image = try XCTUnwrap(bitmap.cgImage)
         } else { image = try XCTUnwrap(renderer.cgImage) }
@@ -87,10 +89,43 @@ final class MeetingsQuestionRowsTests: XCTestCase {
         XCTAssertTrue(text.contains("Raised confidence on 1 line"), text)
     }
 
+    private func question(_ id: String = "q", status: String = "suggested", token: String? = nil) throws -> ReviewRow {
+        var row = try JSONDecoder().decode(ReviewRow.self, from: Data("{\"id\":\"\(id)\",\"label\":\"Q1\",\"kind\":\"question\",\"status\":\"\(status)\",\"what\":\"Who?\",\"parts\":[],\"choices\":[],\"edit\":\"answer\",\"sources\":[],\"target\":{\"kind\":\"item\",\"id\":\"\(id)\"}}".utf8))
+        if let token { row.decision = .init(token: token, actor: .window, by: "you", action: "answer", reason: nil, question: id, at: nil) }
+        return row
+    }
+
     func testX5TwoVoiceEditorUsesTheTimeScopedPeopleAndEverybodyEscape() throws {
         let row = try JSONDecoder().decode(ReviewRow.self, from: Data(#"{"id":"q","label":"Q1","kind":"question","status":"suggested","what":"Who?","parts":[{"kind":"when","from":{"sec":10,"text":"00:10"},"target":{"kind":"item","id":"q"}}],"choices":[],"edit":"answer","sources":[],"target":{"kind":"item","id":"q"}}"#.utf8))
         XCTAssertEqual(ListenVoicesEditor.offeredPeople([present, absent], row: row, everybody: false), [present.name])
         XCTAssertEqual(ListenVoicesEditor.offeredPeople([present, absent], row: row, everybody: true), [present.name, absent.name])
+    }
+
+    func testX13FreshAnswerFlashesOnceAndReopenAndDisabledDoNotFlash() throws {
+        let before = ReviewRows(meeting: "copy", rows: [try question()], hidden: .init(lowPriority: 0, minPriority: 0), questionDetails: [evidence()])
+        let after = ReviewRows(meeting: "copy", rows: [try question(status: "confirmed", token: "next")], hidden: before.hidden, questionDetails: [evidence()])
+        var flash = RaisedLineFlash()
+        XCTAssertTrue(flash.receive(before, enabled: true).isEmpty)
+        XCTAssertEqual(flash.receive(after, enabled: true), [99])
+        XCTAssertTrue(flash.receive(after, enabled: true).isEmpty)
+        var reopened = RaisedLineFlash()
+        XCTAssertTrue(reopened.receive(after, enabled: true).isEmpty)
+        var disabled = RaisedLineFlash()
+        _ = disabled.receive(before, enabled: false)
+        XCTAssertTrue(disabled.receive(after, enabled: false).isEmpty)
+        XCTAssertTrue(disabled.receive(after, enabled: true).isEmpty)
+        XCTAssertTrue(MeetingsPreferences.Transcript.flashRaised.defaultValue)
+        XCTAssertEqual(MeetingsPreferences.Transcript.raisedFlashSec.defaultValue, 1.2)
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "test.raised.\(UUID().uuidString)"))
+        let rows = SidePanelCatalog.windowSections(defaults).first { $0.id == "transcript" }?.rows ?? []
+        XCTAssertTrue(rows.contains { $0.title == MeetingsPreferences.Transcript.flashRaised.title })
+        let detail = MeetingDetailModel(id: "copy", window: nil)
+        detail.comments = .loaded(.init(meeting: "copy", comments: [], listeners: []))
+        detail.rows = .loaded(before)
+        let entries = [TranscriptLine(id: "raised", startSec: 60, speaker: "Alice Example", text: "Raised source line", endSec: 62, sourceIndex: 99)]
+        let view = TranscriptBlocksPane(detail: detail, entries: entries)
+        XCTAssertTrue(try rendered(view, name: "X13-before", native: true).contains("Raised source line"))
+        XCTAssertTrue(try rendered(view, name: "X13-after", native: true, afterMount: { detail.rows = .loaded(after) }).contains("Raised source line"))
     }
 
     func testPinPlacementInputsCoverPinsZoomWidthLanesAndCaptions() {

@@ -44,6 +44,11 @@ struct TranscriptBlocksPane: View {
     @AppStorage(MeetingsPreferences.Panes.followPlayback.key) private var followSetting =
         MeetingsPreferences.Panes.followPlayback.defaultValue
     @AppStorage(MeetingsPreferences.Transcript.dimPast.key) private var dimPast = MeetingsPreferences.Transcript.dimPast.defaultValue
+    @AppStorage(MeetingsPreferences.Transcript.flashRaised.key) private var flashRaised = MeetingsPreferences.Transcript.flashRaised.defaultValue
+    @AppStorage(MeetingsPreferences.Transcript.raisedFlashSec.key) private var raisedFlashSec = MeetingsPreferences.Transcript.raisedFlashSec.defaultValue
+    @State private var raisedFlash = RaisedLineFlash()
+    @State private var raisedLineIDs: Set<String> = []
+    @State private var flashTask: Task<Void, Never>?
     @AppStorage(MeetingsPreferences.Transcript.avatars.key) private var avatars = MeetingsPreferences.Transcript.avatars.defaultValue
     @AppStorage(MeetingsPreferences.Transcript.blockBreakSec.key) private var blockBreakSec =
         MeetingsPreferences.Transcript.blockBreakSec.defaultValue
@@ -156,7 +161,7 @@ struct TranscriptBlocksPane: View {
                 EmptyState(symbol: "magnifyingglass", text: "No line holds “\(filter)”")
             } else {
                 FollowingBlocks(blocks: blocks, player: detail.window?.player, meeting: detail.id, follows: isFollowing,
-                                jump: jump, selection: selection, popoverLine: popoverLine, dimsPast: dimPast, showsAvatar: avatars,
+                                jump: jump, selection: selection.union(raisedLineIDs), popoverLine: popoverLine, dimsPast: dimPast, showsAvatar: avatars,
                                 play: { detail.play(at: $0, from: .transcript) },
                                 select: select, selectWords: selectWords,
                                 scrolledAway: { if isFollowing { following = false } },
@@ -166,6 +171,18 @@ struct TranscriptBlocksPane: View {
             staged
         }
         .onAppear { detail.ensureComments(); if detail.rows.value == nil { detail.loadRows() } }
+        .onChange(of: detail.rows.value, initial: true) { _, rows in
+            let indexes = raisedFlash.receive(rows, enabled: flashRaised)
+            guard !indexes.isEmpty else { return }
+            flashTask?.cancel()
+            raisedLineIDs = Set(entries.enumerated().compactMap { indexes.contains($0.element.sourceIndex ?? $0.offset) ? $0.element.rowID : nil })
+            flashTask = Task {
+                try? await Task.sleep(for: .seconds(raisedFlashSec))
+                if !Task.isCancelled { raisedLineIDs = [] }
+            }
+        }
+        .onChange(of: flashRaised) { _, enabled in if !enabled { flashTask?.cancel(); raisedLineIDs = [] } }
+        .onDisappear { flashTask?.cancel(); raisedLineIDs = [] }
         .task { await threshold.load() }
     }
 
@@ -430,6 +447,23 @@ struct TranscriptBlocksPane: View {
                 }
             }
         }
+    }
+}
+
+/// Existing evidence primes the ledger; only a fresh answer token raises a new flash. Reopening never replays it.
+struct RaisedLineFlash {
+    private var tokens: [String: String]?
+    mutating func receive(_ rows: ReviewRows?, enabled: Bool) -> Set<Int> {
+        guard let rows else { return [] }
+        let previous = tokens
+        tokens = rows.questionDetailsTokens
+        guard enabled, let previous else { return [] }
+        var indexes: Set<Int> = []
+        for evidence in rows.questionDetails ?? [] {
+            guard let token = rows.questionDetailsTokens[evidence.id], previous[evidence.id] != token else { continue }
+            indexes.formUnion((evidence.raisedLines ?? []).map(\.index))
+        }
+        return indexes
     }
 }
 
