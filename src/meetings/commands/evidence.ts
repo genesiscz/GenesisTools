@@ -11,7 +11,7 @@ import { parseClock } from "@genesiscz/utils/transcribe/render";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { channelEvidence } from "../lib/channel-operation";
+import { channelEvidence, lineEligibilityFor } from "../lib/channel-operation";
 import { localSpeechDuring } from "../lib/local-speech";
 import { OpenedMeeting } from "../lib/opened-meeting";
 import { compactEvidence, rawMeeting } from "../lib/raw";
@@ -44,6 +44,7 @@ async function evidence(
         wordCheck?: string;
         voices?: string;
         voiceFeatures?: boolean;
+        lineEligibility?: string;
         channel?: string;
     }
 ): Promise<void> {
@@ -74,10 +75,17 @@ async function evidence(
             return;
         }
 
+        const opened = OpenedMeeting.of(store, record);
+        if (opts.lineEligibility !== undefined) {
+            if (!/^\d+$/.test(opts.lineEligibility)) {
+                throw new Error("--line-eligibility requires a zero-based transcript line index.");
+            }
+            out.result(SafeJSON.stringify(await lineEligibilityFor(opened, Number(opts.lineEligibility))));
+            return;
+        }
         // A meeting without a transcript source fails in linked() with [no-transcript-source], as every command does.
         const readiness = voiceReadiness(record);
         readiness.hints.forEach(ui.info);
-        const opened = OpenedMeeting.of(store, record);
         // The voice measurement decodes the whole recording: only when asked for, and only into an output that shows it.
         const wantsVoice = opts.voiceFeatures === true || opts.voices !== undefined;
         if (wantsVoice && (opts.table || (format === "table" && !opts.raw))) {
@@ -330,6 +338,10 @@ export function registerEvidenceCommand(program: Command): void {
         .option("--channel <0|1>", "physical clustering channel, default calibrated mic channel or left when unknown")
         .option("--files", "also list the evidence files and their sizes")
         .option("--table", "compact per-line evidence table")
+        .option(
+            "--line-eligibility <index>",
+            "print eligible and excluded speakers for one zero-based transcript line as JSON"
+        )
         .option("--from <seconds>", "table start time")
         .option("--to <seconds>", "table end time")
         .option(

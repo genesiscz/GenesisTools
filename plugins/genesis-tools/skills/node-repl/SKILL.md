@@ -29,6 +29,20 @@ For one meeting use `meetings.voices({ scope: "meeting", meeting: id })`. For al
 To preview or apply a timed seat, pass `room: [{ name, fromSec: 30, toSec: 90 }]` to
 `meetings.seats` or `meetings.applySeats`. A stay includes its start and ends just before its leave time.
 
+| REPL call (await the result) | CLI command |
+| --- | --- |
+| `meetings.lineEligibility({ meeting, line: 3 })` | `tools meetings evidence <meeting> --line-eligibility 3 --json` (fourth transcript line) |
+| `meetings.voices.list({ scope: { kind: "meeting", meeting }, person })` | `tools meetings voices --meeting <meeting> --person <person> --json` |
+| `meetings.voices.move({ id, person, to: { name } })` | `tools meetings voices move <person> --sample <id> --to <name>` |
+| `meetings.voices.quality({ project, person })` | `tools meetings voices quality --project <p> --person <person> --json` |
+| `meetings.voices.reject({ id, person, reason: "bad-audio" })` | `tools meetings voices reject <person> --sample <id> --reason bad-audio` |
+| `meetings.voices.remove({ id, planToken })` | `tools meetings voices remove <person> --sample <id> --plan-token <token>` |
+| `meetings.voices.sample({ id })` | `tools meetings voices play <person> --sample <id> --no-start --json` |
+| `meetings.voices.undo({ token })` | `tools meetings voices undo <correction-token>` |
+
+Read the `id` from the listed sample. To preview a move, rejection or removal in the REPL, add `preview: true`. To confirm, call it again with
+the preview's `planToken` and omit `preview`. Undo takes the applied receipt's `token`.
+
 ## Presets (save a script that worked, run it again)
 
 1. Get the script right in the REPL first. A preset is the body of an async function: it reads `params` and `return`s

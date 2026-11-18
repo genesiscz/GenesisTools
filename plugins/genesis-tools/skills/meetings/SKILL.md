@@ -57,6 +57,10 @@ answer subscription. For example, `GENESIS_TOOLS_HOME=/path/to/isolated/home too
 
    **Seats and voices. Strongly recommended before pass 2.**
 
+   For a disputed line, `tools meetings evidence <meeting> --line-eligibility <index> --json` and
+   `await meetings.lineEligibility({ meeting, line: index })` return the same choices, excluded people and reasons,
+   channel and review-only flag. The first source transcript line is 0.
+
    - Run `tools meetings seats <meeting>` or `await meetings.seats({ meeting })` and read the reasons. Someone listed in the call may have sat in the room.
      Run `tools meetings seats <meeting> --apply` or `await meetings.applySeats({ meeting })` to save the suggestion when seats are missing. Ask where anyone
      marked unsure sat. Use `--room` and `--remote` for corrections. Use `--replace` to change saved seats.
@@ -241,8 +245,24 @@ estimated-clean tracks separately.
 Use `scope: "meeting", meeting: id` for one meeting or `scope: "global"` for the library. Each row gives the meeting, seat, track, time and words. `voices play <person>
 [--sample <n>]` plays one. `voices preview <meeting>` prints the lines the voice labeler would name, with scores and
 refusal reasons. A preview can cache line embeddings. `voices apply <meeting>` saves the names as suggestions.
-`voices remove <person> [--sample <n>]` retires that person's voice-named suggestions first. `play <meeting> --track
-<track>` plays one track; `show` lists the tracks. The first voice pass of a meeting embeds every line once and caches
+`voices remove <person> [--sample <n>]` retires that person's voice-named suggestions first.
+
+| Voice library command (after `tools meetings`) | REPL call (await the result) |
+| --- | --- |
+| `voices --meeting <meeting> --person <person> --json` | `meetings.voices.list({ scope: { kind: "meeting", meeting }, person })` |
+| `voices play <person> --sample <id> --no-start --json` | `meetings.voices.sample({ id })` returns the verified file and slice |
+| `voices quality --project <p> --person <person>` | `meetings.voices.quality({ project, person })` |
+| `voices move <person> --sample <id> --to <name>` | `meetings.voices.move({ id, person, to: { name } })` |
+| `voices reject <person> --sample <id> --reason wrong-person` | `meetings.voices.reject({ id, person, reason: "wrong-person" })` |
+| `voices remove <person> --sample <id> --preview` | `meetings.voices.remove({ id, preview: true })` |
+| `voices undo <token>` | `meetings.voices.undo({ token })` |
+
+Copy the stable `id` from the list. In the REPL, add `preview: true` to inspect a move, rejection or removal.
+Use the preview's `planToken` on the same call without `preview` to
+apply it. A stale preview needs a fresh read. The applied receipt's `token` addresses that correction for Undo.
+Use `wrong-person` for an incorrect owner. Use `bad-audio` or `several-voices` when the clip is unsuitable for any owner.
+
+`play <meeting> --track <track>` plays one track; `show` lists the tracks. The first voice pass of a meeting embeds every line once and caches
 it (172 minutes: about 90 s at normal priority); later passes read the cache in about half a second. Its priority and
 worker count are `global.speakerLabels.voice.compute` (`priority: normal` by default, `workers: auto` takes the free
 performance cores, at most four).

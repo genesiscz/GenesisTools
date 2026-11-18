@@ -6,10 +6,12 @@ import { RecordingSession, type SegmentRecorder } from "@app/control/lib/recordi
 import { SessionRecorderControl } from "@app/control/lib/recording-session-control";
 import type { AppStatus } from "@app/macos/lib/permissions/app";
 import * as appModule from "@app/macos/lib/permissions/app";
+import { registerEvidenceCommand } from "@app/meetings/commands/evidence";
 import * as channelOperation from "@app/meetings/lib/channel-operation";
 import { DecisionJournal } from "@app/meetings/lib/decision-journal";
 import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
+import type { MeetingsParams, MeetingsResult } from "@app/meetings/lib/service/api";
 import { settingsPatchFromFlags } from "@app/meetings/lib/settings-flags";
 import { ReplEngine } from "@app/node-repl/lib/engine";
 import { BrowserToolset } from "@app/node-repl/lib/toolsets/browser";
@@ -56,11 +58,16 @@ import { renderDocs } from "@genesiscz/utils/api-descriptor";
 import { withTimeout } from "@genesiscz/utils/async";
 import * as converter from "@genesiscz/utils/audio/converter";
 import * as cli from "@genesiscz/utils/cli";
+import { env } from "@genesiscz/utils/env";
+import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
 import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import * as ocr from "@genesiscz/utils/macos/ocr";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
+import { readVoiceLibrary } from "@genesiscz/utils/meetings/voice-library";
+import { addVoicePrint } from "@genesiscz/utils/meetings/voice-store";
 import { closeStartGate, startGatePath } from "@genesiscz/utils/process/start-gate";
 import transcriptCuts from "@genesiscz/utils/recording-editor/__fixtures__/transcript-cuts.json";
 import transcriptWordsFixture from "@genesiscz/utils/recording-editor/__fixtures__/transcript-words.json";
@@ -249,6 +256,12 @@ interface MeetingHandle {
     mark(label: string): Promise<RecordingMarker>;
 }
 
+type VoiceDoors = {
+    [K in "list" | "move" | "quality" | "reject" | "remove" | "sample" | "undo"]: (
+        input: MeetingsParams<`voices.${K}`>
+    ) => Promise<MeetingsResult<`voices.${K}`>>;
+};
+
 /** The meetings toolset's global, as the meetings tests call it. */
 interface MeetingsHandle {
     applySeats(input: unknown): Promise<unknown>;
@@ -256,7 +269,8 @@ interface MeetingsHandle {
     seats(input: unknown): Promise<unknown>;
     thresholds(input?: unknown): Promise<unknown>;
     voiceReadiness(input: unknown): Promise<unknown>;
-    voices(input: unknown): Promise<{ people: Array<{ person: string; meetings: string[] }> }>;
+    voices: ((input: unknown) => Promise<MeetingsResult<"voices.list">>) & VoiceDoors;
+    lineEligibility(input: { meeting: string; line: number }): Promise<unknown>;
     look(input: { meeting: string; from: number | string; to: number | string }): Promise<unknown>;
     list(): Array<{ id: string; seconds: number | null }>;
     open(ref: string): MeetingHandle;
@@ -448,6 +462,169 @@ describe("toolset method names", () => {
         }
         await expect(meetings.voices({ scope: "meeting" })).rejects.toThrow();
         expect(describeMethod([new MeetingsToolset().api], "meetings.voices")).toContain("meetings voices");
+    });
+
+    test("meetings parity t3 returns the same single-line speaker eligibility as the CLI", async () => {
+        const fields = { title: "Line rehearsal", start: "2026-11-01T15:00:00Z" };
+        const { id: meeting } = await new MeetingStore().create(
+            {
+                ...fields,
+                createdBy: "new",
+                seats: { room: [{ name: "Ash Example", fromSec: 4 }], remote: [{ name: "Pine Example" }] },
+            },
+            { command: "test", change: "fixture" }
+        );
+        const mocks = [
+            spyOn(OpenedMeeting.prototype, "meeting").mockResolvedValue({
+                ...fields,
+                sourceMeetingId: "rehearsal",
+                folders: [],
+                participants: [],
+                speakers: [],
+                transcript: [
+                    { startSec: 0, speaker: "S1", text: "One" },
+                    { startSec: 4, speaker: "S1", text: "Two" },
+                ],
+            }),
+            spyOn(OpenedMeeting.prototype, "evidence").mockResolvedValue({
+                segments: [{ channel: "mic", startSec: 0, endSec: 8 }],
+                speaking: [],
+                files: [],
+            }),
+            spyOn(OpenedMeeting.prototype, "presence").mockResolvedValue(undefined),
+            spyOn(OpenedMeeting.prototype, "energy").mockResolvedValue({}),
+        ];
+        const printed = spyOn(out, "result").mockImplementation(() => {});
+        try {
+            const meetings = await loadMeetings();
+            const result = await meetings.lineEligibility({ meeting, line: 1 });
+            expect(result).toMatchObject({
+                channel: { side: "mic", strong: true },
+                choices: ["Ash Example"],
+                excluded: [{ person: "Pine Example", reason: expect.any(String) }],
+                reviewOnly: false,
+            });
+            expect(await meetings.lineEligibility({ meeting, line: 0 })).toMatchObject({
+                choices: [],
+                reviewOnly: true,
+            });
+            await expect(meetings.lineEligibility({ meeting, line: 2 })).rejects.toThrow("line 2");
+            const cli = new Command().exitOverride();
+            registerEvidenceCommand(cli);
+            await cli.parseAsync(["evidence", meeting, "--line-eligibility", "1", "--json"], { from: "user" });
+            expect(SafeJSON.parse(String(printed.mock.lastCall?.[0]))).toEqual(result);
+            expect(describeMethod([new MeetingsToolset().api], "meetings.lineEligibility")).toContain(
+                "--line-eligibility"
+            );
+        } finally {
+            printed.mockRestore();
+            for (const mock of mocks) {
+                mock.mockRestore();
+            }
+        }
+    });
+
+    test("meetings parity t3 follows one voice ID through playback, correction receipts and token-bound removal", async () => {
+        const root = mkdtempSync(join(tmpdir(), "repl-voice-library-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: root }, async () => {
+            const project = "reed-rehearsal";
+            const person = "Reed Example";
+            const to = { name: "Fern Example", email: "fern@example.com" };
+            const start = "2026-11-01T16:00:00Z";
+            const { id: meeting } = await new MeetingStore().create(
+                { title: "Voice rehearsal", start, createdBy: "new", project },
+                { command: "test", change: "fixture" }
+            );
+            const path = join(root, "sample.wav");
+            writeFileSync(path, "fixture audio");
+            const slice = {
+                path,
+                track: "source-mic" as const,
+                channel: 0 as const,
+                fileFromSec: 2,
+                fileToSec: 6,
+                clock: "source" as const,
+            };
+            const sound = spyOn(OpenedMeeting.prototype, "sound").mockResolvedValue({ tracks: [], slice: () => slice });
+            try {
+                addVoicePrint(
+                    project,
+                    person,
+                    {
+                        meeting,
+                        fromSec: 2,
+                        toSec: 6,
+                        seat: "mic",
+                        track: slice.track,
+                        sourceSha: await sha256FileAsync(path),
+                        embedding: [1, 0],
+                        confirmedAt: start,
+                    },
+                    "fixture-model"
+                );
+                const meetings = await loadMeetings();
+                const library = meetings.voices;
+                const scoped = { scope: { kind: "meeting" as const, meeting }, person };
+                const listed = await library.list(scoped);
+                expect(listed).toEqual(await library({ scope: "meeting", meeting, person }));
+                const id = listed.people[0]!.samples[0]!.id;
+                expect(await library.quality(scoped)).toEqual({ learnt: listed.learnt });
+                expect(await library.sample({ id })).toEqual({ ...slice, meeting, fromSec: 2, toSec: 6 });
+                const preview = await library.move({ id, person, to, preview: true });
+                if (preview.status !== "preview") {
+                    throw new Error("Expected a move preview");
+                }
+                const move = {
+                    id,
+                    person,
+                    to,
+                    token: "transfer-reed",
+                    planToken: preview.planToken,
+                    expectedRevision: readVoiceLibrary().library.revision,
+                };
+                expect(await library.move(move)).toMatchObject({ status: "applied", token: move.token, ids: [id] });
+                expect(readVoiceLibrary().library.samples.find((s) => s.id === id)?.owner).toEqual(to);
+                expect(await library.move(move)).toMatchObject({ status: "applied", token: move.token });
+                expect(
+                    await library.reject({ id, reason: "wrong-person", expectedRevision: move.expectedRevision })
+                ).toMatchObject({ status: "stale", reason: expect.any(String) });
+                const rejected = await library.reject({
+                    id,
+                    person: to.name,
+                    reason: "bad-audio",
+                    token: "reject-reed",
+                });
+                expect(rejected).toMatchObject({ status: "applied", token: "reject-reed", ids: [id] });
+                expect(await library.undo({ token: "reject-reed", requestToken: "undo-rejection" })).toMatchObject({
+                    status: "applied",
+                    token: "undo-rejection",
+                    ids: [id],
+                });
+                expect(await library.undo({ token: "unknown-correction" })).toMatchObject({
+                    status: "refused",
+                    reason: expect.any(String),
+                });
+                const plan = await library.remove({ id, preview: true });
+                expect(plan).toMatchObject({ ids: [id], planToken: expect.any(String) });
+                await expect(library.remove({ id, planToken: "expired" })).rejects.toThrow("Stale");
+                expect(await library.remove({ id, planToken: plan.planToken })).toMatchObject({
+                    removed: 1,
+                    ids: [id],
+                });
+                expect(readVoiceLibrary().library.samples.some((s) => s.id === id)).toBe(false);
+                await expect(library.list({ project: "" })).rejects.toThrow(
+                    "Invalid arguments for meetings.voices.list"
+                );
+                for (const method of ["list", "move", "quality", "reject", "remove", "sample", "undo"]) {
+                    const help = describeMethod([new MeetingsToolset().api], `meetings.voices.${method}`);
+                    expect(help).toContain(
+                        `meetings voices${method === "list" ? " " : ` ${method === "sample" ? "play" : method}`}`
+                    );
+                }
+            } finally {
+                sound.mockRestore();
+            }
+        });
     });
 
     test("meetings.look documents its CLI twin and accepts a meeting and two clocks", async () => {

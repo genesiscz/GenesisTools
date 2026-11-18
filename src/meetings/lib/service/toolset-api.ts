@@ -25,6 +25,12 @@ import {
     voiceBackfill,
     voiceEnrol,
     voicesList,
+    voicesMove,
+    voicesQuality,
+    voicesReject,
+    voicesRemove,
+    voicesSample,
+    voicesUndo,
 } from "./api";
 
 /**
@@ -680,6 +686,52 @@ export const voices = defineMethod({
     doc: `Return people, samples, learnt voice quality and conflicts for one meeting ID, project or the global library. CLI: ${toolCommand("meetings", "voices")} --json.`,
 });
 
+export const lineEligibility = defineMethod({
+    name: "lineEligibility",
+    params: seatsRpc.params.pick({ meeting: true }).extend({ line: z.number().int().nonnegative() }),
+    result: z.object({
+        channel: z.object({
+            side: z.enum(["mic", "call", "mixed", "unknown"]),
+            strong: z.boolean(),
+            source: z.enum(["segments", "energy", "both", "none"]).optional(),
+        }),
+        choices: z.array(z.string()),
+        excluded: z.array(z.object({ person: z.string(), reason: z.string() })),
+        reviewOnly: z.boolean(),
+    }),
+    effect: "read",
+    doc: `Return the channel, eligible people, exclusions with reasons and reviewOnly flag for a zero-based source transcript line. CLI: ${toolCommand("meetings", "evidence")} <meeting> --line-eligibility <index> --json.`,
+});
+
+const libraryList = defineMethod({
+    ...voicesList,
+    doc: `Return scoped people and their samples with stable IDs, learnt quality and conflicts. CLI: ${toolCommand("meetings", "voices")} [--project <p> | --meeting <id> | --all] --json.`,
+});
+const libraryMove = defineMethod({
+    ...voicesMove,
+    doc: `Return a transfer preview or applied receipt (IDs, affected proposals, tokens and revision), or a stale/refused reason. CLI: ${toolCommand("meetings", "voices", "move")} <person> --sample <id> --to <name>.`,
+});
+const libraryQuality = defineMethod({
+    ...voicesQuality,
+    doc: `Return learnt voice quality, compatible neighbors and outliers in scope. CLI: ${toolCommand("meetings", "voices", "quality")} [--person <name>] --json.`,
+});
+const libraryReject = defineMethod({
+    ...voicesReject,
+    doc: `Return a rejection preview or applied receipt, or a stale/refused reason. CLI: ${toolCommand("meetings", "voices", "reject")} <person> --sample <id> --reason <reason>.`,
+});
+const libraryRemove = defineMethod({
+    ...voicesRemove,
+    doc: `Return selected IDs, removed count and affected suggestions. Preview for a planToken and pass it back to guard the removal. CLI: ${toolCommand("meetings", "voices", "remove")} <person> [--sample <id|number>].`,
+});
+const librarySample = defineMethod({
+    ...voicesSample,
+    doc: `Return a hash-verified track, file, channel and playback interval by stable ID or scoped sample number. CLI: ${toolCommand("meetings", "voices", "play")} <person> --sample <id|number> --no-start --json.`,
+});
+const libraryUndo = defineMethod({
+    ...voicesUndo,
+    doc: `Return an undo preview or applied receipt, or a stale/refused reason. CLI: ${toolCommand("meetings", "voices", "undo")} <correction-token>.`,
+});
+
 export const meetingsToolsetApi = defineApi({
     id: "meetings",
     global: "meetings",
@@ -693,6 +745,14 @@ export const meetingsToolsetApi = defineApi({
         thresholds,
         voiceReadiness,
         voices,
+        lineEligibility,
+        libraryList,
+        libraryMove,
+        libraryQuality,
+        libraryReject,
+        libraryRemove,
+        librarySample,
+        libraryUndo,
         list,
         open,
         look,

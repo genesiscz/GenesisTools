@@ -1,10 +1,40 @@
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
-import { seatsFingerprint } from "@genesiscz/utils/meetings/seats";
+import { seatsFingerprint, wholeMeetingRoomPeople } from "@genesiscz/utils/meetings/seats";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { type ByChannelOptions, byChannelOptionsSchema, type ChannelLine, planByChannel } from "./by-channel";
 import { callerActor, DecisionJournal } from "./decision-journal";
 import { OpenedMeeting } from "./opened-meeting";
 import { rawMeeting } from "./raw";
+import { speakersFor } from "./speaker-eligibility";
+import { assessIndicator } from "./speaker-indicator";
+
+/** Evaluate the source line at its original index. A stuck indicator is assessed across the meeting. */
+export async function lineEligibilityFor(opened: OpenedMeeting, index: number) {
+    const meeting = await opened.meeting();
+    if (!Number.isSafeInteger(index) || meeting.transcript[index]?.startSec === undefined) {
+        throw new Error(`No timed transcript line ${index} in ${opened.record.id} (line indices start at 0).`);
+    }
+    const [evidence, energy, callStays] = await Promise.all([opened.evidence(), opened.energy(), opened.presence()]);
+    const lines = lineEvidence(meeting.transcript, evidence ?? { segments: [], speaking: [] }, callStays, energy.share);
+    const line = lines.find((row) => row.index === index);
+    if (!line) {
+        throw new Error(`No evidence span for transcript line ${index}.`);
+    }
+    const { participants, seats } = opened.record;
+    const selfName = participants.find((person) => person.self)?.name ?? evidence?.selfName;
+    const indicator = assessIndicator({ lines, selfName: selfName ?? "", roomPeople: wholeMeetingRoomPeople(seats) });
+    return speakersFor(
+        { index, fromSec: line.startSec, toSec: line.endSec },
+        {
+            ...line,
+            seats,
+            callStays,
+            selfName,
+            people: participants.map((person) => person.name),
+            ignoredIndicator: indicator.ignored.has(index),
+        }
+    );
+}
 
 /** The channel evidence of a meeting; with a window, only the lines that start in it are measured. */
 export async function channelEvidence(opened: OpenedMeeting, window?: { fromSec: number; toSec: number }) {
