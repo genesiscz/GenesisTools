@@ -39,11 +39,11 @@ package enum WidgetLaunch {
     package static func ensureRunningIfShown() {
         guard AppParts.has(face: "--widget"),
               AppParts.stagingRefusal(face: "--widget", facesEnabled: NativeStaging.facesEnabled) == nil,
-              showWidget(stateFile: stateFile()),
+              (MenuBarSettings.showsApp() || showWidget(stateFile: stateFile())),
               !isRunning()
         else { return }
-        PerfLog.mark("widget.boot: \"Show the widget\" is on and the widget is not running, starting it")
-        FaceLifecycle.note("widget-boot", detail: "the widget was not running and Show the widget is on")
+        PerfLog.mark("widget.boot: starting the widget face for its panels or menu bar")
+        FaceLifecycle.note("widget-boot", detail: "the widget face is needed for its panels or menu bar")
         ensureRunning()
     }
 

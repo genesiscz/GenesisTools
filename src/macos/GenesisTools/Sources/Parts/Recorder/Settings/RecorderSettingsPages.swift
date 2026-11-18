@@ -203,6 +203,10 @@ private struct RecorderRecordingSettings: View {
 
     private var menuBarCard: some View {
         NativeSettingsCard("Menu bar", subtitle: "The recorder's item in the menu bar, and where its messages go.") {
+            NativeSettingsToggle("Show separate Recorder item",
+                                 detail: "Keep Recorder running with its own menu bar item.",
+                                 identifier: MenuBarSettings.recorderKey, isOn: model.bool(MenuBarSettings.recorderKey, true))
+            Divider()
             NativeSettingsToggle("Quick actions in Recent",
                                  detail: "Each recent recording opens a menu: open, copy the movie or a GIF, show in Finder, rename, its meeting, Trash. Off: a click opens the editor.",
                                  identifier: "recorder.settings.recentActions", isOn: model.bool(RecorderMenu.recentActionsKey, true))

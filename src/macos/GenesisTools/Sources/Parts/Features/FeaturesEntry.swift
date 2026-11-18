@@ -37,7 +37,12 @@ final class FeatureSettingsShell: FeatureSettingsPluginHost {
     /// writes go to the real defaults, since an agent drives its controls, but the page it opened is not the user's.
     private lazy var window = FeatureSettingsWindowController(
         sections: [
-            FeatureSettingsPages.general(extra: AnyView(QuitSettingsCard(defaults: defaults))),
+            FeatureSettingsPages.general(extra: AnyView(VStack(spacing: 18) {
+                if AppParts.isLinked("widget") {
+                    AppMenuSettingsCard(defaults: defaults, preview: mode == .snapshot)
+                }
+                QuitSettingsCard(defaults: defaults)
+            })),
             DaemonSettingsPages.section(store: daemon),
         ], defaults: defaults,
         appearance: appearance, frameAutosaveName: mode == .snapshot ? "" : "FeatureSettings.window",
