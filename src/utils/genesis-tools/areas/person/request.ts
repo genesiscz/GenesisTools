@@ -1,5 +1,6 @@
 import { spawnToolDetached } from "@genesiscz/utils/cli/tools";
 import { type ActionDef, defineAction } from "@genesiscz/utils/genesis-tools/actions/define";
+import { APP_FACES, type AppFaceFlag } from "@genesiscz/utils/genesis-tools/capability/generated/app-surface";
 import { refuseHostEffectInTest } from "@genesiscz/utils/test-process";
 import { z } from "zod";
 import { Delivery, type DeliveryName, deliverySchema, personConfigSchema } from "./deliveries";
@@ -9,6 +10,13 @@ export const noticeInputSchema = z.object({
     id: z.string().regex(/^[a-zA-Z0-9:._-]{1,500}$/),
     title: z.string().min(1).max(200),
     reason: z.string().min(1).max(20_000),
+    /** The window a click on this request opens. */
+    open: z
+        .object({
+            window: z.enum(Object.keys(APP_FACES) as AppFaceFlag[]),
+            args: z.array(z.string().max(500)).max(20),
+        })
+        .optional(),
 });
 export type NoticeInput = z.infer<typeof noticeInputSchema>;
 
