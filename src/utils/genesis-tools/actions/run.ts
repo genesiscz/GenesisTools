@@ -165,22 +165,57 @@ async function firstFailedNeed(params: {
     return null;
 }
 
+/** The budget of one action run: the caller's override, else the action's own, else two minutes. */
+export function actionBudgetMs(action: AnyActionDef, override?: number): number {
+    return Math.max(1, override ?? action.timeoutMs ?? 120_000);
+}
+
 class ActionDeadlineError extends Error {}
 
-async function withDeadline<T>(work: Promise<T>, timeoutMs: number | undefined, way: WayName): Promise<T> {
-    if (timeoutMs === undefined) {
-        return work;
+interface RunDeadline {
+    /** Aborts when the budget is spent or the caller's own signal aborts. */
+    signal: AbortSignal;
+    remainingMs(): number;
+    dispose(): void;
+}
+
+/** One deadline for a whole run, set at its entry: the need checks, the fixes and every way share its budget. */
+function runDeadline(budgetMs: number, outer: AbortSignal | undefined): RunDeadline {
+    const controller = new AbortController();
+    const endsAt = Date.now() + budgetMs;
+    const timer = setTimeout(
+        () => controller.abort(new ActionDeadlineError(`the action did not finish within ${budgetMs} ms`)),
+        budgetMs
+    );
+    const onOuterAbort = (): void => controller.abort(outer?.reason);
+
+    if (outer?.aborted) {
+        onOuterAbort();
+    } else {
+        outer?.addEventListener("abort", onOuterAbort, { once: true });
     }
 
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const expired = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new ActionDeadlineError(`${way} timed out after ${timeoutMs} ms`)), timeoutMs);
-    });
+    return {
+        signal: controller.signal,
+        remainingMs: () => Math.max(0, endsAt - Date.now()),
+        dispose: () => {
+            clearTimeout(timer);
+            outer?.removeEventListener("abort", onOuterAbort);
+        },
+    };
+}
+
+/** `work`, or the abort reason once `signal` aborts first. The work is not stopped here: a way reads `ctx.signal`. */
+async function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+    signal.throwIfAborted();
+    const aborted = Promise.withResolvers<never>();
+    const onAbort = (): void => aborted.reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
 
     try {
-        return await Promise.race([work, expired]);
+        return await Promise.race([work, aborted.promise]);
     } finally {
-        clearTimeout(timer);
+        signal.removeEventListener("abort", onAbort);
     }
 }
 
@@ -192,6 +227,7 @@ function contextFor(params: {
     config: Record<string, unknown>;
     deps: EngineDeps;
     timeoutMs: number;
+    signal: AbortSignal;
 }): ActionContext<unknown, Record<string, unknown>> {
     const { registry, areaName, area, deps } = params;
     const clients = clientsOf(registry, () => deps);
@@ -210,6 +246,7 @@ function contextFor(params: {
         facts: deps.facts,
         service: deps.service ?? null,
         timeoutMs,
+        signal: params.signal,
         pass: passFor,
         emit: (event, payload) => {
             const schema = area.events?.[event];
@@ -225,7 +262,8 @@ function contextFor(params: {
 
 /**
  * Runs `<area>.<action>`: the args are checked, then each way in order (native, then the fallbacks in key order) runs
- * when its needs hold; a way that returns `ctx.pass(why)` or throws is skipped with its reason.
+ * when its needs hold; a way that returns `ctx.pass(why)` or throws is skipped with its reason. One deadline, set
+ * here, covers the need checks, the fixes and the ways; once it passes no further step starts.
  */
 export async function runAreaAction(
     registry: Record<string, Area>,
@@ -248,64 +286,99 @@ export async function runAreaAction(
     const skip = (way: WayName, code: UnavailableCode, reason: string, fix: Fix | null = null) => {
         skipped.push({ way, code, reason, fix });
     };
-
-    for (const { way, needs, run } of waysOf(action)) {
-        const wayNeeds = needsFor(needs, { ok: true, value: parsedArgs.data }) ?? [];
-        const failed = await firstFailedNeed({
+    const deadline = runDeadline(actionBudgetMs(action, options.timeoutMs), options.signal);
+    /** The outcome once the deadline passed or the caller cancelled; a way that had started may still finish. */
+    const ended = (way: WayName, started: boolean): ActionOutcome<unknown> => {
+        const reason: unknown = deadline.signal.reason;
+        const why =
+            reason instanceof ActionDeadlineError ? reason.message : `the caller cancelled: ${messageOf(reason)}`;
+        skip(
             way,
-            needs: wayNeeds,
-            action,
-            args: parsedArgs.data,
-            config,
-            deps,
-            env,
-        });
+            "timed-out",
+            started
+                ? `${why}; the way had started and may still finish, so its effect is unknown`
+                : `${why} while its needs were checked`
+        );
+        logger.debug({ id, way, started }, "genesis-tools actions: the run ended at its deadline");
 
-        if (failed) {
-            skip(
-                way,
-                failed.result.code,
-                `${describeNeed(failed.need)}: ${failed.result.reason}`,
-                fixOf(failed.result)
-            );
-            continue;
+        if (action.onTimeout) {
+            return { status: "ran", via: way, value: action.result.parse(action.onTimeout(parsedArgs.data)), skipped };
         }
 
-        const timeoutMs = Math.max(1, options.timeoutMs ?? action.timeoutMs ?? 120_000);
-        const ctx = contextFor({ registry, areaName, area, args: parsedArgs.data, config, deps, timeoutMs });
+        return { status: "unreachable", skipped, manual: action.manual?.(parsedArgs.data) ?? null };
+    };
 
-        try {
-            const value = await withDeadline(Promise.resolve(run(ctx)), timeoutMs, way);
-
-            if (isPass(value)) {
-                skip(way, "passed", value.reason);
-                continue;
+    try {
+        for (const { way, needs, run } of waysOf(action)) {
+            if (deadline.signal.aborted) {
+                return ended(way, false);
             }
 
-            const checked = action.result.safeParse(value);
+            const wayNeeds = needsFor(needs, { ok: true, value: parsedArgs.data }) ?? [];
+            let failed: Awaited<ReturnType<typeof firstFailedNeed>>;
 
-            if (!checked.success) {
-                skip(way, "threw", `the result does not match the schema: ${checked.error.message}`);
-                continue;
-            }
-
-            logger.debug({ id, via: way, skipped: skipped.length }, "genesis-tools actions: ran");
-            return { status: "ran", via: way, value: checked.data, skipped };
-        } catch (error) {
-            logger.debug({ id, way, error }, "genesis-tools actions: a way threw");
-            skip(way, "threw", messageOf(error));
-            if (error instanceof ActionDeadlineError) {
-                if (action.onTimeout) {
-                    return {
-                        status: "ran",
-                        via: way,
-                        value: action.result.parse(action.onTimeout(parsedArgs.data)),
-                        skipped,
-                    };
+            try {
+                failed = await untilAborted(
+                    firstFailedNeed({ way, needs: wayNeeds, action, args: parsedArgs.data, config, deps, env }),
+                    deadline.signal
+                );
+            } catch (error) {
+                if (deadline.signal.aborted) {
+                    return ended(way, false);
                 }
-                return { status: "unreachable", skipped, manual: action.manual?.(parsedArgs.data) ?? null };
+
+                throw error;
+            }
+
+            if (failed) {
+                skip(
+                    way,
+                    failed.result.code,
+                    `${describeNeed(failed.need)}: ${failed.result.reason}`,
+                    fixOf(failed.result)
+                );
+                continue;
+            }
+
+            const ctx = contextFor({
+                registry,
+                areaName,
+                area,
+                args: parsedArgs.data,
+                config,
+                deps,
+                timeoutMs: Math.max(1, deadline.remainingMs()),
+                signal: deadline.signal,
+            });
+
+            try {
+                const value = await untilAborted(Promise.resolve(run(ctx)), deadline.signal);
+
+                if (isPass(value)) {
+                    skip(way, "passed", value.reason);
+                    continue;
+                }
+
+                const checked = action.result.safeParse(value);
+
+                if (!checked.success) {
+                    skip(way, "threw", `the result does not match the schema: ${checked.error.message}`);
+                    continue;
+                }
+
+                logger.debug({ id, via: way, skipped: skipped.length }, "genesis-tools actions: ran");
+                return { status: "ran", via: way, value: checked.data, skipped };
+            } catch (error) {
+                if (deadline.signal.aborted) {
+                    return ended(way, true);
+                }
+
+                logger.debug({ id, way, error }, "genesis-tools actions: a way threw");
+                skip(way, "threw", messageOf(error));
             }
         }
+    } finally {
+        deadline.dispose();
     }
 
     logger.debug({ id, skipped }, "genesis-tools actions: no way could run");

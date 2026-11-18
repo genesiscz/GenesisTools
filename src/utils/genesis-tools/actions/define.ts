@@ -30,7 +30,8 @@ export type UnavailableCode =
     | "no-service"
     | "in-test"
     | "passed"
-    | "threw";
+    | "threw"
+    | "timed-out";
 
 /** The need codes a `fix` decision can remove by building the app. */
 export const BUILD_FIXABLE_CODES: ReadonlySet<UnavailableCode> = new Set(["app-missing", "app-stale", "part-missing"]);
@@ -84,7 +85,10 @@ export interface AreaStateView {
 }
 
 export interface RunOptions {
+    /** The budget of the whole run, from its entry: need checks, fixes and ways. Default: the action's own. */
     timeoutMs?: number;
+    /** The caller's cancel (a closed connection, an RPC deadline): no further step starts, and `ctx.signal` aborts. */
+    signal?: AbortSignal;
 }
 
 /**
@@ -100,7 +104,10 @@ export interface ActionContextBase<A, C> {
     state: AreaStateView;
     facts: Facts;
     service: ServiceDoor | null;
+    /** What is left of the run's budget when this way starts. */
     timeoutMs: number;
+    /** Aborts when the run's deadline passes or its caller cancels; a way checks it before an effect it cannot undo. */
+    signal: AbortSignal;
     pass(reason: string): Pass;
     /** Emits `<area>.<event>`; the payload is checked against the area's `events` schema and a mismatch throws. */
     emit(event: string, payload: unknown): void;
