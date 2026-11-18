@@ -9,6 +9,7 @@ import {
     lastClaudeContext,
     readClaudeLoops,
 } from "./claude-analysis-loops";
+import { collectContext } from "./claude-context";
 import { collectResumes } from "./claude-resumes";
 
 /**
@@ -18,6 +19,9 @@ import { collectResumes } from "./claude-resumes";
  */
 export const claudeAnalysis: SessionAnalysisReader = {
     lastContext: lastClaudeContext,
+    contextItems(path, selection = {}) {
+        return readClaudeLoops(path, selection, collectContext);
+    },
     resumes(path, selection = {}) {
         return readClaudeLoops(path, selection, collectResumes);
     },
