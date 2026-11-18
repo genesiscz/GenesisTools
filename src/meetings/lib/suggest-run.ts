@@ -356,6 +356,7 @@ async function readSuggestInputs(
                 ? await prof.measureAsync("speakers.labels", () =>
                       proposeSpeakerLabels(opened, config.global.speakerLabels, storedPresence, {
                           applyAbove: config.global.suggest.applyAbove,
+                          energyMicShare: share,
                       })
                   )
                 : undefined,
@@ -509,6 +510,7 @@ function applySuggestionRun(
         suggestItems({
             ...inputs,
             record: current,
+            applyAbove: config.global.suggest.applyAbove,
             termThresholds: config.global.suggest.terms,
             listenBelow: config.global.suggest.listenBelow,
             questionBudget: config.global.suggest.questionCap,

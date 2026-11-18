@@ -35,7 +35,14 @@ import {
     questionRank,
     wordQuestions,
 } from "./questions";
-import { ENERGY_MIC_SURE, evidenceItems, inSwap, micSure, scoresEvidence } from "./speaker-evidence";
+import {
+    ENERGY_MIC_SURE,
+    evidenceItems,
+    inSwap,
+    micSure,
+    retireContradictedSeats,
+    scoresEvidence,
+} from "./speaker-evidence";
 import { assessIndicator } from "./speaker-indicator";
 import { speakerLabelRule } from "./speaker-labels";
 import { ATTENDANCE_CONFIDENCE } from "./speaker-labels/seat";
@@ -329,10 +336,20 @@ const AGREEING_MAX = 0.95;
 function agreeing(first: NewItem, second: NewItem): NewItem {
     const a = first.confidence;
     const b = second.confidence;
+    // The channel and the seat use the same audio. Agreement cannot remove a calibrated seat's confidence limit.
+    const seatLimit = (item: NewItem) =>
+        item.evidence?.reason === "seat-of-one" && typeof item.evidence.score === "number"
+            ? item.evidence.score
+            : AGREEING_MAX;
     const confidence =
         a === undefined || b === undefined
             ? (a ?? b)
-            : Math.min(AGREEING_MAX, Math.round((1 - (1 - a) * (1 - b)) * 100) / 100);
+            : Math.min(
+                  AGREEING_MAX,
+                  seatLimit(first),
+                  seatLimit(second),
+                  Math.round((1 - (1 - a) * (1 - b)) * 100) / 100
+              );
     const evidence = { ...second.evidence, ...first.evidence };
     // Both rules' alternatives stay: one rule may score only its speaker while the other scored E3's or E4's people.
     const scores =
@@ -457,10 +474,23 @@ function labeledItems(options: {
                     : {}),
             },
         };
-        const stored = record.items.filter((one) => one.status === "suggested" && covers(one, entry.speaker, at));
+        const stored = record.items.filter(
+            (one) =>
+                covers(one, entry.speaker, at) &&
+                (one.status === "suggested" ||
+                    (one.status === "rejected" &&
+                        one.evidence?.retired === "calibrated-seat" &&
+                        !one.decision &&
+                        !one.decidedAt &&
+                        label.reason === "seat-of-one" &&
+                        one.evidence.transcriptLine === label.index &&
+                        one.kind === "speaker-range" &&
+                        one.speaker &&
+                        sameName(one.speaker, label.person!)))
+        );
         const older = [...options.found.filter((one) => covers(one, entry.speaker, at)), ...stored];
 
-        // A rerun keeps this line's stored seat proposal instead of a new item, so its voice support follows this pass.
+        // A rerun keeps this line's item ID. Its confidence and voice support follow the current seat proposal.
         if (label.reason === "seat-of-one") {
             for (const old of stored) {
                 if (
@@ -470,8 +500,20 @@ function labeledItems(options: {
                     old.speaker &&
                     sameName(old.speaker, label.person)
                 ) {
-                    const { voiceSupport: _previous, ...rest } = old.evidence;
-                    old.evidence = label.voiceSupport ? { ...rest, voiceSupport: label.voiceSupport } : rest;
+                    const { voiceSupport: _previous, score: _score, retired: _retired, ...rest } = old.evidence;
+                    old.status = "suggested";
+                    const confidence = label.score ?? CONFIDENCE.attendance;
+                    const scores =
+                        old.confidence !== confidence && old.evidence.candidateScores
+                            ? anchorScores(speakerScoresOf(old), old.speaker, confidence)
+                            : undefined;
+                    old.confidence = confidence;
+                    old.evidence = {
+                        ...rest,
+                        ...(scores ? { candidateScores: scores } : {}),
+                        ...(label.score !== undefined ? { score: label.score } : {}),
+                        ...(label.voiceSupport ? { voiceSupport: label.voiceSupport } : {}),
+                    };
                 }
             }
         }
@@ -566,6 +608,7 @@ export function suggestItems(options: {
     energyMicShare?: (fromSec: number, toSec: number) => number | undefined;
     voice?: LineVoice[];
     labels?: LineLabel[];
+    applyAbove?: number;
     /** In a stored suggestion run, update roster stays with the voice evidence from this same pass. */
     leaveSilenceMinutes?: number;
     /** Items under this confidence become questions to answer by ear, when they matter (default 0.6). */
@@ -959,6 +1002,10 @@ export function suggestItems(options: {
     }
 
     found.splice(0, found.length, ...found.map(unlabeled.restore));
+
+    if (options.labels && (options.rules.includes("speakers") || options.rules.includes("evidence"))) {
+        retireContradictedSeats({ record, lines: sourceLines, applyAbove: options.applyAbove });
+    }
 
     if (options.labels?.length && (options.rules.includes("speakers") || options.rules.includes("evidence"))) {
         found.splice(

@@ -11,7 +11,7 @@ import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
 import { callMutes } from "./call-mutes";
 import type { NewItem } from "./new-item";
 import { assessIndicator } from "./speaker-indicator";
-import { ATTENDANCE_CONFIDENCE } from "./speaker-labels/seat";
+import { ATTENDANCE_CONFIDENCE, ENERGY_CALL_LEANS, ENERGY_MIC_LEANS, seatConfidence } from "./speaker-labels/seat";
 import { addPolish, lineTallies, type SamePerson, type SpeakerScore, scoreCandidates } from "./speaker-scores";
 
 const { log } = logger.scoped("meetings-suggest");
@@ -19,6 +19,42 @@ const { log } = logger.scoped("meetings-suggest");
 /** A range's `evidence.candidateScores`, or nothing when no candidate has evidence. */
 export function scoresEvidence(scores: SpeakerScore[]): { candidateScores?: SpeakerScore[] } {
     return scores.length > 0 ? { candidateScores: scores } : {};
+}
+
+/** An outstanding automatic seat answer can predate calibration. Leave decisions and unrelated ranges alone. */
+export function retireContradictedSeats(options: {
+    record: MeetingRecord;
+    lines: LineEvidence[];
+    applyAbove?: number;
+}) {
+    const byIndex = new Map(options.lines.map((line) => [line.index, line]));
+    for (const item of options.record.items) {
+        const evidence = item.evidence;
+        if (
+            item.kind !== "speaker-range" ||
+            item.status !== "suggested" ||
+            evidence?.labeler !== "seat" ||
+            evidence.reason !== "seat-of-one" ||
+            (evidence.seat !== "mic" && evidence.seat !== "call") ||
+            typeof evidence.transcriptLine !== "number"
+        ) {
+            continue;
+        }
+        const line = byIndex.get(evidence.transcriptLine);
+        if (!line || line.label !== item.label || line.startSec !== item.fromSec) {
+            continue;
+        }
+        if (
+            seatConfidence({
+                seat: evidence.seat,
+                energyMic: line.energyMic ?? line.energyMicRaw,
+                applyAbove: options.applyAbove,
+            }) === undefined
+        ) {
+            item.status = "rejected";
+            item.evidence = { ...evidence, retired: "calibrated-seat" };
+        }
+    }
 }
 
 /** A line counts as one channel when that channel holds at least this share of it (rule E1). */
@@ -62,8 +98,6 @@ const ENERGY_OVER_SEGMENTS_CONFIDENCE = 0.75;
  * Where the segments are mixed (neither channel holds `CHANNEL_SHARE`), the energy's majority decides: this much on
  * the microphone is the user, unsure enough to ask; under `ENERGY_CALL_LEANS` it is not the user.
  */
-const ENERGY_MIC_LEANS = 0.7;
-const ENERGY_CALL_LEANS = 0.5;
 const ENERGY_LEANS_CONFIDENCE = 0.55;
 /** A mixed line under a platform label whose person E3 alone shows speaking stays the label's below this energy. */
 const ENERGY_LABEL_HOLDS = 0.8;
