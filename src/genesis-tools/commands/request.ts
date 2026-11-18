@@ -41,7 +41,7 @@ export function registerRequestCommand(program: Command): void {
         .description("Inspect, present or withdraw a person request (every subcommand prints JSON)");
     request.command("list").action(async () => {
         const remote = await callRunningService("requests.list", {});
-        out.result(remote.called ? remote.value : createRequestJournal().list().slice(-100));
+        out.result(remote.called ? remote.value : createRequestJournal().list({ limit: 100 }));
     });
     request
         .command("show")

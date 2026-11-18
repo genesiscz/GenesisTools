@@ -123,7 +123,7 @@ export async function startGenesisToolsService(
         },
         "requests.post": (params) => journal.post(params),
         "requests.get": (params) => journal.get(params.id),
-        "requests.list": (params) => journal.list().slice(-params.limit),
+        "requests.list": (params) => journal.list({ limit: params.limit }),
         "requests.answer": (params) => journal.settle(params.id, params.status, params.reason),
         "requests.withdraw": (params) => journal.withdraw(params.id),
     };
@@ -140,7 +140,7 @@ export async function startGenesisToolsService(
             if (minutes <= 0) {
                 return;
             }
-            for (const view of journal.list()) {
+            for (const view of journal.pending()) {
                 const last = view.events.findLast((event) => event.type === "delivered");
                 if (
                     view.state !== "waiting" ||
@@ -150,6 +150,12 @@ export async function startGenesisToolsService(
                 ) {
                     continue;
                 }
+
+                // An earlier notification of this loop awaited; the request may have been answered or withdrawn since.
+                if (journal.get(view.id)?.state !== "waiting") {
+                    continue;
+                }
+
                 const result = await runAreaAction(AREAS, "person.notifyThenAsk", view.request, deps, {
                     timeoutMs: 15_000,
                 });
@@ -158,7 +164,8 @@ export async function startGenesisToolsService(
                     typeof result.value === "object" &&
                     result.value !== null &&
                     "status" in result.value &&
-                    result.value.status === "pending"
+                    result.value.status === "pending" &&
+                    journal.get(view.id)?.state === "waiting"
                 ) {
                     journal.append(view.id, {
                         type: "delivered",
@@ -195,7 +202,7 @@ export async function startGenesisToolsService(
         onCheck: () => {
             void repeatNotices();
         },
-        keepAlive: { idle: () => journal.list().some((view) => view.outcome.status === "pending") },
+        keepAlive: { idle: () => journal.pending().length > 0 },
         onStopped: () => {
             offConfig();
             offJournal?.();
