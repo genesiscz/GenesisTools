@@ -35,15 +35,13 @@ import { ensureConfigHooks, HOOKS_OFF, newExecutablesStall, spawnGit } from "./v
 /** The guards `.githooks/pre-push` runs, label first. Keep this list in step with the hook. */
 export const PRE_PUSH_GUARDS: string[][] = [
     ["lint:dashboard", "bun", "run", "lint:dashboard"],
-    ["typecheck:all", "bun", "run", "typecheck:all"],
+    ["typecheck", "bun", "run", "typecheck", "--prefer-tsc-rs"],
     ["logging-guard", "bash", "scripts/ci/logging-guard.sh"],
     ["ai-credentials-guard", "bash", "scripts/ci/ai-credentials-guard.sh"],
     ["pid-safety-guard", "bash", "scripts/ci/pid-safety-guard.sh"],
     ["package-boundaries", "bun", "scripts/ci/check-package-boundaries.ts"],
-    ["tree-rosters", "bun", "scripts/ci/rosters/generate.ts", "--check", "--tree"],
     ["plugin-standalone", "bun", "scripts/ci/check-plugin-standalone.ts"],
     ["plugin-vendored", "bun", "scripts/gen-harness-plugin.ts", "--check"],
-    ["tool-commands", "bun", "scripts/ci/check-tool-commands.ts", "--strict"],
     ["jev-instrumentation", "bun", "scripts/ci/jev-instrumentation-guard.ts"],
     ["entrypoint-imports", "bun", "scripts/ci/entrypoint-import-guard.ts"],
 ];
@@ -246,12 +244,6 @@ async function main(): Promise<void> {
     }
 
     if (!skipGates && oldHead !== newHead) {
-        // TypeScript 7's native compiler, called directly: `bunx` hangs in /tmp worktrees.
-        const tsc = join(
-            executionRoot,
-            `node_modules/@typescript/typescript-${process.platform}-${process.arch}/lib/tsc`
-        );
-        must(existsSync(tsc) ? [tsc, "--noEmit"] : ["bunx", "tsc", "--noEmit"], "tsc");
         // Biome by its exit code over the round's changed files: judging it by the tail of its output let a formatting
         // error through to the pre-push hook (2026-10-14, #502 round 6). The main checkout's binary is already assessed.
         const changed = must(
@@ -275,7 +267,7 @@ async function main(): Promise<void> {
             );
         }
 
-        must(["bun", "run", "lint:rules"], "lint-rules");
+        must(["bun", "scripts/ci/lint-rules.ts", "--no-rosters", "--changed", gateFrom], "lint-rules");
         // The pre-push hook's CI guards, with the same flags (.githooks/pre-push): a judged round that passes a
         // weaker local check is refused at the push (2026-10-16: tool-commands --strict and pid-safety-guard
         // refused #533, #536 and #537 after integrate's own gates had passed).

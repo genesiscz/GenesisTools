@@ -6,6 +6,53 @@ import { skip } from "@genesiscz/utils/test/skip";
 
 const SCRIPT = join(import.meta.dir, "summarize-tests.sh");
 
+test.skipIf(skip.onWindows)("the CI selector includes file readers and falls back when test discovery changes", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "ci-test-selection-"));
+    const bin = join(cwd, "bin");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "bun"), '#!/bin/sh\nprintf "%s\\n" "$*"\necho "[test] suite complete (exit 0)"\n', {
+        mode: 0o755,
+    });
+    const git = (...args: string[]) => {
+        const p = Bun.spawnSync(
+            [
+                "git",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.com",
+                ...args,
+            ],
+            { cwd, env: process.env }
+        );
+        expect(p.exitCode, p.stderr.toString()).toBe(0);
+    };
+    git("init", "-q");
+    git("commit", "--allow-empty", "-qm", "base");
+    const select = (file: string) => {
+        writeFileSync(join(cwd, file), "fixture\n");
+        git("add", file);
+        git("commit", "-qm", "change fixture");
+        const p = Bun.spawnSync(["bash", join(import.meta.dir, "test-changed.sh"), "HEAD^"], {
+            cwd,
+            env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+        });
+        expect(p.exitCode, p.stderr.toString()).toBe(0);
+        return p.stdout.toString();
+    };
+    mkdirSync(join(cwd, ".githooks"));
+    mkdirSync(join(cwd, "scripts/ci"), { recursive: true });
+    const hook = select(".githooks/pre-push");
+    expect(hook).toContain("babysit/scripts/scripts.test.ts");
+    expect(hook).toContain("pre-commit-hook.test.ts");
+    expect(hook).toContain("[ci] file-reader tests complete");
+    expect(select("scripts/ci/summarize-tests.sh")).toContain("summarize-tests.test.ts");
+    expect(select("scripts/ci/test-changed.sh")).toContain("summarize-tests.test.ts");
+    expect(select("scripts/test.ts")).toContain("[ci] full test suite");
+});
+
 /**
  * The step that consumes this script declares `shell: bash`, which GitHub Actions runs as
  * `bash --noprofile --norc -eo pipefail {0}`. Reproduce that exactly: the defect this suite

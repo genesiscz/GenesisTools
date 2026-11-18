@@ -27,7 +27,8 @@ Covers snapshot runs, the hub bench, logic tests, the hub's verification flags a
   `GENESIS_HUB_BENCH_AX=1`: the live hub always has an accessibility client (dictation, `tools control`), and with
   one SwiftUI walks every responder per changed accessibility node; a click that costs 90 ms without it costs 1.6 s.
 - Logic tests: `bun run app:test [-- --filter <name>]` for this folder (Tests/; it runs `swift test` in the app build's
-  own tree, `.claude/rules/macos.md`), and `swift test` in `../GenesisKit` for the shared code (its SessionTranscriptScrollTests
+  own tree, `.claude/rules/macos.md`), and `bun scripts/native/swift-package.ts test --package-path src/macos/GenesisKit`
+  from the checkout root for the shared code (its SessionTranscriptScrollTests
   and WindowTitlebarTests open windows the same way). Here only LiveTimeTests
   open a window, alpha 0 below the desktop and never activated; `SESSION_SCROLL_PERF=1` adds the transcript's scroll and idle cost lines.
 - Read the PNG. The web diff is composited from WKWebView's own snapshot, so it needs no Screen Recording grant.

@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentSessionRow, AgentSessionRowsOptions } from "./agent-session-rows";
+import { POLLED_LISTING_REUSE_MS } from "./listing-reuse";
 import {
     cachedSessionRowsJson,
     cacheIsUsable,
@@ -124,6 +125,21 @@ describe("cachedSessionRowsJson", () => {
 });
 
 describe("sessionRowsJson", () => {
+    test("a cache miss can share catalog discovery while a fresh request walks its own query", async () => {
+        const path = await scratch();
+        const queries: AgentSessionRowsOptions[] = [];
+        const listRows = async (query: AgentSessionRowsOptions) => {
+            queries.push(query);
+            return [row(9)];
+        };
+        const options = { path, listRows, liveLocations: false };
+        await sessionRowsJson({ hours: 72 }, options);
+        expect((await readSessionRowsCache(path))?.query).toEqual({ hours: 72 });
+        expect((await sessionRowsJson({ hours: 72 }, options)).cached).toBe(true);
+        await sessionRowsJson({ hours: 24 }, { ...options, fresh: true });
+        expect(queries).toEqual([{ hours: 72, maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS }, { hours: 24 }]);
+    });
+
     test("daemon fetches do not update the cache or request stamp; normal fresh requests still do", async () => {
         const path = await scratch();
         const original = entry();

@@ -14,6 +14,7 @@
  * to GenesisKit/Controls gets an entry there, or a line in KitCatalogTests with the reason it has none.
  */
 import { resolve } from "node:path";
+import { swiftJobArgs, waitForSwift, withAppBuildSlot } from "@app/macos/lib/permissions/app";
 
 const kit = resolve(import.meta.dir, "../../src/macos/GenesisKit");
 const args = process.argv.slice(2);
@@ -32,12 +33,15 @@ const buildArgs = [
     "genesis-kit-catalog",
     ...(scratch ? ["--scratch-path", scratch] : []),
 ];
-const build = Bun.spawn(["swift", ...buildArgs], { stdout: "pipe", stderr: "pipe" });
-const [buildOut, buildErr, buildCode] = await Promise.all([
-    new Response(build.stdout).text(),
-    new Response(build.stderr).text(),
-    build.exited,
-]);
+const [buildOut, buildErr, buildCode] = await withAppBuildSlot(async () => {
+    const cmd = ["swift", ...buildArgs, ...swiftJobArgs(buildArgs)];
+    const build = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" });
+    return await Promise.all([
+        new Response(build.stdout).text(),
+        new Response(build.stderr).text(),
+        waitForSwift(build, cmd),
+    ]);
+});
 if (buildCode !== 0) {
     process.stderr.write(buildOut + buildErr);
     process.exit(buildCode);

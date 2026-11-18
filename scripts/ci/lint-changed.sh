@@ -19,7 +19,7 @@ BASE="${1:-}"
 
 run_full() {
     bun run lint:biome
-    bun run lint:rules
+    bun scripts/ci/lint-rules.ts --no-rosters
 }
 
 if [ -z "$BASE" ]; then
@@ -67,4 +67,4 @@ fi
 
 # Repo rules own a wider source set than Biome, including Swift. They must run
 # even when the TypeScript/JavaScript list above is empty.
-bun scripts/ci/lint-rules.ts --changed "$BASE"
+bun scripts/ci/lint-rules.ts --no-rosters --changed "$BASE"
