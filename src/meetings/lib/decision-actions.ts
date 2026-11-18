@@ -144,6 +144,7 @@ export const DECISION_ACTION_OPTIONS = [
     z.object({
         kind: z.literal("set"),
         seats: meetingSeatsSchema.optional(),
+        seatsIfAbsent: z.literal(true).optional(),
         project: z.string().min(1).optional(),
         title: z.string().min(1).optional(),
         labels: z.array(z.string().min(1)).optional(),

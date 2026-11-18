@@ -782,6 +782,49 @@ async function failure(call: Promise<unknown>): Promise<Error> {
 }
 
 describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetings service, %s adapter", (kind) => {
+    test("seat suggestions read raw channel energy on confirmed lines without changing the record", async () => {
+        const { client, store, source } = await ADAPTERS[kind]();
+        const meeting = await source.load("wf-2041");
+        source.load = async () => ({
+            ...meeting,
+            transcript: Array.from({ length: 5 }, (_, startSec) => ({ startSec, speaker: "S1", text: "A line." })),
+        });
+        await store.update(REVIEW.id, { command: "test", change: "confirmed lines" }, (record) => {
+            record.items = [
+                {
+                    kind: "speaker-range",
+                    id: "i1",
+                    status: "confirmed",
+                    label: "S1",
+                    fromSec: 0,
+                    toSec: 4,
+                    speaker: "Moss Example",
+                    suggestedAt: record.start,
+                    rules: [],
+                },
+            ];
+        });
+        const energy = spyOn(OpenedMeeting.prototype, "energy").mockResolvedValue({
+            share: Object.assign(() => 0.1, { raw: () => 0.9 }),
+        });
+        closing.push(() => energy.mockRestore());
+        const before = readFileSync(store.path(REVIEW.id));
+        const view = await client.call("meeting.seats.suggest", { meeting: REVIEW.id });
+        expect(view.suggestion.seats.room).toEqual(["Dana Example", "Moss Example"]);
+        expect(view.suggestion.people).toContainEqual({
+            name: "Moss Example",
+            seat: "room",
+            reason: "5 of 5 decided lines on the microphone.",
+            confidence: 1,
+        });
+        expect(view.suggestion.people).toContainEqual({
+            name: "Alex Example",
+            seat: "unsure",
+            reason: "No call roster entry or decided lines.",
+            confidence: 0,
+        });
+        expect(readFileSync(store.path(REVIEW.id))).toEqual(before);
+    });
     test("suggest refuses without a project before running and runs once a project is set", async () => {
         const { client, store, config } = await ADAPTERS[kind]();
         const suggest = await import("../suggest-run");
@@ -3103,6 +3146,7 @@ async function captureExamples(): Promise<Example[]> {
         "A source meeting another record holds: refused, so two records never share one source meeting."
     );
     await ask(window, "voice.backfill", { project: "Unassigned-fixture", dryRun: true });
+    await ask(window, "meeting.seats.suggest", { meeting: RETRO.id });
     return examples;
 }
 

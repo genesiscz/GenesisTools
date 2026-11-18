@@ -19,7 +19,7 @@ import { mergeMeetings } from "../lib/merge";
 import { OpenedMeeting } from "../lib/opened-meeting";
 import { resolveProject } from "../lib/project";
 import { withMeetingsClient } from "../lib/service/client";
-import { fail, TOOL } from "../lib/shared";
+import { fail, hintIfSeatsUnset, TOOL } from "../lib/shared";
 import { showText } from "../lib/show-text";
 import { listSoundTracks } from "../lib/sound";
 import { sourceAudioSummary } from "../lib/source-audio";
@@ -73,7 +73,7 @@ async function create(
             } else {
                 ui.ok(`Created ${record.id}${record.project ? ` (project ${record.project})` : ""}`);
             }
-            await collectAndReport(store, record);
+            hintIfSeatsUnset(await collectAndReport(store, record));
 
             if (record.end || !sourceAudioSummary(record)) {
                 await askProjectAtEnd(store, record.id);
