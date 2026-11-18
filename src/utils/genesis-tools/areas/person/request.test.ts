@@ -500,6 +500,14 @@ test("every generated fixture parses in TypeScript and generated files are curre
         "fixture.unsupported"
     );
     expect(() => renderSwiftSchema({ not: {} }, "Never", [], "fixture.never")).toThrow("fixture.never");
+    const unionDeclarations: string[] = [];
+    renderSwiftSchema(
+        { anyOf: [{ type: "string" }, { type: "number" }, { type: "null" }] },
+        "Mixed",
+        unionDeclarations,
+        "fixture.mixed"
+    );
+    expect(unionDeclarations.join("\n")).toContain("case option2(GenesisToolsNull)");
     expect(() => renderSwiftSchema({ type: "array", prefixItems: [] }, "Tuple", [], "fixture.tuple")).toThrow(
         "fixture.tuple"
     );
