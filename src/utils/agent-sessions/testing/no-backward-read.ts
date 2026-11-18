@@ -1,6 +1,7 @@
 import type { SessionAnalysisReader } from "../analysis-types";
 import type {
     BackwardRead,
+    ChangesWindowRead,
     HistoryMetadataRead,
     HistoryRecordRead,
     HistorySourceRecord,
@@ -82,4 +83,8 @@ export async function noRecordRead(): Promise<HistoryRecordRead> {
 /** `readSpawnLink` for a test reader whose sessions were never spawned by another session. */
 export async function noSpawnLink(): Promise<SpawnLink | null> {
     return null;
+}
+
+export function noChangesWindow(reason: string): () => ChangesWindowRead {
+    return () => ({ supported: false, reason });
 }

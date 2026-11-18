@@ -1,10 +1,18 @@
 import type { HistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
-import type { SessionChangesRead } from "@genesiscz/utils/agent-sessions/types";
+import type { SessionChangesRead, SessionChangesWindow } from "@genesiscz/utils/agent-sessions/types";
 import { readChangeLog } from "@genesiscz/utils/agents/change-log";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
+import { env } from "@genesiscz/utils/env";
 import { requireSibling } from "@genesiscz/utils/fs/module-dir";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { type ComputedSessionChanges, computeSessionChanges, type SessionChangesInput } from "./compute";
+import {
+    type ComputedSessionChanges,
+    computeChanges,
+    computeSessionChanges,
+    lastChangedTurns,
+    type SessionChangesInput,
+} from "./compute";
 
 export { repoRootOf } from "@genesiscz/utils/git/repo-root";
 export type { AnalyzeCommandInput, CommandAnalysis, StageKind } from "./command";
@@ -116,4 +124,111 @@ export function loadSessionChanges(
     );
 
     return { ...computeSessionChanges({ ...input, log: rows, transcript }), transcriptPath };
+}
+
+export interface ChangesRound {
+    round: number;
+    requested: number;
+    changed: number;
+    late: number;
+    writers: number;
+    rows: number;
+    fallback?: string;
+}
+
+export function loadRecentSessionChanges(input: {
+    sessionId: string;
+    count: number;
+    log?: SessionChangesInput["log"];
+    initialTurns?: number;
+    onRound?: (round: ChangesRound) => void;
+}): ComputedSessionChanges & { transcriptPath: string | null } {
+    const { sessionId, count } = input;
+    const rows = input.log ?? readChangeLog(sessionId);
+    const full = () => loadSessionChanges({ sessionId, log: rows });
+    let requested = input.initialTurns ?? Math.max(2 * count, 8);
+    let round = 1;
+    const covers = new Set<string>();
+    const total = { late: 0, writers: 0, rows: 0 };
+    const fallback = (reason: string) => {
+        const info = { session: sessionId, round, requested, count, ...total, changed: 0, fallback: reason };
+        input.onRound?.(info);
+        if (reason.startsWith("F7")) {
+            log.warn(info, "unknown changes window cover");
+        } else {
+            log.info(info, "using full session changes");
+        }
+        return full();
+    };
+
+    for (; round <= 17; round++) {
+        let window: SessionChangesWindow | undefined;
+        for (const kind of ACCOUNT_PROVIDER_ALIASES) {
+            const read = historyProvider(kind).reader.readChangesWindow(sessionId, {
+                turns: requested,
+                cover: [...covers],
+            });
+            if (read?.supported) {
+                window = read.window;
+                break;
+            }
+            if (read && /^F[1-7]/.test(read.reason)) {
+                return fallback(read.reason);
+            }
+        }
+        if (!window || window.complete) {
+            return fallback(window ? "F1" : "F4");
+        }
+        const { changes, cover, triggers } = computeChanges(
+            { sessionId, log: rows, transcript: window.transcript },
+            window
+        );
+        const changed = changes.turns.filter((turn) => turn.files.length).length;
+        total.late += window.lateResultCovers ?? 0;
+        total.writers += triggers.writers;
+        total.rows += triggers.rows;
+        input.onRound?.({ round, requested, changed, late: window.lateResultCovers ?? 0, ...triggers });
+        if (!cover.length && changed >= count) {
+            log.debug(
+                {
+                    session: sessionId,
+                    count,
+                    rounds: round,
+                    finalTurns: window.windowTurns,
+                    changedTurns: changed,
+                    covers: total,
+                },
+                "recent session changes"
+            );
+            if (env.agents.verifyChangesWindow()) {
+                const expected = full();
+                const selected = lastChangedTurns(changes, count);
+                const other = lastChangedTurns(expected, count);
+                const mismatch = selected.findIndex((turn, i) => {
+                    const next = other[i];
+                    return (
+                        !next ||
+                        next.turnId !== turn.turnId ||
+                        SafeJSON.stringify([turn.files, turn.excluded], { strict: true }) !==
+                            SafeJSON.stringify([next.files, next.excluded], { strict: true })
+                    );
+                });
+                if (mismatch !== -1 || selected.length !== other.length) {
+                    log.warn(
+                        { session: sessionId, turn: selected[mismatch]?.turnId ?? other[selected.length]?.turnId },
+                        "window differs from full changes"
+                    );
+                    return expected;
+                }
+            }
+            return { ...changes, transcriptPath: window.transcriptPath };
+        }
+        for (const id of cover) {
+            covers.add(id);
+        }
+        if (changed < count) {
+            requested *= 2;
+        }
+    }
+    return fallback("F2");
 }

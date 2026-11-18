@@ -1,4 +1,4 @@
-import type { SessionChangesRead } from "@genesiscz/utils/agent-sessions/types";
+import type { NativeSessionReader, SessionChangesRead } from "@genesiscz/utils/agent-sessions/types";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
 import { requireSibling } from "@genesiscz/utils/fs/module-dir";
 import type { PeerProcess, PeerSessionPart, TranscriptLocator } from "./parts";
@@ -137,4 +137,15 @@ export function deferredPeerSession(module: string, exportName: string): PeerSes
     );
 
     return { supported: true, sessionOf: (process, registryDir) => impl()(process, registryDir) };
+}
+
+type ReadChangesWindow = NativeSessionReader["readChangesWindow"];
+
+function isReadChangesWindow(value: unknown): value is ReadChangesWindow {
+    return typeof value === "function" && value.length === 2;
+}
+
+export function deferredReadChangesWindow(meta: ImportMeta, module: string, exportName: string): ReadChangesWindow {
+    const impl = lazyExport(meta, module, exportName, isReadChangesWindow, "window change reader");
+    return (sessionId, request) => impl()(sessionId, request);
 }

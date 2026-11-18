@@ -590,6 +590,9 @@ export interface NativeSessionReader<Kind extends string = AgentKind> {
      * `loadSessionChanges` asks each provider in turn and never parses a transcript itself.
      */
     readChanges(sessionId: string): SessionChangesRead | null;
+    /** Newest prompt turns plus the session-wide facts needed to judge the same changes as readChanges.
+     * Null when the provider has no transcript for this session. */
+    readChangesWindow(sessionId: string, request: ChangesWindowRequest): ChangesWindowRead | null;
     importSession?(
         session: AgentSession<Kind>,
         context: NativeSessionImportContext
