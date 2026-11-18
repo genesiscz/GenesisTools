@@ -1905,14 +1905,15 @@ describe("rows --json: the review rows (F3)", () => {
         ],
     });
 
-    test("one order: questions by priority then time (a decided one keeps its place), then the rest by time; low priority is counted", async () => {
+    test("one order: open rows first (questions by priority then time, then the rest by time), decided rows after them; low priority is counted", async () => {
         const { reviewRows } = await import("./review-rows");
         const rows = reviewRows(record, { minPriority: 0.2 });
         const all = reviewRows(record, { minPriority: 0.2, lowPriority: "show" });
 
-        expect(rows.rows.map((row) => row.label)).toEqual(["Q2", "Q4", "Q1", "i2", "i1"]);
+        // Q4 is decided, so it follows the open rows (U15, U16).
+        expect(rows.rows.map((row) => row.label)).toEqual(["Q2", "Q1", "i2", "i1", "Q4"]);
         expect(rows.hidden).toEqual({ lowPriority: 1, minPriority: 0.2 });
-        expect(all.rows.map((row) => row.label)).toEqual(["Q2", "Q4", "Q1", "Q3", "i2", "i1"]);
+        expect(all.rows.map((row) => row.label)).toEqual(["Q2", "Q1", "Q3", "i2", "i1", "Q4"]);
         expect(all.hidden.lowPriority).toBe(0);
     });
 

@@ -59,6 +59,7 @@ import {
     type DisplayInfo,
     FrameRecorder,
 } from "@genesiscz/utils/screen-recorder/types";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { applyCorrections } from "@genesiscz/utils/transcribe/apply";
@@ -71,6 +72,7 @@ import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { createCanvas } from "@napi-rs/canvas";
 import { Command } from "commander";
 import { z } from "zod";
+import { registerItemCommands } from "./commands/items";
 import { registerRecordCommands } from "./commands/record";
 import { claimWatcher } from "./commands/watch";
 import { buildQuestion } from "./lib/assign";
@@ -1081,6 +1083,326 @@ test("in a column, a long quote is shortened inside its quotes and keeps its sou
     expect(what.endsWith('…" (quote from dto.ts:12)')).toBe(true);
     // Without a width, nothing is cut.
     expect(itemWhat(long)).toContain("null");
+});
+
+describe("the words a review row shows (U9, U13, U15 to U18)", () => {
+    /** A code a person cannot read: a labeler code such as `seat-of-one`, or a whole rule id such as `RA`. */
+    const CODE_TOKEN = /[a-z]+-[a-z]+-[a-z]+|^[A-Z]{1,2}\d*$/;
+    const item = (fields: Record<string, unknown>) =>
+        meetingItemSchema.parse({ status: "suggested", suggestedAt: meeting.start, rules: [], ...fields });
+    const reasons = (row: { parts: Array<{ kind: string; pieces?: Array<{ text: string }> }> }) =>
+        row.parts.flatMap((part) => (part.kind === "reason" ? [(part.pieces ?? []).map((p) => p.text).join("")] : []));
+    const seatLine = (fields: Record<string, unknown> = {}) =>
+        item({
+            id: "i1",
+            kind: "speaker-range",
+            label: "Speaker 5",
+            fromSec: 120,
+            toSec: 120,
+            speaker: "Alice Example",
+            confidence: 0.95,
+            rules: [MeetingRule.Attendance],
+            evidence: { labeler: "seat", reason: "seat-of-one", seat: "mic", transcriptLine: 4 },
+            ...fields,
+        });
+    const voiceLine = item({
+        id: "i2",
+        kind: "speaker-range",
+        label: "Speaker 7",
+        fromSec: 80,
+        toSec: 80,
+        speaker: "Carol Example",
+        confidence: 0.6083,
+        rules: [MeetingRule.VoiceEmbedding],
+        evidence: {
+            labeler: "voice",
+            reason: "named",
+            seat: "call",
+            score: 0.6083,
+            next: { person: "Bob Example", score: 0.4021 },
+            transcriptLine: 3,
+        },
+    });
+    const strangerLine = item({
+        id: "i3",
+        kind: "speaker-range",
+        label: "Speaker 5",
+        fromSec: 0,
+        toSec: 0,
+        confidence: 0.2,
+        rules: [MeetingRule.VoiceEmbedding],
+        evidence: { reason: "not-the-seat-person", seat: "mic", score: 0.2, seatPerson: "Alice Example" },
+    });
+    const agentLine = item({
+        id: "i4",
+        kind: "speaker-range",
+        label: "Speaker 5",
+        fromSec: 10,
+        toSec: 10,
+        speaker: "Carol Example",
+        confidence: 0.7,
+        rules: [MeetingRule.Agent],
+        evidence: { reason: "Štítek nesleduje jednoho člověka, mluví pod ním dva lidé." },
+    });
+
+    test("every labeler code the types allow reads as a sentence, never as the code", async () => {
+        const { LABELER_REASON_CODES, labelerReasonSentence } = await import("./lib/reason-words");
+        const codes: string[] = [...LABELER_REASON_CODES].sort();
+
+        expect(codes).toEqual(
+            [
+                "named",
+                "exclusion",
+                "exclusion-not-one-voice",
+                "exclusion-too-few-lines",
+                "below-gate",
+                "no-rival-sample",
+                "unsampled-present",
+                "not-the-seat-person",
+                "no-voice",
+                "seat-of-one",
+                "seat-shared",
+                "seat-unknown",
+            ].sort()
+        );
+
+        for (const reason of LABELER_REASON_CODES) {
+            const full = {
+                reason,
+                labeler: "voice",
+                seat: "call",
+                person: "Alice Example",
+                score: 0.6083,
+                next: { person: "Bob Example", score: 0.4021 },
+            };
+
+            for (const evidence of [{ reason }, full]) {
+                const sentence = labelerReasonSentence(evidence);
+                expect(sentence).toBeString();
+                expect(sentence).not.toMatch(CODE_TOKEN);
+                expect(sentence!.split(/[\s,.:;()]+/u)).not.toContain(reason);
+            }
+        }
+
+        expect(
+            labelerReasonSentence({ labeler: "seat", reason: "seat-of-one", seat: "mic", person: "Alice Example" })
+        ).toBe("Only Alice Example sat at this seat, so the line is theirs");
+        expect(
+            labelerReasonSentence({
+                labeler: "voice",
+                reason: "named",
+                seat: "call",
+                person: "Alice Example",
+                score: 0.6083,
+                next: { person: "Bob Example", score: 0.4021 },
+            })
+        ).toBe("Sounds like Alice Example: 0.61 match, next closest Bob Example 0.40");
+        expect(labelerReasonSentence({ reason: "not-the-seat-person", person: "Alice Example" })).toBe(
+            "Does not sound like Alice Example"
+        );
+        // An agent's own words are not a code: the row prints them as they are.
+        expect(labelerReasonSentence({ reason: "Pass 2 (agent): the voices differ" })).toBeUndefined();
+    });
+
+    test("a row's reason parts print the labeler's sentence and keep an agent's own words", async () => {
+        const { reviewRows } = await import("./lib/review-rows");
+        const rows = reviewRows(
+            { ...record, items: [seatLine(), voiceLine, strangerLine, agentLine] },
+            { transcript: meeting.transcript, minPriority: 0 }
+        ).rows;
+        const byId = new Map(rows.map((row) => [row.id, reasons(row)]));
+
+        for (const row of rows) {
+            for (const text of reasons(row)) {
+                expect(text).not.toMatch(CODE_TOKEN);
+                expect(text.split(/[\s,.:;()]+/u)).not.toContain("named");
+            }
+        }
+
+        expect(byId.get("i1")).toContain("Only Alice Example sat at this seat, so the line is theirs");
+        expect(byId.get("i2")).toContain("Sounds like Carol Example: 0.61 match, next closest Bob Example 0.40");
+        expect(byId.get("i3")).toContain("Does not sound like Alice Example");
+        expect(byId.get("i4")).toContain("Štítek nesleduje jednoho člověka, mluví pod ním dva lidé.");
+    });
+
+    test("a voice row carries the voice, the runner-up and the saved samples; a seat line its voice support", async () => {
+        const { reviewRows } = await import("./lib/review-rows");
+        const home = env.tools.getHome();
+        env.testing.set("GENESIS_TOOLS_HOME", mkdtempSync(join(tmpdir(), "rows-voices-")));
+        try {
+            const voices = toolDataDir("meetings", "voices");
+            mkdirSync(voices, { recursive: true });
+            const sample = (meetingId: string, fromSec: number) => ({
+                meeting: meetingId,
+                sourceSha: `digest-${meetingId}`,
+                seat: "call",
+                track: "system",
+                fromSec,
+                toSec: fromSec + 2,
+                embedding: [0.5, 0.25, fromSec],
+                confirmedAt: "2026-11-01T10:00:00Z",
+            });
+            writeFileSync(
+                join(voices, "garden.json"),
+                SafeJSON.stringify({
+                    version: 1,
+                    model: "fixture-model",
+                    people: {
+                        "Carol Example": { samples: [sample("m-one", 1), sample("m-one", 5), sample("m-two", 9)] },
+                    },
+                })
+            );
+            const supported = seatLine({
+                evidence: {
+                    labeler: "seat",
+                    reason: "seat-of-one",
+                    seat: "mic",
+                    transcriptLine: 4,
+                    voiceSupport: { person: "Alice Example", score: 0.78, samples: 0 },
+                },
+            });
+            const rows = reviewRows(
+                { ...record, project: "garden", items: [supported, voiceLine, strangerLine] },
+                { minPriority: 0 }
+            ).rows;
+            const byId = new Map(rows.map((row) => [row.id, row]));
+
+            expect(byId.get("i2")?.voice).toEqual({
+                person: "Carol Example",
+                score: 0.6083,
+                next: { person: "Bob Example", score: 0.4021 },
+                samples: { count: 3, meetings: 2 },
+                seat: "call",
+                support: false,
+            });
+            expect(byId.get("i1")?.voice).toEqual({
+                person: "Alice Example",
+                score: 0.78,
+                samples: { count: 0, meetings: 0 },
+                seat: "mic",
+                support: true,
+            });
+            // The seat's confidence stays; the voice only supports it.
+            expect(byId.get("i1")?.confidence).toBe(0.95);
+            expect(byId.get("i3")?.voice).toBeUndefined();
+
+            // A person confirmed another speaker: the row still says whom the voice matched, never the correction.
+            const corrected = item({
+                ...voiceLine,
+                id: "i9",
+                status: "confirmed",
+                speaker: "Bob Example",
+                decidedAt: meeting.start,
+                decision: { token: "fixture-token", previous: { status: "suggested", speaker: "Carol Example" } },
+            });
+            const row = reviewRows({ ...record, project: "garden", items: [corrected] }, { minPriority: 0 }).rows[0]!;
+
+            expect(row.voice?.person).toBe("Carol Example");
+            expect(reasons(row)).toContain("Sounds like Carol Example: 0.61 match, next closest Bob Example 0.40");
+        } finally {
+            env.testing.set("GENESIS_TOOLS_HOME", home);
+        }
+    });
+
+    test("every kind has a word from one table, and an unreliable label says what its choices do", async () => {
+        const { reviewRow } = await import("./lib/review-rows");
+        const label = item({
+            id: "i5",
+            kind: "label",
+            label: "Bob Example",
+            fromSec: 0,
+            toSec: 6103,
+            meaningless: true,
+            confidence: 0.8,
+            evidence: { reason: "Two people speak under this label." },
+        });
+        const row = reviewRow({ ...record, items: [label] }, label);
+
+        expect(row.kindWord).toBe("Unreliable label");
+        expect(row.what).toBe('The label "Bob Example" does not belong to one person (00:00 to 1:41:43)');
+        expect(row.choices.map((choice) => [choice.label, choice.action.kind])).toEqual([
+            ["Mark its lines unclear", "confirm"],
+            ["Keep the label", "reject"],
+        ]);
+
+        const kinds = [
+            seatLine(),
+            label,
+            item({ id: "i6", kind: "term", atSec: 5, heard: "Ada", proposed: "ADA", confidence: 0.9 }),
+            item({ id: "i7", kind: "join", atSec: 10, joined: "databází", confidence: 0.9 }),
+            item({ id: "i8", kind: "removal", fromSec: 0, toSec: 2, heard: "echo", confidence: 0.9 }),
+            item({
+                id: "i9",
+                kind: "question",
+                about: "speaker",
+                fromSec: 0,
+                toSec: 10,
+                question: "Who speaks?",
+                choices: [],
+                decides: [],
+            }),
+        ];
+        const words = kinds.map((one) => reviewRow({ ...record, items: kinds }, one).kindWord);
+
+        expect(words).toEqual([
+            "Speaker range",
+            "Unreliable label",
+            "Spelling",
+            "Join lines",
+            "Local speech output",
+            "Question",
+        ]);
+    });
+
+    test("open rows come before decided rows, each group in the order listen asks (U15, U16)", async () => {
+        const { reviewRows } = await import("./lib/review-rows");
+        const ask = (id: string, fromSec: number, status: string) =>
+            item({
+                id,
+                kind: "question",
+                status,
+                about: "speaker",
+                fromSec,
+                toSec: fromSec + 5,
+                question: `Who speaks at ${fromSec}?`,
+                choices: [],
+                decides: [],
+            });
+        const range = (id: string, fromSec: number, status: string) =>
+            item({ id, kind: "speaker-range", status, label: "Speaker 5", fromSec, toSec: fromSec, confidence: 0.9 });
+        // Questions i11 to i13, speaker ranges i21 to i23.
+        const items = [
+            ask("i11", 10, "rejected"),
+            ask("i12", 50, "suggested"),
+            ask("i13", 70, "suggested"),
+            range("i21", 5, "suggested"),
+            range("i22", 1, "confirmed"),
+            range("i23", 3, "rejected"),
+        ];
+
+        expect(reviewRows({ ...record, items }, { minPriority: 0 }).rows.map((row) => row.id)).toEqual([
+            "i12",
+            "i13",
+            "i21",
+            "i11",
+            "i22",
+            "i23",
+        ]);
+    });
+
+    test("items add --help names the reader of a reason and its language", () => {
+        const program = new Command();
+        registerItemCommands(program);
+        const add = program.commands
+            .find((command) => command.name() === "items")
+            ?.commands.find((command) => command.name() === "add");
+
+        // Commander wraps long help lines; the words are checked as one line.
+        const help = add?.helpInformation().replace(/\s+/gu, " ");
+
+        expect(help).toContain("in the meeting's language");
+        expect(help).toContain("for the person who reviews the meeting");
+    });
 });
 
 describe("appliedLine", () => {

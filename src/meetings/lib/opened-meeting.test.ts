@@ -556,7 +556,8 @@ describe("suggest attendance resilience", () => {
             const opened = OpenedMeeting.of(store, record, { source: fakeSource(), sourceMeetingId: "abc" });
             await opened.collect();
             await opened.suggestionPresence({ warnings: [] });
-            expect(attendanceWarning(new MeetingStore(store.storage).read(record.id)!)).toBe(
+            const { attendanceDetail } = await import("./opened-meeting");
+            expect(attendanceDetail(new MeetingStore(store.storage).read(record.id)!)).toBe(
                 "attendance not collected: Fixture attendance missing"
             );
         } finally {
@@ -587,6 +588,41 @@ describe("suggest attendance resilience", () => {
             const recovered = new MeetingStore(store.storage).read(record.id)!;
             expect(attendanceWarning(recovered)).toBeUndefined();
             expect(recovered.history.at(-1)?.command).toBe("attendance-recovered");
+        } finally {
+            reader.mockRestore();
+        }
+    });
+    test("the rows warn in one short sentence; the full text with its commands is the detail (U3)", async () => {
+        const { attendanceDetail } = await import("./opened-meeting");
+        const { store, record } = await newRecord({ platform: "teams" });
+        const full =
+            'attendance not collected: tools ms-teams meetings attendance "Planning" failed: Could not resolve a single meeting chat. Pass --id.\ntools ms-teams meetings meetings list';
+        const failed = await store.update(record.id, { command: "attendance-failed", change: full }, () => {});
+
+        expect(attendanceWarning(failed)).toBe(
+            "Microsoft Teams did not say who joined, so the people come from the transcript."
+        );
+        expect(attendanceDetail(failed)).toBe(full);
+
+        const { MEETING_PLATFORMS } = await import("./platforms");
+        const reader = spyOn(MEETING_PLATFORMS.teams, "attendance").mockRejectedValue(
+            new AttendanceUnavailableError("Fixture chat missing. Run tools ms-teams meetings meetings list")
+        );
+        try {
+            const warnings: string[] = [];
+            await OpenedMeeting.of(store, failed, { source: fakeSource(), sourceMeetingId: "abc" }).suggestionPresence({
+                attendance: "teams",
+                warnings,
+            });
+            const saved = new MeetingStore(store.storage).read(record.id)!;
+
+            // The suggest run and the rows say the same sentence, so the window shows it once.
+            expect(warnings).toEqual([attendanceWarning(saved)!]);
+            for (const text of warnings) {
+                expect(text).not.toContain("tools ");
+                expect(text).not.toMatch(/\bE\d\b/u);
+            }
+            expect(attendanceDetail(saved)).toContain("tools ms-teams meetings meetings list");
         } finally {
             reader.mockRestore();
         }
@@ -657,9 +693,13 @@ describe("suggest attendance resilience", () => {
                     attendance: "teams",
                     wordCheck: "off",
                 });
-                const warning = result.warnings.find((line) => line.includes("attendance unavailable"));
-                expect(warning).toBeDefined();
-                expect(warning).toBe(attendanceWarning(new MeetingStore(store.storage).read(record.id)!));
+                const { attendanceDetail } = await import("./opened-meeting");
+                const saved = new MeetingStore(store.storage).read(record.id)!;
+                // The run warns in the rows' one sentence; the stored detail keeps the candidates and their commands.
+                expect(result.warnings).toContain(attendanceWarning(saved)!);
+                expect(attendanceWarning(saved)).not.toContain("tools ");
+                const warning = attendanceDetail(saved);
+                expect(warning).toContain("attendance unavailable");
                 expect(warning).not.toContain("reader diagnostic on stderr");
                 expect(exec.mock.calls.some(([args]) => args.includes("list"))).toBe(false);
                 if (status === "ambiguous") {

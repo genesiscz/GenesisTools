@@ -42,7 +42,9 @@ export function itemWhat(item: MeetingItem, options: { width?: number } = {}): s
     }
 
     if (item.kind === "label") {
-        return `${item.label} ${span(item.fromSec, item.toSec)} tracks no one person`;
+        const from = formatClock(item.fromSec);
+        const to = formatClock(item.toSec);
+        return `The label "${item.label}" does not belong to one person (${from === to ? from : `${from} to ${to}`})`;
     }
 
     const occurrences = typeof item.evidence?.occurrences === "number" ? ` ×${item.evidence.occurrences}` : "";

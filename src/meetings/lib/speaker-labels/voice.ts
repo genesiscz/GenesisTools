@@ -28,10 +28,11 @@ import {
 } from "@genesiscz/utils/meetings/voice-library";
 import { backgroundPrefix } from "@genesiscz/utils/process/priority";
 import { profiler } from "@genesiscz/utils/profile";
+import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { OpenedMeeting } from "../opened-meeting";
 import { type MeetingSound, measureSoundClock, meetingSound, readSoundClock, saveSoundClock } from "../sound";
 import { nameByVoice, type VoiceLine } from "../voice-names";
-import type { LabelContext, LineLabel, SpeakerLabeler } from "./types";
+import type { LabelContext, LineLabel, SpeakerLabeler, VoiceSupport } from "./types";
 
 const prof = profiler.scope("meetings-suggest");
 
@@ -185,6 +186,35 @@ export async function embedSeatLines(
     return result.sort((a, b) => a.index - b.index);
 }
 
+/** The saved prints a seat line's support compared with: the person's samples on its seat and track, not its own. */
+function comparedSamples(options: {
+    store: VoiceStore;
+    person: string;
+    line: VoiceLine;
+    meeting: string;
+    sources: ReadonlyMap<VoicePrint, SampleSource>;
+}): number {
+    const voice = options.line.channels.find((channel) => channel.quality === "ready");
+    const saved = Object.entries(options.store.people).find(([name]) => sameName(name, options.person))?.[1];
+    if (!voice || !saved) {
+        return 0;
+    }
+
+    const fromSec = options.line.fromSec ?? voice.fromSec;
+    const toSec = options.line.toSec ?? voice.toSec;
+    return saved.samples.filter(
+        (sample) =>
+            sample.seat === options.line.seat &&
+            sample.track === options.line.track &&
+            sample.embedding.length === voice.embedding.length &&
+            !(
+                (options.sources.get(sample)?.rootMeeting ?? sample.meeting) === options.meeting &&
+                sample.fromSec < toSec &&
+                sample.toSec > fromSec
+            )
+    ).length;
+}
+
 async function meetingVoiceLines(opened: OpenedMeeting, context: LabelContext): Promise<VoiceLine[]> {
     let sound = context.sound ?? (await prof.measureAsync("speakers.sound-inputs", () => opened.sound()));
     {
@@ -308,18 +338,42 @@ export function voiceLabeler(options: {
                     certain.delete(line.index);
                 }
             }
-            // Several strangers on the same single-owner seat must not train one another as its owner.
+            // Seat lines are scored against the saved samples only, so the seat never confirms itself. Several strangers
+            // on the same single-owner seat must not train one another as its owner: a stranger vetoes the owner. A
+            // line that passes the voice gate for the seat's person keeps the seat's name and gains the voice's support.
             const vetoes = new Map<number, LineLabel>();
-            if (context.seatOnlySeeds?.size && Object.keys(store.people).length) {
-                const seatLines = lines.filter((line) => context.seatOnlySeeds?.has(line.index));
-                for (const label of nameByVoice({ ...inputs, lines: seatLines, exclusion: undefined })) {
-                    if (label.reason === "not-the-seat-person") {
+            const supports = new Map<number, VoiceSupport>();
+            const seatOwners = options.settings.supportOnSeatLines ? context.seatOwners : undefined;
+            const checked = new Set([...(context.seatOnlySeeds ?? []), ...(seatOwners?.keys() ?? [])]);
+            if (checked.size && Object.keys(store.people).length) {
+                const seatLines = new Map(lines.filter((line) => checked.has(line.index)).map((l) => [l.index, l]));
+                for (const label of nameByVoice({ ...inputs, lines: [...seatLines.values()], exclusion: undefined })) {
+                    const owner = seatOwners?.get(label.index);
+                    const line = seatLines.get(label.index);
+                    if (label.reason === "not-the-seat-person" && context.seatOnlySeeds?.has(label.index)) {
                         certain.delete(label.index);
                         vetoes.set(label.index, label);
+                    } else if (
+                        label.reason === "named" &&
+                        label.person &&
+                        label.score !== undefined &&
+                        owner &&
+                        line &&
+                        sameName(label.person, owner)
+                    ) {
+                        supports.set(label.index, {
+                            person: label.person,
+                            score: label.score,
+                            ...(label.next ? { next: label.next } : {}),
+                            samples: comparedSamples({ store, person: label.person, line, meeting: root, sources }),
+                        });
                     }
                 }
             }
-            return nameByVoice({ ...inputs, certain }).map((label) => vetoes.get(label.index) ?? label);
+            return nameByVoice({ ...inputs, certain }).map((label) => {
+                const support = supports.get(label.index);
+                return vetoes.get(label.index) ?? (support ? { ...label, voiceSupport: support } : label);
+            });
         },
     };
 }

@@ -1,6 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
+import { logger } from "@genesiscz/utils/logger";
 import type { MeetingItem, MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { MeetingRule, meetingRuleNames } from "@genesiscz/utils/meetings/rules";
+import { predictionScope, readVoiceLibrary, type VoiceScope, voicesIn } from "@genesiscz/utils/meetings/voice-library";
 import { LINE_AT_TOLERANCE_SEC, TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
@@ -20,6 +22,7 @@ import {
     questionLabel,
     questionView,
 } from "./questions";
+import { indicatorIgnoredSentence, itemKindWord, labelerReasonSentence, type ReasonEvidence } from "./reason-words";
 import type {
     ClockTime,
     ReviewRow,
@@ -28,6 +31,7 @@ import type {
     RowChoice,
     RowPart,
     RowSource,
+    RowVoice,
     TextPiece,
 } from "./review-row-schema";
 import { speakerChoiceScores } from "./speaker-scores";
@@ -37,15 +41,18 @@ export * from "./review-row-schema";
 /**
  * The review rows of a meeting (F3): one row per item with its structured question, its typed choices, its edit kind,
  * its sources, its Moment and its last decision. The Meetings window, `tools meetings rows`, `items` and the REPL print
- * from these rows, so a question reads the same everywhere and the window computes nothing itself.
+ * from these rows, so a question reads the same everywhere and the window computes nothing itself. Every word a person
+ * reads for a code (a labeler's reason, an item kind) comes from the one table in reason-words.ts.
  *
- * The order is one rule (G32): questions first, by uncertain words and distinct answer targets as they were when the
- * question was asked (`askedRank`), then by time, which is the order `listen` asks them in until an answer raises
- * another question's confidence; then every other item by time, then by id. Legacy and term questions use their
- * priority. A decision does not move its row, nor the rows its answer propagates to (R16). Open questions under
- * `playback.listen.minPriority` are
- * left out, as `listen` leaves them, and counted (G13).
+ * The order is one rule (G32): open rows first and decided rows after them (U15, U16), each group in the same order:
+ * questions first, by uncertain words and distinct answer targets as they were when the question was asked
+ * (`askedRank`), then by time, which is the order `listen` asks them in until an answer raises another question's
+ * confidence; then every other item by time, then by id. Legacy and term questions use their priority. A decision
+ * moves its row into the decided group; the window keeps a row it has just decided in place while it is shown. Open
+ * questions under `playback.listen.minPriority` are left out, as `listen` leaves them, and counted (G13).
  */
+
+const { log } = logger.scoped("meetings-rows");
 
 type Transcript = readonly TranscriptEntry[] | TranscriptLines;
 type TermItem = Extract<MeetingItem, { kind: "term" }>;
@@ -355,16 +362,17 @@ function rangeChoices(item: Extract<MeetingItem, { kind: "speaker-range" }>): Ro
     ]);
 }
 
-function plainChoices(item: MeetingItem, label: string): RowChoice[] {
+/** A confirm and a reject, each named by what it does to the item. */
+function plainChoices(item: MeetingItem, words: { confirm: string; reject?: string }): RowChoice[] {
     return [
         {
-            value: label,
-            label,
+            value: words.confirm,
+            label: words.confirm,
             role: "suggested",
             action: { kind: "confirm" },
             ...confidenceOf(item.confidence),
         },
-        { value: NONE_OF_THESE, label: "Reject", role: "none", action: { kind: "reject" } },
+        { value: NONE_OF_THESE, label: words.reject ?? "Reject", role: "none", action: { kind: "reject" } },
     ];
 }
 
@@ -572,10 +580,7 @@ function partsOf(record: MeetingRecord, item: MeetingItem, lines: TranscriptLine
     }
 
     if (typeof item.evidence?.indicatorIgnored === "string") {
-        parts.push({
-            kind: "reason",
-            pieces: textPieces(`Speaking indicator ignored: ${item.evidence.indicatorIgnored}`),
-        });
+        parts.push({ kind: "reason", pieces: textPieces(indicatorIgnoredSentence(item.evidence.indicatorIgnored)) });
     }
     const swap = item.evidence?.swap;
     if (typeof swap === "object" && swap !== null && "skipped" in swap && Array.isArray(swap.skipped)) {
@@ -603,10 +608,158 @@ function partsOf(record: MeetingRecord, item: MeetingItem, lines: TranscriptLine
     const reason = item.evidence?.reason;
 
     if (typeof reason === "string" && reason.trim()) {
-        parts.push({ kind: "reason", pieces: textPieces(reason.trim()) });
+        // A labeler's code reads as its sentence (U9); an agent's own words stay as they are.
+        const sentence = labelerReasonSentence(reasonEvidence(item, reason));
+        parts.push({ kind: "reason", pieces: sentence ? [{ text: sentence }] : textPieces(reason.trim()) });
     }
 
     return parts;
+}
+
+const nextVoiceSchema = z.object({ person: z.string().min(1), score: z.number() });
+const seatSchema = z.enum(["mic", "call"]);
+/** The voice's agreement with a seat's label (`evidence.voiceSupport`, speaker-labels/types.ts). */
+const voiceSupportSchema = z.object({
+    person: z.string().min(1),
+    score: z.number(),
+    next: nextVoiceSchema.optional(),
+});
+
+function textOf(value: unknown): string | undefined {
+    return typeof value === "string" && value ? value : undefined;
+}
+
+/**
+ * The speaker a rule named on a range. A person may confirm another one; the decision keeps the speaker from before
+ * it (`decision.previous`), so a decided row still words what the rule heard, never the person's correction.
+ */
+function suggestedSpeaker(item: MeetingItem): string | undefined {
+    if (item.kind !== "speaker-range") {
+        return undefined;
+    }
+
+    return item.status === "suggested" ? item.speaker : (item.decision?.previous.speaker ?? item.speaker);
+}
+
+/**
+ * What a labeler's reason is worded from. The person is the seat's for a voice that does not match it, the one person
+ * without a sample for an exclusion, else the speaker the rule named.
+ */
+function reasonEvidence(item: MeetingItem, reason: string): ReasonEvidence {
+    const evidence = item.evidence ?? {};
+    const next = nextVoiceSchema.safeParse(evidence.next);
+    const person =
+        reason === "not-the-seat-person"
+            ? textOf(evidence.seatPerson)
+            : (textOf(evidence.exclusionPerson) ?? suggestedSpeaker(item));
+    return {
+        reason,
+        ...(textOf(evidence.labeler) ? { labeler: textOf(evidence.labeler) } : {}),
+        ...(textOf(evidence.seat) ? { seat: textOf(evidence.seat) } : {}),
+        ...(person ? { person } : {}),
+        ...(typeof evidence.score === "number" ? { score: evidence.score } : {}),
+        ...(next.success ? { next: next.data } : {}),
+    };
+}
+
+/** A person's saved voice samples and their meetings; nothing when the voice library cannot be read. */
+export type VoiceSamplesOf = (person: string) => RowVoice["samples"] | undefined;
+
+/**
+ * Reads the voice library once and counts each person's samples in the scope the voice labeler compares a line with
+ * (`speakerLabels.voice.sampleScope`): this meeting's project, or every project.
+ */
+function countVoiceSamples(record: MeetingRecord): VoiceSamplesOf {
+    try {
+        const scope: VoiceScope =
+            predictionScope() === "project" && record.project
+                ? { kind: "project", project: record.project }
+                : { kind: "all" };
+        const people = voicesIn(readVoiceLibrary(), scope);
+        const counted = new Map<string, RowVoice["samples"]>();
+        log.debug({ meeting: record.id, scope: scope.kind, people: people.length }, "voice samples read for rows");
+        return (person) => {
+            const known = counted.get(person);
+
+            if (known) {
+                return known;
+            }
+
+            const samples = people.filter((row) => sameName(row.owner.name, person)).flatMap((row) => row.samples);
+            const count = {
+                count: samples.length,
+                meetings: new Set(samples.map((sample) => sample.source.rootMeeting)).size,
+            };
+            counted.set(person, count);
+            return count;
+        };
+    } catch (error) {
+        log.warn({ error, meeting: record.id }, "voice library unreadable; rows show no voice evidence");
+        return () => undefined;
+    }
+}
+
+/** Reads the voice library at the first row that needs it, so a meeting without a voice row reads nothing. */
+function lazyVoiceSamples(record: MeetingRecord): VoiceSamplesOf {
+    let read: VoiceSamplesOf | undefined;
+    return (person) => {
+        read ??= countVoiceSamples(record);
+        return read(person);
+    };
+}
+
+/**
+ * The samples a lone `reviewRow` counts with, one read per record object: a caller that builds its rows one by one
+ * (the `items` table, the REPL's `items.list`, a decision's reach) passes the same record, so it reads the library
+ * once, and a record read again later reads it again.
+ */
+const voicesByRecord = new WeakMap<MeetingRecord, VoiceSamplesOf>();
+
+function voiceSamplesOfRecord(record: MeetingRecord): VoiceSamplesOf {
+    let voices = voicesByRecord.get(record);
+
+    if (!voices) {
+        voices = lazyVoiceSamples(record);
+        voicesByRecord.set(record, voices);
+    }
+
+    return voices;
+}
+
+/**
+ * The voice behind a row (U13): a range the voice model named, with its score and runner-up, or a seat line whose
+ * voice agrees with the seat (`voiceSupport`), which keeps the seat's confidence.
+ */
+function voiceOf(item: MeetingItem, samplesOf: VoiceSamplesOf): RowVoice | undefined {
+    const evidence = item.evidence ?? {};
+    const next = nextVoiceSchema.safeParse(evidence.next);
+    const speaker = suggestedSpeaker(item);
+    const named =
+        speaker && evidence.labeler === "voice" && evidence.reason === "named" && typeof evidence.score === "number"
+            ? { person: speaker, score: evidence.score, ...(next.success ? { next: next.data } : {}) }
+            : undefined;
+    const support = voiceSupportSchema.safeParse(evidence.voiceSupport);
+    const heard = named ?? (support.success ? support.data : undefined);
+
+    if (!heard) {
+        return undefined;
+    }
+
+    const samples = samplesOf(heard.person);
+
+    if (!samples) {
+        return undefined;
+    }
+
+    const seat = seatSchema.safeParse(evidence.seat);
+    return {
+        person: heard.person,
+        score: heard.score,
+        ...(heard.next ? { next: heard.next } : {}),
+        samples,
+        ...(seat.success ? { seat: seat.data } : {}),
+        support: named === undefined,
+    };
 }
 
 function sourcesOf(item: MeetingItem, parts: RowPart[], lines: TranscriptLines | undefined): RowSource[] {
@@ -662,7 +815,7 @@ const EDITS: Record<MeetingItem["kind"], ReviewRow["edit"]> = {
 function choicesOf(record: MeetingRecord, item: MeetingItem): RowChoice[] {
     switch (item.kind) {
         case "removal":
-            return plainChoices(item, "Remove local speech output");
+            return plainChoices(item, { confirm: "Remove local speech output" });
         case "question":
             return questionChoices(record, item);
         case "term":
@@ -670,9 +823,10 @@ function choicesOf(record: MeetingRecord, item: MeetingItem): RowChoice[] {
         case "speaker-range":
             return rangeChoices(item);
         case "join":
-            return plainChoices(item, item.joined ? `Join "${item.joined}"` : "Join");
+            return plainChoices(item, { confirm: item.joined ? `Join "${item.joined}"` : "Join" });
         case "label":
-            return plainChoices(item, `${item.label} tracks no one person`);
+            // A confirmed label item makes its lines unclear unless something else names them (README, label items).
+            return plainChoices(item, { confirm: "Mark its lines unclear", reject: "Keep the label" });
     }
 }
 
@@ -693,18 +847,28 @@ function decidedAs(item: MeetingItem): string | undefined {
     return item.kind === "speaker-range" ? item.speaker : undefined;
 }
 
-/** One item's row. `transcript`: the meeting's lines, for what was said; without it a row names no words. */
-export function reviewRow(record: MeetingRecord, item: MeetingItem, transcript?: Transcript): ReviewRow {
+/**
+ * One item's row. `transcript`: the meeting's lines, for what was said; without it a row names no words. `voices`: the
+ * saved voice samples, read once by `reviewRows` for all its rows; a lone row reads them once per record object.
+ */
+export function reviewRow(
+    record: MeetingRecord,
+    item: MeetingItem,
+    transcript?: Transcript,
+    context: { voices?: VoiceSamplesOf } = {}
+): ReviewRow {
     const lines = transcript ? linesOf(transcript) : undefined;
     const parts = partsOf(record, item, lines);
     const needs = inputNeeded(item) ?? (item.kind === "question" && item.status === "suggested" ? "listen" : undefined);
     const decision = item.decision;
     const actor = decision?.actor ?? { kind: "unknown" as const };
     const answer = decidedAs(item);
+    const voice = voiceOf(item, context.voices ?? voiceSamplesOfRecord(record));
     return {
         id: item.id,
         label: item.kind === "question" ? questionLabel(record, item.id) : item.id,
         kind: item.kind,
+        kindWord: itemKindWord(item.kind),
         status: item.status,
         rules: item.rules,
         ...confidenceOf(item.confidence),
@@ -724,6 +888,7 @@ export function reviewRow(record: MeetingRecord, item: MeetingItem, transcript?:
         edit: EDITS[item.kind],
         ...(needs ? { needs } : {}),
         sources: sourcesOf(item, parts, lines),
+        ...(voice ? { voice } : {}),
         target: { kind: "item", id: item.id },
         ...(decision
             ? {
@@ -742,8 +907,18 @@ export function reviewRow(record: MeetingRecord, item: MeetingItem, transcript?:
     };
 }
 
-/** The row order (see the module comment): questions by uncertain-word score then time, then the rest by time and id. */
+/**
+ * The row order (see the module comment): open rows before decided ones; in each group, questions by uncertain-word
+ * score then time, then the rest by time and id.
+ */
 function rowOrder(a: MeetingItem, b: MeetingItem): number {
+    const aOpen = a.status === "suggested";
+    const bOpen = b.status === "suggested";
+
+    if (aOpen !== bOpen) {
+        return aOpen ? -1 : 1;
+    }
+
     const aQuestion = a.kind === "question";
     const bQuestion = b.kind === "question";
 
@@ -769,13 +944,14 @@ function rowOrder(a: MeetingItem, b: MeetingItem): number {
 
 /**
  * Every row of a meeting in the row order, with the count of the open questions left out under `minPriority`
- * (`lowPriority: "show"` keeps them).
+ * (`lowPriority: "show"` keeps them). The voice library is read once for all rows, and only when a row needs it.
  */
 export function reviewRows(
     record: MeetingRecord,
-    options: { transcript?: Transcript; minPriority: number; lowPriority?: "hide" | "show" }
+    options: { transcript?: Transcript; minPriority: number; lowPriority?: "hide" | "show"; voices?: VoiceSamplesOf }
 ): ReviewRows {
     const lines = options.transcript ? linesOf(options.transcript) : undefined;
+    const voices = options.voices ?? lazyVoiceSamples(record);
     const low = (item: MeetingItem) =>
         item.kind === "question" &&
         item.status === "suggested" &&
@@ -783,7 +959,7 @@ export function reviewRows(
     const shown = record.items.filter((item) => options.lowPriority === "show" || !low(item));
     return {
         meeting: record.id,
-        rows: [...shown].sort(rowOrder).map((item) => reviewRow(record, item, lines)),
+        rows: [...shown].sort(rowOrder).map((item) => reviewRow(record, item, lines, { voices })),
         hidden: {
             lowPriority: options.lowPriority === "show" ? 0 : record.items.filter(low).length,
             minPriority: options.minPriority,
@@ -799,8 +975,10 @@ export function reviewRowsPatch(options: {
     minPriority: number;
     lowPriority?: "hide" | "show";
 }): ReviewRowsPatch {
-    const before = reviewRows(options.before, options);
-    const after = reviewRows(options.after, options);
+    // One read of the voice library for both sides: a decision does not change the saved samples a row counts.
+    const voices = lazyVoiceSamples(options.after);
+    const before = reviewRows(options.before, { ...options, voices });
+    const after = reviewRows(options.after, { ...options, voices });
     const previous = new Map(before.rows.map((row) => [row.id, row]));
     const next = new Map(after.rows.map((row) => [row.id, row]));
     const fields = (record: MeetingRecord) => ({

@@ -1,13 +1,18 @@
-import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { existsSync, linkSync, readFileSync, renameSync, utimesSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { existsSync, linkSync, mkdtempSync, readFileSync, renameSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import type { AreaClients } from "@genesiscz/utils/genesis-tools";
 import * as requestJournal from "@genesiscz/utils/genesis-tools/areas/person/journal";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
+import type { ChannelEmbedding } from "@genesiscz/utils/meetings/voice";
+import * as voiceEmbedding from "@genesiscz/utils/meetings/voice";
 import * as voiceFeatures from "@genesiscz/utils/meetings/voice-features";
+import { addVoicePrint } from "@genesiscz/utils/meetings/voice-store";
 import { PROFILER_SCOPE_NAMES, profiler } from "@genesiscz/utils/profile";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { WordCheck } from "@genesiscz/utils/transcribe/languages/word-check";
@@ -1203,6 +1208,235 @@ describe("speaker-label integration", () => {
         const second = await runSuggest({ store, record: reopened, rules: ["speakers"] });
         expect(second.fresh).toEqual([]);
         expect(new MeetingStore(store.storage).read(record.id)?.items).toEqual(reopened.items);
+    });
+});
+
+describe("voice support on seat lines", () => {
+    const owner = "Alice Example";
+    const project = "voice-support-fixture";
+    let previousHome: string;
+
+    beforeEach(() => {
+        previousHome = env.tools.getHome();
+        env.testing.set("GENESIS_TOOLS_HOME", mkdtempSync(join(tmpdir(), "voice-support-")));
+    });
+    afterEach(() => env.testing.set("GENESIS_TOOLS_HOME", previousHome));
+
+    function readyChannel(options: { embedding: number[]; fromSec: number; toSec: number; audioPath: string }) {
+        const channel: ChannelEmbedding = {
+            quality: "ready",
+            model: "fixture-model",
+            embedding: options.embedding,
+            fromSec: options.fromSec,
+            toSec: options.toSec,
+            channel: 0,
+            track: "raw-mic",
+            source: { audioPath: options.audioPath, size: 13, mtimeMs: 1 },
+        };
+        return channel;
+    }
+
+    /** Alice alone on the microphone seat, one saved sample of her voice, and one embedding per transcript line. */
+    async function seatVoiceFixture(vectors: number[][]) {
+        const fixture = await runnerFixture({
+            project,
+            participants: [{ name: owner, self: true, from: ["fixture"] }],
+            seats: { room: [owner], remote: [] },
+        });
+        const { store, record, opened, meeting } = fixture;
+        const audioPath = join(store.folder(record.id), "fixture.wav");
+        writeFileSync(audioPath, "fixture audio");
+        const endSec = vectors.length * 5 + 10;
+        meeting.transcript = vectors.map((_, index) => ({
+            speaker: "Speaker 1",
+            startSec: index * 5,
+            text: "A line.",
+        }));
+        spies.push(
+            spyOn(opened, "evidence").mockResolvedValue({
+                segments: [{ startSec: 0, endSec, channel: "mic" }],
+                speaking: [],
+                files: [],
+            }),
+            spyOn(opened, "presence").mockResolvedValue([{ name: owner, fromSec: 0, toSec: endSec }]),
+            spyOn(opened, "sound").mockResolvedValue({
+                tracks: [],
+                slice: (request) => ({
+                    track: "source-mic",
+                    path: audioPath,
+                    channel: 0,
+                    clock: "source",
+                    fileFromSec: request.fromSec,
+                    fileToSec: request.toSec,
+                }),
+            }),
+            spyOn(voiceEmbedding, "embedVoiceLines").mockImplementation(async (input) =>
+                input.spans.map((span) => ({
+                    index: span.index,
+                    channels: [
+                        readyChannel({
+                            embedding: vectors[span.index]!,
+                            fromSec: span.fromSec,
+                            toSec: span.toSec,
+                            audioPath,
+                        }),
+                    ],
+                }))
+            )
+        );
+        addVoicePrint(
+            project,
+            owner,
+            {
+                meeting: "training",
+                sourceSha: "digest",
+                seat: "mic",
+                track: "source-mic",
+                fromSec: 0,
+                toSec: 5,
+                embedding: [1, 0],
+                confirmedAt: START,
+            },
+            "fixture-model"
+        );
+        return fixture;
+    }
+
+    function storedRanges(store: MeetingStore, id: string) {
+        return new MeetingStore(store.storage).read(id)!.items.filter((item) => item.kind === "speaker-range");
+    }
+
+    test("merge keeps the seat label and attaches the voice's support only when it names the seat's person", () => {
+        const owned: LineLabel = { labeler: "seat", index: 0, seat: "mic", person: owner, reason: "seat-of-one" };
+        const support = { person: owner, score: 0.82, samples: 21 };
+        const voiced: LineLabel = {
+            labeler: "voice",
+            index: 0,
+            seat: "mic",
+            person: owner,
+            reason: "named",
+            score: 0.8,
+            voiceSupport: support,
+        };
+        expect(
+            mergeLineLabels(
+                new Map([
+                    ["seat", [owned]],
+                    ["voice", [voiced]],
+                ])
+            )
+        ).toEqual([{ ...owned, voiceSupport: support }]);
+        const elsewhere: LineLabel = { ...voiced, voiceSupport: { ...support, person: "Bob Example" } };
+        expect(
+            mergeLineLabels(
+                new Map([
+                    ["seat", [owned]],
+                    ["voice", [elsewhere]],
+                ])
+            )
+        ).toEqual([owned]);
+        const veto: LineLabel = {
+            labeler: "voice",
+            index: 0,
+            seat: "mic",
+            reason: "not-the-seat-person",
+            score: 0.1,
+            next: { person: owner, score: 0.1 },
+        };
+        expect(
+            mergeLineLabels(
+                new Map([
+                    ["seat", [owned]],
+                    ["voice", [veto]],
+                ])
+            )
+        ).toEqual([veto]);
+    });
+
+    test("a seat line whose voice matches the seat person carries voiceSupport and keeps confidence 0.95", async () => {
+        const { store, record, opened, config } = await seatVoiceFixture([
+            [1, 0],
+            [0.96, 0.28],
+        ]);
+        const labels = await proposeSpeakerLabels(opened, config.global.speakerLabels);
+        expect(labels.map(({ labeler, reason, person, score }) => [labeler, reason, person, score])).toEqual([
+            ["seat", "seat-of-one", owner, undefined],
+            ["seat", "seat-of-one", owner, undefined],
+        ]);
+        expect(labels[0]?.voiceSupport).toEqual({ person: owner, score: 1, samples: 1 });
+        expect(labels[1]?.voiceSupport).toMatchObject({ person: owner, samples: 1 });
+        expect(labels[1]?.voiceSupport?.score).toBeCloseTo(0.96, 6);
+
+        await runSuggest({ store, record, rules: ["speakers"] });
+        const ranges = storedRanges(store, record.id);
+        expect(ranges.map((item) => [item.speaker, item.confidence, item.rules])).toEqual([
+            [owner, 0.95, [MeetingRule.Attendance]],
+            [owner, 0.95, [MeetingRule.Attendance]],
+        ]);
+        expect(ranges[0]?.evidence).toMatchObject({
+            labeler: "seat",
+            reason: "seat-of-one",
+            voiceSupport: { person: owner, score: 1, samples: 1 },
+        });
+        expect(ranges[0]?.evidence?.score).toBeUndefined();
+    });
+
+    test("a stranger's line on the seat still gets not-the-seat-person while the owner's lines carry support", async () => {
+        const { opened, config } = await seatVoiceFixture([
+            [1, 0],
+            [0, 1],
+            [1, 0],
+        ]);
+        const labels = await proposeSpeakerLabels(opened, config.global.speakerLabels);
+        expect(labels.map(({ labeler, reason, person }) => [labeler, reason, person])).toEqual([
+            ["seat", "seat-of-one", owner],
+            ["voice", "not-the-seat-person", undefined],
+            ["seat", "seat-of-one", owner],
+        ]);
+        expect(labels[1]).toMatchObject({ score: 0, next: { person: owner, score: 0 } });
+        expect(labels.map((label) => label.voiceSupport?.person)).toEqual([owner, undefined, owner]);
+    });
+
+    test("with supportOnSeatLines off the labels are today's: the same seats and vetoes, no support", async () => {
+        expect(meetingsConfigSchema.parse({}).global.speakerLabels.voice.supportOnSeatLines).toBe(true);
+        const { opened, config } = await seatVoiceFixture([
+            [1, 0],
+            [0, 1],
+            [1, 0],
+        ]);
+        const on = await proposeSpeakerLabels(opened, config.global.speakerLabels);
+        config.global.speakerLabels.voice.supportOnSeatLines = false;
+        const off = await proposeSpeakerLabels(opened, config.global.speakerLabels);
+        expect(on.filter((label) => label.voiceSupport)).toHaveLength(2);
+        expect(off.filter((label) => label.voiceSupport)).toEqual([]);
+        expect(on.map((label): LineLabel => ({ ...label, voiceSupport: undefined }))).toEqual(off);
+    });
+
+    test("a rerun adds the voice's support to the stored seat proposal and takes it away when the setting is off", async () => {
+        const { store, record, config } = await seatVoiceFixture([
+            [1, 0],
+            [1, 0],
+        ]);
+        config.global.speakerLabels.voice.supportOnSeatLines = false;
+        await runSuggest({ store, record, rules: ["speakers"] });
+        const before = storedRanges(store, record.id);
+        expect(before.map((item) => item.evidence?.voiceSupport)).toEqual([undefined, undefined]);
+
+        config.global.speakerLabels.voice.supportOnSeatLines = true;
+        const second = await runSuggest({ store, record: store.read(record.id)!, rules: ["speakers"] });
+        expect(second.fresh).toEqual([]);
+        const supported = storedRanges(store, record.id);
+        expect(supported.map((item) => [item.id, item.status, item.confidence])).toEqual(
+            before.map((item) => [item.id, "suggested", 0.95])
+        );
+        expect(supported.map((item) => item.evidence?.voiceSupport)).toEqual([
+            { person: owner, score: 1, samples: 1 },
+            { person: owner, score: 1, samples: 1 },
+        ]);
+
+        config.global.speakerLabels.voice.supportOnSeatLines = false;
+        await runSuggest({ store, record: store.read(record.id)!, rules: ["speakers"] });
+        expect(storedRanges(store, record.id)).toEqual(before);
     });
 });
 

@@ -933,7 +933,9 @@ test("meeting rows expose a stored attendance failure even without a readable tr
         config: () => config.read(),
         linkedSource,
     });
-    expect(result.attendanceWarning).toBe("Fixture attendance not found");
+    // One short sentence for the window; the stored text is the detail behind it (U3).
+    expect(result.attendanceWarning).toBe("The call did not say who joined, so the people come from the transcript.");
+    expect(result.attendanceDetail).toBe("Fixture attendance not found");
 });
 
 test("line evidence names the active swaps that skipped each source line", async () => {

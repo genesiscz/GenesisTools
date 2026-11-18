@@ -404,6 +404,12 @@ const speakerLabelsSchema = z.object({
             sampleScope: z.enum(["all", "project"]).default("all"),
             /** Mean cosine below which a sample is offered for human review. */
             outlierBelow: z.number().min(-1).max(1).default(0.5),
+            /**
+             * Also score a line that the seat gives to its only person against that person's saved samples, and keep
+             * a match as the voice's support beside the seat's name. The seat's confidence stays its own. Off: the
+             * voice only checks such a line for a stranger.
+             */
+            supportOnSeatLines: z.boolean().default(true),
             /** When a voice match is good enough to name a line (cosine scores, 0 to 1). */
             gate: z
                 .object({

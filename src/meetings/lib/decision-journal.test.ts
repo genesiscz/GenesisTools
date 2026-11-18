@@ -1406,6 +1406,39 @@ describe("decision journal", () => {
         ]);
     });
 
+    test("spelling reach names the heard and the proposed words and where each line says them (U12)", async () => {
+        const fx = await fixture([term("i1", 5, { proposed: "ADA" })]);
+        const planned = await fx.journal.plan({
+            meeting: fx.meeting.id,
+            action: { kind: "confirm", items: ["i1"] },
+            actor: person,
+        });
+        const reach = decisionReach({
+            entry: planned.entry!,
+            named: ["i1"],
+            transcript: [
+                { startSec: 5, speaker: "Speaker 1", text: "Ada is here, Ada again" },
+                // An emoji is two UTF-16 units: the range counts them as the window's NSRange does.
+                { startSec: 10, speaker: "Speaker 1", text: "😀 Ada" },
+                { startSec: 15, speaker: "Speaker 1", text: "Nothing to change" },
+            ],
+            ledger: [],
+            repeats: 2,
+        });
+
+        expect(reach.spelling).toMatchObject({ heard: "Ada", proposed: "ADA" });
+        expect(reach.spelling?.occurrences.map(({ line, ranges }) => ({ line, ranges }))).toEqual([
+            {
+                line: 0,
+                ranges: [
+                    { location: 0, length: 3 },
+                    { location: 13, length: 3 },
+                ],
+            },
+            { line: 1, ranges: [{ location: 3, length: 3 }] },
+        ]);
+    });
+
     test("changing only spelling reach stamps a new decision and permits explicit dictionary teaching", async () => {
         const fx = await fixture([term("i1", 5, { proposed: "ADA" })]);
         const first = await fx.journal.apply({

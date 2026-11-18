@@ -19,7 +19,7 @@ import {
 import { DecisionJournal } from "../decision-journal";
 import { type DecidedLine, decidedLines, itemLines, personPresent } from "../listen-answers";
 import { localSpeechDuring } from "../local-speech";
-import { attendanceWarning, OpenedMeeting } from "../opened-meeting";
+import { attendanceDetail, attendanceWarning, OpenedMeeting } from "../opened-meeting";
 import { compactEvidence, rawMeeting } from "../raw";
 import { screenTimeline } from "../screen-timeline";
 import { configShowRead, overviewRead, rowsRead, speakerStatsRead } from "../window-reads";
@@ -78,6 +78,7 @@ export async function readRows(
         questionDetails?: QuestionDetails[];
         lineEvidence?: WindowLineEvidence[];
         attendanceWarning?: string;
+        attendanceDetail?: string;
     }
 > {
     const record = recordOf(store, params.meeting);
@@ -85,6 +86,7 @@ export async function readRows(
     const config = await (deps.config?.() ?? (deps.configStore?.() ?? new MeetingsConfigStore()).read());
     const warning = attendanceWarning(record);
     const opened = OpenedMeeting.of(store, record, linked);
+    const detail = attendanceDetail(record);
     const result = {
         ...(await rowsRead({
             store,
@@ -95,6 +97,7 @@ export async function readRows(
             applyAbove: params.applyAbove ?? config.global.suggest.applyAbove,
         })),
         ...(warning ? { attendanceWarning: warning } : {}),
+        ...(detail ? { attendanceDetail: detail } : {}),
     };
     const transcript = await opened.meeting().catch((error: unknown) => {
         logger.debug({ error, meeting: record.id }, "question line data needs a readable transcript");
