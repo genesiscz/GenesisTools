@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 @testable import GenesisKit
 import SwiftUI
 import XCTest
@@ -514,6 +515,215 @@ final class RecordingRenderTests: XCTestCase {
             XCTAssertTrue(text.contains(state.phase == .finishing ? "Saving" : state.useTitle.components(separatedBy: " ").last ?? ""),
                           "\(name): \(text)")
         }
+    }
+}
+
+/// Drives the widget entry and its actual bar. Only the target inventory, grant and capture-session pipe are fixtures.
+@MainActor
+final class WidgetBarRecordingTests: XCTestCase {
+    @MainActor private final class Fixture {
+        let suite = "widget-recording-\(UUID().uuidString)"
+        lazy var defaults = UserDefaults(suiteName: suite)!
+        let channel = FakeChannel()
+        var starts: [[String]] = []
+        var receive: (([String]) -> Void)?
+        var listed = false
+        var used: [URL] = []
+        var errors: [String] = []
+        lazy var recorder = ScreenRecorder(
+            settings: RecordingSettings(defaults: defaults), defaults: defaults, forSnapshot: true,
+            permissionGate: { _ in true }, makeController: { [weak self] in
+                RecordingSessionController { [weak self] args, lines, _ in
+                    guard let self else { throw CancellationError() }
+                    starts.append(args)
+                    receive = lines
+                    return channel
+                }
+            }, loadTargets: { [weak self] in
+                self?.listed = true
+                return RecordingFixture.targets
+            })
+
+        init() {
+            defaults.set(false, forKey: "recorder.capture.countdown")
+            defaults.set(false, forKey: RecordingSettings.Key.showsBorder)
+            defaults.set(60, forKey: "recorder.capture.fps")
+        }
+
+        func begin() {
+            recorder.begin(host: ScreenRecordingHost(useTitle: "Stop and paste", permissionReason: "Fixture recording",
+                onUse: { [weak self] in self?.used.append($0) }, onError: { [weak self] in self?.errors.append($0) }))
+        }
+
+        var picker: NSWindow? {
+            NSApp.windows.first { $0.identifier?.rawValue == "recording.picker" && $0.isVisible }
+        }
+
+        func cleanup() {
+            receive?([#"{"event":"discarded"}"#])
+            recorder.discard()
+            picker?.orderOut(nil)
+            defaults.removePersistentDomain(forName: suite)
+        }
+    }
+
+    private func until(_ description: String, _ condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now + .seconds(4)
+        while !condition() {
+            guard ContinuousClock.now < deadline else { throw ToolsBridgeError.refused(description) }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+    }
+
+    private func bar(_ f: Fixture) throws -> NSWindow {
+        let window = try XCTUnwrap(f.picker?.parent, "The widget picker must be attached to the setup bar")
+        XCTAssertEqual(window.identifier?.rawValue, "recording.bar")
+        return window
+    }
+
+    private func press(_ control: String, in window: NSWindow) async throws {
+        // Let SwiftUI update the enabled state after a target choice or session acknowledgement.
+        await withCheckedContinuation { continuation in
+            RunLoop.main.perform { continuation.resume() }
+        }
+        window.contentView?.layoutSubtreeIfNeeded()
+        window.displayIfNeeded()
+        func value(_ node: AXUIElement, _ name: CFString) -> CFTypeRef? {
+            var result: CFTypeRef?
+            return AXUIElementCopyAttributeValue(node, name, &result) == .success ? result : nil
+        }
+        let identifier = "fixture-bar-\(window.windowNumber)"
+        window.setAccessibilityIdentifier(identifier)
+        let app = AXUIElementCreateApplication(getpid())
+        let windows = value(app, kAXWindowsAttribute as CFString) as? [AXUIElement] ?? []
+        let root = try XCTUnwrap(windows.first { value($0, kAXIdentifierAttribute as CFString) as? String == identifier })
+        var visited = Set<AXUIElement>()
+        func button(_ node: AXUIElement) -> AXUIElement? {
+            guard visited.insert(node).inserted else { return nil }
+            if value(node, kAXIdentifierAttribute as CFString) as? String == "recording.bar.\(control)" { return node }
+            for child in value(node, kAXChildrenAttribute as CFString) as? [AXUIElement] ?? [] {
+                if let found = button(child) { return found }
+            }
+            return nil
+        }
+        let target = try XCTUnwrap(button(root), "Missing bar control \(control)")
+        XCTAssertEqual(AXUIElementPerformAction(target, kAXPressAction as CFString), .success)
+    }
+
+    func testShelfEntryOpensSetupWithPickerAndStartsNoSession() async throws {
+        _ = NSApplication.shared
+        let f = Fixture()
+        let shelf = WidgetShelfStore(request: { _, _ in Data() }, screenRecorder: f.recorder)
+        defer { shelf.stop(); f.cleanup() }
+        shelf.recordScreen()
+        try await until("The shelf did not open its picker") { f.picker != nil && f.listed }
+        let window = try bar(f)
+        let picker = try XCTUnwrap(f.picker)
+        XCTAssertTrue(window.isVisible)
+        XCTAssertLessThanOrEqual(picker.frame.maxY, window.frame.minY + 1)
+        XCTAssertEqual(window.sharingType, .none)
+        XCTAssertEqual(picker.sharingType, .none)
+        XCTAssertTrue(f.recorder.stateDescription.contains("phase=setup"))
+        shelf.recordScreen()
+        XCTAssertIdentical(f.picker?.parent, window)
+        XCTAssertTrue(f.starts.isEmpty)
+        if let directory = ProcessInfo.processInfo.environment["RECORDING_SNAPSHOT_DIR"] {
+            let folder = URL(fileURLWithPath: directory, isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            for (name, panel) in [("bar", window), ("picker", picker)] {
+                let sharing = panel.sharingType
+                defer { panel.sharingType = sharing }
+                panel.sharingType = .readOnly
+                let captured = await WindowSnapshot.capture(panel)
+                let shot = try XCTUnwrap(captured)
+                let png = try XCTUnwrap(shot.image.representation(using: .png, properties: [:]))
+                try png.write(to: folder.appendingPathComponent("widget-setup-\(name).png"), options: .atomic)
+                print("Widget setup \(name) frame \(NSStringFromRect(panel.frame)) by \(shot.method)")
+            }
+        }
+    }
+
+    func testChoiceWaitsForRecordAndStopAndPasteDeliversOnce() async throws {
+        _ = NSApplication.shared
+        let f = Fixture()
+        defer { f.cleanup() }
+        f.begin()
+        try await until("Missing widget targets") { f.listed }
+        let pickerID = try XCTUnwrap(f.picker?.windowNumber)
+        let window = f.picker?.parent
+        XCTAssertTrue(f.recorder.choose { $0.windows.first?.target })
+        f.recorder.stopAndUse()
+        XCTAssertTrue(f.recorder.stateDescription.contains("phase=setup"), "Choosing edits the draft")
+        XCTAssertTrue(f.starts.isEmpty)
+        try await press("record", in: XCTUnwrap(window))
+        try await until("Record did not start a session") { !f.starts.isEmpty }
+        XCTAssertEqual(f.starts.count, 1)
+        let args = try XCTUnwrap(f.starts.first)
+        func argument(_ flag: String) throws -> String {
+            let index = try XCTUnwrap(args.firstIndex(of: flag))
+            return try XCTUnwrap(args.dropFirst(index + 1).first)
+        }
+        let wire = try argument("--target")
+        XCTAssertEqual(try JSONDecoder().decode(RecordingTarget.self, from: Data(wire.utf8)),
+                       RecordingFixture.targets.windows.first?.target)
+        XCTAssertEqual(try argument("--fps"), "60")
+        let exclusions = Set(try argument("--exclude-window-ids").split(separator: ",").compactMap { Int($0) })
+        XCTAssertTrue(exclusions.contains(try XCTUnwrap(window).windowNumber))
+        XCTAssertTrue(exclusions.contains(pickerID))
+        f.recorder.stopAndUse()
+        XCTAssertTrue(f.channel.sent.isEmpty, "Stop is unavailable until this take has a frame")
+        f.receive?([#"{"event":"state","state":"recording"}"#])
+        try await until("The take never became stoppable") { f.recorder.stateDescription.contains("phase=recording") }
+        f.recorder.stopAndUse()
+        f.recorder.stopAndUse()
+        try await until("Stop did not reach the session") { !f.channel.sent.isEmpty }
+        XCTAssertEqual(f.channel.sent, [#"{"cmd":"stop"}"#])
+        XCTAssertTrue(f.used.isEmpty, "Saving has no movie to hand over yet")
+        f.receive?([#"{"event":"done","path":"/fixture/widget.mp4"}"#])
+        try await until("Stop did not deliver the movie") { !f.recorder.isActive }
+        XCTAssertEqual(f.used, [URL(fileURLWithPath: "/fixture/widget.mp4")])
+        XCTAssertTrue(f.errors.isEmpty)
+    }
+
+    func testSwitchWaitsForPauseAndResumesOnlyAPickerPause() async throws {
+        _ = NSApplication.shared
+        let f = Fixture()
+        defer { f.cleanup() }
+        f.begin()
+        try await until("Missing widget targets") { f.listed }
+        let window = try bar(f)
+        XCTAssertTrue(f.recorder.choose { $0.windows.first?.target })
+        try await press("record", in: window)
+        try await until("Record did not start") { f.receive != nil }
+        let recording = #"{"event":"state","state":"recording"}"#
+        let paused = #"{"event":"state","state":"paused","reason":"user"}"#
+        f.receive?([recording])
+        try await until("Missing first frame") { f.recorder.stateDescription.contains("phase=recording") }
+        try await press("target", in: window)
+        try await until("No picker pause") { f.channel.sent == [#"{"cmd":"pause"}"#] }
+        XCTAssertNil(f.picker, "The switch picker must wait for the pause acknowledgement")
+        f.receive?([paused])
+        try await until("Pause did not open the picker") { f.picker != nil }
+        XCTAssertTrue(f.recorder.choose { $0.apps.last?.target })
+        try await until("The switch did not resume capture") { f.channel.sent.count == 2 }
+        XCTAssertEqual(f.channel.sent.last, #"{"cmd":"switch","target":{"app":"4202","kind":"app","name":"Viewer"}}"#)
+        f.receive?([#"{"event":"state","state":"starting","target":{"kind":"app","app":"4202"}}"#, recording])
+        try await until("Switch never finished") { f.recorder.stateDescription.contains("phase=recording") }
+        try await press("pause", in: window)
+        try await until("No manual pause") { f.channel.sent.count == 3 }
+        f.receive?([paused])
+        try await until("Manual pause not confirmed") { f.recorder.stateDescription.contains("phase=paused") }
+        try await press("target", in: window)
+        try await until("No picker while paused") { f.picker != nil }
+        XCTAssertTrue(f.recorder.choose { $0.windows.last?.target })
+        try await until("Pending target was not selected") { f.recorder.stateDescription.contains("target=Quarterly chart") }
+        XCTAssertTrue(f.recorder.stateDescription.contains("phase=paused"))
+        XCTAssertEqual(f.channel.sent.count, 3, "Choosing must not resume a manually paused session")
+        try await press("resume", in: window)
+        try await until("Resume did not apply the paused choice") { f.channel.sent.count == 4 }
+        XCTAssertEqual(f.channel.sent.last, #"{"cmd":"switch","target":{"app":"Viewer","kind":"window","pid":4202,"title":"Quarterly chart","windowIds":[610]}}"#)
+        f.receive?([#"{"event":"state","state":"starting","target":{"kind":"window","windowIds":[610]}}"#, recording])
+        try await until("Did not resume after the manual pause") { f.recorder.stateDescription.contains("phase=recording") }
     }
 }
 
