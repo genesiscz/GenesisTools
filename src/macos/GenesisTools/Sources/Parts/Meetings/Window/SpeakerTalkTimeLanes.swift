@@ -147,8 +147,10 @@ struct SpeakerTalkTimeLanes: View {
     static let compactWidth: CGFloat = 620
     static let compactNameWidth: CGFloat = 112
     static let compactShareWidth: CGFloat = 40
-    /// The room an end label of the ruler takes ("2:26:10" in 10 pt monospaced digits, with a gap).
-    static let rulerEndRoom: CGFloat = 80
+    /// One character of a ruler label: 10 pt monospaced digits advance 0.6 em, plus a little for rounding.
+    static let rulerCharWidth: CGFloat = 6.1
+    /// The clear gap between a mark's label and an end label.
+    static let rulerGap: CGFloat = 6
 
     @State private var compact = false
     @State private var dragOwner = UUID()
@@ -379,12 +381,7 @@ struct SpeakerTalkTimeLanes: View {
 
     private var ruler: some View {
         GeometryReader { proxy in
-            let marks = Self.rulerMarks(durationSec: durationSec)
-            // A mark too close to an end label leaves out: at the narrowest lanes "2:00:00" overlapped "2:26:10".
-            let inner = marks.dropFirst().dropLast().filter { sec in
-                let x = CGFloat(sec / durationSec) * proxy.size.width
-                return x > Self.rulerEndRoom && x < proxy.size.width - Self.rulerEndRoom
-            }
+            let inner = Self.innerRulerMarks(durationSec: durationSec, width: proxy.size.width)
             ZStack(alignment: .topLeading) {
                 ForEach(inner, id: \.self) { sec in
                     rulerText(sec).position(x: CGFloat(sec / durationSec) * proxy.size.width, y: 7)
@@ -406,6 +403,24 @@ struct SpeakerTalkTimeLanes: View {
             .font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary)
             .fixedSize()
     }
+
+    /// The marks between the two end labels that keep clear of both. A mark too close to an end label leaves out (at
+    /// the narrowest lanes "2:00:00" overlapped "2:26:10"); each end's room is its own label's width, so the short
+    /// "00:00" at the start no longer takes the room of a long end label (w_ehvp4b0b: one 80 pt room for both ends
+    /// dropped 0:30:00 beside "00:00" at 900 x 600).
+    static func innerRulerMarks(durationSec: Double, width: CGFloat) -> [Double] {
+        guard durationSec > 0 else { return [] }
+        let startRoom = rulerLabelWidth(MeetingsFormat.clock(0))
+        let endRoom = rulerLabelWidth(MeetingsFormat.clock(durationSec))
+        return rulerMarks(durationSec: durationSec).dropFirst().dropLast().filter { sec in
+            let x = CGFloat(sec / durationSec) * width
+            let half = rulerLabelWidth(MeetingsFormat.clock(sec)) / 2 + rulerGap
+            return x - half > startRoom && x + half < width - endRoom
+        }
+    }
+
+    /// The width of a ruler label (10 pt monospaced).
+    static func rulerLabelWidth(_ text: String) -> CGFloat { CGFloat(text.count) * rulerCharWidth }
 
     /// Ruler marks at a round step that gives four to seven marks, plus the end.
     static func rulerMarks(durationSec: Double) -> [Double] {
