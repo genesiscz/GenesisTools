@@ -8,6 +8,7 @@ import { liveEngineDeps } from "@genesiscz/utils/genesis-tools/actions/registry"
 import { runAreaAction } from "@genesiscz/utils/genesis-tools/actions/run";
 import { AREAS } from "@genesiscz/utils/genesis-tools/areas";
 import { LIVE_FACTS } from "@genesiscz/utils/genesis-tools/capability/facts";
+import { genesisToolsRequestOpenCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { RpcSocketClient } from "@genesiscz/utils/rpc/socket-client";
 import { runVisibly } from "@genesiscz/utils/terminal/visible-run";
@@ -29,7 +30,15 @@ import {
     stateOf,
 } from "./journal";
 import { type PersonRequest, presentPostedRequest, requestSchema } from "./request";
-import { notifyRequest, presentInApp, presentInSystemDialog, presentInTerminal, type RequestContext } from "./surfaces";
+import {
+    notifyRequest,
+    notifyViaChannels,
+    presentInApp,
+    presentInSystemDialog,
+    presentInTerminal,
+    type RequestContext,
+} from "./surfaces";
+import { type DialogAnswer, type DialogResult, PERSON_DIALOGS } from "./system-dialog";
 
 const input = {
     id: "notice:fixture",
@@ -180,19 +189,30 @@ test("windowNotice posts once per caller id and returns after the configured del
 });
 
 test("all live effects refuse the test process before a host call", async () => {
-    const ctx = {} as RequestContext;
-    for (const surface of [presentInApp, presentInSystemDialog, presentInTerminal, notifyRequest]) {
-        await expect(surface(ctx)).rejects.toThrow();
+    const hostCall = mock((): never => {
+        throw new Error("The test process reached the host");
+    });
+    // A context every surface could run with: only the refusal at the surface's own entry stops it.
+    const ctx = {
+        args: { ...input, createdAt: now().toISOString(), deadlineSeconds: 1 },
+        config: {},
+        areaConfig: {},
+        timeoutMs: 1_000,
+        service: null,
+        app: { rpc: hostCall },
+        facts: { ...LIVE_FACTS, platform: hostCall, hasDisplay: hostCall },
+        pass: (reason: string) => ({ pass: true as const, reason }),
+    } as unknown as RequestContext;
+    for (const surface of [presentInApp, presentInSystemDialog, presentInTerminal, notifyRequest, notifyViaChannels]) {
+        await expect(surface(ctx)).rejects.toThrow("is refused in a test process");
     }
+    expect(hostCall).not.toHaveBeenCalled();
     await expect(runVisibly({ argv: ["/usr/bin/true"], timeoutMs: 10 })).rejects.toThrow();
     expect(await connectGenesisToolsService()).toBeNull();
     await expect(startGenesisToolsService()).rejects.toThrow("in-test");
     const result = await runAreaAction(AREAS, "person.notice", input, liveEngineDeps(AREAS));
     expect(result.status).toBe("unreachable");
     expect(result.skipped[0]?.reason).toContain("in-test");
-    const hostCall = mock((): never => {
-        throw new Error("The test process reached the host");
-    });
     const deps = liveEngineDeps(AREAS, {
         app: { rpc: hostCall },
         facts: { ...LIVE_FACTS, platform: () => "darwin", appBundle: hostCall, hasDisplay: hostCall },
@@ -204,6 +224,34 @@ test("all live effects refuse the test process before a host call", async () => 
     expect(window.status).toBe("unreachable");
     expect(window.skipped[0]?.code).toBe("in-test");
     expect(hostCall).not.toHaveBeenCalled();
+});
+
+test("a system dialog tells an Approve and a Cancel from a deadline and a failed program", () => {
+    const cases: Array<[NodeJS.Platform, DialogResult, DialogAnswer]> = [
+        ["darwin", { exitCode: 0, stdout: "button returned:Approve, gave up:false" }, "approved"],
+        ["darwin", { exitCode: 1, stdout: "", stderr: "execution error: User canceled. (-128)" }, "cancelled"],
+        ["darwin", { exitCode: 0, stdout: "button returned:, gave up:true" }, "gave-up"],
+        ["darwin", { exitCode: null, stdout: "" }, "gave-up"],
+        ["darwin", { exitCode: 1, stdout: "", stderr: "" }, "failed"],
+        ["linux", { exitCode: 0, stdout: "" }, "approved"],
+        ["linux", { exitCode: 1, stdout: "" }, "cancelled"],
+        ["linux", { exitCode: 5, stdout: "" }, "gave-up"],
+        ["linux", { exitCode: null, stdout: "" }, "gave-up"],
+        ["linux", { exitCode: 255, stdout: "" }, "failed"],
+        ["win32", { exitCode: 0, stdout: "Yes\r\n" }, "approved"],
+        ["win32", { exitCode: 0, stdout: "No\r\n" }, "cancelled"],
+        ["win32", { exitCode: null, stdout: "" }, "gave-up"],
+        ["win32", { exitCode: 1, stdout: "" }, "failed"],
+    ];
+    expect(cases.map(([platform, result]) => PERSON_DIALOGS[platform]?.answer(result))).toEqual(
+        cases.map(([, , answer]) => answer)
+    );
+});
+
+test("the request open command ends its options before the id", () => {
+    expect(genesisToolsRequestOpenCommand("notice:fixture")).toBe("tools genesis-tools request open -- notice:fixture");
+    expect(genesisToolsRequestOpenCommand("--help")).toBe("tools genesis-tools request open -- --help");
+    expect(() => genesisToolsRequestOpenCommand("notice fixture")).toThrow("Invalid request id");
 });
 
 test("the click worker opens the exact target and records one successful notification click", async () => {
@@ -276,22 +324,24 @@ test("a notice goes through isolated RPC in both directions, emits events, and r
         throw new Error("fixture service did not start");
     }
     let presentations = 0;
-    const face = await RpcSocketClient.connect({
-        socket: start.host.entry.socket,
-        logScope: "fixture",
-        label: "fixture face",
-        onRequest: async (incoming) => {
-            expect(incoming.method).toBe("request.present");
-            const request = requestSchema.parse(incoming.params);
-            presentations++;
-            return { id: request.id, status: "done", reason: null };
-        },
-    });
-    const client = await connectGenesisToolsService({ dir });
-    if (!client) {
-        throw new Error("fixture client did not connect");
-    }
+    let face: RpcSocketClient | null = null;
+    let client: RpcSocketClient | null = null;
     try {
+        face = await RpcSocketClient.connect({
+            socket: start.host.entry.socket,
+            logScope: "fixture",
+            label: "fixture face",
+            onRequest: async (incoming) => {
+                expect(incoming.method).toBe("request.present");
+                const request = requestSchema.parse(incoming.params);
+                presentations++;
+                return { id: request.id, status: "done", reason: null };
+            },
+        });
+        client = await connectGenesisToolsService({ dir });
+        if (!client) {
+            throw new Error("fixture client did not connect");
+        }
         await face.call("hello", { methods: ["request.present"] });
         const events: string[] = [];
         client.onNotification((event) => events.push(event.method));
@@ -318,8 +368,8 @@ test("a notice goes through isolated RPC in both directions, emits events, and r
         expect(await client.call<string>("config.get", { path: "person.notice.delivery" })).toBe("askNow");
         expect(events).toContain("config.changed");
     } finally {
-        client.close();
-        face.close();
+        client?.close();
+        face?.close();
         start.host.stop("test complete");
         await start.host.stopped;
     }
