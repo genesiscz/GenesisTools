@@ -7,82 +7,52 @@ struct ListenPresenceStrip: View {
     @Bindable var detail: MeetingDetailModel
     let duration: Double
     @State private var groups: [PresenceGroup] = []
-    @State private var selected: MeetingRecordView.Person?
-    @State private var from = ""
-    @State private var to = ""
-    @State private var failure: String?
+    /// The person the editor is open on, and the join and leave it starts from.
+    @State private var editing: (stay: PersonStay, window: ClosedRange<Double>)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             ForEach(groups) { group in
                 Text(group.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
                 ForEach(group.people) { row in
-                    PresencePersonRow(row: row, duration: duration, edit: { range in
-                        selected = row.person; failure = nil
-                        from = Self.clock(range.lowerBound); to = Self.clock(range.upperBound)
-                    }, save: { range in save(row.person, range) })
+                    PresencePersonRow(row: row, duration: duration, edit: { range in open(row.person, range) },
+                                      save: { range in save(row.person, range) })
                 }
             }
         }.padding(.horizontal, 8)
         .onChange(of: detail.record.value, initial: true) { _, record in groups = PresenceGroup.make(record) }
-        .sheet(isPresented: Binding(get: { selected != nil }, set: { if !$0 { selected = nil } })) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(selected?.name ?? "")
-                if let count = selected?.stays?.count, count > 1 {
-                    Text("Saving replaces their \(count) stays with this one window, from the join to the leave.")
-                        .font(.caption).foregroundStyle(.secondary)
+        .sheet(isPresented: Binding(get: { editing != nil }, set: { if !$0 { editing = nil } })) {
+            if let editing {
+                PersonStayEditor(detail: detail, original: editing.stay, window: editing.window, duration: duration) {
+                    self.editing = nil
                 }
-                TextField("Join (mm:ss or hh:mm:ss)", text: $from)
-                TextField("Leave (mm:ss or hh:mm:ss)", text: $to)
-                if let failure { Text(failure).foregroundStyle(.red) }
-                HStack {
-                    Button("Cancel") { selected = nil }.keyboardShortcut(.cancelAction)
-                    Button("Save window") {
-                        guard let person = selected, let range = Self.window(from: from, to: to, duration: duration) else {
-                            failure = "Enter a join and leave within the meeting, as mm:ss or hh:mm:ss."; return
-                        }
-                        Task {
-                            do {
-                                let group = detail.record.value?.seats?.microphones?.first { $0.people.contains(person.name) }
-                                let atMic = group?.id == "self" || detail.record.value?.seats?.room.contains(person.name) == true
-                                try await detail.editMeetingPerson(.init(meeting: detail.id, name: person.name, action: "add", fromSec: range.lowerBound, toSec: range.upperBound, atMic: atMic, via: group?.id == "self" ? nil : group?.deviceId))
-                                selected = nil
-                            } catch { failure = asFailure(error).sentence }
-                        }
-                    }.keyboardShortcut(.defaultAction)
-                }.buttonStyle(.genHoverPlain())
-            }.padding().frame(width: 360)
+            }
         }
+    }
+
+    /// The one editor of who was there (`PersonStayEditor`), starting from `range`.
+    private func open(_ person: MeetingRecordView.Person, _ range: ClosedRange<Double>) {
+        editing = (PersonStay.of(person.name, in: detail.record.value), range)
     }
 
     /// A dragged join or leave saves at once, with an Undo that puts the old window back. A person with several stays
     /// opens the editor instead, since saving replaces them all with one window and an Undo could not bring them back.
     private func save(_ person: MeetingRecordView.Person, _ range: ClosedRange<Double>) {
-        guard (person.stays?.count ?? 0) == 1, let old = Self.spans(person, duration: duration).first else {
-            selected = person; failure = nil
-            from = Self.clock(range.lowerBound); to = Self.clock(range.upperBound)
+        guard (person.stays?.count ?? 0) == 1 else {
+            open(person, range)
             return
         }
+        let before = PersonStay.of(person.name, in: detail.record.value)
+        var after = before
+        after.fromSec = range.lowerBound
+        after.toSec = range.upperBound
         Task {
             do {
-                try await write(person, range)
-                let text = "\(person.name): \(MeetingsFormat.clock(range.lowerBound)) to \(MeetingsFormat.clock(range.upperBound))"
-                detail.notices.push(StackedNotice(text: text, actions: [.undo { _ in
-                    Task {
-                        do { try await write(person, old) } catch { detail.notices.push(.meetingsFailure(error)) }
-                    }
-                }]))
+                try await detail.savePersonStay(after, before: before)
             } catch {
                 detail.notices.push(.meetingsFailure(error, retry: { save(person, range) }))
             }
         }
-    }
-
-    private func write(_ person: MeetingRecordView.Person, _ range: ClosedRange<Double>) async throws {
-        let group = detail.record.value?.seats?.microphones?.first { $0.people.contains(person.name) }
-        let atMic = group?.id == "self" || detail.record.value?.seats?.room.contains(person.name) == true
-        try await detail.editMeetingPerson(.init(meeting: detail.id, name: person.name, action: "add", fromSec: range.lowerBound,
-                                                 toSec: range.upperBound, atMic: atMic, via: group?.id == "self" ? nil : group?.deviceId))
     }
 
     static func clock(_ sec: Double) -> String {
@@ -90,18 +60,11 @@ struct ListenPresenceStrip: View {
         return MeetingsFormat.clock(sec) + (fraction > 0 ? String(String(fraction).dropFirst()) : "")
     }
 
+    /// A join and a leave as clock text, both inside the meeting; one parser with the editor (`PersonStay.Clock`).
     static func window(from: String, to: String, duration: Double) -> ClosedRange<Double>? {
-        func seconds(_ text: String) -> Double? {
-            let parts = text.trimmingCharacters(in: .whitespaces).split(separator: ":", omittingEmptySubsequences: false)
-            guard (1...3).contains(parts.count) else { return nil }
-            var result = 0.0
-            for (index, part) in parts.enumerated() {
-                guard let n = Double(part), n.isFinite, n >= 0, index == 0 || n < 60 else { return nil }
-                result = result * 60 + n
-            }
-            return result
+        guard let start = PersonStay.Clock(from).value, let end = PersonStay.Clock(to).value, start <= end, end <= duration else {
+            return nil
         }
-        guard let start = seconds(from), let end = seconds(to), start <= end, end <= duration else { return nil }
         return start...end
     }
 
