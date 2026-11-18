@@ -87,6 +87,7 @@ const recorderStateSchema = z.object({
     bytes: z.number(),
     lastFrameAt: z.string().optional(),
     warning: z.string().optional(),
+    withoutScreen: z.string().optional(),
     sound: z
         .discriminatedUnion("path", [
             z.object({ path: z.literal("session"), sources: z.array(z.enum(["mic", "system"])) }),
@@ -105,7 +106,10 @@ export function recorderAcknowledged(options: {
 }): boolean {
     const { current, meetingId, startedAfter } = options;
     return (
-        current.running && current.state?.meetingId === meetingId && Date.parse(current.state.startedAt) >= startedAfter
+        current.running &&
+        current.state?.meetingId === meetingId &&
+        Date.parse(current.state.startedAt) >= startedAfter &&
+        (!current.state.withoutScreen || (current.state.sound?.path === "session" && !current.state.stopReason))
     );
 }
 
@@ -236,6 +240,8 @@ export interface RunRecorderOptions {
     capture: MeetingsConfig["global"]["capture"];
     /** The Vision OCR languages of the meeting language (`languages.<code>.ocr`); the default language's when omitted. */
     ocrLanguages?: string[];
+    /** The live grant read that ruled out frames for this run. */
+    withoutScreen?: string;
     /** Overrides `capture.displays`. */
     display?: DisplayPolicy;
     /** Overrides `capture.recorders.<backend>.audio.sources`. */

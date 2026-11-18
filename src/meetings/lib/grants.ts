@@ -19,12 +19,16 @@ export interface GrantOutcome {
     message?: string;
 }
 
-function identityNow(): { identity: string; granted: boolean | undefined } {
+function identityNow(): { identity: string; granted: boolean | undefined; error?: string } {
     const { live, error } = readLivePermissions();
 
     if (!live) {
         log.warn({ error }, "screen recording: live check failed");
-        return { identity: installedGenesisAppLauncher() ? "GenesisTools.app" : "this terminal", granted: undefined };
+        return {
+            identity: installedGenesisAppLauncher() ? "GenesisTools.app" : "this terminal",
+            granted: undefined,
+            error,
+        };
     }
 
     const identity = live.viaGenesisApp ? "GenesisTools.app" : (live.responsibleName ?? "this terminal");
@@ -54,11 +58,25 @@ async function waitForGrant(timeoutMs: number): Promise<ReturnType<typeof identi
     return now;
 }
 
-export async function ensureScreenRecording(options: { quiet?: boolean } = {}): Promise<GrantOutcome> {
+function unavailable(read: ReturnType<typeof identityNow>): GrantOutcome {
+    const reason =
+        read.granted === undefined
+            ? `could not read the grant for Screen Recording (${read.identity}): ${read.error ?? "missing live value"}`
+            : `Screen Recording is not granted to ${read.identity}.`;
+    return { granted: false, identity: read.identity, message: reason };
+}
+
+export async function ensureScreenRecording(
+    options: { quiet?: boolean; allowSoundOnly?: boolean } = {}
+): Promise<GrantOutcome> {
     const first = identityNow();
 
     if (first.granted) {
         return { granted: true, identity: first.identity };
+    }
+
+    if (options.allowSoundOnly || first.granted === undefined) {
+        return unavailable(first);
     }
 
     const appInstalled = isGenesisAppBundleInstalled();
@@ -76,7 +94,7 @@ export async function ensureScreenRecording(options: { quiet?: boolean } = {}): 
 
     log.info({ identity: first.identity }, "screen recording: asking macOS (classic route)");
     await execToolInteractive(["control", "permissions", "request"]);
-    const second = identityNow();
+    let second = identityNow();
 
     if (second.granted) {
         return { granted: true, identity: second.identity };
@@ -86,6 +104,7 @@ export async function ensureScreenRecording(options: { quiet?: boolean } = {}): 
         log.info("screen recording: opening the GenesisTools.app permission window");
         await execToolInteractive(["macos", "permissions", "ui"]);
         const third = await waitForGrant(WINDOW_WAIT_MS);
+        second = third;
 
         if (third.granted) {
             return { granted: true, identity: third.identity };
@@ -95,6 +114,6 @@ export async function ensureScreenRecording(options: { quiet?: boolean } = {}): 
     return {
         granted: false,
         identity: second.identity,
-        message: `Screen Recording is still not granted to ${second.identity}; macOS does not ask twice after a denial. ${installHint}`,
+        message: `${unavailable(second).message} ${installHint}`,
     };
 }

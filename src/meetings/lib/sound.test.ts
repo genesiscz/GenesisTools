@@ -220,6 +220,62 @@ const recording = () => {
 };
 
 describe("the recorder keeps the meeting's sound", () => {
+    test("without a screen grant the native session keeps both sidecars and never opens a frame capture", async () => {
+        const store = new MeetingStore(new Storage("meetings-sound-only"));
+        const meeting = await store.create(
+            { title: "Orchard planning", start: "2026-11-03T12:00:00Z", createdBy: "record" },
+            { command: "test", change: "fixture" }
+        );
+        const liveDir = mkdtempSync(join(tmpdir(), "sound-only-live-"));
+        const calls: string[][] = [];
+        class FixtureRecorder extends NativeFrameRecorder {
+            override async capture(): Promise<CaptureResult> {
+                throw new Error("unexpected frame capture");
+            }
+            override async startAudioSession(options: Parameters<NativeFrameRecorder["startAudioSession"]>[0]) {
+                const session = await super.startAudioSession(options);
+                // The stop request takes effect after the driver accepts the native state event.
+                setImmediate(() => {
+                    void callRecorder({ id: meetingLiveId(meeting.id), method: "stop", dir: liveDir });
+                });
+                return session;
+            }
+        }
+        const recorder = new FixtureRecorder({
+            axTool: async () => [
+                process.execPath,
+                join(moduleDir(import.meta), "../../utils/screen-recorder/__fixtures__/fake-ax-tool.ts"),
+                "--fixture-audio-three",
+            ],
+            launch: (argv) => {
+                calls.push(argv);
+                return argv;
+            },
+        });
+        const state = await runRecorder({
+            store,
+            meetingId: meeting.id,
+            capture: meetingsConfigSchema.parse({}).global.capture,
+            withoutScreen: "Screen Recording is not granted to Fixture",
+            deps: {
+                recorder,
+                liveDir,
+                failurePauseMs: 0,
+                startOcr: () => {
+                    throw new Error("unexpected OCR worker");
+                },
+                notify: async () => {},
+            },
+        });
+        expect(calls.some((argv) => argv.includes("audio-record") && argv.includes("--without-screen"))).toBe(true);
+        expect(state.frames).toBe(0);
+        expect(existsSync(join(store.folder(meeting.id), "frames"))).toBe(false);
+        const saved = new MeetingStore(store.storage).read(meeting.id)?.recording;
+        expect(saved?.warning).toContain("Screen frames omitted: Screen Recording is not granted to Fixture");
+        const rows = readAudioRows(store.folder(meeting.id));
+        expect(new Set(rows.map((row) => row.source))).toEqual(new Set(["mic", "system"]));
+        expect(rows.every((row) => existsSync(join(store.folder(meeting.id), row.file)))).toBe(true);
+    });
     test.each(["--fixture-audio-three", "--fixture-no-mic-grant", "--fixture-audio-loss"])(
         "native session %s keeps rows, counts files, and salvages an interrupted segment",
         async (mode) => {

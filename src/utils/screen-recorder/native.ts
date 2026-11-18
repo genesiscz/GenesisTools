@@ -42,6 +42,7 @@ export const NATIVE_OPTIONAL_FLAGS = [
     "--audio-sidecar",
     "audio-devices",
     "audio-record",
+    "--without-screen",
     // `--control-stdin` commands, named in the same help text.
     "mute",
     "set-mic",
@@ -641,6 +642,9 @@ export class NativeFrameRecorder extends FrameRecorder {
             return undefined;
         }
 
+        if (options.withoutScreen && !this.flags.has("--without-screen")) {
+            throw new CaptureError("unavailable", "Rebuild ax-tool for recording sound without Screen Recording.");
+        }
         return AudioSession.start({ ...options, argv, launch: this.context.launch });
     }
 

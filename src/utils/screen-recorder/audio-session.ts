@@ -253,6 +253,7 @@ const eventSchema = z.discriminatedUnion("event", [
 type AudioEvent = z.infer<typeof eventSchema>;
 
 export interface RecorderAudioOptions {
+    withoutScreen?: boolean;
     folder: string;
     /** Under the piece folder, so P14's salvage sees any file a killed process left open. */
     outDir: string;
@@ -302,6 +303,7 @@ export class AudioSession {
         const argv = [
             ...options.argv,
             "audio-record",
+            ...(options.withoutScreen ? ["--without-screen"] : []),
             "--sources",
             options.request.sources.join(","),
             ...(options.request.micDeviceId ? ["--mic-device", options.request.micDeviceId] : []),

@@ -39,7 +39,7 @@ if (args[0] === "--help") {
         "capture: [--display-id ID] [--follow-focus] [--max-long-side PX] [--control-stdin] mute/unmute | set-mic | set-fps | set-threshold | set-max-long-side\n  [--audio system,mic] [--mic-device UID] [--audio-sidecar]\n  ax-tool audio-devices\n" +
             (fixtureMode === "--fixture-no-audio-session"
                 ? ""
-                : "  ax-tool audio-record --sources mic,system --segment-sec 60\n")
+                : "  ax-tool audio-record --sources mic,system --segment-sec 60 [--without-screen]\n")
     );
     process.exit(0);
 }

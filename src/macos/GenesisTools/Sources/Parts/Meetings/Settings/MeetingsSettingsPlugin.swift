@@ -174,6 +174,12 @@ struct MeetingsRecordingPage: View {
             }
 
             NativeSettingsCard("Capture", subtitle: costLine(model.cost)) {
+                NativeSettingsToggle("Record sound when Screen Recording is unavailable",
+                                     detail: "Keep the selected audio tracks when screen frames cannot be captured.",
+                                     identifier: "meetings.capture.soundWithoutScreen",
+                                     isOn: Binding(get: { capture.soundWithoutScreen ?? true },
+                                                   set: { model.set(["global", "capture", "soundWithoutScreen"], $0) }))
+                Divider()
                 NativeSettingsPicker("Displays", detail: "Which screens a recording records.", identifier: "meetings.capture.displays",
                                      options: [
                                          NativeSettingsOption(DisplayPolicy("all"), "All displays", detail: costText(cost?.displayCost("all"))),
