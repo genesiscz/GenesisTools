@@ -25,7 +25,7 @@ import {
 } from "@genesiscz/utils/claude/history-cache";
 import { PROJECTS_DIR, resolveProjectDir } from "@genesiscz/utils/claude/projects";
 import { logger } from "@genesiscz/utils/logger";
-import { profiler } from "@genesiscz/utils/profile";
+import { cpuMeta, profiler } from "@genesiscz/utils/profile";
 import { getIndexedClaudeConversation, searchIndexedClaudeHistory } from "./indexed-search";
 import type { SearchFilters, SearchResult } from "./types";
 
@@ -134,6 +134,7 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
         filePaths: options.filePaths,
         newest: options.newest,
     };
+    const cpu = p.enabled ? cpuMeta() : undefined;
     const { metadata, report, reindexed } = await p.measureAsync(
         "listing.catalog",
         () =>
@@ -144,6 +145,7 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
                 refresh: options.refresh,
             }),
         () => ({
+            ...cpu?.(),
             project,
             limit,
             newest: options.newest,
