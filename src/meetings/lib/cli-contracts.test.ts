@@ -1108,7 +1108,9 @@ describe("rows --json: the review rows (F3)", () => {
             {
                 kind: "reason",
                 pieces: [
-                    { text: "The call shows who is speaking. The recording separates microphone audio from call audio." },
+                    {
+                        text: "The call shows who is speaking. The recording separates microphone audio from call audio.",
+                    },
                 ],
             },
         ]);

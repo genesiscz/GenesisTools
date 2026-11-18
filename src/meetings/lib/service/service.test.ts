@@ -1476,8 +1476,8 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
                 to: { sec: 30, text: "00:30" },
                 target: { kind: "item", id: "i1" },
             },
-            { kind: "reason", pieces: [{ text: "Rules: presence" }] },
         ]);
+        expect(rows.rows[0]?.rules).toEqual(["presence"]);
 
         expect(rows.rows[0]?.choices.map((choice) => [choice.role, choice.value, choice.confidence])).toEqual([
             ["suggested", "Alex Example", 0.82],

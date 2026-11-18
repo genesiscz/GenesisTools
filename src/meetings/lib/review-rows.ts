@@ -686,11 +686,7 @@ function decidedAs(item: MeetingItem): string | undefined {
 }
 
 /** One item's row. `transcript`: the meeting's lines, for what was said; without it a row names no words. */
-export function reviewRow(
-    record: MeetingRecord,
-    item: MeetingItem,
-    transcript?: Transcript
-): ReviewRow & Pick<MeetingItem, "rules"> {
+export function reviewRow(record: MeetingRecord, item: MeetingItem, transcript?: Transcript): ReviewRow {
     const lines = transcript ? linesOf(transcript) : undefined;
     const parts = partsOf(record, item, lines);
     const needs = inputNeeded(item) ?? (item.kind === "question" && item.status === "suggested" ? "listen" : undefined);
