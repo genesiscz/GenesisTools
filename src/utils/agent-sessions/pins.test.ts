@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -248,12 +249,66 @@ describe("the parsed journal", () => {
 describe("the T3 Code thread of a session", () => {
     test("is the newest pin's T3 host, and a later pin with no host ends it", async () => {
         await recordPin(pin({ sessionId: "s1", host: { kind: "t3", id: "thread:fixture%3Aone" }, at: 1_000 }));
-        expect(await t3ThreadOfSession("s1")).toBe("thread:fixture%3Aone");
+        expect(await t3ThreadOfSession({ sessionId: "s1" })).toBe("thread:fixture%3Aone");
         await recordPin(pin({ sessionId: "s1", at: 2_000 }));
-        expect(await t3ThreadOfSession("s1")).toBeUndefined();
+        expect(await t3ThreadOfSession({ sessionId: "s1" })).toBeUndefined();
         await recordPin(pin({ sessionId: "s2", host: { kind: "t3" }, at: 3_000 }));
-        expect(await t3ThreadOfSession("s2")).toBeUndefined();
-        expect(await t3ThreadOfSession("never-pinned")).toBeUndefined();
+        expect(await t3ThreadOfSession({ sessionId: "s2" })).toBeUndefined();
+        expect(await t3ThreadOfSession({ sessionId: "never-pinned" })).toBeUndefined();
+    });
+
+    test("a Codex session T3 Code runs is found in T3 Code's state, with no pin at all", async () => {
+        // Under the suite's own temporary home, which afterEach removes even when an assertion fails.
+        const t3 = join(home, "t3-home");
+        await mkdir(join(t3, "userdata"), { recursive: true });
+        const db = new Database(join(t3, "userdata", "statev2.sqlite"));
+        db.exec("CREATE TABLE orchestration_v2_projection_provider_threads (thread_id TEXT, payload_json TEXT)");
+        db.exec("CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT, payload_json TEXT)");
+        db.query("INSERT INTO orchestration_v2_projection_provider_threads VALUES (?, ?)").run(
+            "mcp:launch:codex-thread",
+            SafeJSON.stringify({ nativeThreadRef: { nativeId: "codex-session" } })
+        );
+        db.query("INSERT INTO orchestration_v2_projection_threads VALUES (?, ?)").run("mcp:launch:codex-thread", "{}");
+        db.close();
+
+        expect(await t3ThreadOfSession({ sessionId: "codex-session", homeDir: t3 })).toBe("mcp:launch:codex-thread");
+        // The same session resumed later in a terminal pins again with no host: T3 Code no longer runs it.
+        await recordPin(pin({ sessionId: "codex-session", provider: "codex", at: 4_000 }));
+        expect(await t3ThreadOfSession({ sessionId: "codex-session", homeDir: t3 })).toBeUndefined();
+    });
+
+    test("an older terminal pin does not hide a Codex session that T3 Code ran after it; a newer one ends it", async () => {
+        const t3 = join(home, "t3-home-runs");
+        await mkdir(join(t3, "userdata"), { recursive: true });
+        const db = new Database(join(t3, "userdata", "statev2.sqlite"));
+        db.exec(
+            "CREATE TABLE orchestration_v2_projection_provider_threads (provider_thread_id TEXT, thread_id TEXT, payload_json TEXT)"
+        );
+        db.exec("CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT, payload_json TEXT)");
+        db.exec("CREATE TABLE orchestration_v2_projection_runs (provider_thread_id TEXT, requested_at TEXT)");
+        db.query("INSERT INTO orchestration_v2_projection_provider_threads VALUES (?, ?, ?)").run(
+            "pt-1",
+            "mcp:launch:codex-thread",
+            SafeJSON.stringify({ nativeThreadRef: { nativeId: "codex-resumed" } })
+        );
+        db.query("INSERT INTO orchestration_v2_projection_threads VALUES (?, ?)").run("mcp:launch:codex-thread", "{}");
+        // Two runs: the newest one is the time that counts.
+        db.query("INSERT INTO orchestration_v2_projection_runs VALUES (?, ?)").run("pt-1", "2026-11-17T10:00:00.000Z");
+        db.query("INSERT INTO orchestration_v2_projection_runs VALUES (?, ?)").run("pt-1", "2026-11-17T12:00:00.000Z");
+        db.close();
+        const lastRun = Date.parse("2026-11-17T12:00:00.000Z");
+
+        // The session first ran in a terminal: a pin with no host. T3 Code resumed it later and wrote no pin.
+        await recordPin(pin({ sessionId: "codex-resumed", provider: "codex", at: lastRun - 60_000 }));
+        expect(await t3ThreadOfSession({ sessionId: "codex-resumed", homeDir: t3 })).toBe("mcp:launch:codex-thread");
+        // A pin of another app that is older than the run loses the same way.
+        await recordPin(
+            pin({ sessionId: "codex-resumed", provider: "codex", host: { kind: "cmux" }, at: lastRun - 1 })
+        );
+        expect(await t3ThreadOfSession({ sessionId: "codex-resumed", homeDir: t3 })).toBe("mcp:launch:codex-thread");
+        // Resumed in a terminal after T3 Code's last run: T3 Code no longer runs it.
+        await recordPin(pin({ sessionId: "codex-resumed", provider: "codex", at: lastRun + 60_000 }));
+        expect(await t3ThreadOfSession({ sessionId: "codex-resumed", homeDir: t3 })).toBeUndefined();
     });
 
     test("the desktop link keeps the thread id percent-encoded as T3 Code prints it", () => {

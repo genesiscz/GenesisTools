@@ -23,6 +23,11 @@ export interface T3ThreadParent {
 export interface T3SessionThread {
     threadId: string;
     parent: T3ThreadParent | null;
+    /**
+     * Epoch ms of the newest run T3 Code requested for this native session. Absent when T3 Code's state holds no run
+     * of it, or has no table of runs (an older T3 Code): then a pin decides alone.
+     */
+    lastRunAt?: number;
 }
 
 interface ThreadRow {
@@ -81,6 +86,7 @@ export function t3SessionThreads(homeDir: string = t3Home(env.getProcessEnv())):
                 });
             }
 
+            addLastRuns(db, threads);
             log.debug({ path, threads: threads.size }, "t3code: read the T3 Code threads of native sessions");
             return threads;
         } catch (error) {
@@ -93,22 +99,59 @@ export function t3SessionThreads(homeDir: string = t3Home(env.getProcessEnv())):
 }
 
 /**
- * The T3 Code thread that holds a session now, by T3 Code's record and the session's newest pin. A newest pin that
- * names no host wins: the session was resumed in a terminal and no longer runs in T3. A pin that names another host or
- * another thread wins too. With no pin (a Codex session T3 starts writes none), T3 Code's record decides.
+ * Stamps each thread with the newest run T3 Code requested for its native session. Its own query: a state database
+ * with no table of runs, or with another shape of it, still names the threads, and then a pin decides alone.
+ */
+function addLastRuns(db: Database, threads: Map<string, T3SessionThread>): void {
+    try {
+        const rows = db
+            .query<{ nativeId: string | null; requestedAt: string | null }, []>(
+                `SELECT json_extract(pt.payload_json, '$.nativeThreadRef.nativeId') AS nativeId,
+                        max(r.requested_at) AS requestedAt
+                   FROM orchestration_v2_projection_provider_threads pt
+                   JOIN orchestration_v2_projection_runs r ON r.provider_thread_id = pt.provider_thread_id
+                  WHERE json_extract(pt.payload_json, '$.nativeThreadRef.nativeId') IS NOT NULL
+                  GROUP BY pt.provider_thread_id`
+            )
+            .all();
+
+        for (const row of rows) {
+            const thread = row.nativeId ? threads.get(row.nativeId) : undefined;
+            const at = row.requestedAt ? Date.parse(row.requestedAt) : Number.NaN;
+
+            if (thread && Number.isFinite(at)) {
+                thread.lastRunAt = Math.max(thread.lastRunAt ?? 0, at);
+            }
+        }
+    } catch (error) {
+        log.debug({ error }, "t3code: the runs of the T3 Code threads were not readable, so a pin decides alone");
+    }
+}
+
+/**
+ * The T3 Code thread that holds a session now, by T3 Code's record and the session's newest pin. The newer of the
+ * two decides. A pin written after T3 Code's last run of the session wins: with no host the session was resumed in a
+ * terminal and no longer runs in T3, and a pin that names another host or another thread wins too. A run that T3 Code
+ * requested after the pin wins over it: a Codex session T3 Code resumes writes no pin, so an older terminal pin would
+ * hide the thread for ever. With no pin, or with no known run time, the rule is as before: T3 Code's record decides
+ * alone, and a pin wins over a record with no time.
  */
 export function t3ThreadHolding({
     thread,
     pin,
 }: {
     thread: T3SessionThread | undefined;
-    pin: { host?: PinHost } | undefined;
+    pin: { host?: PinHost; at?: number } | undefined;
 }): T3SessionThread | undefined {
-    if (!thread || (pin && !pin.host)) {
+    if (!thread) {
         return undefined;
     }
 
-    if (pin?.host && (pin.host.kind !== "t3" || (pin.host.id !== undefined && pin.host.id !== thread.threadId))) {
+    if (!pin || (pin.at !== undefined && thread.lastRunAt !== undefined && thread.lastRunAt > pin.at)) {
+        return thread;
+    }
+
+    if (!pin.host || pin.host.kind !== "t3" || (pin.host.id !== undefined && pin.host.id !== thread.threadId)) {
         return undefined;
     }
 
