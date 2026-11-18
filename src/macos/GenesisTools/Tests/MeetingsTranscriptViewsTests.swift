@@ -9,14 +9,30 @@ import XCTest
 @MainActor
 final class MeetingsTranscriptViewsTests: XCTestCase {
 
-    func testWordTimingFormValidatesItsInitialRangeAndEveryEdit() {
-        XCTAssertEqual(WordTimingOptions.range(from: "64.0", to: "84.0")?.0, 64)
-        XCTAssertEqual(WordTimingOptions.range(from: " 1796 ", to: "1816")?.1, 1816)
-        XCTAssertNil(WordTimingOptions.range(from: "64", to: "85"))
-        XCTAssertNil(WordTimingOptions.range(from: "-1", to: "10"))
-        XCTAssertNil(WordTimingOptions.range(from: "nan", to: "10"))
-        XCTAssertNil(WordTimingOptions.range(from: "1", to: "inf"))
-        XCTAssertNil(WordTimingOptions.range(from: "1", to: "1"))
+    /// Word timings ask for no number, model id or language code (audit M7): the range comes from the selected lines or
+    /// the heard line, and the model and the language are settings with their words.
+    func testWordTimingsTakeTheRangeFromTheSelectionOrTheHeardLine() {
+        typealias Range = WordTimingOptions.Range
+        let selected = Range.of(selected: [(start: 64, end: 70), (start: 70, end: 75.5)])
+        XCTAssertEqual(selected, Range(from: 64, to: 75.5, source: "the 2 selected lines"))
+        let long = Range.of(selected: [(start: 100, end: 110), (start: 110, end: 140)])
+        XCTAssertEqual(long, Range(from: 100, to: 120, source: "the 2 selected lines, cut at 20 s"), "never more than 20 s")
+        XCTAssertNil(Range.of(selected: [(start: nil, end: nil)]), "no timed line selected: the heard line decides")
+        let lines: [(start: Double?, end: Double?)] = [(start: 0, end: 30), (start: 30, end: 40), (start: 40, end: 52)]
+        XCTAssertEqual(Range.near(lines, position: 41), Range(from: 40, to: 60, source: "from the line at the heard spot"))
+        XCTAssertEqual(Range.near(lines, position: 0).from, 30, "a line longer than 20 s is skipped")
+        XCTAssertEqual(Range.near(lines, position: 500).from, 30, "past the end: the first short line")
+
+        typealias Transcript = MeetingsPreferences.Transcript
+        XCTAssertEqual(Transcript.timingLanguageCode(.meeting, meeting: "cs"), "cs")
+        XCTAssertNil(Transcript.timingLanguageCode(.detect, meeting: "cs"))
+        XCTAssertEqual(Transcript.timingLanguageCode(.en, meeting: "cs"), "en")
+        XCTAssertEqual(WordTimingOptions.languageWords(.meeting, code: "cs"), "Czech, the meeting's language")
+        XCTAssertEqual(SidePanelWords.choice(Transcript.TimingModel.whisperTurbo.rawValue, key: Transcript.timingModel.key),
+                       "Whisper large v3 turbo", "the model's name, never its repository id")
+        let titles = SidePanelCatalog.windowSections(UserDefaults(suiteName: "timings-\(UUID())")!)
+            .first { $0.id == "transcript" }?.rows.map(\.title) ?? []
+        XCTAssertTrue(titles.contains("Word timings model") && titles.contains("Word timings language"), "\(titles)")
     }
 
     func testWordTimingHighlightsUseExactUTF16RangesAndKeepUntimedLineFallback() {

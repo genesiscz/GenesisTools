@@ -216,6 +216,9 @@ enum SidePanelWords {
     /// Choices whose words depend on the key ("always" of the typed answer is "On every question").
     static let keyedTitles: [String: [String: String]] = [
         MeetingsPreferences.typedAnswerKey: ["always": "On every question", "noChoices": "Without choices"],
+        MeetingsPreferences.Transcript.timingModel.key: [MeetingsPreferences.Transcript.TimingModel.whisperTurbo.rawValue: "Whisper large v3 turbo"],
+        MeetingsPreferences.Transcript.timingLanguage.key: ["meeting": "The meeting's language", "detect": "Detect it",
+                                                            "cs": "Czech", "en": "English"],
     ]
 
     /// A number choice of 0 that means "not at all" for its key.
@@ -405,6 +408,8 @@ enum SidePanelCatalog {
                          value: .text(MeetingsPreferences.speakerOrder(defaults).rawValue), defaultValue: .text("spoken")),
             row(Transcript.echoAbove, value: Transcript.echoAbove.value(defaults)),
             row(Transcript.wordHighlights, value: Transcript.wordHighlights.value(defaults)),
+            row(Transcript.timingModel, value: Transcript.timingModel.value(defaults)),
+            row(Transcript.timingLanguage, value: Transcript.timingLanguage.value(defaults)),
             row(Transcript.flashRaised, value: Transcript.flashRaised.value(defaults)),
             row(Transcript.raisedFlashSec, value: Transcript.raisedFlashSec.value(defaults)),
             row(Transcript.dimPast, value: Transcript.dimPast.value(defaults)),

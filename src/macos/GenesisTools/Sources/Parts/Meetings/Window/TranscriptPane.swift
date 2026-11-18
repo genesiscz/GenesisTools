@@ -66,10 +66,12 @@ struct TranscriptBlocksPane: View {
     @State private var jump = 0
     @State private var sentExpanded = false
     @State private var paneSheet: PaneSheet?
-    @State private var timingFrom = ""
-    @State private var timingTo = ""
-    @State private var timingModel = "onnx-community/whisper-large-v3-turbo_timestamped"
-    @State private var timingLanguage = "cs"
+    /// The range "Word timings…" times, and where it comes from; set when the popover opens.
+    @State private var timing: WordTimingOptions.Range?
+    @AppStorage(MeetingsPreferences.Transcript.timingModel.key) private var timingModel =
+        MeetingsPreferences.Transcript.timingModel.defaultValue.rawValue
+    @AppStorage(MeetingsPreferences.Transcript.timingLanguage.key) private var timingLanguage =
+        MeetingsPreferences.Transcript.timingLanguage.defaultValue.rawValue
     /// The one transcript threshold (the Transcript tab picks the service's preview by it too).
     @State private var threshold = MeetingsApplyThreshold.shared
     private var applyAbove: Double { threshold.percent ?? 70 }
@@ -344,25 +346,33 @@ struct TranscriptBlocksPane: View {
         }
     }
 
-    /// The timing range starts at the first short line from the heard position on (20 s at most).
+    /// The range comes from the selected lines; with none, from the first short line at or after the heard spot.
     private func openTimings() {
-        let position = detail.window?.player.position ?? 0
-        let eligible = entries.lazy.filter { line in
-            guard let start = line.startSec, let end = line.endSec else { return false }
-            return end > start && end - start <= 20
-        }
-        let chosen = eligible.first { ($0.endSec ?? 0) > position } ?? eligible.first
-        let from = chosen?.startSec ?? position
-        timingFrom = String(format: "%.1f", from)
-        timingTo = String(format: "%.1f", from + 20)
+        let selected = selectedLines.map { (start: $0.startSec, end: $0.endSec) }
+        timing = WordTimingOptions.Range.of(selected: selected)
+            ?? WordTimingOptions.Range.near(entries.lazy.map { (start: $0.startSec, end: $0.endSec) },
+                                            position: detail.window?.player.position ?? 0)
         paneSheet = .timings
     }
 
+    @ViewBuilder
     private var timingOptions: some View {
-        WordTimingOptions(from: $timingFrom, to: $timingTo, model: $timingModel, language: $timingLanguage,
-                          cancel: { paneSheet = nil }) { from, to, model, language in
-            detail.generateWordTimings(from: from, to: to, model: model, language: language)
-            paneSheet = nil
+        if let timing {
+            let choice = MeetingsPreferences.Transcript.TimingLanguage(rawValue: timingLanguage)
+                ?? MeetingsPreferences.Transcript.timingLanguage.defaultValue
+            let meetingLanguage = detail.window?.settings.value?.global.language
+            let code = MeetingsPreferences.Transcript.timingLanguageCode(choice, meeting: meetingLanguage)
+            WordTimingOptions(range: timing,
+                              model: SidePanelWords.choice(timingModel, key: MeetingsPreferences.Transcript.timingModel.key),
+                              language: WordTimingOptions.languageWords(choice, code: code),
+                              openSettings: {
+                                  paneSheet = nil
+                                  detail.window?.sidePanelOpen = true
+                              },
+                              cancel: { paneSheet = nil }) {
+                detail.generateWordTimings(from: timing.from, to: timing.to, model: timingModel, language: code)
+                paneSheet = nil
+            }
         }
     }
 
@@ -738,62 +748,87 @@ private struct UserScrollProbe: NSViewRepresentable {
 
 /// The explicit generation form owns its validation, so its initial bound values and later edits use the same rule.
 struct WordTimingOptions: View {
-    @Binding var from: String
-    @Binding var to: String
-    @Binding var model: String
-    @Binding var language: String
-    let cancel: () -> Void
-    let generate: (Double, Double, String, String?) -> Void
+    /// Up to 20 seconds of the transcript clock, and where they come from, in words.
+    struct Range: Equatable {
+        static let longest = 20.0
+        let from: Double
+        let to: Double
+        let source: String
 
-    static func range(from: String, to: String) -> (Double, Double)? {
-        guard let start = Double(from.trimmingCharacters(in: .whitespacesAndNewlines)),
-              let end = Double(to.trimmingCharacters(in: .whitespacesAndNewlines)),
-              start.isFinite, end.isFinite, start >= 0, end > start, end - start <= 20 else { return nil }
-        return (start, end)
+        /// The selected lines from the first start to the last end, cut at 20 s; nil when no selected line is timed.
+        static func of(selected lines: [(start: Double?, end: Double?)]) -> Range? {
+            let starts = lines.compactMap(\.start)
+            guard let from = starts.min() else { return nil }
+            let end = lines.compactMap { $0.end ?? $0.start }.max() ?? from
+            let to = min(max(end, from + 1), from + longest)
+            let cut = end > from + longest ? ", cut at 20 s" : ""
+            return Range(from: from, to: to, source: "the \(Plural.count(lines.count, "selected line"))\(cut)")
+        }
+
+        /// The first line of 20 s or less that ends after `position` (else the first such line), and 20 s from its start.
+        static func near<Lines: Sequence>(_ lines: Lines, position: Double) -> Range where Lines.Element == (start: Double?, end: Double?) {
+            var first: Double?
+            for line in lines {
+                guard let start = line.start, let end = line.end, end > start, end - start <= longest else { continue }
+                if first == nil { first = start }
+                if end > position { return Range(from: start, to: start + longest, source: "from the line at the heard spot") }
+            }
+            let from = first ?? position
+            return Range(from: from, to: from + longest, source: "from the line at the heard spot")
+        }
+    }
+
+    let range: Range
+    let model: String
+    let language: String
+    let openSettings: () -> Void
+    let cancel: () -> Void
+    let generate: () -> Void
+
+    /// The language row: the choice in words, with the code the meeting's language resolved to.
+    static func languageWords(_ choice: MeetingsPreferences.Transcript.TimingLanguage, code: String?) -> String {
+        switch choice {
+        case .meeting: code.map { "\(MeetingsLanguage.name($0)), the meeting's language" } ?? "Detected (the meeting's language is not read yet)"
+        case .detect: "Detected by the model"
+        case .cs, .en: MeetingsLanguage.name(choice.rawValue)
+        }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Generate word timings").font(.headline)
-            Text("Choose up to 20 seconds. A cached model estimates timings; only exact, unambiguous words are highlighted.")
-                .font(.caption).foregroundStyle(.secondary)
-            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
+            Text("A cached model times each word of the range; only exact, unambiguous words are highlighted. Lines that "
+                 + "cross the range's edge keep the line highlight.")
+                .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
                 GridRow {
-                    Text("From (seconds)")
-                    TextField("From seconds", text: $from)
-                        .accessibilityLabel("From seconds").accessibilityIdentifier("meetings.transcript.timings.from")
+                    Text("Range").foregroundStyle(.secondary)
+                    Text(verbatim: "\(MeetingsFormat.clock(range.from)) to \(MeetingsFormat.clock(range.to)), \(range.source)")
+                        .monospacedDigit().fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("meetings.transcript.timings.range")
                 }
                 GridRow {
-                    Text("To (seconds)")
-                    TextField("To seconds", text: $to)
-                        .accessibilityLabel("To seconds").accessibilityIdentifier("meetings.transcript.timings.to")
+                    Text("Model").foregroundStyle(.secondary)
+                    Text(verbatim: model)
                 }
                 GridRow {
-                    Text("Cached model")
-                    TextField("Cached model ID", text: $model)
-                        .accessibilityLabel("Cached model ID").accessibilityIdentifier("meetings.transcript.timings.model")
-                }
-                GridRow {
-                    Text("Language")
-                    TextField("Blank for auto", text: $language)
-                        .accessibilityLabel("Language code, blank for auto").accessibilityIdentifier("meetings.transcript.timings.language")
+                    Text("Language").foregroundStyle(.secondary)
+                    Text(verbatim: language)
                 }
             }
-            Text("No model download. Lines crossing the range boundary stay line-highlighted.")
-                .font(.caption).foregroundStyle(.secondary)
+            .font(.system(size: 12))
             HStack {
+                Button("Model and language…", action: openSettings)
+                    .buttonStyle(.genHoverPlain())
+                    .font(.system(size: 12))
+                    .instantTooltip("Opens the side panel, where the Transcript section sets the model and the language")
+                    .accessibilityIdentifier("meetings.transcript.timings.settings")
                 Spacer()
                 Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
-                Button("Generate") {
-                    guard let range = Self.range(from: from, to: to) else { return }
-                    let code = language.trimmingCharacters(in: .whitespacesAndNewlines)
-                    generate(range.0, range.1, model.trimmingCharacters(in: .whitespacesAndNewlines), code.isEmpty ? nil : code)
-                }
-                .disabled(Self.range(from: from, to: to) == nil || model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .accessibilityIdentifier("meetings.transcript.timings.generate")
+                Button("Generate", action: generate)
+                    .accessibilityIdentifier("meetings.transcript.timings.generate")
             }
         }
-        .textFieldStyle(.roundedBorder)
-        .padding(16).frame(width: 450)
+        .padding(16).frame(width: 420)
     }
 }

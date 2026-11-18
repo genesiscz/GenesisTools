@@ -66,7 +66,7 @@ struct MeetingsRequest {
     var edit: String?
     /// `--notice <text>`: a notice with an Undo, as an answer leaves one.
     var notice: String?
-    /// `--card <row id>` and `--sheet history[:<row id>]`: a snapshot of that part alone.
+    /// `--card <row id>` and `--sheet history[:<row id>]` or `--sheet voice-tools[:details]` or `--sheet word-timings`: a snapshot of that part alone.
     var card: String?
     var sheet: String?
     /// `--suggest-progress <fraction>,<label>`: a snapshot of the Items tab while a suggest run reports that step (the
@@ -330,6 +330,21 @@ private func meetingsSnapshotPart(_ request: MeetingsRequest, model: MeetingsWin
         _ = await waitUntil(60) { detail.speakers.value != nil || detail.speakers.failure != nil }
         return AnyView(MeetingVoiceToolsSheet(detail: detail, evidenceOpen: sheet.hasSuffix(":details"), close: {}))
     }
+    if request.sheet == "word-timings" {
+        // The pane's "Word timings…" with nothing selected: the range from the line at the start.
+        if case .idle = detail.transcript { detail.loadTranscript() }
+        _ = await waitUntil(60) { detail.transcript.value != nil || detail.transcript.failure != nil }
+        _ = await waitUntil(30) { model.settings.value != nil || model.settings.failure != nil }
+        let lines = (detail.transcript.value?.entries ?? []).lazy.map { (start: $0.startSec, end: $0.endSec) }
+        typealias Transcript = MeetingsPreferences.Transcript
+        let choice = Transcript.timingLanguage.value(model.defaults)
+        let code = Transcript.timingLanguageCode(choice, meeting: model.settings.value?.global.language)
+        return AnyView(WordTimingOptions(range: .near(lines, position: 0),
+                                         model: SidePanelWords.choice(Transcript.timingModel.value(model.defaults).rawValue,
+                                                                      key: Transcript.timingModel.key),
+                                         language: WordTimingOptions.languageWords(choice, code: code),
+                                         openSettings: {}, cancel: {}, generate: {}))
+    }
     return nil
 }
 
@@ -441,7 +456,7 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
             let window: NSWindow
             if request.card != nil || request.sheet != nil {
                 guard let part = await meetingsSnapshotPart(request, model: model) else {
-                    FileHandle.standardError.write(Data("meetings snapshot: no such part (--card needs a row id of --meeting, --sheet takes history or history:<row id>)\n".utf8))
+                    FileHandle.standardError.write(Data("meetings snapshot: no such part (--card needs a row id of --meeting, --sheet takes history, history:<row id>, voice-tools or word-timings)\n".utf8))
                     exit(1)
                 }
                 window = MeetingsWindow.partWindow(part)
