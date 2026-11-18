@@ -1,5 +1,12 @@
 import SwiftUI
 
+extension ReviewRow {
+    var questionPriority: String? {
+        guard isOpen, isQuestion, let priority else { return nil }
+        return "Priority \(priority.formatted(.number.precision(.fractionLength(0...2))))"
+    }
+}
+
 // MARK: - The pin's hover card (R5, R37, G-CARD-1)
 
 /// The whole context of one review row, large enough that nothing is cut to one line (R37): its label and time, what
@@ -25,6 +32,9 @@ struct PinCard: View {
             Text(verbatim: ReviewRowView.title(row))
                 .font(.system(size: 14, weight: .semibold))
                 .fixedSize(horizontal: false, vertical: true)
+            if let priority = row.questionPriority {
+                Text(verbatim: priority).font(.caption).foregroundStyle(.secondary)
+            }
             if !row.isOpen {
                 // How it was decided stands under the title: at the card's end, in small grey text under five
                 // choices, a decided row read as an open one.

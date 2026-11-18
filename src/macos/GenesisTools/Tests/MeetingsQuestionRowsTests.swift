@@ -189,6 +189,15 @@ final class MeetingsQuestionRowsTests: XCTestCase {
         XCTAssertLessThan(more.lowerBound, skip.lowerBound, "Skip comes after the answers: \(card)")
     }
 
+    func testTheOpenQuestionPinShowsItsPriorityWithoutAddingAColumnToTheList() throws {
+        let ranked = ReviewRow(id: "q", label: "Q1", kind: "question", status: "suggested", confidence: 0.4,
+                               priority: 7, what: "Who speaks?", parts: [], choices: [], edit: "answer",
+                               needs: nil, sources: [], target: .item("q"))
+        let open = try rendered(PinCard(row: ranked), name: "C7-priority", native: true)
+        XCTAssertTrue(open.contains("Priority 7"), open)
+        XCTAssertFalse(try rendered(PinCard(row: question()), name: "C7-unranked", native: true).contains("Priority"))
+    }
+
     func testCheckByEarHoldsBothChecksWithTheirNumbersAndTheRate() throws {
         XCTAssertEqual(SpotCheckRate(changed: 1, answered: 3).percent, 33)
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "test.listen.\(UUID().uuidString)"))
