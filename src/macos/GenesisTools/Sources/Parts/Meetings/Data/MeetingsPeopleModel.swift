@@ -127,20 +127,19 @@ final class MeetingsPeopleModel {
     }
 
     func setHidden(_ person: KnownPerson, hidden: Bool) {
-        perform({ [weak self] in
-            try await self?.writeHidden(person, hidden: hidden)
+        perform({ [service] in
+            try await Self.writeHidden(person, hidden: hidden, service: service)
             return hidden ? "\(person.name) is hidden" : "\(person.name) shows again"
-        }, undo: { [weak self] notice in
-            // The Undo ends its own notice: "Undone: …", or why not.
-            self?.window?.notices.settleUndo(notice, done: hidden ? "Undone: \(person.name) shows again"
-                                                                  : "Undone: \(person.name) is hidden again") { [weak self] in
-                try await self?.writeHidden(person, hidden: !hidden)
+        }, undo: { [weak notices = window?.notices, weak self, service] notice in
+            let done = hidden ? "Undone: \(person.name) shows again" : "Undone: \(person.name) is hidden again"
+            notices?.settleUndo(notice, done: done) {
+                try await Self.writeHidden(person, hidden: !hidden, service: service)
                 self?.load()
             }
         }, retry: { [weak self] in self?.setHidden(person, hidden: hidden) })
     }
 
-    private func writeHidden(_ person: KnownPerson, hidden: Bool) async throws {
+    private static func writeHidden(_ person: KnownPerson, hidden: Bool, service: MeetingsService?) async throws {
         let params = MeetingsAPI.PeopleHide.Params(person: person.id, hidden: hidden)
         _ = try await PeopleCalls.write(MeetingsAPI.PeopleHide.self, params, orRun: PeopleCalls.hideArgs(params), service: service)
     }

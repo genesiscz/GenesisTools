@@ -103,9 +103,8 @@ extension MeetingDetailModel {
     func savePersonStay(_ stay: PersonStay, before: PersonStay?) async throws {
         try await editMeetingPerson(stay.params(meeting: id))
         let undoable = (before?.stays ?? 0) <= 1
-        notices.push(StackedNotice(text: "\(stay.name): \(stay.windowWords)", actions: undoable ? [.undo { [weak self] notice in
-            self?.undoPersonStay(stay, before: before, notice: notice)
-        }] : []))
+        notices.push(StackedNotice(text: "\(stay.name): \(stay.windowWords)",
+                                   actions: undoable ? personStayUndo(stay, before: before) : []))
     }
 
     /// Removes a person and leaves a notice whose Undo adds them back, with one stay from their first join to their
@@ -114,14 +113,21 @@ extension MeetingDetailModel {
         try await editMeetingPerson(stay.params(meeting: id, remove: true))
         let text = stay.stays > 1 ? "Removed \(stay.name); Undo brings them back with one stay, \(stay.windowWords)"
                                   : "Removed \(stay.name) from the meeting"
-        notices.push(StackedNotice(text: text, actions: [.undo { [weak self] notice in
-            self?.undoPersonStay(nil, before: stay, notice: notice)
-        }]))
+        notices.push(StackedNotice(text: text, actions: personStayUndo(nil, before: stay)))
     }
 
-    /// Puts back what the notice reports, and ends the notice with "Undone: …" or why it was not undone.
-    private func undoPersonStay(_ after: PersonStay?, before: PersonStay?, notice: StackedNotice.ID) {
-        guard let undo = PersonStay.undo(after: after, before: before, meeting: id) else { return notices.dismiss(notice) }
-        notices.settleUndo(notice, done: undo.done) { [weak self] in _ = try await self?.editMeetingPerson(undo.params) }
+    /// The window keeps the notice when another meeting opens. Its write belongs to the original meeting.
+    private func personStayUndo(_ after: PersonStay?, before: PersonStay?) -> [StackedNotice.Action] {
+        guard let undo = PersonStay.undo(after: after, before: before, meeting: id) else { return [] }
+        let work = { @MainActor [weak self, weak window, service] in
+            try await MeetingDetailModel.writeMeetingPerson(undo.params, service: service)
+            if let window {
+                if let open = window.detail, open.id == undo.params.meeting { open.reloadRecord() }
+                window.loadOverview()
+            } else {
+                self?.reloadRecord()
+            }
+        }
+        return [.undo { [weak notices] id in notices?.settleUndo(id, done: undo.done, work) }]
     }
 }

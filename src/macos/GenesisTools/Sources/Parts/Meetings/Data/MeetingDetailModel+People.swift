@@ -165,14 +165,18 @@ extension MeetingDetailModel {
     }
 
     func editMeetingPerson(_ params: MeetingsAPI.MeetingPeopleEdit.Params) async throws {
-        var args = ["attendance", id, params.action == "remove" ? "--remove" : "--add", params.name, "--json"]
+        try await Self.writeMeetingPerson(params, service: service)
+        reloadRecord()
+        window?.loadOverview()
+    }
+
+    static func writeMeetingPerson(_ params: MeetingsAPI.MeetingPeopleEdit.Params, service: MeetingsService?) async throws {
+        var args = ["attendance", params.meeting, params.action == "remove" ? "--remove" : "--add", params.name, "--json"]
         if let from = params.fromSec { args += ["--from", String(from)] }
         if let to = params.toSec { args += ["--to", String(to)] }
         if params.atMic == true { args += ["--at-mic"] }
         if let owner = params.via { args += ["--via", owner] }
         _ = try await PeopleCalls.write(MeetingsAPI.MeetingPeopleEdit.self, params, orRun: args, service: service)
-        reloadRecord()
-        window?.loadOverview()
     }
     /// The source label a shown speaker name stands for: a transcript block shows the rename ("Dana Example") where the
     /// record renamed a label, and a rename or an assignment names the label ("Speaker 2").
