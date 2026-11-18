@@ -181,7 +181,10 @@ struct ReviewRowView: View, Equatable {
             }
             // The score says what it is. The priority number is not drawn: the list is already in priority order, and at
             // 900 pt it broke one syllable per line down the card.
-            if let confidence = MeetingsWords.confidence(row.confidence), row.isOpen {
+            if row.isOpen, row.isVoiceModel {
+                // A name the voice model gave carries its mark and cosine, never a percent "sure" (P7, ux 12a).
+                VoiceModelMark(score: row.confidence).lineLimit(1).fixedSize()
+            } else if let confidence = MeetingsWords.confidence(row.confidence), row.isOpen {
                 Text(verbatim: "\(confidence) sure").font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
                     .lineLimit(1).fixedSize()
             }

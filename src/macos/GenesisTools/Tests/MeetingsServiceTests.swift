@@ -1054,6 +1054,84 @@ final class MeetingsServiceTests: XCTestCase {
         XCTAssertEqual(detail.suggestionWarnings, ["One warning"])
     }
 
+    /// w_gu80y4mc: one deadline for every call, and it measures silence. The service repeats a running call's newest
+    /// step every 15 s; each `$/progress` starts the wait again, so a call longer than its deadline still ends by its answer.
+    func testALongCallOutlivesItsDeadlineWhileTheServiceKeepsSendingSteps() async throws {
+        try writeServiceEntry()
+        fake.silent = ["meeting.suggest"]
+        let service = makeService()
+        final class Steps { var seen: [MeetingsCallProgress] = [] }
+        let steps = Steps()
+        let call = Task { @MainActor in
+            try await service.call(MeetingsAPI.MeetingSuggest.self, .init(meeting: Self.design, attendance: nil), timeout: 0.6) {
+                steps.seen.append($0)
+            }
+        }
+        let fake = self.fake!
+        let sent = try await Task.detached { try fake.line { $0["method"] as? String == "meeting.suggest" } }.value
+        let id = sent["id"] ?? NSNull()
+        // 1.8 s of work, three times the deadline: an empty beat first (before any step), then the newest step again.
+        for beat: [String: Any] in [[:], ["fraction": 0.5, "label": "Voices: 60 of 120 lines"], ["fraction": 0.5, "label": "Voices: 60 of 120 lines"],
+                                    ["fraction": 0.5, "label": "Voices: 60 of 120 lines"]] {
+            try await Task.sleep(for: .milliseconds(450))
+            fake.send(["jsonrpc": "2.0", "method": "$/progress", "params": beat.merging(["id": id]) { $1 }])
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        fake.send(["jsonrpc": "2.0", "id": id, "result": ["added": 1, "warnings": [String]()]])
+        let result = try await call.value
+        XCTAssertEqual(result, .init(added: 1, warnings: []), "the call answered after 2.1 s with a 0.6 s deadline")
+        XCTAssertEqual(steps.seen.first, MeetingsCallProgress(fraction: 0.5, label: "Voices: 60 of 120 lines"),
+                       "an empty beat keeps the call alive and shows nothing")
+        XCTAssertEqual(steps.seen.count, 3)
+        XCTAssertEqual(MeetingsService.silenceLimit, 60, "the one deadline of every call")
+    }
+
+    func testALongCallWithNoWordFromTheServiceStillFailsAtItsDeadline() async throws {
+        try writeServiceEntry()
+        fake.silent = ["voices.preview"]
+        let service = makeService()
+        let started = Date()
+        do {
+            _ = try await service.call(MeetingsAPI.VoicesPreview.self, .init(meeting: Self.design), timeout: 0.5)
+            XCTFail("a silent service ends the call")
+        } catch {
+            XCTAssertLessThan(Date().timeIntervalSince(started), 5, "it fails at the deadline, not later: \(error)")
+        }
+    }
+
+    func testTheVoicesPaneShowsAPreviewsStepsThenItsLines() async throws {
+        try writeServiceEntry()
+        fake.silent = ["voices.preview"]
+        fake.progress["voices.preview"] = [["fraction": 0.4, "label": "Voices: 120 of 300 lines"]]
+        let service = makeService()
+        let detail = MeetingDetailModel(id: Self.design, window: nil, service: service)
+        let voices = detail.voices
+        voices.runPreview()
+        XCTAssertEqual(voices.running, .preview)
+        XCTAssertEqual(VoicesRunView.label(.preview, voices.progress), "Reading the voices…", "before the first step")
+        let reached = await waitUntil(3) { voices.progress?.fraction == 0.4 }
+        XCTAssertTrue(reached, "the step reaches the pane: \(String(describing: voices.progress))")
+        XCTAssertEqual(VoicesRunView.label(.preview, voices.progress), "Voices: 120 of 300 lines (40 %)")
+        let fake = self.fake!
+        let sent = try await Task.detached { try fake.line { $0["method"] as? String == "voices.preview" } }.value
+        fake.send(["jsonrpc": "2.0", "id": sent["id"] ?? NSNull(), "result": [
+            "meeting": Self.design, "project": "Atlas",
+            "lines": [
+                ["labeler": "voice", "index": 3, "seat": "call", "fromSec": 12, "toSec": 15, "text": "Hello there.", "current": "Speaker 2",
+                 "person": "Bob Example", "score": 0.71, "reason": "named"],
+                ["labeler": "voice", "index": 4, "seat": "call", "fromSec": 16, "toSec": 19, "text": "And more.", "current": "Speaker 2",
+                 "score": 0.4, "next": ["person": "Dana Example", "score": 0], "reason": "unsampled-present"],
+            ],
+        ]])
+        let ended = await waitUntil(3) { voices.running == nil }
+        XCTAssertTrue(ended)
+        XCTAssertNil(voices.progress, "no step stays after the answer")
+        XCTAssertEqual(voices.preview.value?.headline, "2 lines: 1 named, 1 left open")
+        XCTAssertEqual(voices.preview.value?.waiting, ["Dana Example": 1])
+        XCTAssertEqual(VoicesPane.waitingText("Dana Example", preview: voices.preview.value),
+                       "1 line waits for one. Confirm one line of this person to add a sample.")
+    }
+
     func testTheWindowReadsTheRuleSentencesOnceFromTheService() async throws {
         try writeServiceEntry()
         let service = makeService()

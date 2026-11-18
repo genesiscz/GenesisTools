@@ -280,6 +280,9 @@ struct TranscriptLine: Decodable, Equatable, Hashable, Identifiable {
     var words: [TranscriptWord]? = nil
     var confidence: Double? = nil
     var suggestedSpeaker: String? = nil
+    /// `voice` when the line's suggested name comes from the voice model; `nameScore` is that match's cosine.
+    var nameSource: String? = nil
+    var nameScore: Double? = nil
     var sourceIndex: Int? = nil
     var questioned: Bool? = nil
     var guess: Bool? = nil
@@ -299,6 +302,8 @@ struct TranscriptLine: Decodable, Equatable, Hashable, Identifiable {
     /// question with the answers on offer. Read from the typed fields, never from the marks in `speaker`.
     var who: TranscriptSpeaker {
         if let voices, !voices.isEmpty { return .name(voices.joined(separator: " + ")) }
+        // A name the voice model gave is a suggestion of its own look (P7), whatever the threshold made of it.
+        if nameSource == "voice", band != "confirmed", let name = suggestedSpeaker { return .voice(name) }
         if guess == true, let name = suggestedSpeaker {
             return .guess(name, percent: confidence.map { Int(($0 * 100).rounded()) })
         }
@@ -315,6 +320,8 @@ struct TranscriptLine: Decodable, Equatable, Hashable, Identifiable {
 enum TranscriptSpeaker: Hashable {
     case name(String)
     case guess(String, percent: Int?)
+    /// A name the voice model gave: a suggestion until a person confirms it (the waveform mark, the tentative hue).
+    case voice(String)
     /// `label`: the source label the question is about, nil when the engine did not send it.
     case open(label: String?, candidates: [String])
 
@@ -322,7 +329,7 @@ enum TranscriptSpeaker: Hashable {
     var title: String {
         switch self {
         case .name(let name): return name.isEmpty ? "Unknown voice" : name
-        case .guess(let name, _): return name
+        case .guess(let name, _), .voice(let name): return name
         case .open: return "Who is this?"
         }
     }
@@ -330,12 +337,13 @@ enum TranscriptSpeaker: Hashable {
     /// The name the person colour and the initials come from; empty for an open question, which takes the neutral "?".
     var personName: String {
         switch self {
-        case .name(let name), .guess(let name, _): return name
+        case .name(let name), .guess(let name, _), .voice(let name): return name
         case .open: return ""
         }
     }
 
     var isGuess: Bool { if case .guess = self { return true } else { return false } }
+    var isVoice: Bool { if case .voice = self { return true } else { return false } }
     var isOpen: Bool { if case .open = self { return true } else { return false } }
 }
 

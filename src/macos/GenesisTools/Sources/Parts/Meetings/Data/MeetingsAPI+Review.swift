@@ -760,8 +760,12 @@ struct ReviewRow: Decodable, Equatable, Identifiable {
     var decision: Decision?
     /// What a decided row was decided as: a question's answer, a word's spelling, a range's speaker.
     var answer: String? = nil
+    /// The ids of the rules that raised the item (`meeting.rows`); older services send none.
+    var rules: [String]? = nil
 
     var isOpen: Bool { status == "suggested" }
+    /// A speaker range the voice model named (`MeetingRule.VoiceEmbedding`): its score is a cosine, drawn as its mark.
+    var isVoiceModel: Bool { kind == "speaker-range" && rules?.contains("voice-embedding") == true }
     var isQuestion: Bool { kind == "question" }
 
     /// What a decided item was decided as (`decidedAs` in src/meetings/lib/review-rows.ts): a confirmed question's

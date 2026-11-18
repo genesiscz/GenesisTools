@@ -27,8 +27,8 @@ struct MeetingDetailView: View {
         MeetingsPreferences.Panes.transcriptPane.defaultValue.rawValue
 
     /// What the trailing pane shows beside the tab: the transcript beside the review rows (decision 2 of WaveB-Plan.md),
-    /// or the settings side panel, which replaces it while open, as an inspector.
-    enum TrailingPane: Equatable { case transcript, settings }
+    /// the settings side panel, or the Voices pane (VoicesPane.swift); either inspector replaces the transcript while open.
+    enum TrailingPane: Equatable { case transcript, settings, voices }
 
     /// The pane width, and the column width from which `auto` shows the transcript beside the rows: the rows keep about
     /// 500 pt. At the window's smallest size (900 pt) the column is about 438 pt, so the Transcript tab answers there.
@@ -36,8 +36,9 @@ struct MeetingDetailView: View {
     static let transcriptPaneMinWidth: CGFloat = 820
 
     static func trailingPane(tab: MeetingDetailModel.Tab, width: CGFloat, setting: MeetingsPreferences.Panes.TranscriptPane,
-                             sidePanelOpen: Bool, hasTranscript: Bool = true) -> TrailingPane? {
+                             sidePanelOpen: Bool, hasTranscript: Bool = true, voicesOpen: Bool = false) -> TrailingPane? {
         if sidePanelOpen { return .settings }
+        if voicesOpen { return .voices }
         // A meeting without a transcript has nothing for the pane: beside "No items yet" it was a second empty state
         // that said the same thing at another height.
         guard tab == .items, hasTranscript else { return nil }
@@ -93,7 +94,8 @@ struct MeetingDetailView: View {
     private var trailingPane: TrailingPane? {
         Self.trailingPane(tab: detail.tab, width: width,
                           setting: MeetingsPreferences.Panes.TranscriptPane(rawValue: transcriptPaneSetting) ?? .auto,
-                          sidePanelOpen: window.sidePanelOpen, hasTranscript: window.meeting(detail.id)?.hasTranscript ?? true)
+                          sidePanelOpen: window.sidePanelOpen, hasTranscript: window.meeting(detail.id)?.hasTranscript ?? true,
+                          voicesOpen: detail.voices.open)
     }
 
     @ViewBuilder
@@ -101,6 +103,7 @@ struct MeetingDetailView: View {
         switch pane {
         case .transcript: TranscriptPane(detail: detail)
         case .settings: MeetingsSidePanel(window: window, detail: detail)
+        case .voices: VoicesPane(detail: detail) { detail.voices.open = false }
         }
     }
 
@@ -125,12 +128,13 @@ struct MeetingDetailView: View {
                      .action("Rename…") { window.renamingMeetingID = detail.id },
                      .divider,
                      .action("Seats and microphones…", enabled: record != nil) { seatsOpen = true },
-                     .action("Voice tools…", enabled: record != nil) { voiceToolsOpen = true }]
+                     .action("Voice tools…", enabled: record != nil) { voiceToolsOpen = true },
+                     .action("Voices…", enabled: record != nil) { detail.voices.open = true }]
                 }) {
                     Image(systemName: "ellipsis.circle").font(.system(size: 14)).foregroundStyle(.secondary)
                         .frame(width: 24, height: 22).contentShape(Rectangle())
                 }
-                .instantTooltip("More: open in a new window, duplicate, rename, seats and microphones, voice tools")
+                .instantTooltip("More: open in a new window, duplicate, rename, seats and microphones, voice tools, voices")
                 .accessibilityLabel("More meeting actions")
                 .accessibilityIdentifier("meetings.detail.more")
                 if overview?.hasRecording == true, AppParts.isLinked("recorder") {

@@ -26,6 +26,9 @@ struct TimelinePin: Identifiable, Equatable {
     /// A filter hides the row in the list: the pin is drawn dimmed (G-PLAY-5).
     var dimmed: Bool = false
     var isCut = false
+    /// An open name the voice model gave, with its score: the waveform glyph in the suggestion's hue (P7, ux 12a).
+    var byVoice = false
+    var voiceScore: Double? = nil
 
     /// The pin of a review row: the start of its first `when` part, its label as the text.
     init?(row: ReviewRow, playing: Bool = false, dimmed: Bool = false) {
@@ -38,6 +41,8 @@ struct TimelinePin: Identifiable, Equatable {
                     : row.status == "rejected" ? .rejected : .done,
                   dimmed: dimmed)
         isCut = row.isQuestion && (row.group == "long-stretch" || row.what.contains("Who says \""))
+        byVoice = row.isOpen && row.isVoiceModel
+        voiceScore = byVoice ? row.confidence : nil
     }
 
     init(id: String, sec: Double, text: String, state: State, dimmed: Bool = false) {
@@ -61,7 +66,7 @@ struct TimelinePin: Identifiable, Equatable {
     /// the older flags, with a rejected pin drawn as a decided one.
     func symbol(_ stateLook: MeetingsPreferences.Rows.StateLook) -> String {
         switch (state.shown(stateLook), stateLook) {
-        case (.open, .hueAndGlyph): return "sparkles"
+        case (.open, .hueAndGlyph): return byVoice ? "waveform" : "sparkles"
         case (.playing, .hueAndGlyph): return "play.fill"
         case (.open, .shade), (.playing, .shade): return "flag.fill"
         case (.done, _): return "checkmark"
@@ -83,7 +88,7 @@ struct TimelinePin: Identifiable, Equatable {
 
     var stateWords: String {
         switch state {
-        case .open: return "open"
+        case .open: return byVoice ? "open, \(VoiceModelMark.words(voiceScore))" : "open"
         case .done: return "answered"
         case .rejected: return "rejected"
         case .question: return "question"
@@ -416,7 +421,9 @@ struct PinMark: View {
     private var fill: Color { look == .classic ? tint : cluster.state.hue(stateLook).solid }
 
     private var tooltip: String {
-        if cluster.isSingle, let pin = cluster.pins.first { return "\(MeetingsFormat.clock(pin.sec)) · \(pin.text)" }
+        if cluster.isSingle, let pin = cluster.pins.first {
+            return "\(MeetingsFormat.clock(pin.sec)) · \(pin.text)" + (pin.byVoice ? " · \(VoiceModelMark.words(pin.voiceScore))" : "")
+        }
         let between = "\(cluster.pins.count) items between \(MeetingsFormat.clock(cluster.range.lowerBound)) and \(MeetingsFormat.clock(cluster.range.upperBound))"
         return expands ? "\(between): click to zoom in" : "\(between): click to pick one"
     }
