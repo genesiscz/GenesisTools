@@ -49,6 +49,13 @@
     "movie.volume",
     "movie.mute",
     "movie.unmute",
+    "movie.audioLanes",
+    "movie.audioLane",
+    "movie.layers",
+    "movie.addLayer",
+    "movie.layer",
+    "movie.moveLayer",
+    "movie.removeLayer",
     "movie.apply",
     "movie.undo",
     "movie.shape",
@@ -492,6 +499,38 @@
       "op": "cameraShow",
       "from": 1.5,
       "to": 2
+    },
+    {
+      "op": "audioLane",
+      "id": "mic",
+      "muted": true,
+      "volume": 0.75,
+      "name": "Narration"
+    },
+    {
+      "op": "layerAdd",
+      "kind": "image",
+      "file": "logo.png",
+      "startUs": 500000,
+      "endUs": 2000000,
+      "width": 0.25
+    },
+    {
+      "op": "layer",
+      "id": "l1",
+      "x": 0.2,
+      "y": 0.8,
+      "opacity": 0.6,
+      "shape": "rounded"
+    },
+    {
+      "op": "layerMove",
+      "id": "l1",
+      "to": "bottom"
+    },
+    {
+      "op": "layerRemove",
+      "id": "l1"
     },
     {
       "op": "removeIdle",
