@@ -444,10 +444,14 @@ transformed module at `/name.tsx`:
 
 ```bash
 origin='http://127.0.0.1:3077'    # the origin that serve --detach printed
+tools artifact build dashboard.tsx -o "$TMPDIR/dashboard.check.html"   # exit 0: the module compiles
 curl -s "$origin/dashboard" | rg -c __ARTIFACT_BASE__
 curl -s "$origin/dashboard.tsx" | rg -c 'sample stat'   # a string from your page
 curl -s "$origin/__catalog" | rg dashboard
 ```
+
+A module that fails to transform still answers 200, and its error page shows a code frame that can contain your
+string. Only the exit code of `build` proves that the page compiles.
 
 ## Troubleshooting
 

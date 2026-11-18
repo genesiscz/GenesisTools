@@ -1,6 +1,6 @@
 ---
 name: artifact
-description: Create, serve, and build LOCAL dashboards and HTML artifacts via `tools artifact` — a single .tsx or .html file anywhere (no folder, no node_modules, no tsconfig) becomes a live page with clean URLs, React, Tailwind and a 60+ component kit (Tabs, Router, MdViewer, Mermaid diagrams, DiffView, TreeView, Steps, Heatmap, Timeline, Simulator, ParametricSimulator, DataTable, Claim, Gantt, CapacityGrid, Tooltip, FilterChips, Wizard, EditableTable, ChangeLedger, form controls, …), or a self-contained single-file HTML. Use this WHENEVER the user says "create me an html artifact", "make a dashboard for/from this", "visualize this analysis as a page", "serve this folder", "single-file report", "incident dashboard", "artifact library", "show me the kit components", "open the component gallery", "turn these notes/json/md into a dashboard", or wants an interactive local page over some data — even when they don't say "artifact". Also use it PROACTIVELY when an analysis produces data (json/md/csv) that reads better as an interactive page than as chat text.
+description: Create, serve, and build LOCAL dashboards and HTML artifacts via `tools artifact` — a single .tsx or .html file anywhere (no folder, no node_modules, no tsconfig) becomes a live page with clean URLs, React, Tailwind and a 60+ component kit (Tabs, Router, MdViewer, Mermaid diagrams, DiffView, TreeView, Steps, Heatmap, Timeline, Simulator, ParametricSimulator, DataTable, Claim, Gantt, CapacityGrid, Tooltip, FilterChips, Wizard, EditableTable, ChangeLedger, form controls, …), or a self-contained single-file HTML. Use this WHENEVER the user says "create me an html artifact", "make a dashboard for/from this", "visualize this analysis as a page", "serve this folder", "single-file report", "incident dashboard", "artifact library", "show me the kit components", "open the component gallery", "turn these notes/json/md into a dashboard", "compare these options/designs on a page", "scorecard", or wants an interactive local page over some data — even when they don't say "artifact". Also use it PROACTIVELY when an analysis produces data (json/md/csv) that reads better as an interactive page than as chat text.
 ---
 
 # tools artifact — dashboards from a single file
@@ -104,6 +104,13 @@ code retints completely. A custom template dir may override just `theme.css`.
 ## Design rules (inlined — the kit already encodes most)
 
 - Prefer kit components over hand-rolled markup; they carry the palette and radius system.
+- **Every code is named where it appears.** An option letter, a criterion id (`R3`), a question id or an
+  abbreviation stands next to its name (`R3 · Change safety`) and carries a `Tooltip`. Never remove the code (the
+  report and the source files use it), and never show it alone: prose says "change safety (R3)". A reader who lands
+  in the middle of the page must not need to scroll back to a key.
+- **Comparison and decision pages** (options scored against criteria) follow
+  [references/comparison-pages.md](references/comparison-pages.md): the answer first, one card per option, ONE table
+  of properties and scores with each reason in a tooltip, and the background folded.
 - One accent per page; tones carry meaning (ok/warn/err), never decoration. No AI-purple, no
   neon glows, no pure black/white.
 - Real data over filler: no invented names, no fake-precise numbers, no "Elevate/Seamless"
@@ -117,14 +124,20 @@ code retints completely. A custom template dir may override just `theme.css`.
   tones; `ChartJs` takes a raw Chart.js v4 config when you need something they don't cover;
   `SeriesTable` renders any series as a plain table.
 
-## Verify with curl, not a browser
+## Verify: compile, serve, then look
 
 ```bash
-# Set this to the origin in the URL printed by serve --detach, including its actual port.
+# Compile: exit 0 is the proof. A curl of the served page answers 200 even when its module fails to transform.
+tools artifact build dashboard.tsx -o "<scratch dir>/dashboard.check.html"
+
+# Serve: set this to the origin in the URL printed by serve --detach, including its actual port.
 artifact_origin='<origin printed by serve --detach, including the port>'
 curl -s -o /dev/null -w '%{http_code}\n' "$artifact_origin/dashboard"
 curl -s "$artifact_origin/__catalog" | rg dashboard
 ```
 
-A browser/screenshot pass is only for visual sign-off when the user asks to see it.
+A page with tooltips, tabs or a wide table also needs one browser pass (Playwright or Chrome DevTools): no console
+errors, one tooltip shows its text on hover, and no table is wider than its frame
+(`table.scrollWidth <= table.parentElement.clientWidth` in a 1200 px window). Neither `build` nor `curl` sees a
+render error. A screenshot for the user is still only for visual sign-off when they ask to see the page.
 `tools artifact --readme` prints the full docs; every verb has `--help`.
