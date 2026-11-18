@@ -2,7 +2,15 @@ import { expect, it } from "bun:test";
 import { appendFileSync, writeFileSync } from "node:fs";
 import { auditClaudeFacts } from "./claude-changes-audit";
 import { advanceClaudeFacts, sessionFacts } from "./claude-changes-facts";
-import { claudeFixture, claudeFixtureNames, createFile, jsonl, prompt } from "./fixtures/changes/claude-sessions";
+import {
+    claudeFixture,
+    claudeFixtureNames,
+    createFile,
+    jsonl,
+    prompt,
+    result,
+    use,
+} from "./fixtures/changes/claude-sessions";
 
 for (const name of claudeFixtureNames) {
     it(`agrees with the full parser's change facts for ${name}`, () => {
@@ -22,6 +30,19 @@ for (const name of claudeFixtureNames) {
         });
     });
 }
+
+it("audits the last tool_use offset when a call id repeats", () => {
+    const { transcript } = claudeFixture("basic");
+    if (!transcript) {
+        throw new Error("missing Claude fixture");
+    }
+    const prefix = `${jsonl([prompt("p1", "café", 1), use("again", "Bash", { command: "pwd" }, 2)])}\n`;
+    const tail = jsonl([use("again", "Bash", { command: "ls" }, 3), result("p1", "again", 4)]);
+    writeFileSync(transcript, `${prefix}${tail}\n`);
+
+    expect(advanceClaudeFacts(transcript, true).state.calls.get("again")?.offset).toBe(Buffer.byteLength(prefix));
+    expect(auditClaudeFacts(transcript).positions).toBe(true);
+});
 
 it("indexes direct and indirect heredoc writers, then resumes or rebuilds on a rewrite", () => {
     const { transcript } = claudeFixture("heredoc");

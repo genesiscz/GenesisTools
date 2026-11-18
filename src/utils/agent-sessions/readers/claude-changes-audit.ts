@@ -5,6 +5,7 @@ import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { analyzeCommand } from "@genesiscz/utils/session-changes/command";
 import { fileToolVia, isShellTool } from "@genesiscz/utils/session-changes/tool-calls";
+import type { SessionToolCall } from "@genesiscz/utils/session-changes/types";
 import { advanceClaudeFacts, sessionFacts } from "./claude-changes-facts";
 import {
     emptyParseState,
@@ -116,20 +117,19 @@ export function auditClaudeFacts(path: string) {
         const cursor: ParseCursor = { currentTurn: null };
         const turns: Array<{ id: string; offset: number; at: number | null }> = [];
         const offsets = new Map<string, number>();
-        const idIterator = state.calls.keys();
         const turnIterator = state.turns.values();
         let offset = 0;
+        // A repeated tool_use replaces the parser's call without growing its map.
+        class ObservedCalls extends Map<string, SessionToolCall> {
+            override set(id: string, call: SessionToolCall): this {
+                offsets.set(id, offset);
+                return super.set(id, call);
+            }
+        }
+        state.calls = new ObservedCalls();
         for (const line of readLinesSync(file)) {
-            // Map iterators become exhausted after the last item. New ids are read by count below.
-            const beforeCalls = state.calls.size;
             const beforeTurns = state.turns.size;
             parseLines([line], file === path ? null : file, state, cursor);
-            for (let i = beforeCalls; i < state.calls.size; i++) {
-                const id = idIterator.next().value;
-                if (id !== undefined && fold.state.calls.has(id)) {
-                    offsets.set(id, offset);
-                }
-            }
             if (state.turns.size > beforeTurns) {
                 const turn = turnIterator.next().value;
                 if (turn) {
