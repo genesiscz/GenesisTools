@@ -130,6 +130,7 @@ describe("findClaudeCommand probe verdicts", () => {
 describe("probeScript in a real shell", () => {
     async function run(prelude: string, candidate: string): Promise<{ exitCode: number; stdout: string }> {
         const proc = Bun.spawn({
+            env: process.env,
             cmd: ["bash", "-c", `shopt -s expand_aliases\n${prelude}\n${probeScript(candidate)}`],
             stdio: ["ignore", "pipe", "pipe"],
         });

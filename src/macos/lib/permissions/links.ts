@@ -46,6 +46,7 @@ export function linkHolderKind(command: string | null): LinkHolderKind {
     }
 
     // A hub link starts the hub window in the process it reached (HostMain.swift), so that process is a face.
+    // lint-rules-ignore: reads a process's argument, builds no link
     if (first === "" || first.startsWith("-") || first.startsWith("genesis-tools://hub")) {
         return "face";
     }
