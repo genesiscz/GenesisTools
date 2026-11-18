@@ -53,6 +53,14 @@ final class RequestPresentTests: XCTestCase {
         XCTAssertEqual(allows, 1)
     }
 
+    func testGeneratedNullArmTakesOnlyNull() throws {
+        XCTAssertNoThrow(try JSONDecoder().decode(GenesisToolsNull.self, from: Data("null".utf8)))
+        for other in ["1", "\"text\"", "false", "{}", "[]"] {
+            XCTAssertThrowsError(try JSONDecoder().decode(GenesisToolsNull.self, from: Data(other.utf8)), other)
+        }
+        XCTAssertEqual(String(decoding: try JSONEncoder().encode(GenesisToolsNull()), as: UTF8.self), "null")
+    }
+
     // MARK: - The presenter's queue, deadlines and answers, with a fake panel and a hand-moved clock
 
     func testRequestsShowOneAtATimeAndEachAnswerResolvesOnce() throws {
