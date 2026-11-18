@@ -39,7 +39,7 @@ if (args[0] === "--help") {
         "capture: [--display-id ID] [--follow-focus] [--max-long-side PX] [--control-stdin] mute/unmute | set-mic | set-fps | set-threshold | set-max-long-side\n  [--audio system,mic] [--mic-device UID] [--audio-sidecar]\n  ax-tool audio-devices\n" +
             (fixtureMode === "--fixture-no-audio-session"
                 ? ""
-                : "  ax-tool audio-record --sources mic,system --segment-sec 60 [--without-screen]\n")
+                : "  ax-tool audio-record --sources mic,system --segment-sec 60 [--without-screen] [--monitor] [--levels]\n")
     );
     process.exit(0);
 }
@@ -82,6 +82,17 @@ if (args[0] === "screens") {
 
 const value = (flag: string) => (args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined);
 const outDir = value("--out") ?? ".";
+if (args[0] === "audio-record" && args.includes("--monitor")) {
+    print({ event: "state", state: "recording", sources: ["mic", "system"] }, "stderr");
+    print(
+        { event: "levels", atMs: Date.now(), mic: 0.25, system: null, input: "Test input", output: "Test output" },
+        "stderr"
+    );
+    process.stdin.once("data", () => process.exit(0));
+    process.stdin.once("end", () => process.exit(0));
+    await new Promise<void>((resolve) => process.once("SIGTERM", () => resolve()));
+    process.exit(0);
+}
 if (args[0] === "audio-record") {
     mkdirSync(outDir, { recursive: true });
     writeFileSync(join(outDir, "argv.json"), SafeJSON.stringify(args));

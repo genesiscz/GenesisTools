@@ -8,6 +8,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { z } from "zod";
 import { type AudioSegment, AudioSession, audioSegmentSchema, salvagedAudioTiming } from "./audio-session";
 import type { AudioSource } from "./control";
+import { NativeFrameRecorder } from "./native";
 
 const fake = join(moduleDir(import.meta), "__fixtures__", "fake-ax-tool.ts");
 // Offline Apple AAC silence, with a finalized edit list declaring the encoder's 2,112 priming frames.
@@ -38,6 +39,34 @@ const start = (dir: string, mode?: string, onSegment?: (segment: AudioSegment) =
     });
 
 describe("continuous sound over the fake tool", () => {
+    test("a live level monitor requests no output folder and closes its native session", async () => {
+        const argv: string[][] = [];
+        const recorder = new NativeFrameRecorder({
+            axTool: async () => [process.execPath, fake],
+            launch: (args) => {
+                argv.push(args);
+                return args;
+            },
+        });
+        const first = Promise.withResolvers<unknown>();
+        const session = await recorder.monitorLevels({
+            request: { sources: ["mic", "system"] },
+            onLevels: first.resolve,
+        });
+        try {
+            expect(argv[0]).toContain("--monitor");
+            expect(argv[0]).toContain("--without-screen");
+            expect(argv[0]).not.toContain("--out");
+            expect(await withTimeout(first.promise, 2000, new Error("missing native meter event"))).toMatchObject({
+                mic: 0.25,
+                system: null,
+                input: "Test input",
+                output: "Test output",
+            });
+        } finally {
+            expect((await session.stop()).segments).toBe(0);
+        }
+    });
     test("muted and paused state reaches the process launch before its first samples", async () => {
         const dir = folder();
         const options = {
