@@ -358,6 +358,15 @@ describe("sources, synth and stems", () => {
         const untouched = power(balanced);
         expect(guardLows(balanced, 6)).toBeCloseTo(0, 3);
         expect(power(balanced)).toBeCloseTo(untouched, 3);
+
+        // The same sub in opposite phase on the two sides cancels in a mono sum, and the guard still hears it.
+        const opposite = tones(0.5, 0.02);
+
+        for (let n = 0; n < opposite.right.length; n++) {
+            opposite.right[n] = opposite.right[n] - 2 * 0.5 * Math.sin((2 * Math.PI * 50 * n) / RATE);
+        }
+
+        expect(guardLows(opposite, 6)).toBeGreaterThan(6);
     });
 
     test("the master stops at the loss cap and ships quieter, and without the cap it refuses", async () => {

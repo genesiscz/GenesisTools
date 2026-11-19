@@ -66,6 +66,32 @@ const LOW_END_HZ = 120;
 /** The deepest cut of the low end, in dB. */
 const LOW_GUARD_FLOOR_DB = 9;
 
+/** A fourth-order Linkwitz-Riley split at `LOW_END_HZ`: after a tick, `low` and `high` hold the two bands. */
+class BandSplit {
+    private readonly lowA = new Svf();
+    private readonly lowB = new Svf();
+    private readonly highA = new Svf();
+    private readonly highB = new Svf();
+    low = 0;
+    high = 0;
+
+    constructor() {
+        this.lowA.set(LOW_END_HZ, 0.541);
+        this.lowB.set(LOW_END_HZ, 1.307);
+        this.highA.set(LOW_END_HZ, 0.541);
+        this.highB.set(LOW_END_HZ, 1.307);
+    }
+
+    tick(sample: number): void {
+        this.lowA.tick(sample);
+        this.lowB.tick(this.lowA.low);
+        this.highA.tick(sample);
+        this.highB.tick(this.highA.high);
+        this.low = this.lowB.low;
+        this.high = this.highB.high;
+    }
+}
+
 /**
  * Keep the low end at most `maxOverDb` above the rest of the mix. A loudness meter hardly counts a sub note, so a
  * mix whose sub stands far over everything else is pushed into the limiter until the sub is a square wave, and
@@ -73,11 +99,9 @@ const LOW_GUARD_FLOOR_DB = 9;
  * `LOW_GUARD_FLOOR_DB`. Returns the deepest cut in dB.
  */
 export function guardLows(buffer: Stereo, maxOverDb: number): number {
-    const [lowA, lowB, highA, highB] = [new Svf(), new Svf(), new Svf(), new Svf()];
-    lowA.set(LOW_END_HZ, 0.541);
-    lowB.set(LOW_END_HZ, 1.307);
-    highA.set(LOW_END_HZ, 0.541);
-    highB.set(LOW_END_HZ, 1.307);
+    // Each side is filtered on its own, so bass in opposite phase on the two sides is still metered.
+    const leftBand = new BandSplit();
+    const rightBand = new BandSplit();
     const meter = 1 - Math.exp(-1 / (0.3 * RATE));
     const glide = 1 - Math.exp(-1 / (0.15 * RATE));
     const pole = 1 - Math.exp((-2 * Math.PI * LOW_END_HZ) / RATE);
@@ -91,13 +115,12 @@ export function guardLows(buffer: Stereo, maxOverDb: number): number {
     let right = 0;
 
     for (let n = 0; n < buffer.left.length; n++) {
-        const mono = (buffer.left[n] + buffer.right[n]) / 2;
-        lowA.tick(mono);
-        lowB.tick(lowA.low);
-        highA.tick(mono);
-        highB.tick(highA.high);
-        lowPower += meter * (lowB.low ** 2 - lowPower);
-        restPower += meter * (highB.high ** 2 - restPower);
+        leftBand.tick(buffer.left[n]);
+        rightBand.tick(buffer.right[n]);
+        const low = (leftBand.low ** 2 + rightBand.low ** 2) / 2;
+        const rest = (leftBand.high ** 2 + rightBand.high ** 2) / 2;
+        lowPower += meter * (low - lowPower);
+        restPower += meter * (rest - restPower);
         const tooMuch = lowPower > 1e-7 && lowPower > ratio * restPower;
         const wanted = tooMuch ? Math.max(floor, Math.sqrt((ratio * restPower) / lowPower)) : 1;
         level += glide * (wanted - level);
