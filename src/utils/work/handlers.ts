@@ -17,7 +17,7 @@ import {
 import { originFor, type Pairing } from "./connectors/types";
 import { type ContextReport, stampOf } from "./context";
 import type { Item } from "./model/item";
-import { ITEM_TYPES, type ItemType, isOpenState } from "./model/vocab";
+import { ITEM_TYPES, type ItemType, isOpenState, OPEN_STATES } from "./model/vocab";
 import { type ResolvedNotify, resolveNotify } from "./notify";
 import { pairingsForRows, type RowPairings } from "./pairing-rows";
 import { type ItemRow, type Liveness, listItems, type ShowResult, showItem, type TriageRow, triage } from "./read";
@@ -237,9 +237,12 @@ export const workHandlers: WorkHandlers = {
 
     async tree(p, session) {
         const project = p.project ?? session.ctx.project;
-        const containers = selectItems(session.ctx.db, { project, types: ["handoff", "epic"], limit: 5000 }).filter(
-            (item) => p.all === true || isOpenState(item.state)
-        );
+        const containers = selectItems(session.ctx.db, {
+            project,
+            types: ["handoff", "epic"],
+            ...(p.all === true ? {} : { states: [...OPEN_STATES] }),
+            limit: 5000,
+        });
         const out: TreeContainer[] = containers.map((item) => {
             const listed = listItems(session.ctx.db, { under: item.id });
             const members = listed.ok ? listed.rows : [];
