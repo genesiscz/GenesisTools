@@ -4,6 +4,47 @@ import Vision
 import XCTest
 @testable import GenesisToolsMeetings
 
+/// The scratch benchmarks connect to a Meetings service and may write decisions, so they start only in a disposable
+/// Genesis home: a folder under /tmp or the temporary folder, never the real home or a folder inside it.
+enum ScratchHome {
+    struct Refused: Error, CustomStringConvertible {
+        let home: String
+        var description: String { "Refusing to run outside a scratch Genesis home (\(home)); point \(GenesisToolsHome.variable) under /tmp" }
+    }
+
+    static func isDisposable(_ path: String) -> Bool {
+        guard !path.isEmpty else { return false }
+        let home = canonicalHome(path), real = canonicalHome(NSHomeDirectory())
+        guard home != real, !home.hasPrefix(real + "/") else { return false }
+        return ["/tmp", FileManager.default.temporaryDirectory.path].contains { home.hasPrefix(canonicalHome($0) + "/") }
+    }
+
+    static func require() throws {
+        let home = GenesisToolsHome.home()
+        guard isDisposable(home) else { throw Refused(home: home) }
+    }
+}
+
+/// A process's CPU time from `ps -o time=` (`[[h:]m:]s.cc`). A process that is gone, a failed `ps` or an answer that
+/// is not a time throws, so a benchmark never records a stale pid as zero CPU.
+struct ProcessCPUSample: Error, CustomStringConvertible {
+    let pid: String, status: Int32, output: String
+    var description: String { "No CPU sample for pid \(pid): ps exited \(status) with \"\(output)\"" }
+
+    static func seconds(pid: String) throws -> Double {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/ps")
+        process.arguments = ["-p", pid, "-o", "time="]
+        let capture = try process.runCapturing(timeout: 10)
+        let text = String(decoding: capture.stdout, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = text.split(separator: ":").map { Double($0) }
+        guard capture.status == 0, !parts.isEmpty, parts.count <= 3, !parts.contains(nil) else {
+            throw ProcessCPUSample(pid: pid, status: capture.status, output: text)
+        }
+        return parts.compactMap { $0 }.reduce(0) { $0 * 60 + $1 }
+    }
+}
+
 @MainActor
 final class MeetingsQuestionRowsTests: XCTestCase {
     private let present = KnownPerson(id: "alice", name: "Alice Example", sources: [.meetings], rank: .present)
@@ -410,22 +451,13 @@ extension MeetingsQuestionRowsTests {
         guard let input = ProcessInfo.processInfo.environment["MEETINGS_ANSWER_BENCH"] else { throw XCTSkip("Scratch benchmark only") }
         let values = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: input))) as? [String: String])
         let meeting = try XCTUnwrap(values["meeting"]), output = try XCTUnwrap(values["output"])
-        XCTAssertNotEqual(canonicalHome(GenesisToolsHome.home()), canonicalHome(NSHomeDirectory()))
+        try ScratchHome.require()
         let service = MeetingsService(folder: GenesisToolsHome.url("meetings-service"), startService: { throw CancellationError() })
         let detail = MeetingDetailModel(id: meeting, window: nil, service: service)
         detail.settleDecisionRecord(try await service.call(MeetingsAPI.Show.self, .init(ref: meeting)))
         detail.rows = .loaded(try await MeetingDetailModel.rowsRead(meeting, lowPriority: .show).run(service: service))
-        func serviceCPU() throws -> Double {
-            let process = Process(), pipe = Pipe()
-            process.executableURL = URL(fileURLWithPath: "/bin/ps")
-            process.arguments = ["-p", try XCTUnwrap(values["pid"]), "-o", "time="]
-            process.standardOutput = pipe
-            try process.run()
-            let text = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            process.waitUntilExit()
-            XCTAssertEqual(process.terminationStatus, 0)
-            return text.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: ":").reduce(0) { $0 * 60 + (Double($1) ?? 0) }
-        }
+        let pid = try XCTUnwrap(values["pid"])
+        func serviceCPU() throws -> Double { try ProcessCPUSample.seconds(pid: pid) }
         let cpuStart = try serviceCPU()
         let readStart = service.rowsRefresh.completedReadCount
         let start = ProcessInfo.processInfo.systemUptime
@@ -459,7 +491,7 @@ extension MeetingsQuestionRowsTests {
         guard let input = ProcessInfo.processInfo.environment["MEETINGS_READ_BENCH"] else { throw XCTSkip("Scratch benchmark only") }
         let values = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: input))) as? [String: String])
         let meeting = try XCTUnwrap(values["meeting"]), output = try XCTUnwrap(values["output"])
-        XCTAssertNotEqual(canonicalHome(GenesisToolsHome.home()), canonicalHome(NSHomeDirectory()))
+        try ScratchHome.require()
         let service = MeetingsService(folder: GenesisToolsHome.url("meetings-service"), startService: { throw CancellationError() })
         let priority = MeetingsPreferences.Rows.lowPriority.value()
         let rows = try await MeetingDetailModel.rowsRead(meeting, lowPriority: priority).run(service: service)
@@ -471,12 +503,8 @@ extension MeetingsQuestionRowsTests {
             var usage = rusage(); getrusage(RUSAGE_SELF, &usage)
             return Double(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) + Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1_000_000
         }
-        func serviceCPU() throws -> Double {
-            let process = Process(), pipe = Pipe(); process.executableURL = URL(fileURLWithPath: "/bin/ps")
-            process.arguments = ["-p", try XCTUnwrap(values["pid"]), "-o", "time="]; process.standardOutput = pipe
-            try process.run(); let text = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self); process.waitUntilExit()
-            return text.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: ":").reduce(0) { $0 * 60 + (Double($1) ?? 0) }
-        }
+        let pid = try XCTUnwrap(values["pid"])
+        func serviceCPU() throws -> Double { try ProcessCPUSample.seconds(pid: pid) }
         var samples: [[String: Any]] = []
         func measure(_ name: String, call: Int, _ work: () throws -> Int) rethrows {
             let cpuStart = cpu(), start = ProcessInfo.processInfo.systemUptime
