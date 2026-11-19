@@ -59,7 +59,7 @@ export function connectorConfigOf(layers: readonly RuleLayerInput[], connector: 
         }
     }
 
-    if (!named) {
+    if (!named || problems.length > 0) {
         return { config: null, problems };
     }
 
