@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -500,20 +500,27 @@ test("default play chooses the line seat's best track and source setting is resp
         participants: [],
         speakers: [],
         folders: [],
-        transcript: [{ startSec: 15, text: "On the microphone.", speaker: "Speaker 1" }],
+        transcript: [
+            { startSec: 0, text: "Before it.", speaker: "Speaker 2" },
+            { startSec: 15, text: "On the microphone.", speaker: "Speaker 1" },
+            { startSec: 40, text: "After it.", speaker: "Speaker 2" },
+        ],
     });
     const evidence = spyOn(opened, "evidence").mockResolvedValue({
         segments: [{ channel: "mic", startSec: 15, endSec: 20 }],
         speaking: [],
         files: [],
     });
-    const energy = spyOn(opened, "energy").mockResolvedValue({});
+    // Each measured line asks the energy share once: playback measures only the line at atSec, never the transcript.
+    const measured = mock((_fromSec: number, _toSec: number): number | undefined => undefined);
+    const energy = spyOn(opened, "energy").mockResolvedValue({ share: measured });
     try {
         expect(await playbackSlice({ opened, atSec: 15, fromSec: 15, toSec: 20 })).toMatchObject({
             track: "mic-raw",
             fileFromSec: 5,
             fileToSec: 10,
         });
+        expect(measured.mock.calls).toEqual([[15, 40]]);
         sound.mockResolvedValue(meetingSound({ ...base, tracks: "source" }));
         expect(await playbackSlice({ opened, atSec: 15, fromSec: 15, toSec: 20 })).toMatchObject({
             track: "source-mic",

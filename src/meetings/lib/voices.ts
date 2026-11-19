@@ -645,11 +645,13 @@ export async function addVoiceSample(
         seated?.length || record.seats?.remote.some((row) => sameName(row.name, options.person))
     );
     const self = record.participants.some((person) => person.self && sameName(person.name, options.person));
+    // Only lines inside the interval can be enrolled, so only lines that start in it are measured.
     const eligible = lineEvidence(
         [...lines.entries],
         evidence ?? { segments: [], speaking: [] },
         undefined,
-        energy.share
+        energy.share,
+        { window: { fromSec: options.fromSec, toSec: options.toSec } }
     ).flatMap((line) => {
         const share = line.micShare ?? line.energyMic;
         if (share === undefined || share === 0.5 || line.startSec < options.fromSec || line.endSec > options.toSec) {
