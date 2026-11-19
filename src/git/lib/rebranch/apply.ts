@@ -1,7 +1,7 @@
 /**
- * `rebranch apply`: build one branch per group from the base with `git cherry-pick` (no `-x`: the
- * trailer showed on every PR commit, and `verify` proves the split by content), in source
- * order, resumable after a conflict. The state file lives in the git common dir like
+ * `rebranch apply`: build one branch per group from the base with `git cherry-pick`, in source
+ * order, resumable after a conflict. Picks preserve the source message and append no provenance
+ * trailer. `verify` proves the split by content. The state file lives in the git common dir like
  * `rebase-cascade`'s, so `--continue` and `--abort` find it from any worktree, and every command
  * runs in the checkout that started the operation.
  *
