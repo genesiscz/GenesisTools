@@ -17,7 +17,7 @@ private final class NotifyFixtureSource: WorkSource {
     var hold = false
     var held: CheckedContinuation<Void, Never>?
     func projects() async throws -> [String] { ["Orchard"] }
-    func changes() -> AsyncStream<Void> { AsyncStream { _ in } }
+    func changes() -> AsyncStream<WorkSourceEvent> { AsyncStream { _ in } }
     func snapshot(project: String) async throws -> WorkSnapshotValue { .init(project: project, containers: [], triage: []) }
     func detail(ref: String) async throws -> WorkItemDetail { throw WorkSourceError("Unknown fixture") }
     func perform(_ action: WorkScreenAction, project: String) async throws -> WorkActionOutcome { throw WorkSourceError("Unsupported") }

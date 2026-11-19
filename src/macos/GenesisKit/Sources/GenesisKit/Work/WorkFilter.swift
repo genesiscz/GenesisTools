@@ -26,7 +26,7 @@ public struct WorkFilter: Equatable, Sendable {
     public static let `default` = WorkFilter()
     public var isActive: Bool { self != .default }
     public var requiresIndex: Bool {
-        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || states.isEmpty
+        mine || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || states.isEmpty
             || states.contains(.done) || states.contains(.dropped)
     }
 
@@ -36,13 +36,13 @@ public struct WorkFilter: Equatable, Sendable {
         let parts = candidate.split(separator: ":", omittingEmptySubsequences: false)
         guard parts.count <= 2, let base = parts.first else { return nil }
         let bits = base.split(separator: "_", omittingEmptySubsequences: false)
-        guard bits.count == 2, ["w", "h", "t"].contains(String(bits[0])),
+        guard bits.count == 2, ["w", "h", "t"].contains(bits[0].lowercased()),
               bits[1].count == 8, bits[1].allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { return nil }
         if parts.count == 2 {
             guard !parts[1].isEmpty,
                   parts[1].allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }) else { return nil }
         }
-        return candidate
+        return base.lowercased() + (parts.count == 2 ? ":" + String(parts[1]) : "")
     }
 
     public struct Row: Equatable, Sendable {

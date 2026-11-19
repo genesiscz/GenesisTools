@@ -221,6 +221,10 @@ public struct WorkSourceError: LocalizedError, Equatable, Sendable {
     public var errorDescription: String? { message }
 }
 
+public enum WorkSourceEvent: Sendable {
+    case localChange, serviceChange, serviceDisconnected
+}
+
 /// Where the Work screen reads and writes. Tests give a fake; the app gives LiveWorkSource.
 @MainActor
 public protocol WorkSource: AnyObject {
@@ -230,8 +234,8 @@ public protocol WorkSource: AnyObject {
     func detail(ref: String) async throws -> WorkItemDetail
     func notify(project: String) async throws -> [WorkNotifyRow]
     func perform(_ action: WorkScreenAction, project: String) async throws -> WorkActionOutcome
-    /// A tick for each change of the store, from any writer (the service's `work.changed`, a CLI or MCP write).
-    func changes() -> AsyncStream<Void>
+    /// Store changes from any writer and the service's connection state.
+    func changes() -> AsyncStream<WorkSourceEvent>
     // MARK: - Notify
     func setNotify(project: String?, scope: WorkNotifyScope, type: String, action: String, level: String?) async throws -> WorkActionOutcome
     func restoreNotify(project: String?, scope: WorkNotifyScope, changes: [WorkNotifyChange]) async throws -> WorkActionOutcome
@@ -427,9 +431,9 @@ public final class LiveWorkSource: WorkSource {
         return WorkActionOutcome(ok: false, message: outcome.skipped.first?.reason ?? "The work service could not run it")
     }
 
-    public func changes() -> AsyncStream<Void> {
+    public func changes() -> AsyncStream<WorkSourceEvent> {
         let rpc = rpc
-        let wal = walPath
+        let wal = DirectoryWatcher.normalizedEventPath(walPath)
         let directory = (wal as NSString).deletingLastPathComponent
         let config = (directory as NSString).appendingPathComponent("config.json")
         return AsyncStream { continuation in
@@ -438,14 +442,14 @@ public final class LiveWorkSource: WorkSource {
             let events = Task { @MainActor in
                 // The event stream ends, with an error, when the service connection closes; the screen then reads as stopped.
                 do {
-                    for try await _ in rpc.events.workChanged { continuation.yield(()) }
+                    for try await _ in rpc.events.workChanged { continuation.yield(.serviceChange) }
                 } catch {
                     workSourceLog.notice("work.changed ended: \(error.localizedDescription, privacy: .public)")
                 }
-                continuation.finish()
+                if !Task.isCancelled { continuation.yield(.serviceDisconnected) }
             }
             let watcher = DirectoryWatcher(paths: [directory], latency: 0.3,
-                                           accepts: { $0 == wal || $0 == config }) { _ in continuation.yield(()) }
+                                           accepts: { $0 == wal || $0 == config }) { _ in continuation.yield(.localChange) }
             continuation.onTermination = { _ in
                 events.cancel()
                 watcher.stop()

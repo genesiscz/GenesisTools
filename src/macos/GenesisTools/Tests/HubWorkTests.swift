@@ -16,9 +16,9 @@ private final class FakeWorkSource: WorkSource {
     var snapshotReads = 0
     var holdNextSnapshot = false
     private(set) var heldSnapshot: CheckedContinuation<Void, Never>?
-    private var changeFeed: AsyncStream<Void>.Continuation?
+    private var changeFeed: AsyncStream<WorkSourceEvent>.Continuation?
 
-    func tick() { changeFeed?.yield(()) }
+    func tick() { changeFeed?.yield(.serviceChange) }
     func stopChanges() { changeFeed?.finish() }
     func releaseSnapshot() {
         let held = heldSnapshot
@@ -95,7 +95,7 @@ private final class FakeWorkSource: WorkSource {
         performed.append(action)
         return WorkActionOutcome(ok: true, message: "\(action.done): \(action.ref)")
     }
-    func changes() -> AsyncStream<Void> { AsyncStream { changeFeed = $0 } }
+    func changes() -> AsyncStream<WorkSourceEvent> { AsyncStream { changeFeed = $0 } }
 }
 
 @MainActor
