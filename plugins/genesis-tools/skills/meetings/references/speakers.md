@@ -126,6 +126,26 @@ For project voice naming, follow the seats and voices step in pass 1 of the skil
 by exclusion. The person must be present throughout the line. The voice must sound different from every enrolled
 seat-mate there, and the proposed lines must form one voice. Listen to confirm the name.
 
+### When a library sample sounds wrong
+
+Use the [voice sample commands](../SKILL.md#review-a-learned-voice-sample) to trace a name back to its recording.
+The global view shows a person's samples across projects. A project view limits the samples to that project, and a
+meeting view limits them to that recording's meeting ID. The row includes the words, seat, track, start and end
+seconds, how the sample was confirmed and how it entered the library. A temporary sample used to score a line in
+this pass has no editable library ID.
+
+Quality compares independent clips from the same seat, track, model and embedding dimension. Each clip needs at
+least two other independent clips for its similarity score. Overlapping copies of the same source cannot supply
+an independent comparison. The JSON result can also name the most similar compatible clip from another owner.
+Play both IDs if that helps the listener distinguish the speakers. A missing score supplies no basis for rejection.
+
+For example, suppose a sample under Mica Vale sounds unlike the other clips. If the owner hears Lark Fen speaking
+alone, move the sample to Lark. If the owner can rule out Mica but cannot name the speaker, reject it as
+`wrong-person`. If both voices overlap, choose `several-voices`. For an unusable recording choose `bad-audio`.
+If the owner just wants to forget this example, removal leaves the source eligible for later backfill.
+Keep the applied receipt to undo that decision. A library correction can retire affected voice suggestions while
+preserving human-confirmed transcript decisions.
+
 ## Inputs the agent still gathers
 
 1. **The roles. Ask the user before scoring**: who is the analyst, the architect, the backend and frontend developers,
