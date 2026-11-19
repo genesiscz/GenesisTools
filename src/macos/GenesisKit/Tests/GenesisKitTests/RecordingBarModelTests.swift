@@ -147,6 +147,53 @@ final class RecordingBarModelTests: XCTestCase {
         XCTAssertEqual(engine.calls, [.start(initial, []), .apply(.frameRate(24, still: 1)), .pause, .discard, .start(draft, [])])
     }
 
+    func testPickerWaitsForPauseAndDoesNotPresentOnRefusal() async {
+        let (model, engine) = await recording()
+        engine.pauseRejection = .unsupported("Could not pause")
+        model.beginTargetSelection { XCTFail("Picker must wait for an acknowledged pause") }
+        await model.pendingCommand?.value
+        XCTAssertEqual(model.phase, .recording(take: "take-1"))
+        XCTAssertEqual(model.notice?.message, "Could not pause")
+        model.endTargetSelection(.display(index: 1, name: "Second"))
+        await model.pendingCommand?.value
+        XCTAssertEqual(model.notice?.controlID, "target")
+    }
+
+    func testRejectedTargetResumesThePickerPauseAndKeepsItsWarning() async {
+        let (model, engine) = await recording()
+        let original = model.setup.target
+        model.beginTargetSelection()
+        await model.pendingCommand?.value
+        engine.rejection = .unsupported("Window closed")
+        model.endTargetSelection(.display(index: 1, name: "Second"))
+        await model.pendingCommand?.value
+        XCTAssertEqual(model.phase, .recording(take: "take-1"))
+        XCTAssertEqual(model.setup.target, original)
+        XCTAssertEqual(model.notice?.message, "Window closed")
+        XCTAssertEqual(engine.calls.last, .resume)
+    }
+
+    func testQueuedRatesMergeAgainstTheLastAcknowledgedSetup() async {
+        let (model, engine) = await recording()
+        model.changeFrameRate(active: 24)
+        model.changeFrameRate(still: 2)
+        await model.pendingCommand?.value
+        XCTAssertEqual(Array(engine.calls.suffix(2)), [.apply(.frameRate(24, still: 0)), .apply(.frameRate(24, still: 2))])
+        XCTAssertEqual(model.setup.frameRate, 24)
+    }
+
+    func testQueuedRestartReservesStopBeforeTheQueueRuns() async {
+        let (model, engine) = await recording()
+        model.changeFrameRate(active: 24)
+        model.restart()
+        XCTAssertTrue(model.isRestartPending)
+        model.stop()
+        await model.pendingCommand?.value
+        XCTAssertFalse(model.isRestartPending)
+        XCTAssertFalse(engine.calls.contains(.stop))
+        XCTAssertEqual(model.phase, .starting(take: "take-2"))
+    }
+
     func testClosingThePickerResumesOnlyItsOwnPause() async {
         let (model, engine) = await recording()
         model.pause()
@@ -267,6 +314,7 @@ final class RecordingBarModelTests: XCTestCase {
         var nextTakeID: String { "take-\(sequence)" }
         var calls: [Call] = []
         var rejection: RecordingEngineError?
+        var pauseRejection: RecordingEngineError?
 
         func emit(_ value: RecordingEngineEvent.Value, take: String) {
             stream.continuation.yield(RecordingEngineEvent(take: take, value: value))
@@ -282,7 +330,10 @@ final class RecordingBarModelTests: XCTestCase {
             if let rejection { throw rejection }
         }
 
-        func pause() async throws { calls.append(.pause) }
+        func pause() async throws {
+            calls.append(.pause)
+            if let pauseRejection { throw pauseRejection }
+        }
         func resume() async throws { calls.append(.resume) }
         func restart() async throws {
             calls.append(.restart)

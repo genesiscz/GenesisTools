@@ -161,11 +161,11 @@ private struct LiveRecordingControlsHost: View {
 public struct LiveRecordingBarPresentation {
     public static let foreignPreference = "recorder.bar.forForeignRecordings"
     public static var resolve: ((LiveRecording, @escaping () -> Void) -> Self?)?
-    let show: () -> Void
+    let show: (@escaping (Bool) -> Void) -> Void
     let update: (LiveRecording) -> Void
     let close: () -> Void
 
-    public init(show: @escaping () -> Void, update: @escaping (LiveRecording) -> Void,
+    public init(show: @escaping (@escaping (Bool) -> Void) -> Void, update: @escaping (LiveRecording) -> Void,
                 close: @escaping () -> Void) {
         self.show = show
         self.update = update
@@ -182,6 +182,9 @@ final class LiveRecordingPanel {
     private let model: LiveRecordingPanelModel
     private let hide: () -> Void
     private var bar: LiveRecordingBarPresentation?
+    private var opening = false
+    private var visible = false
+    private var fullBarVisible = false
 
     /// `stack` is the number of controls already open: each next one goes under the one before.
     init(recording: LiveRecording, stack: Int, send: @escaping (LiveRecordingCommand) -> Void,
@@ -191,7 +194,6 @@ final class LiveRecordingPanel {
         self.hide = hide
         model = LiveRecordingPanelModel(recording: recording)
         bar = LiveRecordingBarPresentation.resolve?(recording, hide)
-        if bar != nil { return }
         panel.window.title = "Recording controls: \(recording.title)"
         panel.window.identifier = NSUserInterfaceItemIdentifier("live-recording.controls")
         panel.setContent(LiveRecordingControlsHost(model: model, send: send, hide: hide))
@@ -212,17 +214,29 @@ final class LiveRecordingPanel {
         if recording != model.recording { model.recording = recording }
         if let bar { bar.update(recording); return }
         if let replacement = LiveRecordingBarPresentation.resolve?(recording, hide) {
-            panel.close()
             bar = replacement
-            replacement.show()
+            if visible { show() }
         }
     }
 
     func show() {
-        if let bar { bar.show() } else { panel.show() }
+        visible = true
+        if !fullBarVisible { panel.show() }
+        guard let bar, !opening else { return }
+        opening = true
+        bar.show { [weak self] opened in
+            guard let self, self.visible else { return }
+            self.opening = false
+            self.fullBarVisible = opened
+            if opened { self.panel.close() } else { self.panel.show() }
+        }
     }
 
     func close() {
-        if let bar { bar.close() } else { panel.close() }
+        visible = false
+        opening = false
+        fullBarVisible = false
+        bar?.close()
+        panel.close()
     }
 }

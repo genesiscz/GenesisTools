@@ -388,8 +388,7 @@ public struct RecordingBarView: View {
     }
 
     private func pick(_ kind: RecordingTargetKind?) {
-        model.beginTargetSelection()
-        actions.chooseTarget(kind)
+        model.beginTargetSelection { actions.chooseTarget(kind) }
     }
 
     private func soundState(_ enabled: Bool, _ muted: Bool) -> String {
@@ -500,7 +499,7 @@ public struct RecordingBarView: View {
         } else {
             MenuButton(style: RecordingBarCellStyle(kind: .plain, width: 64), items: {
                 [15, 24, 30, 60].map { rate in
-                    .action("\(rate) fps", checked: rate == setup.frameRate) { model.apply(.frameRate(rate, still: setup.stillFrameRate)) }
+                    .action("\(rate) fps", checked: rate == setup.frameRate) { model.changeFrameRate(active: rate) }
                 }
             }) { label }
             .barControl("frameRate", label: "Frame rate", value: "\(setup.frameRate) fps", reason: why, scope: scope(why))
@@ -614,11 +613,16 @@ public struct RecordingBarView: View {
 
     /// Restart and discard sit beside pause, as in the running bars of other recorders; both ask once in the bar.
     @ViewBuilder private var takeCells: some View {
+        let restartReason = caps.liveRestart ? restartPendingReason
+            : (caps.reasonUnavailable["restart"] ?? "This recorder does not offer Restart.")
         hairline
-        cell("arrow.counterclockwise", "Restart", "restart") { confirm(.restart) }
+        cell("arrow.counterclockwise", "Restart", "restart", reason: restartReason) { confirm(.restart) }
         hairline
-        cell("trash", "Discard", "discard") { confirm(.discard) }
+        cell("trash", "Discard", "discard", reason: restartPendingReason) { confirm(.discard) }
     }
+
+    /// Stop, Restart and Discard wait while a Restart runs: the take they would act on is being replaced.
+    private var restartPendingReason: String? { model.isRestartPending ? "Restart is in progress." : nil }
 
     /// The thin line between the running controls (CleanShot's running bar).
     private var hairline: some View {
@@ -642,7 +646,7 @@ public struct RecordingBarView: View {
         }
         .buttonStyle(RecordingBarCellStyle(kind: .plain, width: nil))
         .fixedSize()
-        .barControl("stop", label: "Stop", value: (paused ? "Paused, " : "Recording, ") + time)
+        .barControl("stop", label: "Stop", value: (paused ? "Paused, " : "Recording, ") + time, reason: restartPendingReason)
         // A button style keeps its label's preferences, and a probe replaces the ones inside it: the clock's probe
         // rides beside the button's.
         .overlay { Color.clear.allowsHitTesting(false).barStatus("recording.bar.clock", label: paused ? "Paused" : "Recording") }
@@ -690,7 +694,14 @@ public struct RecordingBarView: View {
             ?? (caps.targets.contains(.displays) ? nil : "This recorder captures one display at a time.")
     }
 
-    private static let stillRates: [Double] = [0, 0.5, 1, 2, 5]
+    private var recordsFrames: Bool { setup.target?.kind == .displays }
+    /// A frames recording keeps an explicit still rate; "Same" is only a movie's.
+    private var stillRates: [Double] { RecordingSetup.stillFrameRates.filter { !recordsFrames || $0 > 0 } }
+    /// High and Max scale a frames recording; a movie records at its target's native size.
+    private var qualities: [RecordingQuality] { recordsFrames ? RecordingQuality.allCases : [.standard] }
+    private var qualityReason: String? {
+        recordsFrames ? nil : (caps.reasonUnavailable["quality"] ?? "Movies record at the target’s native size.")
+    }
     private static let thresholds: [Double] = [0.5, 1, 2.5, 5]
     private static func stillTitle(_ rate: Double) -> String { rate == 0 ? "Same" : "\(number(rate)) fps" }
     /// "0.5", "2.5": one English form, not the system region's ("0,5" on a Czech Mac).
@@ -706,10 +717,10 @@ public struct RecordingBarView: View {
     /// The setup menu: the macOS screenshot toolbar's "Options" menu, with this recorder's choices.
     private var optionItems: [MenuButtonItem] {
         var items: [MenuButtonItem] = [
-            .submenu("Quality", choiceItems(RecordingQuality.allCases, current: setup.quality, title: { $0.rawValue.capitalized },
-                                            reason: nil) { model.apply(.quality($0)) }),
-            .submenu("While still", choiceItems(Self.stillRates, current: setup.stillFrameRate, title: Self.stillTitle,
-                                                reason: stillReason) { model.apply(.frameRate(setup.frameRate, still: $0)) }),
+            .submenu("Quality", choiceItems(qualities, current: setup.quality, title: { $0.rawValue.capitalized },
+                                            reason: qualityReason) { model.apply(.quality($0)) }),
+            .submenu("While still", choiceItems(stillRates, current: setup.stillFrameRate, title: Self.stillTitle,
+                                                reason: stillReason) { model.changeFrameRate(still: $0) }),
             .submenu("Change needed", choiceItems(Self.thresholds, current: draftThreshold, title: { "\(Self.number($0))%" },
                                                   reason: thresholdReason) { draftThreshold = $0 }),
             .submenu("Countdown", choiceItems(Array(0...10), current: setup.countdownSeconds ?? 0,
@@ -892,8 +903,8 @@ public struct RecordingBarView: View {
     @ViewBuilder private var setupRows: some View {
         row {
             pair("Quality") {
-                segmented("Quality", "quality", values: RecordingQuality.allCases, current: setup.quality,
-                          title: { $0.rawValue.capitalized }, reason: nil) { model.apply(.quality($0)) }
+                segmented("Quality", "quality", values: qualities, current: setup.quality,
+                          title: { $0.rawValue.capitalized }, reason: qualityReason) { model.apply(.quality($0)) }
             }
             pair("Pointer") {
                 segmented("Pointer", "drawsCursor", values: [true, false], current: setup.drawsCursor,
@@ -959,9 +970,9 @@ public struct RecordingBarView: View {
     }
 
     private var stillChoice: some View {
-        segmented("While still", "stillFrameRate", values: Self.stillRates, current: setup.stillFrameRate,
+        segmented("While still", "stillFrameRate", values: stillRates, current: setup.stillFrameRate,
                   title: { $0 == 0 ? "Same" : Self.number($0) }, reason: stillReason) {
-            model.apply(.frameRate(setup.frameRate, still: $0))
+            model.changeFrameRate(still: $0)
         }
     }
 
@@ -970,7 +981,7 @@ public struct RecordingBarView: View {
             pair("Frame rate") {
                 segmented("Frame rate", "liveFrameRate", values: [15, 24, 30, 60], current: setup.frameRate,
                           title: { "\($0) fps" }, reason: reason("frameRate", live: caps.liveFrameRate)) {
-                    model.apply(.frameRate($0, still: setup.stillFrameRate))
+                    model.changeFrameRate(active: $0)
                 }
             }
             pair("While still") { stillChoice }

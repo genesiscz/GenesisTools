@@ -96,6 +96,7 @@ final class RecordingWindowFront {
     private var observer: AXObserver?
     private var activation: NSObjectProtocol?
     private var deadline: Task<Void, Never>?
+    private var raiseJob: Task<AXObserver?, Never>?
     private var raiseReturned = false
 
     init(_ window: RecordingWindow, excluding: Set<UInt32>, done: @escaping () -> Void) {
@@ -106,19 +107,7 @@ final class RecordingWindowFront {
 
     func start() {
         let limit = ContinuousClock.now.advanced(by: .milliseconds(350))
-        let app = AXUIElementCreateApplication(window.pid)
-        var observer: AXObserver?
-        let callback: AXObserverCallback = { _, _, _, ref in
-            guard let ref else { return }
-            MainActor.assumeIsolated { Unmanaged<RecordingWindowFront>.fromOpaque(ref).takeUnretainedValue().changed() }
-        }
-        if AXObserverCreate(window.pid, callback, &observer) == .success, let observer {
-            self.observer = observer
-            AXUIElementSetMessagingTimeout(app, 0.15)
-            AXObserverAddNotification(observer, app, kAXFocusedWindowChangedNotification as CFString,
-                                      Unmanaged.passUnretained(self).toOpaque())
-            CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .commonModes)
-        }
+
         activation = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification,
                                                                        object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.changed() }
@@ -129,15 +118,43 @@ final class RecordingWindowFront {
         }
         NSRunningApplication(processIdentifier: window.pid)?.activate(options: [])
         let target = window
+        let job = Task.detached { [self] in
+            let observer = makeObserver(for: target)
+            if !Task.isCancelled { Self.raise(target) }
+            return observer
+        }
+        raiseJob = job
         Task {
-            await Task.detached { Self.raise(target) }.value
+            let observer = await job.value
+            guard deadline != nil else { return }
+            self.observer = observer
+            if let observer {
+                CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .commonModes)
+            }
             raiseReturned = true
             changed()
         }
     }
 
-    static func bringForward(_ window: RecordingWindow, excluding: Set<UInt32>, done: @escaping () -> Void) {
-        RecordingWindowFront(window, excluding: excluding, done: done).start()
+    static func bringForward(_ window: RecordingWindow, excluding: Set<UInt32>, done: @escaping () -> Void) -> () -> Void {
+        let choice = RecordingWindowFront(window, excluding: excluding, done: done)
+        choice.start()
+        return { choice.finish(commit: false) }
+    }
+
+    nonisolated private func makeObserver(for target: RecordingWindow) -> AXObserver? {
+        guard !Task.isCancelled else { return nil }
+        let callback: AXObserverCallback = { _, _, _, ref in
+            guard let ref else { return }
+            MainActor.assumeIsolated { Unmanaged<RecordingWindowFront>.fromOpaque(ref).takeUnretainedValue().changed() }
+        }
+        var observer: AXObserver?
+        guard AXObserverCreate(target.pid, callback, &observer) == .success, let observer else { return nil }
+        let app = AXUIElementCreateApplication(target.pid)
+        AXUIElementSetMessagingTimeout(app, 0.15)
+        guard AXObserverAddNotification(observer, app, kAXFocusedWindowChangedNotification as CFString,
+                                        Unmanaged.passUnretained(self).toOpaque()) == .success else { return nil }
+        return observer
     }
 
     private func changed() {
@@ -145,15 +162,17 @@ final class RecordingWindowFront {
         if WindowClickPicker.windows().first(where: { !excluded.contains($0.id) })?.id == window.id { finish() }
     }
 
-    private func finish() {
+    private func finish(commit: Bool = true) {
         guard let deadline else { return }
         self.deadline = nil
         deadline.cancel()
+        raiseJob?.cancel()
+        raiseJob = nil
         if let observer { CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .commonModes) }
         observer = nil
         if let activation { NSWorkspace.shared.notificationCenter.removeObserver(activation) }
         activation = nil
-        done()
+        if commit { done() }
     }
 
     /// Match the WindowServer ID, even when two windows have the same title. ax-tool uses the same AX bridge.
@@ -174,6 +193,7 @@ final class RecordingWindowFront {
             var id: CGWindowID = 0
             guard getID(candidate, &id) == .success, id == window.id else { continue }
             AXUIElementSetMessagingTimeout(candidate, 0.2)
+            guard !Task.isCancelled else { return }
             AXUIElementPerformAction(candidate, kAXRaiseAction as CFString)
             return
         }

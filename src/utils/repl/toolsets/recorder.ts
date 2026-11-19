@@ -1,7 +1,7 @@
 import { basename, join } from "node:path";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { withTimeout } from "@genesiscz/utils/async";
-import { recorderCommand } from "@genesiscz/utils/genesis-tools/tools/system";
+import { recorderCommands } from "@genesiscz/utils/genesis-tools/tools/system";
 import type { JobInfo } from "@genesiscz/utils/jobs";
 import { logger } from "@genesiscz/utils/logger";
 import {
@@ -109,7 +109,7 @@ const switchTargetSchema = z.union([
 ]);
 const targetKind = z.enum(["window", "app", "display", "displays", "area"]);
 const capabilitiesSchema = z.object({
-    targets: z.array(targetKind),
+    targets: z.array(targetKind).nullable(),
     liveTargetSwitch: z.boolean(),
     liveMicrophoneMute: z.boolean(),
     liveMicrophoneDevice: z.boolean(),
@@ -135,7 +135,7 @@ const recordingMethods = [
         params: z.object({}),
         result: capabilitiesSchema,
         resultName: "RecordingCapabilities",
-        doc: `Returns target kinds, live controls, the known duration limit and reasons for unavailable controls. ${recorderCommand("status")} reads the take. ${recorderCommand("list", "--live", "--json")} lists its advertised controls.`,
+        doc: `Returns target kinds (null when the engine does not report which kinds it can switch to), live controls, the known duration limit and reasons for unavailable controls. ${recorderCommands.status} reads the take. ${recorderCommands.listLive} lists its advertised controls.`,
         effect: "read",
     }),
     defineMethod({
@@ -143,14 +143,14 @@ const recordingMethods = [
         params: z.object({ target: switchTargetSchema }),
         positional: ["target"],
         result: z.object({ state: z.string() }),
-        doc: `Switches by window id, app name or bundle id, display id, or a tagged target. Returns the engine's state. ${recorderCommand("serve")} exposes target.switch through recording.call.`,
+        doc: `Switches by window id, app name or bundle id, display id, or a tagged target. Returns the engine's state. ${recorderCommands.serve} exposes target.switch through recording.call.`,
         effect: "reversible",
     }),
     defineMethod({
         name: "restart",
         params: z.object({}),
         result: z.object({ state: z.string() }),
-        doc: `Discards the take so far and starts again. Returns the engine's state. ${recorderCommand("serve")} exposes restart through recording.call.`,
+        doc: `Discards the take so far and starts again. Returns the engine's state. ${recorderCommands.serve} exposes restart through recording.call.`,
         effect: "destructive",
     }),
     defineMethod({
@@ -330,7 +330,7 @@ export const recorderApi = defineApi({
             params: recorderStartSchema,
             result: z.unknown(),
             resultName: "Recording",
-            doc: `Starts a library recording (frames of the chosen displays, sound when asked) and returns its handle. excludeWindowIds leaves those CG windows out of every display, as ${recorderCommand("start", "--frames", "--exclude-window-ids")} does. Frames default to the recorder's files moved at the stop; frames: { format: "jpeg", naming: "wall-clock", flush: "piece" } with ocr: { enabled: true } and ocrSink: "jsonl" records the way a meeting does (each piece's JPEGs and ocr.jsonl rows exist while it records). It records what the user's screen shows, and a first microphone use can raise the system's permission prompt.`,
+            doc: `Starts a library recording (frames of the chosen displays, sound when asked) and returns its handle. excludeWindowIds leaves those CG windows out of every display, as ${recorderCommands.startFrames} does. Frames default to the recorder's files moved at the stop; frames: { format: "jpeg", naming: "wall-clock", flush: "piece" } with ocr: { enabled: true } and ocrSink: "jsonl" records the way a meeting does (each piece's JPEGs and ocr.jsonl rows exist while it records). It records what the user's screen shows, and a first microphone use can raise the system's permission prompt.`,
             effect: "reversible",
             reaches: ["user"],
         }),
@@ -511,8 +511,14 @@ export class RecordingHandle {
         };
 
         const targets: z.infer<typeof targetKind>[] = [];
-        if (this.kind === "control-session" && methods.includes("target.switch")) {
-            targets.push("window", "app", "display", "area");
+        const controlSession = this.kind === "control-session";
+        const liveTargetSwitch = available("liveTargetSwitch", ["target.switch"]);
+        if (controlSession && liveTargetSwitch) {
+            if (settings?.audio.sources.length === 0) {
+                targets.push("window", "app");
+            }
+
+            targets.push("display", "area");
         } else if (methods.includes("displays.switch")) {
             targets.push("display");
         }
@@ -523,8 +529,8 @@ export class RecordingHandle {
         }
 
         return {
-            targets,
-            liveTargetSwitch: available("liveTargetSwitch", ["target.switch"]),
+            targets: liveTargetSwitch && !controlSession ? null : targets,
+            liveTargetSwitch,
             liveMicrophoneMute: available("liveMicrophoneMute", ["audio.mute"], soundReason("mic")),
             liveMicrophoneDevice: available("liveMicrophoneDevice", ["audio.setInput"], soundReason("mic")),
             liveSystemAudioMute: available("liveSystemAudioMute", ["audio.mute"], soundReason("system")),

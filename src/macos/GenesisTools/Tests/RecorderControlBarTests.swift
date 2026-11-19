@@ -84,6 +84,21 @@ final class RecorderControlBarTests: XCTestCase {
         XCTAssertTrue(recorder.starts.isEmpty)
     }
 
+    func testReopeningTheSetupPickerKeepsTheEngineEventConsumer() throws {
+        let suite = "recorder.test.reopen.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let host = host(Recorder(), defaults: defaults)
+        defer { host.dismiss() }
+        host.show(focus: false)
+        let bar = try XCTUnwrap(host.bar)
+        bar.setup.target = .display(index: 0, name: nil)
+        host.dismiss()
+        host.show(focus: false)
+        XCTAssertTrue(host.bar === bar)
+        XCTAssertNil(bar.setup.target)
+    }
+
     func testRecordStartsOnceWithThisDraftAndTheBarPickerOverlayAndCameraExclusions() async throws {
         let suite = "recorder.test.start.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -168,6 +183,133 @@ final class RecorderControlBarTests: XCTestCase {
         XCTAssertEqual(calls, ["settings.get"])
     }
 
+    func testStartTimesOutAndDoesNotInstallAnEntryAfterExitDuringLookup() async throws {
+        let noAck = ToolsRecorderEngine(prepare: { _ in ([], {}) }, launch: { _, _, _ in nil },
+                                        startupTimeout: .milliseconds(20))
+        do {
+            try await noAck.start(.init(), excludeWindowIDs: [])
+            XCTFail("A launched recorder must acknowledge startup")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("in time"))
+            XCTAssertNil(noAck.entry)
+        }
+
+        let fixture = Recorder()
+        var exited: (@MainActor (Int32, String) -> Void)?
+        let lookup = ToolsRecorderEngine(prepare: { _ in ([], {}) }, launch: { _, lines, exit in
+            exited = exit
+            lines([#"{"event":"started","liveId":"owned-live"}"#])
+            return nil
+        }, locate: { _ in
+            exited?(1, "Recorder stopped")
+            return fixture.entry
+        })
+        do {
+            try await lookup.start(.init(), excludeWindowIDs: [])
+            XCTFail("A terminated take cannot install a live entry")
+        } catch {
+            XCTAssertNil(lookup.entry)
+            XCTAssertNil(lookup.liveID)
+        }
+    }
+
+    func testForeignControlSessionUsesMeasuredProgressAndValidatesStop() async throws {
+        var live = Recorder().entry
+        live.recordedMs = 300
+        live.recordedRunning = true
+        let engine = ToolsRecorderEngine(adopting: live, rpc: { _, _, _ in
+            ["state": "stopped", "outcome": "failed"]
+        })
+        let bar = RecordingBarModel(engine: engine, setup: .init(countdownSeconds: nil))
+        let take = engine.nextTakeID
+        let recording = expectation(description: "the existing take already has a frame")
+        let phases = bar.$phase.first(where: { $0 == .recording(take: take) }).sink { _ in recording.fulfill() }
+        bar.record()
+        await fulfillment(of: [recording], timeout: 1)
+        withExtendedLifetime(phases) {}
+        XCTAssertFalse(engine.capabilities.liveRestart)
+        do {
+            _ = try await engine.stop()
+            XCTFail("A stopped take with failed outcome is not saved")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("saved recording"))
+        }
+    }
+
+    func testOwnedRestartWaitsForTheNewFrameAfterTheStdoutBoundary() async throws {
+        let live = LiveRecording(id: "owned", kind: "library", title: "Example", pid: 123,
+                                 startedAt: Date(), state: "recording", frames: 1, lastFrameAt: Date(),
+                                 controls: ["restart"])
+        var publish: (@MainActor ([String]) -> Void)?
+        let engine = ToolsRecorderEngine(prepare: { _ in ([], {}) }, launch: { _, lines, _ in
+            publish = lines
+            lines([#"{"event":"started","liveId":"owned"}"#, #"{"event":"state","state":"recording","elapsedMs":1}"#])
+            return nil
+        }, rpc: { _, _, _ in nil }, locate: { _ in live })
+        try await engine.start(.init(), excludeWindowIDs: [])
+        let replacement = engine.nextTakeID
+        try await engine.restart()
+        engine.observe(live)
+        publish?([#"{"event":"state","state":"starting","elapsedMs":0}"#])
+        engine.observe(live)
+        publish?([#"{"event":"state","state":"recording","elapsedMs":1}"#,
+                  #"{"event":"result","outcome":"discarded"}"#])
+
+        var observed: [RecordingEngineEvent.Value] = []
+        let finished = expectation(description: "replacement events through discard")
+        let reader = Task {
+            for await event in engine.events where event.take == replacement {
+                observed.append(event.value)
+                if event.value == .discarded {
+                    finished.fulfill()
+                    return
+                }
+            }
+        }
+        await fulfillment(of: [finished], timeout: 1)
+        reader.cancel()
+        XCTAssertEqual(observed, [.elapsed(milliseconds: 0), .firstFrame, .elapsed(milliseconds: 1), .discarded])
+    }
+
+    func testSwitchReconcilesTheNewTargetIfTheSecondPauseFails() async throws {
+        let engine = ToolsRecorderEngine(adopting: Recorder().entry, rpc: { _, method, _ in
+            if method == "pause" { throw RecordingEngineError.unsupported("Could not pause") }
+            if method == "status" { return ["state": "recording"] }
+            return nil
+        })
+        var live = Recorder().entry
+        live.state = "paused"
+        engine.observe(live)
+        let target = RecordingTarget.display(index: 0, name: nil)
+        do {
+            try await engine.apply(.target(target))
+            XCTFail("The second pause did not succeed")
+        } catch {
+            guard case let .partialTargetSwitch(actual, _) = error as? RecordingEngineError else {
+                return XCTFail("Expected the new recording target despite the pause failure")
+            }
+            XCTAssertEqual(actual, target)
+        }
+    }
+
+    func testSetupRetainsLegacyMovieRatesAndScopesFrameQuality() throws {
+        let suite = "recorder.test.rates.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let setup = RecordingSetup(frameRate: 10, stillFrameRate: 10)
+        setup.save(defaults)
+        let options = CaptureOptions.load(defaults)
+        XCTAssertEqual(options.fps, 10)
+        XCTAssertEqual(options.idleFps, 10)
+        RecordingSetup(target: .displays(indices: [0, 1]), quality: .max).save(defaults)
+        XCTAssertEqual(RecordingSetup.load(defaults).quality, .standard)
+        let frames = RecordingSetup(target: .displays(indices: [0, 1]), frameRate: 60, stillFrameRate: 0)
+        let args = try CaptureOptions.barArguments(frames, threshold: 0.5, shortcuts: true, excluding: [],
+                                                  screens: [], displayIDs: [1, 2])
+        let still = try XCTUnwrap(args.firstIndex(of: "--idle-fps"))
+        XCTAssertEqual(args[still + 1], "0.5")
+    }
+
     func testLiveCameraHasItsDisabledReasonAndSendsNoCommand() async throws {
         let recorder = Recorder(), engine = recorder.engine()
         try await engine.start(RecordingSetup(), excludeWindowIDs: [])
@@ -237,7 +379,7 @@ final class RecorderControlBarTests: XCTestCase {
         let arguments = try CaptureOptions.barArguments(setup, threshold: 0.5, shortcuts: true, excluding: [72],
                                                        screens: screens, displayIDs: [55, 88])
         XCTAssertEqual(arguments, ["recorder", "start", "--frames", "--displays", "88,55", "--fps", "60",
-                                   "--exclude-window-ids", "72", "--json"])
+                                   "--idle-fps", "0.5", "--exclude-window-ids", "72", "--json"])
         XCTAssertThrowsError(try CaptureOptions.barArguments(setup, threshold: 0.5, shortcuts: true, excluding: [72],
                                                             screens: screens, displayIDs: [55, nil]))
     }

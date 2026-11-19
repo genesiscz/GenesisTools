@@ -75,7 +75,7 @@ final class CapturePicker {
             controls?.show(focus: focus)
             return
         }
-        if bar == nil || preset != nil || isFinished { configure(setup: draft(preset: preset)) }
+        if controls == nil || preset != nil || isFinished { configure(setup: draft(preset: preset)) }
         controls?.show(focus: false)
         openPicker(nil)
     }
@@ -91,8 +91,11 @@ final class CapturePicker {
             let screens = NSScreen.screens.map(\.frame)
             guard let primary = screens.first else { return }
             let cocoa = CaptureChoice.coreGraphicsRect(cocoa: rect, primaryHeight: primary.maxY)
-            guard let index = screens.firstIndex(where: { $0.contains(CGPoint(x: cocoa.midX, y: cocoa.midY)) }) else { return }
-            setup.target = .area(rect: cocoa.offsetBy(dx: -screens[index].minX, dy: -screens[index].minY), display: index)
+            let ids = CaptureChoice.screenIDs
+            guard let index = screens.firstIndex(where: { $0.contains(cocoa) }),
+                  ids.indices.contains(index), let id = ids[index] else { return }
+            setup.target = .area(rect: cocoa.offsetBy(dx: -screens[index].minX, dy: -screens[index].minY),
+                                 display: index, displayID: id)
         }
         configure(setup: setup)
         controls?.show()
@@ -118,7 +121,8 @@ final class CapturePicker {
         detachPicker()
         controls?.window.orderOut(nil)
         observers.removeAll()
-        let bar = RecordingBarModel(engine: engine, setup: setup)
+        let bar = self.bar ?? RecordingBarModel(engine: engine, setup: setup)
+        bar.resetSetup(setup)
         self.bar = bar
         let options = CaptureOptions.load(defaults)
         engine.threshold = options.threshold
@@ -188,9 +192,8 @@ final class CapturePicker {
 
     private func bounds(of target: RecordingTarget) -> CGRect? {
         let screens = NSScreen.screens
-        if case let .area(rect, index) = target, screens.indices.contains(index) {
-            let origin = screens[index].frame.origin
-            return rect.offsetBy(dx: origin.x, dy: origin.y)
+        if target.kind == .area {
+            return target.areaBounds(screens: screens.map(\.frame), displayIDs: CaptureChoice.screenIDs)
         }
         guard case let .loaded(targets) = load, let primary = screens.first else { return nil }
         let windows: [RecordingWindow]
@@ -277,6 +280,7 @@ final class CapturePicker {
     private func detachPicker(keepingChoice: Bool = false) {
         picker.window.parent?.removeChildWindow(picker.window)
         picker.dismiss()
+        picker.window.contentView = nil
         overlays?.dismiss(keepingChoice: keepingChoice)
         read?.cancel()
         read = nil
@@ -292,7 +296,6 @@ final class CapturePicker {
         if bar?.phase == .setup || isFinished {
             if onHide == nil { preview(false) }
             observers.removeAll()
-            bar = nil
             controls = nil
             overlays = nil
             filter = nil
@@ -310,7 +313,10 @@ final class CapturePicker {
     /// Resolve a request from the watcher's Show Controls action, even if the original bar was hidden.
     static func presentation(for entry: LiveRecording, hide: @escaping () -> Void) -> LiveRecordingBarPresentation? {
         if shared.engine.liveID == entry.id {
-            return LiveRecordingBarPresentation(show: { shared.controls?.show() }, update: { _ in }, close: {})
+            return LiveRecordingBarPresentation(show: { done in
+                shared.controls?.show()
+                done(shared.isVisible)
+            }, update: { _ in }, close: {})
         }
         guard UserDefaults.standard.bool(forKey: LiveRecordingBarPresentation.foreignPreference),
               entry.canControl, entry.socket != nil, entry.controls.contains("settings.get") else { return nil }
@@ -318,22 +324,34 @@ final class CapturePicker {
         let host = CapturePicker(engine: engine)
         host.onHide = hide
         var opening: Task<Void, Never>?
-        return LiveRecordingBarPresentation(show: {
-            if host.bar != nil { host.controls?.show(); return }
+        var openingID: UUID?
+        return LiveRecordingBarPresentation(show: { done in
+            if let controls = host.controls { controls.show(); done(host.isVisible); return }
             guard opening == nil else { return }
+            let id = UUID()
+            openingID = id
             opening = Task {
+                defer {
+                    if openingID == id {
+                        opening = nil
+                        openingID = nil
+                    }
+                }
                 do {
                     let setup = try await engine.adoptedSetup()
-                    guard !Task.isCancelled else { return }
+                    guard openingID == id, !Task.isCancelled else { return }
                     host.configure(setup: setup)
                     host.bar?.record() // The adapter attaches to the existing ID; no process is launched.
                     host.controls?.show()
+                    done(host.isVisible)
                 } catch {
-                    if !Task.isCancelled { RecorderNotice.failure("Could not open this recording's controls.", more: error.localizedDescription) }
+                    guard openingID == id, !Task.isCancelled else { return }
+                    RecorderNotice.failure("Could not open this recording's controls.", more: error.localizedDescription)
+                    done(false)
                 }
-                opening = nil
             }
         }, update: { engine.observe($0) }, close: {
+            openingID = nil
             opening?.cancel()
             opening = nil
             host.detachPicker()

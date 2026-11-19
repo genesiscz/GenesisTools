@@ -131,8 +131,7 @@ final class RecorderFailureNoticeTests: XCTestCase {
             await RecorderShortcutActions.stop(id: "take-27", defaults: defaults) {
                 attempts += 1
                 if attempts == 1 {
-                    if style == "alert" { throw RecordingEngineError.unsupported("Socket closed") }
-                    return ["state": "stopping"]
+                    throw JSONRPCSocketClient.Failure.connect(errno: 61)
                 }
                 finished.fulfill()
                 return ["state": "stopped"]
@@ -143,6 +142,19 @@ final class RecorderFailureNoticeTests: XCTestCase {
             await fulfillment(of: [finished], timeout: 1)
             XCTAssertEqual(attempts, 2)
         }
+    }
+
+    func testUnconfirmedStopDoesNotOfferASecondSend() async {
+        defaults.set("notice", forKey: RecorderFailureStyle.key)
+        var reported = false
+        RecorderNotice.outlets.notice = { _, retry in
+            reported = true
+            XCTAssertNil(retry)
+        }
+        await RecorderShortcutActions.stop(id: "take-27", defaults: defaults) {
+            throw JSONRPCSocketClient.Failure.timeout(method: "stop")
+        }
+        XCTAssertTrue(reported)
     }
 
     func testTheNoticeSettingsDefaultToOpenUnderTheItemAndNeverClosing() {

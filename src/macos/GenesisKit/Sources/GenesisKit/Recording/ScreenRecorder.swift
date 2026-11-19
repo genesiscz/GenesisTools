@@ -143,7 +143,7 @@ public final class ScreenRecorder: ObservableObject {
     private func presentSetup(host: ScreenRecordingHost, anchor: CGPoint?) {
         var setup = RecordingSetup.load(defaults)
         let storedRate = usesCustomSettings ? settings.frameRate : defaults.integer(forKey: RecordingSettings.Key.frameRate)
-        widgetRate = RecordingSettings.frameRates.contains(storedRate) ? storedRate : nil
+        widgetRate = RecordingSettings.frameRates.contains(storedRate) ? storedRate : settings.frameRate
         if let widgetRate {
             if setup.stillFrameRate == Double(setup.frameRate) { setup.stillFrameRate = 0 }
             setup.frameRate = widgetRate
@@ -366,7 +366,8 @@ public final class ScreenRecorder: ObservableObject {
     }
 
     private func rects(_ target: RecordingTarget) -> [CGRect] {
-        RecordingPickerGeometry.rects(target, windows: targets?.windows ?? [], screens: NSScreen.screens.map(\.frame))
+        RecordingPickerGeometry.rects(target, windows: targets?.windows ?? [], screens: NSScreen.screens.map(\.frame),
+                                      displayIDs: RecordingTarget.connectedDisplayIDs)
     }
 
     private func updateOutline(enabled: Bool) {

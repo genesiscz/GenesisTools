@@ -104,7 +104,12 @@ public enum AreaSelector {
             let view = RecordingAreaSelectionView(frame: frame)
             view.setAccessibilityLabel("Select an area")
             view.onCancel = { [weak overlays] in overlays?.finish(nil) }
-            view.onSelect = { [weak overlays] rect in overlays?.finish(.area(rect: rect, display: display)) }
+            let ids = RecordingTarget.connectedDisplayIDs
+            let id = ids.indices.contains(display) ? ids[display] : nil
+            view.onSelect = { [weak overlays] rect in
+                guard let id else { overlays?.finish(nil); return }
+                overlays?.finish(.area(rect: rect, display: display, displayID: id))
+            }
             return view
         }, completion: completion)
     }
@@ -176,15 +181,49 @@ final class RecordingAreaSelectionView: RecordingSelectorView {
         drag(to: convert(event.locationInWindow, from: nil))
         confirm()
     }
+    private func beginKeyboardSelection() {
+        guard start == nil else { return }
+        let width = min(bounds.width, max(Self.minimumSide, bounds.width / 2))
+        let height = min(bounds.height, max(Self.minimumSide, bounds.height / 2))
+        selection = CGRect(x: bounds.midX - width / 2, y: bounds.midY - height / 2, width: width, height: height)
+        start = selection?.origin
+        tooSmall = false
+        needsDisplay = true
+    }
+
+    func moveSelection(dx: CGFloat, dy: CGFloat, resizing: Bool) {
+        beginKeyboardSelection()
+        guard var rect = selection else { return }
+        if resizing {
+            rect.size.width = min(bounds.maxX - rect.minX, max(Self.minimumSide, rect.width + dx))
+            rect.size.height = min(bounds.maxY - rect.minY, max(Self.minimumSide, rect.height + dy))
+        } else {
+            rect.origin.x = min(bounds.maxX - rect.width, max(bounds.minX, rect.minX + dx))
+            rect.origin.y = min(bounds.maxY - rect.height, max(bounds.minY, rect.minY + dy))
+        }
+        selection = rect
+        start = rect.origin
+        needsDisplay = true
+    }
+
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 36 || event.keyCode == 76 { confirm() } else { super.keyDown(with: event) }
+        let step: CGFloat = 10
+        let resizing = event.modifierFlags.contains(.shift)
+        switch event.keyCode {
+        case 36, 76: beginKeyboardSelection(); confirm()
+        case 123: moveSelection(dx: -step, dy: 0, resizing: resizing)
+        case 124: moveSelection(dx: step, dy: 0, resizing: resizing)
+        case 125: moveSelection(dx: 0, dy: -step, resizing: resizing)
+        case 126: moveSelection(dx: 0, dy: step, resizing: resizing)
+        default: super.keyDown(with: event)
+        }
     }
 
     override func draw(_ dirtyRect: NSRect) {
         NSColor.black.withAlphaComponent(0.25).setFill()
         bounds.fill()
         var center = CGPoint(x: bounds.midX, y: bounds.midY)
-        var label = "Drag to select an area · Esc to return"
+        var label = "Drag or use arrows · Shift + arrows resize · Return chooses · Esc cancels"
         if let rect = selection {
             NSGraphicsContext.saveGraphicsState()
             NSGraphicsContext.current?.compositingOperation = .clear

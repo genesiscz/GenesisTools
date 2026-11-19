@@ -21,17 +21,22 @@ final class ToolsRecorderEngine: RecordingEngineAdapter {
     private let prepare: @MainActor (CameraSetup) async throws -> Preparation
     private let locate: (String) async -> LiveRecording?
     private let foreign: Bool
+    private let startupTimeout: Duration
+    private var startup: CheckedContinuation<Void, Error>?
+    private var startupDeadline: Task<Void, Never>?
     private var take: String?
     private var stream: DetachedToolsJob?
     private var launchID: UUID?
     private var started: CheckedContinuation<String, Error>?
-    private var result: Result<URL?, Error>?
+    private var terminal: (answer: Result<URL?, Error>, event: RecordingEngineEvent.Value)?
+    private var result: Result<URL?, Error>? { terminal?.answer }
     private var finishing: CheckedContinuation<URL?, Error>?
     private var setup = RecordingSetup()
     private var recordedSources = Set<LiveRecordingCommand.Source>()
     private var paused = false
     private var switching = false
     private var awaitingRestart = false
+    private var needsRestartFrame = false
     private var framing = false
     private var watcher: LiveRecordingsWatcher?
     private var releasePreparation: (@MainActor () -> Void)?
@@ -48,9 +53,11 @@ final class ToolsRecorderEngine: RecordingEngineAdapter {
 
     init(adopting entry: LiveRecording? = nil,
          prepare: (@MainActor (CameraSetup) async throws -> Preparation)? = nil,
-         launch: Launch? = nil, rpc: RPC? = nil, locate: ((String) async -> LiveRecording?)? = nil) {
+         launch: Launch? = nil, rpc: RPC? = nil, locate: ((String) async -> LiveRecording?)? = nil,
+         startupTimeout: Duration = .seconds(90)) {
         (events, output) = AsyncStream.makeStream(of: RecordingEngineEvent.self)
         foreign = entry != nil
+        self.startupTimeout = startupTimeout
         self.entry = entry
         liveID = entry?.id
         self.prepare = prepare ?? { camera in
@@ -100,6 +107,7 @@ final class ToolsRecorderEngine: RecordingEngineAdapter {
         if frames { targets = [.display, .displays] }
         else if methods != nil { targets.remove(.displays) }
         var reasons = ["camera": "The camera starts with the recording"]
+        if !supports("restart") { reasons["restart"] = "This recorder does not offer Restart." }
         if !supports("audio.mute") {
             reasons["microphone"] = "This recorder keeps the audio sources chosen at start."
             reasons["systemAudio"] = reasons["microphone"]
@@ -113,6 +121,7 @@ final class ToolsRecorderEngine: RecordingEngineAdapter {
                                      liveMicrophoneMute: mic && supports("audio.mute"), liveMicrophoneDevice: mic && supports("audio.setInput"),
                                      liveSystemAudioMute: system && supports("audio.mute"), liveFrameRate: supports("settings.set"),
                                      liveCamera: false, liveDisplaysAddRemove: supports("displays.add") && supports("displays.remove"),
+                                     liveRestart: supports("restart"),
                                      reasonUnavailable: reasons)
     }
 
@@ -123,9 +132,11 @@ final class ToolsRecorderEngine: RecordingEngineAdapter {
         if setup.systemAudio.enabled, foreign || !setup.systemAudio.muted { recordedSources.insert(.system) }
         take = nextTakeID
         nextTakeID = UUID().uuidString
-        result = nil
+        terminal = nil
         framing = false
         paused = false
+        awaitingRestart = false
+        needsRestartFrame = false
         if foreign {
             guard let entry else { throw RecordingEngineError.unsupported("This recording has ended.") }
             observe(entry)
@@ -135,46 +146,80 @@ final class ToolsRecorderEngine: RecordingEngineAdapter {
         launchID = token
         entry = nil
         liveID = nil
-        do {
-            let preparation = try await prepare(setup.camera)
-            releasePreparation = preparation.release
-            let ids = Array(Set(excludeWindowIDs + preparation.previewWindows)).filter { $0 > 0 }.sorted()
-            let args = try CaptureOptions.barArguments(setup, threshold: threshold, shortcuts: shortcuts, excluding: ids,
-                                                       screens: NSScreen.screens.map(\.frame), displayIDs: CaptureChoice.screenIDs,
-                                                       systemAudioScope: SystemAudioScope.load())
-            let id: String = try await withCheckedThrowingContinuation { continuation in
-                started = continuation
+        try await withCheckedThrowingContinuation { continuation in
+            startup = continuation
+            startupDeadline = Task { [weak self, startupTimeout] in
+                do { try await Task.sleep(for: startupTimeout) } catch { return }
+                self?.finishStartup(token, with: .failure(RecordingEngineError.unsupported("The recorder did not finish starting in time.")))
+            }
+            Task {
                 do {
-                    stream = try launch(args, { [weak self] lines in
-                        guard let self, self.launchID == token else { return }
-                        self.receive(lines)
-                    }, { [weak self] status, error in
-                        guard let self, self.launchID == token else { return }
-                        self.exited(status: status, error: error)
-                    })
+                    try await self.startOwned(setup, excluding: excludeWindowIDs, token: token)
+                    self.finishStartup(token, with: .success(()))
                 } catch {
-                    started = nil
-                    continuation.resume(throwing: error)
+                    self.finishStartup(token, with: .failure(error))
                 }
             }
-            guard let found = await locate(id) else {
-                throw RecordingEngineError.unsupported("The recorder did not publish its control socket.")
-            }
-            entry = found
-            if found.kind == "library" {
-                let watcher = LiveRecordingsWatcher()
-                self.watcher = watcher
-                watcher.onRefresh = { [weak self] list in
-                    if let current = list.first(where: { $0.id == id }) { self?.observe(current) }
-                }
-                watcher.start()
-            }
-        } catch {
-            stream?.stop()
-            releasePreparation?()
-            releasePreparation = nil
-            throw error
         }
+    }
+
+    private func startOwned(_ setup: RecordingSetup, excluding excludeWindowIDs: [Int], token: UUID) async throws {
+        let preparation = try await prepare(setup.camera)
+        guard launchID == token, result == nil else {
+            preparation.release()
+            return
+        }
+        releasePreparation = preparation.release
+        let ids = Array(Set(excludeWindowIDs + preparation.previewWindows)).filter { $0 > 0 }.sorted()
+        let args = try CaptureOptions.barArguments(setup, threshold: threshold, shortcuts: shortcuts, excluding: ids,
+                                                   screens: NSScreen.screens.map(\.frame), displayIDs: CaptureChoice.screenIDs,
+                                                   systemAudioScope: SystemAudioScope.load())
+        let id: String = try await withCheckedThrowingContinuation { continuation in
+            started = continuation
+            do {
+                stream = try launch(args, { [weak self] lines in
+                    guard let self, self.launchID == token else { return }
+                    self.receive(lines)
+                }, { [weak self] status, error in
+                    guard let self, self.launchID == token else { return }
+                    self.exited(status: status, error: error)
+                })
+            } catch {
+                started = nil
+                continuation.resume(throwing: error)
+            }
+        }
+        guard let found = await locate(id) else {
+            throw RecordingEngineError.unsupported("The recorder did not publish its control socket.")
+        }
+        if let result {
+            _ = try result.get()
+            throw RecordingEngineError.unsupported("The recording ended before its controls became available.")
+        }
+        guard launchID == token else { return }
+        entry = found
+        if found.kind == "library" {
+            let watcher = LiveRecordingsWatcher()
+            self.watcher = watcher
+            watcher.onRefresh = { [weak self] list in
+                if let current = list.first(where: { $0.id == id }) { self?.observe(current) }
+            }
+            watcher.start()
+        }
+    }
+
+    private func finishStartup(_ token: UUID, with answer: Result<Void, Error>) {
+        guard launchID == token, let startup else { return }
+        self.startup = nil
+        startupDeadline?.cancel()
+        startupDeadline = nil
+        if case let .failure(error) = answer {
+            launchID = nil
+            stream?.stop()
+            stream = nil
+            complete(.failure(error))
+        }
+        startup.resume(with: answer)
     }
 
     /// CameraBubble reads these two existing keys both for the preview and when writing the edit's placement.
@@ -199,7 +244,12 @@ final class ToolsRecorderEngine: RecordingEngineAdapter {
     func observe(_ recording: LiveRecording) {
         guard recording.id == liveID else { return }
         entry = recording
-        if CaptureCountdown.hasFirstFrame(recording) || (foreign && recording.isPaused) { firstFrame() }
+        let sessionHasFrames = recording.kind == "control-session" && recording.recordedMs.map {
+            $0 > 0 || recording.recordedRunning
+        } == true
+        if !needsRestartFrame && (CaptureCountdown.hasFirstFrame(recording) || sessionHasFrames || (foreign && recording.isPaused)) {
+            firstFrame()
+        }
         let display = followedDisplay
         if display != reportedDisplay {
             reportedDisplay = display
@@ -226,6 +276,7 @@ final class ToolsRecorderEngine: RecordingEngineAdapter {
                     awaitingRestart = false
                 }
                 if state == "recording" {
+                    needsRestartFrame = false
                     firstFrame()
                     if !switching, paused { paused = false; emit(.resumed) }
                 } else if state == "paused" {
@@ -270,8 +321,13 @@ final class ToolsRecorderEngine: RecordingEngineAdapter {
     }
 
     private func complete(_ answer: Result<URL?, Error>, discarded: Bool = false) {
-        guard result == nil else { return }
-        result = answer
+        guard terminal == nil else { return }
+        let event: RecordingEngineEvent.Value
+        switch answer {
+        case let .failure(error): event = .failed(error.localizedDescription)
+        case let .success(url): event = discarded ? .discarded : .stopped(url)
+        }
+        terminal = (answer, event)
         if let started {
             self.started = nil
             switch answer {
@@ -281,10 +337,7 @@ final class ToolsRecorderEngine: RecordingEngineAdapter {
         }
         finishing?.resume(with: answer)
         finishing = nil
-        switch answer {
-        case let .failure(error): emit(.failed(error.localizedDescription))
-        case let .success(url): emit(discarded ? .discarded : .stopped(url))
-        }
+        emit(event)
         watcher?.stop()
         watcher = nil
         releasePreparation?()
@@ -309,9 +362,17 @@ final class ToolsRecorderEngine: RecordingEngineAdapter {
 
     func stop() async throws -> URL? {
         let folder = entry?.folder
-        do { try await send(.stop) }
+        let answer: Any?
+        do { answer = try await send(.stop) }
         catch { if let result { return try result.get() }; throw error }
-        if foreign { return folder.map { URL(fileURLWithPath: $0, isDirectory: true) } }
+        if foreign {
+            let state = answer as? [String: Any]
+            let outcome = state?["outcome"] as? String
+            guard state?["state"] as? String == "stopped", outcome != "failed", outcome != "discarded" else {
+                throw RecordingEngineError.unsupported("The recorder did not confirm a saved recording.")
+            }
+            return folder.map { URL(fileURLWithPath: $0, isDirectory: true) }
+        }
         return try await finalResult()
     }
 
@@ -327,13 +388,24 @@ final class ToolsRecorderEngine: RecordingEngineAdapter {
     }
 
     func restart() async throws {
+        guard capabilities.liveRestart else {
+            throw RecordingEngineError.unsupported("This recorder does not offer Restart.")
+        }
         let old = take, wasFraming = framing
         take = nextTakeID
         nextTakeID = UUID().uuidString
-        awaitingRestart = true
+        awaitingRestart = !foreign
+        needsRestartFrame = !foreign
         framing = false
         do { try await call("restart") }
-        catch { take = old; awaitingRestart = false; framing = wasFraming; throw error }
+        catch {
+            awaitingRestart = false
+            needsRestartFrame = false
+            if let terminal { throw RecordingEngineError.restartEnded(terminal.event) }
+            take = old
+            framing = wasFraming
+            throw error
+        }
     }
 
     func addMarker() async throws { try await send(.marker) }
@@ -397,22 +469,35 @@ final class ToolsRecorderEngine: RecordingEngineAdapter {
             return
         }
         let wire: Any
-        if case let .area(rect, display) = target {
-            guard let region = CaptureChoice.region(rect, on: display, screens: NSScreen.screens.map(\.frame)) else {
-                throw RecordingEngineError.unsupported("The selected display disconnected.")
+        if target.kind == .area {
+            let screens = NSScreen.screens.map(\.frame)
+            guard let primary = screens.first, let cocoa = target.areaBounds(screens: screens, displayIDs: CaptureChoice.screenIDs) else {
+                throw RecordingEngineError.unsupported("The selected display disconnected. Choose the area again.")
             }
+            let region = CaptureChoice.coreGraphicsRect(cocoa: cocoa, primaryHeight: primary.maxY)
             wire = ["kind": "region", "x": region.minX, "y": region.minY, "width": region.width, "height": region.height] as [String: Any]
         } else {
             wire = try JSONSerialization.jsonObject(with: JSONEncoder().encode(target))
         }
         let keepPaused = paused
         switching = keepPaused && !foreign
+        do { try await call("target.switch", ["target": wire]) }
+        catch { switching = false; throw error }
+        guard keepPaused else { return }
         do {
-            try await call("target.switch", ["target": wire])
-            if keepPaused { try await call("pause") }
+            try await call("pause")
         } catch {
             switching = false
-            throw error
+            guard result == nil else { throw error }
+            let state = (try? await call("status")) as? [String: Any]
+            if state?["state"] as? String == "paused" {
+                paused = true
+                return
+            }
+            guard result == nil else { throw error }
+            paused = false
+            setup.target = target
+            throw RecordingEngineError.partialTargetSwitch(target, "The target switched but could not be paused: \(error.localizedDescription)")
         }
     }
 

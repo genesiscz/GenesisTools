@@ -188,7 +188,8 @@ and after the last. A step's first moments and its hold are never cut.
 
 ## Exclude windows from frames
 
-For frames, `await recorder.start({ excludeWindowIds: [91, 105] })` returns the recording handle and excludes those
+Load `tools node-repl mcp --toolset recorder` for this example. For frames,
+`await recorder.start({ excludeWindowIds: [91, 105] })` returns the recording handle and excludes those
 CG windows from each display. The CLI equivalent is `tools recorder start --frames --exclude-window-ids 91,105`.
 
 ## Camera bubble

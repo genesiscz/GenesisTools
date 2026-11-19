@@ -169,7 +169,7 @@ public struct RecordingTargetPicker: View {
     private let title: String
     private let initial: RecordingTarget?
     private let onChoose: (RecordingTarget) -> Void
-    private let onStart: () -> Void
+    private let onStart: (() -> Void)?
     private let capabilities: RecordingCapabilities?
     private let onCancel: () -> Void
     private let onRetry: () -> Void
@@ -202,7 +202,7 @@ public struct RecordingTargetPicker: View {
                 onRetry: @escaping () -> Void = {}, restoring: (tab: RecordingPickerTab, query: String)? = nil,
                 onFilterChange: @escaping (RecordingPickerTab, String) -> Void = { _, _ in },
                 accessory: AnyView? = nil, footerHint: String? = nil, capabilities: RecordingCapabilities? = nil,
-                overlays: RecordingPickerOverlays? = nil, onStart: @escaping () -> Void = {}) {
+                overlays: RecordingPickerOverlays? = nil, onStart: (() -> Void)? = nil) {
         self.accessory = accessory
         self.footerHint = footerHint
         self.load = load
@@ -361,7 +361,7 @@ public struct RecordingTargetPicker: View {
                     Text("Off").tag(RecordingPickerPulseMode.off)
                 }
                 Toggle("Bring chosen window to front", isOn: $frontChosenWindow)
-                Toggle("Start recording on choice", isOn: $choiceStarts)
+                if onStart != nil { Toggle("Start recording on choice", isOn: $choiceStarts) }
             } label: { Image(systemName: "gearshape") }
             .menuStyle(.borderlessButton)
             .fixedSize()
@@ -519,7 +519,7 @@ public struct RecordingTargetPicker: View {
 
     private var footer: some View {
         HStack(spacing: 4) {
-            Text(footerHint ?? "↑ ↓ to browse · \(choiceStarts ? "Return records" : "Return chooses") · Esc cancels · \(RecordingPickerKey.tabLabels) tabs")
+            Text(footerHint ?? "↑ ↓ to browse · \(choiceStarts && onStart != nil ? "Return records" : "Return chooses") · Esc cancels · \(RecordingPickerKey.tabLabels) tabs")
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
@@ -608,6 +608,7 @@ public struct RecordingTargetPicker: View {
         feedback.highlight(target) {
             let windows = window.map { [$0] } ?? windowsForPulse(target)
             overlays.pulse.hover(RecordingPickerGeometry.rects(target, windows: windows, screens: NSScreen.screens.map(\.frame),
+                                                               displayIDs: RecordingTarget.connectedDisplayIDs,
                                                                pointer: NSEvent.mouseLocation))
         }
     }
@@ -634,6 +635,7 @@ public struct RecordingTargetPicker: View {
             guard pulseMode != .off else { return }
             let latest = wasRaised ? windowsForPulse(target) : windows
             let rects = RecordingPickerGeometry.rects(target, windows: latest, screens: NSScreen.screens.map(\.frame),
+                                                      displayIDs: RecordingTarget.connectedDisplayIDs,
                                                       pointer: NSEvent.mouseLocation)
             overlays.pulse.pulse(rects, after: wasRaised ? .zero : .milliseconds(350))
         }, restore: {
@@ -643,7 +645,7 @@ public struct RecordingTargetPicker: View {
 
     func commitChoice(_ target: RecordingTarget, choiceStarts: Bool) {
         onChoose(target)
-        if choiceStarts { onStart() }
+        if choiceStarts { onStart?() }
     }
 }
 
@@ -689,16 +691,15 @@ enum RecordingPickerGeometry {
     /// Cocoa screen rects to outline for `target`; "Follow display" outlines the display under `pointer`, where its
     /// take starts (the first display without one).
     static func rects(_ target: RecordingTarget, windows: [RecordingWindow], screens: [CGRect],
-                      pointer: CGPoint? = nil) -> [CGRect] {
+                      displayIDs: [UInt32?] = [], pointer: CGPoint? = nil) -> [CGRect] {
         guard let primary = screens.first else { return [] }
         func cocoa(_ window: RecordingWindow) -> CGRect { RecordingPanelLayout.cocoa(window.quartzFrame, primaryHeight: primary.maxY) }
         switch target {
         case let .window(ids, _, _, _): return windows.filter { ids.contains($0.id) }.map(cocoa)
         case let .app(app, _):
             return windows.filter { String($0.pid) == app || $0.app == app }.map(cocoa)
-        case let .area(rect, display):
-            guard screens.indices.contains(display) else { return [] }
-            return [rect.offsetBy(dx: screens[display].minX, dy: screens[display].minY)]
+        case .area:
+            return target.areaBounds(screens: screens, displayIDs: displayIDs).map { [$0] } ?? []
         case let .display(index, _):
             return screens.indices.contains(index) ? [screens[index].insetBy(dx: 6, dy: 6)] : []
         case let .displays(indices):
@@ -718,6 +719,7 @@ final class RecordingPickerFeedback {
     private var cancelHover: (() -> Void)?
     private var hovered: RecordingTarget?
     private var choiceID: UUID?
+    private var cancelFront: (() -> Void)?
     private var restore: (() -> Void)?
     var isChoosing: Bool { choiceID != nil }
 
@@ -748,12 +750,14 @@ final class RecordingPickerFeedback {
 
     func cancelChoice() {
         choiceID = nil
+        cancelFront?()
+        cancelFront = nil
         restore?()
         restore = nil
     }
 
     func choose(background: RecordingWindow?,
-                front: (RecordingWindow, @escaping () -> Void) -> Void, pulse: @escaping (Bool) -> Void,
+                front: (RecordingWindow, @escaping () -> Void) -> (() -> Void)?, pulse: @escaping (Bool) -> Void,
                 restore: @escaping () -> Void, commit: @escaping () -> Void) {
         guard !isChoosing else { return }
         let id = UUID()
@@ -765,6 +769,11 @@ final class RecordingPickerFeedback {
             pulse(background != nil)
             commit()
         }
-        if let background { front(background, finish) } else { finish() }
+        if let background {
+            let cancel = front(background, finish)
+            if choiceID == id { cancelFront = cancel } else { cancel?() }
+        } else {
+            finish()
+        }
     }
 }

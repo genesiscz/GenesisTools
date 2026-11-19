@@ -140,9 +140,7 @@ export class SessionRecorderControl extends RecorderControl {
 
     /** Changes the movie's rates and threshold (`activeFps`, `idleFps`, `threshold`); the next segment records with them. */
     override async setSettings(patch: RecorderSettingsPatch): Promise<SettingsAnswer> {
-        const rates = this.session.currentRates();
-
-        if (!rates) {
+        if (!this.session.currentRates()) {
             return super.setSettings(patch);
         }
 
@@ -155,18 +153,15 @@ export class SessionRecorderControl extends RecorderControl {
             );
         }
 
-        const activeFps = patch.activeFps ?? rates.activeFps;
-        // A single-rate movie (equal rates) stays single-rate when only its active rate changes: 60/60 to 120 is 120/120,
-        // never 120/60, which the capture refuses as an idle rate above 5.
-        const singleRate = patch.idleFps === undefined && rates.idleFps === rates.activeFps;
-        // ax-tool never records the idle rate above the active one (Record.swift setFrameRates).
-        const idleFps = singleRate ? activeFps : Math.min(patch.idleFps ?? rates.idleFps, activeFps);
-        const applied = await this.session.retune({
-            activeFps,
-            idleFps,
-            threshold: patch.threshold ?? rates.threshold,
+        const { rates, applied } = await this.session.retune((current) => {
+            const activeFps = patch.activeFps ?? current.activeFps;
+            // A single-rate movie stays single-rate when only its active rate changes.
+            const singleRate = patch.idleFps === undefined && current.idleFps === current.activeFps;
+            const idleFps = singleRate ? activeFps : Math.min(patch.idleFps ?? current.idleFps, activeFps);
+            return { activeFps, idleFps, threshold: patch.threshold ?? current.threshold };
         });
-        return { ...(await this.getSettings()), applied };
+        const answer = await this.getSettings();
+        return { ...answer, settings: { ...answer.settings, ...rates }, applied };
     }
 
     /** Every session event passes here, so the state and target stay what the session says. */
@@ -272,8 +267,8 @@ export class SessionRecorderControl extends RecorderControl {
         return { state: "stopped", outcome: await this.session.finished };
     }
 
-    override async restart(): Promise<{ state: ControlState }> {
-        await this.session.command({ cmd: "restart" });
+    override async restart(target?: RecordingTarget): Promise<{ state: ControlState }> {
+        await this.session.command({ cmd: "restart", target });
         return { state: this.state };
     }
 
@@ -339,7 +334,7 @@ const commandQueues = new WeakMap<RecorderControl, Promise<void>>();
  * before it: a pause and a resume sent together each check the state the one before left.
  */
 export function applyRecordingCommand(
-    control: RecorderControl,
+    control: SessionRecorderControl,
     command: RecordingCommand,
     onRates?: (rates: MovieRates) => void
 ): Promise<void> {
@@ -356,7 +351,7 @@ export function applyRecordingCommand(
 }
 
 async function dispatchRecordingCommand(
-    control: RecorderControl,
+    control: SessionRecorderControl,
     command: RecordingCommand,
     onRates?: (rates: MovieRates) => void
 ): Promise<void> {
@@ -386,7 +381,7 @@ async function dispatchRecordingCommand(
             await control.discard();
             return;
         case "restart":
-            await control.restart();
+            await control.restart(command.target);
             return;
         case "switch":
             await control.switchTarget(command.target);

@@ -208,7 +208,10 @@ export function genesisToolsRequestOpenCommand(id: string): string {
     return toolCommand("genesis-tools request open", "--", id);
 }
 
-/** A recorder command that a REPL method names as its CLI twin, such as `recorder status`. */
-export function recorderCommand(...words: string[]): string {
-    return [toolCommand("recorder"), ...words].join(" ");
-}
+/** CLI equivalents for the recorder REPL methods. These literal paths are checked against the command tree. */
+export const recorderCommands = {
+    status: toolCommand("recorder status"),
+    listLive: toolCommand("recorder list", "--live", "--json"),
+    serve: toolCommand("recorder serve"),
+    startFrames: toolCommand("recorder start", "--frames", "--exclude-window-ids"),
+};

@@ -161,6 +161,7 @@ export class LibraryRecording extends FrameRecording<number> {
         const id = options.id ?? liveRecordingId("library", `${stamp(new Date())}-${randomUUID()}`);
         const folder = options.folder ?? recordingsLibraryDir(id);
         const choice = new ChosenDisplays();
+        const excludedWindows = [...(options.excludeWindowIds ?? [])];
         const sources: AudioSource[] = [
             ...(options.audio?.mic ? (["mic"] as const) : []),
             ...(options.audio?.system ? (["system"] as const) : []),
@@ -197,7 +198,7 @@ export class LibraryRecording extends FrameRecording<number> {
                 audioOwnership: "every",
                 request: (now) => ({
                     heartbeatSec: now.heartbeatSec || undefined,
-                    ...(options.excludeWindowIds?.length ? { excludeWindowIds: options.excludeWindowIds } : {}),
+                    ...(excludedWindows.length ? { excludeWindowIds: [...excludedWindows] } : {}),
                 }),
                 failures: {
                     max: 3,

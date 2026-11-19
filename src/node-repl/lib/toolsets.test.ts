@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { RecordingSession, type SegmentRecorder } from "@app/control/lib/recording-session";
@@ -2399,6 +2399,7 @@ describe("recording handle live controls", () => {
         await withHandle(control, async (recording) => {
             expect(await recording.switchTarget({ window: 42 })).toEqual({ state: "paused" });
             expect(switched.mock.calls).toEqual([[{ window: 42 }]]);
+            expect(await recording.capabilities()).toMatchObject({ targets: null, liveTargetSwitch: true });
         });
     });
 
@@ -2449,7 +2450,7 @@ describe("recording handle live controls", () => {
         const read = spyOn(control, "status").mockResolvedValue({ ...status, limitMs: 32100 });
         await withHandle(control, async (recording) => {
             expect(await recording.capabilities()).toMatchObject({
-                targets: ["window", "app", "display", "area"],
+                targets: ["display", "area"],
                 liveTargetSwitch: true,
                 liveMicrophoneMute: true,
                 liveMicrophoneDevice: false,
@@ -2462,6 +2463,11 @@ describe("recording handle live controls", () => {
             });
             read.mockResolvedValue({ ...status, limitMs: 12300 });
             expect((await recording.capabilities()).maxDurationMs).toBe(12300);
+            spyOn(control, "getSettings").mockResolvedValue({
+                ...(await control.getSettings()),
+                audio: { sources: [], muted: { mic: false, system: false } },
+            });
+            expect((await recording.capabilities()).targets).toEqual(["window", "app", "display", "area"]);
         });
     });
 
@@ -3456,14 +3462,18 @@ describe("the CLI doors of a frames recording and of the live OCR settings take 
                 both.resolve();
             }
         };
-        const recording = await startRecording({
-            ...libraryStartOptions(cli),
-            recorder,
-            folder: join(root, "rec"),
-            liveDir: join(root, "live"),
-        });
+        const providedExclusions = [91, 105];
+        let recording: Awaited<ReturnType<typeof startRecording>> | undefined;
         try {
+            recording = await startRecording({
+                ...libraryStartOptions(cli),
+                excludeWindowIds: providedExclusions,
+                recorder,
+                folder: join(root, "rec"),
+                liveDir: join(root, "live"),
+            });
             await withTimeout(both.promise, 2_000);
+            providedExclusions.splice(0);
             expect(recorder.requests).toHaveLength(2);
             expect(recorder.requests.map((request) => request.target)).toEqual(
                 expect.arrayContaining([
@@ -3475,7 +3485,11 @@ describe("the CLI doors of a frames recording and of the live OCR settings take 
                 expect(request).toMatchObject({ excludeWindowIds: ids });
             }
         } finally {
-            await recording.stop();
+            try {
+                await recording?.stop();
+            } finally {
+                rmSync(root, { recursive: true, force: true });
+            }
         }
     });
 

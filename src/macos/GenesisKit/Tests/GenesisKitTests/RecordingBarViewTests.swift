@@ -237,19 +237,24 @@ final class RecordingBarViewTests: XCTestCase {
         let f = try fixture()
         await firstFrame(f)
         let saving = expectation(description: "Engine is saving the file")
-        var release: CheckedContinuation<Void, Never>?
-        f.engine.waitForSave = {
-            await withCheckedContinuation { continuation in
-                release = continuation
-                saving.fulfill()
-            }
+        var continuation: CheckedContinuation<Void, Never>?
+        var released = false
+        func release() {
+            released = true
+            let waiter = continuation
+            continuation = nil
+            waiter?.resume()
         }
+        f.engine.waitForSave = {
+            saving.fulfill()
+            if released { return }
+            await withCheckedContinuation { continuation = $0 }
+        }
+        defer { release() }
         f.model.stop()
         await fulfillment(of: [saving], timeout: 2)
-        do {
-            defer { release?.resume() }
-            try await assertBar(f, shows: ["finishing"])
-        }
+        try await assertBar(f, shows: ["finishing"])
+        release()
         await f.model.pendingCommand?.value
     }
 

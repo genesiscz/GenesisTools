@@ -28,7 +28,9 @@ enum RecorderShortcutActions {
         case .stop:
             guard let recording = newest(), let socket = recording.socket else { nothingRunning(action); return }
             Task {
-                await stop(id: recording.id) {
+                await stop(id: recording.id, stillRunning: {
+                    LiveRecordingStore.live.load().contains { $0.id == recording.id && $0.allows(.stop) }
+                }) {
                     let client = LiveRecordingRPCClient(path: socket)
                     defer { client.close() }
                     try client.connect()
@@ -46,7 +48,7 @@ enum RecorderShortcutActions {
         }
     }
 
-    static func stop(id: String, defaults: UserDefaults = .standard,
+    static func stop(id: String, defaults: UserDefaults = .standard, stillRunning: @escaping @MainActor () -> Bool = { true },
                      request: @escaping @MainActor () async throws -> [String: Any]?) async {
         do {
             let answer = try await request()
@@ -56,9 +58,17 @@ enum RecorderShortcutActions {
         } catch {
             let report = FailureReport(title: "Stop recording", headline: "Could not confirm Stop for \(id).",
                                        dayLog: FailureReport.dayLogPath(), log: error.localizedDescription)
-            RecorderNotice.failure(report, retry: {
-                Task { await stop(id: id, defaults: defaults, request: request) }
-            }, defaults: defaults)
+            let retry: (@MainActor () -> Void)?
+            switch error as? JSONRPCSocketClient.Failure {
+            case .connect, .notConnected:
+                retry = {
+                    guard stillRunning() else { return }
+                    Task { await stop(id: id, defaults: defaults, stillRunning: stillRunning, request: request) }
+                }
+            default:
+                retry = nil
+            }
+            RecorderNotice.failure(report, retry: retry, defaults: defaults)
         }
     }
 
