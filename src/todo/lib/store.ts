@@ -5,7 +5,7 @@
  * a file that is newer than the import (an old checkout wrote it) is imported again by the same key.
  */
 import type { Database } from "bun:sqlite";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import { gitCommonRoot } from "@genesiscz/utils/agent/identity";
@@ -238,7 +238,7 @@ function persist(
     });
 }
 
-const imported = new Set<string>();
+const imported = new Map<string, string>();
 
 export class TodoStore {
     private readonly fileRoot: string;
@@ -535,24 +535,27 @@ function importFiles(db: Database, dbPath: string, entries: readonly { root: str
     for (const { root, path } of entries) {
         const key = `${dbPath}|${path}`;
 
-        if (imported.has(key)) {
+        const stat = statSync(path, { throwIfNoEntry: false });
+
+        if (stat === undefined) {
+            imported.delete(key);
             continue;
         }
 
-        imported.add(key);
+        const version = `${root}:${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
 
-        if (!existsSync(path)) {
+        if (imported.get(key) === version) {
             continue;
         }
 
-        // An empty root is a store whose meta.json is gone: the todo keeps no project, and a lookup says so.
-        const target = root === "" ? "" : canonicalTodoRoot(root);
         const todos = SafeJSON.parse(readFileSync(path, "utf8")) as Todo[];
-        const actor = actorHere(target);
 
         inTransaction(db, () => {
             for (const todo of todos) {
-                const row = rowsOf(db, { todoId: todo.id }).find((r) => r.meta.projectRoot === target) ?? null;
+                const recordedRoot = root || todo.context?.projectRoot || "";
+                const target = recordedRoot === "" ? "" : canonicalTodoRoot(recordedRoot);
+                const actor = actorHere(target);
+                const row = rowsOf(db, { todoId: todo.id, projectRoot: target })[0] ?? null;
                 const origin = { via: "legacy" as const, uid: `todo-file:${todo.id}:${updatedAtOf(todo)}` };
 
                 if (row === null) {
@@ -562,7 +565,7 @@ function importFiles(db: Database, dbPath: string, entries: readonly { root: str
 
                 const stored = SafeJSON.parse(row.meta.todo) as Todo;
 
-                if (updatedAtOf(todo) > updatedAtOf(stored)) {
+                if (updatedAtOf(todo) > updatedAtOf(stored) && updatedAtOf(todo) > row.item.updatedTs) {
                     log.warn(
                         { path, id: todo.id },
                         "todo: a todos.json row is newer than the work store; imported it again"
@@ -574,6 +577,7 @@ function importFiles(db: Database, dbPath: string, entries: readonly { root: str
                 }
             }
         });
+        imported.set(key, version);
     }
 }
 
