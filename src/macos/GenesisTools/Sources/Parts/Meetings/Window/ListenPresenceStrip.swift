@@ -16,7 +16,7 @@ struct ListenPresenceStrip: View {
                 Text(group.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
                 ForEach(group.people) { row in
                     PresencePersonRow(row: row, duration: duration, edit: { range in open(row.person, range) },
-                                      save: { range in save(row.person, range) })
+                                      save: { range in await save(row.person, range) })
                 }
             }
         }.padding(.horizontal, 8)
@@ -37,21 +37,24 @@ struct ListenPresenceStrip: View {
 
     /// A dragged join or leave saves at once, with an Undo that puts the old window back. A person with several stays
     /// opens the editor instead, since saving replaces them all with one window and an Undo could not bring them back.
-    private func save(_ person: MeetingRecordView.Person, _ range: ClosedRange<Double>) {
+    /// True when the write landed, so the row keeps its dragged window until the record comes back with it; false
+    /// (the editor opened, or the write failed) puts the row back on the record's window.
+    @discardableResult
+    private func save(_ person: MeetingRecordView.Person, _ range: ClosedRange<Double>) async -> Bool {
         guard (person.stays?.count ?? 0) == 1 else {
             open(person, range)
-            return
+            return false
         }
         let before = PersonStay.of(person.name, in: detail.record.value)
         var after = before
         after.fromSec = range.lowerBound
         after.toSec = range.upperBound
-        Task {
-            do {
-                try await detail.savePersonStay(after, before: before)
-            } catch {
-                detail.notices.push(.meetingsFailure(error, retry: { save(person, range) }))
-            }
+        do {
+            try await detail.savePersonStay(after, before: before)
+            return true
+        } catch {
+            detail.notices.push(.meetingsFailure(error, retry: { Task { await save(person, range) } }))
+            return false
         }
     }
 
@@ -110,8 +113,8 @@ struct PresencePersonRow: View {
     let row: PresenceGroup.Person
     let duration: Double
     var edit: (ClosedRange<Double>) -> Void
-    /// A drag's release; nil opens the editor as a click on the name does.
-    var save: ((ClosedRange<Double>) -> Void)? = nil
+    /// A drag's release, true when the write landed; nil opens the editor as a click on the name does.
+    var save: ((ClosedRange<Double>) async -> Bool)? = nil
     @State private var draft: ClosedRange<Double>?
     @State private var dragStart: ClosedRange<Double>?
     @State private var spans: [ClosedRange<Double>] = []
@@ -179,9 +182,14 @@ struct PresencePersonRow: View {
             }.onEnded { _ in
                 let released = window
                 dragStart = nil
-                // A save keeps the dragged window drawn until the record comes back with it (`onChange(of: row.person)`
-                // clears the draft), so the bar does not jump back for the length of the write.
-                if let save { save(released) } else { draft = nil; edit(released) }
+                // A save that lands keeps the dragged window drawn until the record comes back with it
+                // (`onChange(of: row.person)` clears the draft), so the bar does not jump back for the length of the
+                // write. A save that does not land (the editor opened instead, or the write failed) drops the draft,
+                // unless a newer drag has replaced it meanwhile.
+                guard let save else { draft = nil; edit(released); return }
+                Task {
+                    if await !save(released), dragStart == nil, draft == released { draft = nil }
+                }
             })
     }
     static func dragged(_ range: ClosedRange<Double>, join: Bool, delta: Double, duration: Double) -> ClosedRange<Double> {
