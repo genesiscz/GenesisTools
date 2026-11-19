@@ -10,7 +10,7 @@ import { type LineEvidence, presentAt, SELF } from "@genesiscz/utils/transcribe/
 import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
 import { callMutes } from "./call-mutes";
 import type { NewItem } from "./new-item";
-import { type Eligibility, isStrongCallForNaming, speakersFor } from "./speaker-eligibility";
+import { type Eligibility, isStrongCallForNaming, type SpeakerFacts, speakersFor } from "./speaker-eligibility";
 import { assessIndicator } from "./speaker-indicator";
 import { ATTENDANCE_CONFIDENCE, ENERGY_CALL_LEANS, ENERGY_MIC_LEANS, seatConfidence } from "./speaker-labels/seat";
 import { addPolish, lineTallies, type SamePerson, type SpeakerScore, scoreCandidates } from "./speaker-scores";
@@ -23,6 +23,7 @@ type SourceRange = { label: string; fromSec: number; toSec: number; evidence?: R
 export class LineSpeakers {
     private readonly rows = new Map<number, LineEvidence>();
     private readonly byLabel = new Map<string, LineEvidence[]>();
+    private readonly facts: Pick<SpeakerFacts, "seats" | "people" | "selfName" | "callStays">;
     readonly eligibility = new Map<number, Eligibility>();
     readonly assessment: ReturnType<typeof assessIndicator>;
 
@@ -66,26 +67,32 @@ export class LineSpeakers {
                 ]),
             ]),
         ];
+        this.facts = { seats: record.seats, people, selfName, callStays: selfStays };
         for (const line of lines) {
             this.rows.set(line.index, line);
             const group = this.byLabel.get(line.label) ?? [];
             group.push(line);
             this.byLabel.set(line.label, group);
-            this.eligibility.set(
-                line.index,
-                speakersFor(
-                    { index: line.index, fromSec: line.startSec, toSec: line.endSec },
-                    {
-                        ...line,
-                        seats: record.seats,
-                        people,
-                        selfName,
-                        callStays: selfStays,
-                        ignoredIndicator: this.assessment.ignored.has(line.index),
-                    }
-                )
-            );
+            this.eligibility.set(line.index, this.resolve(line));
         }
+    }
+
+    private resolve(line: LineEvidence): Eligibility {
+        return speakersFor(
+            { index: line.index, fromSec: line.startSec, toSec: line.endSec },
+            { ...line, ...this.facts, ignoredIndicator: this.assessment.ignored.has(line.index) }
+        );
+    }
+
+    allowsMatchedVoice(line: LineEvidence, person: string): boolean {
+        const eligible = this.eligibility.get(line.index)!;
+        // A positive embedding comes from an audio track. On a disagreement, check its calibrated side's
+        // occupants, attendance and transmitting-account mute across the full span.
+        const track =
+            eligible.channel.side === "mixed" && line.energyMic !== undefined
+                ? this.resolve({ ...line, micShare: undefined })
+                : eligible;
+        return track.channel.strong && track.choices.some((name) => sameName(name, person));
     }
 
     linesFor(range: SourceRange): LineEvidence[] {
@@ -1166,8 +1173,7 @@ export function evidenceItems(options: {
                 !confirmed &&
                 voice?.quality === "matched" &&
                 voice.person &&
-                eligible.choices.some((name) => sameName(name, voice.person!)) &&
-                eligible.channel.strong
+                speakers.allowsMatchedVoice(line, voice.person)
             ) {
                 close();
                 items.push({

@@ -1059,6 +1059,48 @@ test("R3 an echo residual leaves a strong call line unnamed and its choices on t
     expect(found[0]?.rules).toContain("R18");
 });
 
+test("a matched call voice under a microphone tag still needs an eligible call input throughout the line", () => {
+    const guest = "Fern Example";
+    const visitor = "Pip Example";
+    const fixture = scene(Array.from({ length: 4 }, () => ({ label: "Voice", mic: 1 })));
+    fixture.evidence.speaking = [
+        { tSec: 0, speaking: [], muted: [guest] },
+        { tSec: 10, speaking: [], muted: [] },
+    ];
+    const match = (person: string) => ({
+        person,
+        model: "fixture",
+        quality: "matched",
+        candidates: [{ person, score: 0.85 }],
+        reason: "cosine and margin passed",
+    });
+    const seated = meetingRecordSchema.parse({
+        ...record,
+        seats: { room: [USER, visitor], remote: [{ name: guest }] },
+        evidence: {
+            voice: {
+                version: 1,
+                source: "fixture.wav",
+                enrolment: "fixture.json",
+                lines: { 0: match(guest), 1: match(guest), 2: match(visitor), 3: match(guest) },
+            },
+        },
+    });
+    const found = ranges(
+        suggestItems({
+            ...base,
+            ...fixture,
+            record: seated,
+            presence: [{ name: guest, fromSec: 0, toSec: 32 }],
+            energyMicShare: () => 0.1,
+        })
+    );
+    // Muted at 0, eligible at 10, room-only at 20, and a call stay ending inside the last line.
+    expect(
+        found.filter((item) => item.rules.includes(MeetingRule.VoiceEmbedding)).map((r) => [r.fromSec, r.speaker])
+    ).toEqual([[10, guest]]);
+});
+
 test("R20 does not override a line when tagged channel and calibrated energy disagree", () => {
     const slots = Array.from({ length: 180 }, (_, index) => ({
         label: index % 2 === 0 ? USER : "Bob Example",
