@@ -141,6 +141,8 @@ python3 -B scripts/benchmarks/compress/transparent.py --scratch "$bench_dir/corp
 
 The first script copies five real files of each kind with `ditto --noclone`: plain and image-bearing Claude
 transcripts, tool results, Codex sessions, Grok sessions, GenesisTools logs and JSON files. It requires all 35.
+The daily pass keeps only today's and yesterday's day logs plain, so a finished `.log.zst` day log is a log candidate
+too when the `zstd` CLI is installed: its seek table gives the decoded size, and `zstd -d` writes the plain copy.
 Each writer gets three copies per input. The supplementary script times the installed afsctool codecs after staging
 the plain copy. Ditto's time includes the copy. If applesauce is installed, pass its in-place compression arguments
 last with `--applesauce-args`, using the literal `'{file}'` for the scratch copy. The scripts install nothing.

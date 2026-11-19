@@ -2,12 +2,14 @@ import io
 import json
 import os
 from pathlib import Path
+import struct
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
-from _run import APPEND, KINDS, append_trial, digest, require_corpus, search_trials
+from _run import (APPEND, KINDS, SEEK_TABLE_MAGIC, SEEKABLE_FOOTER_MAGIC, append_trial, digest, require_corpus,
+                  search_trials, seekable_decoded_size)
 from transparent_open_files import activity, collect, observation, open_under_root
 from transparent_summary import distribution, report
 
@@ -24,6 +26,23 @@ class BenchmarkTest(unittest.TestCase):
         self.assertEqual(distribution([10, 1, 4]), '3: 1.60 / 4.00 / 8.80')
         self.assertEqual(distribution([7]), '1: 7.00 / 7.00 / 7.00')
         self.assertEqual(distribution([]), '0: n/a')
+
+    def test_reads_the_decoded_size_from_a_seek_table(self):
+        frames = [(b'abc', 70000), (b'defgh', 30)]
+        entries = b''.join(struct.pack('<II', len(data), decoded) for data, decoded in frames)
+        table_bytes = len(entries) + 9
+        table = struct.pack('<II', SEEK_TABLE_MAGIC, table_bytes) + entries + struct.pack(
+            '<IBI', len(frames), 0, SEEKABLE_FOOTER_MAGIC)
+        with tempfile.TemporaryDirectory() as scratch:
+            seekable = Path(scratch) / 'day.log.zst'
+            seekable.write_bytes(b''.join(data for data, _ in frames) + table)
+            self.assertEqual(seekable_decoded_size(seekable), 70030)
+            # A table that does not add up to the frames before it is not trusted.
+            seekable.write_bytes(b'x' + seekable.read_bytes())
+            self.assertIsNone(seekable_decoded_size(seekable))
+            plain = Path(scratch) / 'plain.zst'
+            plain.write_bytes(b'not seekable zstd at all')
+            self.assertIsNone(seekable_decoded_size(plain))
 
     def test_directory_search_pairs_the_same_names_and_alternates_arms(self):
         with tempfile.TemporaryDirectory() as scratch:

@@ -2,6 +2,7 @@
 import hashlib
 import os
 import resource
+import struct
 import subprocess
 import time
 
@@ -19,6 +20,37 @@ def require_corpus(selected):
     missing = {kind: len(selected.get(kind, [])) for kind in KINDS if len(selected.get(kind, [])) != 5}
     if missing:
         raise ValueError(f'Need five eligible files of each kind. Counts for incomplete kinds: {missing}')
+
+
+# Seekable zstd (src/utils/compress/zstd.ts): a skippable frame that holds one entry per frame, then a 9-byte footer.
+SEEK_TABLE_MAGIC = 0x184D2A5E
+SEEKABLE_FOOTER_MAGIC = 0x8F92EAB1
+
+
+def seekable_decoded_size(path):
+    """Decoded size of a seekable zstd file from its seek table, or None when it has no table this reader trusts."""
+    with open(path, 'rb') as source:
+        size = source.seek(0, os.SEEK_END)
+        if size < 17:
+            return None
+        source.seek(size - 9)
+        count, descriptor, magic = struct.unpack('<IBI', source.read(9))
+        if magic != SEEKABLE_FOOTER_MAGIC:
+            return None
+        entry = 12 if descriptor & 0x80 else 8
+        table_bytes = count * entry + 9
+        start = size - table_bytes - 8
+        if start < 0:
+            return None
+        source.seek(start)
+        table = source.read(table_bytes + 8)
+    if struct.unpack_from('<II', table) != (SEEK_TABLE_MAGIC, table_bytes):
+        return None
+    entries = [struct.unpack_from('<II', table, 8 + index * entry) for index in range(count)]
+    # The frames must fill the file up to the table, as in readSeekTable; anything else is not trusted.
+    if sum(compressed for compressed, _ in entries) != start:
+        return None
+    return sum(decoded for _, decoded in entries)
 
 
 def digest(path, suffix=b''):
