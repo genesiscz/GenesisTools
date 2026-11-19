@@ -4,21 +4,25 @@ import { formatBytes } from "@genesiscz/utils/format";
 import { moveAsideRoot } from "@genesiscz/utils/fs/move-aside";
 import { out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { createBoxTable, formatDotStatus, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import { type Command, InvalidArgumentError } from "commander";
 import pc from "picocolors";
 import {
     DEFAULT_LIVE_MINUTES,
-    MOVE_ASIDE_CONTEXT,
-    moveAsideJournalPath,
     moveAsideWorktrees,
-    readLiveUsers,
     removeWorktrees,
     scanWorktrees,
     unresolvedBase,
     type WorktreeCleanupRow,
     worktreeSizes,
 } from "./worktrees";
+
+const MOVE_ASIDE_CONTEXT = "hub-worktrees";
+
+function moveAsideJournalPath(): string {
+    return toolDataDir("hub", "moved-aside.jsonl");
+}
 
 interface ScanFlags {
     liveMinutes: number;
@@ -108,21 +112,19 @@ export function registerWorktreesCommand(program: Command): void {
         .action(async (repos: string[], opts: ScanFlags) => {
             const report = await scanWorktrees({
                 repos: repos.length > 0 ? repos : [process.cwd()],
-                live: await readLiveUsers({
-                    liveMinutes: opts.liveMinutes,
-                    readSessions: async () => {
-                        // Polls share the existing recent listing with the hub roster. Destructive checks read fresh native metadata.
-                        const { listAgentSessionRows, POLLED_LISTING_REUSE_MS } = await import(
-                            "@app/ai/lib/sessions/agent-session-rows"
-                        );
-                        return listAgentSessionRows({
-                            hours: Math.max(1, Math.ceil(opts.liveMinutes / 60)),
-                            withUsage: false,
-                            maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS,
-                            failClosed: true,
-                        });
-                    },
-                }),
+                liveMinutes: opts.liveMinutes,
+                readSessions: async () => {
+                    // Polls share the existing recent listing with the hub roster. Destructive checks read fresh native metadata.
+                    const { listAgentSessionRows, POLLED_LISTING_REUSE_MS } = await import(
+                        "@app/ai/lib/sessions/agent-session-rows"
+                    );
+                    return listAgentSessionRows({
+                        hours: Math.max(1, Math.ceil(opts.liveMinutes / 60)),
+                        withUsage: false,
+                        maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS,
+                        failClosed: true,
+                    });
+                },
                 base: opts.base,
                 olderThanDays: opts.olderThan,
             });
@@ -288,6 +290,8 @@ export function registerWorktreesCommand(program: Command): void {
 
             const outcomes = await moveAsideWorktrees({
                 paths,
+                destRoot: moveAsideRoot({ context: MOVE_ASIDE_CONTEXT }),
+                journal: moveAsideJournalPath(),
                 liveMinutes: opts.liveMinutes,
                 base: opts.base,
                 olderThanDays: opts.olderThan,
