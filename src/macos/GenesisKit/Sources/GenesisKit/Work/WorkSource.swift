@@ -281,11 +281,25 @@ public final class LiveWorkSource: WorkSource {
             // A write through the service sends `work.changed`; a write of the CLI or the MCP tools only touches the
             // store's WAL file, which every write changes (a write after a checkpoint creates it again).
             let events = Task { @MainActor in
-                do {
-                    for try await _ in rpc.events.workChanged { continuation.yield(()) }
-                } catch {
-                    // The stream ends with the connection error when the service goes; the WAL watcher still sees writes.
-                    workSourceLog.notice("work.changed ended: \(error.localizedDescription, privacy: .public)")
+                var retrySeconds = 1
+                var reconnecting = false
+                while !Task.isCancelled {
+                    do {
+                        // Register before connecting so events sent during the handshake reach this reader.
+                        let changes = rpc.events.workChanged
+                        try await rpc.connect()
+                        try Task.checkCancellation()
+                        if reconnecting { continuation.yield(()) }
+                        retrySeconds = 1
+                        for try await _ in changes { continuation.yield(()) }
+                        return
+                    } catch {
+                        guard !Task.isCancelled else { return }
+                        workSourceLog.notice("work.changed ended: \(error.localizedDescription, privacy: .public)")
+                        reconnecting = true
+                        do { try await Task.sleep(for: .seconds(retrySeconds)) } catch { return }
+                        retrySeconds = min(retrySeconds * 2, 30)
+                    }
                 }
             }
             let watcher = DirectoryWatcher(paths: [(wal as NSString).deletingLastPathComponent], latency: 0.3,
