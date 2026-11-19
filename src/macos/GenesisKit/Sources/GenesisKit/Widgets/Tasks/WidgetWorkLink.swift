@@ -22,10 +22,18 @@ struct WidgetWorkLink {
     }
 
     static func destination(_ ref: String?) -> URL {
+        destination(ref.map { URLQueryItem(name: "work", value: $0) } ?? URLQueryItem(name: "mode", value: "work"))
+    }
+
+    static func project(_ project: String) -> URL {
+        destination(URLQueryItem(name: "work-project", value: project))
+    }
+
+    private static func destination(_ query: URLQueryItem) -> URL {
         var link = URLComponents()
         link.scheme = "genesis-tools"
         link.host = "hub"
-        link.queryItems = ref.map { [URLQueryItem(name: "work", value: $0)] } ?? [URLQueryItem(name: "mode", value: "work")]
+        link.queryItems = [query]
         return link.url!
     }
 
@@ -39,8 +47,8 @@ struct WidgetWorkLink {
         pattern: #"(?<![\w/:.-])(?:[\x60"']((?:[~/][^\x60"'\n]*?/)?\.claude/plans/[^\x60"'\n]+)[\x60"']|((?:[~/][^\s\x60"'()<>]*?/)?\.claude/plans/[^\s\x60"'()<>,;:#]+))"#)
 
     var plan: URL? {
+        guard title.contains(".claude/plans/") || body?.contains(".claude/plans/") == true else { return nil }
         let text = [title, body].compactMap { $0 }.joined(separator: "\n")
-        guard text.contains(".claude/plans/") else { return nil }
         func resolve(_ path: String) -> URL? {
             let url: URL
             if let absolute = PathLink.fileURL(path) { url = absolute }
@@ -69,30 +77,41 @@ struct WidgetWorkButton<Label: View>: View {
     @Environment(\.openURL) private var openURL
 
     var body: some View {
-        Button(action: open) {
-            label().frame(maxWidth: .infinity, minHeight: 26, alignment: .leading).contentShape(Rectangle())
-        }
-        .buttonStyle(RowButtonStyle())
-        .instantTooltip(showTooltip ? item.tooltip : "")
-        .accessibilityLabel(item.title)
-        .accessibilityValue(item.acceptance ?? "")
-        .accessibilityHint("Opens this item in Work")
-        .accessibilityIdentifier("tasks.open.\(item.id)")
-        .contextMenu {
-            Button("Open in Work", action: open)
-            Button("Copy id") { Clipboard.copy(item.id, what: "id") }
-            if let plan = item.plan ?? parentPlan?() {
-                Button("Open plan") {
-                    if PathLink.isMarkdown(plan) { openURL(plan) }
-                    else { PathOpener.primary(plan.path) }
+        let plan = item.plan ?? parentPlan?()
+        HStack(spacing: 4) {
+            Button(action: open) {
+                label().frame(maxWidth: .infinity, minHeight: 26, alignment: .leading).contentShape(Rectangle())
+            }
+            .buttonStyle(RowButtonStyle())
+            .instantTooltip(showTooltip ? item.tooltip : "")
+            .accessibilityLabel(item.title)
+            .accessibilityValue(item.acceptance ?? "")
+            .accessibilityHint("Opens this item in Work")
+            .accessibilityIdentifier("tasks.open.\(item.id)")
+            .contextMenu {
+                Button("Open in Work", action: open)
+                Button("Copy id") { Clipboard.copy(item.id, what: "id") }
+                if let plan {
+                    Button("Open plan") { openPlan(plan) }
                 }
+            }
+            if let plan {
+                IconButton(systemName: "doc.text", tooltip: "Open plan: \(plan.lastPathComponent)") { openPlan(plan) }
             }
         }
     }
 
+    private func openPlan(_ plan: URL) {
+        if PathLink.isMarkdown(plan) {
+            openURL(plan) { accepted in
+                if !accepted { CopyToast.post(title: "Could not open the plan", detail: plan.lastPathComponent, style: .problem) }
+            }
+        } else { PathOpener.primary(plan.path) }
+    }
+
     private func open() {
         openURL(WidgetWorkLink.destination(item.id)) { opened in
-            if !opened { CopyToast.post(title: "Could not open Work", detail: item.id, style: .problem) }
+            if !opened { CopyToast.post(title: "Could not open Work", detail: item.title, style: .problem) }
         }
     }
 }

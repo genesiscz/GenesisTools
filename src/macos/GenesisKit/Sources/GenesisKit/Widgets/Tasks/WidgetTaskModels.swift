@@ -179,7 +179,7 @@ public struct WidgetWorkCount: Codable, Equatable, Sendable, Identifiable {
 
     /// "7 spotted · 1 reopened", the counts that are not zero; empty when all three are.
     public var summary: String {
-        [(spotted, "spotted"), (reopened, "reopened"), (held, "held")]
+        [(spotted, "spotted"), (reopened, "reopened"), (held, Plural.word(held, "held link"))]
             .filter { $0.0 > 0 }
             .map { "\($0.0) \($0.1)" }
             .joined(separator: " · ")
