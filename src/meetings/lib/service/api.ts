@@ -940,10 +940,15 @@ const meetingRows = defineMethod({
         })
         .strict(),
     result: reviewRowsSchema.extend({
-        /** A failed attendance lookup in one short sentence; its full text with the fixing commands is the detail. */
+        /**
+         * A failed attendance lookup in one short sentence; its full text with the fixing commands is the detail. Both
+         * are absent when the attendance was read or never tried.
+         */
         attendanceWarning: z.string().optional(),
         attendanceDetail: z.string().optional(),
+        /** One entry per source line; absent when the transcript is unreadable or nothing was measured. */
         lineEvidence: z.array(windowLineEvidenceSchema).optional(),
+        /** The decided lines and impact of each question row; absent without a readable transcript or questions. */
         questionDetails: z
             .array(
                 z.object({
@@ -959,8 +964,8 @@ const meetingRows = defineMethod({
             )
             .optional(),
     }),
-    resultName: "{ meeting, rows: ReviewRow[], hidden }",
-    doc: "The review rows (`meetings rows --json`): one per item in the order `listen` asks, each with its question as parts (who, said, when, asks, settles, reason), its typed choices with confidence, its edit kind, what it needs, its sources, its Moment and its last decision. A decided row keeps its place.",
+    resultName: "{ meeting, rows: ReviewRow[], hidden, attendanceWarning?, lineEvidence?, questionDetails? }",
+    doc: "The review rows (`meetings rows --json`): one per item in the order `listen` asks, each with its question as parts (who, said, when, asks, settles, reason), its typed choices with confidence, its edit kind, what it needs, its sources, its Moment and its last decision. A decided row keeps its place. Optional: `attendanceWarning` (why attendance could not be read), `lineEvidence` (per source line: swaps that skipped it, no remote present, microphone share, call level and echo) and `questionDetails` (per question: its decided lines, their impact and the lines an answer raised). A missing field or measurement was not available, never a negative result.",
     effect: "read",
 });
 
