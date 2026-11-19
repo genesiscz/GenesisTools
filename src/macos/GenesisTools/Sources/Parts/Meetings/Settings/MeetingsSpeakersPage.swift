@@ -51,6 +51,8 @@ struct MeetingsSpeakersPage: View {
 
     var body: some View {
         MeetingsSettingsFrame(model: model) { _ in
+            RoomDeviceSettingsCard(raw: model.settingsRaw) { path, value in model.set(path, value) }
+                .nativeSettingsAnchor("roomDevices")
             MeetingsVoiceLibraryCard(config: MeetingsVoiceCompute(raw: model.settingsRaw)) { path, value in model.set(path, value) }
                 .nativeSettingsAnchor("voiceLibrary")
             MeetingsVoicePassCard(compute: MeetingsVoiceCompute(raw: model.settingsRaw), autoNow: autoNow) { path, value in
@@ -59,6 +61,33 @@ struct MeetingsSpeakersPage: View {
             .nativeSettingsAnchor(MeetingsSettingsPages.voicePassAnchor)
         }
         .task { autoNow = await MeetingsVoiceCompute.autoWorkersNow(service: model.service) }
+    }
+}
+
+struct RoomDeviceSettingsCard: View {
+    static let path = ["global", "speakerLabels", "seat", "deviceOfferMinMeetings"]
+    // The config accepts any positive JavaScript safe integer.
+    private static let counts = 1..<(1 << 53)
+    let raw: JSONValue?
+    let set: ([String], Int) -> Void
+
+    var minimum: Int {
+        guard case .number(let value) = raw?.at(Self.path), let count = Int(exactly: value),
+              Self.counts.contains(count) else { return 2 }
+        return count
+    }
+
+    func choose(_ count: Int) {
+        if Self.counts.contains(count) { set(Self.path, count) }
+    }
+
+    var body: some View {
+        NativeSettingsCard("Room devices") {
+            NativeSettingsRow("Meetings before asking", detail: "Ask about a shared room account after it joins from the room in this many meetings.") {
+                NativeSettingsNumberPicker("Meetings before asking", range: Self.counts, identifier: "meetings.devices.minimum",
+                                           suffix: .counted("meeting"), value: Binding(get: { minimum }, set: choose))
+            }
+        }
     }
 }
 

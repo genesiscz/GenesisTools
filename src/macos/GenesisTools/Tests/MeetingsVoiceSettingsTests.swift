@@ -28,6 +28,17 @@ final class MeetingsVoiceSettingsTests: XCTestCase {
         XCTAssertEqual(writes, ["global.speakerLabels.voice.sampleScope": "all", "global.speakerLabels.voice.outlierBelow": "-0.12"])
     }
 
+    func testRoomDeviceThresholdReadsAndWritesTheSeatSetting() throws {
+        let config = try raw(#"{"global":{"speakerLabels":{"seat":{"deviceOfferMinMeetings":7}}}}"#)
+        var writes: [String: Int] = [:]
+        let card = RoomDeviceSettingsCard(raw: config) { path, value in writes[path.joined(separator: ".")] = value }
+        XCTAssertEqual(card.minimum, 7)
+        XCTAssertEqual(RoomDeviceSettingsCard(raw: nil, set: { _, _ in }).minimum, 2)
+        card.choose(4)
+        card.choose(0)
+        XCTAssertEqual(writes, ["global.speakerLabels.seat.deviceOfferMinMeetings": 4])
+    }
+
     func testTheCardReadsTheConfigAndADefaultForAMissingBlock() throws {
         XCTAssertEqual(MeetingsVoiceCompute(raw: nil), MeetingsVoiceCompute(priority: .normal, workers: nil),
                        "no settings read yet: normal and auto")

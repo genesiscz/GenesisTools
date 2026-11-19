@@ -560,6 +560,28 @@ describe("sparse roster mute readings on the call", () => {
         });
     }
 
+    test("a review-only sole remote seat never hides the name the speaking indicator applies alone", () => {
+        const { meeting, evidence } = scene([{ label: "S1", mic: 0 }]);
+        meeting.transcript = transcriptAt(100).map((line) => ({ ...line, speaker: "S1" }));
+        evidence.segments = [{ startSec: 0, endSec: 1000, channel: "system", liveName: lake }];
+        evidence.speaking = [
+            { tSec: 98, speaking: [lake], validUntilSec: 108 },
+            { tSec: 108, speaking: [], validUntilSec: 118 },
+        ];
+        const presence = [lake, reed].map((name) => ({ name, fromSec: 0, toSec: 1000 }));
+        const input = { ...base, meeting, evidence, applyAbove: 0.7, presence };
+        const [alone] = ranges(suggestItems(input));
+        expect(alone?.speaker).toBe(lake);
+        expect(alone?.evidence?.reviewOnly).not.toBe(true);
+        expect(alone?.confidence).toBeGreaterThanOrEqual(0.7);
+
+        const seat = { labeler: "seat" as const, reason: "seat-of-one" as const, seat: "call" as const, index: 0 };
+        const [range] = ranges(suggestItems({ ...input, labels: [{ ...seat, person: lake, reviewOnly: true }] }));
+        expect(range?.speaker).toBe(lake);
+        expect(range?.evidence?.reviewOnly).not.toBe(true);
+        expect(range?.confidence).toBeGreaterThanOrEqual(alone!.confidence!);
+    });
+
     test("R3 positive mic voices survive a personal mute and an absent call account", () => {
         const { meeting, evidence } = scene([
             { label: "S1", mic: 1 },

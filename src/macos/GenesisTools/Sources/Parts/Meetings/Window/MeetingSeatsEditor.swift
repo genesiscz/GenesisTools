@@ -357,6 +357,15 @@ struct MeetingSeatChoices {
         choices[name] = seat
     }
 
+    /// A device decision can remove a proposed speaker. Keep manual picks only for people still suggested.
+    func refreshed(with fresh: MeetingsAPI.SeatsSuggest.Suggestion) -> Self {
+        var next = Self(fresh)
+        for person in suggestion.people {
+            if let pick = choices[person.name], pick != person.seat { next.set(pick, for: person.name) }
+        }
+        return next
+    }
+
     /// Built only when a button takes the choices. A remote person's original fractional times survive the review.
     func seats(record: MeetingRecordView?) -> MeetingSeats {
         let remote = Dictionary(grouping: suggestion.seats.remote, by: { PeopleText.personKey($0.name) })
@@ -402,6 +411,53 @@ struct MeetingSeatChoices {
     }
 }
 
+struct RoomDeviceOfferRow: View {
+    let offer: RoomDeviceOffer
+    let window: MeetingsWindowModel?
+    let answer: (Bool) -> Void
+    @State private var showingMeetings = false
+    @State private var titles: [String: String] = [:]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(verbatim: offer.question).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Button("Yes") { answer(true) }
+                    .accessibilityLabel("Yes, mark \(offer.account) as a room device")
+                    .accessibilityIdentifier("meetings.devices.yes.\(offer.account)")
+                Button("No") { answer(false) }
+                    .accessibilityLabel("No, keep \(offer.account) as a person")
+                    .accessibilityIdentifier("meetings.devices.no.\(offer.account)")
+            }
+            .buttonStyle(.bordered)
+            GenDisclosure(Plural.count(offer.meetings.count, "meeting"), isExpanded: $showingMeetings, minHeight: 22) {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(offer.meetings, id: \.self) { id in
+                        Text(verbatim: titles[id] ?? id)
+                    }
+                }
+                .task(id: offer.meetings) { await readTitles() }
+            }
+            .font(.callout).foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 3)
+    }
+
+    /// The offer carries stable IDs. Resolve older meetings outside the overview only when the evidence is opened.
+    private func readTitles() async {
+        for id in offer.meetings where titles[id] == nil {
+            guard !Task.isCancelled else { return }
+            if let known = window?.meeting(id) {
+                titles[id] = known.displayTitle
+            } else if let record = try? await MeetingDetailModel.recordRead(id).run(service: window?.service),
+                      !record.title.isEmpty, !Task.isCancelled {
+                titles[id] = record.title
+            }
+        }
+    }
+}
+
 /// "Seats and microphones…" from the meeting header's "…" menu: who sat in the room, who joined from elsewhere and
 /// when, and which microphone carried whom. People come from the person picker the person editor uses (the meeting's
 /// people first, or a new name), microphones from this Mac and the remote people's devices.
@@ -443,6 +499,7 @@ struct MeetingSeatsEditor: View {
     @State private var choices: MeetingSeatChoices?
     @State private var readFailure: MeetingsCLI.Failure?
     @State private var readAttempt = 0
+    @State private var deviceActions = RoomDeviceActions()
     @State private var initiallyUnset: Bool
     let load: () async throws -> MeetingsAPI.SeatsSuggest.Suggestion
     let save: (MeetingSeats, Bool) async throws -> Void
@@ -488,6 +545,14 @@ struct MeetingSeatsEditor: View {
     }
 
     var body: some View {
+        if let detail {
+            editor.noticeStack(detail.notices, alignment: detail.window?.noticePlace.alignment ?? .bottom)
+        } else {
+            editor
+        }
+    }
+
+    private var editor: some View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Seats and microphones").font(.headline)
@@ -524,17 +589,20 @@ struct MeetingSeatsEditor: View {
                     else { submit(form.draft.parsed) }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(reviewing ? (choices?.count ?? 0) == 0 : form.problem != nil || emptyFirstSave)
+                .disabled(reviewing ? readFailure != nil || (choices?.count ?? 0) == 0 : form.problem != nil || emptyFirstSave)
                 .accessibilityIdentifier(reviewing ? "meetings.seats.useSuggestion" : "meetings.seats.save")
             }
         }
-        .disabled(saving)
+        .disabled(saving || deviceActions.busy)
         .padding(20)
         .frame(width: 620, height: 560)
         .onAppear {
             if let detail, case .idle = detail.speakers { detail.loadSpeakers() }
         }
         .onDisappear { search?.cancel() }
+        .task(id: readAttempt) {
+            if readAttempt > 0 || (choices == nil && readFailure == nil) { await reloadSuggestion() }
+        }
     }
 
     private var emptyFirstSave: Bool {
@@ -543,29 +611,19 @@ struct MeetingSeatsEditor: View {
 
     private var suggestionReview: some View {
         VStack(alignment: .leading) {
-            if let choices {
-                if choices.suggestion.people.isEmpty {
+            if let readFailure {
+                suggestionFailure(readFailure)
+                Spacer()
+            } else if let choices {
+                if choices.suggestion.people.isEmpty && (choices.suggestion.deviceOffers ?? []).isEmpty {
                     Text("No people to suggest. Add seats manually.").foregroundStyle(.secondary)
                     Spacer()
                 } else {
-                    List(choices.suggestion.people) { person in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(verbatim: person.name)
-                                Text(verbatim: person.reason).font(.callout).foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            Spacer()
-                            Picker("Seat for \(person.name)", selection: Binding(
-                                get: { choices.choices[person.name] ?? .unsure },
-                                set: { self.choices?.set($0, for: person.name) })) {
-                                Text("Unsure").tag(MeetingSeatChoices.Seat.unsure)
-                                Text("In the room").tag(MeetingSeatChoices.Seat.room)
-                                Text("Remote").tag(MeetingSeatChoices.Seat.remote)
-                            }
-                            .labelsHidden().frame(width: 110)
+                    List {
+                        offerRows
+                        ForEach(choices.suggestion.people) { person in
+                            seatChoice(person, choices: choices)
                         }
-                        .padding(.vertical, 3)
                     }
                     .listStyle(.plain)
                 }
@@ -573,25 +631,58 @@ struct MeetingSeatsEditor: View {
                     Text("Using this suggestion replaces the saved seats and microphone groups.")
                         .font(.callout).foregroundStyle(.secondary)
                 }
-            } else if let readFailure {
-                NoticePill(text: readFailure.sentence, more: readFailure.detail, tone: .error, fixes: [
-                    .button("Retry", symbol: "arrow.clockwise") { self.readFailure = nil; readAttempt += 1 }
-                ])
-                Spacer()
             } else {
                 ProgressView("Reading seat suggestions…")
                 Spacer()
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .task(id: readAttempt) {
-            guard choices == nil, readFailure == nil else { return }
-            do {
-                let fresh = try await load()
-                try Task.checkCancellation()
-                choices = MeetingSeatChoices(fresh)
-            } catch {
-                if !Task.isCancelled { readFailure = asFailure(error) }
+    }
+
+    private func seatChoice(_ person: MeetingsAPI.SeatsSuggest.Person, choices: MeetingSeatChoices) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(verbatim: person.name)
+                Text(verbatim: person.reason).font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Picker("Seat for \(person.name)", selection: Binding(
+                get: { choices.choices[person.name] ?? .unsure },
+                set: { self.choices?.set($0, for: person.name) })) {
+                Text("Unsure").tag(MeetingSeatChoices.Seat.unsure)
+                Text("In the room").tag(MeetingSeatChoices.Seat.room)
+                Text("Remote").tag(MeetingSeatChoices.Seat.remote)
+            }
+            .labelsHidden().frame(width: 110)
+        }
+        .padding(.vertical, 3)
+    }
+
+    private func suggestionFailure(_ failure: MeetingsCLI.Failure) -> some View {
+        NoticePill(text: failure.sentence, more: failure.detail, tone: .error, fixes: [
+            .button("Retry", symbol: "arrow.clockwise") { readAttempt += 1 }
+        ])
+    }
+
+    private func reloadSuggestion() async {
+        do {
+            let fresh = try await load()
+            try Task.checkCancellation()
+            choices = choices?.refreshed(with: fresh) ?? MeetingSeatChoices(fresh)
+            readFailure = nil
+        } catch {
+            if !Task.isCancelled { readFailure = asFailure(error) }
+        }
+    }
+
+    @ViewBuilder private var offerRows: some View {
+        if let detail {
+            ForEach(choices?.suggestion.deviceOffers ?? []) { offer in
+                RoomDeviceOfferRow(offer: offer, window: detail.window) { yes in
+                    deviceActions.submit(.answer(offer, meeting: detail.id, yes: yes), service: detail.service,
+                                         notices: detail.notices, refresh: reloadSuggestion)
+                }
             }
         }
     }
@@ -602,6 +693,11 @@ struct MeetingSeatsEditor: View {
         let record = detail?.record.value
         let layout = record?.evidence?.channels?.layout
         return Form {
+            if let readFailure {
+                suggestionFailure(readFailure)
+            } else if !(choices?.suggestion.deviceOffers ?? []).isEmpty {
+                Section("Room devices") { offerRows }
+            }
             Section {
                 room(record)
             } header: {

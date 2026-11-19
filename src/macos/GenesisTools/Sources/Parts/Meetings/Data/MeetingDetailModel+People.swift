@@ -48,6 +48,56 @@ struct PresenceGroup: Identifiable, Equatable {
 /// The people directory's methods: through the Meetings service when it answers, else `tools meetings people` with the
 /// same JSON (`people list|add|hide|merge|unmerge --json`), so the picker and the Contacts view work without a service.
 enum PeopleCalls {
+    @MainActor
+    private static func deviceService(_ service: MeetingsService?) throws -> MeetingsService {
+        guard let service else {
+            throw MeetingsCLI.Failure(sentence: "Connect to the Meetings service to manage room devices.",
+                                      detail: "Room device decisions use the window's Meetings service connection.")
+        }
+        return service
+    }
+
+    @MainActor
+    static func roomDevices(offers: Bool = true, service: MeetingsService?) async throws -> MeetingsAPI.RoomDevices.Result {
+        try await deviceService(service).call(MeetingsAPI.RoomDevices.self, .init(offers: offers))
+    }
+
+    @MainActor
+    static func decideDevice(_ change: RoomDeviceChange, service: MeetingsService?) async throws -> MeetingsAPI.DecideRoomDevice.Result {
+        let connection = try deviceService(service)
+        var params = change.params
+        if case let .answer(offer, nil, _) = change {
+            params.meeting = try await supportingMeeting(for: offer, service: connection)
+        }
+        return try await connection.call(MeetingsAPI.DecideRoomDevice.self, params)
+    }
+
+    /// The evidence counts original recordings. A duplicate can hold the microphone group even when its original
+    /// doesn't. The service chooses which offers a record supports and rechecks the exact evidence on the write.
+    @MainActor
+    private static func supportingMeeting(for offer: RoomDeviceOffer, service: MeetingsService) async throws -> String {
+        func supportsOffer(_ id: String) async throws -> Bool {
+            do {
+                let result = try await service.call(MeetingsAPI.RoomDevices.self, .init(meeting: id))
+                return result.offers.contains {
+                    $0.account.lowercased() == offer.account.lowercased() && $0.group == offer.group && $0.meetings == offer.meetings
+                }
+            } catch let failure as MeetingsCLI.Failure where failure.code == "meeting-not-found" {
+                return false
+            }
+        }
+        for id in offer.meetings {
+            if try await supportsOffer(id) { return id }
+        }
+        let roots = Set(offer.meetings)
+        let history = try await service.call(MeetingsAPI.PeopleMeetings.self, .init(person: offer.account))
+        for appearance in history.meetings where !roots.contains(appearance.meeting) {
+            if try await supportsOffer(appearance.meeting) { return appearance.meeting }
+        }
+        throw MeetingsCLI.Failure(sentence: "The room device offer has changed. Review the refreshed suggestions.",
+                                  detail: "No meeting still supports the offered account, microphone group and evidence.")
+    }
+
     /// `people.known`, or `people list [query] --json`.
     static func known(_ params: MeetingsAPI.PeopleKnown.Params) -> MeetingsRead<MeetingsAPI.PeopleKnown.Result> {
         .service(MeetingsAPI.PeopleKnown.self, params, orRun: knownArgs(params))
@@ -88,6 +138,78 @@ enum PeopleCalls {
     }
 
 
+}
+
+/// Both editors use the service's receipt and the same inverse operation. Only an explicit button starts a write.
+@Observable @MainActor
+final class RoomDeviceActions {
+    private(set) var busy = false
+    @ObservationIgnored private var lastNotice: [String: StackedNotice.ID] = [:]
+
+    func submit(_ change: RoomDeviceChange, service: MeetingsService?, notices: NoticeStackModel,
+                refresh: @escaping @MainActor () async -> Void, committed: @escaping @MainActor () -> Void = {}) {
+        guard !busy else { return }
+        busy = true
+        Task {
+            defer { busy = false }
+            do {
+                let receipt = try await PeopleCalls.decideDevice(change, service: service)
+                let account = change.params.account
+                let key = account.lowercased()
+                var actions: [StackedNotice.Action] = []
+                let text: String
+                if let device = receipt.device {
+                    text = "\(device.account) is mapped to \(device.group ?? "the room")."
+                } else if case .answer = change {
+                    text = "Kept \(account) as a person."
+                } else {
+                    text = "\(account) has no room device mapping."
+                }
+                if receipt.changed {
+                    let inverse: RoomDeviceChange
+                    switch change {
+                    case .map(let device): inverse = .unmap(device)
+                    case .unmap(let device): inverse = .map(device)
+                    case let .answer(offer, _, yes): inverse = yes ? .unmap(offer.device) : .map(offer.device)
+                    }
+                    let reverse: @MainActor (StackedNotice.ID) -> Void = { [weak notices] id in
+                        guard let notices else { return }
+                        guard !self.busy else { notices.release(id); return }
+                        let done: String
+                        switch inverse {
+                        case .map(let device): done = "\(account) is mapped to \(device.group ?? "the room")."
+                        default: done = "\(account) is no longer a room device."
+                        }
+                        notices.settleUndo(id, done: done) {
+                            guard !self.busy else {
+                                throw MeetingsCLI.Failure(sentence: "Wait for the current room device change to finish.", detail: "")
+                            }
+                            self.busy = true
+                            defer { self.busy = false }
+                            _ = try await PeopleCalls.decideDevice(inverse, service: service)
+                            await refresh()
+                        }
+                    }
+                    if case .answer(_, _, false) = change {
+                        actions = [.init("Change to Yes", afterPress: .wait("Mapping…"), perform: reverse)]
+                    } else {
+                        actions = [.undo(reverse)]
+                    }
+                }
+                // Replaying an already-saved request must not take another receipt's Undo away.
+                if receipt.changed {
+                    lastNotice[key] = notices.push(StackedNotice(text: text, actions: actions), replacing: lastNotice[key])
+                } else {
+                    notices.push(StackedNotice(text: text))
+                }
+                committed()
+            } catch {
+                notices.push(.meetingsFailure(error))
+            }
+            // A refused stale offer and a lost response both need a fresh read, too.
+            await refresh()
+        }
+    }
 }
 
 // MARK: - A picker's search
@@ -169,7 +291,11 @@ extension MeetingsAPI {
             let confidence: Double
             var id: String { name }
         }
-        struct Suggestion: Decodable, Equatable { let seats: MeetingSeats; let people: [Person] }
+        struct Suggestion: Decodable, Equatable {
+            let seats: MeetingSeats
+            let people: [Person]
+            var deviceOffers: [RoomDeviceOffer]?
+        }
         struct Result: Decodable, Equatable { let meeting: String; let current: MeetingSeats?; let suggestion: Suggestion }
     }
 }

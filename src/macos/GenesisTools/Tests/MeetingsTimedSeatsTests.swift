@@ -4,6 +4,42 @@ import XCTest
 
 @MainActor
 final class MeetingsTimedSeatsTests: XCTestCase {
+    func testSeatOfferKeepsTheQuestionAndEvidenceForEitherAnswer() throws {
+        let json = #"""
+        {"meeting":"review","current":null,"suggestion":{"seats":{},"people":[],"deviceOffers":[{
+          "account":"Boardroom PC","group":"self","meetings":["planning","review"],"question":"Is this the shared microphone?"
+        }]}}
+        """#
+        let result = try JSONDecoder().decode(MeetingsAPI.SeatsSuggest.Result.self, from: Data(json.utf8))
+        let offer = try XCTUnwrap(result.suggestion.deviceOffers?.first)
+        XCTAssertEqual(offer.question, "Is this the shared microphone?")
+        for yes in [true, false] {
+            let params = RoomDeviceChange.answer(offer, meeting: result.meeting, yes: yes).params
+            XCTAssertEqual(try MeetingsService.paramsObject(params) as NSDictionary, [
+                "action": "answer", "account": "Boardroom PC", "group": "self",
+                "meetings": ["planning", "review"], "meeting": "review", "yes": yes,
+            ] as NSDictionary)
+        }
+    }
+
+    func testSeatSuggestionFromBeforeDeviceOffersStillDecodes() throws {
+        let json = #"{"meeting":"planning","current":null,"suggestion":{"seats":{"room":["Boardroom PC"]},"people":[]}}"#
+        let result = try JSONDecoder().decode(MeetingsAPI.SeatsSuggest.Result.self, from: Data(json.utf8))
+        XCTAssertEqual(result.suggestion.seats.room, ["Boardroom PC"])
+        XCTAssertTrue(result.suggestion.people.isEmpty)
+    }
+
+    func testRefreshedSeatsKeepAnEditedGuestAndDropTheConfirmedDevice() {
+        typealias Suggestion = MeetingsAPI.SeatsSuggest.Suggestion
+        let guest = MeetingsAPI.SeatsSuggest.Person(name: "Ash Example", seat: .unsure, reason: "Roster", confidence: 0.4)
+        let device = MeetingsAPI.SeatsSuggest.Person(name: "Boardroom PC", seat: .remote, reason: "Roster", confidence: 0.5)
+        var choices = MeetingSeatChoices(Suggestion(seats: .init(), people: [guest, device]))
+        choices.set(.room, for: guest.name)
+        let fresh = choices.refreshed(with: Suggestion(seats: .init(), people: [guest]))
+        XCTAssertEqual(fresh.choices, [guest.name: .room])
+        XCTAssertEqual(fresh.count, 1)
+    }
+
     func testEditingAnotherSeatPreservesLegacyRoomGroupAndDisjointStays() throws {
         let data = Data(#"""
         {"room":["Reed Example",{"name":"Fern Example","fromSec":60,"toSec":120}],

@@ -198,7 +198,60 @@ struct PeopleMergeRecord: Codable, Equatable, Hashable {
     var at: String
 }
 
+struct RoomDevice: Codable, Equatable, Identifiable {
+    let account: String
+    var group: String?
+    var id: String { account }
+}
+
+struct RoomDeviceOffer: Codable, Equatable, Identifiable {
+    let account: String
+    var group: String?
+    let meetings: [String]
+    let question: String
+    var id: String { account }
+    var device: RoomDevice { .init(account: account, group: group) }
+}
+
+/// An unmap remembers the group locally for Undo. Only the account goes on the wire.
+enum RoomDeviceChange {
+    case map(RoomDevice)
+    case unmap(RoomDevice)
+    /// The people book spans meetings. Its answer resolves a supporting record before the write.
+    case answer(RoomDeviceOffer, meeting: String?, yes: Bool)
+
+    var params: MeetingsAPI.DecideRoomDevice.Params {
+        switch self {
+        case .map(let device): return .init(action: .map, account: device.account, group: device.group)
+        case .unmap(let device): return .init(action: .unmap, account: device.account)
+        case let .answer(offer, meeting, yes):
+            return .init(action: .answer, account: offer.account, group: offer.group,
+                         meetings: offer.meetings, meeting: meeting, yes: yes)
+        }
+    }
+}
+
 extension MeetingsAPI {
+    enum RoomDevices: MeetingsServiceMethod {
+        static let name = "people.devices.list"
+        struct Params: Codable, Equatable { var offers: Bool?; var meeting: String? }
+        struct Result: Decodable, Equatable { let devices: [RoomDevice]; var offers: [RoomDeviceOffer] }
+    }
+
+    enum DecideRoomDevice: MeetingsServiceMethod {
+        static let name = "people.devices.decide"
+        enum Action: String, Codable { case map, unmap, answer }
+        struct Params: Codable, Equatable {
+            let action: Action
+            let account: String
+            var group: String?
+            var meetings: [String]?
+            var meeting: String?
+            var yes: Bool?
+        }
+        struct Result: Decodable, Equatable { let changed: Bool; let device: RoomDevice? }
+    }
+
     /// `people.known`: the ranked people for a query, a meeting and a moment of it. Nothing is preselected.
     enum PeopleKnown: MeetingsServiceMethod {
         static let name = "people.known"

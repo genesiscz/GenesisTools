@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import SwiftUI
+import Vision
 import XCTest
 @testable import GenesisToolsMeetings
 
@@ -8,7 +9,130 @@ import XCTest
 /// Snapshots: `MEETINGS_PEOPLE_SHOTS=<folder>` renders every view there, light and dark.
 @MainActor
 final class MeetingsContactsTests: XCTestCase {
+    func testRoomDeviceMapAndUnmapCarryOnlyTheirOwnParameters() async throws {
+        let fake = try FakeMeetingsService()
+        let device = RoomDevice(account: "Boardroom PC", group: "north")
+        fake.fixtureMethods = ["people.devices.list", "people.devices.decide"]
+        fake.fixtureReply = { method, params in
+            if method == "people.devices.list" { return ["devices": [], "offers": []] }
+            return ["changed": true, "device": params["action"] as? String == "map" ? params as Any : NSNull()]
+        }
+        try await fake.withVoiceWindow { window in
+            let result = try await PeopleCalls.roomDevices(service: window.service)
+            XCTAssertTrue(result.devices.isEmpty && result.offers.isEmpty)
+            XCTAssertEqual(fake.count("people.devices.decide"), 0)
+            let list = try fake.line { $0["method"] as? String == "people.devices.list" }
+            XCTAssertEqual(list["params"] as? [String: Bool], ["offers": true])
+            let hello = try fake.line { $0["method"] as? String == "hello" }
+            XCTAssertEqual((hello["params"] as? [String: Any])?["role"] as? String, "window")
+            for (change, expected) in [
+                (RoomDeviceChange.map(device), ["action": "map", "account": "Boardroom PC", "group": "north"]),
+                (.map(.init(account: "Desk PC")), ["action": "map", "account": "Desk PC"]),
+                (.unmap(device), ["action": "unmap", "account": "Boardroom PC"]),
+            ] {
+                _ = try await PeopleCalls.decideDevice(change, service: window.service)
+                XCTAssertEqual(fake.received.last?["params"] as? [String: String], expected)
+            }
+        }
+    }
+
+    func testRoomDeviceReceiptsReverseTheAnswerOrRestoreTheUnmappedGroup() async throws {
+        let fake = try FakeMeetingsService()
+        let offer = RoomDeviceOffer(account: "Boardroom PC", group: "north", meetings: ["planning", "review"], question: "Shared?")
+        fake.fixtureMethods = ["people.devices.decide"]
+        fake.fixtureReply = { [weak fake] _, params in
+            let mapped = params["yes"] as? Bool == true || params["action"] as? String == "map"
+            // An identical Yes replay has no new decision to undo.
+            let changed = params["yes"] as? Bool != true || fake?.count("people.devices.decide") == 1
+            return ["changed": changed, "device": mapped ? ["account": "Boardroom PC", "group": "north"] as Any : NSNull()]
+        }
+        try await fake.withVoiceWindow { window in
+            let actions = RoomDeviceActions()
+            let changes: [(RoomDeviceChange, String, [String: String])] = [
+                (.answer(offer, meeting: "review", yes: true), "Undo", ["action": "unmap", "account": "Boardroom PC"]),
+                (.answer(offer, meeting: "review", yes: false), "Change to Yes", ["action": "map", "account": "Boardroom PC", "group": "north"]),
+                (.unmap(offer.device), "Undo", ["action": "map", "account": "Boardroom PC", "group": "north"]),
+            ]
+            for (change, label, inverse) in changes {
+                var reads = 0
+                actions.submit(change, service: window.service, notices: window.notices, refresh: { reads += 1 })
+                let saved = await waitUntil(3) { reads == 1 && !actions.busy }
+                XCTAssertTrue(saved)
+                let notice = try XCTUnwrap(window.notices.notices.last { $0.actions.contains { $0.label == label } })
+                if case .answer(_, _, true) = change {
+                    actions.submit(change, service: window.service, notices: window.notices, refresh: { reads += 1 })
+                    let replayed = await waitUntil(3) { reads == 2 && !actions.busy }
+                    XCTAssertTrue(replayed)
+                    XCTAssertEqual(window.notices.notice(notice.id)?.actions.first?.label, "Undo")
+                    XCTAssertTrue(window.notices.notices.last?.actions.isEmpty == true)
+                }
+                let beforeUndo = reads
+                window.notices.press(try XCTUnwrap(notice.actions.first { $0.label == label }), of: notice.id)
+                let reversed = await waitUntil(3) { reads == beforeUndo + 1 && window.notices.waiting[notice.id] == nil }
+                XCTAssertTrue(reversed)
+                XCTAssertEqual(fake.received.last?["params"] as? [String: String], inverse)
+            }
+        }
+    }
+
+    func testPeopleBookAnswersFromTheCopyThatHasTheRosterEvidence() async throws {
+        let fake = try FakeMeetingsService()
+        let evidence = ["planning", "review"]
+        let offer = RoomDeviceOffer(account: "Boardroom PC", group: "north", meetings: evidence, question: "Shared?")
+        fake.fixtureMethods = ["people.devices.list", "people.meetings", "people.devices.decide"]
+        fake.fixtureReply = { method, params in
+            if method == "people.meetings" {
+                return ["person": ["id": "name:boardroom pc", "name": "Boardroom PC", "rank": "meetings", "sources": ["meetings"]],
+                        "meetings": [["meeting": "planning-copy", "title": "Planning copy", "start": "2026-01-12T10:00:00Z",
+                                      "as": ["participant"], "present": [], "labels": []]]] as [String: Any]
+            }
+            if method == "people.devices.list" {
+                let matches = params["meeting"] as? String == "planning-copy"
+                return ["devices": [], "offers": matches ? [try MeetingsService.paramsObject(offer)] : []]
+            }
+            return ["changed": true, "device": NSNull()] as [String: Any]
+        }
+        try await fake.withVoiceWindow { window in
+            _ = try await PeopleCalls.decideDevice(.answer(offer, meeting: nil, yes: false), service: window.service)
+            let answer = try fake.line { $0["method"] as? String == "people.devices.decide" }
+            XCTAssertEqual(answer["params"] as? NSDictionary, [
+                "action": "answer", "account": "Boardroom PC", "group": "north",
+                "meeting": "planning-copy", "meetings": evidence, "yes": false,
+            ] as NSDictionary)
+            XCTAssertEqual(fake.count("people.devices.decide"), 1)
+        }
+    }
+
+    func testRoomDeviceSectionShowsConfirmedAccountsAndUnansweredQuestions() throws {
+        let data = try MeetingsService.decode(MeetingsAPI.RoomDevices.Result.self, [
+            "devices": [["account": "Boardroom PC", "group": "North"], ["account": "Desk PC"]],
+            "offers": [["account": "Studio PC", "meetings": ["planning", "review"], "question": "Is Studio PC shared?"]],
+        ] as [String: Any])
+        let view = RoomDeviceRows(data: data, window: nil, decide: { _ in })
+            .padding().frame(width: 620).background(Color.white).environment(\.colorScheme, .light)
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 2
+        let request = VNRecognizeTextRequest()
+        request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: XCTUnwrap(renderer.cgImage)).perform([request])
+        let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        for words in ["Boardroom PC", "North", "Desk PC", "the room", "Is Studio PC shared?", "2 meetings"] {
+            XCTAssertTrue(text.contains(words), text)
+        }
+    }
+
     // MARK: The mirrors against the protocol fixture
+
+    func testRoomDeviceSnapshotOpensPeopleAndKeepsTheOfferFile() {
+        let request = MeetingsRequest.parse(["--sheet", "room-devices", "--snapshot", "room.png",
+                                            "--place", "all", "--device-offers-file", "offers.json"])
+        XCTAssertEqual(request.place, .contacts)
+        XCTAssertEqual(request.deviceOffersFile, "offers.json")
+        let seats = MeetingsRequest.parse(["--sheet", "seats", "--meeting", "planning", "--device-offers-file", "offers.json"])
+        XCTAssertEqual(seats.sheet, "seats")
+        XCTAssertEqual(seats.meeting, "planning")
+        XCTAssertEqual(seats.deviceOffersFile, "offers.json")
+    }
 
     private static var fixtureURL: URL {
         URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
