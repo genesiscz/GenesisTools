@@ -1835,10 +1835,15 @@ struct InboxMain: View {
                                 Text("For you").tag("human")
                                 if !tasks.draft.session.isEmpty { Text("For agent").tag("agent") }
                             }
+                            .onChange(of: tasks.draft.owner) { _, owner in
+                                if owner != "agent" { sendImmediately = false }
+                            }
                             if tasks.draft.owner == "agent" && !tasks.draft.session.isEmpty {
                                 Toggle("Send to the session now", isOn: $sendImmediately)
                             }
-                            Button("Add task") { tasks.create(sendImmediately: sendImmediately) }
+                            Button("Add task") {
+                                tasks.create(sendImmediately: sendImmediately && tasks.draft.owner == "agent" && !tasks.draft.session.isEmpty)
+                            }
                                 .disabled(tasks.isCreating || tasks.draft.title.trimmed.isEmpty)
                         }.padding().frame(width: 340)
                     }
