@@ -390,6 +390,7 @@ enum SidePanelCatalog {
             row(Panes.screenHeight, value: Panes.screenHeight.value(defaults))
                 .requiring(Panes.screenBesidePlayback.key, [.flag(true)], "Off while the screen is not beside the sound."),
             row(Panes.transcriptPane, value: Panes.transcriptPane.value(defaults)),
+            row(Panes.autoHideSidebar, value: Panes.autoHideSidebar.value(defaults)),
             row(Panes.frameBoxes, value: Panes.frameBoxes.value(defaults)),
             row(Panes.frameFocusSingle, value: Panes.frameFocusSingle.value(defaults)),
             row(Panes.frameAutoDisplay, value: Panes.frameAutoDisplay.value(defaults)),
