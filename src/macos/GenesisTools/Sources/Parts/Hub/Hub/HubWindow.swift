@@ -932,6 +932,7 @@ final class HubModel {
             prs.$selectedID.map { _ in () }.eraseToAnyPublisher(),
             inbox.$selectedID.map { _ in () }.eraseToAnyPublisher(),
             agents.$selectedID.map { _ in () }.eraseToAnyPublisher(),
+            work.screen.$project.dropFirst().map { _ in () }.receive(on: DispatchQueue.main).eraseToAnyPublisher(),
         ]
         navRecorder = Publishers.MergeMany(changes).sink { [weak self] in
             self?.placeChanged()
