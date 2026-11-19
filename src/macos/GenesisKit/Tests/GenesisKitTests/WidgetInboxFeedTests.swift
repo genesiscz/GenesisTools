@@ -157,6 +157,30 @@ final class WidgetInboxFeedTests: XCTestCase {
         XCTAssertNil(model.overviewFilterPick)
     }
 
+    func testMarkAllReadCanBeUndoneAndOnlyClearsThroughTheOriginalClick() async throws {
+        let model = try makeModel()
+        defer { model.stop() }
+        model.actionRunner = { _ in ["ok": true] }
+        let initialSelectionSaved = await model.waitForShutdownMutations()
+        XCTAssertTrue(initialSelectionSaved)
+        var calls: [WidgetJSON] = []
+        model.actionRunner = { value in calls.append(value); return ["ok": true] }
+        model.markAllRead()
+        XCTAssertNotNil(model.readThrough)
+        model.undoMarkAllRead()
+        model.commitMarkAllRead()
+        XCTAssertNil(model.readThrough)
+        let undoSettled = await model.waitForShutdownMutations()
+        XCTAssertTrue(undoSettled)
+        XCTAssertTrue(calls.isEmpty)
+        model.markAllRead()
+        let cutoff = try XCTUnwrap(model.readThrough)
+        model.commitMarkAllRead()
+        let drained = await model.waitForShutdownMutations()
+        XCTAssertTrue(drained)
+        XCTAssertEqual(calls, [["action": "inbox-clear", "at": .number(cutoff)]])
+    }
+
     func testHoverSegmentsKeepTheSessionFilterWhenItemsIsSelected() throws {
         let model = try makeModel()
         defer { model.stop() }

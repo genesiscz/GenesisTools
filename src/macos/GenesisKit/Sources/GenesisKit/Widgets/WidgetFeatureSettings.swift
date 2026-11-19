@@ -375,7 +375,7 @@ private struct WidgetGeneralSettings: View {
                     NativeSettingsSegmented(
                         "Feed headers", detail: "For single items, show the source inside the row or in a separate header.",
                         identifier: "widget.settings.inboxFeedHeaders",
-                        options: [.init("groups", "Groups only"), .init("all", "Every group")],
+                        options: [.init("groups", "Groups only"), .init("all", "All runs")],
                         selection: field(\.inboxFeedHeaders))
                 }
                 openingFilters
@@ -749,11 +749,14 @@ private struct WidgetSessionSettings: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            previewCard
-            NativeSettingsCard("Your sessions", subtitle: "Pin a session to keep it in the widget's rail. Click one to open it in the widget.") {
-                WidgetSessionBrowser(model: model, onOpen: openSession)
+            WidgetSettingsLoading(model: model)
+            if model.settingsLoaded {
+                previewCard
+                NativeSettingsCard("Your sessions", subtitle: "Pin a session to keep it in the widget's rail. Click one to open it in the widget.") {
+                    WidgetSessionBrowser(model: model, onOpen: openSession)
+                }
+                filterCard
             }
-            filterCard
             WidgetSettingsError(model: model)
         }.task { model.refreshSettings() }
     }
@@ -768,15 +771,19 @@ private struct WidgetSessionSettings: View {
                 selection: Binding(get: { prefs.previewView }, set: { view in
                     model.writePreferences { $0.previewView = view }
                 }))
-            NativeSettingsSegmented(
-                "Show", identifier: "widget.preview.filter",
-                options: WidgetPreviewChoices.filters,
-                selection: Binding(get: { model.previewFilter }, set: { model.setPreview(filter: $0) }),
-                minSegmentWidth: 96)
-            NativeSettingsPicker(
-                "Order", identifier: "widget.preview.sort",
-                options: WidgetPreviewChoices.sorts,
-                selection: Binding(get: { model.previewSort }, set: { model.setPreview(sort: $0) }))
+            if prefs.previewView == "sessions" {
+                NativeSettingsSegmented(
+                    "Show", identifier: "widget.preview.filter",
+                    options: WidgetPreviewChoices.filters,
+                    selection: Binding(get: { model.previewFilter }, set: { model.setPreview(filter: $0) }),
+                    minSegmentWidth: 96)
+            }
+            if prefs.previewView == "sessions" || prefs.railOrder != "stable" {
+                NativeSettingsPicker(
+                    prefs.previewView == "sessions" ? "Session order" : "Rail session order", identifier: "widget.preview.sort",
+                    options: WidgetPreviewChoices.sorts,
+                    selection: Binding(get: { model.previewSort }, set: { model.setPreview(sort: $0) }))
+            }
         }
         .nativeSettingsAnchor("inbox-preview")
     }

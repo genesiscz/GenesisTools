@@ -13,6 +13,15 @@ public final class WidgetModel: ObservableObject {
 
     @Published public private(set) var snapshot: WidgetSnapshot? {
         didSet {
+            if oldValue?.state.preferences.hoverPreviews == true, snapshot?.state.preferences.hoverPreviews == false {
+                hoverTask?.cancel()
+                cancelHoverPrewarm()
+                if alertPopup.item == nil, livePreviewWidth == nil, expanded == nil {
+                    closePreviewEntry()
+                    hoveredSurface = nil
+                    presentationChanged?()
+                }
+            }
             // Only the preferences changed (a live setting): the sessions and the inbox are the same, so only what
             // the preferences decide is computed again. Rebuilding the inbox was most of a live apply (2026-10-28).
             if preferencesOnlyChange {
@@ -853,6 +862,7 @@ public final class WidgetModel: ObservableObject {
         sendCloseRevision += 1
         // A Discard still in its Undo window is what the user chose: it goes out now, not never.
         commitHeldDiscard()
+        commitMarkAllRead()
         alertPopup.stop()
         preferenceStore.stop()
         settingsTask?.cancel()
@@ -1116,7 +1126,7 @@ public final class WidgetModel: ObservableObject {
             guard presentation(for: surface) != .expanded else { return }
             hoverTask = Task { [weak self] in
                 do { try await Task.sleep(for: .milliseconds(160)) } catch { return }
-                guard let self, !self.dialogOpen else { return }
+                guard let self, self.layout.hoverPreviews, !self.dialogOpen else { return }
                 self.hoveredSurface = surface
                 self.prewarmTranscript(on: surface)
                 self.presentationChanged?()
@@ -1541,13 +1551,43 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
-    /// "Mark all read": every answer up to now is read, and older questions, decisions and results stop counting in
-    /// the badges. Nothing is deleted or answered; each item stays in its session's inbox.
+    private static let pendingMarkReadNotice = "All sessions will be marked read."
+    @Published private(set) var readThrough: Double?
+    @Published private(set) var markingRead = false
+    private var markReadDelay: Task<Void, Never>?
+
+    /// Capture the cutoff on the click, so arrivals during Undo keep their unread state.
     public func markAllRead() {
-        guard !stopping else { return }
-        let at = (Date().timeIntervalSince1970 * 1000).rounded(.down)
-        action(["action": "inbox-clear", "at": .number(at)], completed: { [weak self] in
-            self?.notice = "Inbox marked read. Every item stays in its session."
+        guard !stopping, readThrough == nil, !markingRead, inboxCount > 0 else { return }
+        readThrough = (Date().timeIntervalSince1970 * 1000).rounded(.down)
+        let seconds = undoSeconds
+        postNote(Self.pendingMarkReadNotice, action: .init(title: "Undo") { [weak self] in self?.undoMarkAllRead() })
+        markReadDelay = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
+            self?.commitMarkAllRead()
+        }
+    }
+
+    func undoMarkAllRead() {
+        guard readThrough != nil else { return }
+        markReadDelay?.cancel()
+        markReadDelay = nil
+        readThrough = nil
+        postNote("Kept the unread items.")
+    }
+
+    func commitMarkAllRead() {
+        guard let at = readThrough else { return }
+        markReadDelay?.cancel()
+        markReadDelay = nil
+        readThrough = nil
+        if notice == Self.pendingMarkReadNotice { notice = nil }
+        markingRead = true
+        action(["action": "inbox-clear", "at": .number(at)], failed: { [weak self] in
+            self?.markingRead = false
+        }, completed: { [weak self] in
+            self?.markingRead = false
+            self?.postNote("Inbox marked read. Every item stays in its session.")
         })
     }
 
