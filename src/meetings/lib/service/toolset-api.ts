@@ -213,9 +213,9 @@ export const itemsRows = defineMethod({
         .object({ lowPriority: z.enum(["hide", "show"]).optional(), applyAbove: z.number().min(0).max(1).optional() })
         .strict(),
     result: z.unknown(),
-    resultName: "{ meeting, rows: ReviewRow[], hidden }",
+    resultName: "{ meeting, rows: ReviewRow[], hidden, attendanceWarning?, lineEvidence?, questionDetails? }",
     effect: "read",
-    doc: `The review rows, as \`${toolCommand("meetings", "rows", "--json")}\` prints them: each item in the order listen asks, with its question as parts, its typed choices with confidence, its edit kind, sources, Moment and last decision. lowPriority: "show" keeps the open questions under the priority line.`,
+    doc: `The review rows, as \`${toolCommand("meetings", "rows", "--json")}\` prints them: each item in the order listen asks, with its question as parts, its typed choices with confidence, its edit kind, sources, Moment and last decision. Optional attendanceWarning, lineEvidence (per source line) and questionDetails (per question); a missing field was not available, never a negative result. lowPriority: "show" keeps the open questions under the priority line.`,
 });
 export const add = defineMethod({
     name: "items.add",
