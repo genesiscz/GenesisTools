@@ -105,16 +105,21 @@ struct AgentWidgetPreview: View {
                 }
             }.padding(.horizontal, 5)
 
-            HStack(spacing: 6) {
+            let toolbar = model.agentsPreviewWidth >= 300
+                ? AnyLayout(HStackLayout(spacing: 6))
+                : AnyLayout(VStackLayout(alignment: .trailing, spacing: 4))
+            toolbar {
                 GenSegmentedTabs(
                     "Show", items: WidgetPreviewChoices.filters.map { .init($0.value, $0.title) } + [.init("items", "Items")],
                     selection: Binding(get: { model.previewSegment }, set: model.choosePreviewSegment),
                     identifier: "widget.preview.filter", fillsWidth: true, size: .small)
-                if !showsItems { previewOrderButton }
-                IconButton(systemName: "slider.horizontal.3", tooltip: "Choose what this list shows and its order",
-                           size: 10.5) {
-                    model.showSettingsPage?("widgets.sessions#inbox-preview")
-                }.accessibilityLabel("Inbox preview settings")
+                HStack(spacing: 6) {
+                    if !showsItems { previewOrderButton }
+                    IconButton(systemName: "slider.horizontal.3", tooltip: "Choose what this list shows and its order",
+                               size: 10.5) {
+                        model.showSettingsPage?("widgets.sessions#inbox-preview")
+                    }.accessibilityLabel("Inbox preview settings")
+                }.fixedSize()
             }
             .padding(.horizontal, 5).padding(.bottom, 3)
             .accessibilityElement(children: .contain)
