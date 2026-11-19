@@ -159,21 +159,28 @@ public struct WorkNotifyPane: View {
 
     public var body: some View {
         Group {
-            if let failure = screen.failure {
-                FailureInline(.unexpected(failure, outcome: "The notification rules did not load", action: "Read the rules"),
-                              identifier: "work-notify-failure") { screen.reload() }
-            } else if !screen.notifyLoaded {
+            if screen.notifyLoaded {
+                VStack(spacing: 0) {
+                    WorkNotifyGridView(project: screen.project ?? "", rows: screen.notifyRows,
+                                       pending: screen.notifyPending, command: screen.notifyCommand,
+                                       serviceAvailable: serviceAvailable) { scope, type, action, level in
+                        Task { await screen.setNotify(scope: scope, type: type, action: action, level: level) }
+                    }
+                    if let failure = screen.failure { retry(failure, form: .compact) }
+                }
+            } else if let failure = screen.failure {
+                retry(failure, form: .pane)
+            } else {
                 ProgressView("Reading notification rules")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .accessibilityIdentifier("work-notify-loading")
-            } else {
-                WorkNotifyGridView(project: screen.project ?? "", rows: screen.notifyRows,
-                                   pending: screen.notifyPending, command: screen.notifyCommand,
-                                   serviceAvailable: serviceAvailable) { scope, type, action, level in
-                    Task { await screen.setNotify(scope: scope, type: type, action: action, level: level) }
-                }
             }
         }
+    }
+
+    private func retry(_ failure: String, form: FailureInline.Form) -> some View {
+        FailureInline(.unexpected(failure, outcome: "The notification rules did not load", action: "Read the rules"),
+                      form: form, identifier: "work-notify-failure") { screen.reload() }
     }
 
     private var serviceAvailable: Bool {

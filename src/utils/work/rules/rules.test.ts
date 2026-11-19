@@ -29,13 +29,13 @@ afterEach(() => {
 });
 
 test("notification edits and restores obey repository rules for a different project", async () => {
-    const initialized = Bun.spawnSync(["git", "init", "-q", dir]);
+    const initialized = Bun.spawnSync(["git", "init", "-q", dir], { env: process.env });
     expect(initialized.exitCode).toBe(0);
     writeFileSync(
         join(dir, ".git", "genesis-tools.config.json"),
         SafeJSON.stringify({ work: { version: 1, rules: { notify: { "*": { spotted: "off" } } } } })
     );
-    writeFileSync(configPath, SafeJSON.stringify({ version: WORK_CONFIG_VERSION }));
+    writeFileSync(configPath, SafeJSON.stringify({ version: WORK_CONFIG_VERSION, projects: { App: {} } }));
     applyChange(db, {
         v: 1,
         ts: "2026-11-19T06:00:00.000Z",
@@ -76,6 +76,17 @@ test("notification edits and restores obey repository rules for a different proj
         )
     ).toMatchObject({ ok: true });
     expect(readWorkConfig(configPath).value.projects?.[project]?.rules?.notify?.bug?.finished).toBe("inbox");
+    expect(
+        await callWork(
+            "configSet",
+            {
+                scope: "project",
+                notify: { type: "bug", action: "finished", level: "off" },
+            },
+            session
+        )
+    ).toMatchObject({ ok: true });
+    expect(readWorkConfig(configPath).value.projects?.App?.rules?.notify?.bug?.finished).toBe("off");
 });
 
 function actor(sessionId: string, kind: Actor["kind"] = "agent"): Actor {

@@ -138,9 +138,7 @@ public struct WorkNotifyCell: Identifiable, Equatable, Sendable {
     public var minSeverity: String?
     public var repoPath: String?
     public var builtInLevel: String
-    public var writable: Bool {
-        from != "config.repo" && !layers.contains { $0.layer == "config.repo" && ($0.rule != nil || $0.level != nil) }
-    }
+    public var writable: Bool { from != "config.repo" }
     /// The strongest rule left when the concrete override at this scope is removed.
     public func inheriting(_ scope: WorkNotifyScope) -> (level: String, layer: String) {
         let removed = scope == .project ? "config.project" : "config.global"

@@ -268,7 +268,8 @@ one file write (count the document updates); `null` removes the key; a `{ level,
 `bun scripts/native/swift-package.ts test --package-path src/macos/GenesisKit --filter WorkScreenTests` passes with a
 fake source case for `setNotify`. A probe on a scratch home:
 `GENESIS_TOOLS_HOME=/tmp/cc/GenesisTools/ae3ac312-7dbe-4045-970a-292aa93ed9ab/work-live-b/home ./tools work config-set ...`
-(or the generated CLI name for the method) prints the changed paths, and `./tools work config --project <p> --json`
+(or the generated CLI name for the method) prints the changed paths, and
+`GENESIS_TOOLS_HOME=/tmp/cc/GenesisTools/ae3ac312-7dbe-4045-970a-292aa93ed9ab/work-live-b/home ./tools work config --project <p> --json`
 shows the new level with `from: "config.project"`.
 **Targets:**
 - ideally one row write takes under 50 ms; way: time the test's call; source: tool; if not: write it into Progress.
@@ -294,8 +295,10 @@ shows the new level with `from: "config.project"`.
    - Alternate row fills (very faint) and a hover fill on the row and column under the pointer, so the eye finds
      the cell's type and action.
 2. A click on a cell opens a menu (`MenuButton`): the four levels with glyph and word (the current one checked),
-   a separator, "Use the built-in level (<word>)" (writes `null` at the layer that decides), and the scope:
-   "For this project" (default) or "For all projects". A cell decided by the repository file is read-only: the menu
+   a separator, a reset action naming the level and layer that will apply afterward, and the scope:
+   "For this project" (default) or "For all projects". Level choices and reset write to the selected scope.
+   Reset deletes its concrete override. The remaining layers determine the effective level.
+   A cell decided by the repository file is read-only: the menu
    says "Set in <repo>/<file>" and offers "Open the file" (`PathOpener`).
 3. A click on a row head opens a menu that sets the whole row (`action: "*"`); a click on a column head sets the
    whole column (`type: "*"`). Each asks nothing more: the change is one write, and Undo is offered in the outcome

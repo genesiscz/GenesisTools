@@ -463,6 +463,7 @@ export const workHandlers: WorkHandlers = {
 
         const result = await setWorkNotifyConfig({
             ...p,
+            project,
             ...(session.configPath !== undefined ? { configPath: session.configPath } : {}),
             dryRun: session.call.dryRun === true,
             projectExists: selectItems(session.ctx.db, { project, limit: 1 }).length > 0,

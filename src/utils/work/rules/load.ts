@@ -398,6 +398,7 @@ export async function setWorkNotifyConfig(options: NotifyConfigWrite): Promise<N
         }
         const base = scope === "global" ? ["global", "rules", "notify"] : ["projects", project!, "rules", "notify"];
         const rules = scope === "global" ? config.global?.rules : config.projects?.[project!]?.rules;
+        const projectNotify = project ? config.projects?.[project]?.rules?.notify : undefined;
         const updates = notify
             ? selectedCells(notify).map((cell) => ({ ...cell, edit: notify, previous: null }))
             : (restore ?? []).map((previous) => ({
@@ -414,7 +415,12 @@ export async function setWorkNotifyConfig(options: NotifyConfigWrite): Promise<N
                 return { keep: refuse("INVALID_EDIT", "A rule appears twice in this change.") };
             }
             seen.add(key);
-            if (lockedCells?.has(key)) {
+            // Resolve the project layer from the same document revision as the write. A removal
+            // can expose the repository rule, and a restore payload alone cannot unlock it.
+            if (
+                lockedCells?.has(key) &&
+                (projectNotify?.[type]?.[action] ?? projectNotify?.["*"]?.[action]) === undefined
+            ) {
                 if (!previous && updates.length > 1) {
                     continue;
                 }
