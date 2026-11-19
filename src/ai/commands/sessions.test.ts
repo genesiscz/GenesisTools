@@ -7,6 +7,7 @@ import { out } from "@genesiscz/utils/logger";
 import { drainSpool } from "@genesiscz/utils/metrics/spool";
 import { MetricsStore } from "@genesiscz/utils/metrics/store";
 import { Command } from "commander";
+import { coldComparison } from "../lib/sessions/cold-resumes";
 import { spoolContextItems } from "../lib/sessions/session-context";
 import { registerSessionsCommands, resumeAdvice } from "./sessions";
 
@@ -31,6 +32,14 @@ afterEach(() => {
 });
 
 describe("sessions range flags", () => {
+    test("cold comparison medians average the two middle values of an even count", () => {
+        const sample = { expected: 10, gapMs: 600_000, hit: false, rewriteUsd: null, followUsd: null };
+        const comparison = coldComparison(
+            { edges: new Map(), samples: [1, 9].map((calls) => ({ ...sample, calls })) },
+            { priceModel: "fixture-unpriced", freshStart: 0, idleSeconds: 295 }
+        );
+        expect(comparison.bands).toMatchObject([{ resumes: 2, medianCalls: 5, medianRewriteUsd: null }]);
+    });
     test("context and resumes list the harnesses for an unknown --provider", async () => {
         for (const sub of ["context", "resumes"]) {
             const { exitCode, errors } = await run(["sessions", sub, "some-id", "--provider", "nope"]);

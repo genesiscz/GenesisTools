@@ -3,6 +3,7 @@ import type { LoopResumes } from "@genesiscz/utils/agent-sessions/analysis-types
 import { byId } from "@genesiscz/utils/ai/catalog/static";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { priceUsage } from "@genesiscz/utils/ai/usage/spend/priced-usage";
+import { median } from "@genesiscz/utils/math";
 import { formatTable } from "@genesiscz/utils/table";
 
 interface ColdSample {
@@ -73,13 +74,6 @@ export function addColdEvidence(
     }
 }
 
-function median(values: number[]): number | null {
-    if (!values.length) {
-        return null;
-    }
-    return values.sort((a, b) => a - b)[Math.floor(values.length / 2)];
-}
-
 interface ColdBand {
     from: number;
     to: number | null;
@@ -145,9 +139,9 @@ export function coldComparison(
                 from,
                 to,
                 resumes: band.length,
-                medianCalls: median(band.map((s) => s.calls)),
-                medianRewriteUsd: median(rewrite),
-                medianFollowUsd: median(follow),
+                medianCalls: median(band.map((s) => s.calls)) ?? null,
+                medianRewriteUsd: median(rewrite) ?? null,
+                medianFollowUsd: median(follow) ?? null,
                 unpricedFollowUps: band.length - follow.length,
             },
         ];
