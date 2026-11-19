@@ -294,8 +294,8 @@ export const HANDOFF_GET_INPUT_SCHEMA = {
 export const HANDOFF_LIST_INPUT_SCHEMA = {
     type: "object",
     properties: {
-        limit: { type: "number", description: "max rows (default 20)" },
-        offset: { type: "number", description: "skip this many rows (paging)" },
+        limit: { type: "integer", minimum: 1, description: "max rows (default 20)" },
+        offset: { type: "integer", minimum: 0, description: "skip this many rows (paging)" },
         mine: {
             type: "boolean",
             description: "only handoffs posted by, claimed by, or targeted at this session",
