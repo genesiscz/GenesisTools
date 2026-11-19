@@ -18,12 +18,16 @@ struct ListenVoicesEditor: View {
     }
 
     private func updateWords() {
-        let time = row.startSec ?? 0
-        // The journal splits the original words. The displayed transcript may already have spelling edits.
-        let source = sourceLines.last { ($0.startSec ?? .infinity) <= time } ?? sourceLines.first
-        let text = source?.text ?? detail.transcript.value?.entries.last { ($0.startSec ?? .infinity) <= time }?.text
-        words = (text ?? "").split(whereSeparator: \.isWhitespace).map(String.init)
+        words = Self.splitWords(sourceLines, at: row.startSec ?? 0)
         cut = min(max(1, cut), max(1, words.count - 1))
+    }
+
+    /// The words a split offset counts: the question's original line, which the journal splits. The displayed
+    /// transcript is never used, since a spelling edit there changes how many words come before the boundary; without
+    /// an original line there is no split, and the voices save as the ordered two-person mark.
+    static func splitWords(_ sourceLines: [QuestionDetails.Line], at time: Double) -> [String] {
+        let source = sourceLines.last { ($0.startSec ?? .infinity) <= time } ?? sourceLines.first
+        return (source?.text ?? "").split(whereSeparator: \.isWhitespace).map(String.init)
     }
     static func offeredPeople(_ known: [KnownPerson], row: ReviewRow, everybody: Bool) -> [String] {
         PeopleText.questionPeople(known, choices: row.choices.filter { $0.action.kind == "answer" && ["earlier", "suggested", "candidate", "presumed"].contains($0.role) }.map(\.value),
@@ -55,10 +59,10 @@ struct ListenVoicesEditor: View {
             if words.count > 1 {
                 Text(words.prefix(cut).joined(separator: " ") + " | " + words.dropFirst(cut).joined(separator: " ")).font(.caption)
                     .accessibilityHidden(words.count > 2)
-            } else if words.isEmpty, let failure = detail.transcript.failure {
+            } else if words.isEmpty, let failure = detail.rows.failure {
                 NoticePill(text: failure.sentence, more: failure.detail, tone: .error)
-                Button("Retry") { detail.loadTranscript() }
-            } else if words.isEmpty, detail.transcript.value == nil {
+                Button("Retry") { detail.loadRows() }
+            } else if words.isEmpty, detail.rows.value == nil {
                 ProgressView("Reading the words…").controlSize(.small)
             } else {
                 Text("No word boundary is available. The ordered voices will remain an unclear two-person mark.").font(.caption)
@@ -68,15 +72,13 @@ struct ListenVoicesEditor: View {
                 detail.decide(row, .answer(row.id, first + ", then " + second, segments: segments), askReach: false)
                 close()
             }.buttonStyle(.genHoverPlain()).disabled(first.isEmpty || second.isEmpty || first == second
-                                                    || (words.isEmpty && detail.transcript.value == nil))
+                                                    || (words.isEmpty && detail.rows.value == nil))
         }.padding().frame(width: 430)
         .onAppear {
             detail.window?.player.pause()
-            if sourceLines.isEmpty { detail.ensureTranscript() }
             updateWords()
             let next = detail.peopleSearch(atSec: row.startSec); search = next; next.ask("", after: .zero)
         }
-        .onChange(of: detail.transcript.value) { _, _ in updateWords() }
         .onChange(of: sourceLines) { _, _ in updateWords() }
         .onChange(of: search?.people, initial: true) { _, _ in updatePeople() }
         .onChange(of: search?.sources, initial: true) { _, sources in unavailable = PeopleText.unavailable(sources ?? []) }
