@@ -7,6 +7,8 @@
         { "harness": "claude", "path": "-fixture/memory.md", "expect": null },
         { "harness": "claude", "path": "-fixture/lead/subagents/agent-a1.jsonl", "expect": { "owner": "subagent", "file": "transcript", "sessionId": "a1", "parentSessionId": "lead", "nested": false } },
         { "harness": "claude", "path": "-fixture/lead/subagents/agent-a1.meta.json", "expect": { "owner": "subagent", "file": "sidecar", "sessionId": "a1", "parentSessionId": "lead", "nested": false } },
+        { "harness": "claude", "path": "-fixture/lead/subagents/agent-b1.jsonl", "meta": { "teamName": "red" }, "expect": { "owner": "teammate", "teamName": "red", "file": "transcript", "sessionId": "b1", "parentSessionId": "lead", "nested": false } },
+        { "harness": "claude", "path": "-fixture/lead/subagents/agent-b2.jsonl", "meta": { "taskKind": "in_process_teammate" }, "expect": { "owner": "teammate", "file": "transcript", "sessionId": "b2", "parentSessionId": "lead", "nested": false } },
         { "harness": "claude", "path": "-fixture/lead/subagents/workflows/wf_1/agent-w1.jsonl", "expect": { "owner": "subagent", "file": "transcript", "sessionId": "w1", "parentSessionId": "lead", "nested": true } },
         { "harness": "claude", "path": "-fixture/lead/subagents/workflows/wf_1/journal.jsonl", "expect": null },
         { "harness": "claude", "path": "-fixture\\lead\\subagents\\agent-a2.jsonl", "expect": { "owner": "subagent", "file": "transcript", "sessionId": "a2", "parentSessionId": "lead", "nested": false } },

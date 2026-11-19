@@ -11,7 +11,7 @@ import { logger, out } from "@genesiscz/utils/logger";
 import { formatTable } from "@genesiscz/utils/table";
 import { type Command, Option } from "commander";
 import pc from "picocolors";
-import { humanBytes } from "../format";
+import { compressionLine, humanBytes } from "../format";
 import { durationToCutoff, intOpt } from "../options";
 import { buildIndex } from "./build";
 import { indexTaskStatus, scheduleIndexTask, unscheduleIndexTask } from "./daemon-task";
@@ -191,6 +191,9 @@ function renderQuery(r: QueryFound | QueryNotFound): void {
         pc.bold(`${r.path}  ${humanBytes(r.node.alloc_bytes)}`) +
             pc.dim(`  (${r.node.files.toLocaleString()} files${age})`)
     );
+    if (r.node.compressed && r.node.compressed.files > 0) {
+        out.println(compressionLine(r.node.compressed, humanBytes));
+    }
     const rows = r.children.map((c) => [
         humanBytes(c.alloc_bytes),
         `${(c.share * 100).toFixed(1)}%`,

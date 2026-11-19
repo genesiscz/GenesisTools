@@ -71,6 +71,15 @@ describe("tools compress verify", () => {
 });
 
 describe.skipIf(process.platform !== "darwin")("tools compress transparent", () => {
+    it("rejects a malformed age before plan or apply walks its root", async () => {
+        for (const mode of ["plan", "apply"]) {
+            const program = new Command("compress");
+            registerTransparentCommands(program);
+            const args = ["transparent", mode, join(root, "missing-root"), "--older", "3 dyas", "--json"];
+            await expect(program.parseAsync(args, { from: "user" })).rejects.toThrow("Invalid duration");
+        }
+    });
+
     it("opens the picker for a bare algorithm in an interactive terminal", async () => {
         const realIsTty = process.stdin.isTTY;
         const select = spyOn(prompts, "select").mockResolvedValue("lzvn");

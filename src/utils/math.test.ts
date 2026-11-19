@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { cosineDistance } from "./math";
+import { cosineDistance, median } from "./math";
 
 describe("cosineDistance", () => {
     it("returns 0 for identical vectors", () => {
@@ -30,5 +30,13 @@ describe("cosineDistance", () => {
         const a = new Float32Array([1, 2, 3]);
         const b = new Float32Array([2, 4, 6]);
         expect(cosineDistance(a, b)).toBeCloseTo(0, 5);
+    });
+});
+
+describe("median", () => {
+    it("takes the middle value of an odd count and the mean of the two middle values of an even count", () => {
+        expect(median([9, 1, 5])).toBe(5);
+        expect(median([9, 1])).toBe(5);
+        expect(median([])).toBeUndefined();
     });
 });

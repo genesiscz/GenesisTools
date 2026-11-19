@@ -151,14 +151,15 @@ public final class WorkScreenModel: ObservableObject {
         guard !active else { return }
         active = true
         if projectsLoaded { projectsLoaded = false }
-        if itemRef != nil, companionReadNeeded { reload() }
+        if itemRef != nil, stale || companionReadNeeded { reload() }
         openingCandidates = projects
         if visible { listen() }
         wake = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification,
             object: nil, queue: .main) { [weak self] _ in Task { @MainActor in self?.reconnect() } }
         let previousLoad = loadToken
         opening = Task {
-            guard !Task.isCancelled else { return }
+            guard visible, !Task.isCancelled else { return }
+            projectsStale = false
             await loadProjects()
             if !Task.isCancelled && loadToken == previousLoad && itemRef == nil { read() }
         }
@@ -536,6 +537,10 @@ public final class WorkScreenModel: ObservableObject {
     }
 
     private func read(explicit: Bool = false, change: Bool = false, retryOnFailure: Bool = true) {
+        guard active, visible else {
+            stale = true
+            return
+        }
         loading?.cancel()
         if live == .catchingUp { live = .live }
         let project = project

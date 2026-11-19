@@ -87,6 +87,7 @@ import {
     clonePartner,
     compressedSince,
     DITTO_WRITER,
+    hasTextHeader,
     type NativeCompressionEntry,
     openInodes,
     plan as planTransparent,
@@ -97,6 +98,7 @@ import {
     type Candidate as TransparentCandidate,
 } from "./transparent";
 import { migrateTransparentConfig } from "./transparent-config";
+import { encodedSampleBytes, storedCompressionAlgorithm } from "./transparent-native";
 import { applyTransparent } from "./transparent-run";
 import { compressStream, createVerifiedZstdBatch, createVerifiedZstdWriter, ZstdVerificationError } from "./verified";
 import { readSeekTable, readZstdFrames, readZstdFramesSync, SeekableZstdWriter, walkFrames, zstdFrames } from "./zstd";
@@ -2492,6 +2494,82 @@ describe.skipIf(process.platform !== "darwin")("transparent APFS compression", (
         expect(outcome.note).toContain("too-big");
         expect(statSync(c.path).ino).toBe(c.ino);
     });
+    it("samples LZVN with the native LZVN encoder", () => {
+        const input = Buffer.from(logText(4096));
+        const output = Buffer.alloc(input.length * 2);
+        const library = dlopen("/usr/lib/libcompression.dylib", {
+            compression_encode_buffer: {
+                args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u32],
+                returns: FFIType.u64,
+            },
+        });
+        try {
+            const encode = (code: number) =>
+                Number(
+                    library.symbols.compression_encode_buffer(output, output.length, input, input.length, null, code)
+                );
+            const lzvn = encode(0x900);
+            expect(lzvn).toBeGreaterThan(0);
+            expect(lzvn).not.toBe(encode(0x100));
+            expect(encodedSampleBytes(input, "lzvn")).toBe(lzvn);
+        } finally {
+            library.close();
+        }
+    });
+    for (const algorithm of ["zlib", "lzvn", "lzfse"] as const) {
+        const binary = Bun.which("afsctool");
+        it.skipIf(!binary)(
+            `preserves ${algorithm} bytes, mtime and compression across a clone and append`,
+            async () => {
+                const c = fixture(algorithm);
+                const bytes = readFileSync(c.path);
+                const mtime = statSync(c.path, { bigint: true }).mtimeNs;
+                const result = settleTransparent(
+                    await swapTransparent(c, afsctoolWriter(algorithm, binary!)),
+                    new Set()
+                );
+                expect(result.status).toBe("compressed");
+                const copy = `${c.path}.clone`;
+                expect(Bun.spawnSync(["/bin/cp", "-cp", c.path, copy], { env: env.getProcessEnv() }).exitCode).toBe(0);
+                for (const path of [c.path, copy]) {
+                    expect(storedCompressionAlgorithm(path)).toBe(algorithm);
+                    expect(statSync(path, { bigint: true }).mtimeNs).toBe(mtime);
+                    expect(readFileSync(path)).toEqual(bytes);
+                }
+                expect(getCloneId(copy)).toBeTruthy();
+                expect(getCloneId(copy)).toBe(getCloneId(c.path));
+                appendFileSync(copy, "\nlate");
+                expect(readFileSync(copy)).toEqual(Buffer.concat([bytes, Buffer.from("\nlate")]));
+                expect(fileFlags(copy)! & 0x20).toBe(0);
+                expect(storedCompressionAlgorithm(c.path)).toBe(algorithm);
+                expect(readFileSync(c.path)).toEqual(bytes);
+            }
+        );
+    }
+    it("excludes compressible binary content behind a text extension from estimates", () => {
+        const c = fixture("misnamed");
+        expect(hasTextHeader(c)).toBe(true);
+        // Printable padding, so only the signature can turn the ZIP and GIF samples away (the SQLite magic holds a NUL).
+        const padding = Buffer.from(logText(4000)).subarray(0, 64 * 1024);
+        expect(sniffSample(padding).kind).toBe("text");
+        for (const magic of ["SQLite format 3\0", "PK\x03\x04", "GIF89a"]) {
+            const bytes = Buffer.concat([Buffer.from(magic), padding]);
+            writeFileSync(c.path, bytes);
+            expect(hasTextHeader({ ...c, size: bytes.length })).toBe(false);
+            expect(sampleRatio(c.path, bytes.length)).toBe(Number.POSITIVE_INFINITY);
+        }
+    });
+    it("keeps an ANSI-coloured text log in estimates and on the text preset", () => {
+        const c = fixture("ansi");
+        const line = (index: number) => `\x1b[32mINFO\x1b[0m ${index} ready \x1b[2m(worker)\x1b[0m\n`;
+        const bytes = Buffer.from(Array.from({ length: 4000 }, (_, index) => line(index)).join(""));
+        writeFileSync(c.path, bytes);
+        const sample = { ...c, size: bytes.length };
+        expect(sniffSample(bytes).kind).toBe("text");
+        expect(hasTextHeader(sample)).toBe(true);
+        expect(sampleRatio(c.path, bytes.length)).toBeLessThan(0.75);
+        expect(resolvePreset(c.path).preset.name).toBe("text");
+    });
     it("refreshes two clone partners to shared compressed blocks and preserves divergent bytes", async () => {
         const c = fixture("partners");
         const one = `${c.path}.one`;
@@ -2895,13 +2973,13 @@ describe.skipIf(process.platform !== "darwin")("transparent APFS compression", (
         const input = {
             du: {
                 compress: {
-                    defaults: { olderThan: "7d", minKb: 128, exts: ["txt"] },
+                    defaults: { olderThan: "7d", minKb: 128, exts: [" TXT "] },
                     harnesses: { grok: { roots: ["/fixture/grok"] } },
                 },
             },
         };
         const config = migrateTransparentConfig(input, "/fixture");
-        expect(config.defaults).toEqual(input.du.compress.defaults);
+        expect(config.defaults).toEqual({ olderThan: "7d", minKb: 128, exts: ["txt"] });
         expect(config.harnesses.grok.roots).toEqual(["/fixture/grok"]);
         expect(migrateTransparentConfig({ du: { compress: config } }, "/fixture")).toEqual(config);
     });

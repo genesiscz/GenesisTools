@@ -70,8 +70,9 @@ tools music score PulseLight > score.json
 tools music render --score score.json --out out/custom.m4a
 ~~~
 
-A score has key, title, bpm, seconds, end and parts. Each part has a GM program number from 0 to 127, percussion,
-volume, pan, and notes. Each note has at and duration in seconds, a MIDI pitch and velocity. end is the written
+A score has key, title, bpm, seconds, end and parts. Each part has a source, volume, pan and notes. A SoundFont
+source has a GM program number from 0 to 127 and a percussion flag. A score file written before 2026-11-15 holds
+program and percussion flat on the part; it still loads, and is read as a SoundFont source. Each note has at and duration in seconds, a MIDI pitch and velocity. end is the written
 ending that the mix aligns, and must fit inside seconds. Notes cannot extend past the score. Program numbers are
 zero-based. Each part has an independent MIDI channel for volume and pan. The first percussion part uses channel 10;
 additional drum parts use XG bank selection on separate channels. FluidSynth 2.3.5 or newer is required.
@@ -79,13 +80,96 @@ additional drum parts use XG bank selection on separate channels. FluidSynth 2.3
 An explicit --soundfont file may select another sample bank. Its hash is printed, and its license remains the
 caller's responsibility. The default cached asset always receives the pinned file and license checks.
 
+## Synth parts, effects and a loud master
+
+~~~sh
+tools music presets                 # kick, snare, hat, sub, reese, wobble, growl, bass808, supersaw, pad ...
+tools music presets reese           # one preset as an editable patch
+tools music render Orbit --out out/orbit.m4a
+tools music render Tremor --out out/tremor.m4a
+tools music render Halo --out out/halo.m4a
+tools music score Orbit > orbit.json
+~~~
+
+A part source is one of three kinds. `{ "kind": "soundfont", "program": 0, "percussion": false }` plays the sample
+bank. `{ "kind": "synth", "patch": "reese" }` plays the built-in synthesizer, with a preset name or a whole patch:
+oscillators (sine, triangle, saw, square, noise) with unison, detune, a pitch drop and phase modulation, an
+envelope, a filter (low, high, band, notch or vowel) with its own envelope, LFOs, mono glide and drive.
+
+`{ "kind": "sample", "file": "break.wav", "mode": "slices", "slices": 16, "speed": 1.24 }` plays an audio file
+you own. Mode `hit` plays the whole file for each note. Mode `pitched` moves its speed with the note around `root`.
+Mode `slices` cuts it in equal parts, and note 36 plays the first part, 37 the second. `speed` fits a loop to the
+score tempo (score bpm divided by loop bpm). `file` is a path to your own audio, or the name of an installed sample.
+
+~~~sh
+tools music samples install         # 320 CC0 drum files, 47 MB, each checked against its SHA-256
+tools music samples list            # the sets and how many files are on disk
+tools music samples list sonic-pi   # the names a score can use, such as sonic-pi/bd_tek.flac
+tools music samples install amen    # opt-in: the two cuts of the recorded drum break that Orbit chops
+~~~
+
+The two sets are the Sonic Pi samples (commit aa0c8e9, 204 FLAC files) and a TR-808 set (tidalcycles
+sounds-tr808-fischer, commit 85fbecf, 116 WAV files). Both repositories state CC0 1.0 for their samples; the
+license links are in the `list` output. The two Amen break cuts of the Sonic Pi set are a third set, `amen`, which
+installs only by its name: the repository states CC0 for them too, but they are cut from a 1969 record and no
+source shows that the recording itself was cleared. Decide yourself before you publish music that uses them. The
+files live under `~/.genesis-tools/music/samples/`, never in git. Rendering never downloads; a score that names a
+missing sample fails with the install command of its set.
+
+Each part may carry `effects`, applied in this order: highpass, lowpass, eq, drive, crush, compressor, delay,
+width and monoBelow, duck, gain. `duck` pulls the part down at every note start of the parts it names, which is
+the sidechain pump of dance music. `reverb` is the send level into the one shared `room` of the score. `lanes`
+move a parameter over score time: cutoff, pitch, vowel, fm and lfoRate on a synth part, and level, lowpass and
+highpass on any part.
+
+A score that only names SoundFont programs renders in one FluidSynth pass, byte for byte as before. Any synth
+part, effect, lane or room switches the render to stems: one FluidSynth pass per SoundFont part, the synth parts
+in Bun, then one mix. A stem score may hold 32 parts. A synth render repeats sample for sample.
+
+`master` sets the loudness of a score: `{ "lufs": -9, "peak": -1, "limiter": true, "clip": 3 }`. With the
+limiter, a soft clipper and a look-ahead limiter bring the mix to the target, so a loud track is not refused for
+its crest factor. `--lufs` and `--peak` win over the score, and the range now ends at -6 LUFS. AAC lifts the
+peaks of limited audio. When an .m4a goes over the cap, the cap wins and the file ships a little under the
+target; the printed measurement is the truth. A .wav has no such lift.
+
+A limited master is guarded, so a score cannot tear the bass of a speaker. A loudness meter hardly counts a sub
+note, so a mix with too much sub would be pushed into the limiter until the sub is a square wave. Three things
+stop that, and the render result names them under `master`:
+
+- Rumble under 25 Hz is removed.
+- `lowCutDb`: where the band under 120 Hz stands more than 6 dB over the rest of the mix, a slow shelf brings it
+  down, by 9 dB at most.
+- `limiterLossDb` and `shortOfTargetDb`: the clipper and the limiter may take away 3 dB of loudness and no more.
+  A mix that needs more ships under its target by `shortOfTargetDb`. Make the mix itself denser or lower the
+  target; do not push the limiter. When a lossy encoder lifts the peaks over the cap, the file ships that much
+  quieter again, and `shortOfTargetDb` counts that too.
+
+`"guard": false` in `master` switches the three off.
+
+Orbit is an original drum and bass score at 174 BPM that uses all of this. Its basses, pads and leads are synthesized.
+Its drums layer recorded hits from the Sonic Pi set over synthesized ones, and under them plays the recorded break
+of the `amen` set, cut in 64 slices and chopped in a new order for fills. It needs `tools music samples install`
+and `tools music samples install amen`. The piano and the cymbals come from the sample bank.
+
+Tremor is an original dubstep score at 140 BPM with half-time drums. Its wobble bass has an `lfoRate` lane with one
+held value per note, so the filter opens once, twice, three or eight times in a beat from note to note. Its growl
+bass has a `vowel` lane that moves the formants through each note. It needs `tools music samples install` only.
+
+Halo is an original melodic trap score at 110 BPM: saw chords (`supersaw`) that a deep duck pumps under the kick,
+an 808 bass (`bass808`) whose touching notes slide, hats and claps from the TR-808 set, and a lead where a singer
+would be. It needs `tools music samples install` only.
+
+Scores written in code share `grid(bpm, names)` from `src/utils/music/compose.ts`: sixteen steps to a bar, `put`
+for a note, and `parts(setup)` for the part list.
+
 ## Mix under a video
 
 ~~~sh
 tools music mix demo.mp4 --music out/pulse-light.m4a --end 91.5 --out demo-music.mp4
 ~~~
 
-All built-in scores have a written end of 91.5 s and a file duration of 95 s. A shorter movie trims the track's
+Pulse, PulseLight, Calm and Piano have a written end of 91.5 s and a file duration of 95 s. Orbit ends at 87.5 s
+in a 89.5 s file, Tremor ends at 115.1 s in a 117.1 s file, and Halo ends at 159.1 s in a 161.1 s file. A shorter movie trims the track's
 opening; a longer movie delays the track with silence. The written ending lands at the movie ending. --end takes
 the score's end, not its file duration.
 

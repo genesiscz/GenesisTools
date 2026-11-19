@@ -1,6 +1,7 @@
 /** The Claude reader's `midWork` member: was the agent still working when its transcript was last written? */
 import type { JsonRecord } from "@genesiscz/utils/ai/transcripts/turn-state-types";
 import { isObject } from "@genesiscz/utils/object";
+import { withDecodedMessage } from "./claude-analysis-loops";
 
 /** A teammate's last act before its process exits: `SendMessage` with an approving `shutdown_response`. */
 function approvesShutdown(part: unknown): boolean {
@@ -31,7 +32,8 @@ function lastConversationRecord(records: readonly JsonRecord[]): JsonRecord | nu
  * at all counts as working: the file holds only a spawn that has not answered yet.
  */
 export function claudeMidWork(records: readonly JsonRecord[]): boolean {
-    const last = lastConversationRecord(records);
+    const found = lastConversationRecord(records);
+    const last = found && withDecodedMessage(found, "subagent transcript tail");
 
     if (!last || last.type === "user") {
         return true;

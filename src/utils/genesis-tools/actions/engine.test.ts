@@ -1,5 +1,14 @@
-import { describe, expect, test } from "bun:test";
-import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
+import { describe, expect, mock, test } from "bun:test";
+import {
+    closeSync,
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    openSync,
+    readFileSync,
+    readSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createConfigStore, resolveConfig } from "@genesiscz/utils/genesis-tools/actions/config";
@@ -28,6 +37,7 @@ import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { appNeedFixture } from "@genesiscz/utils/macos/testing/app-need";
 import { JSON_RPC_ERRORS, RpcError } from "@genesiscz/utils/rpc/errors";
 import { startServiceHost } from "@genesiscz/utils/rpc/service-host";
+import { shellWord } from "@genesiscz/utils/shell/quote";
 import { z } from "zod";
 import { APP_SURFACE_PATH, readAppSurfaceInput, renderAppSurface } from "../../../../scripts/gen-genesis-app-surface";
 
@@ -89,7 +99,7 @@ const REGISTRY = { demo };
 function deps(overrides: Partial<EngineDeps> = {}): EngineDeps {
     const dir = mkdtempSync(join(tmpdir(), "gt-actions-"));
     return {
-        config: createConfigStore({ registry: REGISTRY, file: join(dir, "config.json") }),
+        config: createConfigStore({ registry: { ...REGISTRY, ...AREAS }, file: join(dir, "config.json") }),
         state: memoryStateStore(),
         facts: fakeFacts(),
         app: { rpc: async () => ({ ok: false, error: { code: "refused_in_test", message: "test" } }) },
@@ -637,6 +647,93 @@ describe("the real areas", () => {
         expect(builds).toEqual(["hub"]);
     });
 
+    test("a failed window click posts the failed need and its build command once", async () => {
+        const postNotice = mock<NonNullable<EngineDeps["postNotice"]>>(async () => {});
+        const args = { window: "--hub", fix: "skip" };
+        const missingPart = deps({ postNotice });
+        const missingApp = deps({
+            postNotice,
+            facts: {
+                ...appNeedFixture({ installed: false }).facts,
+                hasDisplay: async () => true,
+                hasTerminal: () => true,
+            },
+        });
+
+        for (const [engine, code, command] of [
+            [missingPart, "part-missing", "tools macos permissions build --add-part hub"],
+            [missingApp, "app-missing", "tools macos permissions build"],
+        ] as const) {
+            postNotice.mockClear();
+            const result = await runAreaAction(AREAS, "windows.open", args, engine);
+            const failure = result.skipped[0];
+            expect(result.status).toBe("unreachable");
+            expect(failure).toMatchObject({ code, fix: { command } });
+            expect(postNotice.mock.calls).toEqual([
+                [{ title: "Could not open --hub", message: `${failure?.reason}\n${command}` }],
+            ]);
+        }
+
+        postNotice.mockClear();
+        await runAreaAction(AREAS, "windows.open", { window: "--hub" }, missingPart);
+        expect(postNotice).not.toHaveBeenCalled();
+    });
+
+    test("a refused window click posts the manual command and a successful click posts nothing", async () => {
+        const postNotice = mock<NonNullable<EngineDeps["postNotice"]>>(async () => {});
+        const args = { window: "--hub", fix: "skip" };
+        const open = AREAS.windows.actions.open;
+        const run = mock(() => ({ window: "--hub", opened: true }));
+        run.mockImplementationOnce(() => {
+            throw new Error("Launch Services refused the window");
+        });
+        const registry = { windows: { ...AREAS.windows, actions: { open: { ...open, native: run } } } };
+        const engine = deps({ postNotice });
+        const refused = await runAreaAction(registry, "windows.open", args, engine);
+        expect(refused.status).toBe("unreachable");
+        const manual = windowOpenArgv(open.args.parse(args)).map(shellWord).join(" ");
+        expect(postNotice.mock.calls).toEqual([
+            [
+                {
+                    title: "Could not open --hub",
+                    message: `Launch Services refused the window\n${manual}`,
+                },
+            ],
+        ]);
+
+        expect((await runAreaAction(registry, "windows.open", args, engine)).status).toBe("ran");
+        expect(postNotice).toHaveBeenCalledTimes(1);
+    });
+
+    test("a notice that fails to format or to send leaves the unreachable outcome as it was", async () => {
+        const args = { window: "--hub", fix: "skip" };
+        const open = AREAS.windows.actions.open;
+        const throwingFormat = {
+            windows: {
+                ...AREAS.windows,
+                actions: {
+                    open: {
+                        ...open,
+                        failureNotice: () => {
+                            throw new Error("the notice text could not be built");
+                        },
+                    },
+                },
+            },
+        };
+        const sent = mock<NonNullable<EngineDeps["postNotice"]>>(async () => {});
+        const formatFailed = await runAreaAction(throwingFormat, "windows.open", args, deps({ postNotice: sent }));
+        expect(formatFailed).toMatchObject({ status: "unreachable", skipped: [{ code: "part-missing" }] });
+        expect(sent).not.toHaveBeenCalled();
+
+        const failingSend = mock<NonNullable<EngineDeps["postNotice"]>>(async () => {
+            throw new Error("no notification channel");
+        });
+        const sendFailed = await runAreaAction(AREAS, "windows.open", args, deps({ postNotice: failingSend }));
+        expect(sendFailed).toMatchObject({ status: "unreachable", skipped: [{ code: "part-missing" }] });
+        expect(failingSend).toHaveBeenCalledTimes(1);
+    });
+
     test("explain windows.open names the ways and changes no state without --fresh", async () => {
         const state = memoryStateStore();
         const before = SafeJSON.stringify(state.read());
@@ -651,13 +748,68 @@ describe("the real areas", () => {
         expect(explain.ways.map((way) => way.way)).toEqual(["native"]);
         expect(explain.ways[0]?.needs.map((need) => need.need)).toEqual([
             "platform.darwin",
+            "person.display",
             "app.bundle",
             "app.part(hub)",
-            "person.display",
         ]);
         expect(explain.first).toBeNull();
         expect(explain.config).toEqual({ fix: "offer" });
         expect(SafeJSON.stringify(state.read())).toBe(before);
+    });
+
+    test("the review diff viewer need explains the hub fix and rechecks the bundle after a build", async () => {
+        const bundle = mkdtempSync(join(tmpdir(), "gt-review-app-"));
+        const viewer = join(bundle, "Contents", "Resources", "diff-viewer");
+        const build = mock(async (_part: string | null) => {
+            mkdirSync(viewer, { recursive: true });
+            writeFileSync(join(viewer, "index.html"), "<html></html>");
+        });
+        const engine = deps({
+            facts: fakeFacts({
+                appBundle: () => ({ installed: true, launcher: true, routingOff: false, path: bundle }),
+                appManifest: () => ({ buildId: "b1", parts: ["hub"], rpcMethods: null }),
+                hasTerminal: () => true,
+            }),
+            builder: { build, offerBuild: async () => false, buildCommand: (part) => `build-it ${part}` },
+        });
+        await engine.config.set("windows.fix", "build");
+        const args = { window: "--review" };
+        const explain = () => explainAction(AREAS, "windows.open", engine, { args });
+        const missing = await explain();
+        expect(missing.first).toBeNull();
+        expect(missing.ways[0]?.needs).toContainEqual({
+            need: "app.diffViewer",
+            ok: false,
+            code: "app-stale",
+            reason: "GenesisTools.app has no bundled diff viewer.",
+            fix: { command: "build-it hub", sentence: "Rebuilds the hub part with its diff viewer." },
+            from: "probe",
+        });
+        const hub = await explainAction(AREAS, "windows.open", engine, { args: { window: "--hub" } });
+        expect(hub.first).toBe("native");
+        expect(build).not.toHaveBeenCalled();
+
+        // With no display nobody could see the window, so even the build policy starts no repair.
+        const headless = { ...engine, facts: { ...engine.facts, hasDisplay: async () => false } };
+        const unseen = await runAreaAction(AREAS, "windows.open", args, headless);
+        expect(unseen.skipped[0]?.code).toBe("no-display");
+        expect(build).not.toHaveBeenCalled();
+
+        const click = await runAreaAction(AREAS, "windows.open", { ...args, fix: "skip" }, engine);
+        expect(click.skipped[0]).toMatchObject({ code: "app-stale", fix: { command: "build-it hub" } });
+        expect(build).not.toHaveBeenCalled();
+
+        // The real native way would start the app, so the repair runs in front of a stand-in launch.
+        const open = AREAS.windows.actions.open;
+        const launch = mock(() => ({ window: "--review", opened: true }));
+        const registry = {
+            windows: { ...AREAS.windows, actions: { open: { ...open, native: { ...open.native, run: launch } } } },
+        };
+        const repaired = await runAreaAction(registry, "windows.open", args, engine);
+        expect(build.mock.calls).toEqual([["hub"]]);
+        expect(repaired).toMatchObject({ status: "ran", via: "native" });
+        expect(launch).toHaveBeenCalledTimes(1);
+        expect((await explain()).first).toBe("native");
     });
 });
 

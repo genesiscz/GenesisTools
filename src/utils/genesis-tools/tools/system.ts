@@ -182,6 +182,11 @@ export function musicSoundfontInstallCommand(): string {
     return toolCommand("music soundfont install");
 }
 
+/** Explicitly installs the pinned drum sample sets: the default ones, or one set by name. */
+export function musicSamplesInstallCommand(set?: string): string {
+    return toolCommand(set === undefined ? "music samples install" : `music samples install ${set}`);
+}
+
 export function macosPermissionsCommand(): string {
     return toolCommand("macos permissions");
 }

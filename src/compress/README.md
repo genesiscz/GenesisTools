@@ -52,6 +52,14 @@ is `ditto --noclone --hfsCompression`, which emits LZVN on the measured macOS 27
 The stored decmpfs type is checked before replacement; a writer producing another algorithm is refused.
 Oversized files remain untouched and appear in `skips.too-big` and `tooBigBytes`. Transcripts are never split.
 
+Ordinary macOS readers can read these files because the kernel has a decoder for their decmpfs type.
+The November 12 benchmark on macOS 27.2 observed zlib type 4, LZVN type 8 and LZFSE type 12.
+Apple's XNU header describes decoder registration. The installed AppleFSCompressionTypeZlib personality
+advertises types 3/4, 7/8, 9/10 and 11/12. It advertises no Zstandard decoder.
+Transparent Zstandard for ordinary readers would require another filesystem layer or kernel support.
+The sampler uses libcompression's in-memory LZVN encoder (selector `0x900` on this OS).
+[`decmpfs.h` in Apple XNU](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/decmpfs.h)
+
 The plan uses the native `tools du` walker for size, allocation, flags, link count, inode, exact mtime and clone ID.
 The walker gets the size floor and the extensions, so it returns only files that can be candidates plus every
 `.cold-*` transaction remnant (any size); the result's `discoveryFiltered` counts the regular files it left out.
@@ -87,10 +95,67 @@ Configuration lives in the GenesisTools configuration under `du.compress`:
 ```
 
 An absent configuration loads the existing Claude roots and mirror as defaults in memory. Other harness roots are
-opt-in after writer evidence; SQLite is excluded by the extension filter. `tools du compressed`,
+opt-in after writer evidence. Known SQLite extensions are excluded. The plan also reads up to 4 KiB from each
+otherwise eligible file and checks its signature, so renaming a database to `.jsonl` cannot put it in the plan.
+`tools du compressed`,
 `tools du clonesize --compressed` and `tools du compressible` are read-only consumers. The optional daily
 `du-cold-compress` task registers disabled through `tools du compression-schedule` and requires explicit operator
 approval before it is enabled.
+
+#### Check a proposed harness root
+
+Run the corresponding command while that harness is writing. Keep the four JSON files in private scratch.
+Each command collects five whole-system `lsof -nP -Fn0` snapshots five seconds apart. The `0` selects NUL
+field terminators. The JSON includes only paths inside the selected root and their PIDs. It also records which
+text files grew on the same inode, appeared, or rotated between the beginning and end.
+
+```bash
+evidence_dir=$(mktemp -d "${TMPDIR:-/tmp}/transparent-writers.XXXXXX")
+python3 -B scripts/benchmarks/compress/transparent_open_files.py codex > "$evidence_dir/codex.json"
+python3 -B scripts/benchmarks/compress/transparent_open_files.py grok  > "$evidence_dir/grok.json"
+python3 -B scripts/benchmarks/compress/transparent_open_files.py t3    > "$evidence_dir/t3.json"
+python3 -B scripts/benchmarks/compress/transparent_open_files.py logs  > "$evidence_dir/logs.json"
+```
+
+These sample `~/.codex/sessions`, `~/.grok/sessions`, `~/.t3/userdata/logs` and `~/.genesis-tools/logs`
+respectively. A missing root, failed scan or lsof warning yields `incomplete` and exit 1. An idle window
+needs a new sample during a write. A held session or log file is evidence against adding that root by default.
+Even with growth and five clear snapshots, a descriptor could have opened between snapshots. To qualify a
+root, retain the writer version and its append call site or an active writer trace that shows the pathname
+opened for append, written and closed on each operation. The sampler never changes compression configuration.
+On a Mac where the operator can trace the writer, `sudo fs_usage -w -f filesys -t 30 "$writer_pid"`
+records a 30-second window for that PID. Match each pathname and descriptor across open, write and close.
+A trace that misses the writing process or those calls leaves the evidence incomplete.
+
+#### Rerun the transparent benchmark
+
+From the checkout root on an APFS Mac with Python 3 and `rg`, use a fresh private scratch directory.
+The boundary probes can materialize more than 12 GiB. Omit `--boundaries` from both commands for a corpus-only run.
+
+```bash
+bench_dir=$(mktemp -d "${TMPDIR:-/tmp}/transparent.XXXXXX")
+python3 -B scripts/benchmarks/compress/transparent.py --scratch "$bench_dir/corpus" --boundaries &&
+  python3 -B scripts/benchmarks/compress/transparent-writers.py --scratch "$bench_dir/corpus" --boundaries &&
+  python3 -B scripts/benchmarks/compress/transparent_summary.py --scratch "$bench_dir/corpus"
+```
+
+The first script copies five real files of each kind with `ditto --noclone`: plain and image-bearing Claude
+transcripts, tool results, Codex sessions, Grok sessions, GenesisTools logs and JSON files. It requires all 35.
+The daily pass keeps only today's and yesterday's day logs plain, so a finished `.log.zst` day log is a log candidate
+too when the `zstd` CLI is installed: its seek table gives the decoded size, and `zstd -d` writes the plain copy.
+Each writer gets three copies per input. The supplementary script times the installed afsctool codecs after staging
+the plain copy. Ditto's time includes the copy. If applesauce is installed, pass its in-place compression arguments
+last with `--applesauce-args`, using the literal `'{file}'` for the scratch copy. The scripts install nothing.
+
+The summary prints sample counts and p10/p50/p90 for allocation ratios, compression, `cmp`, reads, directory
+search and the first append with fsync. The read and search arms alternate order with an uncontrolled cache.
+Per-file byte counts, flags, mtimes, timings and commands stay in `results.json` and `writers.json` in the corpus
+directory. The directory also holds private source paths and file copies. Boundary output gives each writer's
+actual flag, allocation and exit status around 512 MiB and 4 GiB. A writer's refusal establishes only its own limit.
+
+In the November 12 macOS 27.2 run, afsctool LZFSE retained 30.68% of the 35 inputs' allocated bytes.
+Ditto retained 46.26%. All 420 outputs passed `cmp`, and all 420 appended clones read back as the original
+bytes plus the test marker. Those timings reflect a warm or uncontrolled cache.
 
 ### pack
 
@@ -295,9 +360,9 @@ folder archive.
 
 `--preset auto` (the default) picks by the data. A folder is `tree`, or `binary` when its name ends in `.app`. A file
 is sniffed: magic bytes first (zstd, gzip, xz, bzip2, zip, 7z, JPEG, PNG, GIF, WebP, HEIC/MP4/MOV/M4A, Matroska are
-`media`; SQLite is `database`; Mach-O, ELF and PE are `binary`), then text (no NUL byte, almost no control bytes),
-then entropy (over 7.5 bits per byte is `media`, else `binary`). A trial that saves under 3% turns any guess into
-`media`.
+`media`; SQLite is `database`; Mach-O, ELF and PE are `binary`), then text (no NUL byte, almost no control bytes;
+the ESC of ANSI colour codes counts as text, so a coloured log is text), then entropy (over 7.5 bits per byte is
+`media`, else `binary`). A trial that saves under 3% turns any guess into `media`.
 
 | Preset | Level | Long | Frame | Threads | For |
 |---|---|---|---|---|---|

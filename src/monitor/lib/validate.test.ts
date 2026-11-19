@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { muteUntilFrom, sinceFrom } from "@app/monitor/commands/extras";
 import { DEFAULT_INTERVAL_SEC, DEFAULT_TIMEOUT_MS, WATCHER_KINDS } from "./types";
 import {
     normalizeTarget,
@@ -189,5 +190,19 @@ describe("parseEntityId", () => {
         }
 
         expect(() => parseEntityId("x", "target")).toThrow(/target id/);
+    });
+});
+
+describe("watcher durations", () => {
+    test("an empty, zero or out-of-range duration is a validation error, never a crash or no filter", () => {
+        for (const read of [muteUntilFrom, sinceFrom]) {
+            for (const bad of ["", "0m", "soon", "200000000d"]) {
+                expect(() => read(bad)).toThrow(WatcherValidationError);
+            }
+        }
+
+        expect(() => sinceFrom("200000000d")).toThrow(/out of range/);
+        expect(Date.parse(muteUntilFrom("2h"))).toBeGreaterThan(Date.now());
+        expect(Date.parse(sinceFrom("1d"))).toBeLessThan(Date.now());
     });
 });

@@ -19,14 +19,18 @@ stage_done() {
     stage_started=$now
 }
 
-# Skip if pushing nothing (e.g. delete-only push).
-if ! read -r local_ref local_sha remote_ref remote_sha; then
+# Git sends one line per pushed ref. The stages below read the first line that is not a deletion, and the stack guard
+# reads them all. A push of deletions only has nothing to check, and a deletion listed first must not skip a rewrite
+# later in the same push.
+push_lines=$(cat)
+first_line=$(printf '%s\n' "$push_lines" | awk 'NF == 4 && $2 != "0000000000000000000000000000000000000000" { print; exit }')
+if [ -z "$first_line" ]; then
     exit 0
 fi
 
-if [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
-    exit 0
-fi
+read -r local_ref local_sha remote_ref remote_sha <<EOF
+$first_line
+EOF
 
 # Every stage runs through scripts/ci/pre-push-profile.ts: wall time, CPU time with child processes, the peak memory
 # of its process tree and its largest process, the load when it started, and the wait between stages. The table
@@ -66,6 +70,12 @@ stage() {
 # would echo the matched values into a public log. Sub-second on 800 needles.
 echo "▶ placeholder-check (local needle list)..."
 stage placeholder-check bash scripts/ci/placeholder-check.sh
+stage_done
+
+# A push that rewrites a branch must also move the open PRs stacked on it (2026-11-19: a hand-made restack left one
+# child PR showing 133 commits instead of 8). Answers at once when no pushed branch is rewritten.
+echo "▶ stack children (open PRs on a rewritten branch)..."
+printf '%s\n' "$push_lines" | stage stack-children bun scripts/git/stack-children-guard.ts "${1:-origin}"
 stage_done
 
 echo "▶ biome (push-range files)..."

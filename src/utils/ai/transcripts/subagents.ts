@@ -7,7 +7,7 @@
  * return says nothing about a background agent or a teammate that still works. The directory has
  * every agent, and each transcript's last record says whether that agent is still working.
  */
-import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import {
@@ -15,6 +15,7 @@ import {
     claudeSubagentIdOf,
     claudeSubagentTranscripts,
     claudeWorkflowRunOf,
+    readClaudeSubagentMeta,
 } from "@genesiscz/utils/agent-sessions/readers/claude-paths";
 import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import { isMissingPathError } from "@genesiscz/utils/fs/canonical";
@@ -74,6 +75,8 @@ export interface SessionSubagent {
     startedAt: string | null;
     /** When its transcript was last written. */
     lastAt: string;
+    /** Last call's input plus output, or post-compaction size. Null when the bounded tail cannot answer. */
+    contextTokens?: number | null;
     state: SubagentState;
     /** The size of every file in `files`. */
     bytes: number;
@@ -183,20 +186,6 @@ function promptText(record: JsonRecord | null, maxChars: number): string | null 
               : "";
     const unwrapped = TEAMMATE_ENVELOPE.exec(raw)?.[1] ?? raw;
     return text(unwrapped.slice(0, maxChars));
-}
-
-function readMeta(path: string): JsonRecord {
-    if (!existsSync(path)) {
-        return {};
-    }
-
-    try {
-        const value: unknown = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true });
-        return isRecord(value) ? value : {};
-    } catch (error) {
-        logger.debug({ error, path }, "[transcripts] unreadable sub-agent meta");
-        return {};
-    }
 }
 
 interface ReadAgentEntry {
@@ -314,8 +303,9 @@ function readAgentFresh(
         const tailStart = Math.max(0, stat.size - TAIL_BYTES);
         const tail = readSlice(fd, tailStart, stat.size - tailStart);
         const { first, records } = headAndTail(head, tail);
-        const meta = readMeta(claudeSubagentFiles(dir, id).meta);
-        const working = resolveHistoryProvider("claude").reader.midWork(records);
+        const meta = readClaudeSubagentMeta(claudeSubagentFiles(dir, id).meta);
+        const reader = resolveHistoryProvider("claude").reader;
+        const working = reader.midWork(records);
         const scanned = scan ? scanClaudeToolCalls(filePath) : null;
         const runId = claudeWorkflowRunOf(filePath);
         const agent: Omit<SessionSubagent, "state"> = {
@@ -336,6 +326,7 @@ function readAgentFresh(
             spawnPrompt: promptText(first, promptChars),
             startedAt: text(first?.timestamp),
             lastAt: new Date(stat.mtimeMs).toISOString(),
+            contextTokens: reader.analysis.lastContext(records),
             bytes: stat.size,
             filePath,
             files: [filePath],
@@ -394,6 +385,7 @@ function mergeAgentFiles(parts: SessionSubagent[]): SessionSubagent {
         isFork: parts.some((part) => part.isFork),
         transcriptModel: newest.transcriptModel ?? firstOf("transcriptModel"),
         lastAt: newest.lastAt,
+        contextTokens: newest.contextTokens,
         state: newest.state,
         bytes: parts.reduce((sum, part) => sum + part.bytes, 0),
         filePath: newest.filePath,

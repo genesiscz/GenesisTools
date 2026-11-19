@@ -7,6 +7,84 @@
  */
 export type SessionFacts<T> = { supported: true; items: T[] } | { supported: false; reason: string };
 
+/** A workflow agent can have a second transcript written when it was revived. */
+export interface SessionLoop {
+    id: string;
+    kind: "main" | "subagent" | "workflow" | "teammate";
+    files: string[];
+    agentType: string | null;
+    teamName: string | null;
+}
+
+export interface LoopSelection {
+    main?: boolean;
+    agents?: boolean;
+}
+
+export type WrittenLifetime = "5m" | "1h" | "mixed" | "none";
+export type PauseCause = "tool" | "notification" | "message" | "unknown";
+
+export interface TimedSessionCall extends SessionCall {
+    start: string;
+    end: string;
+    stop: string | null;
+    writeTtl: WrittenLifetime;
+}
+
+export interface SessionPause {
+    callId: string;
+    at: string;
+    model: string;
+    gapMs: number;
+    resumed: boolean;
+    cause: PauseCause;
+    compacted: boolean;
+    modelChanged: boolean;
+    expected: number;
+    cacheRead: number;
+    cacheWrite: number;
+    /** Estimated old prefix written again, bounded by both missing prefix and actual writes. */
+    rewrittenTokens: number;
+    /** Lifetime last written before this pause, when the transcript stated it. */
+    writeTtl: WrittenLifetime;
+    outcome: "hit" | "partial" | "miss";
+}
+
+export interface LoopResumes extends SessionLoop {
+    calls: TimedSessionCall[];
+    pauses: SessionPause[];
+}
+
+export interface ContextItem {
+    source: string;
+    key: string;
+    path: string;
+    /** Physical line, or 0 for the inferred system prompt and tool definitions. */
+    line: number;
+    at: string | null;
+    /** Estimated from characters / 4, with a flat estimate per image. */
+    tokens: number;
+    carryCalls: number;
+}
+
+export interface LoopContext extends SessionLoop {
+    model: string | null;
+    calls: number;
+    firstCallContext: number | null;
+    peakContext: number | null;
+    cacheRead: number;
+    input: number;
+    cacheWrite: number;
+    output: number;
+    estimatedAtSegmentEnds: number;
+    measuredAtSegmentEnds: number;
+    excluded: Record<string, number>;
+    bashResults: { count: number; tokens: number; bigCount: number; bigTokens: number };
+    toolCalls: Record<string, number>;
+    compactions: number;
+    items: ContextItem[];
+}
+
 /** One model call, its tokens split the way every price is: uncached input, cache read, cache write, output. */
 export interface SessionCall {
     /** Dedup key inside the transcript: the message or response id, or a synthesized one. */
@@ -58,6 +136,10 @@ export interface SessionQuotaReading {
 
 /** The analysis facts of one transcript. Each member reads the file it is given and never writes. */
 export interface SessionAnalysisReader {
+    contextItems(transcriptPath: string, selection?: LoopSelection): Promise<SessionFacts<LoopContext>>;
+    resumes(transcriptPath: string, selection?: LoopSelection): Promise<SessionFacts<LoopResumes>>;
+    /** Latest context after output or compaction in a bounded transcript tail. Null when unknown. */
+    lastContext(records: readonly Record<string, unknown>[]): number | null;
     /** Every model call, oldest first, each once (a repeated message id keeps its first row). */
     callTrace(transcriptPath: string): Promise<SessionFacts<SessionCall>>;
     /** Every compaction, oldest first. */

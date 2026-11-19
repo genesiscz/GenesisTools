@@ -1,9 +1,6 @@
-import { existsSync } from "node:fs";
-import { join } from "node:path";
 import { defineAction, defineArea, type Fix, type FixDecision } from "@genesiscz/utils/genesis-tools/actions/define";
-import { defaultBuildCommand } from "@genesiscz/utils/genesis-tools/app-builder";
 import { APP_FACES } from "@genesiscz/utils/genesis-tools/capability/generated/app-surface";
-import { Need, type NeedSpec } from "@genesiscz/utils/genesis-tools/capability/needs";
+import { checkAppDiffViewer, Need, type NeedSpec } from "@genesiscz/utils/genesis-tools/capability/needs";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { shellWord } from "@genesiscz/utils/shell/quote";
@@ -23,20 +20,24 @@ export function windowFailureMessage(failure: { reason: string; fix?: Fix | null
 
 /** Some older hub builds lack the diff viewer the review window uses to display a proposal. */
 export function reviewResourcesProblem(bundle: string): string | undefined {
-    if (!existsSync(join(bundle, "Contents", "Resources", "diff-viewer", "index.html"))) {
-        return `GenesisTools.app has no bundled diff viewer.\n${defaultBuildCommand("hub")}`;
-    }
-
-    return undefined;
+    const result = checkAppDiffViewer(bundle, null);
+    return result.ok ? undefined : windowFailureMessage(result);
 }
 
 /**
- * The needs of opening a face: macOS, the bundle, the part that ships the face, and a person who can see it. `open`
+ * The needs of opening a face: macOS, a person who can see it, the bundle, and the part that ships the face. `open`
  * starts the bundle itself, so routing switched off blocks no face: `--window` holds the switch that turns it back on.
+ * The display comes before every need a build can repair, so a caller nobody can see never builds first.
  */
 function openNeeds(flag: OpenWindowFlag): NeedSpec[] {
     const part = OPEN_WINDOWS[flag].part;
-    return [Need.platform.darwin, Need.app.bundle, ...(part ? [Need.app.part(part)] : []), Need.person.display];
+    return [
+        Need.platform.darwin,
+        Need.person.display,
+        Need.app.bundle,
+        ...(part ? [Need.app.part(part)] : []),
+        ...(flag === "--review" ? [Need.app.diffViewer] : []),
+    ];
 }
 
 /** The argv of `open`: `-n` hands the flags to a running face too, `-g` keeps the caller in front. */
@@ -90,13 +91,6 @@ export const windows = defineArea({
             native: {
                 needs: (args) => openNeeds(args.window),
                 run: async (ctx) => {
-                    if (ctx.args.window === "--review") {
-                        const problem = reviewResourcesProblem(genesisAppBundlePath());
-                        if (problem) {
-                            throw new Error(problem);
-                        }
-                    }
-
                     logger.debug({ window: ctx.args.window, args: ctx.args.args }, "windows.open: opening a face");
                     const argv = windowOpenArgv(ctx.args);
                     const proc = Bun.spawn(argv, {
@@ -115,7 +109,7 @@ export const windows = defineArea({
             },
             fix: (ctx): FixDecision => {
                 const policy = ctx.args.fix ?? ctx.config.fix ?? "offer";
-                const part = ctx.failed.need.kind === "app.part" ? ctx.failed.need.part : null;
+                const part = ctx.failed.code === "app-missing" ? null : OPEN_WINDOWS[ctx.args.window].part;
 
                 // A notification click is killed after 30 s, so it never starts a build (40 s to over 2 min): it says
                 // so in its args, and a caller with no terminal is treated the same. The outcome names the fix command.
@@ -130,6 +124,19 @@ export const windows = defineArea({
                 return policy === "offer" ? ctx.offerBuild(part) : ctx.skip();
             },
             manual: (args) => windowOpenArgv(args).map(shellWord).join(" "),
+            failureNotice: (args, { skipped, manual }) => {
+                const failure = skipped[0];
+                if (args.fix !== "skip" || !failure) {
+                    return null;
+                }
+
+                return {
+                    title: `Could not open ${args.window}`,
+                    message: failure.fix
+                        ? windowFailureMessage(failure)
+                        : [failure.reason, manual].filter(Boolean).join("\n"),
+                };
+            },
         }),
     },
 });
