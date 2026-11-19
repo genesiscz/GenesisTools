@@ -218,6 +218,7 @@ public struct WorkSourceError: LocalizedError, Equatable, Sendable {
 public protocol WorkSource: AnyObject {
     func projects() async throws -> [String]
     func snapshot(project: String) async throws -> WorkSnapshotValue
+    func list(project: String) async throws -> [WorkRowValue]
     func detail(ref: String) async throws -> WorkItemDetail
     func notify(project: String) async throws -> [WorkNotifyRow]
     func perform(_ action: WorkScreenAction, project: String) async throws -> WorkActionOutcome
@@ -275,6 +276,12 @@ public extension WorkSource {
     }
 }
 
+extension WorkSource {
+    public func list(project: String) async throws -> [WorkRowValue] {
+        throw WorkSourceError("This source cannot read the project index.")
+    }
+}
+
 /// The `work` area through the generated client. Each answer is an `ActionOutcome` around the method's reply; it is
 /// encoded once and read into the screen's own small models, so the views never name the generated types.
 @MainActor
@@ -307,6 +314,8 @@ public final class LiveWorkSource: WorkSource {
     }
 
     public func detail(ref: String) async throws -> WorkItemDetail {
+        let span = PerfSpans.begin("work.detail.load", awaits: true)
+        defer { span.end() }
         if ref.hasPrefix("t_") {
             // An older listing, or a TODO before its first import, has only the id used by question show.
             struct Todo: Decodable {
@@ -325,6 +334,18 @@ public final class LiveWorkSource: WorkSource {
                                               body: todo.prompt, acceptance: nil))
         }
         return try reply(await rpc.work.show(WorkShowParams(ref: ref)))
+    }
+
+    // MARK: - Find
+
+    public func list(project: String) async throws -> [WorkRowValue] {
+        let span = PerfSpans.begin("work.index.load", awaits: true)
+        defer { span.end() }
+        let fields = ["ref", "state", "type", "severity", "worker", "title", "project", "slot"]
+        let rows: [WorkRowValue] = try reply(await rpc.work.list(.init(project: project, fields: fields, limit: 5000,
+                                                                       call: .init(project: project))))
+        // work.list orders by ascending creation time. The archive reads from newest to oldest.
+        return Array(rows.reversed())
     }
 
     public func notify(project: String) async throws -> [WorkNotifyRow] {
