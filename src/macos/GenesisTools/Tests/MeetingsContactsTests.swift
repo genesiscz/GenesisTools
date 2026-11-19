@@ -85,6 +85,17 @@ final class MeetingsContactsTests: XCTestCase {
 
     // MARK: The mirrors against the protocol fixture
 
+    func testRoomDeviceSnapshotOpensPeopleAndKeepsTheOfferFile() {
+        let request = MeetingsRequest.parse(["--sheet", "room-devices", "--snapshot", "room.png",
+                                            "--place", "all", "--device-offers-file", "offers.json"])
+        XCTAssertEqual(request.place, .contacts)
+        XCTAssertEqual(request.deviceOffersFile, "offers.json")
+        let seats = MeetingsRequest.parse(["--sheet", "seats", "--meeting", "planning", "--device-offers-file", "offers.json"])
+        XCTAssertEqual(seats.sheet, "seats")
+        XCTAssertEqual(seats.meeting, "planning")
+        XCTAssertEqual(seats.deviceOffersFile, "offers.json")
+    }
+
     private static var fixtureURL: URL {
         URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()

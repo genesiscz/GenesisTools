@@ -125,6 +125,7 @@ struct MeetingsContactsView: View {
     @State private var mergeSearching: PeopleSearch?
     @State private var mergeChoices: [KnownPerson] = []
     @Environment(MeetingsWindowModel.self) private var window: MeetingsWindowModel?
+    @Environment(\.roomDevicesPreview) private var roomDevicesPreview
 
     private var access: ContactsAccessState { switches.contacts ? ContactsAccessState.from(sources) : .off }
 
@@ -265,7 +266,7 @@ struct MeetingsContactsView: View {
     private var list: some View {
         ScrollView {
             LazyVStack(spacing: 0) {
-                RoomDeviceBookSection(people: people, window: window)
+                RoomDeviceBookSection(people: people, window: window, preview: roomDevicesPreview)
                     .padding(.horizontal, 16).padding(.vertical, 6)
                 Divider()
                 personRows
@@ -362,6 +363,17 @@ struct MeetingsContactsView: View {
         .font(.system(size: 12))
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
+    }
+}
+
+private struct RoomDevicesPreviewKey: EnvironmentKey {
+    static let defaultValue: MeetingsAPI.RoomDevices.Result? = nil
+}
+
+extension EnvironmentValues {
+    var roomDevicesPreview: MeetingsAPI.RoomDevices.Result? {
+        get { self[RoomDevicesPreviewKey.self] }
+        set { self[RoomDevicesPreviewKey.self] = newValue }
     }
 }
 
