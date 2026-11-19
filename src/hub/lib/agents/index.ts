@@ -94,7 +94,7 @@ export function openSessionsReader(
     read: (psTimeoutMs?: number) => Promise<Set<string>>,
     clock: () => number = Date.now
 ): (psTimeoutMs?: number) => Promise<Set<string>> {
-    let memo: { until: number; ids: Set<string> } | undefined;
+    const successes = new Map<number | undefined, { until: number; ids: Set<string> }>();
     /** A failed read, kept per timeout like `running`: a one-session read cut at 3 s says nothing about the whole table. */
     const failures = new Map<number | undefined, { until: number; error: unknown }>();
     const running = new Map<number | undefined, Promise<Set<string>>>();
@@ -106,6 +106,7 @@ export function openSessionsReader(
         );
 
     return (psTimeoutMs) => {
+        const memo = successes.get(psTimeoutMs);
         if (memo && clock() < memo.until) {
             return Promise.resolve(memo.ids);
         }
@@ -128,7 +129,7 @@ export function openSessionsReader(
                 (ids) => {
                     failures.delete(psTimeoutMs);
                     // From the finish: a read that lasted longer than its own reuse window must still be shared.
-                    memo = { until: keptFor(startedAt, clock()), ids };
+                    successes.set(psTimeoutMs, { until: keptFor(startedAt, clock()), ids });
 
                     return ids;
                 },
