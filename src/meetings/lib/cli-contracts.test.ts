@@ -558,9 +558,12 @@ test("sample playback feeds the Moment player the selected channel and seconds a
     wav.writeUInt16LE(16, 34);
     wav.write("data", 36);
     wav.writeUInt32LE(dataBytes, 40);
+    // Each channel counts its frames (call: 2 x frame / 8, mic: the negative), so a clip from the wrong start, the
+    // wrong channel or the wrong rate shows in its first and last sample.
+    const callAt = (frame: number) => 2 * Math.floor(frame / 8);
     for (let frame = 0; frame < 48000 * 2; frame++) {
-        wav.writeInt16LE(1000, 44 + frame * 4);
-        wav.writeInt16LE(2000, 46 + frame * 4);
+        wav.writeInt16LE(-callAt(frame), 44 + frame * 4);
+        wav.writeInt16LE(callAt(frame), 46 + frame * 4);
     }
     writeFileSync(audio, wav);
     const available = spyOn(PLAYERS.afplay, "available").mockReturnValue(true);
@@ -581,7 +584,9 @@ test("sample playback feeds the Moment player the selected channel and seconds a
         expect(received.readUInt16LE(22)).toBe(1);
         const data = received.indexOf(Buffer.from("data")) + 8;
         expect(received.length - data).toBe(48000 * 2);
-        expect(received.readInt16LE(data)).toBe(2000);
+        // 0.5 s to 1.5 s of the call channel: frames 24000 to 71999, nothing from before or after.
+        expect(received.readInt16LE(data)).toBe(callAt(24000));
+        expect(received.readInt16LE(received.length - 2)).toBe(callAt(71999));
         expect(player).toHaveBeenCalledWith("/dev/stdin");
     } finally {
         available.mockRestore();
