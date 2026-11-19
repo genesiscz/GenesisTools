@@ -2,6 +2,7 @@
  * Commander commands made from a method table: one command per method, the named keys as positional words, every
  * other key as one flag. Params must stay flat for this: a key is a flag.
  */
+import { parseJSON } from "@genesiscz/utils/json";
 import type { Command } from "commander";
 import type { ApiDescriptor, MethodDescriptor } from "./descriptor";
 import { type JsonSchema, jsonSchemaOf } from "./render";
@@ -61,8 +62,16 @@ function describe(schema: JsonSchema & { description?: string }): string {
     return values !== undefined ? `${text}${text ? "; " : ""}${values.join("|")}` : text;
 }
 
-function coerce(kind: ReturnType<typeof kindOf>, raw: unknown): unknown {
+function coerce(schema: JsonSchema, raw: unknown): unknown {
+    const kind = kindOf(schema);
+
     if (kind === "array" && typeof raw === "string") {
+        const items = Array.isArray(schema.items) ? schema.items[0] : schema.items;
+
+        if (items?.type === "object" || items?.type === "array") {
+            return parseJSON<unknown>(raw) ?? raw;
+        }
+
         return raw
             .split(",")
             .map((v) => v.trim())
@@ -137,7 +146,7 @@ export function toCliCommands(api: ApiDescriptor, program: Command, options: Cli
 
             words.forEach((word, index) => {
                 if (args[index] !== undefined) {
-                    params[word] = coerce(kindOf(properties[word] ?? {}), args[index]);
+                    params[word] = coerce(properties[word] ?? {}, args[index]);
                 }
             });
 
@@ -145,7 +154,7 @@ export function toCliCommands(api: ApiDescriptor, program: Command, options: Cli
                 if (extraKeys.has(key)) {
                     extra[key] = value;
                 } else if (properties[key] !== undefined) {
-                    params[key] = coerce(kindOf(properties[key]), value);
+                    params[key] = coerce(properties[key], value);
                 }
             }
 
