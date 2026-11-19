@@ -1461,6 +1461,12 @@ final class MeetingsServiceTests: XCTestCase {
             XCTFail("a silent service ends the call")
         } catch {
             XCTAssertLessThan(Date().timeIntervalSince(started), 5, "it fails at the deadline, not later: \(error)")
+            // A connection that failed before the request is not silence: the request reached the service and the
+            // call ended on its own deadline, which may have changed data, so the command does not run it again.
+            XCTAssertEqual(fake.count("voices.preview"), 1, "the request reached the silent service")
+            let silence = JSONRPCSocketClient.Failure.timeout(method: "voices.preview").localizedDescription
+            XCTAssertEqual(error as? MeetingsService.Unavailable,
+                           .init(reason: "voices.preview: \(silence)", safeToRetry: false), "the silence deadline ended it: \(error)")
         }
     }
 
