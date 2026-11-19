@@ -1610,6 +1610,9 @@ struct InboxAddTaskButton: View {
                         Text("For you").tag("human")
                         if !tasks.draft.session.isEmpty { Text("For agent").tag("agent") }
                     }
+                    .onChange(of: tasks.draft.owner) { _, owner in
+                        if owner != "agent" { sendImmediately = false }
+                    }
                     if tasks.draft.owner == "agent" && !tasks.draft.session.isEmpty {
                         Toggle("Send to the session now", isOn: $sendImmediately)
                     }
@@ -1619,7 +1622,8 @@ struct InboxAddTaskButton: View {
                         Button("Close") { addingTask = false }.keyboardShortcut(.cancelAction)
                         Button(tasks.isCreating ? "Adding…" : "Add task") {
                             triedToAdd = true
-                            tasks.create(sendImmediately: sendImmediately)
+                            tasks.create(sendImmediately: sendImmediately && tasks.draft.owner == "agent"
+                                         && !tasks.draft.session.isEmpty)
                         }
                             .buttonStyle(.genPrimary())
                             .disabled(tasks.draft.title.trimmed.isEmpty)
