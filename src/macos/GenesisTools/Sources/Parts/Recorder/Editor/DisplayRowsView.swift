@@ -127,6 +127,7 @@ private struct DisplayRowView: View {
             }
         }
         .contextMenu { menu(for: hoveredSlot.map { (range: $0.range, shown: $0.shown) }) }
+        // lint-rules-ignore: short list (one row per captured display)
         .instantTooltip(tooltip(hoveredSlot))
         .focusable()
         .focused($focused)
@@ -278,5 +279,7 @@ private struct SwitchLineHandle: View {
         .frameProbe("recorder.timeline.displaySwitch.\(atUs)")
         // Last, so the hit area moves with the drawing.
         .offset(x: baseX + shift - 7)
+        // One line per display switch: its tooltip rests until the pointer reaches the line.
+        .liveRow()
     }
 }
