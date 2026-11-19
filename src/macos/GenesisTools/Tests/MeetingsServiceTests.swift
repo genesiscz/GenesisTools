@@ -142,6 +142,10 @@ private final class FakeMeetingsService: @unchecked Sendable {
                 return
             }
             connection = next
+            // A reply written after the window hung up (a test ended while a read was in flight) fails with EPIPE
+            // instead of killing the whole test process with SIGPIPE, as the window's own client does.
+            var noSigpipe: Int32 = 1
+            setsockopt(next, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe, socklen_t(MemoryLayout<Int32>.size))
             accepted += 1
             condition.unlock()
             read(next)
@@ -287,7 +291,9 @@ private enum WindowWriteControls {
         throw NSError(domain: "Timed out waiting for \(description)", code: 1)
     }
 
-    static func picture(_ window: NSWindow, containing words: String, named name: String? = nil) throws -> NSPoint? {
+    /// The centre of the first OCR line with `words`; `whole` takes only a line that is exactly `words` (a button title
+    /// beside a sentence that contains it).
+    static func picture(_ window: NSWindow, containing words: String, named name: String? = nil, whole: Bool = false) throws -> NSPoint? {
         let view = try XCTUnwrap(window.contentView)
         view.layoutSubtreeIfNeeded()
         let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
@@ -297,7 +303,9 @@ private enum WindowWriteControls {
         ocr.usesLanguageCorrection = false
         try VNImageRequestHandler(cgImage: XCTUnwrap(bitmap.cgImage)).perform([ocr])
         for line in ocr.results ?? [] {
-            guard let text = line.topCandidates(1).first, let range = text.string.range(of: words, options: .caseInsensitive),
+            guard let text = line.topCandidates(1).first,
+                  !whole || text.string.trimmingCharacters(in: .whitespaces) == words,
+                  let range = text.string.range(of: words, options: .caseInsensitive),
                   let box = try text.boundingBox(for: range)?.boundingBox else { continue }
             if let name, let folder = ProcessInfo.processInfo.environment["MEETINGS_P10_SHOTS"] {
                 let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
@@ -875,7 +883,7 @@ final class MeetingsServiceTests: XCTestCase {
         defer { detail.cancelReads(); model.stopLiveUpdates() }
 
         /// A form with the term filled in, as a person leaves it before pressing Add.
-        func hostForm(onClose: @escaping () -> Void) -> (NSWindow, FindingComposerForm) {
+        func hostForm(onClose: @escaping () -> Void) -> NSWindow {
             let draft = FindingComposerForm.Draft()
             draft.kind = "term"
             draft.from = 0
@@ -883,14 +891,21 @@ final class MeetingsServiceTests: XCTestCase {
             draft.proposed = "Glimmer"
             let form = FindingComposerForm(detail: detail, draft: draft, onClose: onClose)
             XCTAssertFalse(draft.addDisabled)
-            return (WindowWriteControls.host(form, width: 430, height: 500), form)
+            return WindowWriteControls.host(form, width: 430, height: 500)
+        }
+        /// Presses the form's visible Add button, so the test covers the button's wiring as well as its action.
+        func pressAdd(in panel: NSWindow, picture: String) async throws {
+            let point = try await WindowWriteControls.until("the Add button") {
+                try WindowWriteControls.picture(panel, containing: "Add", named: picture, whole: true)
+            }
+            try WindowWriteControls.click(point, in: panel)
         }
 
         var firstCloses = 0
         do {
-            let (first, form) = hostForm { firstCloses += 1 }
+            let first = hostForm { firstCloses += 1 }
             defer { first.close() }
-            form.add()
+            try await pressAdd(in: first, picture: "finding-add")
             _ = try await WindowWriteControls.until("the first finding to close the form") { firstCloses > 0 ? true : nil }
         }
         XCTAssertEqual(firstCloses, 1)
@@ -904,9 +919,9 @@ final class MeetingsServiceTests: XCTestCase {
         XCTAssertEqual(term.evidence?["transcriptLine"], .number(0))
 
         var duplicateCloses = 0
-        let (second, duplicate) = hostForm { duplicateCloses += 1 }
+        let second = hostForm { duplicateCloses += 1 }
         defer { second.close() }
-        duplicate.add()
+        try await pressAdd(in: second, picture: "finding-add-again")
         let warning = "Already open: \(term.id)"
         _ = try await WindowWriteControls.until(warning) {
             guard duplicateCloses == 0 else { throw NSError(domain: "The duplicate dismissed the finding form", code: 1) }
