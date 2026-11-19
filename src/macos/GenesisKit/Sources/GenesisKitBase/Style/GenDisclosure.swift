@@ -20,6 +20,8 @@ public struct GenDisclosure<Label: View, Content: View>: View {
     private let content: Content
     @GenReduceMotion private var reduceMotion
     @Environment(\.genExpansionHost) private var host
+    /// Set while this disclosure opens or closes; the clip belongs to that motion only.
+    @State private var toggle: Int?
 
     public init(
         isExpanded: Binding<Bool>,
@@ -44,7 +46,14 @@ public struct GenDisclosure<Label: View, Content: View>: View {
             Button {
                 let expanding = !isExpanded
                 host?.willChange(expanding)
+                let current = (toggle ?? 0) + 1
+                toggle = current
                 GenMotion.perform(expanding: expanding, reduceMotion: reduceMotion) { isExpanded = expanding }
+                let wait = reduceMotion ? 0 : GenMotion.duration(expanding: expanding) + 0.05
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(wait))
+                    if toggle == current { toggle = nil }
+                }
             } label: {
                 HStack(spacing: 7) {
                     Image(systemName: "chevron.right")
@@ -68,9 +77,10 @@ public struct GenDisclosure<Label: View, Content: View>: View {
                     .transition(.genReveal)
             }
         }
-        // The section closes over its content instead of the rows below sliding up over fading text. A few points of
-        // slack keep a focus ring at the content's edge.
-        .clipShape(Rectangle().inset(by: -3))
+        // While it opens or closes, the section closes over its content instead of the rows below sliding up over
+        // fading text; a few points of slack keep a focus ring at the content's edge. At rest nothing is clipped, so a
+        // row the content takes away fades in place instead of being wiped by the section's moving bottom edge.
+        .clipShape(Rectangle().inset(by: toggle == nil ? -100_000 : -3))
     }
 }
 
