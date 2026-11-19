@@ -53,6 +53,8 @@ export function voicesHandlers(
         return result;
     }
     return {
+        "voices.jobs": ({ project }) => deps.voiceJobs?.list(project) ?? [],
+        "voices.jobs.cancel": ({ id }) => deps.voiceJobs?.cancel(id) ?? null,
         "voices.move": (p, context) =>
             correction(
                 { kind: "move", id: p.id, to: p.to, token: p.token, expectedRevision: p.expectedRevision },
@@ -74,9 +76,11 @@ export function voicesHandlers(
         "voices.quality": (p) => voiceQuality({ ...access, ...p }),
         "voices.list": (params) => listProjectVoices({ ...access, ...params }),
         "voice.backfill": async (params, context) => {
-            knownMeetings(params.meetings);
-            const result = await backfillVoices({ ...access, ...params });
-            if (!result.dryRun && result.added) {
+            const result =
+                deps.voiceJobs && !params.dryRun
+                    ? await deps.voiceJobs.backfill(params)
+                    : await backfillVoices({ ...access, ...params });
+            if (!deps.voiceJobs && !result.dryRun && result.added) {
                 context.emit?.("people.changed", {});
             }
             return result;

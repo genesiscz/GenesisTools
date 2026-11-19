@@ -3,7 +3,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { projectNameSchema } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { voiceRootMeeting } from "@genesiscz/utils/meetings/record";
-import { readVoiceLibrary, sourceForVoicePrint } from "@genesiscz/utils/meetings/voice-library";
+import { meetingVoiceOwner, readVoiceLibrary, sourceForVoicePrint } from "@genesiscz/utils/meetings/voice-library";
 import { DecisionJournal } from "./decision-journal";
 import { recordPeople } from "./listen-answers";
 import { OpenedMeeting } from "./opened-meeting";
@@ -13,11 +13,13 @@ import {
     journalVoices,
     prepareVoicePrints,
     type VoicePrintChange,
+    type VoiceSourceChecks,
     type VoiceTarget,
+    voiceLineVersions,
 } from "./voice-samples";
 import type { VoicesAccess } from "./voices";
 
-interface BackfillRow {
+export interface BackfillRow {
     meeting: string;
     person: string | null;
     added: number;
@@ -28,6 +30,8 @@ interface BackfillRow {
 interface BackfillDecision extends VoiceTarget {
     changes: VoicePrintChange[];
     skipped?: string;
+    missing?: number;
+    refusals?: Map<string, number>;
 }
 
 /** Words a name abbreviates with a period (`Dr. Ada Example`), lower case. A single letter is an initial. */
@@ -67,7 +71,9 @@ async function prepareDecisions(
     access: VoicesAccess,
     journal: DecisionJournal,
     record: MeetingRecord,
-    dryRun: boolean
+    dryRun: boolean,
+    job: LearningRun,
+    checks: VoiceSourceChecks
 ) {
     const owners = new Map(
         record.items.filter((item) => item.status === "confirmed").map((item) => [item.id, item.decision?.token])
@@ -78,8 +84,12 @@ async function prepareDecisions(
         ...record.participants.map((one) => one.name),
         ...(record.attendance?.people.map((one) => one.name) ?? []),
     ];
+    const sourceChanged = job.sourceAtEnqueue && !sameRecording(job.sourceAtEnqueue, record);
     const decisions: BackfillDecision[] = [];
     for (const entry of journal.read(record.id).reverse()) {
+        if (job.tokens && !job.tokens.has(entry.token)) {
+            continue;
+        }
         if (entry.meeting !== record.id) {
             throw new Error(`Decision ${entry.token} belongs to ${entry.meeting}, not ${record.id}.`);
         }
@@ -92,22 +102,45 @@ async function prepareDecisions(
                 decisions.push({ ...target, changes: [], skipped: "confirmation undone or replaced" });
                 continue;
             }
+            if (sourceChanged) {
+                decisions.push({ ...target, changes: [], skipped: "recording or source line changed" });
+                continue;
+            }
             const saved = journalVoices(entry, target.voice.item, record.project);
             decisions.push({ ...target, saved, changes: [...(saved ?? [])] });
         }
     }
     const active = decisions.filter((decision) => !decision.skipped);
     if (active.length) {
-        const opened = OpenedMeeting.of(access.store, record, access.linkedSource?.(record));
+        const opened = OpenedMeeting.of(access.store, record, access.linkedSource?.(record), await access.config?.());
         try {
-            for (const { target, changes } of await prepareVoicePrints(opened, active, dryRun)) {
+            for (const prepared of await prepareVoicePrints(opened, active, {
+                dryRun,
+                signal: job.signal,
+                checks,
+                planned: (count) =>
+                    job.progress?.({
+                        done: 0,
+                        total: count + decisions.length - active.length,
+                        added: 0,
+                        skipped: 0,
+                        step: "Extracting confirmed lines",
+                    }),
+            })) {
+                const { target, changes } = prepared;
+                target.missing = prepared.missing;
+                target.refusals = prepared.refusals;
                 target.changes.push(...changes);
-                if (!changes.length && !target.saved?.length) {
+                if (!changes.length && !target.saved?.length && !target.refusals.size) {
                     target.skipped = "no complete line with usable channel and voice evidence";
                 }
             }
         } catch (error) {
+            job.signal?.throwIfAborted();
             for (const target of active) {
+                if (target.saved?.length) {
+                    continue;
+                }
                 target.skipped = `voice extraction unavailable: ${errorText(error)}`;
             }
         }
@@ -116,22 +149,79 @@ async function prepareDecisions(
     return decisions;
 }
 
-async function backfillMeeting(
-    access: VoicesAccess,
-    record: MeetingRecord,
-    project: string,
-    dryRun: boolean
-): Promise<BackfillRow[]> {
+export interface LearningRun {
+    sourceAtEnqueue?: MeetingRecord;
+    tokens?: ReadonlySet<string>;
+    signal?: AbortSignal;
+    acquiredBy?: "live" | "backfill";
+    progress?: (progress: { done: number; total: number; added: number; skipped: number; step: string }) => void;
+    publishWhenFree?: (publish: () => Promise<BackfillRow[]>) => Promise<BackfillRow[]>;
+}
+
+function sameRecording(a: MeetingRecord, b: MeetingRecord): boolean {
+    return (
+        a.start === b.start &&
+        a.voiceRootMeeting === b.voiceRootMeeting &&
+        isDeepStrictEqual(a.sources, b.sources) &&
+        isDeepStrictEqual(a.recording, b.recording) &&
+        isDeepStrictEqual(a.audio, b.audio) &&
+        isDeepStrictEqual(a.evidence?.channels, b.evidence?.channels) &&
+        isDeepStrictEqual(a.seats, b.seats)
+    );
+}
+
+/** The project and tokens come from the enqueue-time record. Nothing computed outside the lock grants publication rights. */
+export async function learnMeetingVoices(options: {
+    access: VoicesAccess;
+    record: MeetingRecord;
+    project: string;
+    dryRun: boolean;
+    job?: LearningRun;
+}): Promise<BackfillRow[]> {
+    const { access, record, project, dryRun, job = {} } = options;
     const journal = new DecisionJournal({ store: access.store });
-    const decisions = await prepareDecisions(access, journal, record, dryRun);
-    const finish = () => {
+    job.signal?.throwIfAborted();
+    const checks: VoiceSourceChecks = new Map();
+    const decisions = await prepareDecisions(access, journal, record, dryRun, job, checks);
+    const units = (decision: BackfillDecision) =>
+        Math.max(
+            1,
+            decision.changes.length +
+                (decision.missing ?? 0) +
+                [...(decision.refusals?.values() ?? [])].reduce((sum, n) => sum + n, 0)
+        );
+    const total = decisions.reduce((sum, d) => sum + units(d), 0);
+    const finish = async (current: MeetingRecord) => {
+        let done = 0,
+            added = 0,
+            skipped = 0;
+        job.progress?.({ done, total, added, skipped, step: "Checking confirmed lines" });
+        job.signal?.throwIfAborted();
+        if (!dryRun) {
+            journal.repairVoiceReceipts(record.id);
+        }
+        const root = voiceRootMeeting(access.store, current);
         const view = readVoiceLibrary();
-        const root = voiceRootMeeting(access.store, record);
+        const items = new Map(current.items.map((item) => [item.id, item]));
+        const sameSource = sameRecording(job.sourceAtEnqueue ?? record, current);
+        const versions =
+            checks.size && sameSource && current.project === project
+                ? await OpenedMeeting.of(access.store, current, access.linkedSource?.(current))
+                      .meeting()
+                      .then((m) => voiceLineVersions(m))
+                : undefined;
+        job.signal?.throwIfAborted();
         const changes: VoicePrintChange[] = [];
         const rows = new Map<string, BackfillRow>();
+        function skip(row: BackfillRow, reason: string, count = 1) {
+            row.skipped[reason] = (row.skipped[reason] ?? 0) + count;
+            skipped += count;
+            done += count;
+            job.progress?.({ done, total, added, skipped, step: reason });
+        }
         for (const decision of decisions) {
             const { entry, voice } = decision;
-            const row: BackfillRow = rows.get(voice.person) ?? {
+            const row = rows.get(voice.person) ?? {
                 meeting: record.id,
                 person: voice.person,
                 added: 0,
@@ -139,37 +229,73 @@ async function backfillMeeting(
                 skipped: {},
             };
             rows.set(voice.person, row);
-            const reason = decision.skipped;
+            const item = items.get(voice.item);
+            const original = entry.changes.find((change) => change.id === voice.item)?.after;
+            let reason = decision.skipped;
+            if (!reason && current.project !== project) {
+                reason = "meeting project changed";
+            }
+            if (
+                !reason &&
+                (item?.status !== "confirmed" ||
+                    item.decision?.token !== entry.token ||
+                    !isDeepStrictEqual(item, original))
+            ) {
+                reason = "confirmation undone or replaced";
+            }
+            if (!reason && !sameSource) {
+                reason = "recording or source line changed";
+            }
             if (reason) {
-                row.skipped[reason] = (row.skipped[reason] ?? 0) + 1;
+                skip(row, reason, units(decision));
+                continue;
+            }
+            for (const [reason, count] of decision.refusals ?? []) {
+                skip(row, reason, count);
+            }
+            if (decision.missing) {
+                skip(row, "no complete line with usable channel and voice evidence", decision.missing);
             }
             for (const change of decision.changes) {
+                const check = checks.get(change);
+                if (check && (!versions || !check(versions))) {
+                    skip(row, "recording or source line changed");
+                    continue;
+                }
+                if (change.owner && !isDeepStrictEqual(meetingVoiceOwner(current, voice.person), change.owner)) {
+                    skip(row, "confirmed person's identity changed");
+                    continue;
+                }
                 if (view.library.model && view.library.model !== change.model) {
-                    const reason = "sample uses a different voice model from the project";
-                    row.skipped[reason] = (row.skipped[reason] ?? 0) + 1;
+                    skip(row, "sample uses a different voice model from the project");
                     continue;
                 }
                 changes.push({
                     ...change,
                     project,
+                    item: voice.item,
                     origin: entry.action.kind === "confirm" ? "confirm" : "answer",
-                    acquiredBy: "backfill",
+                    acquiredBy: job.acquiredBy ?? "backfill",
                     token: entry.token,
                     source: change.source ?? sourceForVoicePrint(change.after, root),
                 });
             }
         }
+        job.signal?.throwIfAborted();
         const receipts = journal.publishBackfilledVoices(record.id, changes, dryRun);
         for (const [index, receipt] of receipts.entries()) {
             const row = rows.get(changes[index]!.person)!;
             if (receipt.status === "added") {
                 row.added++;
+                added++;
             } else if (receipt.status === "already-present") {
                 row.present++;
+                skipped++;
             } else {
-                const reason = receipt.status === "refused" ? receipt.reason : "attachment conflict";
-                row.skipped[reason] = (row.skipped[reason] ?? 0) + 1;
+                skip(row, receipt.status === "refused" ? receipt.reason : "attachment conflict");
+                continue;
             }
+            job.progress?.({ done: ++done, total, added, skipped, step: receipt.status });
         }
         return rows.size
             ? [...rows.values()]
@@ -183,24 +309,16 @@ async function backfillMeeting(
                   },
               ];
     };
-    if (dryRun || !decisions.some((decision) => decision.changes.length)) {
-        return finish();
+    if (dryRun) {
+        return finish(record);
     }
-    // Extraction may take minutes. Hold the same lock as Undo only for the final read and publication.
-    return access.store.withRecords({
-        ids: [record.id],
-        fn: async (current) => {
-            if (!isDeepStrictEqual(current.get(record.id), record)) {
-                throw new Error(`Meeting ${record.id} changed during backfill. Retry with its current decisions.`);
-            }
-            return finish();
-        },
-    });
+    // Keep the prepared prints and their source checks. Each publication attempt rereads the meeting under its lock.
+    const publish = () =>
+        access.store.withRecords({ ids: [record.id], fn: (current) => finish(current.get(record.id)!) });
+    return job.publishWhenFree ? job.publishWhenFree(publish) : publish();
 }
 
-export async function backfillVoices(
-    options: VoicesAccess & { meetings?: string[]; project?: string; dryRun?: boolean }
-) {
+export function backfillRecords(options: VoicesAccess & { meetings?: string[]; project?: string; dryRun?: boolean }) {
     if (Boolean(options.meetings?.length) === (options.project !== undefined)) {
         throw new Error("Give one or more meetings or --project <name>.");
     }
@@ -225,10 +343,17 @@ export async function backfillVoices(
             return [record.id, { record, project: record.project }] as const;
         })
     );
+    return [...selected.values()];
+}
+
+export async function backfillVoices(
+    options: VoicesAccess & { meetings?: string[]; project?: string; dryRun?: boolean }
+) {
+    const selected = backfillRecords(options);
     const rows: BackfillRow[] = [];
     const dryRun = options.dryRun ?? false;
-    for (const { record, project } of selected.values()) {
-        rows.push(...(await backfillMeeting(options, record, project, dryRun)));
+    for (const { record, project } of selected) {
+        rows.push(...(await learnMeetingVoices({ access: options, record, project, dryRun })));
     }
     return {
         dryRun,

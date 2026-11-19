@@ -301,6 +301,7 @@ describe("meetings config", () => {
                 sampleScope: "all",
                 outlierBelow: 0.5,
                 supportOnSeatLines: true,
+                seatOppositeShare: 0.1,
             },
         });
         expect(config.global.capture.audioRetentionDays).toBeUndefined();
@@ -329,6 +330,7 @@ describe("meetings config", () => {
             sampleScope: "all",
             outlierBelow: 0.5,
             supportOnSeatLines: true,
+            seatOppositeShare: 0.1,
         });
         expect(set.capture.audioRetentionDays).toBe(90);
         expect(set.playback.tracks).toBe("source");

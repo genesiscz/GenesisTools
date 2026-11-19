@@ -14,9 +14,11 @@ import {
     meetingsCodeStamp,
     subscribeParamsSchema,
 } from "./api";
-import { helloAnswer, meetingsServiceDir } from "./client";
+import { helloAnswer, meetingsServiceDir, subscriptionHears } from "./client";
 import { MeetingsFolderWatch } from "./folder-watch";
 import { asRefusal, type MeetingsHandlerDeps, meetingsTable, refusal } from "./handlers";
+
+import { MeetingVoiceJobs } from "./voice-jobs";
 
 const { log } = logger.scoped("meetings-service");
 
@@ -59,6 +61,7 @@ interface ConnectionState {
     hello?: MeetingsHello;
     /** The meeting its subscription names; undefined: every meeting. */
     meeting?: string;
+    project?: string;
 }
 
 export interface MeetingsServiceOptions extends MeetingsHandlerDeps {
@@ -110,7 +113,7 @@ export type MeetingsServiceStart =
  */
 export async function startMeetingsService(options: MeetingsServiceOptions = {}): Promise<MeetingsServiceStart> {
     const code = options.code ?? meetingsCodeStamp();
-    const table = meetingsTable(options);
+    const store = options.store?.() ?? new MeetingStore();
     let lastId = 0;
     // `host` is set once it listens; no call reaches `hello` before.
     let host: ServiceHost<ConnectionState> | undefined;
@@ -127,12 +130,28 @@ export async function startMeetingsService(options: MeetingsServiceOptions = {})
             watch?.ownWrite(meeting);
         }
 
-        host?.emit(
-            event,
-            { ...params },
-            (connection) =>
-                event === "people.changed" || !connection.state.meeting || connection.state.meeting === meeting
-        );
+        host?.emit(event, { ...params }, (connection) => subscriptionHears(connection.state, event, params));
+    };
+
+    const jobs = new MeetingVoiceJobs({
+        store,
+        config: options.config,
+        linkedSource: options.linkedSource,
+        notify: (job) => {
+            emit("voices.job", job);
+            if (job.state === "done" && job.added) {
+                emit("people.changed", {});
+            }
+        },
+        named: (meeting) => emit("meeting.changed", { meeting, parts: ["show", "speakers", "transcript"] }),
+    });
+    const table = meetingsTable({ ...options, voiceJobs: jobs });
+    const discover = (record: ReturnType<typeof store.read>) => {
+        if (record) {
+            void Promise.resolve()
+                .then(() => jobs.discover(record))
+                .catch((error: unknown) => log.warn({ error, meeting: record.id }, "voice recovery failed"));
+        }
     };
 
     const greet = (connection: RpcConnection<ConnectionState>, hello: MeetingsHello) => {
@@ -201,11 +220,14 @@ export async function startMeetingsService(options: MeetingsServiceOptions = {})
             }
 
             connection.state.meeting = parsed.data.meeting;
+            connection.state.project = parsed.data.project;
         },
         idleMs: options.idleMs ?? MEETINGS_SERVICE_IDLE_MS,
         checkEveryMs: options.checkEveryMs,
         sourceRoot: options.sourceRoot,
         rivalWaitMs: options.rivalWaitMs,
+        keepAlive: { idle: () => jobs.busy },
+        onStopping: () => jobs.stop(),
         onStopped: options.onStopped,
         // The next row's click cuts its Moment; the older cut it replaces stops at once (G-PLAY-10).
         supersedes: (method) => (method === "moment.clip" ? method : undefined),
@@ -220,8 +242,13 @@ export async function startMeetingsService(options: MeetingsServiceOptions = {})
 
     if (options.watch !== false) {
         const folderWatch = new MeetingsFolderWatch({
-            root: (options.store?.() ?? new MeetingStore()).root,
-            emit: (meeting, parts) => emit("meeting.changed", { meeting, parts }),
+            root: store.root,
+            emit: (meeting, parts) => {
+                emit("meeting.changed", { meeting, parts });
+                if (parts.includes("show")) {
+                    discover(store.read(meeting));
+                }
+            },
             peopleChanged: () => emit("people.changed", {}),
             commentsChanged: (meeting) => emit("comment.changed", { meeting }),
             ...(options.watch?.subscribe ? { subscribe: options.watch.subscribe } : {}),
@@ -236,6 +263,10 @@ export async function startMeetingsService(options: MeetingsServiceOptions = {})
         } catch (error) {
             log.warn({ error }, "the meetings folder is not watched; outside writes tell no meeting.changed");
         }
+    }
+
+    for (const record of store.listBounded({ where: (record) => !!record.project }).records) {
+        discover(record);
     }
 
     return {

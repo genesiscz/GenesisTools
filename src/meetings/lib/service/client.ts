@@ -54,7 +54,7 @@ export interface MeetingsClient {
     ): Promise<MeetingsResult<M>>;
     /** Hears the events of one meeting (or every meeting) until the returned function stops it. */
     subscribe(
-        filter: { meeting?: string; events?: readonly MeetingsEvent[] },
+        filter: SubscriptionFilter<MeetingsEvent>,
         listener: (event: MeetingsEventMessage) => void
     ): Promise<() => void>;
     close(): void;
@@ -77,6 +77,12 @@ export function meetingsServiceDir(): string {
     return toolDataDir("meetings-service");
 }
 
+interface SubscriptionFilter<E extends string = string> {
+    meeting?: string;
+    project?: string;
+    events?: readonly E[];
+}
+
 /** A meeting the event names, for the subscription's filter. */
 function meetingOf(params: unknown): string | undefined {
     const meeting = typeof params === "object" && params !== null ? Reflect.get(params, "meeting") : undefined;
@@ -84,15 +90,14 @@ function meetingOf(params: unknown): string | undefined {
 }
 
 /** True when a subscription with this filter hears the event. */
-export function subscriptionHears(
-    filter: { meeting?: string; events?: readonly string[] },
-    event: string,
-    params: unknown
-): boolean {
+export function subscriptionHears(filter: SubscriptionFilter, event: string, params: unknown): boolean {
     const events = filter.events ?? [];
     return (
         (events.length === 0 || events.includes(event)) &&
-        (event === "people.changed" || !filter.meeting || filter.meeting === meetingOf(params))
+        (event === "people.changed" || !filter.meeting || filter.meeting === meetingOf(params)) &&
+        (event !== "voices.job" ||
+            !filter.project ||
+            (typeof params === "object" && params !== null && Reflect.get(params, "project") === filter.project))
     );
 }
 
@@ -100,7 +105,7 @@ export function subscriptionHears(
  * The filter as both adapters accept it: an empty or non-string meeting would widen the subscription to every meeting,
  * so it is refused as invalid params (-32602), as the service refuses it.
  */
-function checkedFilter<F extends { meeting?: string; events?: readonly string[] }>(filter: F): F {
+function checkedFilter<F extends SubscriptionFilter>(filter: F): F {
     // The filter itself, never a copy: a spread would turn a string `events` into its characters, which the schema takes.
     const parsed = subscribeParamsSchema.safeParse(filter);
 
@@ -121,7 +126,7 @@ function checkedFilter<F extends { meeting?: string; events?: readonly string[] 
  */
 export class LocalMeetingsEvents {
     private readonly listeners = new Set<{
-        filter: { meeting?: string; events?: readonly string[] };
+        filter: SubscriptionFilter;
         listener: (event: MeetingsEventMessage) => void;
     }>();
 
@@ -133,10 +138,7 @@ export class LocalMeetingsEvents {
         }
     }
 
-    listen(
-        filter: { meeting?: string; events?: readonly string[] },
-        listener: (event: MeetingsEventMessage) => void
-    ): () => void {
+    listen(filter: SubscriptionFilter, listener: (event: MeetingsEventMessage) => void): () => void {
         const entry = { filter, listener };
         this.listeners.add(entry);
         return () => this.listeners.delete(entry);
@@ -207,7 +209,7 @@ export class InProcessMeetingsClient implements MeetingsClient {
     }
 
     async subscribe(
-        filter: { meeting?: string; events?: readonly MeetingsEvent[] },
+        filter: SubscriptionFilter<MeetingsEvent>,
         listener: (event: MeetingsEventMessage) => void
     ): Promise<() => void> {
         const stop = (this.options.events ?? localMeetingsEvents).listen(checkedFilter(filter), listener);
@@ -252,7 +254,7 @@ async function greetedConnection(entry: ServiceEntry, hello: MeetingsHello): Pro
 export class SocketMeetingsClient implements MeetingsClient {
     readonly kind = "socket";
     private readonly listeners = new Set<{
-        filter: { meeting?: string; events?: readonly string[] };
+        filter: SubscriptionFilter;
         listener: (event: MeetingsEventMessage) => void;
     }>();
 
@@ -307,7 +309,7 @@ export class SocketMeetingsClient implements MeetingsClient {
     }
 
     async subscribe(
-        filter: { meeting?: string; events?: readonly MeetingsEvent[] },
+        filter: SubscriptionFilter<MeetingsEvent>,
         listener: (event: MeetingsEventMessage) => void
     ): Promise<() => void> {
         const entry = { filter: checkedFilter(filter), listener };
@@ -478,7 +480,9 @@ export class SocketMeetingsClient implements MeetingsClient {
         const events = anyEvent ? [] : [...new Set(filters.flatMap((filter) => filter.events ?? []))];
         const meetings = new Set(filters.map((filter) => filter.meeting));
         const meeting = meetings.size === 1 ? [...meetings][0] : undefined;
-        await this.client.call(SUBSCRIBE, subscribeParamsSchema.parse({ events, ...(meeting ? { meeting } : {}) }));
+        const projects = new Set(filters.map((filter) => filter.project));
+        const project = projects.size === 1 ? [...projects][0] : undefined;
+        await this.client.call(SUBSCRIBE, subscribeParamsSchema.parse({ events, meeting, project }));
     }
 }
 

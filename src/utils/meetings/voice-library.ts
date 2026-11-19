@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { sha256Json } from "@genesiscz/utils/hash";
 import { parseJSON, SafeJSON } from "@genesiscz/utils/json";
-import { withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { withRecoverablePathArbitrationSync } from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
 import { MeetingsConfigStore, meetingsConfigSchema, projectNameSchema } from "./config";
@@ -500,7 +500,7 @@ function withProjectLocks<T>(projects: string[], index: number, write: () => T):
     const project = projects[index];
     return project === undefined
         ? write()
-        : withPathArbitrationSync(legacyFile(project), () => withProjectLocks(projects, index + 1, write));
+        : withRecoverablePathArbitrationSync(legacyFile(project), () => withProjectLocks(projects, index + 1, write));
 }
 
 function transact<T>(
@@ -508,7 +508,7 @@ function transact<T>(
     options: MigrationOptions = {}
 ): { result: T; migration: MigrationReceipt } {
     const file = libraryFile();
-    return withPathArbitrationSync(file, () => {
+    return withRecoverablePathArbitrationSync(file, () => {
         const projects = legacyProjects();
         return withProjectLocks(projects, 0, () => {
             const pending = reconcile(projects, options);

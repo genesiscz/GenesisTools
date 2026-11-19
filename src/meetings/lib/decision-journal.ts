@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, statSync, truncateSync } from "node:fs";
+import { existsSync, statSync, truncateSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
@@ -31,10 +31,21 @@ import {
 } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { seatsFingerprint } from "@genesiscz/utils/meetings/seats";
+import {
+    idSchema,
+    ownerKey,
+    readVoiceLibrary,
+    type SampleId,
+    sameLine,
+    sourceForVoicePrint,
+    voicePrintSchema,
+} from "@genesiscz/utils/meetings/voice-library";
+import { atomicWriteFileSync, readFileIfExistsSync } from "@genesiscz/utils/storage/atomic-file";
 import { heardLineAt } from "@genesiscz/utils/transcribe/apply";
 import type { DictionaryEntry } from "@genesiscz/utils/transcribe/dictionary";
 import { heardIn, TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import { z } from "zod";
 import { prepareFindings } from "./add-findings";
 import { ANSWER_LOG_FILE, type AnswerEvent, appendAnswerEvent, appendAnswerEvents, roundRunning } from "./answer-log";
 import {
@@ -54,7 +65,6 @@ import {
     MEETING_FIELDS,
 } from "./decision-actions";
 import { appendLines, parseJsonLine } from "./ndjson-lines";
-import { OpenedMeeting } from "./opened-meeting";
 import { projectRequired } from "./project";
 import {
     answerQuestion,
@@ -88,27 +98,16 @@ import {
 } from "./speaker-assign";
 import { needsSpeakerReview } from "./speaker-scores";
 import { decisionLedger, ledgerEntryFor, lineOf } from "./transcript-corrections";
-import {
-    prepareAnsweredVoiceSamples,
-    publishVoiceChanges,
-    transitionAnsweredVoiceSamples,
-    type VoicePrintChange,
-} from "./voice-samples";
+import { publishVoiceChanges, transitionAnsweredVoiceSamples, type VoicePrintChange } from "./voice-samples";
 
 const { log } = logger.scoped("meetings-journal");
 const backfilledEntry = journalEntrySchema.pick({ meeting: true, token: true, voices: true });
-
-/** A confirm that names, by hand, a speaker range the voice model named: its lines may become voice samples. */
-function confirmsVoiceNames(action: JournalAction, record: MeetingRecord): boolean {
-    if (action.kind !== "confirm" || action.minConfidence !== undefined) {
-        return false;
-    }
-
-    const named = new Set(action.items);
-    return record.items.some(
-        (item) => named.has(item.id) && item.kind === "speaker-range" && item.rules.includes(MeetingRule.VoiceEmbedding)
-    );
-}
+const namingReceipt = z.object({
+    meeting: z.string(),
+    project: z.string(),
+    nameSamples: z.array(idSchema).optional(),
+    namedSamples: z.array(idSchema).optional(),
+});
 
 export {
     type Decided,
@@ -2029,50 +2028,162 @@ export class DecisionJournal {
 
     /** Called under the record lock. Keep late embeddings with their original decision for Undo and replay. */
     publishBackfilledVoices(meeting: string, changes: VoicePrintChange[], dryRun: boolean) {
-        const batch = publishVoiceChanges(changes, dryRun);
-        if (dryRun) {
-            return batch.results;
+        if (dryRun || !changes.length) {
+            return publishVoiceChanges(changes, dryRun).results;
         }
-        const recovered = new Map<string, VoicePrintChange[]>();
-        for (const [i, change] of changes.entries()) {
-            const receipt = batch.results[i];
-            if (receipt?.status === "added" && change.token) {
-                const group = recovered.get(change.token) ?? [];
-                group.push({ ...change, id: receipt.id });
-                recovered.set(change.token, group);
+
+        this.repairVoiceReceipts(meeting);
+        if (changes.every((change) => change.id)) {
+            const preview = publishVoiceChanges(changes, true).results;
+            if (preview.every((row) => row.status !== "added")) {
+                return preview;
             }
         }
-        if (recovered.size) {
-            try {
-                const path = this.backfillPath(meeting);
-                undoableAppend(path, () =>
-                    appendLines(
-                        path,
-                        Array.from(recovered, ([token, voices]) =>
-                            SafeJSON.stringify({ meeting, token, voices }, { jsonl: true })
-                        ),
-                        { mode: 0o600 }
-                    )
-                );
-            } catch (error) {
-                batch.rollback();
-                throw error;
-            }
+        const pending = this.pendingPath(meeting);
+        // The meeting lock serializes this intent with Undo. The library atomically records
+        // the sample AND its learn receipt. Only that receipt grants ownership to the journal.
+        atomicWriteFileSync(pending, SafeJSON.stringify(changes), { mode: 0o600 });
+        const batch = publishVoiceChanges(changes);
+        try {
+            this.appendVoiceReceipts(
+                meeting,
+                changes.flatMap((change, i) => {
+                    const result = batch.results[i];
+                    return result?.status === "added" ? [{ ...change, id: result.id }] : [];
+                })
+            );
+        } catch (error) {
+            batch.rollback();
+            throw error;
         }
+        unlinkSync(pending);
         return batch.results;
+    }
+
+    private pendingPath(meeting: string): string {
+        return join(this.options.store.folder(meeting), "voice-learning-pending.json");
+    }
+
+    /** Visible for Undo even if the service stopped after the library write and before its journal append. */
+    private committedPending(meeting: string): VoicePrintChange[] {
+        const bytes = readFileIfExistsSync(this.pendingPath(meeting));
+        if (!bytes) {
+            return [];
+        }
+        const candidates = journalEntrySchema.shape.voices
+            .unwrap()
+            .parse(SafeJSON.parse(Buffer.from(bytes).toString("utf8")));
+        const { library } = readVoiceLibrary();
+        // A correction between the two file writes may already have moved or removed the sample.
+        const versions = [
+            ...library.samples,
+            ...library.receipts.flatMap((r) => (r.kind === "correct" ? r.before : [])),
+        ];
+        return candidates.flatMap((change) => {
+            const source = change.source ?? sourceForVoicePrint(change.after);
+            const receipt = library.receipts.find(
+                (r) =>
+                    r.kind === "learn" &&
+                    r.token === change.token &&
+                    r.item === (change.item ?? change.after.question) &&
+                    r.project === change.project &&
+                    ownerKey(r.owner) === ownerKey(change.owner ?? { name: change.person }) &&
+                    sameLine(r.source, source)
+            );
+            if (receipt?.kind !== "learn" || receipt.active === false || change.after.meeting !== meeting) {
+                return [];
+            }
+            const ownsVersion = versions.some(
+                (sample) =>
+                    sample.id === receipt.id &&
+                    ownerKey(sample.owner) === ownerKey(receipt.owner) &&
+                    isDeepStrictEqual(voicePrintSchema.parse(sample), change.after)
+            );
+            return ownsVersion ? [{ ...change, id: receipt.id }] : [];
+        });
+    }
+
+    /** Caller holds the meeting lock. An uncommitted intent gives no Undo rights. */
+    repairVoiceReceipts(meeting: string): void {
+        const path = this.pendingPath(meeting);
+        if (existsSync(path)) {
+            const owned = this.committedPending(meeting);
+            const saved = this.backfilledVoices(meeting);
+            this.appendVoiceReceipts(
+                meeting,
+                owned.filter((change) => !saved.get(change.token!)?.some((row) => row.id === change.id))
+            );
+            unlinkSync(path);
+        }
+    }
+
+    protected appendVoiceReceipts(meeting: string, changes: VoicePrintChange[]): void {
+        if (!changes.length) {
+            return;
+        }
+        const groups = Map.groupBy(
+            changes.filter((change) => change.token),
+            (change) => change.token!
+        );
+        const path = this.backfillPath(meeting);
+        undoableAppend(path, () =>
+            appendLines(
+                path,
+                Array.from(groups, ([token, voices]) =>
+                    SafeJSON.stringify(
+                        { meeting, token, voices, project: voices[0]!.project, nameSamples: voices.map((v) => v.id) },
+                        { jsonl: true }
+                    )
+                ),
+                { mode: 0o600 }
+            )
+        );
+    }
+
+    /** P6 receipt lines carry the naming intent beside the committed print. Older rows have no outstanding pass. */
+    pendingNaming(meeting: string, project: string): SampleId[] {
+        const path = this.backfillPath(meeting);
+        if (!existsSync(path)) {
+            return [];
+        }
+        const ids = new Set<SampleId>();
+        for (const line of readLinesSync(path, { containing: ['"nameSamples"', '"namedSamples"'] })) {
+            const parsed = namingReceipt.safeParse(parseJsonLine(line, path));
+            if (parsed.success && parsed.data.meeting === meeting && parsed.data.project === project) {
+                for (const id of parsed.data.nameSamples ?? []) {
+                    ids.add(id);
+                }
+                for (const id of parsed.data.namedSamples ?? []) {
+                    ids.delete(id);
+                }
+            }
+        }
+        return ids.size
+            ? readVoiceLibrary()
+                  .library.samples.filter(
+                      (sample) => sample.meeting === meeting && sample.project === project && ids.has(sample.id)
+                  )
+                  .map((sample) => sample.id)
+            : [];
+    }
+
+    async finishNaming(meeting: string, project: string, ids: SampleId[]): Promise<void> {
+        const path = this.backfillPath(meeting);
+        await this.options.store.withRecords({
+            ids: [meeting],
+            fn: async () => {
+                appendLines(path, [SafeJSON.stringify({ meeting, project, namedSamples: ids }, { jsonl: true })], {
+                    mode: 0o600,
+                });
+            },
+        });
     }
 
     private backfillPath(meeting: string): string {
         return join(this.options.store.folder(meeting), "voice-backfill.ndjson");
     }
 
-    private entries(meeting: string): JournalEntry[] {
-        const path = this.path(meeting);
-
-        if (!existsSync(path)) {
-            return [];
-        }
-
+    private backfilledVoices(meeting: string) {
         const recovered = new Map<string, VoicePrintChange[]>();
         const backfill = this.backfillPath(meeting);
         if (existsSync(backfill)) {
@@ -2084,6 +2195,22 @@ export class DecisionJournal {
                     recovered.set(extra.data.token, known);
                 }
             }
+        }
+        return recovered;
+    }
+
+    private entries(meeting: string): JournalEntry[] {
+        const path = this.path(meeting);
+
+        if (!existsSync(path)) {
+            return [];
+        }
+
+        const recovered = this.backfilledVoices(meeting);
+        for (const change of this.committedPending(meeting)) {
+            const group = recovered.get(change.token!) ?? [];
+            group.push(change);
+            recovered.set(change.token!, group);
         }
         return Array.from(readLinesSync(path))
             .filter((line) => line.trim())
@@ -2233,8 +2360,6 @@ export class DecisionJournal {
         // Filled in by the handler: the store reads it after the change, for the record's history line.
         const history: MeetingChange = { command: action.kind, change: "" };
         let before: MeetingRecord | undefined;
-        let voices: VoicePrintChange[] = [];
-        let voiceBase: MeetingRecord | undefined;
         const decide = (record: MeetingRecord): typeof MEETING_UNCHANGED | undefined => {
             if (
                 replay &&
@@ -2242,9 +2367,6 @@ export class DecisionJournal {
                     (replay.source && store.read(replay.source.id)?.history.length !== replay.source.revision))
             ) {
                 return MEETING_UNCHANGED;
-            }
-            if (voiceBase && !isDeepStrictEqual(record, voiceBase)) {
-                throw new Error("The meeting changed while preparing voice samples; retry the answer.");
             }
             if (this.options.onApplied) {
                 before = structuredClone(record);
@@ -2314,7 +2436,6 @@ export class DecisionJournal {
                     ...(assigned.length > 0 ? { assignments: assigned } : {}),
                     corrections: outcome.corrections ?? [],
                     ...(dictionary.length > 0 ? { dictionary } : {}),
-                    ...(voices.length > 0 ? { voices } : {}),
                 },
                 skipped: outcome.skipped ?? [],
                 ...warnings,
@@ -2327,69 +2448,53 @@ export class DecisionJournal {
             return result;
         }
 
-        // A person's speaker answer, or confirm of a voice-named range, keeps the confirmed lines as voice samples.
-        if (
-            !replay &&
-            (action.kind === "answer" || confirmsVoiceNames(action, saved)) &&
-            saved.project &&
-            ["window", "listen", "cli"].includes(request.actor.kind)
-        ) {
-            decide(structuredClone(saved));
-            if (result.entry) {
-                try {
-                    voices = await prepareAnsweredVoiceSamples({
-                        opened: OpenedMeeting.of(store, saved),
-                        entry: result.entry,
-                    });
-                    if (voices.length > 0) {
-                        voiceBase = saved;
-                    }
-                } catch (error) {
-                    log.warn({ error, meeting }, "speaker decision could not prepare voice samples");
-                    notes.push(
-                        `The ${action.kind === "answer" ? "answer" : "confirmation"} was saved without voice samples: source sound or voice extraction was unavailable.`
-                    );
-                }
-            }
-        }
-
         let takeBack = (): void => {};
         const unwrite = () => revertDictionaryChanges(this.dictionaryConfig(), dictionary, meeting);
 
         try {
-            await store.update(meeting, history, decide, {
-                write: (current) => {
-                    if (result.entry) {
-                        const undoVoices = transitionAnsweredVoiceSamples({
-                            entry: result.entry,
-                            entryOf: context.entryOf,
-                            project: current.project ?? "",
-                        });
-                        try {
-                            const undoLines = this.writeLines(result.entry, {
-                                reverted: action.kind === "revert" ? context.entryOf(action.token) : undefined,
-                                openAfter,
+            await store.update(
+                meeting,
+                history,
+                (record) => {
+                    // A worker may have committed while the dictionary and action inputs were loading.
+                    this.repairVoiceReceipts(meeting);
+                    known = undefined;
+                    return decide(record);
+                },
+                {
+                    write: (current) => {
+                        if (result.entry) {
+                            const undoVoices = transitionAnsweredVoiceSamples({
+                                entry: result.entry,
+                                entryOf: context.entryOf,
+                                project: current.project ?? "",
                             });
-                            takeBack = () => {
-                                undoLines();
+                            try {
+                                const undoLines = this.writeLines(result.entry, {
+                                    reverted: action.kind === "revert" ? context.entryOf(action.token) : undefined,
+                                    openAfter,
+                                });
+                                takeBack = () => {
+                                    undoLines();
+                                    undoVoices();
+                                };
+                            } catch (error) {
                                 undoVoices();
-                            };
-                        } catch (error) {
-                            undoVoices();
-                            throw error;
+                                throw error;
+                            }
                         }
-                    }
-                },
-                undo: () => takeBack(),
-                saved: (record) => {
-                    if (result.entry) {
-                        this.writeLedger(result.entry);
-                        if (before) {
-                            this.options.onApplied?.({ before, after: structuredClone(record) });
+                    },
+                    undo: () => takeBack(),
+                    saved: (record) => {
+                        if (result.entry) {
+                            this.writeLedger(result.entry);
+                            if (before) {
+                                this.options.onApplied?.({ before, after: structuredClone(record) });
+                            }
                         }
-                    }
-                },
-            });
+                    },
+                }
+            );
         } catch (error) {
             await unwrite();
             throw error;

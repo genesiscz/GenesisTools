@@ -150,6 +150,40 @@ async function failure(promise: Promise<unknown>): Promise<Error> {
 }
 
 describe("meetings clients", () => {
+    test("P6 reconnect lists current voice jobs and restores project and meeting subscriptions", async () => {
+        const dir = scratchDir();
+        const first = await startService(dir);
+        const client = await SocketMeetingsClient.connect(first.service.entry, hello);
+        closing.push(() => client.close());
+        const project = eventQueue();
+        const meeting = eventQueue();
+        const global = eventQueue();
+        await client.subscribe({ events: ["voices.job"], project: "Harbor" }, project.push);
+        await client.subscribe({ events: ["voices.job"], meeting: RETRO.id }, meeting.push);
+        await client.subscribe({ events: ["voices.job"] }, global.push);
+        first.service.stop("restart for subscription");
+        await first.service.stopped;
+        const second = await startService(dir);
+        expect(await client.call("voices.jobs", { project: "Harbor" })).toEqual([]);
+        const job = {
+            kind: "backfill" as const,
+            state: "running" as const,
+            progress: { done: 0, total: 2, step: "Learning" },
+            added: 0,
+            skipped: 0,
+        };
+        for (const [id, project, meeting] of [
+            ["other", "Meadow", "other"],
+            ["project", "Harbor", "other"],
+            ["meeting", "Meadow", RETRO.id],
+        ]) {
+            second.service.emit("voices.job", { ...job, id: id!, project: project!, meeting });
+        }
+        expect((await global.next()).params).toMatchObject({ id: "other" });
+        expect((await project.next()).params).toMatchObject({ id: "project" });
+        expect((await meeting.next()).params).toMatchObject({ id: "meeting" });
+    });
+
     test("a subscribe whose events is not a list is refused as invalid params, never read as its characters", async () => {
         const client = new InProcessMeetingsClient({ hello });
         closing.push(() => client.close());

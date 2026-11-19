@@ -24,6 +24,8 @@ import {
     momentSave,
     voiceBackfill,
     voiceEnrol,
+    voicesJobs,
+    voicesJobsCancel,
     voicesList,
     voicesMove,
     voicesQuality,
@@ -701,6 +703,18 @@ export const applySeats = defineMethod({
     effect: "reversible",
     doc: `Return the seat preview and saved flag. Accept names or timed room and remote entries. Save when seats are absent, or replace them with replace: true. CLI: ${toolCommand("meetings", "seats")} <meeting> --apply --json.`,
 });
+export const voiceJobs = defineMethod({
+    ...voicesJobs,
+    name: "voiceJobs",
+    doc: `Return current and recent voice jobs with progress, counts and errors. CLI: ${toolCommand("meetings voices jobs")} [--project <p>] --json.`,
+});
+export const cancelVoiceJob = defineMethod({
+    ...voicesJobsCancel,
+    name: "cancelVoiceJob",
+    positional: ["id"],
+    doc: `Return the cancelled or terminal voice job, or null for an unknown id. CLI: ${toolCommand("meetings voices jobs cancel")} <id>.`,
+});
+
 export const backfillVoices = defineMethod({
     ...voiceBackfill,
     name: "backfillVoices",
@@ -817,6 +831,8 @@ export const meetingsToolsetApi = defineApi({
     methods: [
         applySeats,
         backfillVoices,
+        voiceJobs,
+        cancelVoiceJob,
         seats,
         thresholds,
         voiceReadiness,

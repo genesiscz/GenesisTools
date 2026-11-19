@@ -1,10 +1,16 @@
+import { isDeepStrictEqual } from "node:util";
 import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
+import { type FileIdentity, fileIdentity } from "@genesiscz/utils/fs/identity-cache";
+import { sha256Json } from "@genesiscz/utils/hash";
 import { voiceRootMeeting } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
+import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import {
     type ConfirmedSampleInput,
     changeVoiceLearning,
     meetingVoiceOwner,
+    readVoiceLibrary,
+    refused,
     type SampleId,
     type SampleSource,
     sourceForVoicePrint,
@@ -154,52 +160,105 @@ export function answeredVoiceTargets(entry: JournalEntry, people: readonly strin
     return confirmedVoices(entry, people).map((voice) => ({ entry, voice }));
 }
 
+/** Frozen before inference and compared per line at publication, including the next start which can set its end. */
+export function voiceLineVersions(meeting: SourceMeeting, keys = voiceLineKeys(meeting)): Map<string, string> {
+    return new Map(
+        keys.map((key, i) => [key, sha256Json([meeting.transcript[i], meeting.transcript[i + 1]?.startSec ?? null])])
+    );
+}
+
+export type VoiceSourceChecks = Map<VoicePrintChange, (versions: ReadonlyMap<string, string>) => boolean>;
+
 /** A backfill can decode all the confirmed windows of one recording in the same pass. */
-export async function prepareVoicePrints<T extends VoiceTarget>(opened: OpenedMeeting, targets: T[], dryRun = false) {
+export async function prepareVoicePrints<T extends VoiceTarget>(
+    opened: OpenedMeeting,
+    targets: T[],
+    options: {
+        dryRun?: boolean;
+        signal?: AbortSignal;
+        planned?: (count: number) => void;
+        checks?: VoiceSourceChecks;
+    } = {}
+) {
+    const { dryRun, signal } = options;
     const project = opened.record.project;
     if (!project || !targets.length) {
         return [];
     }
+    signal?.throwIfAborted();
     const energy = await opened.energy();
     const meeting = await opened.meeting();
     const rootMeeting = voiceRootMeeting(opened.store, opened.record);
     const keys = voiceLineKeys(meeting);
+    const versions = options.checks ? voiceLineVersions(meeting, keys) : undefined;
     const lines = lineEvidence(
         meeting.transcript,
         (await opened.evidence()) ?? { segments: [], speaking: [] },
         undefined,
         energy.share
     );
-    const spans: LabelContext["lines"][number][] = lines.flatMap((line) => {
-        const share = line.micShare ?? line.energyMic;
-        if (share === undefined || share === 0.5) {
-            return [];
-        }
-        return [{ index: line.index, fromSec: line.startSec, toSec: line.endSec, seat: share > 0.5 ? "mic" : "call" }];
-    });
-    const eligible = targets.map(({ voice, saved }) =>
-        spans.filter(
-            (line) =>
-                line.fromSec >= voice.fromSec &&
-                line.toSec <= voice.endSec &&
-                (!voice.seat || voice.seat === line.seat) &&
-                !saved?.some(
-                    ({ after }) =>
-                        after.fromSec === line.fromSec && after.toSec === line.toSec && after.seat === line.seat
+    const { library } = readVoiceLibrary();
+    const skipped = targets.map(() => new Map<string, number>());
+    const eligible = targets.map(({ voice, saved }, i) => {
+        const owner = meetingVoiceOwner(opened.record, voice.person);
+        return lines.flatMap((line): LabelContext["lines"] => {
+            if (line.startSec < voice.fromSec || line.endSec > voice.endSec || line.endSec <= line.startSec) {
+                return [];
+            }
+            const share = line.micShare ?? line.energyMic;
+            const seat = share === undefined || share === 0.5 ? undefined : share > 0.5 ? "mic" : "call";
+            const lineKey = keys[line.index]!;
+            if (
+                saved?.some(
+                    ({ after, source }) =>
+                        (!source?.spanKey || source.lineKey === lineKey) &&
+                        after.fromSec === line.startSec &&
+                        after.toSec === line.endSec &&
+                        (!seat || after.seat === seat)
                 )
+            ) {
+                return [];
+            }
+            const reason =
+                !seat || (voice.seat && voice.seat !== seat)
+                    ? "no complete line with usable channel and voice evidence"
+                    : refused(library, { rootMeeting, lineKey, recordingKey: "" }, owner);
+            if (reason || !seat) {
+                const counts = skipped[i]!;
+                const why = reason ?? "no complete line with usable channel and voice evidence";
+                counts.set(why, (counts.get(why) ?? 0) + 1);
+                return [];
+            }
+            return [{ index: line.index, fromSec: line.startSec, toSec: line.endSec, seat }];
+        });
+    });
+    options.planned?.(
+        targets.reduce(
+            (sum, target, i) =>
+                sum +
+                Math.max(
+                    1,
+                    (target.saved?.length ?? 0) +
+                        eligible[i]!.length +
+                        [...skipped[i]!.values()].reduce((sum, n) => sum + n, 0)
+                ),
+            0
         )
     );
-    const wanted = new Set(eligible.flat().map((line) => line.index));
+    const wanted = new Map(eligible.flat().map((line) => [line.index, line]));
     const embeddings = wanted.size
         ? await embedSeatLines({
-              lines: spans.filter((line) => wanted.has(line.index)),
+              lines: [...wanted.values()].sort((a, b) => a.index - b.index),
               sound: await opened.sound(),
+              config: await opened.config(),
+              signal,
               // An explicit empty path selects the call-local VoiceLineCache without an on-disk file.
               ...(dryRun ? { cachePath: "" } : {}),
           })
         : [];
     const byLine = new Map(embeddings.map((line) => [line.index, line]));
     const hashes = new Map<string, string>();
+    const files = new Map<string, FileIdentity>();
     const results = [];
     for (const [i, target] of targets.entries()) {
         const lines = eligible[i]!.flatMap(({ index }) => byLine.get(index) ?? []);
@@ -210,10 +269,18 @@ export async function prepareVoicePrints<T extends VoiceTarget>(opened: OpenedMe
             project,
             lines,
             hashes,
+            files: options.checks ? files : undefined,
+            checks: options.checks,
+            versions,
             keys,
             rootMeeting,
         });
-        results.push({ target, changes });
+        results.push({
+            target,
+            changes,
+            refusals: skipped[i]!,
+            missing: eligible[i]!.length - changes.length,
+        });
     }
     return results;
 }
@@ -228,6 +295,9 @@ async function printsOf(options: {
     keys: string[];
     rootMeeting: string;
     hashes: Map<string, string>;
+    files?: Map<string, FileIdentity>;
+    checks?: VoiceSourceChecks;
+    versions?: ReadonlyMap<string, string>;
 }): Promise<VoicePrintChange[]> {
     const { project, entry, voice, hashes } = options;
     const changes: VoicePrintChange[] = [];
@@ -237,6 +307,19 @@ async function printsOf(options: {
             continue;
         }
 
+        const path = channel.source.audioPath;
+        if (options.files) {
+            const identity = fileIdentity(path);
+            if (
+                !identity ||
+                identity.size !== channel.source.size ||
+                identity.mtimeMs !== channel.source.mtimeMs ||
+                (options.files.has(path) && !isDeepStrictEqual(options.files.get(path), identity))
+            ) {
+                continue;
+            }
+            options.files.set(path, identity);
+        }
         let sourceSha = hashes.get(channel.source.audioPath);
         if (!sourceSha) {
             sourceSha = await sha256FileAsync(channel.source.audioPath);
@@ -254,7 +337,7 @@ async function printsOf(options: {
             confirmedAt: entry.at,
             question: voice.item,
         };
-        changes.push({
+        const change: VoicePrintChange = {
             project,
             owner: options.owner,
             person: voice.person,
@@ -263,7 +346,17 @@ async function printsOf(options: {
             token: entry.token,
             origin: entry.action.kind === "confirm" ? "confirm" : "answer",
             source: sourceForVoicePrint(after, options.rootMeeting, options.keys[line.index]),
-        });
+        };
+        changes.push(change);
+        const identity = options.files?.get(path);
+        const key = options.keys[line.index]!;
+        if (options.checks && identity && options.versions) {
+            const version = options.versions.get(key);
+            options.checks.set(
+                change,
+                (current) => current.get(key) === version && isDeepStrictEqual(fileIdentity(path), identity)
+            );
+        }
     }
 
     return changes;

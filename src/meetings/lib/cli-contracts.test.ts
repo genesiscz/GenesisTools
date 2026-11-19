@@ -309,6 +309,7 @@ test("voices has one tree, the voice alias, and all old and new subcommands", as
             "backfill",
             "collect",
             "enroll",
+            "jobs",
             "move",
             "play",
             "prepare",
@@ -320,6 +321,20 @@ test("voices has one tree, the voice alias, and all old and new subcommands", as
             "score",
             "undo",
         ]);
+    }
+});
+
+test("P6 voices jobs lists the service queue and exposes cancel by id", async () => {
+    const program = new Command().exitOverride();
+    await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "voices" });
+    const jobs = program.commands.find((c) => c.name() === "voices")!.commands.find((c) => c.name() === "jobs");
+    expect(jobs?.commands.map((c) => c.name())).toEqual(["cancel"]);
+    const output = spyOn(out, "result").mockImplementation(() => undefined);
+    try {
+        await program.parseAsync(["voices", "jobs", "--project", "empty-rehearsal", "--json"], { from: "user" });
+        expect(SafeJSON.parse(String(output.mock.calls[0]?.[0]))).toEqual([]);
+    } finally {
+        output.mockRestore();
     }
 });
 

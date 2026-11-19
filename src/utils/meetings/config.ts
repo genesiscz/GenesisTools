@@ -402,6 +402,8 @@ const speakerLabelsSchema = z.object({
             enabled: z.boolean().default(true),
             /** The samples prediction may consult. Browsing and corrections carry their own scope. */
             sampleScope: z.enum(["all", "project"]).default("all"),
+            /** Seat preview's limit on opposite-side matches as a fraction of the stronger side's count. */
+            seatOppositeShare: z.number().min(0).max(0.5).default(0.1),
             /** Mean cosine below which a sample is offered for human review. */
             outlierBelow: z.number().min(-1).max(1).default(0.5),
             /**
@@ -630,6 +632,16 @@ const storedConfigSchema = z
     .object({
         /** A newer version than this code writes still reads: its keys this code knows, the rest stay in the file. */
         version: z.number().int().min(MEETINGS_CONFIG_VERSION).default(MEETINGS_CONFIG_VERSION),
+        meetings: z
+            .object({
+                voices: z
+                    .object({
+                        /** Seconds after the last learned sample before the meeting's speaker suggestions run again. */
+                        reproposeDelaySec: z.number().min(0).max(2_147_483).default(10),
+                    })
+                    .prefault({}),
+            })
+            .prefault({}),
         global: z
             .object({
                 dictionary: dictionaryLevelSchema.prefault({}),

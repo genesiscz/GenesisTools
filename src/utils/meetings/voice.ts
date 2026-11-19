@@ -447,6 +447,8 @@ export async function embedVoiceLines(options: {
     spans: readonly { index: number; fromSec: number; toSec: number }[];
     channels: readonly { channel: 0 | 1; track: VoiceEmbeddingProvenance["track"] }[];
     cachePath?: string;
+    /** Reuse matching entries and compute misses in memory. A preview never persists them. */
+    readOnlyCache?: boolean;
     workerPrefix?: readonly string[];
     /** The worker takes itself out of background first (`clearOwnBackground`): the voice pass at normal priority. */
     clearBackground?: boolean;
@@ -571,7 +573,9 @@ export async function embedVoiceLines(options: {
             }
         }
     }
-    cache?.save();
+    if (!options.readOnlyCache) {
+        cache?.save();
+    }
     if (aborted) {
         throw options.signal?.reason;
     }

@@ -153,6 +153,9 @@ export class MeetingsToolset extends ReplToolset {
                     }),
                 backfillVoices: async (params: z.input<typeof backfillVoices.params>) =>
                     withMeetingsClient((client) => client.call("voice.backfill", params, { timeoutMs: 3_600_000 })),
+                voiceJobs: serviceCall("voices.jobs"),
+                cancelVoiceJob: (id: string) =>
+                    withMeetingsClient((client) => client.call("voices.jobs.cancel", { id })),
                 seats: serviceCall("meeting.seats.suggest"),
                 thresholds: async (params: z.input<typeof thresholds.params> = {}) =>
                     withMeetingsClient((client) => readOrSetThresholds({ client, ...params })),
