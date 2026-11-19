@@ -81,7 +81,7 @@ function infer(facts: Facts, reads: ReadonlyArray<ReadonlySet<string>>): Omit<Se
         if (facts.lines === 0) {
             return {
                 seat: "unsure",
-                reason: "A speaker decision is saved, but its transcript lines are unavailable.",
+                reason: "A speaker decision is saved, but no transcript line counts for it.",
                 confidence: 0,
             };
         }
@@ -145,6 +145,10 @@ export function suggestSeats(options: {
     }
     const byLabel = new Map<string, Range[]>();
     for (const range of ranges) {
+        if (range.person) {
+            person(range.person).hasRange = true;
+        }
+
         const group = byLabel.get(range.label);
         if (group) {
             group.push(range);
@@ -158,18 +162,10 @@ export function suggestSeats(options: {
             continue;
         }
         const row = person(range.person);
-        row.hasRange = true;
         row.lines++;
         if (line.energyMicRaw !== undefined) {
             row.mic += Number(line.energyMicRaw > 0.65);
             row.call += Number(line.energyMicRaw < 0.35);
-        }
-    }
-    if (lines.length === 0) {
-        for (const range of ranges) {
-            if (range.person) {
-                person(range.person).hasRange = true;
-            }
         }
     }
     const manual = new Map<string, "room" | "remote">();
