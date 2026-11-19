@@ -124,18 +124,19 @@ final class MeetingsTranscriptRowsTests: XCTestCase {
         var source = line("Bob Example", at: 10)
         source.sourceIndex = 42
         let evidence = WindowLineEvidence(index: 42, startSec: 10, endSec: 12, swapSkippedBy: ["i1"])
-        let marks = TranscriptBlock.build(from: [source], evidence: [evidence], items: swaps)[0].lines[0].evidenceMarks
+        let block = try XCTUnwrap(TranscriptBlock.build(from: [source], evidence: [evidence], items: swaps).first)
+        let marks = try XCTUnwrap(block.lines.first).evidenceMarks
         XCTAssertEqual(marks.map(\.kind), [.swapSkipped])
-        XCTAssertEqual(marks[0].text, "Skipped by swap to Alice Example at 00:05 to 00:30")
-        var rejected = swaps; rejected[0].status = "rejected"
+        XCTAssertEqual(try XCTUnwrap(marks.first).text, "Skipped by swap to Alice Example at 00:05 to 00:30")
+        let rejected = swaps.map { item in var item = item; item.status = "rejected"; return item }
         XCTAssertTrue(TranscriptEvidenceMark.build(evidence, items: rejected, echoAbove: 70).isEmpty)
     }
 
-    func testX6NoRemotePresenceHasItsOwnCauseAndMark() {
+    func testX6NoRemotePresenceHasItsOwnCauseAndMark() throws {
         let unknown = WindowLineEvidence(index: 0, startSec: 0, endSec: 1)
         XCTAssertTrue(TranscriptEvidenceMark.build(unknown, items: [], echoAbove: 70).isEmpty)
         var absent = unknown; absent.noRemotePresent = true
-        let mark = TranscriptEvidenceMark.build(absent, items: [], echoAbove: 70)[0]
+        let mark = try XCTUnwrap(TranscriptEvidenceMark.build(absent, items: [], echoAbove: 70).first)
         XCTAssertEqual(mark.kind, .noRemotePresent)
         XCTAssertEqual(mark.text, "No remote person was in the call at this time")
     }
@@ -162,30 +163,31 @@ final class MeetingsTranscriptRowsTests: XCTestCase {
     }
 
     /// C1, C2, T7, T8: a line under an open suggestion is rebuilt with the name, and keeps its indicator.
-    func testASuggestedLineKeepsItsIndicator() {
+    func testASuggestedLineKeepsItsIndicator() throws {
         let indicator = TranscriptLine.Indicator(names: ["Bob Example"], ignored: "stretch-stuck")
-        let shown = TranscriptBlocksPane.shownLines(
+        let shown = try XCTUnwrap(TranscriptBlocksPane.shownLines(
             [line("Speaker 2", at: 10, confidence: 0.8, suggested: "Alice Example", band: "applied", indicator: indicator)],
-            applyAbove: 70)
-        XCTAssertEqual(shown[0].who, .name("Alice Example"))
-        XCTAssertEqual(shown[0].speaker, "Speaker 2", "the label the engine sent stays, for a rename or an assignment")
-        XCTAssertEqual(shown[0].indicator, indicator)
+            applyAbove: 70).first)
+        XCTAssertEqual(shown.who, .name("Alice Example"))
+        XCTAssertEqual(shown.speaker, "Speaker 2", "the label the engine sent stays, for a rename or an assignment")
+        XCTAssertEqual(shown.indicator, indicator)
         let below = TranscriptBlocksPane.shownLines(
             [line("Speaker 2", at: 10, confidence: 0.6, suggested: "Alice Example", band: "applied", indicator: indicator)],
             applyAbove: 70)
-        XCTAssertEqual(below[0].who, .guess("Alice Example", percent: 60))
-        XCTAssertEqual(below[0].indicator, indicator)
-        let block = TranscriptBlock.build(from: below)[0]
-        XCTAssertEqual(block.lines[0].indicator, indicator, "the block line draws the glyph from it")
+        let guessed = try XCTUnwrap(below.first)
+        XCTAssertEqual(guessed.who, .guess("Alice Example", percent: 60))
+        XCTAssertEqual(guessed.indicator, indicator)
+        let block = try XCTUnwrap(TranscriptBlock.build(from: below).first)
+        XCTAssertEqual(try XCTUnwrap(block.lines.first).indicator, indicator, "the block line draws the glyph from it")
     }
 
     /// C15: a line an open question decides shows the guess form even above the threshold.
-    func testAQuestionedLineStaysAGuess() {
-        let shown = TranscriptBlocksPane.shownLines(
+    func testAQuestionedLineStaysAGuess() throws {
+        let shown = try XCTUnwrap(TranscriptBlocksPane.shownLines(
             [line("Speaker 2", at: 10, confidence: 0.9, suggested: "Alice Example", questioned: true, band: "applied")],
-            applyAbove: 70)
-        XCTAssertEqual(shown[0].who, .guess("Alice Example", percent: 90))
-        XCTAssertEqual(shown[0].guess, true)
+            applyAbove: 70).first)
+        XCTAssertEqual(shown.who, .guess("Alice Example", percent: 90))
+        XCTAssertEqual(shown.guess, true)
     }
 
     /// X8: the engine's unclear mark (no suggested name) and a confirmed name reach the pane unchanged.
@@ -321,7 +323,7 @@ final class MeetingsTranscriptRowsTests: XCTestCase {
                        "the two open lines of one question are one block")
         XCTAssertEqual(TranscriptBlock.names(blocks), ["Alice Example", "Alice Example + Bob Example", "Bob Example"],
                        "an open question takes no person colour")
-        XCTAssertEqual(TranscriptAvatar.initials(blocks[0].who.personName), "?")
+        XCTAssertEqual(TranscriptAvatar.initials(try XCTUnwrap(blocks.first).who.personName), "?")
         XCTAssertEqual(TranscriptBlocksPane.BandCount(TranscriptBlocksPane.shownLines(lines, applyAbove: 70)).words,
                        "1 named · 1 guessed · 2 open lines", "a line no suggestion covers is not counted")
 
