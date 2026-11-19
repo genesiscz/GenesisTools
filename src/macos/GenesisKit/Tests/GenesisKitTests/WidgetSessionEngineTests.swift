@@ -77,7 +77,7 @@ final class WidgetSessionEngineTests: XCTestCase {
         let pipe = WidgetSessionPipe()
         let engine = makeEngine(pipe)
         let caps = engine.capabilities
-        XCTAssertEqual(caps.targets, [.window, .app, .display, .area])
+        XCTAssertEqual(caps.targets, [.window, .app, .display, .area, .follow], "the widget offers Follow display too")
         XCTAssertEqual(caps.maxDurationMs, 600_000)
         XCTAssertTrue(caps.liveFrameRate)
         XCTAssertTrue(caps.liveTargetSwitch)
