@@ -2605,6 +2605,48 @@ describe("frame recordings with continuous sound", () => {
         }
     }, 15_000);
 
+    test("a startup audio failure uses the first observation time after the writer finishes cleanup", async () => {
+        const root = mkdtempSync(join(tmpdir(), "frames-startup-failure-time-"));
+        const recorder = new SessionRecorder();
+        let observedAt = 0;
+        const failure = new Error("fixture writer refused at startup");
+        const startup = spyOn(recorder, "startAudioSession").mockImplementationOnce(async (options) => {
+            const failureTime = Date.now();
+            observedAt = failureTime;
+            const now = spyOn(Date, "now").mockReturnValue(failureTime);
+            try {
+                options.onFailure?.(failure);
+            } finally {
+                now.mockRestore();
+            }
+            await Bun.sleep(30);
+            options.onFailure?.(new Error("fixture writer still closing"));
+            throw failure;
+        });
+        const recording = new ModeRecording({
+            recorder,
+            folder: join(root, "rec"),
+            liveDir: join(root, "live"),
+            audio: { mic: true },
+            audioMode: "session",
+        });
+        const events: Array<{ atMs: number; reason: string }> = [];
+        recording.hooks.onAudioChange = (change) => {
+            if (change.kind === "failure") {
+                events.push({ atMs: change.atMs, reason: change.reason });
+            }
+        };
+        await recording.start();
+        try {
+            await withTimeout(recording.fellBack.promise, 3000, new Error("startup did not fall back"));
+            expect(startup).toHaveBeenCalledTimes(1);
+            expect(events).toEqual([{ atMs: observedAt, reason: failure.message }]);
+        } finally {
+            startup.mockRestore();
+            await recording.stop();
+        }
+    });
+
     test("sound fallback cancels a frame capture before its first frame without a third note", async () => {
         const root = mkdtempSync(join(tmpdir(), "frames-fallback-before-frame-"));
         const recorder = new SessionRecorder("--fixture-audio-session-restart-fails");

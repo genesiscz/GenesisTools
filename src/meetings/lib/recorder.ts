@@ -56,6 +56,8 @@ function meetingRecorderConfig(run: MeetingRun, minSeparation?: number) {
             convert: deps.toJpeg,
         });
         const salvages = new Set<Promise<void>>();
+        const salvageAbort = new AbortController();
+        let began = false;
         const levels = run.capture.levels.enabled ? new MeetingLevels(minSeparation) : undefined;
         let previousLevels: AudioLevelBlock | undefined;
         let stopLevels: (() => void) | undefined;
@@ -158,6 +160,7 @@ function meetingRecorderConfig(run: MeetingRun, minSeparation?: number) {
                 },
                 beforeLoop: async () => {
                     await run.begin(recording);
+                    began = true;
                     if (levels) {
                         stopLevels = deps.scheduleLevels((atMs) => {
                             try {
@@ -177,18 +180,24 @@ function meetingRecorderConfig(run: MeetingRun, minSeparation?: number) {
                 },
                 afterLoop: async () => {
                     stopLevels?.();
+                    if (!began) {
+                        return; // Startup could not account for the earlier run. Its journal still belongs to it.
+                    }
+
                     const deadlineMs = deps.salvageDeadlineMs ?? SALVAGE_DEADLINE_MS;
                     const expired = new Error(`sound recovery did not finish within ${deadlineMs / 1000}s`);
                     try {
                         await withTimeout(
                             (async () => {
                                 await Promise.all(salvages);
-                                await run.salvageTracks(run.pieceDir);
+                                await run.salvageTracks(run.pieceDir, salvageAbort.signal);
                             })(),
                             deadlineMs,
                             expired
                         );
                     } catch (err) {
+                        // An expired probe can finish later, but it may no longer move files or clear recovery data.
+                        salvageAbort.abort(err);
                         if (err !== expired) {
                             throw err;
                         }
@@ -264,11 +273,17 @@ function meetingRecorderConfig(run: MeetingRun, minSeparation?: number) {
                     },
                     onSettled: (entry) => {
                         const salvage = run
-                            .salvageTracks(entry.outDir)
-                            .then(() => rmSync(entry.outDir, { recursive: true, force: true }))
+                            .salvageTracks(entry.outDir, salvageAbort.signal)
+                            .then(() => {
+                                if (!salvageAbort.signal.aborted) {
+                                    rmSync(entry.outDir, { recursive: true, force: true });
+                                }
+                            })
                             .catch((err: unknown) => {
-                                log.error({ err, dir: entry.outDir }, "could not recover a capture's sound");
-                                run.note(`could not recover a capture's sound: ${errorText(err)}`);
+                                if (!salvageAbort.signal.aborted) {
+                                    log.error({ err, dir: entry.outDir }, "could not recover a capture's sound");
+                                    run.note(`could not recover a capture's sound: ${errorText(err)}`);
+                                }
                             });
                         salvages.add(salvage);
                         void salvage.finally(() => salvages.delete(salvage));
@@ -377,7 +392,6 @@ export async function runRecorder(options: RunRecorderOptions): Promise<Recorder
     const capture = options.withoutScreen ? { ...options.capture, backend: "native" as const } : options.capture;
     const deps: RecorderDeps = { ...defaultDeps(capture), startOcr: startOcrWorker, ...options.deps };
     const files = recorderFiles(store);
-    const initial = store.read(meetingId);
     const claim = await claimRecorderPid(files.pid);
     let final: RecorderState;
     const stateFile = new RecorderStateFile<RecorderState>({
@@ -386,6 +400,7 @@ export async function runRecorder(options: RunRecorderOptions): Promise<Recorder
     });
 
     try {
+        const initial = store.read(meetingId);
         const run = new MeetingRun({ ...options, deps, initial, stateFile });
         const recording = new FrameRecording(meetingRecorderConfig(run, options.minSeparation));
         run.state.displaySpans = recording.displayBook.intervals;
