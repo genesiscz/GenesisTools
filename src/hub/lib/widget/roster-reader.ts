@@ -1,7 +1,13 @@
 import type { AgentSessionRow } from "@app/ai/lib/sessions/agent-session-rows";
 import { logger } from "@genesiscz/utils/logger";
 import type { AgentsTree } from "../agents/types";
-import { newestRosterRows, WIDGET_EXACT_PATHS_LIMIT, type WidgetRoster, type WidgetRosterScope } from "./roster-index";
+import {
+    compareRosterRows,
+    newestRosterRows,
+    WIDGET_EXACT_PATHS_LIMIT,
+    type WidgetRoster,
+    type WidgetRosterScope,
+} from "./roster-index";
 import type { RosterPage } from "./roster-pages";
 
 /**
@@ -257,10 +263,17 @@ export class WidgetRosterReader {
                             this.fail("Missing widget roster page");
                             return;
                         }
-                        this.rows =
-                            page.rows.length || !resume
-                                ? newestRosterRows([...(resume ? this.rows : []), ...page.rows])
-                                : this.rows;
+                        if (!resume) {
+                            this.rows = newestRosterRows(page.rows);
+                        } else if (page.rows.length) {
+                            const next = newestRosterRows(page.rows);
+                            const tail = this.rows.at(-1);
+                            if (!tail || compareRosterRows(tail, next[0]) <= 0) {
+                                this.rows.push(...next);
+                            } else {
+                                this.rows = newestRosterRows([...this.rows, ...next]);
+                            }
+                        }
                         this.agents =
                             page.agents ??
                             (resume

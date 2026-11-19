@@ -6,6 +6,7 @@ import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider
 import { HistoryRepository } from "@genesiscz/utils/agent-sessions/repository";
 import { cpuMeta, profiler } from "@genesiscz/utils/profile";
 import { type AgentsTree, rankedParents } from "../agents";
+import { sortNodes } from "../agents/tree";
 import {
     newestRosterRows,
     readWidgetParents,
@@ -131,19 +132,32 @@ export async function updateRosterPaths(
         )
     ) {
         const updated = await tree(rows, now, true);
-        if (updated.parents.length === parents.length) {
+        const workerKey = (node: AgentsTree["orphans"][number]) => `${node.harness}:${node.id}`;
+        const workersOf = (parent: AgentsTree["parents"][number]) =>
+            new Set(parent.children.filter((node) => node.kind === "worker").map(workerKey));
+        const unchangedWorkers = updated.parents.every((parent) => {
+            const previous = parents.find((row) => row.filePath === parent.filePath);
+            return (
+                previous &&
+                workersOf(parent).difference(workersOf(previous)).size === 0 &&
+                workersOf(previous).difference(workersOf(parent)).size === 0
+            );
+        });
+        if (updated.parents.length === parents.length && unchangedWorkers) {
+            const ranked = rankedParents(
+                [...roster.agents.parents.filter((parent) => !changed.has(parent.filePath)), ...updated.parents],
+                WIDGET_ROSTER_LIMIT
+            );
+            const attached = new Set(
+                ranked.flatMap((parent) => parent.children.filter((node) => node.kind === "worker").map(workerKey))
+            );
             return {
                 rows: merged,
                 agents: {
                     ...roster.agents,
                     generatedAt: updated.generatedAt,
-                    parents: rankedParents(
-                        [
-                            ...roster.agents.parents.filter((parent) => !changed.has(parent.filePath)),
-                            ...updated.parents,
-                        ],
-                        WIDGET_ROSTER_LIMIT
-                    ),
+                    parents: ranked,
+                    orphans: sortNodes(updated.orphans.filter((node) => !attached.has(workerKey(node)))),
                 },
             };
         }
@@ -155,17 +169,24 @@ export async function streamWidgetRoster(publish?: (page: RosterPage) => void | 
     const now = Date.now();
     const rows: AgentSessionRow[] = [];
     let offset = 0;
+    let agents: AgentsTree | undefined;
+    let parentPaths: string[] | undefined;
+    const publishParents = publish && ((tree: AgentsTree) => publish({ rows: [], offset, next: offset, agents: tree }));
     for await (const page of coldRosterPages(now)) {
         rows.push(...page.rows);
         offset = page.next;
         await publish?.(page);
+        if (!agents && rows.length >= WIDGET_ROSTER_LIMIT) {
+            const newest = newestRosterRows([...rows]).slice(0, WIDGET_ROSTER_LIMIT);
+            parentPaths = newest.map((row) => row.filePath);
+            agents = await readWidgetParents(newest, now, false, publishParents);
+            await publishParents?.(agents);
+        }
     }
     newestRosterRows(rows);
-    const agents = await readWidgetParents(
-        rows.slice(0, WIDGET_ROSTER_LIMIT),
-        now,
-        false,
-        publish && ((agents) => publish({ rows: [], offset, next: offset, agents }))
-    );
+    const newest = rows.slice(0, WIDGET_ROSTER_LIMIT);
+    if (!agents || newest.some((row, i) => row.filePath !== parentPaths?.[i])) {
+        agents = await readWidgetParents(newest, now, false, publishParents);
+    }
     return { rows, agents };
 }
