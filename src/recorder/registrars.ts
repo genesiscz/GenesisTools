@@ -94,6 +94,7 @@ export const RECORDER_REGISTRARS: LazyRegistrar[] = [
     { names: ["cut-fillers"], load: async () => (await import("./commands/registrars/cut-fillers")).register },
     { names: ["subtitles"], load: async () => (await import("./commands/registrars/subtitles")).register },
     { names: ["proxy"], load: async () => (await import("./commands/registrars/proxy")).register },
+    { names: ["displays"], load: async () => (await import("./commands/registrars/displays")).register },
     { names: ["find-screen"], load: async () => (await import("./commands/registrars/find-screen")).register },
     { names: ["duplicate"], load: async () => (await import("./commands/duplicate")).registerDuplicateCommand },
     {

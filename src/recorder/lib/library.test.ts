@@ -25,6 +25,7 @@ import { recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
 import { LiveRecordingServer } from "@genesiscz/utils/screen-recorder/live";
 import { recordingStoreOf } from "@genesiscz/utils/screen-recorder/recording-stores";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
+import { applyDisplayOps, displayOpOverrides, displayOpSchema, displayTimeline, isDisplayOp } from "./display-ops";
 import {
     computeEdit,
     exportAs,
@@ -289,6 +290,117 @@ describe("a display switch from the editor", () => {
         ).toThrow("the plan shows display 9, which has no frames");
         expect(() => chosenPlan(frames, { plan: before, display: 1 })).toThrow("without a display or switches");
         expect(parseDisplayPlan({ version: 1, ...before })).toEqual({ version: 1, ...before });
+    });
+});
+
+describe("display ops: each display is a row, the movie shows one per segment", () => {
+    const frame = (displayId: number, sec: number) => ({
+        path: `/f/${displayId}-${sec}.jpg`,
+        atUs: sec * 1_000_000,
+        displayId,
+    });
+    const frames = [frame(1, 0), frame(2, 0), frame(3, 15), frame(1, 21), frame(2, 28)];
+    const ranges = [
+        { fromUs: 0, toUs: 10_000_000, displayId: 1 },
+        { fromUs: 10_000_000, toUs: 20_000_000, displayId: 2 },
+        { fromUs: 20_000_000, toUs: 28_000_001, displayId: 1 },
+    ];
+
+    it("reads every display with frames, the segments and the switch points in source seconds", () => {
+        const timeline = displayTimeline({ policy: "most-change", ranges }, frames, [
+            { id: 2, name: "Studio" },
+            { id: 1, name: "Built-in" },
+        ]);
+
+        expect(timeline.displays).toEqual([
+            { id: 2, name: "Studio", firstSec: 0, shownSec: 10, segments: 1 },
+            { id: 1, name: "Built-in", firstSec: 0, shownSec: 18, segments: 2 },
+            { id: 3, name: "Display 3", firstSec: 15, shownSec: 0, segments: 0 },
+        ]);
+        expect(timeline.segments.map((segment) => [segment.from, segment.to, segment.name])).toEqual([
+            [0, 10, "Built-in"],
+            [10, 20, "Studio"],
+            [20, 28, "Built-in"],
+        ]);
+        expect(timeline.switches).toEqual([10, 20]);
+    });
+
+    it("hides a display with its neighbour, moves a switch both ways, and each op sees the ops before it", () => {
+        const hide = displayOpOverrides(ranges, frames, [{ op: "hideDisplay", display: 2, from: 12, to: 16 }]);
+        expect(hide).toEqual([{ fromUs: 12_000_000, toUs: 16_000_000, displayId: 1 }]);
+
+        expect(displayOpOverrides(ranges, frames, [{ op: "moveDisplaySwitch", at: "0:20.2", to: 22.5 }])).toEqual([
+            { fromUs: 20_000_000, toUs: 22_500_000, displayId: 2 },
+        ]);
+        expect(displayOpOverrides(ranges, frames, [{ op: "moveDisplaySwitch", at: 10, to: 7 }])).toEqual([
+            { fromUs: 7_000_000, toUs: 10_000_000, displayId: 2 },
+        ]);
+        // The second op moves a switch the first op made.
+        expect(
+            displayOpOverrides(ranges, frames, [
+                { op: "switchDisplay", display: 3, from: 15, to: 18 },
+                { op: "moveDisplaySwitch", at: 18, to: 19 },
+            ])
+        ).toEqual([
+            { fromUs: 15_000_000, toUs: 18_000_000, displayId: 3 },
+            { fromUs: 18_000_000, toUs: 19_000_000, displayId: 3 },
+        ]);
+        // Hidden over the whole recording, every segment of display 1 shows a neighbour.
+        expect(displayOpOverrides(ranges, frames, [{ op: "hideDisplay", display: 1 }])).toEqual([
+            { fromUs: 0, toUs: 10_000_000, displayId: 2 },
+            { fromUs: 20_000_000, toUs: 28_000_001, displayId: 2 },
+        ]);
+    });
+
+    it("refuses with the facts to try again: no frames, no switch near, nothing else to show, nothing shown", () => {
+        expect(() => displayOpOverrides(ranges, frames, [{ op: "switchDisplay", display: 9, from: 0, to: 5 }])).toThrow(
+            "there are no frames of display 9; the displays are 1, 2, 3"
+        );
+        expect(() => displayOpOverrides(ranges, frames, [{ op: "moveDisplaySwitch", at: 5, to: 7 }])).toThrow(
+            "the switches are at 10 s, 20 s"
+        );
+        expect(() => displayOpOverrides(ranges, frames, [{ op: "hideDisplay", display: 2, from: 0, to: 5 }])).toThrow(
+            "display 2 does not show from 0 s to 5 s; it shows 10-20 s"
+        );
+        const alone = [{ fromUs: 0, toUs: 5_000_000, displayId: 1 }];
+        expect(() =>
+            displayOpOverrides(alone, [frame(1, 0), frame(2, 6)], [{ op: "hideDisplay", display: 1 }])
+        ).toThrow("display 1 is the only display with frames from 0 s to 5 s");
+        expect(() => displayOpOverrides(ranges, frames, [{ op: "switchDisplay", display: 1, from: 9, to: 3 }])).toThrow(
+            "ends (3 s) before it starts (9 s)"
+        );
+    });
+
+    it("splits from a mixed op list, and a call that changes nothing or has no plan is refused before a remake", async () => {
+        const mixed = [
+            { op: "cut", from: 1, to: 2 },
+            { op: "hideDisplay", display: 2 },
+        ];
+        expect(mixed.map(isDisplayOp)).toEqual([false, true]);
+        expect(() => displayOpSchema.parse({ op: "hideDisplay", display: 2, at: 4 })).toThrow();
+
+        const folder = mkdtempSync(join(tmpdir(), "gt-display-ops-"));
+        await expect(applyDisplayOps(folder, [{ op: "hideDisplay", display: 2 }])).rejects.toThrow(
+            "has no display plan yet"
+        );
+        writeFileSync(
+            join(folder, "proxy.json"),
+            SafeJSON.stringify({ version: 1, policy: "most-change", windowSec: 10, ranges: ranges.slice(0, 1) })
+        );
+        writeFileSync(
+            join(folder, "recording.json"),
+            SafeJSON.stringify({
+                version: 1,
+                id: "two",
+                title: "Two displays",
+                startedAt: "2026-11-19T08:00:00.000Z",
+                displays: [{ id: 1, name: "Built-in" }],
+                frames: [{ file: "a.jpg", atMs: 0, displayId: 1 }],
+            })
+        );
+        await expect(applyDisplayOps(folder, [{ op: "switchDisplay", display: 1, from: 0, to: 4 }])).rejects.toThrow(
+            "change nothing"
+        );
     });
 });
 

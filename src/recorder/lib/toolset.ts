@@ -76,6 +76,7 @@ import { probeVideo } from "@genesiscz/utils/video/probe";
 import { z } from "zod";
 import { cameraRefusal, recorderFaceState } from "./camera-recorder";
 import { type DemoDriver, type DemoStep, demoEditSchema, runDemo } from "./demo";
+import { applyDisplayOps, displayFramesFolder, readDisplayTimeline } from "./display-ops";
 import { duplicateRecording } from "./duplicate";
 import {
     audioFactsOf,
@@ -94,7 +95,7 @@ import {
     writeSubtitles,
 } from "./edit";
 import { withEditSession } from "./edit-session";
-import { stepDisplaySwitch, switchDisplay } from "./frames-movie";
+import { stepDisplaySwitch } from "./frames-movie";
 import {
     cachedScreenText,
     eventsOf,
@@ -261,6 +262,9 @@ const layerAddFields = opParams("layerAdd");
 type LayerAddOptions = Omit<Extract<EditOp, { op: "layerAdd" }>, "op" | "file" | "kind"> & {
     kind?: MediaLayer["kind"];
 };
+
+const displayOpsResult =
+    "{ path, frames, plan: { policy, windowSec, ranges: { fromUs, toUs, displayId }[] }, displays: { displays, segments, switches } }";
 
 const movieMethods = [
     defineMethod({
@@ -719,13 +723,46 @@ const movieMethods = [
         effect: "read",
     }),
     defineMethod({
+        name: "displays",
+        params: z.object({}).strict(),
+        result: z.unknown(),
+        resultName:
+            "{ policy, displays: { id, name, firstSec, shownSec, segments }[], segments: { from, to, display, name }[], switches: number[] } | null",
+        doc: `A frames recording of several displays (a meeting, a library frames recording): which display its proxy movie shows when, in SOURCE seconds. displays: every display with frames (firstSec its first frame, shownSec how long the movie shows it); segments: the movie from start to end, one display each; switches: where the picture changes display. null for a recording with one display or no proxy yet. The same as ${toolCommand("recorder displays")} <rec>; the editor draws each display as its own row with these segments and switch lines.`,
+        effect: "read",
+    }),
+    defineMethod({
         name: "switchDisplay",
         params: z
             .object({ from: sourceTimeSchema, to: sourceTimeSchema, display: z.number().int().nonnegative() })
             .strict(),
         result: z.unknown(),
-        resultName: "{ path, frames, plan: { policy, windowSec, ranges: { fromUs, toUs, displayId }[] } }",
-        doc: `A frames recording of several displays (a meeting): its proxy movie shows \`display\` from \`from\` to \`to\` (source seconds or "m:ss") and is made again, the rest of its display plan (proxy.json) kept. The same as ${toolCommand("recorder proxy")} <rec> --keep-plan --switch from-to=display, and the editor's display lane. undoDisplaySwitch() takes it back.`,
+        resultName: displayOpsResult,
+        doc: `A frames recording of several displays (a meeting): its proxy movie shows \`display\` from \`from\` to \`to\` (source seconds or "m:ss") and is made again, the rest of its display plan (proxy.json) kept. The answer's displays is the new timeline, as displays() gives it. The same as the op {"op":"switchDisplay","display":2,"from":10,"to":20} in ${toolCommand("recorder apply")}, ${toolCommand("recorder proxy")} <rec> --keep-plan --switch from-to=display, and the editor's display rows. undoDisplaySwitch() takes it back.`,
+        effect: "reversible",
+    }),
+    defineMethod({
+        name: "hideDisplay",
+        params: z
+            .object({
+                display: z.number().int().nonnegative(),
+                from: sourceTimeSchema.optional(),
+                to: sourceTimeSchema.optional(),
+            })
+            .strict(),
+        positional: ["display", "from", "to"],
+        result: z.unknown(),
+        resultName: displayOpsResult,
+        doc: `Clips a display out of a frames recording's proxy movie: wherever \`display\` shows between \`from\` and \`to\` (source seconds; both absent: the whole recording), the display shown next to that segment shows instead (before it, else after it, else any other display with frames). Refused when no other display has frames there. The same as the op {"op":"hideDisplay","display":2,"from":10,"to":20} in ${toolCommand("recorder apply")}, and "Hide … Here" on a display's row in the editor. undoDisplaySwitch() takes it back.`,
+        effect: "reversible",
+    }),
+    defineMethod({
+        name: "moveDisplaySwitch",
+        params: z.object({ at: sourceTimeSchema, to: sourceTimeSchema }).strict(),
+        positional: ["at", "to"],
+        result: z.unknown(),
+        resultName: displayOpsResult,
+        doc: `Moves the switch between two displays that is at \`at\` (source seconds, within 0.5 s; displays().switches lists them) to \`to\`: the display before it shows longer, or the one after it starts earlier. The same as the op {"op":"moveDisplaySwitch","at":10,"to":12.5} in ${toolCommand("recorder apply")}, and a drag of a switch line in the editor. undoDisplaySwitch() takes it back.`,
         effect: "reversible",
     }),
     defineMethod({
@@ -2571,14 +2608,20 @@ export class Movie {
         );
     }
 
-    async switchDisplay(input: { from: z.infer<typeof timeSchema>; to: z.infer<typeof timeSchema>; display: number }) {
-        const folder = await this.framesFolder("switch between");
+    async displays() {
+        return readDisplayTimeline(await this.framesFolder("read")) ?? null;
+    }
 
-        return switchDisplay(folder, {
-            fromUs: timeToUs(input.from),
-            toUs: timeToUs(input.to),
-            displayId: input.display,
-        });
+    async switchDisplay(input: { from: z.infer<typeof timeSchema>; to: z.infer<typeof timeSchema>; display: number }) {
+        return applyDisplayOps(await this.framesFolder("switch between"), [{ op: "switchDisplay", ...input }]);
+    }
+
+    async hideDisplay(display: number, from?: z.infer<typeof timeSchema>, to?: z.infer<typeof timeSchema>) {
+        return applyDisplayOps(await this.framesFolder("hide"), [{ op: "hideDisplay", display, from, to }]);
+    }
+
+    async moveDisplaySwitch(at: z.infer<typeof timeSchema>, to: z.infer<typeof timeSchema>) {
+        return applyDisplayOps(await this.framesFolder("move a switch of"), [{ op: "moveDisplaySwitch", at, to }]);
     }
 
     async undoDisplaySwitch() {
@@ -2590,24 +2633,8 @@ export class Movie {
     }
 
     /** The frames folder of this recording; a plain movie has no displays to switch. */
-    private async framesFolder(doing: string): Promise<string> {
-        const opened = await openProject(this.recording);
-        const folder = recordingFolderOf(opened);
-
-        if (!folder) {
-            throw new Error(
-                `${opened.project.source.video} is a plain movie: it has no displays, so nothing to ${doing}`
-            );
-        }
-
-        // A video recording has a folder but no frames, and the error was "has no frames to make a movie of" (NR35).
-        if (readRecordingManifest(folder)?.settings?.kind === "video") {
-            throw new Error(
-                `this is a video recording: it has no display frames to ${doing}; only a frames recording (a meeting or a library frames recording) has them`
-            );
-        }
-
-        return folder;
+    private framesFolder(doing: string): Promise<string> {
+        return displayFramesFolder(this.recording, doing);
     }
 
     async findOnScreen(input: { text: string; limit?: number }): Promise<ScreenHitWithOps[]> {
