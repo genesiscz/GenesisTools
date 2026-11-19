@@ -260,13 +260,19 @@ final class HubWorkTests: XCTestCase {
     func testOnLoadedFiresOnceOnTheFirstLoad() async {
         let model = HubWorkModel(source: FakeWorkSource(), defaults: isolatedDefaults())
         var calls = 0
-        model.onLoaded = { calls += 1 }
+        let loaded = expectation(description: "First Work load")
+        model.onLoaded = {
+            calls += 1
+            loaded.fulfill()
+        }
         model.activate()
-        let deadline = Date().addingTimeInterval(3)
-        while calls == 0 && Date() < deadline { try? await Task.sleep(for: .milliseconds(10)) }
+        await fulfillment(of: [loaded], timeout: 3)
         XCTAssertEqual(calls, 1)
+        let reloaded = expectation(description: "Reloaded Work snapshot")
+        let watch = model.screen.$snapshot.dropFirst().compactMap { $0 }.first().sink { _ in reloaded.fulfill() }
         model.screen.reload()
-        try? await Task.sleep(for: .milliseconds(200))
+        await fulfillment(of: [reloaded], timeout: 3)
+        watch.cancel()
         XCTAssertEqual(calls, 1, "once only")
         model.deactivate()
     }
@@ -405,9 +411,11 @@ final class HubWorkTests: XCTestCase {
     /// starts folded with its open count (the real project has 35 of them), so its tasks are not on screen yet.
     func testTheWorkPaneDrawsTheProjectInARealWindow() async throws {
         let model = HubWorkModel(source: FakeWorkSource(), defaults: isolatedDefaults())
+        let loaded = expectation(description: "Work snapshot ready for rendering")
+        let watch = model.screen.$snapshot.compactMap { $0 }.first().sink { _ in loaded.fulfill() }
         model.activate()
-        let deadline = Date().addingTimeInterval(3)
-        while model.screen.snapshot == nil && Date() < deadline { try? await Task.sleep(for: .milliseconds(10)) }
+        await fulfillment(of: [loaded], timeout: 3)
+        watch.cancel()
         XCTAssertEqual(model.screen.project, "App")
         XCTAssertEqual(model.navSelection, "App")
 

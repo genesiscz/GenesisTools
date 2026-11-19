@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 import Vision
 import GenesisKitTestHooks
@@ -116,23 +117,24 @@ final class WorkScreenTests: XCTestCase {
         )
     }
 
-    private func settle(_ until: () -> Bool) async {
-        let deadline = Date().addingTimeInterval(3)
-        while !until() && Date() < deadline { try? await Task.sleep(for: .milliseconds(10)) }
+    private func awaitSnapshot(_ model: WorkScreenModel, trigger: () -> Void) async {
+        let received = expectation(description: "Work snapshot published")
+        let watch = model.$snapshot.dropFirst().compactMap { $0 }.first().sink { _ in received.fulfill() }
+        trigger()
+        await fulfillment(of: [received], timeout: 3)
+        watch.cancel()
     }
 
     func testTheModelLoadsTheFirstProjectReloadsOnAChangeAndRunsAWrite() async throws {
         let source = FakeWorkSource(fixture())
         let model = WorkScreenModel(source: source, reloadInterval: 0.2, settle: 0.05)
-        model.activate()
-        await settle { model.snapshot != nil }
+        await awaitSnapshot(model) { model.activate() }
         XCTAssertEqual(model.project, "App")
         XCTAssertEqual(model.snapshot?.spotted.count, 2)
         XCTAssertEqual(model.snapshot?.reopened.count, 1)
 
         let before = source.reads
-        source.tick()
-        await settle { source.reads > before }
+        await awaitSnapshot(model) { source.tick() }
         XCTAssertGreaterThan(source.reads, before, "a change of the store reloads the screen")
 
         await model.perform(.drop(ref: "w_spot0002", why: "not worth it"))
@@ -147,15 +149,12 @@ final class WorkScreenTests: XCTestCase {
     func testABurstOfChangesIsOneReloadAndAHiddenScreenWaits() async throws {
         let source = FakeWorkSource(fixture())
         let model = WorkScreenModel(source: source, reloadInterval: 0.4, settle: 0.1)
-        model.activate()
-        await settle { model.snapshot != nil }
+        await awaitSnapshot(model) { model.activate() }
         let first = source.reads
 
-        for _ in 0..<20 {
-            source.tick()
-            try await Task.sleep(for: .milliseconds(5))
+        await awaitSnapshot(model) {
+            for _ in 0..<20 { source.tick() }
         }
-        await settle { source.reads > first }
         try await Task.sleep(for: .milliseconds(600))
         XCTAssertEqual(source.reads - first, 1, "twenty changes in 0.1 s are one reload")
         XCTAssertEqual(model.changeReloads, 1)
@@ -166,8 +165,7 @@ final class WorkScreenTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(700))
         XCTAssertEqual(source.reads, hidden, "nothing reloads while nobody can see the screen")
 
-        model.setVisible(true)
-        await settle { source.reads > hidden }
+        await awaitSnapshot(model) { model.setVisible(true) }
         try await Task.sleep(for: .milliseconds(600))
         XCTAssertEqual(source.reads - hidden, 1, "the first look reads what changed meanwhile, once")
 
