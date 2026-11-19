@@ -215,6 +215,7 @@ export function workFormatters(view: ViewOptions = {}): { [M in keyof WorkResult
                 rows: rows.map((row) => ({ ...row })),
             }),
         }),
+        projects: defineFormatter<string[]>({ text: (projects) => projects }),
         show: defineFormatter<ShowResult>({ text: (data) => showText(data, view.section) }),
         tree: defineFormatter<TreeResult>({
             text: (data) => [

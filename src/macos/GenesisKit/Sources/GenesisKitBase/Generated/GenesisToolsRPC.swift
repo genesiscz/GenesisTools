@@ -5224,6 +5224,380 @@ public enum WorkListResult: Codable, Sendable {
     }
 }
 
+public struct WorkProjectsParamsCall: Codable, Sendable {
+    public var `request`: String?
+    public var `dryRun`: Bool?
+    public var `ownerSaid`: String?
+    public var `project`: String?
+    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `project`: String? = nil) {
+        self.`request` = `request`
+        self.`dryRun` = `dryRun`
+        self.`ownerSaid` = `ownerSaid`
+        self.`project` = `project`
+    }
+    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `project` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`request` = try box.decodeIfPresent(String.self, forKey: .`request`)
+        self.`dryRun` = try box.decodeIfPresent(Bool.self, forKey: .`dryRun`)
+        self.`ownerSaid` = try box.decodeIfPresent(String.self, forKey: .`ownerSaid`)
+        self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encodeIfPresent(`request`, forKey: .`request`)
+        try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
+        try box.encodeIfPresent(`ownerSaid`, forKey: .`ownerSaid`)
+        try box.encodeIfPresent(`project`, forKey: .`project`)
+    }
+}
+
+public struct WorkProjectsParams: Codable, Sendable {
+    public var `call`: WorkProjectsParamsCall?
+    public init(`call`: WorkProjectsParamsCall? = nil) {
+        self.`call` = `call`
+    }
+    private enum CodingKeys: String, CodingKey { case `call` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`call` = try box.decodeIfPresent(WorkProjectsParamsCall.self, forKey: .`call`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encodeIfPresent(`call`, forKey: .`call`)
+    }
+}
+
+public enum WorkProjectsResultOption0Status: String, Codable, Sendable {
+    case value0 = "ran"
+}
+
+public enum WorkProjectsResultOption0ValueV: Double, Codable, Sendable { case value0 = 1 }
+
+public enum WorkProjectsResultOption0ValueDiagnosticsItemSeverity: String, Codable, Sendable {
+    case value0 = "error"
+    case value1 = "warning"
+    case value2 = "info"
+}
+
+public struct WorkProjectsResultOption0ValueDiagnosticsItem: Codable, Sendable {
+    public var `code`: String
+    public var `severity`: WorkProjectsResultOption0ValueDiagnosticsItemSeverity
+    public var `message`: String
+    public var `field`: String?
+    public init(`code`: String, `severity`: WorkProjectsResultOption0ValueDiagnosticsItemSeverity, `message`: String, `field`: String? = nil) {
+        self.`code` = `code`
+        self.`severity` = `severity`
+        self.`message` = `message`
+        self.`field` = `field`
+    }
+    private enum CodingKeys: String, CodingKey { case `code`; case `severity`; case `message`; case `field` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`severity` = try box.decode(WorkProjectsResultOption0ValueDiagnosticsItemSeverity.self, forKey: .`severity`)
+        self.`message` = try box.decode(String.self, forKey: .`message`)
+        self.`field` = try box.decodeIfPresent(String.self, forKey: .`field`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`severity`, forKey: .`severity`)
+        try box.encode(`message`, forKey: .`message`)
+        try box.encodeIfPresent(`field`, forKey: .`field`)
+    }
+}
+
+public struct WorkProjectsResultOption0ValueNextItemCall: Codable, Sendable {
+    public var `method`: String
+    public var `params`: [String: GenesisToolsJSON]
+    public init(`method`: String, `params`: [String: GenesisToolsJSON]) {
+        self.`method` = `method`
+        self.`params` = `params`
+    }
+    private enum CodingKeys: String, CodingKey { case `method`; case `params` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`method` = try box.decode(String.self, forKey: .`method`)
+        self.`params` = try box.decode([String: GenesisToolsJSON].self, forKey: .`params`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`method`, forKey: .`method`)
+        try box.encode(`params`, forKey: .`params`)
+    }
+}
+
+public struct WorkProjectsResultOption0ValueNextItem: Codable, Sendable {
+    public var `do`: String
+    public var `call`: WorkProjectsResultOption0ValueNextItemCall?
+    public var `ask`: String?
+    public init(`do`: String, `call`: WorkProjectsResultOption0ValueNextItemCall? = nil, `ask`: String? = nil) {
+        self.`do` = `do`
+        self.`call` = `call`
+        self.`ask` = `ask`
+    }
+    private enum CodingKeys: String, CodingKey { case `do`; case `call`; case `ask` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`do` = try box.decode(String.self, forKey: .`do`)
+        self.`call` = try box.decodeIfPresent(WorkProjectsResultOption0ValueNextItemCall.self, forKey: .`call`)
+        self.`ask` = try box.decodeIfPresent(String.self, forKey: .`ask`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`do`, forKey: .`do`)
+        try box.encodeIfPresent(`call`, forKey: .`call`)
+        try box.encodeIfPresent(`ask`, forKey: .`ask`)
+    }
+}
+
+public enum WorkProjectsResultOption0ValueDryRun: Codable, Sendable {
+    case value0
+    public init(from decoder: Decoder) throws {
+        let value = try decoder.singleValueContainer().decode(Bool.self)
+        guard value == true else { throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Expected true")) }
+        self = .value0
+    }
+    public func encode(to encoder: Encoder) throws { var box = encoder.singleValueContainer(); try box.encode(true) }
+}
+
+public struct WorkProjectsResultOption0ValueReceipt: Codable, Sendable {
+    public var `requestId`: String?
+    public var `changes`: [Double]
+    public var `replayed`: Bool
+    public init(`requestId`: String? = nil, `changes`: [Double], `replayed`: Bool) {
+        self.`requestId` = `requestId`
+        self.`changes` = `changes`
+        self.`replayed` = `replayed`
+    }
+    private enum CodingKeys: String, CodingKey { case `requestId`; case `changes`; case `replayed` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`requestId` = try box.decodeIfPresent(String.self, forKey: .`requestId`)
+        self.`changes` = try box.decode([Double].self, forKey: .`changes`)
+        self.`replayed` = try box.decode(Bool.self, forKey: .`replayed`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encodeIfPresent(`requestId`, forKey: .`requestId`)
+        try box.encode(`changes`, forKey: .`changes`)
+        try box.encode(`replayed`, forKey: .`replayed`)
+    }
+}
+
+public struct WorkProjectsResultOption0Value: Codable, Sendable {
+    public var `v`: WorkProjectsResultOption0ValueV
+    public var `verb`: String
+    public var `ok`: Bool
+    public var `data`: [String]?
+    public var `diagnostics`: [WorkProjectsResultOption0ValueDiagnosticsItem]
+    public var `next`: [WorkProjectsResultOption0ValueNextItem]
+    public var `dryRun`: WorkProjectsResultOption0ValueDryRun?
+    public var `receipt`: WorkProjectsResultOption0ValueReceipt?
+    public init(`v`: WorkProjectsResultOption0ValueV, `verb`: String, `ok`: Bool, `data`: [String]? = nil, `diagnostics`: [WorkProjectsResultOption0ValueDiagnosticsItem], `next`: [WorkProjectsResultOption0ValueNextItem], `dryRun`: WorkProjectsResultOption0ValueDryRun? = nil, `receipt`: WorkProjectsResultOption0ValueReceipt? = nil) {
+        self.`v` = `v`
+        self.`verb` = `verb`
+        self.`ok` = `ok`
+        self.`data` = `data`
+        self.`diagnostics` = `diagnostics`
+        self.`next` = `next`
+        self.`dryRun` = `dryRun`
+        self.`receipt` = `receipt`
+    }
+    private enum CodingKeys: String, CodingKey { case `v`; case `verb`; case `ok`; case `data`; case `diagnostics`; case `next`; case `dryRun`; case `receipt` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`v` = try box.decode(WorkProjectsResultOption0ValueV.self, forKey: .`v`)
+        self.`verb` = try box.decode(String.self, forKey: .`verb`)
+        self.`ok` = try box.decode(Bool.self, forKey: .`ok`)
+        self.`data` = try box.decodeIfPresent([String].self, forKey: .`data`)
+        self.`diagnostics` = try box.decode([WorkProjectsResultOption0ValueDiagnosticsItem].self, forKey: .`diagnostics`)
+        self.`next` = try box.decode([WorkProjectsResultOption0ValueNextItem].self, forKey: .`next`)
+        self.`dryRun` = try box.decodeIfPresent(WorkProjectsResultOption0ValueDryRun.self, forKey: .`dryRun`)
+        self.`receipt` = try box.decodeIfPresent(WorkProjectsResultOption0ValueReceipt.self, forKey: .`receipt`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`v`, forKey: .`v`)
+        try box.encode(`verb`, forKey: .`verb`)
+        try box.encode(`ok`, forKey: .`ok`)
+        try box.encodeIfPresent(`data`, forKey: .`data`)
+        try box.encode(`diagnostics`, forKey: .`diagnostics`)
+        try box.encode(`next`, forKey: .`next`)
+        try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
+        try box.encodeIfPresent(`receipt`, forKey: .`receipt`)
+    }
+}
+
+public struct WorkProjectsResultOption0SkippedItemFix: Codable, Sendable {
+    public var `command`: String
+    public var `sentence`: String
+    public init(`command`: String, `sentence`: String) {
+        self.`command` = `command`
+        self.`sentence` = `sentence`
+    }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
+    }
+}
+
+public struct WorkProjectsResultOption0SkippedItem: Codable, Sendable {
+    public var `way`: String
+    public var `code`: String
+    public var `reason`: String
+    public var `fix`: WorkProjectsResultOption0SkippedItemFix?
+    public init(`way`: String, `code`: String, `reason`: String, `fix`: WorkProjectsResultOption0SkippedItemFix? = nil) {
+        self.`way` = `way`
+        self.`code` = `code`
+        self.`reason` = `reason`
+        self.`fix` = `fix`
+    }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(WorkProjectsResultOption0SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
+}
+
+public struct WorkProjectsResultOption0: Codable, Sendable {
+    public var `status`: WorkProjectsResultOption0Status
+    public var `via`: String
+    public var `value`: WorkProjectsResultOption0Value
+    public var `skipped`: [WorkProjectsResultOption0SkippedItem]
+    public init(`status`: WorkProjectsResultOption0Status, `via`: String, `value`: WorkProjectsResultOption0Value, `skipped`: [WorkProjectsResultOption0SkippedItem]) {
+        self.`status` = `status`
+        self.`via` = `via`
+        self.`value` = `value`
+        self.`skipped` = `skipped`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `via`; case `value`; case `skipped` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(WorkProjectsResultOption0Status.self, forKey: .`status`)
+        self.`via` = try box.decode(String.self, forKey: .`via`)
+        self.`value` = try box.decode(WorkProjectsResultOption0Value.self, forKey: .`value`)
+        self.`skipped` = try box.decode([WorkProjectsResultOption0SkippedItem].self, forKey: .`skipped`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`via`, forKey: .`via`)
+        try box.encode(`value`, forKey: .`value`)
+        try box.encode(`skipped`, forKey: .`skipped`)
+    }
+}
+
+public enum WorkProjectsResultOption1Status: String, Codable, Sendable {
+    case value0 = "unreachable"
+}
+
+public struct WorkProjectsResultOption1SkippedItemFix: Codable, Sendable {
+    public var `command`: String
+    public var `sentence`: String
+    public init(`command`: String, `sentence`: String) {
+        self.`command` = `command`
+        self.`sentence` = `sentence`
+    }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
+    }
+}
+
+public struct WorkProjectsResultOption1SkippedItem: Codable, Sendable {
+    public var `way`: String
+    public var `code`: String
+    public var `reason`: String
+    public var `fix`: WorkProjectsResultOption1SkippedItemFix?
+    public init(`way`: String, `code`: String, `reason`: String, `fix`: WorkProjectsResultOption1SkippedItemFix? = nil) {
+        self.`way` = `way`
+        self.`code` = `code`
+        self.`reason` = `reason`
+        self.`fix` = `fix`
+    }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(WorkProjectsResultOption1SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
+}
+
+public struct WorkProjectsResultOption1: Codable, Sendable {
+    public var `status`: WorkProjectsResultOption1Status
+    public var `skipped`: [WorkProjectsResultOption1SkippedItem]
+    public var `manual`: String?
+    public init(`status`: WorkProjectsResultOption1Status, `skipped`: [WorkProjectsResultOption1SkippedItem], `manual`: String? = nil) {
+        self.`status` = `status`
+        self.`skipped` = `skipped`
+        self.`manual` = `manual`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `skipped`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(WorkProjectsResultOption1Status.self, forKey: .`status`)
+        self.`skipped` = try box.decode([WorkProjectsResultOption1SkippedItem].self, forKey: .`skipped`)
+        self.`manual` = try box.decode(String?.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`skipped`, forKey: .`skipped`)
+        try box.encode(`manual`, forKey: .`manual`)
+    }
+}
+
+public enum WorkProjectsResult: Codable, Sendable {
+    case option0(WorkProjectsResultOption0)
+    case option1(WorkProjectsResultOption1)
+    public init(from decoder: Decoder) throws {
+        if let value = try? WorkProjectsResultOption0(from: decoder) { self = .option0(value); return }
+        if let value = try? WorkProjectsResultOption1(from: decoder) { self = .option1(value); return }
+        throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "No WorkProjectsResult variant matched"))
+    }
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .option0(value): try value.encode(to: encoder)
+        case let .option1(value): try value.encode(to: encoder)
+        }
+    }
+}
+
 public enum WorkShowParamsSection: String, Codable, Sendable {
     case value0 = "all"
     case value1 = "body"
@@ -20863,6 +21237,7 @@ public final class GenesisToolsRPC {
         unowned let owner: GenesisToolsRPC
         init(owner: GenesisToolsRPC) { self.owner = owner }
         public func list(_ params: WorkListParams) async throws -> WorkListResult { try await owner.call("work.list", params, timeout: 140) }
+        public func projects(_ params: WorkProjectsParams) async throws -> WorkProjectsResult { try await owner.call("work.projects", params, timeout: 140) }
         public func show(_ params: WorkShowParams) async throws -> WorkShowResult { try await owner.call("work.show", params, timeout: 140) }
         public func tree(_ params: WorkTreeParams) async throws -> WorkTreeResult { try await owner.call("work.tree", params, timeout: 140) }
         public func triage(_ params: WorkTriageParams) async throws -> WorkTriageResult { try await owner.call("work.triage", params, timeout: 140) }
@@ -21003,6 +21378,7 @@ public final class GenesisToolsRPC {
         case "permissions.status": _ = try decoder.decode(PermissionsStatusParams.self, from: params); _ = try decoder.decode(PermissionsStatusResult.self, from: result)
         case "permissions.require": _ = try decoder.decode(PermissionsRequireParams.self, from: params); _ = try decoder.decode(PermissionsRequireResult.self, from: result)
         case "work.list": _ = try decoder.decode(WorkListParams.self, from: params); _ = try decoder.decode(WorkListResult.self, from: result)
+        case "work.projects": _ = try decoder.decode(WorkProjectsParams.self, from: params); _ = try decoder.decode(WorkProjectsResult.self, from: result)
         case "work.show": _ = try decoder.decode(WorkShowParams.self, from: params); _ = try decoder.decode(WorkShowResult.self, from: result)
         case "work.tree": _ = try decoder.decode(WorkTreeParams.self, from: params); _ = try decoder.decode(WorkTreeResult.self, from: result)
         case "work.triage": _ = try decoder.decode(WorkTriageParams.self, from: params); _ = try decoder.decode(WorkTriageResult.self, from: result)
