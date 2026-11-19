@@ -201,6 +201,15 @@
                         "at": 1767268320000,
                         "needsAnswer": false,
                         "title": "Why the compact layout?"
+                    },
+                    {
+                        "id": "decision:t_5_fixture",
+                        "sourceId": "t_5_fixture",
+                        "kind": "todo",
+                        "key": "local:claude:fixture-work:",
+                        "at": 1767267300000,
+                        "needsAnswer": false,
+                        "title": "Rename the fixture folder once the review lands."
                     }
                 ],
                 "unreadItem": {
@@ -529,7 +538,6 @@
                     "cwd": "/fixture/work"
                 }
             },
-            "hiddenFromInbox": true,
             "sourceContext": {
                 "sessionId": "fixture-work",
                 "agent": "claude",
