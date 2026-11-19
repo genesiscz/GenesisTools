@@ -57,7 +57,7 @@ function answer(raw: unknown, what: string): Record<string, unknown> {
 
     const parsed = data<Record<string, unknown>>(raw);
 
-    if (parsed === undefined || typeof parsed !== "object") {
+    if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) {
         throw new Error(`${what}: no JSON in the answer (${text(raw).slice(0, 200)})`);
     }
 
@@ -67,7 +67,7 @@ function answer(raw: unknown, what: string): Record<string, unknown> {
 function idOf(reply: Record<string, unknown>): string | null {
     const task = reply.task;
     const id = reply.id ?? (task !== null && typeof task === "object" ? (task as { id?: unknown }).id : undefined);
-    return typeof id === "number" || typeof id === "string" ? String(id) : null;
+    return typeof id === "number" || (typeof id === "string" && id.trim() !== "") ? String(id) : null;
 }
 
 function scoped(settings: TrackerSettings, args: Record<string, unknown>): Record<string, unknown> {
@@ -188,14 +188,29 @@ export const trackerConnector: Connector<unknown> = {
                     >;
                     const status = typeof task.status === "string" ? task.status : undefined;
                     const labels = Array.isArray(task.labels)
-                        ? task.labels.map((l) => (typeof l === "string" ? l : String((l as { name?: unknown }).name)))
+                        ? task.labels.flatMap((label: unknown) => {
+                              if (typeof label === "string") {
+                                  return [label];
+                              }
+
+                              if (
+                                  typeof label === "object" &&
+                                  label !== null &&
+                                  "name" in label &&
+                                  typeof label.name === "string"
+                              ) {
+                                  return [label.name];
+                              }
+
+                              return [];
+                          })
                         : undefined;
                     remotes.push({
                         remoteKey: key,
                         ...(typeof task.title === "string" ? { title: task.title } : {}),
                         ...(typeof task.body === "string" ? { body: task.body } : {}),
                         ...(localType(task.type) !== undefined ? { type: localType(task.type) } : {}),
-                        ...(status !== undefined && STATE_OF[status] !== undefined ? { state: STATE_OF[status] } : {}),
+                        ...(status !== undefined && Object.hasOwn(STATE_OF, status) ? { state: STATE_OF[status] } : {}),
                         ...(labels !== undefined ? { labels } : {}),
                     });
                 }
