@@ -15,6 +15,7 @@ import {
     getEventOutcome,
     getHandoffById,
     listHandoffEvents,
+    withHandoffPreview,
 } from "./read-model";
 import {
     buildBy,
@@ -648,19 +649,18 @@ export function executeHandoffActions(input: ExecuteActionsInput, deps: HandoffD
  * the other, as they would be written.
  */
 export function checkHandoffActions(
-    batches: { id: string; editId?: string; actions: HandoffActionInput[] }[],
+    batches: { id: string; editId?: string; asOwner?: boolean; actions: HandoffActionInput[] }[],
     deps: HandoffDeps = {}
 ): HandoffActionResult[][] {
     const by = buildBy(deps);
 
-    return withDb(deps, (db) => {
-        catchUpHandoffs(db, deps.base);
+    return withHandoffPreview(deps, (db) => {
         const states = new Map<string, Handoff>();
 
         return batches.map((batch) => {
             const resolved = resolveHandoffRef(db, { id: batch.id });
             let state = states.get(resolved.id) ?? resolved;
-            const editId = normalizeEditId(batch.editId);
+            const editId = normalizeEditId(batch.asOwner === true ? resolved.editId : batch.editId);
             const stamp = (): { ts: string; uid: string; id: string; by: HandoffEventBy; editId?: string } => ({
                 ts: nowIso(deps),
                 uid: generateEventUid(),
