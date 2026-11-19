@@ -4,7 +4,7 @@ import {
     resolveProjectRoot,
     storeForProject,
 } from "@app/todo/lib/project";
-import { buildSyncReport, hasSyncableTime, type SyncTarget, syncTodo } from "@app/todo/lib/sync";
+import { buildSyncReport, hasSyncableTime, type SyncTarget, syncTodoAndPair } from "@app/todo/lib/sync";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
@@ -62,7 +62,7 @@ export function createSyncCommand(): Command {
                     let failedTodos = 0;
 
                     for (const todo of syncable) {
-                        const result = await syncTodo({ store, todo, target, calendarName: opts.calendar });
+                        const result = await syncTodoAndPair({ store, todo, target, calendarName: opts.calendar });
                         const report = buildSyncReport(result, todo.id);
 
                         for (const line of report.stdout) {
@@ -110,7 +110,7 @@ export function createSyncCommand(): Command {
                     process.exit(1);
                 }
 
-                const result = await syncTodo({ store, todo, target, calendarName: opts.calendar });
+                const result = await syncTodoAndPair({ store, todo, target, calendarName: opts.calendar });
                 const report = buildSyncReport(result, todo.id);
 
                 for (const line of report.stdout) {

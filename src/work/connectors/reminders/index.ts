@@ -38,12 +38,21 @@ export const remindersConnector: Connector<unknown> = {
             }
 
             const store = TodoStore.forProject(found.projectRoot);
-            const result = await syncTodo({ store, todo: found.todo, target: "reminders" });
+            const result = await syncTodo({
+                store,
+                todo: found.todo,
+                target: "reminders",
+                reminderId: intent.pairing?.remoteKey || undefined,
+            });
             const outcome = result.reminders;
             results.push(
                 outcome?.ok === true
                     ? { ok: true, remoteKey: outcome.id }
-                    : { ok: false, error: outcome?.ok === false ? outcome.error.message : "Reminders answered nothing" }
+                    : {
+                          ok: false,
+                          error: outcome?.ok === false ? outcome.error.message : "Reminders answered nothing",
+                          ...(outcome?.id ? { remoteKey: outcome.id } : {}),
+                      }
             );
         }
 

@@ -8,7 +8,7 @@ import {
     storeForProject,
 } from "@app/todo/lib/project";
 import { parseReminderTime } from "@app/todo/lib/reminders";
-import { buildSyncReport, type SyncReport, type SyncTarget, syncTodo } from "@app/todo/lib/sync";
+import { buildSyncReport, type SyncReport, type SyncTarget, syncTodoAndPair } from "@app/todo/lib/sync";
 import type { OutputFormat, Todo, TodoPriority, TodoReminder } from "@app/todo/lib/types";
 import { isInteractive, parseVariadic } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
@@ -131,11 +131,7 @@ export function createEditCommand(): Command {
 
             if (opts.syncTo) {
                 const target = opts.syncTo as SyncTarget;
-                const result = await syncTodo({ store, todo, target, calendarName: opts.calendar });
-                if (result.reminders?.ok) {
-                    // The store keeps the pairing too, so the reminders connector and the sync see it (work-items P5).
-                    await store.recordPairing(todo.id, "reminders", result.reminders.id);
-                }
+                const result = await syncTodoAndPair({ store, todo, target, calendarName: opts.calendar });
                 report = buildSyncReport(result, todo.id);
                 todo = (await store.get(todo.id)) ?? todo;
             }
