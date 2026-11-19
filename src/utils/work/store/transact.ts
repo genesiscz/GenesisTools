@@ -1,9 +1,10 @@
 import type { Database } from "bun:sqlite";
+import { randomUUID } from "node:crypto";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { errorDiagnostic, failReply, okReply, type Reply } from "@genesiscz/utils/output/reply";
 import type { Change } from "../model/change";
 import type { Item, ItemId } from "../model/item";
-import type { LegacyAction } from "../ports";
+import type { LegacyAction, LegacyWriteResult } from "../ports";
 import { applyChange } from "./apply";
 import { decide, type WorkCommand, type WriteEnv } from "./decide";
 import { selectItem } from "./rows";
@@ -25,34 +26,85 @@ export function principalOf(env: WriteEnv): string {
     return env.actor.sessionId ?? `${env.actor.kind}:${env.actor.harness}`;
 }
 
-/** The stored reply of an earlier call with the same request id, marked as a replay. */
-export function replayOf(db: Database, principal: string, requestId: string): Reply<unknown> | null {
+export interface PendingWrite {
+    kind: "work.pending";
+    operationId: string;
+    outcome: Reply<WriteOutcome>;
+    completed: (LegacyWriteResult & { action: LegacyAction["action"] })[];
+    lease?: { token: string; until: number };
+}
+
+export function requestOf(db: Database, principal: string, requestId: string): Reply<unknown> | PendingWrite | null {
     const row = db
         .query<{ reply: string }, [string, string]>("SELECT reply FROM requests WHERE principal = ? AND request_id = ?")
         .get(principal, requestId);
+    return row === null ? null : (SafeJSON.parse(row.reply) as Reply<unknown> | PendingWrite);
+}
 
-    if (row === null) {
+function isOldOutcome(value: unknown): value is WriteOutcome {
+    if (typeof value !== "object" || value === null || !("items" in value) || !Array.isArray(value.items)) {
+        return false;
+    }
+
+    return (
+        value.items.some((item: unknown) => typeof item === "string") ||
+        ("legacy" in value &&
+            Array.isArray(value.legacy) &&
+            value.legacy.some((action: unknown) => typeof action === "object" && action !== null && !("ok" in action)))
+    );
+}
+
+/** Public replay only. Older stored transaction outcomes need deliberate reconciliation. */
+export function replayOf(db: Database, principal: string, requestId: string): Reply<unknown> | null {
+    const reply = requestOf(db, principal, requestId);
+
+    if (reply === null || "kind" in reply) {
         return null;
     }
 
-    const reply = SafeJSON.parse(row.reply) as Reply<unknown>;
-    return { ...reply, receipt: { changes: reply.receipt?.changes ?? [], requestId, replayed: true } };
+    const receipt = { changes: reply.receipt?.changes ?? [], requestId, replayed: true };
+
+    if (reply.ok && isOldOutcome(reply.data)) {
+        if (reply.data.legacy.length > 0) {
+            return {
+                ...failReply(reply.verb, [
+                    errorDiagnostic(
+                        "REQUEST_NEEDS_RECONCILIATION",
+                        "An earlier version may have started this handoff write. Inspect the receipt and handoff before retrying."
+                    ),
+                ]),
+                receipt,
+            };
+        }
+
+        return {
+            ...reply,
+            data: {
+                items: reply.data.items.map((id) => selectItem(db, id)).filter((item) => item !== null),
+                changes: receipt.changes,
+                ...(reply.data.noop ? { noop: true } : {}),
+            },
+            receipt,
+        };
+    }
+
+    return { ...reply, receipt };
 }
 
 export function storeReply(
     db: Database,
     principal: string,
     requestId: string,
-    reply: Reply<unknown>,
+    reply: Reply<unknown> | PendingWrite,
     now: string
 ): void {
     db.run(
         `INSERT INTO requests (principal, request_id, reply, ts) VALUES (?, ?, ?, ?)
-         ON CONFLICT (principal, request_id) DO UPDATE SET reply = excluded.reply`,
+         ON CONFLICT (principal, request_id) DO UPDATE SET reply = excluded.reply, ts = excluded.ts`,
         [principal, requestId, SafeJSON.stringify(reply, { strict: true }), now]
     );
     const cutoff = new Date(Date.parse(now) - REQUEST_DAYS * 86_400_000).toISOString();
-    db.run("DELETE FROM requests WHERE ts < ?", [cutoff]);
+    db.run("DELETE FROM requests WHERE ts < ? AND json_extract(reply, '$.kind') IS NULL", [cutoff]);
 }
 
 /**
@@ -63,13 +115,20 @@ export function transact(
     db: Database,
     command: WorkCommand,
     env: WriteEnv,
-    options: { dryRun?: boolean; approvedLegacy?: LegacyAction[] } = {}
-): Reply<WriteOutcome> | { replay: Reply<unknown> } {
+    options: { dryRun?: boolean; projectItems?: boolean; approvedLegacy?: LegacyAction[] } = {}
+): Reply<WriteOutcome> | { replay: Reply<unknown> } | { pending: PendingWrite; existing: boolean } {
     const principal = principalOf(env);
     db.run("BEGIN IMMEDIATE");
 
     try {
         if (env.request !== undefined) {
+            const request = requestOf(db, principal, env.request);
+
+            if (request !== null && "kind" in request) {
+                db.run("ROLLBACK");
+                return { pending: request, existing: true };
+            }
+
             const replay = replayOf(db, principal, env.request);
 
             if (replay !== null) {
@@ -87,10 +146,16 @@ export function transact(
 
         if (options.dryRun) {
             const preview = decision.changes.map((change, index) => {
-                applyChange(db, change);
+                if (options.projectItems === true) {
+                    applyChange(db, change);
+                }
+
                 return { ...change, seq: -(index + 1) };
             });
-            const projected = decision.items.map((id) => selectItem(db, id)).filter((item) => item !== null);
+            const projected =
+                options.projectItems === true
+                    ? decision.items.map((id) => selectItem(db, id)).filter((item) => item !== null)
+                    : undefined;
             db.run("ROLLBACK");
             return okReply(
                 command.verb,
@@ -99,7 +164,7 @@ export function transact(
                     changes: preview,
                     legacy: decision.legacy,
                     noop: decision.noop === true,
-                    projected,
+                    ...(projected !== undefined ? { projected } : {}),
                 },
                 { diagnostics: decision.diagnostics, next: decision.next, dryRun: true }
             );
@@ -128,7 +193,15 @@ export function transact(
         );
 
         if (env.request !== undefined) {
-            storeReply(db, principal, env.request, reply, env.now);
+            const pending: PendingWrite = {
+                kind: "work.pending",
+                operationId: randomUUID(),
+                outcome: reply,
+                completed: [],
+            };
+            storeReply(db, principal, env.request, pending, env.now);
+            db.run("COMMIT");
+            return { pending, existing: false };
         }
 
         db.run("COMMIT");
