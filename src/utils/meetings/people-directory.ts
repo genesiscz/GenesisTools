@@ -2,7 +2,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { meetingsPeopleCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { logger } from "@genesiscz/utils/logger";
 import type { MeetingsConfig } from "./config";
-import { nameKey, type PersonRef } from "./people";
+import { mappedRoomDevices, nameKey, type PersonRef, rosterAccountKey } from "./people";
 import { type AddedPerson, PeopleBook, type PeopleMerge, type PersonRefValue } from "./people-book";
 import type { MeetingRecord, MeetingStore } from "./record";
 
@@ -846,6 +846,8 @@ export class PeopleDirectory {
             asked.map(async (source) => ({ source, answer: await read(source, { text: sourceText, limit }) }))
         );
         const identities = new IdentityGroups();
+        const book = this.options.book.read();
+        const devices = new Set(mappedRoomDevices(book.devices).map(({ account }) => rosterAccountKey(account)));
 
         for (const { source, answer } of answers) {
             if (answer.state !== "ok") {
@@ -853,11 +855,12 @@ export class PeopleDirectory {
             }
 
             for (const person of answer.people) {
-                identities.add(source.kind, person);
+                if (!devices.has(rosterAccountKey(person.name))) {
+                    identities.add(source.kind, person);
+                }
             }
         }
 
-        const book = this.options.book.read();
         const grouped = applyMerges(identities.list(), book.merges);
 
         for (const identity of grouped) {

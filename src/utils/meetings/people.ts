@@ -4,6 +4,40 @@ import { MeetingsConflictError } from "./conflict";
 
 const isoTime = z.string().min(1);
 
+const rosterName = z.string().trim().min(1);
+export const roomDeviceSchema = z.object({ account: rosterName, group: rosterName.optional() });
+export type RoomDevice = z.infer<typeof roomDeviceSchema>;
+export const roomDeviceOfferSchema = roomDeviceSchema.extend({
+    question: z.string(),
+    meetings: z.array(rosterName).min(1),
+});
+export type RoomDeviceOffer = z.infer<typeof roomDeviceOfferSchema>;
+export const deviceDecisionSchema = roomDeviceSchema
+    .extend({
+        action: z.enum(["map", "unmap", "refuse"]),
+        actor: z.enum(["window", "listen", "cli"]),
+        at: isoTime,
+        meeting: rosterName.optional(),
+        meetings: z.array(rosterName).optional(),
+    })
+    .loose();
+export type DeviceDecision = z.infer<typeof deviceDecisionSchema>;
+
+/** Roster labels have no stable account ID. Keep suffixes, accents and word order to avoid hiding a different guest. */
+export function rosterAccountKey(account: string): string {
+    return account.trim().normalize("NFC").toLowerCase();
+}
+
+export function latestDeviceDecisions(history: readonly DeviceDecision[]): Map<string, DeviceDecision> {
+    return new Map(history.map((entry) => [rosterAccountKey(entry.account), entry]));
+}
+
+export function mappedRoomDevices(history: readonly DeviceDecision[]): RoomDevice[] {
+    return [...latestDeviceDecisions(history).values()].flatMap(({ action, account, group }) =>
+        action === "map" ? [{ account, ...(group ? { group } : {}) }] : []
+    );
+}
+
 /**
  * Where one pairing of a person with a project came from. A person keeps one entry per source, and unpairing a source
  * removes only that entry: the person leaves the project when no entry is left.

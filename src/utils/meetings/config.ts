@@ -394,7 +394,13 @@ const speakerLabelsSchema = z.object({
     channels: z
         .object({ minSeparation: z.number().min(0).max(1).default(DEFAULT_CHANNEL_MIN_SEPARATION) })
         .prefault({}),
-    seat: z.object({ enabled: z.boolean().default(true) }).prefault({}),
+    seat: z
+        .object({
+            enabled: z.boolean().default(true),
+            /** Distinct meetings with a roster join at the same room microphone before asking the owner. */
+            deviceOfferMinMeetings: z.number().int().positive().default(2),
+        })
+        .prefault({}),
     voice: z
         .object({
             enabled: z.boolean().default(true),

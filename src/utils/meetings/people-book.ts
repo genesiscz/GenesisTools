@@ -7,7 +7,7 @@ import { isObject } from "@genesiscz/utils/object";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { z } from "zod";
-import { samePerson } from "./people";
+import { type DeviceDecision, deviceDecisionSchema, rosterAccountKey, samePerson } from "./people";
 
 const { log } = logger.scoped("meetings-people");
 
@@ -57,9 +57,11 @@ export interface PeopleBookData {
     entries: OwnEntry[];
     merges: PeopleMerge[];
     hidden: HiddenPerson[];
+    /** Append-only owner decisions; the last entry for an account determines its state. */
+    devices: DeviceDecision[];
 }
 
-type ListName = "entries" | "merges" | "hidden";
+type ListName = "entries" | "merges" | "hidden" | "devices";
 
 /** The file as it was read: the parsed lists, and every value this build could not read, kept for the next write. */
 interface ReadBook {
@@ -72,8 +74,8 @@ interface ReadBook {
 
 function emptyBook(): ReadBook {
     return {
-        data: { version: PEOPLE_BOOK_VERSION, entries: [], merges: [], hidden: [] },
-        kept: { top: {}, lists: { entries: [], merges: [], hidden: [] } },
+        data: { version: PEOPLE_BOOK_VERSION, entries: [], merges: [], hidden: [], devices: [] },
+        kept: { top: {}, lists: { entries: [], merges: [], hidden: [], devices: [] } },
     };
 }
 
@@ -97,16 +99,17 @@ export function parsePeopleBook(text: string, path = PEOPLE_FILE): ReadBook {
         return { ...book, broken: "the file is not a JSON object" };
     }
 
-    const { version, entries, merges, hidden, ...top } = raw;
+    const { version, entries, merges, hidden, devices, ...top } = raw;
     book.kept.top = top;
     book.data.version = typeof version === "number" && version > PEOPLE_BOOK_VERSION ? version : PEOPLE_BOOK_VERSION;
     const read = { path, kept: book.kept.lists };
     book.data.entries = readList(ownEntrySchema, entries, "entries", read);
     book.data.merges = readList(peopleMergeSchema, merges, "merges", read);
     book.data.hidden = readList(hiddenPersonSchema, hidden, "hidden", read);
+    book.data.devices = readList(deviceDecisionSchema, devices, "devices", read);
     // A list a hand edit turned into another value reads no element, and the next write would put an array in its
     // place: the file is moved aside first, as torn text is.
-    const notLists = Object.entries({ entries, merges, hidden })
+    const notLists = Object.entries({ entries, merges, hidden, devices })
         .filter(([, value]) => value !== undefined && !Array.isArray(value))
         .map(([name]) => name);
 
@@ -152,6 +155,9 @@ function bookText(book: ReadBook): string {
         entries: [...book.data.entries, ...book.kept.lists.entries],
         merges: [...book.data.merges, ...book.kept.lists.merges],
         hidden: [...book.data.hidden, ...book.kept.lists.hidden],
+        ...(book.data.devices.length || book.kept.lists.devices.length
+            ? { devices: [...book.data.devices, ...book.kept.lists.devices] }
+            : {}),
     };
     return `${SafeJSON.stringify(value, null, 4)}\n`;
 }
@@ -181,6 +187,37 @@ export class PeopleBook {
 
     read(): PeopleBookData {
         return this.load().data;
+    }
+
+    /** The mapping and its journal are one atomic write. An old offer cannot override a subsequent owner decision. */
+    async decideDevice(input: {
+        account: string;
+        group?: string;
+        action: DeviceDecision["action"];
+        actor: DeviceDecision["actor"];
+        meeting?: string;
+        meetings?: string[];
+    }) {
+        const entry = deviceDecisionSchema.parse({ ...input, at: this.now().toISOString() });
+        return this.change((data) => {
+            const key = rosterAccountKey(entry.account);
+            const prior = data.devices.findLast((row) => rosterAccountKey(row.account) === key);
+            const device =
+                entry.action === "map"
+                    ? { account: entry.account, ...(entry.group ? { group: entry.group } : {}) }
+                    : null;
+            if (prior?.action === entry.action && prior.group === entry.group) {
+                return { changed: false, device };
+            }
+            if (entry.meeting && prior && prior.action !== "unmap") {
+                throw new Error("This room device offer was already decided. Refresh the suggestions.");
+            }
+            if (entry.action === "unmap" && prior?.action !== "map") {
+                return { changed: false, device: null };
+            }
+            data.devices.push(entry);
+            return { changed: true, device };
+        });
     }
 
     /** Adds a person by hand; one the book knows (same email, or same name tokens) gains the email and note instead. */
