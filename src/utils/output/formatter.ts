@@ -100,13 +100,15 @@ export function render<T>(
             ? [`(replayed the stored reply of request ${reply.receipt.requestId ?? "?"})`]
             : []),
     ];
-    const table = formatter.table?.(reply.data);
-
     switch (format) {
-        case "json-compact":
+        case "json-compact": {
+            const table = formatter.table?.(reply.data);
             return { stdout: SafeJSON.stringify(table ? compact(table) : reply.data), stderr: [...notes, ...stderr] };
-        case "toon":
+        }
+        case "toon": {
+            const table = formatter.table?.(reply.data);
             return { stdout: toToon(table ? table.rows : reply.data), stderr: [...notes, ...stderr] };
+        }
         case "md":
             return { stdout: mdOf(reply.data, formatter, ctx), stderr: [...notes, ...stderr] };
         case "text":
@@ -121,11 +123,7 @@ export function emit<T>(reply: Reply<T>, formatter: Formatter<T>, flags: FormatF
     const { stdout, stderr } = render(reply, formatter, format, { tty, width: process.stdout.columns ?? 120, door });
 
     if (stdout.length > 0) {
-        if (format === "json") {
-            out.result(reply);
-        } else {
-            out.print(stdout.endsWith("\n") ? stdout : `${stdout}\n`);
-        }
+        out.print(stdout.endsWith("\n") ? stdout : `${stdout}\n`);
     }
 
     for (const line of stderr) {
