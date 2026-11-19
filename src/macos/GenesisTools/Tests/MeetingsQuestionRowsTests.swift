@@ -60,6 +60,27 @@ final class MeetingsQuestionRowsTests: XCTestCase {
     }
 }
 
+/// Counts the pixels of the transcript's purple selection edge and wash in a drawn picture.
+enum RaisedFlashPixels {
+    static func purple(in image: CGImage) -> Int {
+        let width = image.width, height = image.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                                          space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard drawn else { return 0 }
+        var count = 0
+        for offset in stride(from: 0, to: pixels.count, by: 4) {
+            let red = Int(pixels[offset]), green = Int(pixels[offset + 1]), blue = Int(pixels[offset + 2])
+            if blue > 150 && red > 110 && green < 110 && blue > green + 60 { count += 1 }
+        }
+        return count
+    }
+}
+
 @MainActor
 enum MeetingQuestionPicture {
     static func text<V: View>(_ view: V, name: String, native: Bool, width: CGFloat = 460, afterMount: () -> Void = {}) throws -> String {
@@ -211,6 +232,29 @@ extension MeetingsQuestionRowsTests {
         let view = TranscriptBlocksPane(detail: detail, entries: entries)
         XCTAssertTrue(try rendered(view, name: "X13-before", native: true).contains("Raised source line"))
         XCTAssertTrue(try rendered(view, name: "X13-after", native: true, afterMount: { detail.rows = .loaded(after) }).contains("Raised source line"))
+
+        // Drawn: the raised line takes the purple selection edge while it flashes, and loses it when the flash ends.
+        guard MeetingsPreferences.Transcript.flashRaised.value() else { throw XCTSkip("The raised-line flash is turned off in this test host's defaults") }
+        let pane = MeetingDetailModel(id: "copy", window: nil)
+        pane.comments = .loaded(.init(meeting: "copy", comments: [], listeners: []))
+        pane.rows = .loaded(before)
+        let host = NSHostingView(rootView: TranscriptBlocksPane(detail: pane, entries: entries)
+            .frame(width: 460).padding(12).background(Color(white: 0.12)).environment(\.colorScheme, .dark))
+        let panel = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 484, height: 460), styleMask: [.borderless], backing: .buffered, defer: false)
+        panel.isReleasedWhenClosed = false; panel.contentView = host; panel.orderInForSnapshot()
+        defer { panel.orderOut(nil); panel.close() }
+        func purple(after seconds: TimeInterval) throws -> Int {
+            RunLoop.main.run(until: Date().addingTimeInterval(seconds)); host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            return RaisedFlashPixels.purple(in: try XCTUnwrap(bitmap.cgImage))
+        }
+        let resting = try purple(after: 0.2)
+        pane.rows = .loaded(after)
+        let flashing = try purple(after: 0.15)
+        XCTAssertGreaterThan(flashing, resting + 40, "the fresh answer's raised line is highlighted (\(resting) -> \(flashing) purple pixels)")
+        let settled = try purple(after: MeetingsPreferences.Transcript.raisedFlashSec.value() + 0.4)
+        XCTAssertLessThanOrEqual(settled, resting + 10, "the highlight ends with the flash (\(resting) -> \(settled) purple pixels)")
     }
 
     func testX18GroupsCountAnsweredOfTotalAndTheBarShowsThem() throws {
