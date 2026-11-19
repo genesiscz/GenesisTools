@@ -142,17 +142,45 @@ export interface SyncReport {
     cursor: number;
 }
 
-interface ChangedItem {
-    item: Item;
-    actor: Actor | null;
-    release: boolean;
+type PushMode = { kind: "sync"; cursor: number } | { kind: "release" } | { kind: "pair"; connector: string };
+
+function pushActors(db: Database, id: ItemId, after: number): Actor[] {
+    return db
+        .query<{ actor: string }, [ItemId, number]>(
+            "SELECT DISTINCT actor FROM changes WHERE item = ? AND seq > ? AND json_extract(origin, '$.via') <> 'connector'"
+        )
+        .all(id, after)
+        .map(({ actor }) => SafeJSON.parse(actor) as Actor);
 }
 
-async function pushItems(deps: SyncDeps, items: ChangedItem[], report: SyncReport): Promise<void> {
-    const projects = await loadRulesForItems(items, deps.loadRules);
+function newPairing(item: ItemId, connector: string, now: string): Pairing {
+    return {
+        item,
+        connector,
+        remoteKey: "",
+        born: "local",
+        origin: originFor("local"),
+        state: "pending",
+        updatedTs: now,
+    };
+}
+
+async function pushItems(input: { deps: SyncDeps; items: Item[]; mode: PushMode; report: SyncReport }): Promise<void> {
+    const { deps, items, mode, report } = input;
+    const projects = await loadRulesForItems(
+        items.map((item) => ({ item })),
+        deps.loadRules
+    );
 
     for (const [project, { entries, loaded }] of projects) {
-        await pushProject({ deps, items: entries, project, layers: loaded.rules.layers, report });
+        await pushProject({
+            deps,
+            items: entries.map(({ item }) => item),
+            project,
+            layers: loaded.rules.layers,
+            mode,
+            report,
+        });
     }
 }
 
@@ -161,10 +189,12 @@ async function pushProject({
     items,
     project,
     layers,
+    mode,
     report,
 }: {
     deps: SyncDeps;
-    items: ChangedItem[];
+    items: Item[];
+    mode: PushMode;
     project: string;
     layers: readonly RuleLayerInput[];
     report: SyncReport;
@@ -173,6 +203,10 @@ async function pushProject({
     const view = sqlView(db);
 
     for (const [id, connector] of Object.entries(deps.connectors)) {
+        if (mode.kind === "pair" && mode.connector !== id) {
+            continue;
+        }
+
         const config = connectorConfigOf(layers, id).config;
 
         if (!config?.enabled) {
@@ -181,36 +215,57 @@ async function pushProject({
 
         const intents: PushIntent[] = [];
 
-        for (const { item, actor, release } of items) {
-            const pairing = selectPairings(db, { item: item.id, connector: id })[0] ?? null;
+        for (const candidate of items) {
+            const item = selectItem(db, candidate.id);
 
-            if (pairing === null && !(connector.can.create && config.createTypes.includes(item.type))) {
+            if (item === null || item.project !== project) {
                 continue;
             }
 
-            const rule = config.push(item.type) ?? defaultPush(item.type);
-            const roles =
-                actor === null
-                    ? []
-                    : rolesOf(view, item, {
-                          lineage: actor.sessionId !== null ? [actor.sessionId] : [],
-                          ownerKind: actor.kind === "owner",
-                          sessionId: actor.sessionId,
-                      });
+            const pairing = selectPairings(db, { item: item.id, connector: id })[0] ?? null;
+            const canCreate = connector.can.create && config.createTypes.includes(item.type);
 
-            if (!release && actor !== null && actor.kind !== "connector" && !allows(rule, roles)) {
-                if (pairing !== null) {
-                    inTransaction(db, () =>
-                        writePairing(db, deps, {
-                            ...pairing,
-                            state: "held",
-                            note: `a change by ${roles.join(", ") || "a session with no role"}; a lead or the owner releases it`,
-                        })
-                    );
-                }
-
-                report.held++;
+            if (mode.kind === "release" && pairing?.state !== "held") {
                 continue;
+            }
+
+            if (mode.kind === "pair" && pairing === null) {
+                continue;
+            }
+
+            if (!pairing?.remoteKey && !canCreate) {
+                continue;
+            }
+
+            if (mode.kind === "sync") {
+                const rule = config.push(item.type) ?? defaultPush(item.type);
+                const actors = rule === "anyone" ? [] : pushActors(db, item.id, mode.cursor);
+                const blocked = actors.some(
+                    (actor) =>
+                        !allows(
+                            rule,
+                            rolesOf(view, item, {
+                                lineage: actor.sessionId !== null ? [actor.sessionId] : [],
+                                ownerKind: actor.kind === "owner",
+                                sessionId: actor.sessionId,
+                            })
+                        )
+                );
+
+                if (pairing?.state === "held" || blocked) {
+                    if (pairing?.state !== "held") {
+                        inTransaction(db, () =>
+                            writePairing(db, deps, {
+                                ...(pairing ?? newPairing(item.id, id, deps.now())),
+                                state: "held",
+                                note: "a change needs a lead or the owner to release it",
+                            })
+                        );
+                    }
+
+                    report.held++;
+                    continue;
+                }
             }
 
             const machine = deps.machinePrefix;
@@ -238,15 +293,7 @@ async function pushProject({
         inTransaction(db, () => {
             intents.forEach((intent, index) => {
                 const result = results[index] ?? { ok: false as const, error: "the connector answered no result" };
-                const base: Pairing = intent.pairing ?? {
-                    item: intent.item.id,
-                    connector: id,
-                    remoteKey: "",
-                    born: "local",
-                    origin: originFor("local"),
-                    state: "pending",
-                    updatedTs: deps.now(),
-                };
+                const base = intent.pairing ?? newPairing(intent.item.id, id, deps.now());
 
                 if (result.ok) {
                     writePairing(db, deps, { ...base, remoteKey: result.remoteKey, state: "in-sync", note: undefined });
@@ -295,7 +342,7 @@ function markLocalDrift(deps: SyncDeps, changes: readonly Change[], report: Sync
     }
 }
 
-/** One pass: every change after the cursor, pushed under the lease. Safe to run again: it starts at its cursor. */
+/** One pass: take up to 500 journal entries after the cursor, then push the affected items under the lease. */
 export async function runSyncOnce(deps: SyncDeps): Promise<SyncReport> {
     const { db } = deps;
     const now = deps.now();
@@ -309,19 +356,17 @@ export async function runSyncOnce(deps: SyncDeps): Promise<SyncReport> {
     try {
         const cursor = (db.query("SELECT seq FROM cursors WHERE consumer = ?").get(CURSOR) as { seq: number }).seq;
         const changes = selectChangesAfter(db, cursor, BATCH);
-        const touched = new Map<string, Actor>();
+        const touched = new Set<ItemId>();
 
         for (const change of changes) {
             // A change a connector made (a pull, a pairing) is not pushed back.
             if (change.origin.via !== "connector") {
-                touched.set(change.item, change.actor);
+                touched.add(change.item);
             }
         }
 
-        const items = [...touched.entries()]
-            .map(([id, actor]) => ({ item: selectItem(db, id), actor, release: false }))
-            .filter((entry): entry is { item: Item; actor: Actor; release: boolean } => entry.item !== null);
-        await pushItems(deps, items, report);
+        const items = [...touched].map((id) => selectItem(db, id)).filter((item) => item !== null);
+        await pushItems({ deps, items, mode: { kind: "sync", cursor }, report });
         markLocalDrift(deps, changes, report);
         const last = changes.length > 0 ? changes[changes.length - 1].seq : cursor;
         db.run("UPDATE cursors SET seq = ? WHERE consumer = ?", [last, CURSOR]);
@@ -334,11 +379,20 @@ export async function runSyncOnce(deps: SyncDeps): Promise<SyncReport> {
 
 /** `sync --release <ref>`: push a held change now, whatever role made it. */
 export async function releaseHeld(deps: SyncDeps, item: ItemId): Promise<SyncReport> {
+    return pushExplicit(deps, item, { kind: "release" });
+}
+
+/** Pair pushes only to the connector the caller selected. */
+export async function pushPairing(input: { deps: SyncDeps; item: ItemId; connector: string }): Promise<SyncReport> {
+    return pushExplicit(input.deps, input.item, { kind: "pair", connector: input.connector });
+}
+
+async function pushExplicit(deps: SyncDeps, item: ItemId, mode: PushMode): Promise<SyncReport> {
     const report: SyncReport = { pushed: 0, held: 0, failed: 0, drift: 0, cursor: -1 };
     const row = selectItem(deps.db, item);
 
     if (row !== null) {
-        await pushItems(deps, [{ item: row, actor: null, release: true }], report);
+        await pushItems({ deps, items: [row], mode, report });
     }
 
     return report;

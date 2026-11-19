@@ -8,6 +8,7 @@ import {
     type PullReport,
     pairItem,
     pullRemote,
+    pushPairing,
     releaseHeld,
     runSyncOnce,
     type SyncDeps,
@@ -464,7 +465,7 @@ export const workHandlers: WorkHandlers = {
         }
 
         const pairing = pairItem(sync.deps, found.item.id, p.connector, p.key);
-        const push = await releaseHeld(sync.deps, found.item.id);
+        const push = await pushPairing({ deps: sync.deps, item: found.item.id, connector: p.connector });
         return okReply("pair", { pairing, push });
     },
 

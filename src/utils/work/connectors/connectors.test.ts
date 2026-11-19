@@ -205,6 +205,7 @@ describe("the sync consumer", () => {
         expect(selectPairings(db, { item: id })[0].state).toBe("in-sync");
 
         await write(ctx("other"), { verb: "comment", ref: id, text: "a note" });
+        await write(ctx("owner-s", "owner"), { verb: "comment", ref: id, text: "another note" });
         const report = await runSyncOnce(deps());
         expect(report.held).toBe(1);
         expect(selectPairings(db, { item: id })[0].state).toBe("held");
