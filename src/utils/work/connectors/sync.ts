@@ -5,6 +5,7 @@
  * local side owns is recorded as drift and never applied.
  */
 import type { Database } from "bun:sqlite";
+import { randomUUID } from "node:crypto";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { Change } from "../model/change";
@@ -27,6 +28,7 @@ import {
     originFor,
     type Pairing,
     type PushIntent,
+    type PushResult,
     pairingLabelFor,
     type RemoteItem,
     SYNCED_FACTS,
@@ -112,8 +114,8 @@ export function takeLease(db: Database, owner: string, now: string): boolean {
         CURSOR,
     ]);
     const taken = db.run(
-        "UPDATE cursors SET lease_owner = ?, lease_until = ? WHERE consumer = ? AND (lease_owner IS NULL OR lease_owner = ? OR lease_until < ?)",
-        [owner, until, CURSOR, owner, now]
+        "UPDATE cursors SET lease_owner = ?, lease_until = ? WHERE consumer = ? AND (lease_owner IS NULL OR lease_until <= ?)",
+        [owner, until, CURSOR, now]
     );
     return taken.changes > 0;
 }
@@ -123,6 +125,28 @@ export function dropLease(db: Database, owner: string): void {
         CURSOR,
         owner,
     ]);
+}
+
+function renewLease(db: Database, token: string, now: string): boolean {
+    const until = new Date(Date.parse(now) + LEASE_MS).toISOString();
+    return (
+        db.run("UPDATE cursors SET lease_until = ? WHERE consumer = ? AND lease_owner = ? AND lease_until > ?", [
+            until,
+            CURSOR,
+            token,
+            now,
+        ]).changes > 0
+    );
+}
+
+function pairingGeneration(db: Database, item: ItemId, connector: string): number | null {
+    return (
+        db
+            .query<{ seq: number | null }, [ItemId, string]>(
+                "SELECT MAX(seq) AS seq FROM changes WHERE item = ? AND kind IN ('paired', 'unpaired') AND json_extract(origin, '$.id') = ?"
+            )
+            .get(item, connector)?.seq ?? null
+    );
 }
 
 function containersOf(db: Database, item: ItemId): string[] {
@@ -143,7 +167,10 @@ export interface SyncReport {
     cursor: number;
 }
 
-type PushMode = { kind: "sync"; cursor: number } | { kind: "release" } | { kind: "pair"; connector: string };
+type PushMode =
+    | { kind: "sync"; cursor: number; lease: string }
+    | { kind: "release" }
+    | { kind: "pair"; connector: string };
 
 function pushActors(db: Database, id: ItemId, after: number): Actor[] {
     return db
@@ -218,7 +245,12 @@ async function pushProject({
             continue;
         }
 
+        if (mode.kind === "sync" && !renewLease(db, mode.lease, deps.now())) {
+            return;
+        }
+
         const intents: PushIntent[] = [];
+        const generations: (number | null)[] = [];
 
         for (const candidate of items) {
             const item = selectItem(db, candidate.id);
@@ -282,6 +314,7 @@ async function pushProject({
                 })
             );
             intents.push({ item, pairing, labels });
+            generations.push(pairingGeneration(db, item.id, id));
         }
 
         if (intents.length === 0) {
@@ -293,7 +326,7 @@ async function pushProject({
             project,
             machinePrefix: deps.machinePrefix,
         };
-        const results = await connector.push(intents, ctx).catch((error: unknown) => {
+        const results = await connector.push(intents, ctx).catch((error: unknown): PushResult[] => {
             logger.warn({ connector: id, project, err: error }, "work sync: connector push failed");
             return intents.map(() => ({
                 ok: false as const,
@@ -302,7 +335,15 @@ async function pushProject({
         });
 
         inTransaction(db, () => {
+            if (mode.kind === "sync" && !renewLease(db, mode.lease, deps.now())) {
+                return;
+            }
+
             intents.forEach((intent, index) => {
+                if (pairingGeneration(db, intent.item.id, id) !== generations[index]) {
+                    return;
+                }
+
                 const result = results[index] ?? { ok: false as const, error: "the connector answered no result" };
                 const base = intent.pairing ?? newPairing(intent.item.id, id, deps.now());
 
@@ -357,8 +398,9 @@ function markLocalDrift(deps: SyncDeps, changes: readonly Change[], report: Sync
 export async function runSyncOnce(deps: SyncDeps): Promise<SyncReport> {
     const { db } = deps;
     const now = deps.now();
+    const lease = `${deps.owner}:${randomUUID()}`;
 
-    if (!takeLease(db, deps.owner, now)) {
+    if (!takeLease(db, lease, now)) {
         return { pushed: 0, held: 0, failed: 0, drift: 0, skipped: "lease", cursor: -1 };
     }
 
@@ -377,14 +419,24 @@ export async function runSyncOnce(deps: SyncDeps): Promise<SyncReport> {
         }
 
         const items = [...touched].map((id) => selectItem(db, id)).filter((item) => item !== null);
-        await pushItems({ deps, items, mode: { kind: "sync", cursor }, report });
+        await pushItems({ deps, items, mode: { kind: "sync", cursor, lease }, report });
+
+        if (!renewLease(db, lease, deps.now())) {
+            return { ...report, cursor, skipped: "lease" };
+        }
+
         markLocalDrift(deps, changes, report);
         const last = changes.length > 0 ? changes[changes.length - 1].seq : cursor;
-        db.run("UPDATE cursors SET seq = ? WHERE consumer = ?", [last, CURSOR]);
+        db.run("UPDATE cursors SET seq = ? WHERE consumer = ? AND lease_owner = ? AND lease_until > ?", [
+            last,
+            CURSOR,
+            lease,
+            deps.now(),
+        ]);
         report.cursor = last;
         return report;
     } finally {
-        dropLease(db, deps.owner);
+        dropLease(db, lease);
     }
 }
 
