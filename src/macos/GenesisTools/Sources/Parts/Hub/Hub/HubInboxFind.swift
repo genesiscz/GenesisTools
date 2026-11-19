@@ -46,6 +46,10 @@ struct InboxFindHost: View {
             default: InboxMain(model: model, inbox: inbox)
             }
         }
+            .onChange(of: inbox.focusRequest, initial: true) { _, _ in
+                // The model publishes a focus request only after finding the item in the unfiltered inbox.
+                if inbox.focusedItemID != nil, !model.filter.isEmpty { model.filter = "" }
+            }
             .taskResumePrompt(inbox.tasks)
             .panelFind(find, revision: Revision(sessions: sessions, filter: model.filter, option: option),
                        prepare: { match in prepareVariant(match, option: option) }) {

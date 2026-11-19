@@ -62,30 +62,78 @@ final class HubInboxUXTests: XCTestCase {
     }
 
     @MainActor
-    func testHidingAFormDuringAnImageImportKeepsItsDraftAndBlocksEarlySubmission() throws {
+    func testHidingAFormDuringAnImageImportKeepsItsDraftAndBlocksEarlySubmission() async throws {
         let inbox = HubInboxModel()
-        let form = try Self.decision(#"{"kind":"form","title":"Pick a sample","questions":[]}"#)
+        let form = try Self.decision("""
+        {"kind":"form","title":"Pick a sample","questions":[{"itemId":"sample","prompt":"Which sample?",
+         "multiple":false,"freeText":true,"required":true,"fileTags":false,"imagePaste":true,"choices":[]}]}
+        """)
+        let sent = expectation(description: "The staged form reaches its sender")
+        sent.assertForOverFulfill = true
+        let reloaded = expectation(description: "The confirmed answer releases its draft before reload")
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let bytes = Data([1, 2, 3])
+        inbox.captureWrite = { args in
+            XCTAssertTrue(args.contains("sample=\(file.path)"))
+            XCTAssertTrue(args.contains { $0.contains("The small basket") })
+            XCTAssertEqual(try Data(contentsOf: file), bytes)
+            sent.fulfill()
+            return ProcessCapture(status: 0, stdout: Data(#"{"channel":"form","delivered":true}"#.utf8), stderr: Data())
+        }
+        inbox.reloadAfterWrite = { reloaded.fulfill() }
         let session = Self.session("orchard", items: [form])
-        inbox.received(InboxEnvelope(sessions: [session], elapsedMs: nil))
+        inbox.received(InboxEnvelope(sessions: [session], elapsedMs: nil, pendingFormIDs: [form.id]))
         let draft = inbox.formDraft(for: form.id)
         draft.texts["sample"] = "The small basket"
         XCTAssertTrue(draft.reserveImage(for: "sample"))
         XCTAssertTrue(draft.importingImages)
         inbox.answerForm(form, choices: [:], texts: draft.texts)
         XCTAssertFalse(inbox.sending.contains(form.id), "The image has not finished staging.")
-        inbox.received(InboxEnvelope(sessions: [], elapsedMs: nil))
-        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let bytes = Data([1, 2, 3])
+        inbox.received(InboxEnvelope(sessions: [], elapsedMs: nil, pendingFormIDs: [form.id]))
         try bytes.write(to: file)
         let image = QaAttachedImage(path: file.path, thumbnail: NSImage(size: .init(width: 2, height: 2)))
-        defer { draft.removeImage(image, for: "sample") }
+        defer { try? FileManager.default.removeItem(at: file) }
         draft.finishImage(.staged(image), for: "sample")
-        inbox.received(InboxEnvelope(sessions: [session], elapsedMs: nil))
+        inbox.received(InboxEnvelope(sessions: [session], elapsedMs: nil, pendingFormIDs: [form.id]))
         let restored = inbox.formDraft(for: form.id)
         XCTAssertFalse(restored.importingImages)
         XCTAssertEqual(restored.texts["sample"], "The small basket")
         let path = try XCTUnwrap(restored.images["sample"]?.first?.path)
         XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path)), bytes)
+        inbox.answerForm(form, choices: [:], texts: restored.texts, imagePaths: ["sample": [path]])
+        await fulfillment(of: [sent, reloaded], timeout: 3)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: path))
+        XCTAssertTrue(inbox.formDraft(for: form.id).texts.isEmpty)
+    }
+
+    @MainActor
+    func testConfirmedClosureAndExplicitDiscardCleanUpStagedAndInFlightImages() throws {
+        for explicitly in [false, true] {
+            let inbox = HubInboxModel()
+            let draft = inbox.formDraft(for: "ask_fixture")
+            draft.texts["sample"] = "A draft"
+            let staged = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            let late = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            defer {
+                try? FileManager.default.removeItem(at: staged)
+                try? FileManager.default.removeItem(at: late)
+            }
+            try Data([1]).write(to: staged)
+            try Data([2]).write(to: late)
+            let thumbnail = NSImage(size: .init(width: 2, height: 2))
+            XCTAssertTrue(draft.reserveImage(for: "sample"))
+            draft.finishImage(.staged(QaAttachedImage(path: staged.path, thumbnail: thumbnail)), for: "sample")
+            XCTAssertTrue(draft.reserveImage(for: "sample"))
+            inbox.received(InboxEnvelope(sessions: [], elapsedMs: nil))
+            XCTAssertTrue(inbox.formDraft(for: "ask_fixture") === draft, "An older CLI cannot confirm closure.")
+            if explicitly { inbox.discardFormDraft("ask_fixture") }
+            else { inbox.received(InboxEnvelope(sessions: [], elapsedMs: nil, pendingFormIDs: [])) }
+            draft.finishImage(.staged(QaAttachedImage(path: late.path, thumbnail: thumbnail)), for: "sample")
+            XCTAssertFalse(FileManager.default.fileExists(atPath: staged.path))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: late.path))
+            XCTAssertTrue(inbox.formDraft(for: "ask_fixture").texts.isEmpty)
+            XCTAssertFalse(draft.reserveImage(for: "sample"))
+        }
     }
 
     @MainActor

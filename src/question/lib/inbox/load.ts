@@ -485,6 +485,8 @@ export interface InboxResult {
     sessions: InboxSession[];
     scanned: { sessions: number; fromCache: number; read: number; failed: number };
     elapsedMs: number;
+    /** Complete pending form IDs, independent of the card limit and inbox filters. */
+    pendingFormIDs?: string[];
 }
 
 /**
@@ -506,10 +508,11 @@ export async function loadInbox({
             item.kind === "decision" ? { ...item, refs: fillExcerpts(item.refs, session.cwd ?? undefined) } : item
         ),
     }));
+    const pendingFormIDs = (await deps.formHeads?.())?.map(({ id }) => id);
     const elapsedMs = Math.round(performance.now() - started);
     log.debug({ hours, ...parts.scanned, waiting: inbox.length, elapsedMs }, "inbox loaded");
 
-    return { sessions: inbox, scanned: parts.scanned, elapsedMs };
+    return { sessions: inbox, scanned: parts.scanned, elapsedMs, pendingFormIDs };
 }
 
 /** What `loadInbox` reads before it builds: the listed sessions, their scans, the rows, forms and open dialogs. */

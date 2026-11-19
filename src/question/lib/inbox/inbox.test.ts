@@ -1003,6 +1003,10 @@ describe("loadInbox", () => {
         expect(queue.total).toBe(3);
         expect(queue.sessions.flatMap((entry) => entry.items.map((item) => item.id))).toEqual(["ask_listed"]);
 
+        const hub = await loadInbox({ deps });
+        expect(hub.pendingFormIDs).toEqual(["ask_listed", "ask_old_1", "ask_old_2"]);
+        expect(hub.sessions.flatMap((session) => session.items.map((item) => item.id))).toEqual(["ask_listed"]);
+
         const withoutHeads = await loadWaitingQueue({ deps: { ...deps, formHeads: undefined }, now });
         expect(withoutHeads.total).toBe(1);
     });
