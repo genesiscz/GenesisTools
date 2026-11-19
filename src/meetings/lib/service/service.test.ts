@@ -949,12 +949,14 @@ test("line evidence names the active swaps that skipped each source line", async
         record.items[1]!.evidence = { swap: { skipped: [40] } };
         record.items[2]!.evidence = { swap: { skipped: [10] } };
         record.items[2]!.status = "rejected";
+        // A swap that names its labels skips only lines under one of them.
+        record.items[3]!.evidence = { swap: { skipped: [10, 20, 40], selfLabel: "Speaker 2", otherLabel: "Nobody" } };
     });
     const result = await readRows({ meeting: REVIEW.id }, store, deps);
     expect(result.lineEvidence?.map((line) => line.swapSkippedBy)).toEqual([
         undefined,
         ["i1"],
-        undefined,
+        ["i4"],
         undefined,
         ["i1", "i2"],
         undefined,
