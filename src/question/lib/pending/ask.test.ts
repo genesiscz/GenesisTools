@@ -4,7 +4,6 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } fro
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { postHandoff } from "@app/handoff/executor";
-import { logFilePathForTs } from "@app/handoff/log-store";
 import { freshEnv } from "@app/handoff/test-utils";
 import { captureCallerContext } from "@app/say/lib/caller";
 import { getAgentRuntimeContext, runAsCaller } from "@genesiscz/utils/agent/runtime";
@@ -1003,9 +1002,10 @@ describe("characterization: the same environment across caller records", () => {
                     isWorktree: false,
                 };
                 expect(handoff.postedByContext).toEqual(expectedBy);
-                const event = SafeJSON.parse(readFileSync(logFilePathForTs(now, handoffEnv.base), "utf8"), {
-                    strict: true,
-                });
+                const logs = readdirSync(handoffEnv.base).filter((file) => file.endsWith(".jsonl"));
+                expect(logs).toHaveLength(1);
+                const event = SafeJSON.parse(readFileSync(join(handoffEnv.base, logs[0]), "utf8"), { strict: true });
+                expect(event.ts).toBe(now);
                 expect(event.by).toEqual(expectedBy);
             });
         });
