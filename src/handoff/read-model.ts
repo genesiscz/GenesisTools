@@ -89,6 +89,18 @@ function createTables(db: Database): { eventsTableCreated: boolean } {
         payload    TEXT NOT NULL
     );`);
     db.exec("CREATE INDEX IF NOT EXISTS idx_handoff_events_handoff ON handoff_events(handoff_id, ts);");
+    // Private journal. Unlike handoff_events, these payloads must retain the fold credentials.
+    db.exec(`CREATE TABLE IF NOT EXISTS handoff_replay (
+        seq INTEGER PRIMARY KEY,
+        uid TEXT NOT NULL UNIQUE,
+        payload TEXT NOT NULL,
+        copy_to TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_handoff_replay_pending ON handoff_replay(seq) WHERE copy_to IS NOT NULL;
+    CREATE TABLE IF NOT EXISTS handoff_transition (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        copy_until INTEGER NOT NULL
+    );`);
     ensureColumn(
         db,
         "handoffs",
@@ -283,6 +295,13 @@ export function listHandoffRows(db: Database, opts: { statuses?: string[]; proje
     return (db.query(sql).all(...params) as HandoffRow[]).map(rowToHandoff);
 }
 
+function recordReplay(db: Database, events: readonly HandoffEvent[], copyTo: string | null): void {
+    const put = db.prepare("INSERT OR IGNORE INTO handoff_replay (uid, payload, copy_to) VALUES (?, ?, ?)");
+    for (const event of events) {
+        put.run(event.uid, SafeJSON.stringify(event, { strict: true }), copyTo);
+    }
+}
+
 /** The fold's verdict for one event, rebuilt from its stored columns. */
 function toOutcome(row: { ok: number; error: string | null; extra: string | null }): FoldOutcome {
     const extra = row.extra !== null ? (SafeJSON.parse(row.extra, { strict: true }) as Partial<FoldOutcome>) : {};
@@ -407,7 +426,7 @@ export function listHandoffEvents({
  * the offset it landed on, not that it reached THIS read's end, so each file
  * is retried from the freshly committed offset until it is fully caught up.
  */
-export function catchUpHandoffs(db: Database, base?: string): void {
+export function catchUpHandoffs(db: Database, base?: string, rebuilding = false): void {
     const dir = handoffLogDir(base);
 
     if (!existsSync(dir)) {
@@ -464,7 +483,7 @@ export function catchUpHandoffs(db: Database, base?: string): void {
                 break;
             }
 
-            const applied = applyHandoffBatch({ db, file, prevOffset: prev, events, consumed, base });
+            const applied = applyHandoffBatch({ db, file, prevOffset: prev, events, consumed, base, rebuilding });
 
             if (applied) {
                 break;
@@ -509,6 +528,7 @@ export interface ApplyBatchInput {
     events: HandoffEvent[];
     consumed: number;
     base?: string;
+    rebuilding?: boolean;
 }
 
 /**
@@ -516,7 +536,15 @@ export interface ApplyBatchInput {
  * another process advanced the offset first — the batch then already folded
  * elsewhere and its outcomes are readable via getEventOutcome.
  */
-export function applyHandoffBatch({ db, file, prevOffset, events, consumed, base }: ApplyBatchInput): boolean {
+export function applyHandoffBatch({
+    db,
+    file,
+    prevOffset,
+    events,
+    consumed,
+    base,
+    rebuilding,
+}: ApplyBatchInput): boolean {
     const getOff = db.prepare("SELECT byte_offset FROM handoff_ingest_offsets WHERE file = ?");
     const setOff = db.prepare("INSERT OR REPLACE INTO handoff_ingest_offsets (file, byte_offset) VALUES (?, ?)");
     let applied = false;
@@ -530,7 +558,18 @@ export function applyHandoffBatch({ db, file, prevOffset, events, consumed, base
             return;
         }
 
-        foldEvents(db, events, base, file);
+        if (rebuilding) {
+            const recorded = db.prepare("SELECT 1 FROM handoff_replay WHERE uid = ?");
+            foldEvents(
+                db,
+                events.filter((event) => recorded.get(event.uid) === null),
+                base,
+                file
+            );
+        } else {
+            foldEvents(db, events, base, file);
+            recordReplay(db, events, null);
+        }
         setOff.run(file, prevOffset + consumed);
         applied = true;
     });
@@ -644,39 +683,101 @@ export function foldEvents(
     return outcomes;
 }
 
-/**
- * The write of the switch (P6): the store folds and keeps the events first, in one transaction, then copies them into
- * the old log, so a rollback to the old code loses nothing (D14 b, for 14 days). A failed copy is logged.
- */
+const ROLLBACK_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+
+/** Fold the private replay event and its pending legacy copy in the same transaction. */
 export function commitHandoffEvents(
     db: Database,
     events: readonly HandoffEvent[],
     base?: string
 ): Map<string, FoldOutcome> {
-    let outcomes = new Map<string, FoldOutcome>();
-    db.transaction(() => {
-        outcomes = foldEvents(db, events, base);
-    })();
-
-    try {
-        appendHandoffEvents([...events], base);
-    } catch (error) {
-        log.warn(
-            { err: error, events: events.length },
-            "handoff: the copy into the old log failed; the work store holds the events"
-        );
+    const nested = db.inTransaction;
+    const outcomes = db
+        .transaction(() => {
+            const results = foldEvents(db, events, base);
+            const now = Date.now();
+            db.run("INSERT OR IGNORE INTO handoff_transition (id, copy_until) VALUES (1, ?)", [
+                now + ROLLBACK_WINDOW_MS,
+            ]);
+            const transition = db
+                .query<{ copy_until: number }, []>("SELECT copy_until FROM handoff_transition WHERE id = 1")
+                .get();
+            recordReplay(
+                db,
+                events.filter((event) => results.has(event.uid)),
+                transition !== null && now < transition.copy_until ? handoffLogDir(base) : null
+            );
+            return results;
+        })
+        .immediate();
+    if (!nested) {
+        flushHandoffCopies(db);
     }
-
     return outcomes;
 }
 
-/** Drop + full re-fold (§6.1 rule 6). Also clears + refills handoff_events (G1). */
+/** The writer lock keeps different processes from appending out of commit order. */
+export function flushHandoffCopies(db: Database): void {
+    try {
+        for (;;) {
+            const drained = db
+                .transaction(() => {
+                    const rows = db
+                        .query<{ seq: number; payload: string; copy_to: string }, []>(
+                            "SELECT seq, payload, copy_to FROM handoff_replay WHERE copy_to IS NOT NULL ORDER BY seq LIMIT 100"
+                        )
+                        .all();
+                    if (rows.length === 0) {
+                        return true;
+                    }
+
+                    const file = rows[0].copy_to;
+                    const nextFile = rows.findIndex((row) => row.copy_to !== file);
+                    const batch = nextFile < 0 ? rows : rows.slice(0, nextFile);
+                    appendHandoffEvents(
+                        batch.map((row) => SafeJSON.parse<HandoffEvent>(row.payload, { strict: true })),
+                        file
+                    );
+                    db.run("UPDATE handoff_replay SET copy_to = NULL WHERE seq <= ?", [batch[batch.length - 1].seq]);
+                    return false;
+                })
+                .immediate();
+            if (drained) {
+                return;
+            }
+        }
+    } catch (error) {
+        log.warn({ err: error }, "handoff: legacy log copy remains queued for retry");
+    }
+}
+
+/** Rebuild from the older log prefix and the private journal in committed order. */
 export function rebuildHandoffModel(db: Database, base?: string): void {
-    db.exec("DROP TABLE IF EXISTS handoffs;");
-    db.exec("DROP TABLE IF EXISTS handoff_ingest_offsets;");
-    db.exec("DROP TABLE IF EXISTS handoff_event_results;");
-    db.exec("DROP TABLE IF EXISTS handoff_events;");
-    createTables(db);
-    catchUpHandoffs(db, base);
-    log.info("handoff read-model rebuilt from JSONL");
+    db.transaction(() => {
+        db.exec("DROP TABLE IF EXISTS handoffs;");
+        db.exec("DROP TABLE IF EXISTS handoff_ingest_offsets;");
+        db.exec("DROP TABLE IF EXISTS handoff_event_results;");
+        db.exec("DROP TABLE IF EXISTS handoff_events;");
+        createTables(db);
+        catchUpHandoffs(db, base, true);
+        let seq = 0;
+        for (;;) {
+            const rows = db
+                .query<{ seq: number; payload: string }, [number]>(
+                    "SELECT seq, payload FROM handoff_replay WHERE seq > ? ORDER BY seq LIMIT 1000"
+                )
+                .all(seq);
+            if (rows.length === 0) {
+                break;
+            }
+            foldEvents(
+                db,
+                rows.map((row) => SafeJSON.parse<HandoffEvent>(row.payload, { strict: true })),
+                base
+            );
+            seq = rows[rows.length - 1].seq;
+        }
+    }).immediate();
+    flushHandoffCopies(db);
+    log.info("handoff read-model rebuilt from the legacy log and private journal");
 }
