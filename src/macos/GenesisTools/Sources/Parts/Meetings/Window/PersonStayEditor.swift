@@ -59,34 +59,38 @@ struct PersonStayEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(original.map { "Who was there: \($0.name)" } ?? "Add a person").font(.headline)
-            if original == nil { person }
-            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 8) {
-                GridRow {
-                    Text("Joined").foregroundStyle(.secondary)
-                    TextField("At the start", text: $from)
-                        .accessibilityIdentifier("meetings.stay.from")
-                }
-                GridRow {
-                    Text("Left").foregroundStyle(.secondary)
-                    TextField("At the end", text: $to)
-                        .accessibilityIdentifier("meetings.stay.to")
-                }
-                GridRow {
-                    Text("Seat").foregroundStyle(.secondary)
-                    GenSegmentedTabs("Seat", items: [.init(true, "This Mac's microphone"), .init(false, "Another device")],
-                                     selection: $atMic, minSegmentWidth: 0, identifier: "meetings.stay.seat", size: .small)
-                        .fixedSize()
-                }
-                if !atMic {
+            // A write in flight takes the draft as it was; an edit made meanwhile would be lost when it closes the editor.
+            Group {
+                if original == nil { person }
+                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 8) {
                     GridRow {
-                        Text("Device").foregroundStyle(.secondary)
-                        TextField("Their own", text: $via)
-                            .accessibilityIdentifier("meetings.stay.via")
+                        Text("Joined").foregroundStyle(.secondary)
+                        TextField("At the start", text: $from)
+                            .accessibilityIdentifier("meetings.stay.from")
+                    }
+                    GridRow {
+                        Text("Left").foregroundStyle(.secondary)
+                        TextField("At the end", text: $to)
+                            .accessibilityIdentifier("meetings.stay.to")
+                    }
+                    GridRow {
+                        Text("Seat").foregroundStyle(.secondary)
+                        GenSegmentedTabs("Seat", items: [.init(true, "This Mac's microphone"), .init(false, "Another device")],
+                                         selection: $atMic, minSegmentWidth: 0, identifier: "meetings.stay.seat", size: .small)
+                            .fixedSize()
+                    }
+                    if !atMic {
+                        GridRow {
+                            Text("Device").foregroundStyle(.secondary)
+                            TextField("Their own", text: $via)
+                                .accessibilityIdentifier("meetings.stay.via")
+                        }
                     }
                 }
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 12))
             }
-            .textFieldStyle(.roundedBorder)
-            .font(.system(size: 12))
+            .disabled(busy)
             Text(problem ?? "On the transcript clock, as 12:04 or 1:05:30. Empty: from the start, or to the end.")
                 .font(.system(size: 11.5)).foregroundStyle(problem == nil ? Color.secondary : KitHue.care.ink)
                 .fixedSize(horizontal: false, vertical: true)
@@ -152,6 +156,7 @@ struct PersonStayEditor: View {
 
     private func save() {
         guard !busy, problem == nil, !draft.name.isEmpty else { return }
+        let draft = draft
         run(.save) { try await detail.savePersonStay(draft, before: original) }
     }
 
