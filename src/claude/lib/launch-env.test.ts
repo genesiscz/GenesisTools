@@ -5,7 +5,7 @@ describe("pinnedLaunchEnv", () => {
     // Pinned key-by-key: dropping any one of these silently changes how the
     // launched session authenticates or which models `/model` offers.
     test("carries all eight keys", () => {
-        const env = pinnedLaunchEnv({ name: "work", label: "max 20x" }, "sk-ant-oat01-token");
+        const env = pinnedLaunchEnv({ name: "work", label: "max 20x" }, { value: "sk-ant-oat01-token" });
 
         expect(env).toEqual({
             TOOLS_CLAUDE_ACCOUNT: "work",
@@ -20,7 +20,22 @@ describe("pinnedLaunchEnv", () => {
     });
 
     test("an account with no label still gets a subscription type", () => {
-        expect(pinnedLaunchEnv({ name: "work" }, "t").CLAUDE_CODE_SUBSCRIPTION_TYPE).toBe("max");
+        expect(pinnedLaunchEnv({ name: "work" }, { value: "t" }).CLAUDE_CODE_SUBSCRIPTION_TYPE).toBe("max");
+    });
+
+    // Without the variable Claude Code treats the token as inference-only and refuses Code Mode, because it cannot
+    // read the organization policy; with it, a token minted with the profile scope passes that check.
+    test("names the token's scopes for Claude Code when the grant is known", () => {
+        const env = pinnedLaunchEnv({ name: "work" }, { value: "t", scopes: ["user:inference", "user:profile"] });
+
+        expect(env.CLAUDE_CODE_OAUTH_SCOPES).toBe("user:inference user:profile");
+    });
+
+    test("leaves the scopes out for a token whose grant is unknown", () => {
+        expect(pinnedLaunchEnv({ name: "work" }, { value: "t" })).not.toHaveProperty("CLAUDE_CODE_OAUTH_SCOPES");
+        expect(pinnedLaunchEnv({ name: "work" }, { value: "t", scopes: [] })).not.toHaveProperty(
+            "CLAUDE_CODE_OAUTH_SCOPES"
+        );
     });
 });
 

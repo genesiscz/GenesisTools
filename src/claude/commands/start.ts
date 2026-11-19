@@ -1209,7 +1209,13 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
         };
         delete launchEnv.CLAUDE_CODE_OAUTH_TOKEN;
     } else {
-        launchEnv = { ...process.env, ...pinnedLaunchEnv(account, longLivedToken ?? "") };
+        launchEnv = {
+            ...process.env,
+            ...pinnedLaunchEnv(account, {
+                value: longLivedToken ?? "",
+                scopes: account.credentials.longLivedTokenScopes,
+            }),
+        };
     }
 
     // Claude Code's own Bash edit-diff renderer is otherwise gated by a per-account
@@ -1236,6 +1242,7 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
                 env: {
                     accountName: account.name,
                     oauthToken: longLivedToken,
+                    oauthScopes: account.credentials.longLivedTokenScopes?.join(" ") || undefined,
                     subscriptionType: subscriptionTypeOf(account),
                     fableModel: FABLE_MODEL_ID,
                     customModelOption: FABLE_MODEL_OPTION,

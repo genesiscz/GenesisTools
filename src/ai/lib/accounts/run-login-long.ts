@@ -134,12 +134,14 @@ export async function runLoginLong(opts: RunLoginLongOptions): Promise<void> {
     }
 
     const expiresAt = outcome.credentials.longLivedTokenExpiresAt;
+    const scopes = outcome.credentials.longLivedTokenScopes;
 
     await store.mutate((data) =>
         applyLongLivedToken(data, {
             accountId: account.id,
             token,
             expiresAt,
+            scopes,
             organizationUuid: outcome.accountFields?.organizationUuid,
         })
     );

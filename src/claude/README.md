@@ -310,6 +310,12 @@ same accounts. An account can hold three credentials:
 `--both` (the OAuth pair and the long-lived token), `--all`, and `-y` to skip the confirmation. `login-long` asks you
 to paste the output of `claude setup-token`, or mints it with `--setup-token`.
 
+A minted token asks for `user:inference user:profile` and keeps the scopes the server granted
+(`credentials.longLivedTokenScopes`). `start`, `exec`, `embed`, `worker` and the agent-team teammates pass them as
+`CLAUDE_CODE_OAUTH_SCOPES`. Without that variable Claude Code treats the token as inference-only, cannot read the
+organization policy, and refuses Code Mode ("couldn't read your organization's settings or policy"). A pasted
+`claude setup-token` token has only `user:inference`, so Code Mode needs a token minted again with `--setup-token`.
+
 - **`usage`** opens a TUI over every account. `--account <name...>` (alias `-f/--filter`) limits it, `--range`
   takes `60m`, `6h`, `24h` or `7d`, `--json` prints the data (`--scored` adds the ranking the picker uses),
   `--no-tui` prints plain text, and `--fresh` forces a live fetch past the shared cache (45 seconds). `--token`

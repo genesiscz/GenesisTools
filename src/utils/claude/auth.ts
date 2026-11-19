@@ -65,12 +65,13 @@ const FULL_SCOPES =
     "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
 
 /**
- * The single scope Claude Code requests for `setup-token`. A custom `expires_in`
- * is only accepted when the grant carries THIS scope alone — any of the normal
- * login scopes alongside it and the server answers "Invalid expiry for scope".
- * Inference-only: such a token cannot call the usage or profile endpoints.
+ * The scopes `login-long` mints a 1-year token for. Claude Code's own `setup-token` asks for `user:inference` alone,
+ * and the server refuses a custom `expires_in` for the full login set ("Invalid expiry for scope", 2026-07-24), but
+ * it granted a 1-year token for this pair on 2026-11-19. `user:profile` lets Claude Code read the organization
+ * policy, which Code Mode needs before it starts; it reaches Claude Code as CLAUDE_CODE_OAUTH_SCOPES
+ * (`pinnedLaunchEnv`).
  */
-export const INFERENCE_SCOPE = "user:inference";
+export const LONG_LIVED_SCOPES = "user:inference user:profile";
 
 /** What Claude Code asks for on a setup-token exchange. */
 export const ONE_YEAR_SECONDS = 365 * 24 * 60 * 60;
@@ -210,7 +211,7 @@ export class ClaudeOAuthClient {
             code_verifier: verifier,
         };
 
-        // Only ever set for an INFERENCE_SCOPE grant — see the note above.
+        // Only ever set for a LONG_LIVED_SCOPES grant — see the note above.
         if (opts.expiresIn !== undefined) {
             body.expires_in = opts.expiresIn;
         }
