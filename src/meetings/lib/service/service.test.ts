@@ -472,6 +472,7 @@ test("J7 offers a room device only for distinct roster joins and persists the ow
             ],
             participants: [account, guest].map((name) => ({
                 name,
+                self: id === "second-room" && name === account,
                 from: ["platform-roster"],
                 stays: [
                     { fromSec: 0, toSec: 10, source: "platform-roster" },

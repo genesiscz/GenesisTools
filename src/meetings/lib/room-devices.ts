@@ -22,11 +22,9 @@ function roomJoins(record: MeetingRecord) {
     );
     function join(name: string, at?: number) {
         const key = rosterAccountKey(name);
-        if (!selves.has(key)) {
-            const times = joins.get(key) ?? [];
-            times.push(at);
-            joins.set(key, times);
-        }
+        const times = joins.get(key) ?? [];
+        times.push(at);
+        joins.set(key, times);
     }
     for (const row of record.participants) {
         const roster = row.stays?.filter((stay) => stay.source === "platform-roster" || stay.source === "attendance");
@@ -52,6 +50,10 @@ function roomJoins(record: MeetingRecord) {
         }
         return (group.deviceId ? [group.deviceId] : group.people).flatMap((account) => {
             const key = rosterAccountKey(account);
+            // The recorder normally belongs to the owner. Count a self account only when it is the named endpoint.
+            if (!group.deviceId && selves.has(key)) {
+                return [];
+            }
             const times = joins.get(key);
             // A deviceId explicitly identifies the endpoint. For a group member require physical presence at join.
             const occupied =
