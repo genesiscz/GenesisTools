@@ -894,6 +894,7 @@ final class HubModel {
     private var navUnsaved: [String]?
     private var navLimitWatch: AnyCancellable?
     private var navRecorder: AnyCancellable?
+    private var workTitleWatch: AnyCancellable?
     private var navRecordPending = false
     private var navRestoring = false
 
@@ -950,6 +951,11 @@ final class HubModel {
         ]
         navRecorder = Publishers.MergeMany(changes).sink { [weak self] in
             self?.placeChanged()
+        }
+        workTitleWatch = work.screen.$itemDetail.compactMap { $0 }.sink { [weak self] detail in
+            guard let self, let ref = self.work.screen.itemRef, let id = self.history.currentID,
+                  self.history.entry(id)?.target["work"] == ref else { return }
+            self.persistNav(self.history.retitle(id, "Work: \(detail.item.title)"))
         }
         watchOwnPlace()
     }
@@ -1320,7 +1326,10 @@ final class HubModel {
     /// What a history entry shows, for the arrows' tooltips.
     @MainActor
     func navTitle(_ entry: HubNavEntry) -> String {
-        if let ref = entry.workItem { return "Work: \(ref)" }
+        if let ref = entry.workItem {
+            if work.screen.itemRef == ref, let title = work.screen.itemDetail?.item.title { return "Work: \(title)" }
+            return entry.selection.map { "Work item in \($0)" } ?? "Work item"
+        }
         guard let id = entry.selection else { return entry.mode.title }
         let name: String
         switch owner(of: entry.mode) {

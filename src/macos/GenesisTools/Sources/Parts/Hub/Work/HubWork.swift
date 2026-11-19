@@ -156,14 +156,16 @@ struct WorkMain: View {
     /// A section a title bar count asked for; the Items scroll view brings its header to the top.
     @State private var jump: String?
     @State private var foldedSections: Set<String> = []
+    @State private var reasonDrafts: [String: String] = [:]
     @AppStorage(HubWorkSections.foldLongListsKey, store: HubDefaults.store) private var foldLongLists = true
     @GenReduceMotion private var reduceMotion
 
     var body: some View {
         VStack(spacing: 0) {
             header
-            if let notice = screen.notice {
-                NoticePill(text: notice.message, isError: !notice.ok, dismiss: { screen.clearNotice() })
+            ForEach(screen.notices.filter { $0.project == screen.project }) { notice in
+                NoticePill(text: notice.outcome.message, isError: !notice.outcome.ok,
+                           fixes: notice.failure.map { [.details($0)] } ?? [], dismiss: { screen.clearNotice(notice.id) })
                     .padding(.horizontal, 18)
                     .padding(.top, 8)
             }
@@ -299,7 +301,8 @@ struct WorkMain: View {
                     switch screen.pane {
                     case .items:
                         if let snapshot = screen.snapshot {
-                            WorkItemsView(snapshot: snapshot, pending: screen.pending, foldedSections: $foldedSections) { action in
+                            WorkItemsView(snapshot: snapshot, pending: screen.pending, foldedSections: $foldedSections,
+                                          reasonDrafts: $reasonDrafts, submitReason: { await screen.submit($0) }) { action in
                                 Task { await screen.perform(action) }
                             }
                         }

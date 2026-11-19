@@ -38,14 +38,20 @@ public struct WorkItemsView: View {
     @State private var expanded: Set<String> = []
     @State private var localFolded: Set<String> = []
     private var foldedSections: Binding<Set<String>>?
+    @State private var localDrafts: [String: String] = [:]
+    private let reasonDrafts: Binding<[String: String]>?
+    private let submitReason: ((WorkScreenAction) async -> Bool)?
 
     public init(snapshot: WorkSnapshotValue, pending: Set<String>, expandAll: Bool = false,
                 foldedSections: Binding<Set<String>>? = nil,
+                reasonDrafts: Binding<[String: String]>? = nil, submitReason: ((WorkScreenAction) async -> Bool)? = nil,
                 perform: @escaping (WorkScreenAction) -> Void) {
         self.snapshot = snapshot
         self.pending = pending
         self.perform = perform
         self.foldedSections = foldedSections
+        self.reasonDrafts = reasonDrafts
+        self.submitReason = submitReason
         openHandoffs = snapshot.openHandoffs
         var index: [String: Set<String>] = [:]
         for handoff in openHandoffs {
@@ -160,12 +166,12 @@ public struct WorkItemsView: View {
                     .foregroundStyle(row.isOpen ? KitPalette.text : KitPalette.dim)
                 Spacer(minLength: 4)
                 if let worker = row.worker {
-                    Text(worker).font(.system(size: 10.5)).foregroundStyle(KitPalette.faint).lineLimit(1)
+                    Text(worker).font(.system(size: 11)).foregroundStyle(KitPalette.dim).lineLimit(1)
                 }
             }
             .contextMenu { copyReference(row.ref) }
             .frame(minHeight: 26)
-            actions(ref: row.ref, state: row.state, accept: row.state == "spotted")
+            actions(ref: row.ref, title: row.title, state: row.state, accept: row.state == "spotted")
                 .padding(.leading, 24)
             pairingRows(ref: row.ref, pairings: row.pairings, project: row.project).padding(.leading, 24)
         }
@@ -190,7 +196,7 @@ public struct WorkItemsView: View {
                 Text(detail).font(.system(size: 11)).foregroundStyle(KitPalette.dim).lineLimit(2)
                     .padding(.leading, 24)
             }
-            actions(ref: row.ref, state: row.state, accept: accept).padding(.leading, 24)
+            actions(ref: row.ref, title: row.title, state: row.state, accept: accept).padding(.leading, 24)
         }
         .padding(.vertical, 3)
         .accessibilityElement(children: .contain)
@@ -224,7 +230,10 @@ public struct WorkItemsView: View {
                             Text(verbatim: "\(name) · \(key)")
                                 .font(.system(size: 11)).lineLimit(1).truncationMode(.middle)
                                 .instantTooltip("\(name) · \(key)")
-                            IconButton(systemName: "minus.circle", tooltip: "Unpair \(name) · \(key). Removes the link and keeps both items.") {
+                            if !pairing.enabled {
+                                Text("Sync off").font(.caption).foregroundStyle(.secondary)
+                            }
+                            WorkUnpairButton(name: name, key: key) {
                                 perform(.unpair(ref: ref, connector: pairing.connector, project: project))
                             }
                         }
@@ -232,7 +241,8 @@ public struct WorkItemsView: View {
                 }
                 Spacer(minLength: 0)
                 if pairings.contains(where: { $0.enabled && $0.state == .held }) {
-                    IconButton(systemName: "arrow.triangle.2.circlepath", tooltip: "Release this item's held changes.") {
+                    KitButton("Release held changes", symbol: "arrow.triangle.2.circlepath", kind: .ghost, size: .small,
+                              tooltip: "Release this item's held changes.") {
                         perform(.sync(ref: ref, project: project))
                     }
                 }
@@ -242,51 +252,63 @@ public struct WorkItemsView: View {
     }
 
     @ViewBuilder
-    private func actions(ref: String, state: String, accept: Bool) -> some View {
-        if pending.contains(ref) {
-            ProgressView().controlSize(.small).accessibilityLabel("Saving")
-        } else {
-            HStack(spacing: 4) {
-                if accept && state == "spotted" {
-                    IconButton(systemName: "checkmark.circle", tooltip: "Accept: it becomes open work") {
-                        perform(.accept(ref: ref))
-                    }
+    private func actions(ref: String, title: String, state: String, accept: Bool) -> some View {
+        WrapLayout(spacing: 6) {
+            if accept && state == "spotted" {
+                KitButton("Accept", symbol: "checkmark.circle", kind: .ghost, size: .small, tooltip: "Accept as open work") {
+                    perform(.accept(ref: ref))
                 }
-                if ["open", "active", "reopened"].contains(state) {
-                    WorkReasonButton(symbol: "checkmark.seal", tooltip: "Finish, with the proof",
-                                     prompt: "The proof: the command, where it ran, the commit") {
-                        perform(.finish(ref: ref, proof: $0))
-                    }
-                }
-                if ["done", "dropped"].contains(state) {
-                    WorkReasonButton(symbol: "arrow.uturn.backward.circle", tooltip: "Reopen, with what is still wrong",
-                                     prompt: "What is still wrong, with the evidence") {
-                        perform(.reopen(ref: ref, why: $0))
-                    }
-                }
-                if state != "dropped" && state != "done" {
-                    let currentHandoffs = handoffsByMember[ref] ?? []
-                    if currentHandoffs.count < openHandoffs.count {
-                        MenuButton(items: {
-                            openHandoffs.filter { !currentHandoffs.contains($0.ref) }.map { handoff in
-                                .action("\(handoff.title) (\(handoff.ref))") { perform(.addMember(ref: ref, handoff: handoff.ref)) }
-                            }
-                        }) {
-                            Image(systemName: "tray.and.arrow.down").frame(width: 20, height: 20)
-                        }
-                        .instantTooltip("Add to a handoff as one of its tasks")
-                        .accessibilityLabel("Add to a handoff")
-                    }
-                    WorkReasonButton(symbol: "xmark.circle", tooltip: "Drop, with the reason",
-                                     prompt: "Why nobody will do it") {
-                        perform(.drop(ref: ref, why: $0))
-                    }
-                }
+                .accessibilityLabel("Accept: it becomes open work")
+                .disabled(pending.contains(ref))
             }
+            if ["open", "active", "reopened"].contains(state) {
+                reasonButton(.finish, ref: ref, title: title)
+            }
+            if ["done", "dropped"].contains(state) {
+                reasonButton(.reopen, ref: ref, title: title)
+            }
+            if state != "dropped" && state != "done" {
+                if !handoffs(excluding: ref).isEmpty {
+                    MenuButton(items: {
+                        let choices = handoffs(excluding: ref)
+                        let byTitle = Dictionary(grouping: choices, by: \.title)
+                        return choices.map { handoff in
+                            let label = byTitle[handoff.title]?.count == 1 ? handoff.title : "\(handoff.title) (\(handoff.ref))"
+                            return .action(label) { perform(.addMember(ref: ref, handoff: handoff.ref)) }
+                        }
+                    }) {
+                        Label(accept ? "Accept and add to handoff" : "Add to handoff", systemImage: "tray.and.arrow.down")
+                            .font(.system(size: 11)).padding(.horizontal, 5).frame(minHeight: 22)
+                    }
+                    .instantTooltip("Add to a handoff as one of its tasks")
+                    .accessibilityLabel("Add to a handoff")
+                    .accessibilityHint(accept ? "Also accepts the spotted item" : "Choose the handoff")
+                    .disabled(pending.contains(ref))
+                }
+                reasonButton(.drop, ref: ref, title: title)
+            }
+        }
+        .overlay(alignment: .trailing) {
+            if pending.contains(ref) { ProgressView().controlSize(.mini).offset(x: 18).accessibilityLabel("Saving") }
         }
     }
 
+    private func reasonButton(_ kind: WorkReasonButton.Kind, ref: String, title: String) -> some View {
+        let drafts = reasonDrafts ?? $localDrafts
+        let key = kind.rawValue + ":" + ref
+        let text = Binding(get: { drafts.wrappedValue[key] ?? "" }, set: { drafts.wrappedValue[key] = $0.isEmpty ? nil : $0 })
+        return WorkReasonButton(kind: kind, title: title, busy: pending.contains(ref), text: text) { value in
+            let action = kind.action(ref: ref, text: value)
+            if let submitReason { return await submitReason(action) }
+            perform(action)
+            return true
+        }
+    }
 
+    private func handoffs(excluding ref: String) -> [WorkContainerValue] {
+        let current = handoffsByMember[ref] ?? []
+        return openHandoffs.filter { !current.contains($0.ref) }
+    }
 }
 
 private extension WorkPairingValue {
@@ -313,47 +335,107 @@ private extension WorkPairingValue {
     }
 }
 
-/// An icon button that asks for one line of text (a reason, a proof) in a popover before it acts.
+private struct WorkUnpairButton: View {
+    let name: String
+    let key: String
+    let action: () -> Void
+    @State private var confirming = false
+
+    var body: some View {
+        KitButton("Unpair", symbol: "minus.circle", kind: .ghost, size: .small,
+                  tooltip: "Unpair \(name) · \(key). Removes the link and keeps both items.") { confirming = true }
+            .accessibilityLabel("Unpair \(name) · \(key). Removes the link and keeps both items.")
+            .confirmationDialog("Unpair \(name) · \(key)?", isPresented: $confirming, titleVisibility: .visible) {
+                Button("Unpair", role: .destructive, action: action)
+                Button("Cancel", role: .cancel) {}
+            } message: { Text("Both items remain. Future changes will no longer sync through this link.") }
+            .liveRow(selected: confirming)
+    }
+}
+
 struct WorkReasonButton: View {
-    let symbol: String
-    let tooltip: String
-    let prompt: String
-    let action: (String) -> Void
+    enum Kind: String {
+        case finish = "Finish", reopen = "Reopen", drop = "Drop"
+
+        var label: (symbol: String, accessibility: String, prompt: String) {
+            switch self {
+            case .finish: return ("checkmark.seal", "Finish, with the proof",
+                                  "Record what ran, where and on which commit. This finishes the task in every handoff that contains it.")
+            case .reopen: return ("arrow.uturn.backward.circle", "Reopen, with what is still wrong",
+                                  "What still needs work? The previous worker receives your reason if available.")
+            case .drop: return ("xmark.circle", "Drop, with the reason",
+                                "Why will this work be dropped? This drops the task in every handoff that contains it.")
+            }
+        }
+
+        func action(ref: String, text: String) -> WorkScreenAction {
+            switch self {
+            case .finish: return .finish(ref: ref, proof: text)
+            case .reopen: return .reopen(ref: ref, why: text)
+            case .drop: return .drop(ref: ref, why: text)
+            }
+        }
+    }
+
+    let kind: Kind
+    let title: String
+    let busy: Bool
+    @Binding var text: String
+    let action: (String) async -> Bool
     @State private var asking = false
-    @State private var text = ""
+    @State private var saving = false
+    @State private var refused = false
     @FocusState private var typing: Bool
 
     var body: some View {
-        IconButton(systemName: symbol, tooltip: tooltip) { asking = true }
+        KitButton(kind.rawValue, symbol: kind.label.symbol, kind: .ghost, size: .small, tooltip: "\(kind.rawValue) \(title)") { asking = true }
+            .accessibilityLabel(kind.label.accessibility)
+            .accessibilityHint(title)
+            .disabled(busy || saving)
             .popover(isPresented: $asking, arrowEdge: .bottom) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(prompt).font(.system(size: 12, weight: .medium))
-                    TextField("", text: $text, axis: .vertical)
-                        .textFieldStyle(.roundedBorder)
-                        .lineLimit(2...5)
-                        .frame(width: 320)
+                    Text(verbatim: "\(kind.rawValue) “\(title)”").font(.headline)
+                    Text(kind.label.prompt).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    TextEditor(text: $text)
+                        .font(.body)
+                        .frame(minHeight: 58, maxHeight: 88)
+                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(.secondary.opacity(0.4)).allowsHitTesting(false))
+                        .accessibilityLabel(kind == .finish ? "Proof" : "Reason")
                         .focused($typing)
-                        .onSubmit(confirm)
                         // The popover only asks for this text: it takes the keys at once, no second click.
                         .onAppear { typing = true }
+                    if refused { Text("Your text is here. Check the failure details in Work and try again.").font(.caption) }
+                    Text("Return adds a line. ⌘Return submits.").font(.caption).foregroundStyle(.secondary)
                     HStack {
                         Spacer()
                         Button("Cancel") { asking = false }.keyboardShortcut(.cancelAction)
-                        Button(tooltip.components(separatedBy: ",").first ?? "Save", action: confirm)
-                            .keyboardShortcut(.defaultAction)
-                            .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        Button(saving ? "Saving…" : kind.rawValue, action: confirm)
+                            .keyboardShortcut(.return, modifiers: .command)
+                            .disabled(saving || busy || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                 }
-                .padding(14)
+                .frame(width: 320).padding(14)
             }
     }
 
     private func confirm() {
-        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty else { return }
-        asking = false
-        text = ""
-        action(value)
+        guard !busy, !saving else { return }
+        saving = true
+        Task { @MainActor in
+            let saved = await Self.saveDraft($text, using: action)
+            saving = false
+            refused = !saved
+            if saved && text.isEmpty { asking = false }
+        }
+    }
+
+    @MainActor
+    static func saveDraft(_ text: Binding<String>, using action: (String) async -> Bool) async -> Bool {
+        let submitted = text.wrappedValue
+        let value = submitted.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, await action(value) else { return false }
+        if text.wrappedValue == submitted { text.wrappedValue = "" }
+        return true
     }
 }
 

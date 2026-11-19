@@ -9,6 +9,7 @@ private final class FakeWorkSource: WorkSource {
     var snapshotValue: WorkSnapshotValue
     var notifyRows: [WorkNotifyRow] = []
     var performed: [WorkScreenAction] = []
+    var writeResult: WorkActionOutcome?
     var reads = 0
     private var continuation: AsyncStream<Void>.Continuation?
 
@@ -20,6 +21,7 @@ private final class FakeWorkSource: WorkSource {
     func notify(project: String) async throws -> [WorkNotifyRow] { notifyRows }
     func perform(_ action: WorkScreenAction, project: String) async throws -> WorkActionOutcome {
         performed.append(action)
+        if let writeResult { return writeResult }
         return WorkActionOutcome(ok: true, message: "\(action.done): \(action.ref)")
     }
     func changes() -> AsyncStream<Void> { AsyncStream { continuation = $0 } }
@@ -85,7 +87,7 @@ final class WorkScreenTests: XCTestCase {
 
         await model.perform(.drop(ref: "w_spot0002", why: "not worth it"))
         XCTAssertEqual(source.performed, [.drop(ref: "w_spot0002", why: "not worth it")])
-        XCTAssertEqual(model.notice, WorkActionOutcome(ok: true, message: "Dropped: w_spot0002"))
+        XCTAssertEqual(model.notice, WorkActionOutcome(ok: true, message: "Dropped: Group spotted items by file"))
         XCTAssertTrue(model.pending.isEmpty)
         model.deactivate()
     }
@@ -132,6 +134,54 @@ final class WorkScreenTests: XCTestCase {
                          "BUG-17", "Local drift", "mirror", "COPY-18", "Held", "PLAN-12", "Synced"] {
             XCTAssertTrue(text.contains(expected), "missing \(expected) in:\n\(text)")
         }
+        for verb in ["Accept", "Finish", "Drop", "Reopen"] { XCTAssertTrue(text.contains(verb), text) }
+        XCTAssertFalse(text.contains("w_spot0001"), text)
+        XCTAssertFalse(text.contains("h_build001"), text)
+    }
+
+    func testARefusedWriteKeepsItsOwnNoticeAndDoesNotReportSuccessToTheReasonForm() async throws {
+        let source = FakeWorkSource(fixture())
+        let model = WorkScreenModel(source: source)
+        model.activate()
+        defer { model.deactivate() }
+        await settle { model.snapshot != nil }
+        source.writeResult = WorkActionOutcome(ok: false, message: "Fixture backend refused the write")
+        let refused = await model.submit(.drop(ref: "w_spot0001", why: "Superseded by a new design"))
+        XCTAssertFalse(refused)
+        let first = try XCTUnwrap(model.notices.first)
+        XCTAssertEqual(first.failure?.log, source.writeResult?.message)
+        XCTAssertFalse(first.outcome.message.contains("Fixture backend"))
+        source.writeResult = nil
+        let saved = await model.submit(.accept(ref: "w_spot0002"))
+        XCTAssertTrue(saved)
+        XCTAssertEqual(model.notices.map(\.ref), ["w_spot0001", "w_spot0002"])
+        model.clearNotice(first.id)
+        XCTAssertEqual(model.notices.map(\.ref), ["w_spot0002"])
+    }
+
+    func testReopenDistinguishesTheStateChangeFromDelivery() throws {
+        for (outcome, expected) in [("delivered", "received"), ("queued", "queued"), ("nobody-alive", "No worker"), ("unknown", "could not be confirmed")] {
+            let receipt = try JSONDecoder().decode(LiveWorkSource.ReopenData.self, from: Data("{\"receipt\":{\"outcome\":\"\(outcome)\"}}".utf8))
+            XCTAssertTrue(receipt.message.hasPrefix("Reopened"))
+            XCTAssertTrue(receipt.message.contains(expected))
+        }
+    }
+
+    func testReasonDraftClearsOnlyAfterAcceptanceOfTheTextStillInTheEditor() async {
+        var draft = "  Evidence from the test\n"
+        let binding = Binding(get: { draft }, set: { draft = $0 })
+        let refused = await WorkReasonButton.saveDraft(binding) { value in
+            XCTAssertEqual(value, "Evidence from the test")
+            return false
+        }
+        XCTAssertFalse(refused)
+        XCTAssertEqual(draft, "  Evidence from the test\n")
+        let first = await WorkReasonButton.saveDraft(binding) { _ in draft = "New evidence"; return true }
+        XCTAssertTrue(first)
+        XCTAssertEqual(draft, "New evidence")
+        let second = await WorkReasonButton.saveDraft(binding) { _ in true }
+        XCTAssertTrue(second)
+        XCTAssertTrue(draft.isEmpty)
     }
 
     func testFoldingAHandoffKeepsItsOwnPairingVisible() throws {

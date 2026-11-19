@@ -47,6 +47,9 @@ public final class WorkScreenModel: ObservableObject {
     @Published public private(set) var failure: String?
     /// The answer of the last write: ok shows as a fading notice, a refusal stays until the next write.
     @Published public private(set) var notice: WorkActionOutcome?
+    @Published public private(set) var notices: [WorkActionNotice] = [] {
+        didSet { notice = notices.last?.outcome }
+    }
     /// Items with a write on its way; their row shows it and refuses a second click.
     @Published public private(set) var pending: Set<String> = []
 
@@ -250,17 +253,60 @@ public final class WorkScreenModel: ObservableObject {
         }
     }
 
-    public func perform(_ action: WorkScreenAction) async {
-        guard let project, !pending.contains(action.ref) else { return }
+    public func perform(_ action: WorkScreenAction) async { _ = await submit(action) }
+
+    /// The reason editor keeps its draft until the service acknowledges this specific write.
+    public func submit(_ action: WorkScreenAction) async -> Bool {
+        guard let project, !pending.contains(action.ref) else { return false }
+        let item = rowInfo(for: action.ref)
+        let itemTitle = item?.title ?? (itemDetail?.item.id == action.ref ? itemDetail?.item.title : nil) ?? "Work item"
+        let target: String
+        if case let .addMember(_, handoff) = action { target = rowInfo(for: handoff)?.title ?? "handoff" }
+        else { target = "" }
+        let accepting = snapshot?.spotted.contains(where: { $0.ref == action.ref }) == true
         pending.insert(action.ref)
         defer { pending.remove(action.ref) }
+        let result: WorkActionOutcome
         do {
-            notice = try await source.perform(action, project: project)
+            result = try await source.perform(action, project: project)
         } catch {
-            notice = WorkActionOutcome(ok: false, message: error.localizedDescription)
+            result = WorkActionOutcome(ok: false, message: error.localizedDescription)
         }
+        var shown = result
+        if result.ok {
+            switch action {
+            case .addMember:
+                shown.message = "\(accepting ? "Accepted and added" : "Added") “\(itemTitle)” to “\(target)”"
+            case let .unpair(_, connector, _):
+                let name = item?.pairings?.first(where: { $0.connector == connector })?.displayName ?? connector
+                shown.message = "\(result.message) “\(itemTitle)” from \(name)"
+            case .sync, .reopen:
+                shown.message = "“\(itemTitle)” · \(result.message)"
+            case .accept, .drop, .finish:
+                shown.message = "\(action.done): \(itemTitle)"
+            }
+        } else if result.partial {
+            shown.message = "“\(itemTitle)” · \(result.message)"
+        } else {
+            shown.message = "Could not \(action.verb) “\(itemTitle)”"
+        }
+        let failure = result.ok ? nil : FailureReport.unexpected(result.message, outcome: shown.message,
+                                                                action: action.verb.capitalized, area: "work", app: .launch)
+        notices.removeAll { $0.ref == action.ref && $0.project == project }
+        notices.append(WorkActionNotice(project: project, ref: action.ref, outcome: shown, failure: failure))
         reload()
+        return result.ok
     }
 
-    public func clearNotice() { notice = nil }
+    private func rowInfo(for ref: String) -> (title: String, pairings: [WorkPairingValue]?)? {
+        if let row = snapshot?.triage.first(where: { $0.ref == ref }) { return (row.title, row.pairings) }
+        for container in snapshot?.containers ?? [] {
+            if container.ref == ref { return (container.title, container.pairings) }
+            if let row = container.members.first(where: { $0.ref == ref }) { return (row.title, row.pairings) }
+        }
+        return nil
+    }
+
+    public func clearNotice(_ id: UUID) { notices.removeAll { $0.id == id } }
+    public func clearNotice() { if let last = notices.last { clearNotice(last.id) } }
 }

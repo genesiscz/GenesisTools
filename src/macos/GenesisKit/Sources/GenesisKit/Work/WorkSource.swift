@@ -181,13 +181,35 @@ public enum WorkScreenAction: Equatable, Sendable {
         case .sync: return "Pushed"
         }
     }
+
+    var verb: String {
+        switch self {
+        case .accept: return "accept"
+        case .drop: return "drop"
+        case .finish: return "finish"
+        case .reopen: return "reopen"
+        case .addMember: return "add to a handoff"
+        case .unpair: return "unpair"
+        case .sync: return "sync"
+        }
+    }
 }
 
 /// The answer of a write: ok, or the first reason it did not happen.
 public struct WorkActionOutcome: Equatable, Sendable {
     public var ok: Bool
     public var message: String
-    public init(ok: Bool, message: String) { self.ok = ok; self.message = message }
+    /// A connector can complete some pushes before another fails. Preserve the measured outcome on screen.
+    public var partial: Bool
+    public init(ok: Bool, message: String, partial: Bool = false) { self.ok = ok; self.message = message; self.partial = partial }
+}
+
+public struct WorkActionNotice: Identifiable {
+    public let id = UUID()
+    public let project: String
+    public let ref: String
+    public let outcome: WorkActionOutcome
+    public let failure: FailureReport?
 }
 
 public struct WorkSourceError: LocalizedError, Equatable, Sendable {
@@ -276,28 +298,30 @@ public final class LiveWorkSource: WorkSource {
         case let .finish(ref, proof):
             outcome = try decode(await rpc.work.finish(WorkFinishParams(ref: ref, proof: proof, call: .init(project: project))))
         case let .reopen(ref, why):
-            outcome = try decode(await rpc.work.reopen(WorkReopenParams(ref: ref, why: why, call: .init(project: project))))
+            let result: ReopenData = try reply(await rpc.work.reopen(WorkReopenParams(ref: ref, why: why, call: .init(project: project))))
+            return WorkActionOutcome(ok: true, message: result.message)
         case let .addMember(ref, handoff):
             outcome = try decode(await rpc.work.addMember(WorkAddMemberParams(refs: [ref], to: handoff, call: .init(project: project))))
         case let .unpair(ref, connector, itemProject):
             let params = WorkUnpairParams(ref: ref, connector: connector, call: .init(project: itemProject ?? project))
             let result: UnpairData = try reply(await rpc.work.unpair(params))
-            let message = result.removed ? "Unpaired \(ref) from \(connector)" : "\(ref) was already unpaired from \(connector)"
+            let message = result.removed ? "Unpaired" : "Already unpaired"
             return WorkActionOutcome(ok: true, message: message)
         case let .sync(ref, itemProject):
             let params = WorkSyncParams(release: ref, call: .init(project: itemProject ?? project))
             let result: SyncData = try reply(await rpc.work.sync(params))
             if result.failed > 0 {
-                return WorkActionOutcome(ok: false, message: "\(ref): \(result.pushed) pushed, \(result.failed) failed")
+                return WorkActionOutcome(ok: false, message: "\(result.pushed) pushed, \(result.failed) failed. Check the pairing marked Failed.",
+                                         partial: true)
             }
             guard result.pushed > 0 else {
                 return WorkActionOutcome(ok: false, message: "No enabled connector pushed \(ref)")
             }
-            return WorkActionOutcome(ok: true, message: "Pushed \(ref) to \(Plural.count(result.pushed, "connector"))")
+            return WorkActionOutcome(ok: true, message: "Pushed to \(Plural.count(result.pushed, "connector"))")
         }
         if let value = outcome.value {
             return value.ok
-                ? WorkActionOutcome(ok: true, message: "\(action.done): \(action.ref)")
+                ? WorkActionOutcome(ok: true, message: action.done)
                 : WorkActionOutcome(ok: false, message: value.diagnostics.first?.message ?? "The store refused it")
         }
         return WorkActionOutcome(ok: false, message: outcome.skipped.first?.reason ?? "The work service could not run it")
@@ -341,6 +365,20 @@ public final class LiveWorkSource: WorkSource {
         var skipped: [Skipped]
     }
     private struct IgnoredData: Decodable {}
+    struct ReopenData: Decodable {
+        struct Receipt: Decodable { var outcome: String }
+        var receipt: Receipt?
+
+        var message: String {
+            switch receipt?.outcome {
+            case "delivered": return "Reopened. The worker received your reason."
+            case "queued": return "Reopened. Your reason is queued for the worker."
+            case "nobody-alive": return "Reopened. No worker was available to receive your reason."
+            case nil: return "Reopened."
+            default: return "Reopened. Delivery to the worker could not be confirmed."
+            }
+        }
+    }
     private struct UnpairData: Decodable { var removed: Bool }
     private struct SyncData: Decodable { var pushed: Int; var failed: Int }
     private struct TreeData: Decodable { var containers: [WorkContainerValue] }

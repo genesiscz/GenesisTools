@@ -23,7 +23,7 @@ struct HubNavTarget: Codable, Hashable, Sendable {
     private(set) var fields: [String: String]
 
     /// The keys a place keeps, in the order `arguments` writes them.
-    static let keys = ["mode", "selection", "session", "agent", "pr", "reveal", "repo", "commit", "tab", "worktree", "work", "work-project"]
+    static let keys = ["mode", "selection", "session", "agent", "pr", "reveal", "repo", "commit", "tab", "worktree", "work"]
 
     init(_ fields: [String: String]) {
         self.fields = fields.filter { Self.keys.contains($0.key) && !$0.value.isEmpty }
@@ -140,7 +140,8 @@ struct HubNavRequest {
         fields["repo"] = repo
         fields["worktree"] = worktree
         fields["work"] = workItem
-        fields["work-project"] = workProject
+        // Project selection is already a persisted navigation key in both the hub and its history service.
+        fields["selection"] = workProject
         fields["reveal"] = reveal
         fields["tab"] = tab?.rawValue
         return HubNavTarget(fields)
