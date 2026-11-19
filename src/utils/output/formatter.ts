@@ -12,6 +12,7 @@ import { toToon } from "./toon";
 export interface FormatContext {
     tty: boolean;
     width: number;
+    door?: Door;
 }
 
 export interface TableShape {
@@ -66,14 +67,16 @@ function mdOf<T>(data: T, formatter: Formatter<T>, ctx: FormatContext): string {
     return json2md([{ code: { language: "text", content: formatter.text(data, ctx).join("\n") } }]);
 }
 
+export function nextActionLine(action: NextAction, door?: Door): string {
+    const how = action.call ? door?.commandOf(action.call) : action.ask;
+    return `next: ${action.do}${how ? `: ${how}` : ""}`;
+}
+
 /** Diagnostics and next actions as lines for stderr. */
 export function sideLines<T>(reply: Reply<T>, door: Door): string[] {
     return [
         ...reply.diagnostics.map((d) => `${d.severity}: ${d.code}: ${d.message}`),
-        ...reply.next.map((n) => {
-            const how = n.call ? door.commandOf(n.call) : (n.ask ?? "");
-            return `next: ${n.do}${how ? `: ${how}` : ""}`;
-        }),
+        ...reply.next.map((action) => nextActionLine(action, door)),
     ];
 }
 
