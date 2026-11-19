@@ -613,7 +613,7 @@ export class TodoStore {
                     )
                     .get(itemId);
                 const creator: Actor | null = created === null ? null : SafeJSON.parse(created.actor, { strict: true });
-                const repoRoot = creator?.repoRoot;
+                const repoRoot = creator?.repoRoot ?? creator?.host?.projectRoot;
                 const projectRoot =
                     repoRoot && isAbsolute(repoRoot)
                         ? canonicalTodoRoot(repoRoot)
@@ -630,7 +630,7 @@ export class TodoStore {
                     context: {
                         projectRoot,
                         cwd: repoRoot ?? projectRoot,
-                        hostname: creator?.host ?? "",
+                        hostname: "",
                         createdAt: item.createdTs,
                         updatedAt: item.updatedTs,
                     },
