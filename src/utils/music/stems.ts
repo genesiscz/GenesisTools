@@ -1,13 +1,12 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { Curve, gain, hash, RATE, type Stereo, stereo } from "./dsp";
 import { applyEffects } from "./effects";
 import { fluidSynthArgs } from "./fluidsynth";
 import { encodeMidi, MIDI_PARTS } from "./midi";
 import { SYNTH_PRESETS } from "./presets";
-import { runAudio } from "./process";
+import { runAudio, withMusicScratch } from "./process";
 import { resolveSample } from "./samples";
 import { room } from "./space";
 import { renderSynth } from "./synth";
@@ -73,37 +72,44 @@ export async function writeFloatWav(file: string, buffer: Stereo): Promise<void>
     await writeFile(file, bytes);
 }
 
-/** Any audio file as 48 kHz stereo floats: its whole length, or cut or padded to `samples`. */
+/**
+ * Any audio file as 48 kHz stereo floats: its whole length, or cut or padded to `samples`. With `samples`, ffmpeg
+ * stops decoding there. The scratch file goes away on success, on failure and on cancellation.
+ */
 export async function readFloat(file: string, samples?: number): Promise<Stereo> {
-    const raw = join(await mkdtemp(join(tmpdir(), "genesis-music-read-")), "audio.f32");
-    await runAudio([
-        "ffmpeg",
-        "-hide_banner",
-        "-nostdin",
-        "-v",
-        "error",
-        "-y",
-        "-i",
-        file,
-        "-f",
-        "f32le",
-        "-ac",
-        "2",
-        "-ar",
-        `${RATE}`,
-        raw,
-    ]);
-    const bytes = await readFile(raw);
-    await rm(dirname(raw), { recursive: true, force: true });
-    const data = new Float32Array(
-        bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength - (bytes.byteLength % 4))
-    );
-    const out = stereo(samples ?? Math.floor(data.length / 2));
-    const frames = Math.min(out.left.length, Math.floor(data.length / 2));
+    const bytes = await withMusicScratch(async (folder) => {
+        const raw = join(folder, "audio.f32");
+        // One sample more than asked, so rounding of the duration never comes up a sample short.
+        const limit = samples === undefined ? [] : ["-t", `${(samples + 1) / RATE}`];
+        await runAudio([
+            "ffmpeg",
+            "-hide_banner",
+            "-nostdin",
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            file,
+            ...limit,
+            "-f",
+            "f32le",
+            "-ac",
+            "2",
+            "-ar",
+            `${RATE}`,
+            raw,
+        ]);
+        return readFile(raw);
+    });
+    // Read in place: the decoded bytes may not start on a 4-byte boundary, and a copy of them doubles the memory.
+    const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const available = Math.floor(bytes.byteLength / 8);
+    const out = stereo(samples ?? available);
+    const frames = Math.min(out.left.length, available);
 
     for (let n = 0; n < frames; n++) {
-        out.left[n] = data[n * 2];
-        out.right[n] = data[n * 2 + 1];
+        out.left[n] = data.getFloat32(n * 8, true);
+        out.right[n] = data.getFloat32(n * 8 + 4, true);
     }
 
     return out;
