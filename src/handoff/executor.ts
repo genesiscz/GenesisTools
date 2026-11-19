@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -61,6 +62,8 @@ export interface HandoffDeps {
     /** Full actor override — the dashboard's owner-authority human actor (§7.1). */
     by?: HandoffEventBy;
     nowIso?: () => string;
+    /** Stable ID of one legacy action from a pending Work request. */
+    workOperationId?: string;
     /** When this returns a link, handoff_post offers a one-click cmux launch. Null means the preset is off. */
     linkFor?: (presetId: string) => { url: string; markdown: string } | null;
     mintLaunchLink?: (input: {
@@ -184,6 +187,10 @@ function mintHandoffLaunch({
     );
 }
 
+function workEventUid(operationId: string, index: number): string {
+    return createHash("sha256").update(operationId).update(`:${index}`).digest("hex").slice(0, 24);
+}
+
 export function postHandoff(input: PostHandoffInput, deps: HandoffDeps = {}): PostHandoffResponse {
     const title = typeof input.title === "string" ? input.title.trim() : "";
     const tasks = Array.isArray(input.tasks) ? input.tasks : [];
@@ -203,7 +210,7 @@ export function postHandoff(input: PostHandoffInput, deps: HandoffDeps = {}): Po
     const event: HandoffEvent = {
         ev: "post",
         ts: nowIso(deps),
-        uid: generateEventUid(),
+        uid: deps.workOperationId === undefined ? generateEventUid() : workEventUid(deps.workOperationId, 0),
         id: generateHandoffId(),
         editId: generateEditId(),
         title,
@@ -236,8 +243,20 @@ export function postHandoff(input: PostHandoffInput, deps: HandoffDeps = {}): Po
 
     return withDb(deps, (db) => {
         catchUpHandoffs(db, deps.base);
-        commitHandoffEvents(db, [event], deps.base);
-        const handoff = getHandoffById(db, event.id);
+        const applied =
+            deps.workOperationId === undefined
+                ? null
+                : db
+                      .query<{ handoff_id: string }, [string]>(
+                          "SELECT handoff_id FROM handoff_event_results WHERE uid = ? AND ok = 1"
+                      )
+                      .get(event.uid);
+
+        if (applied === null) {
+            commitHandoffEvents(db, [event], deps.base);
+        }
+
+        const handoff = getHandoffById(db, applied?.handoff_id ?? event.id);
 
         if (handoff === null) {
             throw new Error(`handoff_post failed to fold ${event.id} — check ~/.genesis-tools/logs for details.`);
@@ -526,9 +545,13 @@ export function executeHandoffActions(input: ExecuteActionsInput, deps: HandoffD
         const existing = resolveHandoffRef(db, input);
         const id = existing.id;
 
+        let eventIndex = 0;
         const stamp = (): { ts: string; uid: string; id: string; by: HandoffEventBy; editId?: string } => ({
             ts: nowIso(deps),
-            uid: generateEventUid(),
+            uid:
+                deps.workOperationId === undefined
+                    ? generateEventUid()
+                    : workEventUid(deps.workOperationId, eventIndex++),
             id,
             by,
             ...(editId !== undefined ? { editId } : {}),
@@ -540,8 +563,13 @@ export function executeHandoffActions(input: ExecuteActionsInput, deps: HandoffD
 
         const events = pending.flatMap((p) => [...(p.preEvents ?? []), ...(p.event !== undefined ? [p.event] : [])]);
 
-        if (events.length > 0) {
-            commitHandoffEvents(db, events, deps.base);
+        const unfinished =
+            deps.workOperationId === undefined
+                ? events
+                : events.filter((event) => getEventOutcome(db, event.uid) === null);
+
+        if (unfinished.length > 0) {
+            commitHandoffEvents(db, unfinished, deps.base);
         }
 
         const handoff = getHandoffById(db, id);

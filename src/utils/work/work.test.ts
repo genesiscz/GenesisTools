@@ -241,6 +241,38 @@ describe("writes", () => {
         expect(drop.ok).toBe(false);
     });
 
+    test("a failed legacy write retains its receipt and retries with the same operation ID", async () => {
+        const seen: (string | undefined)[] = [];
+        const c = ctx("s1");
+        const item = await spotted(c, "handoff item");
+        const withLegacy = {
+            ...c,
+            ports: {
+                ...c.ports,
+                legacy: {
+                    check: async () => [{ ok: true }],
+                    write: async (_: unknown, id?: string) => {
+                        seen.push(id);
+                        return seen.length === 1
+                            ? { ok: false, error: "unavailable" }
+                            : { ok: true, handoff: "h_example1" };
+                    },
+                },
+            },
+        };
+        const command = { verb: "handoff", title: "follow-up", from: [item] } as const;
+        const call = () => write(withLegacy, { ...command, from: [...command.from] }, { request: "retry" });
+        const first = await call();
+        expect(first.ok).toBe(false);
+        expect(first.receipt?.changes).toHaveLength(1);
+        const retry = await call();
+        expect(retry).toMatchObject({ ok: true, data: { handoff: "h_example1" }, receipt: { replayed: true } });
+        expect(seen[0]).toBeDefined();
+        expect(seen).toEqual([seen[0], seen[0]]);
+        expect((await call()).receipt?.changes).toEqual(first.receipt?.changes);
+        expect(seen).toHaveLength(2);
+    });
+
     test("a request id replays the stored reply and writes nothing more; a dry run writes nothing", async () => {
         const c = ctx("s1");
         const first = await write(c, { verb: "spot", title: "once", type: "idea", fields: {} }, { request: "r1" });

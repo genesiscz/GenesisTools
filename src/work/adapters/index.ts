@@ -46,7 +46,8 @@ function failed(error: unknown): LegacyWriteResult {
 /** Writes into the old handoff log through its own executor; its hook brings each event into the work store. */
 export function legacyHandoffs(deps: HandoffDeps = {}): LegacyHandoffs {
     return {
-        async write(action: LegacyAction): Promise<LegacyWriteResult> {
+        async write(action: LegacyAction, operationId?: string): Promise<LegacyWriteResult> {
+            const operation = operationId === undefined ? deps : { ...deps, workOperationId: operationId };
             try {
                 if (action.action === "post") {
                     const posted = postHandoff(
@@ -57,12 +58,15 @@ export function legacyHandoffs(deps: HandoffDeps = {}): LegacyHandoffs {
                             ...(action.project !== undefined ? { project: action.project } : {}),
                             ...(action.target !== undefined ? { target: action.target } : {}),
                         },
-                        deps
+                        operation
                     );
                     return { ok: true, handoff: posted.handoff.id, taskIds: posted.handoff.tasks.map((t) => t.id) };
                 }
 
-                const response = executeHandoffActions({ ...executorInput(action, deps), include: ["tasks"] }, deps);
+                const response = executeHandoffActions(
+                    { ...executorInput(action, deps), include: ["tasks"] },
+                    operation
+                );
                 const result = response.results[0];
 
                 if (result === undefined || !result.ok) {
