@@ -1,4 +1,5 @@
 import Darwin
+import os
 import XCTest
 @testable import GenesisKitBase
 @testable import GenesisKit
@@ -239,6 +240,70 @@ final class ToolsServerClientTests: XCTestCase {
         let result = await task.value
         XCTAssertNil(result)
         XCTAssertLessThan(Date().timeIntervalSince(started), 5)
+    }
+
+    func testASilentServerFallsBackAfterOneHealthProbe() async throws {
+        let probeTimes = OSAllocatedUnfairLock(initialState: [TimeInterval]())
+        let starts = Counter()
+        let server = try FakeServer { request in
+            if request["op"] as? String == "health" {
+                probeTimes.withLock { $0.append(ProcessInfo.processInfo.systemUptime) }
+            }
+            return []
+        }
+        defer { server.stop() }
+        let client = ToolsServerClient(socketPath: server.path) { starts.increment() }
+        let bridge = ToolsBridge(binaryPath: "/bin/echo", server: client)
+
+        // Without the probe, the bridge gives the server 20 s of this call's 60 s limit.
+        let began = ProcessInfo.processInfo.systemUptime
+        let result = try await bridge.run(subcommand: "from-process", args: [], timeoutSeconds: 60)
+        let ended = ProcessInfo.processInfo.systemUptime
+        XCTAssertEqual(result.stdout, "from-process\n")
+        XCTAssertLessThan(ended - began, 10)
+        let probes = probeTimes.withLock { $0 }
+        XCTAssertEqual(probes.count, 1)
+        let probed = try XCTUnwrap(probes.first)
+        XCTAssertGreaterThanOrEqual(probed - began, 4.9)
+        XCTAssertGreaterThanOrEqual(ended - probed, 1.8)
+        XCTAssertTrue(client.isConnected)
+        XCTAssertEqual(starts.value, 0)
+    }
+
+    func testASlowCallKeepsWaitingAfterOneHealthAnswer() async throws {
+        let slowID = OSAllocatedUnfairLock(initialState: Int?.none)
+        let health = expectation(description: "the slow call triggered a health probe")
+        let probes = Counter()
+        let server = try FakeServer { request in
+            guard let id = request["id"] as? Int else { return [] }
+            if request["op"] as? String == "health" {
+                probes.increment()
+                health.fulfill()
+                return [["id": id, "ok": true, "health": ["pid": 42]]]
+            }
+            switch (request["argv"] as? [String])?.first {
+            case "slow":
+                slowID.withLock { $0 = id }
+                return []
+            case "release":
+                guard let original = slowID.withLock({ $0 }) else { return [] }
+                return [["id": original, "ok": true, "exit": 0, "stdout": "from-server"],
+                        ["id": id, "ok": true, "exit": 0]]
+            default:
+                return []
+            }
+        }
+        defer { server.stop() }
+        let client = ToolsServerClient(socketPath: server.path)
+        let slow = Task.detached { client.callSync(argv: ["slow"], timeout: 20) }
+        await fulfillment(of: [health], timeout: 8)
+        // Keep the call pending past the health deadline and even a second five-second probe interval.
+        try await Task.sleep(for: .milliseconds(5500))
+        let release = await client.call(argv: ["release"], timeoutSeconds: 2)
+        XCTAssertEqual(release?.exitCode, 0)
+        let answer = await slow.value
+        XCTAssertEqual(answer?.stdout, "from-server")
+        XCTAssertEqual(probes.value, 1)
     }
 
     /// A server that kept a call for its whole limit: the bridge reports the timeout and does not reach for the
