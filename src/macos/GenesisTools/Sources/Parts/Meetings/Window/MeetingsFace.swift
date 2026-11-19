@@ -666,6 +666,14 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
                 window.contentView?.layoutSubtreeIfNeeded()
                 try? await Task.sleep(for: .milliseconds(200))
             }
+            if request.voices != nil || request.voiceSample != nil || request.voiceJobFile != nil {
+                // The resize above re-creates the sample list, whose onDisappear hides the library: the list reads
+                // its samples again, and a picture taken before that read showed only "Reading voice samples…".
+                let library = model.voiceLibrary
+                if await waitUntil(30, { library.destination != nil && (library.rows.value != nil || library.rows.failure != nil) }) {
+                    try? await Task.sleep(for: .milliseconds(300))
+                }
+            }
             guard let capture = await WindowSnapshot.capture(window),
                   let png = capture.image.representation(using: .png, properties: [:]) else {
                 FileHandle.standardError.write(Data("meetings snapshot failed: the window could not be drawn\n".utf8))
