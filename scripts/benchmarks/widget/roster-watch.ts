@@ -89,7 +89,13 @@ const program = new Command()
             const end = Bun.file(logPath).size;
             const log =
                 end > offset ? createReadStream(logPath, { start: offset, end: end - 1 }) : new Blob([]).stream();
-            for await (const line of splitLines(log)) {
+            let previous: string | undefined;
+            for await (const next of splitLines(log)) {
+                const line = previous;
+                previous = next;
+                if (line === undefined) {
+                    continue;
+                }
                 const entry = parseProfileLine(line, day);
                 if (!entry || entry.pid !== pid) {
                     continue;
