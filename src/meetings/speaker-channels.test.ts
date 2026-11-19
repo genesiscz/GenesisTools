@@ -29,7 +29,7 @@ import { attributeByChannel } from "./lib/channel-operation";
 import { DecisionJournal } from "./lib/decision-journal";
 import { identifiedDepartures } from "./lib/departure";
 import { OpenedMeeting } from "./lib/opened-meeting";
-import { storedPresentAt } from "./lib/person-stays";
+import { personStays, storedPresentAt } from "./lib/person-stays";
 import { MEETING_PLATFORMS } from "./lib/platforms";
 import { teamsAttendanceFromJson } from "./lib/platforms/teams";
 import { answerQuestion } from "./lib/question-answers";
@@ -1000,6 +1000,73 @@ describe("shared indicator and departure APIs", () => {
             ...(line.index > 41 && line.index < 99 ? { speakingUnknown: true } : {}),
         }));
         expect(assessIndicator({ lines: gaps, selfName: USER }).ignored.size).toBe(0);
+    });
+
+    test("a silence departure read inside a known line ends at that line's end, never past the call's silence", () => {
+        const meeting = meetingRecordSchema.parse({
+            ...record,
+            participants: [
+                ...record.participants,
+                { name: "River Example", firstSeenSec: 0, from: ["platform-roster"] },
+            ],
+        });
+        const lines: LineEvidence[] = [
+            { index: 0, startSec: 20, endSec: 35, label: "S2", text: "Ještě jedna věc.", speaking: {} },
+        ];
+        const leftAt = (silentFromSec: number) =>
+            personStays({
+                record: meeting,
+                durationSec: 900,
+                lines,
+                speaking: [{ tSec: 27, speaking: ["River Example"] }],
+                silenceMinutes: 10,
+                callSilent: [{ fromSec: silentFromSec, toSec: 900 }],
+            }).find((person) => person.name === "River Example")?.stays[0]?.toSec;
+        expect(leftAt(30)).toBe(30);
+        expect(leftAt(31)).toBe(31);
+        expect(leftAt(27)).toBe(27);
+    });
+
+    test("an answered sign-off names a witnessed joiner, and the answer may come before or after the sign-off", () => {
+        const line = (index: number, startSec: number, label: string, text: string): LineEvidence => ({
+            index,
+            startSec,
+            endSec: startSec + 1.5,
+            label,
+            text,
+            micShare: 0.1,
+            speaking: {},
+        });
+        const presence = [
+            { name: "Bob Example", fromSec: 30, toSec: 300, leftAtExact: false },
+            { name: "Carol Example", fromSec: 0, toSec: 300, leftAtExact: false },
+        ];
+        const speaking = [
+            { tSec: 32, speaking: ["Bob Example"] },
+            { tSec: 120, speaking: ["Carol Example"] },
+        ];
+        const evidence = { hints: [], selfName: USER, presence, speaking };
+        const opening = [line(0, 31, "S2", "Ahoj, slyšíte mě?"), line(1, 100, "S2", "Já už musím jít.")];
+        expect(
+            identifiedDepartures({
+                ...evidence,
+                lines: [...opening, line(2, 102, "S1", "Tak ahoj, díky."), line(3, 104, "S2", "Čau.")],
+            })
+        ).toEqual([{ name: "Bob Example", atSec: 104, lineIndex: 3, reason: "farewell-exchange", confidence: 0.65 }]);
+        // "Díky, čau." and then "Čau." from the other side is the usual order of a goodbye.
+        expect(
+            identifiedDepartures({
+                ...evidence,
+                lines: [...opening, line(2, 104, "S2", "Čau."), line(3, 106, "S1", "Tak ahoj, díky.")],
+            })
+        ).toEqual([{ name: "Bob Example", atSec: 104, lineIndex: 2, reason: "farewell-exchange", confidence: 0.65 }]);
+        // An answer past the reply window answers nothing.
+        expect(
+            identifiedDepartures({
+                ...evidence,
+                lines: [...opening, line(2, 104, "S2", "Čau."), line(3, 116, "S1", "Tak ahoj, díky.")],
+            })
+        ).toEqual([]);
     });
 
     test("a remote goodbye under the user label identifies only independently known identity", () => {
