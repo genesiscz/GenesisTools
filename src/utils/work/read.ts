@@ -1,12 +1,13 @@
 /** The reads of the work store. Each one is a pure read: it never writes a row, a cursor or a journal entry. */
 import type { Database } from "bun:sqlite";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { NextAction } from "@genesiscz/utils/output/reply";
 import type { Change } from "./model/change";
 import type { Item, ItemId, Pointer, Reference, WorkerStamp } from "./model/item";
 import { asItemId, stampOf } from "./model/item";
 import type { ItemState, ItemType, Severity } from "./model/vocab";
 import { isOpenState } from "./model/vocab";
-import { selectItem } from "./store/rows";
+import { rowToItem, type ItemRow as StoredItemRow, selectItem } from "./store/rows";
 import { type ListFilter, type StoreView, selectItems, sqlView } from "./store/view";
 
 export interface ListQuery extends ListFilter {
@@ -138,6 +139,39 @@ export function listItems(db: Database, query: ListQuery): ListResult {
     }
 
     return { ok: true, rows };
+}
+
+/** The same 500-item page per container as list --under, read for all containers together. */
+export function membersByContainer(db: Database, containers: readonly string[]): Map<string, ItemRow[]> {
+    const rows = db
+        .query<StoredItemRow & { container: string; slot: string | null }, [string]>(`
+        WITH selected AS (SELECT value AS id FROM json_each(?)),
+        edges AS (
+            SELECT r.from_id AS container, r.to_id AS child, COALESCE(r.slot, '') AS slot
+            FROM refs r JOIN selected s ON s.id = r.from_id
+            WHERE r.kind = 'member'
+              AND r.id = (SELECT MAX(m.id) FROM refs m WHERE m.kind = 'member' AND m.from_id = r.from_id AND m.to_id = r.to_id)
+            UNION ALL
+            SELECT r.to_id, r.from_id, NULL FROM refs r JOIN selected s ON s.id = r.to_id WHERE r.kind = 'parent'
+        ),
+        ranked AS (
+            SELECT i.*, e.container, MAX(e.slot) AS slot,
+                   ROW_NUMBER() OVER (PARTITION BY e.container ORDER BY i.created_ts, i.id) AS position
+            FROM edges e JOIN items i ON i.id = e.child
+            GROUP BY e.container, i.id
+        )
+        SELECT * FROM ranked WHERE position <= 500 ORDER BY container, position
+    `)
+        .all(SafeJSON.stringify(containers));
+    const groups = Map.groupBy(rows, (row) => row.container);
+    return new Map(
+        Array.from(groups, ([container, members]) => [
+            container,
+            members
+                .map((row) => toRow(rowToItem(row), row.slot ?? undefined))
+                .sort((a, b) => slotOrder(a.slot) - slotOrder(b.slot)),
+        ])
+    );
 }
 
 function slotOrder(slot: string | undefined): number {
