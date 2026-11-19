@@ -839,7 +839,7 @@ private struct UserScrollProbe: NSViewRepresentable {
     }
 }
 
-/// The explicit generation form owns its validation, so its initial bound values and later edits use the same rule.
+/// Confirms the proposed word-timing range and shows the model and language before generation.
 struct WordTimingOptions: View {
     /// Up to 20 seconds of the transcript clock, and where they come from, in words.
     struct Range: Equatable {
