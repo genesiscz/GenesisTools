@@ -269,6 +269,26 @@ describe("the connector config", () => {
 });
 
 describe("the connector methods", () => {
+    test("pull, sync and release previews do not change the store or call connectors", async () => {
+        const id = await spot("s1", "bug");
+        fake.remote.set("R-1", { remoteKey: "R-1", title: "outside" });
+        const preview = { ...session(true), call: { dryRun: true } };
+        const changes = db.query("SELECT * FROM changes ORDER BY seq").all();
+        const cursors = db.query("SELECT * FROM cursors").all();
+
+        expect(await callWork("pull", { connector: "fake", keys: ["R-1"] }, preview)).toMatchObject({
+            ok: true,
+            dryRun: true,
+        });
+        expect(await callWork("sync", {}, preview)).toMatchObject({ ok: true, dryRun: true });
+        expect(await callWork("sync", { release: id }, preview)).toMatchObject({ ok: true, dryRun: true });
+        expect(fake.pulls).toEqual([]);
+        expect(fake.pushed).toEqual([]);
+        expect(db.query("SELECT * FROM changes ORDER BY seq").all()).toEqual(changes);
+        expect(db.query("SELECT * FROM cursors").all()).toEqual(cursors);
+        expect(selectPairings(db, { item: id })).toEqual([]);
+    });
+
     function session(withPort: boolean): WorkSession {
         const base = ctx("s1");
         return {

@@ -2,7 +2,7 @@
  * The handler of each method of `workApi`. Every door calls these: the CLI, the MCP tools, the REPL and the actions
  * area. A handler returns a `Reply`; it never prints.
  */
-import { errorDiagnostic, failReply, okReply, type Reply } from "@genesiscz/utils/output/reply";
+import { errorDiagnostic, failReply, infoDiagnostic, okReply, type Reply } from "@genesiscz/utils/output/reply";
 import { type WorkMethodName, type WorkParams, workMethods } from "./api";
 import {
     type PullReport,
@@ -597,6 +597,22 @@ export const workHandlers: WorkHandlers = {
         }
 
         const project = p.project ?? session.ctx.project;
+        if (session.call.dryRun === true) {
+            return okReply(
+                "pull",
+                { made: [], updated: [], drift: [] },
+                {
+                    dryRun: true,
+                    diagnostics: [
+                        infoDiagnostic(
+                            "PREVIEW",
+                            `Would pull ${p.keys.length} item(s) from ${p.connector} into ${project}.`
+                        ),
+                    ],
+                }
+            );
+        }
+
         const random = session.ctx.random ?? randomItemSuffix;
         const report = await pullRemote({ ...sync.deps, project, newId: () => newItemId(random) }, p.connector, p.keys);
         return okReply("pull", report);
@@ -609,8 +625,23 @@ export const workHandlers: WorkHandlers = {
             return sync.refused;
         }
 
+        const preview = (message: string) =>
+            okReply(
+                "sync",
+                {
+                    pushed: 0,
+                    held: 0,
+                    failed: 0,
+                    drift: 0,
+                    cursor: -1,
+                },
+                { dryRun: true, diagnostics: [infoDiagnostic("PREVIEW", message)] }
+            );
+
         if (p.release === undefined) {
-            return okReply("sync", await runSyncOnce(sync.deps));
+            return session.call.dryRun === true
+                ? preview("Would sync queued connector changes.")
+                : okReply("sync", await runSyncOnce(sync.deps));
         }
 
         const found = itemOf(session, "sync", p.release);
@@ -619,7 +650,9 @@ export const workHandlers: WorkHandlers = {
             return found.refused;
         }
 
-        return okReply("sync", await releaseHeld(sync.deps, found.item.id));
+        return session.call.dryRun === true
+            ? preview(`Would release held connector changes for ${found.item.id}.`)
+            : okReply("sync", await releaseHeld(sync.deps, found.item.id));
     },
 
     async addMember(p, session) {
