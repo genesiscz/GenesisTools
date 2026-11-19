@@ -47,6 +47,7 @@ import {
     type lineEligibility,
     lines,
     list,
+    locate,
     type look,
     type measure,
     meetingsToolsetApi,
@@ -78,6 +79,7 @@ import {
     voiceScore,
     type voices,
 } from "@app/meetings/lib/service/toolset-api";
+import { locateMeeting } from "@app/meetings/lib/shared";
 import { applyLocalSourceAudio, planLocalSourceAudio } from "@app/meetings/lib/source-audio-backfill";
 import { isSuggestRule, SUGGEST_RULES } from "@app/meetings/lib/suggest";
 import { previewSuggestions, runSuggest } from "@app/meetings/lib/suggest-run";
@@ -247,6 +249,8 @@ export class MeetingsToolset extends ReplToolset {
                     const { measureRoomCallMeeting } = await import("@app/meetings/lib/room-call-metrics");
                     return measureRoomCallMeeting({ meeting, store });
                 },
+                locate: (refText: string) =>
+                    locateMeeting({ ref: locate.params.parse({ ref: refText }).ref, root: store.root }) ?? null,
                 overview: async (input: z.input<typeof overview.params> = {}) => {
                     const { days } = overview.params.parse(input);
                     return meetingsOverview({

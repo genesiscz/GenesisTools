@@ -1523,7 +1523,7 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect(missing).toBeInstanceOf(MeetingsServiceError);
         expect(missing).toMatchObject({ code: "meeting-not-found" });
         expect(errorText(missing)).toBe(
-            `[meeting-not-found] No meeting "nope" in ${store.root}. List them: tools meetings list`
+            `[meeting-not-found] No meeting "nope" in ${store.root}. List them: tools meetings list. Look in the other stores: tools meetings locate nope`
         );
         const ambiguous = await failure(client.call("meeting.show", { ref: "2026-11-03" }));
         expect(ambiguous).toMatchObject({ code: "meeting-ref" });

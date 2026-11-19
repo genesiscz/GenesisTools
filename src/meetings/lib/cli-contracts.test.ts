@@ -63,36 +63,47 @@ import {
  * What the `tools meetings` commands promise a script or the Meetings window: a refusal names a command that runs,
  * an error code leads its sentence, a JSON shape stays. Each test pins one promise.
  */
-test("missing meeting names the searched store and locates an exact id across the scratch boundary", async () => {
-    const { missingMeetingMessage } = await import("./shared");
+test("missing meeting names only the searched store; locate is the explicit search of the others", async () => {
+    const { locateMeeting, missingMeetingMessage } = await import("./shared");
     const base = new Storage("meetings-location-fixture").getBaseDir();
     const ordinary = genesisToolsDirIn(join(base, "user"), "meetings");
     const scratchRoot = join(base, "sessions");
-    const scratch = genesisToolsDirIn(join(scratchRoot, "Fixture", "round", "gap", "home"), "meetings");
+    const scratchHome = join(scratchRoot, "Fixture", "round", "gap", "home");
+    const scratch = genesisToolsDirIn(scratchHome, "meetings");
     const ref = "2026-11-02_15-00-fixture";
     const locations = { ordinary, scratchRoots: [scratchRoot] };
-    const list = "List them: tools meetings list";
+    const scoped = (id: string, root: string) =>
+        `No meeting "${id}" in ${root}. List them: tools meetings list. Look in the other stores: tools meetings locate ${id}`;
+    const sandbox = join(base, "other", "meetings");
     mkdirSync(join(scratch, ref), { recursive: true });
     writeFileSync(join(scratch, ref, "meeting.json"), "{}");
-    expect(missingMeetingMessage({ ref, root: ordinary, ...locations })).toBe(
-        `No meeting "${ref}" in ${ordinary}. Found in ${scratch} with GENESIS_TOOLS_HOME=${join(scratchRoot, "Fixture", "round", "gap", "home")}. ${list}`
-    );
     mkdirSync(join(ordinary, ref), { recursive: true });
     writeFileSync(join(ordinary, ref, "meeting.json"), "{}");
-    expect(missingMeetingMessage({ ref, root: scratch, ...locations })).toBe(
-        `No meeting "${ref}" in ${scratch}. Found in ${ordinary} with GENESIS_TOOLS_HOME unset. ${list}`
+    // The automatic error is scoped to the active store: it never says another store holds the id, nor where it is.
+    expect(missingMeetingMessage({ ref, root: sandbox })).toBe(scoped(ref, sandbox));
+    expect(missingMeetingMessage({ ref: "last", root: ordinary })).toBe(
+        `No meeting "last" in ${ordinary}. List them: tools meetings list.`
     );
-    expect(missingMeetingMessage({ ref: "absent", root: ordinary, ...locations })).toBe(
-        `No meeting "absent" in ${ordinary}. ${list}`
-    );
+    expect(locateMeeting({ ref, root: scratch, ...locations })).toEqual({ store: scratch });
+    expect(locateMeeting({ ref, root: sandbox, ...locations })).toEqual({
+        store: ordinary,
+        setting: "GENESIS_TOOLS_HOME unset",
+    });
+    const scratchOnly = "2026-11-02_15-30-scratch-fixture";
+    mkdirSync(join(scratch, scratchOnly), { recursive: true });
+    writeFileSync(join(scratch, scratchOnly, "meeting.json"), "{}");
+    expect(locateMeeting({ ref: scratchOnly, root: ordinary, ...locations })).toEqual({
+        store: scratch,
+        setting: `GENESIS_TOOLS_HOME=${scratchHome}`,
+    });
+    expect(locateMeeting({ ref: "absent", root: ordinary, ...locations })).toBeUndefined();
+    expect(locateMeeting({ ref: "2026-11", root: scratch, ...locations })).toBeUndefined();
     // The scan is bounded: a store nested deeper than a session home is never walked to.
     const deepRef = "2026-11-02_16-00-deep-fixture";
     const deep = genesisToolsDirIn(join(scratchRoot, "a", "b", "c", "d", "e", "f", "g", "h", "home"), "meetings");
     mkdirSync(join(deep, deepRef), { recursive: true });
     writeFileSync(join(deep, deepRef, "meeting.json"), "{}");
-    expect(missingMeetingMessage({ ref: deepRef, root: ordinary, ...locations })).toBe(
-        `No meeting "${deepRef}" in ${ordinary}. ${list}`
-    );
+    expect(locateMeeting({ ref: deepRef, root: ordinary, ...locations })).toBeUndefined();
 
     const human = spyOn(ui, "err").mockImplementation(() => {});
     const raw = spyOn(ui, "raw").mockImplementation(() => {});
@@ -101,9 +112,7 @@ test("missing meeting names the searched store and locates an exact id across th
         await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "listen" });
         await program.parseAsync(["listen", "absent-location-fixture"], { from: "user" });
         expect(process.exitCode).toBe(1);
-        expect(human.mock.calls.at(-1)?.[0]).toBe(
-            `No meeting "absent-location-fixture" in ${new MeetingStore().root}. ${list}`
-        );
+        expect(human.mock.calls.at(-1)?.[0]).toBe(scoped("absent-location-fixture", new MeetingStore().root));
     } finally {
         raw.mockRestore();
         human.mockRestore();

@@ -75,30 +75,59 @@ function scratchStoreWith(ref: string, roots: string[]): string | undefined {
     }
 }
 
-/** Only a missing exact id looks outside the active store. Never hydrate someone else's meeting to print a hint. */
-export function missingMeetingMessage(options: {
+/** An exact meeting id: never `last` and never a prefix, so a lookup reads one record path and nothing else. */
+function isExactId(ref: string): boolean {
+    return ref !== "last" && /^[A-Za-z0-9][\w.-]*$/.test(ref);
+}
+
+/**
+ * A missing meeting names only the store that was searched. Another store is a boundary: the automatic error never
+ * probes it, so it never says whether a meeting exists there or where that store lives. `meetings locate` does that
+ * search when someone asks for it.
+ */
+export function missingMeetingMessage(options: { ref: string; root: string }): string {
+    const { ref, root } = options;
+    const locate = isExactId(ref) ? ` Look in the other stores: ${TOOL} locate ${ref}` : "";
+    return `No meeting "${ref}" in ${root}. List them: ${TOOL} list.${locate}`;
+}
+
+/**
+ * The explicit diagnostic behind `meetings locate` and the REPL's `meetings.locate`: the store that holds this exact
+ * id. The active store answers without a `setting`; otherwise a sandboxed store looks in the ordinary home and the
+ * ordinary store looks in the agent scratch homes. Reads only the record's path, never the record.
+ */
+export function locateMeeting(options: {
     ref: string;
     root: string;
     ordinary?: string;
     scratchRoots?: string[];
-}): string {
+}): { store: string; setting?: string } | undefined {
     const { ref, root } = options;
-    const ordinary = options.ordinary ?? genesisToolsDirIn(homedir(), "meetings");
-    let found: string | undefined;
-    if (ref !== "last" && /^[A-Za-z0-9][\w.-]*$/.test(ref) && basename(root) === "meetings") {
-        if (resolve(root) !== resolve(ordinary)) {
-            found = existsSync(join(ordinary, ref, MEETING_FILE)) ? ordinary : undefined;
-        } else {
-            const configured = env.doctor.getAgentScratchRoot();
-            const roots =
-                options.scratchRoots ??
-                (configured ? [configured] : [...scratchRootNames()].map((dir) => join(sharedTempRoot(), dir)));
-            found = scratchStoreWith(ref, roots);
-        }
+    if (!isExactId(ref)) {
+        return undefined;
     }
-    const setting =
-        found === ordinary ? "GENESIS_TOOLS_HOME unset" : found && `GENESIS_TOOLS_HOME=${dirname(dirname(found))}`;
-    return `No meeting "${ref}" in ${root}.${found ? ` Found in ${found} with ${setting}.` : ""} List them: ${TOOL} list`;
+
+    if (existsSync(join(root, ref, MEETING_FILE))) {
+        return { store: root };
+    }
+
+    if (basename(root) !== "meetings") {
+        return undefined;
+    }
+
+    const ordinary = options.ordinary ?? genesisToolsDirIn(homedir(), "meetings");
+    if (resolve(root) !== resolve(ordinary)) {
+        return existsSync(join(ordinary, ref, MEETING_FILE))
+            ? { store: ordinary, setting: "GENESIS_TOOLS_HOME unset" }
+            : undefined;
+    }
+
+    const configured = env.doctor.getAgentScratchRoot();
+    const roots =
+        options.scratchRoots ??
+        (configured ? [configured] : [...scratchRootNames()].map((dir) => join(sharedTempRoot(), dir)));
+    const found = scratchStoreWith(ref, roots);
+    return found ? { store: found, setting: `GENESIS_TOOLS_HOME=${dirname(dirname(found))}` } : undefined;
 }
 
 /**

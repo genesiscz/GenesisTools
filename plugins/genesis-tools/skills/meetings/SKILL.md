@@ -30,6 +30,8 @@ Both modes share the meeting record, its items and `tools meetings listen`.
 
 For an isolated store, prefix **every command** with the same `GENESIS_TOOLS_HOME`, including reads, playback and the
 answer subscription. For example, `GENESIS_TOOLS_HOME=/path/to/isolated/home tools meetings show <meeting> --json`.
+A missing meeting names only the store that was searched. To find which store holds an id, run
+`tools meetings locate <id>` (REPL: `meetings.locate(id)`); it names the `GENESIS_TOOLS_HOME` to use.
 
 ## Procedure (three-pass)
 
