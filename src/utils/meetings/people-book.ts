@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
@@ -197,27 +198,38 @@ export class PeopleBook {
         actor: DeviceDecision["actor"];
         meeting?: string;
         meetings?: string[];
+        verifyOffer?: (history: readonly DeviceDecision[]) => void;
     }) {
-        const entry = deviceDecisionSchema.parse({ ...input, at: this.now().toISOString() });
-        return this.change((data) => {
-            const key = rosterAccountKey(entry.account);
-            const prior = data.devices.findLast((row) => rosterAccountKey(row.account) === key);
-            const device =
-                entry.action === "map"
-                    ? { account: entry.account, ...(entry.group ? { group: entry.group } : {}) }
-                    : null;
-            if (prior?.action === entry.action && prior.group === entry.group) {
-                return { changed: false, device };
-            }
-            if (entry.meeting && prior && prior.action !== "unmap") {
-                throw new Error("This room device offer was already decided. Refresh the suggestions.");
-            }
-            if (entry.action === "unmap" && prior?.action !== "map") {
-                return { changed: false, device: null };
-            }
-            data.devices.push(entry);
-            return { changed: true, device };
-        });
+        const { verifyOffer, ...decision } = input;
+        const entry = deviceDecisionSchema.parse({ ...decision, at: this.now().toISOString() });
+        return this.change(
+            (data) => {
+                const key = rosterAccountKey(entry.account);
+                const prior = data.devices.findLast((row) => rosterAccountKey(row.account) === key);
+                const device =
+                    entry.action === "map"
+                        ? { account: entry.account, ...(entry.group ? { group: entry.group } : {}) }
+                        : null;
+                if (
+                    prior?.action === entry.action &&
+                    prior.group === entry.group &&
+                    (!entry.meeting ||
+                        (entry.meeting === prior.meeting && isDeepStrictEqual(entry.meetings, prior.meetings)))
+                ) {
+                    return { changed: false, device };
+                }
+                if (entry.meeting && prior && prior.action !== "unmap") {
+                    throw new Error("This room device offer was already decided. Refresh the suggestions.");
+                }
+                if (entry.action === "unmap" && prior?.action !== "map") {
+                    return { changed: false, device: null };
+                }
+                verifyOffer?.(data.devices);
+                data.devices.push(entry);
+                return { changed: true, device };
+            },
+            (result) => result.changed
+        );
     }
 
     /** Adds a person by hand; one the book knows (same email, or same name tokens) gains the email and note instead. */
@@ -299,11 +311,15 @@ export class PeopleBook {
         return parsePeopleBook(readFileSync(this.path, "utf8"), this.path);
     }
 
-    private async change<T>(mutate: (data: PeopleBookData) => T): Promise<T> {
+    private async change<T>(mutate: (data: PeopleBookData) => T, shouldWrite?: (result: T) => boolean): Promise<T> {
         return this.storage.withFileLock({
             file: this.path,
             fn: async () => {
                 const book = this.load();
+                const result = mutate(book.data);
+                if (shouldWrite && !shouldWrite(result)) {
+                    return result;
+                }
 
                 if (book.broken) {
                     // Kept beside the new file, so a hand edit with a typo is never lost.
@@ -312,7 +328,6 @@ export class PeopleBook {
                     log.warn({ path: this.path, aside, reason: book.broken }, "people book moved aside before a write");
                 }
 
-                const result = mutate(book.data);
                 atomicWriteFileSync(this.path, bookText(book), { mode: 0o600 });
                 log.debug({ path: this.path }, "people book written");
                 return result;

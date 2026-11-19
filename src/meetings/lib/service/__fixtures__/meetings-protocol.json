@@ -76,6 +76,8 @@
             "people.known",
             "people.meetings",
             "people.add",
+            "people.devices.list",
+            "people.devices.decide",
             "people.hide",
             "people.planMerge",
             "people.merge",
@@ -120,7 +122,7 @@
             "people.changed",
             "voices.job"
           ],
-          "version": "2b836a3cb309"
+          "version": "05eb8a38d4f3"
         }
       }
     },
@@ -1466,6 +1468,8 @@
             "people.known",
             "people.meetings",
             "people.add",
+            "people.devices.list",
+            "people.devices.decide",
             "people.hide",
             "people.planMerge",
             "people.merge",
@@ -1510,7 +1514,7 @@
             "people.changed",
             "voices.job"
           ],
-          "version": "2b836a3cb309"
+          "version": "05eb8a38d4f3"
         }
       }
     },
@@ -6151,6 +6155,8 @@
             "people.known",
             "people.meetings",
             "people.add",
+            "people.devices.list",
+            "people.devices.decide",
             "people.hide",
             "people.planMerge",
             "people.merge",
@@ -6195,7 +6201,7 @@
             "people.changed",
             "voices.job"
           ],
-          "version": "2b836a3cb309"
+          "version": "05eb8a38d4f3"
         }
       }
     },
@@ -7276,6 +7282,54 @@
           },
           "added": 1,
           "skipped": 0
+        }
+      }
+    },
+    {
+      "method": "people.devices.decide",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 129,
+        "method": "people.devices.decide",
+        "params": {
+          "action": "map",
+          "account": "Boardroom PC",
+          "group": "table"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 129,
+        "result": {
+          "changed": true,
+          "device": {
+            "account": "Boardroom PC",
+            "group": "table"
+          }
+        }
+      }
+    },
+    {
+      "method": "people.devices.list",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 130,
+        "method": "people.devices.list",
+        "params": {}
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 130,
+        "result": {
+          "devices": [
+            {
+              "account": "Boardroom PC",
+              "group": "table"
+            }
+          ],
+          "offers": []
         }
       }
     }

@@ -1,9 +1,11 @@
 import type { RpcHandlers } from "@genesiscz/utils/api-descriptor";
 import { type MeetingsConfig, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
+import { mappedRoomDevices, rosterAccountKey } from "@genesiscz/utils/meetings/people";
 import { PeopleBook } from "@genesiscz/utils/meetings/people-book";
 import { ContactsPeopleSource } from "@genesiscz/utils/meetings/people-contacts";
 import { type PeopleDirectory, PeopleError, peopleDirectory } from "@genesiscz/utils/meetings/people-directory";
 import type { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { roomDeviceOffers } from "../room-devices";
 import { autoVoiceWorkers } from "../speaker-labels/voice";
 import { backfillVoices } from "../voice-backfill";
 import {
@@ -17,7 +19,67 @@ import {
     voiceSample,
 } from "../voices";
 import type { MeetingsParsedParams, MeetingsResult, VOICES_METHODS } from "./api";
-import { type MeetingsHandlerDeps, recordOf, refusal, voicePassProgress } from "./handlers";
+import { actorOfCall } from "./decision-handlers";
+import { type MeetingsCallContext, type MeetingsHandlerDeps, recordOf, refusal, voicePassProgress } from "./handlers";
+
+async function deviceOfferMinimum(deps: MeetingsHandlerDeps) {
+    const config = await (deps.config?.() ?? (deps.configStore?.() ?? new MeetingsConfigStore()).read());
+    return config.global.speakerLabels.seat.deviceOfferMinMeetings;
+}
+
+export async function listRoomDevices(
+    params: MeetingsParsedParams<"people.devices.list">,
+    store: MeetingStore,
+    deps: MeetingsHandlerDeps
+) {
+    const history = new PeopleBook({ storage: store.storage }).read().devices;
+    const meeting = params.meeting ? recordOf(store, params.meeting) : undefined;
+    const offers =
+        params.offers || meeting
+            ? roomDeviceOffers({ store, history, meeting, minimum: await deviceOfferMinimum(deps) })
+            : [];
+    return { devices: mappedRoomDevices(history), offers };
+}
+
+export async function decideDevice(options: {
+    params: MeetingsParsedParams<"people.devices.decide">;
+    store: MeetingStore;
+    deps: MeetingsHandlerDeps;
+    context: MeetingsCallContext;
+}) {
+    const { params, store, deps, context } = options;
+    const actor = actorOfCall(context).kind;
+    if (context.caller?.role === "agent" || (actor !== "window" && actor !== "cli" && actor !== "listen")) {
+        throw refusal("wrong-actor", "Only the owner can change a room device mapping or answer its offer.");
+    }
+    const book = new PeopleBook({ storage: store.storage, now: deps.now });
+    if (params.action !== "answer") {
+        return book.decideDevice({ ...params, actor });
+    }
+    const meeting = recordOf(store, params.meeting).id;
+    const minimum = await deviceOfferMinimum(deps);
+    return book.decideDevice({
+        actor,
+        account: params.account,
+        group: params.group,
+        meeting,
+        meetings: [...params.meetings].sort(),
+        action: params.yes ? "map" : "refuse",
+        verifyOffer(history) {
+            const offers = roomDeviceOffers({ store, history, meeting: recordOf(store, meeting), minimum });
+            const current = offers.find(
+                (offer) => rosterAccountKey(offer.account) === rosterAccountKey(params.account)
+            );
+            if (
+                !current ||
+                current.group !== params.group ||
+                !Bun.deepEquals(current.meetings, [...params.meetings].sort())
+            ) {
+                throw new Error("This room device offer has changed. Refresh the suggestions.");
+            }
+        },
+    });
+}
 
 /** Project voice operations shared with the CLI. */
 export function voicesHandlers(

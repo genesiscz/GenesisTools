@@ -18,6 +18,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { MeetingsConflictError, MeetingsStateError } from "@genesiscz/utils/meetings/conflict";
+import { PeopleBook } from "@genesiscz/utils/meetings/people-book";
 import { ContactsPeopleSource } from "@genesiscz/utils/meetings/people-contacts";
 import { MEETING_FILE, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
@@ -442,7 +443,8 @@ function scratchStore(): {
 
 test("J7 offers a room device only for distinct roster joins and persists the owner's answer", async () => {
     const { store, config } = scratchStore();
-    const deps = { store: () => store, configStore: () => config };
+    const settings = await config.read();
+    const deps = { store: () => store, config: async () => settings, configStore: () => config };
     const client = new InProcessMeetingsClient({ deps, hello: { role: "window", protocol: 1 } });
     const account = "Boardroom PC";
     const guest = "Pip Example";
@@ -484,6 +486,9 @@ test("J7 offers a room device only for distinct roster joins and persists the ow
         question: "Is Boardroom PC the room's device?",
     };
     expect((await view()).suggestion.deviceOffers).toEqual([offer]);
+    settings.global.speakerLabels.seat.deviceOfferMinMeetings = 3;
+    expect((await view()).suggestion.deviceOffers ?? []).toEqual([]);
+    settings.global.speakerLabels.seat.deviceOfferMinMeetings = 2;
     expect((await view()).suggestion.people.map((row) => row.name)).toContain(account);
     const answer = {
         action: "answer",
@@ -495,18 +500,36 @@ test("J7 offers a room device only for distinct roster joins and persists the ow
     } as const;
     const agent = new InProcessMeetingsClient({ deps, hello: agentHello });
     await expect(agent.call("people.devices.decide", answer)).rejects.toThrow("owner");
+    await expect(client.call("people.devices.decide", { ...answer, meetings: ["not-the-offer"] })).rejects.toThrow(
+        "offer"
+    );
     expect(await client.call("people.devices.decide", answer)).toMatchObject({
         changed: true,
         device: { account, group },
     });
     const mapped = await view();
+    expect(await client.call("people.devices.decide", answer)).toMatchObject({ changed: false });
     expect(mapped.suggestion.deviceOffers ?? []).toEqual([]);
     expect(mapped.suggestion.people.map((row) => row.name)).not.toContain(account);
     expect(mapped.suggestion.people.map((row) => row.name)).toContain(guest);
+    await expect(client.call("meeting.seats.suggest", { meeting: "first-room", room: [account] })).rejects.toThrow(
+        "device"
+    );
     await client.call("people.devices.decide", { action: "unmap", account });
     expect((await view()).suggestion.people.map((row) => row.name)).toContain(account);
     expect((await view()).suggestion.deviceOffers).toEqual([offer]);
     await client.call("people.devices.decide", { ...answer, yes: false });
+    const history = new PeopleBook({ storage: store.storage }).read().devices;
+    expect(history.map((entry) => entry.action)).toEqual(["map", "unmap", "refuse"]);
+    for (const entry of [history[0], history[2]]) {
+        expect(entry).toMatchObject({
+            actor: "window",
+            account,
+            group,
+            meeting: "first-room",
+            meetings: offer.meetings,
+        });
+    }
     expect((await view()).suggestion.deviceOffers ?? []).toEqual([]);
     expect((await view()).suggestion.people.map((row) => row.name)).toContain(account);
     await expect(client.call("people.devices.decide", answer)).rejects.toThrow("offer");
@@ -3629,6 +3652,8 @@ async function captureExamples(): Promise<Example[]> {
         direction: "service→client",
         notification: window.lines.find((line) => line.method === "voices.job"),
     });
+    await ask(window, "people.devices.decide", { action: "map", account: "Boardroom PC", group: "table" });
+    await ask(window, "people.devices.list", {});
     return examples;
 }
 

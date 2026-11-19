@@ -304,7 +304,11 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
                 ...(context.signal ? { signal: context.signal } : {}),
             });
             context.emit?.("meeting.changed", { meeting: record.id, parts: ["show", "speakers", "transcript"] });
-            return { added: result.fresh.length, warnings: result.warnings };
+            return {
+                added: result.fresh.length,
+                warnings: result.warnings,
+                ...(result.deviceOffers ? { deviceOffers: result.deviceOffers } : {}),
+            };
         },
         "meeting.listen.prepare": async (params, context) => {
             const store = storeOf();
@@ -651,6 +655,14 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
             (await comments()).withdrawComment(params, context, storeOf(), deps),
         // The people directory loads Contacts (darwinkit) only when a call asks for people.
         "people.known": async (params) => (await people()).knownPeople(params, storeOf(), deps),
+        "people.devices.list": async (params) => (await people()).listRoomDevices(params, storeOf(), deps),
+        "people.devices.decide": async (params, context) => {
+            const result = await (await people()).decideDevice({ params, context, store: storeOf(), deps });
+            if (result.changed) {
+                context.emit?.("people.changed", {});
+            }
+            return result;
+        },
         // The voices methods (P6): the same functions as `tools meetings voices`, loaded with the people module.
         "voices.jobs": async (params, context) =>
             (await people()).voicesHandlers(storeOf(), deps)["voices.jobs"](params, context),

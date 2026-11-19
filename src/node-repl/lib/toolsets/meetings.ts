@@ -148,6 +148,9 @@ export class MeetingsToolset extends ReplToolset {
         const resolveSample = serviceCall("voices.sample");
         return {
             meetings: {
+                roomDevices: (params: MeetingsParams<"people.devices.list"> = {}) =>
+                    withMeetingsClient((client) => client.call("people.devices.list", params)),
+                decideRoomDevice: serviceCall("people.devices.decide"),
                 applySeats: async ({ replace, ...params }: z.input<typeof applySeats.params>) =>
                     withMeetingsClient(async (client) => {
                         const view = await client.call("meeting.seats.suggest", params);
@@ -589,7 +592,7 @@ export class MeetingsToolset extends ReplToolset {
                         throw new Error(`Unknown rule set ${unknown.join(", ")}. Known: ${SUGGEST_RULES.join(", ")}`);
                     }
 
-                    const { fresh, retired, warnings } = await runSuggest({
+                    const { fresh, retired, warnings, deviceOffers } = await runSuggest({
                         store,
                         record: current(),
                         rules: asked.filter(isSuggestRule),
@@ -597,7 +600,12 @@ export class MeetingsToolset extends ReplToolset {
                         attendanceId: options.attendanceId,
                     });
                     const record = current();
-                    return { fresh: fresh.map((item) => itemRow(record, item)), retired, warnings };
+                    return {
+                        fresh: fresh.map((item) => itemRow(record, item)),
+                        retired,
+                        warnings,
+                        ...(deviceOffers ? { deviceOffers } : {}),
+                    };
                 },
                 confirm: decideWith("confirmed"),
                 reject: decideWith("rejected"),

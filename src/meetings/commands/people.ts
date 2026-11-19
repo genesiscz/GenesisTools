@@ -2,6 +2,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import { rosterAccountKey } from "@genesiscz/utils/meetings/people";
 import type { KnownPerson } from "@genesiscz/utils/meetings/people-directory";
 import { personLabel } from "@genesiscz/utils/meetings/proposals";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
@@ -349,12 +350,110 @@ function collect(value: string, previous: string[] = []): string[] {
     return [...previous, value];
 }
 
+function registerDevices(people: Command): void {
+    const devices = people.command("devices").description("Room device accounts in the people book");
+    devices
+        .command("list", { isDefault: true })
+        .description("List confirmed mappings and, when requested, the meetings behind each offer")
+        .option("--offers", "include unanswered device offers across meetings")
+        .option("--meeting <meeting>", "include the offers in this meeting")
+        .option("--json", "print the devices and offers")
+        .action(async (options: { offers?: boolean; meeting?: string; json?: boolean }) => {
+            try {
+                const result = await withMeetingsClient((client) =>
+                    client.call("people.devices.list", {
+                        offers: options.offers,
+                        meeting: options.meeting,
+                    })
+                );
+                if (options.json) {
+                    printJson(result);
+                    return;
+                }
+                if (!result.devices.length) {
+                    ui.info("No confirmed room devices.");
+                }
+                for (const device of result.devices) {
+                    out.println(`${device.account} → ${device.group ?? "whole room"}`);
+                }
+                for (const offer of result.offers) {
+                    out.println(`${offer.question}  ${offer.group ?? "whole room"} (${offer.meetings.join(", ")})`);
+                }
+            } catch (error) {
+                fail(error);
+            }
+        });
+
+    async function decide(params: MeetingsParams<"people.devices.decide">, json?: boolean) {
+        const result = await withMeetingsClient((client) => client.call("people.devices.decide", params));
+        if (json) {
+            printJson(result);
+        } else if (result.device) {
+            ui.ok(`${result.device.account} is mapped to ${result.device.group ?? "the whole room"}.`);
+        } else {
+            ui.ok(
+                params.action === "answer"
+                    ? `Kept ${params.account} as a person. This question is closed.`
+                    : `${params.account} has no room device mapping.`
+            );
+        }
+    }
+    devices
+        .command("map <account>")
+        .description("Confirm a roster account as a room device")
+        .option("--group <id>", "the room microphone group ID (the whole room by default)")
+        .option("--json", "print the receipt")
+        .action(async (account: string, options: { group?: string; json?: boolean }) => {
+            await decide({ action: "map", account, group: options.group }, options.json).catch(fail);
+        });
+    devices
+        .command("unmap <account>")
+        .description("Clear a confirmed device mapping")
+        .option("--json", "print the receipt")
+        .action(async (account: string, options: { json?: boolean }) => {
+            await decide({ action: "unmap", account }, options.json).catch(fail);
+        });
+    devices
+        .command("answer <meeting> <account> <yes-or-no>")
+        .description("Answer the current room device offer")
+        .option("--json", "print the receipt")
+        .action(async (meeting: string, account: string, answer: string, options: { json?: boolean }) => {
+            try {
+                if (answer !== "yes" && answer !== "no") {
+                    throw new Error("Answer yes or no.");
+                }
+                const { offers } = await withMeetingsClient((client) =>
+                    client.call("people.devices.list", { meeting })
+                );
+                const offer = offers.find((row) => rosterAccountKey(row.account) === rosterAccountKey(account));
+                if (!offer) {
+                    throw new Error(`No open device offer for ${account} in ${meeting}.`);
+                }
+                await decide(
+                    {
+                        action: "answer",
+                        account: offer.account,
+                        group: offer.group,
+                        meetings: offer.meetings,
+                        meeting,
+                        yes: answer === "yes",
+                    },
+                    options.json
+                );
+            } catch (error) {
+                fail(error);
+            }
+        });
+}
+
 export function registerPeopleCommand(program: Command): void {
     const people = program
         .command("people")
         .description(
             "The people directory: everyone the meetings, projects, Contacts and your own entries name, with merges and assignments"
         );
+
+    registerDevices(people);
 
     people
         .command("list", { isDefault: true })

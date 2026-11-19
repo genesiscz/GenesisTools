@@ -4,7 +4,7 @@ import { genesisToolsSourceRoot as meetingsSourceRoot } from "@genesiscz/utils/g
 import { TONE_PRESET_NAMES, toneSoundSettingSchema } from "@genesiscz/utils/meetings/config";
 import { MEETINGS_CONFLICT_CODES, MEETINGS_STATE_CODES } from "@genesiscz/utils/meetings/conflict";
 import { echoMetricSchema } from "@genesiscz/utils/meetings/echo";
-import { pairedBySchema, roomDeviceOfferSchema } from "@genesiscz/utils/meetings/people";
+import { pairedBySchema, roomDeviceOfferSchema, roomDeviceSchema } from "@genesiscz/utils/meetings/people";
 import {
     type KnownPeople,
     type KnownPerson,
@@ -1154,6 +1154,36 @@ const peopleAdd = defineMethod({
     effect: "reversible",
 });
 
+export const peopleDevices = defineMethod({
+    name: "people.devices.list",
+    params: z.object({ offers: z.boolean().optional(), meeting: meetingRef.optional() }).strict(),
+    result: z.object({ devices: z.array(roomDeviceSchema), offers: z.array(roomDeviceOfferSchema) }),
+    doc: "Return confirmed room devices. Request offers for their supporting meetings, optionally scoped to one meeting.",
+    effect: "read",
+});
+
+export const decideRoomDevice = defineMethod({
+    name: "people.devices.decide",
+    params: z.discriminatedUnion("action", [
+        roomDeviceSchema.extend({ action: z.literal("map") }).strict(),
+        roomDeviceSchema
+            .pick({ account: true })
+            .extend({ action: z.literal("unmap") })
+            .strict(),
+        roomDeviceOfferSchema
+            .omit({ question: true })
+            .extend({
+                action: z.literal("answer"),
+                meeting: meetingRef,
+                yes: z.boolean(),
+            })
+            .strict(),
+    ]),
+    result: z.object({ changed: z.boolean(), device: roomDeviceSchema.nullable() }),
+    doc: "Record the owner's map, unmap or yes/no answer in the people book. Answers name the offer's group and supporting meetings.",
+    effect: "reversible",
+});
+
 const peopleHide = defineMethod({
     name: "people.hide",
     params: z
@@ -1485,8 +1515,12 @@ const meetingThresholdsPreview = defineMethod({
 const meetingSuggest = defineMethod({
     name: "meeting.suggest",
     params: z.object({ meeting: meetingRef, attendance: z.string().optional() }).strict(),
-    result: z.object({ added: z.number().int().nonnegative(), warnings: z.array(z.string()) }),
-    resultName: "{ added, warnings }",
+    result: z.object({
+        added: z.number().int().nonnegative(),
+        warnings: z.array(z.string()),
+        deviceOffers: z.array(roomDeviceOfferSchema).optional(),
+    }),
+    resultName: "{ added, warnings, deviceOffers? }",
     doc: "Run the normal suggestion rules and return recoverable attendance and word-check warnings to the window.",
     effect: "reversible",
 });
@@ -1917,6 +1951,8 @@ export const meetingsApi = defineApi({
         peopleKnown,
         peopleMeetings,
         peopleAdd,
+        peopleDevices,
+        decideRoomDevice,
         peopleHide,
         peoplePlanMerge,
         peopleMerge,
