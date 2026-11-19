@@ -84,7 +84,7 @@ struct WorkProjectsList: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 2) {
                 if screen.projects.isEmpty {
-                    Text(screen.failure == nil ? "Reading the projects…" : "No projects")
+                    Text(screen.projectsLoaded ? "No projects" : "Reading the projects…")
                         .font(.system(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 10)
                 } else if shown.isEmpty {
                     Text("No project matches “\(filter.trimmingCharacters(in: .whitespaces))”")
