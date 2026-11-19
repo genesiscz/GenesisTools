@@ -8,6 +8,7 @@ import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import * as voice from "@genesiscz/utils/meetings/voice";
+import * as voiceLibraryModule from "@genesiscz/utils/meetings/voice-library";
 import { insertVoiceSample, readVoiceLibrary, sourceForVoicePrint } from "@genesiscz/utils/meetings/voice-library";
 import { addVoicePrint, readVoiceStore, type VoicePrint, type VoiceStore } from "@genesiscz/utils/meetings/voice-store";
 import { Storage } from "@genesiscz/utils/storage";
@@ -776,10 +777,14 @@ test("voice preview names a legacy room occupant before joining and after leavin
     spies.push(spyOn(voices, "voiceReadMeeting").mockResolvedValue(opened));
     const { speakerLabels, suggest } = meetingsConfigSchema.parse({}).global;
     speakerLabels.seat.enabled = false;
-    const preview = await preparePreviewLabels(opened, speakerLabels, [
-        { name: alice.person, fromSec: 0, toSec: 15 },
-        { name: bob.person, fromSec: 5, toSec: 10 },
-    ]);
+    const preview = await preparePreviewLabels({
+        opened,
+        settings: speakerLabels,
+        presence: [
+            { name: alice.person, fromSec: 0, toSec: 15 },
+            { name: bob.person, fromSec: 5, toSec: 10 },
+        ],
+    });
     const labels = await preview(speakerLabels.voice, suggest.applyAbove);
     expect(labels.map(({ index, person, reason }) => [index, person, reason])).toEqual([
         [0, bob.person, "named"],
@@ -809,10 +814,13 @@ test("threshold preview rescores a shared seat from local voice evidence without
     const config = meetingsConfigSchema.parse({ global: { speakerLabels: { voice: { compute: { workers: 1 } } } } });
     spies.push(spyOn(opened, "config").mockResolvedValue(config));
     const { speakerLabels } = config.global;
-    const score = await preparePreviewLabels(opened, speakerLabels, await opened.presence());
+    const enrollment = spyOn(voiceLibraryModule, "readVoiceLibrary");
+    spies.push(enrollment);
+    const score = await preparePreviewLabels({ opened, settings: speakerLabels, presence: await opened.presence() });
     expect((await score(speakerLabels.voice, 0.8))[1]?.person).toBeUndefined();
     expect((await score(speakerLabels.voice, 0.7))[1]).toMatchObject({ person: alice.person, reason: "named" });
     expect((await score(speakerLabels.voice, 0.72))[1]?.person).toBe(alice.person);
+    expect(enrollment).toHaveBeenCalledTimes(1);
     expect(embed.mock.calls.map(([options]) => options.cachePath)).toEqual([""]);
     expect(readVoiceStore(record.project!).people).toEqual({});
 });

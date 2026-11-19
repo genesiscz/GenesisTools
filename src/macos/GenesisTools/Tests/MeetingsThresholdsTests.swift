@@ -18,6 +18,32 @@ final class MeetingsThresholdsTests: XCTestCase {
         XCTAssertTrue(draft.edits([row]).isEmpty)
     }
 
+    func testThresholdFailureReportKeepsTheServiceCommandAndStack() {
+        let failure = MeetingsCLI.Failure(sentence: "Threshold preview failed.", detail: "Fixture refused the preview.",
+                                          command: "meetings service meeting.thresholds.preview {}", stack: "fixture stack")
+        let report = thresholdFailureReport(failure, outcome: "Could not preview thresholds",
+                                            action: "Compare meeting thresholds", call: nil)
+        XCTAssertEqual(report.log, "Fixture refused the preview.")
+        XCTAssertEqual(report.command, "meetings service meeting.thresholds.preview {}")
+        XCTAssertEqual(report.stack, "fixture stack")
+    }
+
+    func testFinishingAnOlderSaveKeepsEditsInTheNewDraft() {
+        let row = MeetingsAPI.ThresholdPreview.Row(name: "term.applyAbove", path: "global.suggest.terms.applyAbove",
+            title: "Apply proposed terms", meaning: "Set the term confidence.", source: "default",
+            min: 0, step: 0.01, defaultValue: 0.7, globalValue: 0.7, value: 0.7, max: 1)
+        var draft = ThresholdDraft()
+        draft.set(0.8, for: row)
+        let submitted = draft
+        draft.set(0.85, for: row)
+        draft.clearIfUnchanged(since: submitted)
+        XCTAssertEqual(draft.values, ["term.applyAbove": 0.85])
+
+        let latest = draft
+        draft.clearIfUnchanged(since: latest)
+        XCTAssertTrue(draft.values.isEmpty)
+    }
+
     func testPreviewDecodesBothStatesAndTheAffectedLine() throws {
         let json = """
         {"thresholds":[],"warnings":[],"counts":[{"kind":"term proposal","added":0,"removed":0,"changed":1}],

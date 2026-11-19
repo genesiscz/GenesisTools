@@ -21,6 +21,7 @@ import {
     type SampleSource,
     sameLine,
     sourceForVoicePrint,
+    type VoiceLibrarySnapshot,
     type VoicePrint,
     type VoiceStore,
     voiceLineKeys,
@@ -257,8 +258,9 @@ export function meetingPredictionVoices(options: {
     project: string;
     people: readonly string[];
     scope: MeetingsConfig["global"]["speakerLabels"]["voice"]["sampleScope"];
+    view?: VoiceLibrarySnapshot;
 }) {
-    const view = readVoiceLibrary();
+    const view = options.view ?? readVoiceLibrary();
     const owners = options.people.map((name) => meetingVoiceOwner(options.record, name));
     const prints = predictionPrints({ project: options.project, scope: options.scope, owners, view });
     const directory = groupedOwners(view);
@@ -335,7 +337,8 @@ export function localVoiceDecisions(options: {
 export function voiceLabeler(options: {
     opened: OpenedMeeting;
     settings: MeetingsConfig["global"]["speakerLabels"]["voice"];
-    /** A threshold preview supplies in-memory embeddings shared by its two scores. */
+    /** A threshold preview shares the same enrollment and in-memory embeddings across its scores. */
+    voiceLibrary?: VoiceLibrarySnapshot;
     readLines?: (context: LabelContext, model: string) => Promise<VoiceLine[]>;
 }): SpeakerLabeler {
     return {
@@ -350,6 +353,7 @@ export function voiceLabeler(options: {
                 project: context.project,
                 scope: options.settings.sampleScope,
                 people: context.attended.map((stay) => stay.person),
+                view: options.voiceLibrary,
             });
             const { store, sources } = prediction;
             if (!Object.keys(store.people).length && !context.certain?.size) {

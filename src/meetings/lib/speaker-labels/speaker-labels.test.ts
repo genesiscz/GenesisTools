@@ -17,6 +17,7 @@ import { PROFILER_SCOPE_NAMES, profiler } from "@genesiscz/utils/profile";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { WordCheck } from "@genesiscz/utils/transcribe/languages/word-check";
 import { groupTurns, transcriptMarkdown, transcriptTextLines } from "@genesiscz/utils/transcribe/render";
+import * as terms from "@genesiscz/utils/transcribe/terms";
 import * as speechHistory from "../local-speech";
 import { OpenedMeeting } from "../opened-meeting";
 import { questionView } from "../questions";
@@ -198,7 +199,11 @@ describe("suggest runner word settings", () => {
         spies.push(spyOn(opened, "energy").mockResolvedValue({ share: (from) => shares.get(from) }));
         const labels = await proposeSpeakerLabels(opened, config.global.speakerLabels);
         expect(labels.filter((label) => label.person === owner).map((label) => label.index)).toEqual([1, 2, 3]);
-        const preview = await labelers.preparePreviewLabels(opened, config.global.speakerLabels, []);
+        const preview = await labelers.preparePreviewLabels({
+            opened,
+            settings: config.global.speakerLabels,
+            presence: [],
+        });
         const weak = (await preview(config.global.speakerLabels.voice, 0.35)).find((label) => label.index === 1);
         expect(weak?.score).toBeLessThan(0.35);
         const allApply = await preview(config.global.speakerLabels.voice, 0);
@@ -320,6 +325,104 @@ describe("suggest runner word settings", () => {
         const reopened = new MeetingStore(store.storage).read(record.id)!;
         expect(reopened.items.find((item) => item.id === "i1")?.status).toBe("rejected");
         expect(reopened.items.some((item) => item.kind === "question" && item.heard === "zorbax")).toBe(false);
+    });
+
+    test("lowering the candidate cutoff restores automatic retirements and preserves human rejection", async () => {
+        const { store, record, opened, config } = await runnerFixture();
+        const check: WordCheck = {
+            provider: "fixture",
+            language: "cs",
+            verdict: () => ({ class: "dictionary", count: 9 }),
+            dispose: () => undefined,
+        };
+        spies.push(spyOn(opened, "wordCheck").mockResolvedValue({ check }));
+        const term = {
+            kind: "term" as const,
+            heard: "deployovat",
+            proposed: "Deploy",
+            status: "suggested" as const,
+            rules: [MeetingRule.UnknownWord],
+            suggestedAt: START,
+            evidence: {
+                occurrences: 1,
+                candidateSources: [{ term: "Deploy", source: "meeting" }],
+                candidateScores: [{ term: "Deploy", confidence: 0.85 }],
+            },
+        };
+        await store.update(
+            record.id,
+            { command: "fixture", change: "save an automatic and a rejected candidate" },
+            (current) => {
+                current.items.push(
+                    { ...term, id: "i1" },
+                    { ...term, id: "i2", heard: "deployovali", status: "rejected", decidedAt: START },
+                    {
+                        id: "i3",
+                        kind: "question",
+                        status: "suggested",
+                        about: "term",
+                        fromSec: 0,
+                        toSec: 4,
+                        question: "What is it?",
+                        heard: "deployovat",
+                        choices: [],
+                        decides: ["i1"],
+                        rules: [],
+                        suggestedAt: START,
+                    }
+                );
+            }
+        );
+        const suggest = () => runSuggest({ store, record: store.read(record.id)!, rules: ["terms"] });
+        config.global.suggest.terms.unknownCandidate = 0.9;
+        expect((await suggest()).retired).toEqual(["i1", "i3"]);
+        const reopened = new MeetingStore(store.storage);
+        expect(
+            reopened
+                .read(record.id)
+                ?.items.slice(0, 3)
+                .map((item) => item.status)
+        ).toEqual(["rejected", "rejected", "rejected"]);
+
+        config.global.suggest.terms.unknownCandidate = 0.8;
+        await suggest();
+        const items = reopened.read(record.id)!.items;
+        expect(items.slice(0, 3).map((item) => item.status)).toEqual(["suggested", "rejected", "suggested"]);
+        expect(items[0]?.evidence?.retired).toBeUndefined();
+    });
+
+    test("an unknown-word candidate exactly at the fractional cutoff qualifies", async () => {
+        const { store, record, opened, config } = await runnerFixture();
+        const check: WordCheck = {
+            provider: "fixture",
+            language: "cs",
+            verdict: () => ({ class: "dictionary", count: 9 }),
+            dispose: () => undefined,
+        };
+        spies.push(spyOn(opened, "wordCheck").mockResolvedValue({ check }));
+        spies.push(
+            spyOn(terms, "findUnknownWords").mockReturnValue([
+                {
+                    heard: "deployovat",
+                    occurrences: 1,
+                    examples: [],
+                    verdict: { class: "unknown", count: 0 },
+                    candidates: [{ term: "Deploy", confidence: 55, source: "meeting" }],
+                },
+            ])
+        );
+        const suggest = () => runSuggest({ store, record: store.read(record.id)!, rules: ["terms"] });
+        config.global.suggest.terms.unknownCandidate = 0.56;
+        expect((await suggest()).fresh).toEqual([]);
+        config.global.suggest.terms.unknownCandidate = 0.55;
+        expect((await suggest()).fresh).toContainEqual(
+            expect.objectContaining({
+                kind: "term",
+                heard: "deployovat",
+                proposed: "Deploy",
+                confidence: 0.55,
+            })
+        );
     });
 
     test("an agent's run that leaves word questions posts one window notice; other runs and callers post none", async () => {

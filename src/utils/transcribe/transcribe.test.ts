@@ -377,7 +377,7 @@ describe("dictionary", () => {
             entries: [{ type: "term" as const, value: "Quorix" }],
         };
         const source = [line("Alice Example", 0, "Quoriz-tail head-Quoriz Quoriz.")];
-        expect(fuzzyMatches(source, dictionary).map((match) => match.heard)).toEqual(["Quoriz"]);
+        expect(fuzzyMatches({ entries: source, dictionary }).map((match) => match.heard)).toEqual(["Quoriz"]);
         const applied = applyDictionary(source, dictionary);
         expect(applied.entries[0]!.text).toBe("Quoriz-tail head-Quoriz Quorix.");
         expect(applied.fuzzy).toBe(1);
@@ -781,7 +781,7 @@ describe("spoken forms and fuzzy matches (R2.5)", () => {
 
     test("a spoken form is replaced; a close word at or above apply too; a weaker one is only a match", () => {
         const entries = [line("Alice Example", 0, "Ta Jenezetkou se pošle, jenezetkama taky, a kubernetu ne.")];
-        const matches = fuzzyMatches(entries, dictionary);
+        const matches = fuzzyMatches({ entries, dictionary });
         const applied = applyDictionary(entries, dictionary);
 
         expect(matches).toContainEqual(expect.objectContaining({ heard: "jenezetkama", value: "JDZ", score: 1 }));

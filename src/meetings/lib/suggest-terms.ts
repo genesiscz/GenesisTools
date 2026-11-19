@@ -128,9 +128,8 @@ export function knownWord(wordCheck: WordCheck | undefined): (word: string) => b
 }
 
 /**
- * An unknown word with a candidate from the meeting itself at 80 % or more is proposed even when its family is said
- * on purpose (MC5): the suggestion and the retirement of a later run read it the same way. The exception: a heard form
- * spelled as an acronym (capitals and digits, `acronymStem`) counts a candidate at that score or more from any source.
+ * A candidate at the configured cutoff (80% by default) can keep an unknown word even when its family is said on
+ * purpose. Ordinary words require a meeting-sourced candidate. An acronym can use a candidate from any source.
  */
 function strongMeetingCandidate(heard: string, evidence: unknown, threshold: number): boolean {
     if (
@@ -332,6 +331,56 @@ function documentEvidence(options: TermSources, docs: ReturnType<typeof contextD
     };
 }
 
+const spokenOnPurposeRetirement = (heard: string) => `"${heard}" is said on purpose (a word family or an English root)`;
+const settledQuestionRetirement = "every item it decides is settled";
+
+/** Reopen only automatic spoken-on-purpose retirements whose saved evidence reaches the current cutoff. */
+export function restoreThresholdRetirements(options: {
+    record: MeetingRecord;
+    dictionary: Pick<ResolvedDictionary, "entries">;
+    unknownCandidate: number;
+}): void {
+    const { record, dictionary, unknownCandidate } = options;
+    const keep = dictionaryKeeps(dictionary);
+    const keptFamilies = new Set([...keep].map(wordFamily));
+    const restored = new Set<string>();
+    const reconsiderable = (item: MeetingItem) =>
+        item.status === "rejected" &&
+        !item.decision &&
+        !item.rules.includes(MeetingRule.User) &&
+        !item.rules.includes(MeetingRule.Agent);
+    const reopen = (item: MeetingItem) => {
+        item.status = "suggested";
+        delete item.decidedAt;
+        delete item.evidence?.retired;
+    };
+    for (const item of record.items) {
+        if (
+            item.kind === "term" &&
+            reconsiderable(item) &&
+            item.rules.includes(MeetingRule.UnknownWord) &&
+            item.evidence?.retired === spokenOnPurposeRetirement(item.heard) &&
+            !keptFamilies.has(wordFamily(item.heard)) &&
+            !keep.has(item.heard.toLowerCase()) &&
+            strongMeetingCandidate(item.heard, item.evidence, unknownCandidate)
+        ) {
+            reopen(item);
+            restored.add(item.id);
+        }
+    }
+    for (const item of record.items) {
+        if (
+            item.kind === "question" &&
+            reconsiderable(item) &&
+            item.evidence?.retired === settledQuestionRetirement &&
+            item.decides.length > 0 &&
+            item.decides.every((id) => restored.has(id))
+        ) {
+            reopen(item);
+        }
+    }
+}
+
 /**
  * The suggested term items a dictionary entry or the slang rule now settles, and the open questions that decide only
  * those: a later `suggest` retires them (MC5: a `keep` entry added after a run still left its word asked).
@@ -367,7 +416,7 @@ export function settledTermItems(options: {
             heardTimes(item) < (options.minOccurrences ?? DEFAULT_WORD_MIN_OCCURRENCES) &&
             !strongMeetingCandidate(item.heard, item.evidence, options.unknownCandidate ?? 0.8)
         ) {
-            settled.set(item.id, `"${item.heard}" is said on purpose (a word family or an English root)`);
+            settled.set(item.id, spokenOnPurposeRetirement(item.heard));
         }
     }
 
@@ -378,7 +427,7 @@ export function settledTermItems(options: {
             item.decides.length > 0 &&
             item.decides.every((id) => settled.has(id))
         ) {
-            settled.set(item.id, "every item it decides is settled");
+            settled.set(item.id, settledQuestionRetirement);
         }
     }
 
@@ -403,7 +452,7 @@ export function termItems(
     // A word the dictionary keeps, or already replaces (a fix, a term's spoken form), needs no item and no question.
     const keep = dictionaryKeeps(dictionary);
     const context = termsFromText(meeting.title, "title");
-    const unknownCandidate = (options.termThresholds?.unknownCandidate ?? 0.8) * 100;
+    const unknownCandidate = options.termThresholds?.unknownCandidate ?? 0.8;
     const suspects = findSuspectTerms({
         entries: meeting.transcript,
         vocab,
@@ -432,7 +481,7 @@ export function termItems(
         (word) =>
             (word.candidates.some(
                 (candidate) =>
-                    candidate.confidence >= unknownCandidate &&
+                    candidate.confidence / 100 >= unknownCandidate &&
                     (candidate.source === "meeting" || acronymStem(word.heard))
             ) ||
                 !onPurpose.has(word.heard.toLowerCase()) ||
@@ -457,7 +506,7 @@ export function termItems(
         { heard: string; value: string; score: number; atSec?: number; line?: number; occurrences: number }
     >();
 
-    for (const match of fuzzyMatches(meeting.transcript, dictionary).filter(
+    for (const match of fuzzyMatches({ entries: meeting.transcript, dictionary }).filter(
         (candidate) =>
             candidate.score < applyAt &&
             !keep.has(candidate.heard.toLowerCase()) &&
@@ -528,7 +577,7 @@ export function termItems(
         }),
         // Weak phonetic matches remain evidence; an observed one-edit match can be proposed.
         ...unknown.map((word): NewItem => {
-            const proposed = word.candidates.find((candidate) => candidate.confidence >= unknownCandidate);
+            const proposed = word.candidates.find((candidate) => candidate.confidence / 100 >= unknownCandidate);
             return {
                 kind: "term",
                 status: "suggested",

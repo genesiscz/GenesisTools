@@ -65,6 +65,36 @@ describe("meetings config", () => {
         ).toEqual({ apply: 0.98, suggest: 0.75 });
     });
 
+    test("the term cutoff inherits a version 7 saved cutoff once and survives later general edits", async () => {
+        const config = store();
+        await config.storage.setConfig({
+            version: 7,
+            global: { suggest: { applyAbove: 0.9, terms: { phonetic: 0.81 } } },
+        });
+        const original = fs.readFileSync(config.path);
+        expect((await config.read()).global.suggest.terms).toMatchObject({ applyAbove: 0.9, phonetic: 0.81 });
+        expect(fs.readFileSync(config.path)).toEqual(original);
+        await config.update((raw) => {
+            const global = raw.global as { suggest: { applyAbove: number } };
+            global.suggest.applyAbove = 0.75;
+        });
+        expect(await config.storage.getConfig()).toMatchObject({
+            version: MEETINGS_CONFIG_VERSION,
+            global: { suggest: { applyAbove: 0.75, terms: { applyAbove: 0.9, phonetic: 0.81 } } },
+        });
+        const explicit = meetingsConfigSchema.parse({
+            version: 7,
+            global: { suggest: { applyAbove: 0.9, terms: { applyAbove: 0.72 } } },
+        });
+        expect(explicit.global.suggest.terms.applyAbove).toBe(0.72);
+        expect(
+            meetingsConfigSchema.parse({
+                version: MEETINGS_CONFIG_VERSION,
+                global: { suggest: { applyAbove: 0.9 } },
+            }).global.suggest.terms.applyAbove
+        ).toBe(0.7);
+    });
+
     test("native sound defaults to a session and preserves an explicitly selected mode", async () => {
         expect(meetingsConfigSchema.parse({}).global.capture.recorders.native.audio.mode).toBe("session");
         const config = store();
@@ -254,10 +284,10 @@ describe("meetings config", () => {
         expect(() => meetingsConfigSchema.parse({ global: { assign: { folderWaitDays: 0 } } })).toThrow();
     });
 
-    test("a file with no word, speaker label, sound or track keys reads their defaults, still at version 7", () => {
+    test("a legacy file with no word, speaker label, sound or track keys reads their defaults", () => {
         const config = meetingsConfigSchema.parse({ version: 7, global: { language: "cs" } });
 
-        expect(config.version).toBe(7);
+        expect(config.version).toBe(MEETINGS_CONFIG_VERSION);
         expect(config.global.suggest.words).toEqual({ minOccurrences: 2 });
         expect(config.global.speakerLabels).toEqual({
             channels: { minSeparation: 0.3 },
@@ -1320,6 +1350,17 @@ describe("calibrateChannels", () => {
         expect(calibrateChannels(energy, segments, { sourceLayout: "left-mic" }).layout).toBe("unknown");
         expect(calibrateChannels(energy, segments, { minSeparation: 0.04 }).layout).toBe("left-mic");
         expect(calibrateChannels(energyOf("both"), segments, { minSeparation: 0 }).layout).toBe("unknown");
+    });
+
+    test("duplicate and overlapping same-source tags cannot inflate the independent vote count", () => {
+        const tags = Array.from({ length: 24 }, (_, i) => [
+            { startSec: i % 2, endSec: (i % 2) + 2, channel: "mic" },
+            { startSec: 60 + (i % 2), endSec: 62 + (i % 2), channel: "system" },
+        ]).flat();
+        expect(calibrateChannels(energyOf("left"), tags.reverse())).toMatchObject({
+            layout: "unknown",
+            segments: { mic: 1, system: 1 },
+        });
     });
 
     test("a block tagged simultaneously as mic and call cannot vote for either channel", () => {

@@ -173,6 +173,13 @@ export function snippetAround(text: string, query: string, max = 180): string {
     return `${start > 0 ? "…" : ""}${flat.slice(start, end).trim()}${end < flat.length ? "…" : ""}`;
 }
 
+/** Show untrusted text as one terminal line, making control and direction-changing characters visible. */
+export function escapeTerminalControls(text: string): string {
+    return text.replace(/[\p{Cc}\p{Zl}\p{Zp}\p{Bidi_Control}]/gu, (char) => {
+        return `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`;
+    });
+}
+
 /**
  * Remove control characters from text. Optionally strip ANSI escape codes.
  */

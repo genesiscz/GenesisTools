@@ -1,4 +1,5 @@
 import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
+import { escapeTerminalControls } from "@genesiscz/utils/string";
 import { z } from "zod";
 
 /** The exit-1 JSON response of the Teams attendance reader when a query needs a chat id. */
@@ -24,7 +25,11 @@ export function formatAttendanceCandidates(candidates: AttendanceCandidates["can
 
     const lines = candidates.map(({ id, title, lastCallAt, participantCount, command }) => {
         const lastCall = lastCallAt === null ? "unknown" : formatLocalDateTimeStamp(lastCallAt);
-        return `${title} (${id}) · last call ${lastCall} · ${participantCount} participant${participantCount === 1 ? "" : "s"}\n  ${command}`;
+        const retry =
+            escapeTerminalControls(command) === command
+                ? command
+                : "Use JSON output for this retry command because an argument contains control characters.";
+        return `${escapeTerminalControls(title)} (${escapeTerminalControls(id)}) · last call ${lastCall} · ${participantCount} participant${participantCount === 1 ? "" : "s"}\n  ${retry}`;
     });
     return ["Could not resolve a single meeting chat. Matching chats, newest call first:", ...lines].join("\n");
 }

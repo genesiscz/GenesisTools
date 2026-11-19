@@ -1,14 +1,16 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { escapeTerminalControls } from "@genesiscz/utils/string";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
 import { lookMeeting } from "../lib/look";
 import { fail } from "../lib/shared";
 
-function renderLook(answer: Awaited<ReturnType<typeof lookMeeting>>): string {
+export function renderLook(answer: Awaited<ReturnType<typeof lookMeeting>>): string {
+    const safe = escapeTerminalControls;
     const span = (from: number, to: number) => `${formatClock(from)}–${formatClock(to)}`;
-    const rows = [`${answer.meeting}  ${span(answer.fromSec, answer.toSec)}`, "", "Transcript"];
+    const rows = [`${safe(answer.meeting)}  ${span(answer.fromSec, answer.toSec)}`, "", "Transcript"];
     for (const line of answer.lines) {
         const mic = typeof line.micShare === "number" ? `${Math.round(100 * line.micShare)}%` : line.micShare;
         const details = [`mic ${mic ?? "unmeasured"}`];
@@ -31,34 +33,42 @@ function renderLook(answer: Awaited<ReturnType<typeof lookMeeting>>): string {
         }
 
         rows.push(
-            `#${line.index}  ${span(line.fromSec, line.toSec)}  ${line.label} [${details.join(", ")}]  ${line.text}`
+            `#${line.index}  ${span(line.fromSec, line.toSec)}  ${safe(line.label)} [${safe(details.join(", "))}]  ${safe(line.text)}`
         );
     }
 
-    rows.push(
-        "",
-        "Attendance",
-        ...(answer.attendance?.map((stay) => `${span(stay.fromSec, stay.toSec)}  ${stay.name}`) ?? [
-            "Attendance unavailable",
-        ])
-    );
-    rows.push("", "Open questions", ...answer.questions.map((question) => `${question.id}  ${question.what}`));
-    rows.push(
-        "",
-        "Items",
-        ...answer.items.map((item) => `${formatClock(item.atSec)}  ${item.id}  ${item.status}  ${item.what}`)
-    );
-    rows.push(
-        "",
-        "Screen text",
-        ...(answer.screen?.map((frame) =>
-            [
-                `${formatClock(frame.atSec)}${frame.displayId === undefined ? "" : `  display ${frame.displayId}`}`,
-                ...frame.added.map((line) => `+ ${line}`),
-                ...frame.removed.map((line) => `- ${line}`),
-            ].join("\n")
-        ) ?? ["Screen text unavailable"])
-    );
+    rows.push("", "Attendance");
+    if (answer.attendance === null) {
+        rows.push("Attendance unavailable");
+    } else {
+        for (const stay of answer.attendance) {
+            rows.push(`${span(stay.fromSec, stay.toSec)}  ${safe(stay.name)}`);
+        }
+    }
+    rows.push("", "Open questions");
+    for (const question of answer.questions) {
+        rows.push(`${safe(question.id)}  ${safe(question.what)}`);
+    }
+    rows.push("", "Items");
+    for (const item of answer.items) {
+        rows.push(`${formatClock(item.atSec)}  ${safe(item.id)}  ${item.status}  ${safe(item.what)}`);
+    }
+    rows.push("", "Screen text");
+    if (answer.screen === null) {
+        rows.push("Screen text unavailable");
+    } else {
+        for (const frame of answer.screen) {
+            rows.push(
+                `${formatClock(frame.atSec)}${frame.displayId === undefined ? "" : `  display ${frame.displayId}`}`
+            );
+            for (const line of frame.added) {
+                rows.push(`+ ${safe(line)}`);
+            }
+            for (const line of frame.removed) {
+                rows.push(`- ${safe(line)}`);
+            }
+        }
+    }
     return rows.join("\n");
 }
 

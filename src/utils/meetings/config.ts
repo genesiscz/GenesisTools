@@ -47,7 +47,7 @@ export const projectNameSchema = z
 const strings = z.array(z.string().trim().min(1)).default([]);
 
 /** The config shape this code writes. Reads migrate in memory; explicit edits persist the current shape. */
-export const MEETINGS_CONFIG_VERSION = 7;
+export const MEETINGS_CONFIG_VERSION = 8;
 
 /**
  * How a meeting finds its project, by the facts every meeting has: its calendar entry, its title and its people. A
@@ -667,7 +667,7 @@ const storedConfigSchema = z
                         mutedCarrySec: z.number().nonnegative().default(DEFAULT_MUTED_CARRY_SEC),
                         /** `--with-suggested` applies a suggested item at this confidence or more; a lower one is marked unclear. */
                         applyAbove: z.number().min(0).max(1).default(DEFAULT_APPLY_ABOVE),
-                        /** Questions one `items suggest` run makes at most, speakers and terms together; the rest stay marked. */
+                        /** Budget for ordinary questions in one `items suggest` run. Voice exclusions can exceed it. */
                         questionCap: z.number().int().min(1).max(500).default(12),
                         /** `skip`: no meaning after words a plain code name only restates ("entity data" `EntityData`). */
                         restatedIdentifiers: z.enum(["skip", "mark"]).default("skip"),
@@ -902,6 +902,20 @@ function repeatOnDisk(raw: Record<string, unknown>): void {
     }
 }
 
+/** Version 8 splits term application from the general cutoff. An explicitly saved cutoff is grandfathered. */
+function migrateTermCutoff(raw: Record<string, unknown>): void {
+    const global = isObject(raw.global) ? raw.global : undefined;
+    const suggest = global && isObject(global.suggest) ? global.suggest : undefined;
+    if (!suggest || typeof suggest.applyAbove !== "number") {
+        return;
+    }
+    if (suggest.terms === undefined) {
+        suggest.terms = { applyAbove: suggest.applyAbove };
+    } else if (isObject(suggest.terms) && suggest.terms.applyAbove === undefined) {
+        suggest.terms.applyAbove = suggest.applyAbove;
+    }
+}
+
 /**
  * Moves an older config to the current places, in place, one version step at a time. A file without a version is
  * version 1. Returns whether anything changed; a current config is left alone, so a second run changes nothing.
@@ -925,6 +939,7 @@ export function migrateMeetingsConfig(raw: Record<string, unknown>): boolean {
     migrateToV5(raw);
     repeatInMemory(raw);
     repeatOnDisk(raw);
+    migrateTermCutoff(raw);
     raw.version = MEETINGS_CONFIG_VERSION;
     return true;
 }

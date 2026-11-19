@@ -10,6 +10,7 @@ import { screenTextChanges } from "./look-screen";
 import { itemMomentSpot } from "./moment";
 import { meetingTimeRangeSchema } from "./moment-schema";
 import { OpenedMeeting } from "./opened-meeting";
+import { inStretch, unlabeledStretches } from "./unlabeled";
 
 // A pairing finding carries its call line in evidence.transcriptLine and its measured microphone partner here.
 const echoPair = z.looseObject({ micLineIndex: z.number().int().nonnegative(), lagMs: z.number().nonnegative() });
@@ -53,6 +54,7 @@ function lineNames(record: MeetingRecord, window: { fromSec: number; toSec: numb
             item.toSec >= window.fromSec &&
             item.fromSec <= window.toSec
     );
+    const unlabeled = unlabeledStretches(record.items).filter((item) => item.status === "confirmed");
     const assignments = [...(record.speakers.assignments ?? [])].sort((a, b) => a.at.localeCompare(b.at));
     const pairs = new Map<number, z.output<typeof echoPair>>();
     for (const item of record.items) {
@@ -84,12 +86,11 @@ function lineNames(record: MeetingRecord, window: { fromSec: number; toSec: numb
                 line.startSec <= assignment.toSec + LINE_AT_TOLERANCE_SEC
         );
         const multiple = confirmed?.voices?.length || confirmed?.segments?.length;
+        const globalName = inStretch(unlabeled, line.label, line.startSec) ? null : record.speakers.labels[line.label];
         const found = line.voice ?? record.evidence?.voice?.lines[String(line.index)];
         return {
             suggestedName: suggested?.speaker ?? null,
-            confirmedName:
-                assigned?.person ??
-                (multiple ? null : (confirmed?.speaker ?? record.speakers.labels[line.label] ?? null)),
+            confirmedName: assigned?.person ?? (multiple ? null : (confirmed?.speaker ?? globalName ?? null)),
             ...(multiple && !assigned
                 ? { confirmedVoices: confirmed?.voices ?? confirmed?.segments?.map((part) => part.speaker) }
                 : {}),
@@ -176,6 +177,6 @@ export async function lookMeeting(store: MeetingStore, input: z.input<typeof mee
         attendance,
         items,
         questions: items.filter((item) => item.kind === "question" && item.status === "suggested"),
-        screen: screenTextChanges({ folder: store.folder(record.id), timeline, ...window }),
+        screen: await screenTextChanges({ folder: store.folder(record.id), timeline, ...window }),
     };
 }

@@ -61,7 +61,13 @@ import {
     scoreCandidates,
     speakerScoresOf,
 } from "./speaker-scores";
-import { knownWord, settledTermItems, type TermThresholds, termItems } from "./suggest-terms";
+import {
+    knownWord,
+    restoreThresholdRetirements,
+    settledTermItems,
+    type TermThresholds,
+    termItems,
+} from "./suggest-terms";
 import { unlabeledStretches, unlabeledView } from "./unlabeled";
 
 const prof = profiler.scope("meetings-suggest");
@@ -1492,6 +1498,12 @@ export function planSuggestions(inputs: SuggestInputs): SuggestChanges {
                 item.evidence = { ...item.evidence, retired: reason };
             }
         }
+
+        restoreThresholdRetirements({
+            record: draft,
+            dictionary: inputs.dictionary,
+            unknownCandidate: inputs.termThresholds.unknownCandidate,
+        });
     }
     buildSuggestions({ ...inputs, record: draft });
     return {
