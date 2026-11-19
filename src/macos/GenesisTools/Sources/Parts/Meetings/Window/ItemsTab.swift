@@ -199,7 +199,7 @@ struct ItemsTab: View {
             }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
         }
         LoadablePane(state: detail.rowsForReopen, reading: "Reading the items…", retry: detail.loadRows) { rows in
-            if rows.rows.isEmpty, rows.hidden.lowPriority == 0 {
+            if Self.showsEmptyState(rows) {
                 if needsProject { Color.clear } else {
                 let hasTranscript = detail.window?.meeting(detail.id)?.hasTranscript ?? true
                 if detail.isBusy("suggest") {
@@ -228,12 +228,20 @@ struct ItemsTab: View {
             VStack(spacing: 0) {
                 ItemsBar(detail: detail, projection: projection, group: $questionGroup, applyAbove: applyAbove)
                 // A run on a meeting that has items ("Run the rules again…") shows its steps above the list.
-                if detail.isBusy("suggest"), !(detail.rowsForReopen.value?.rows.isEmpty ?? true) {
+                // The same predicate as the empty state: a meeting whose rows are all hidden low-priority questions
+                // shows the list's banner, so its run shows here.
+                if detail.isBusy("suggest"), let rows = detail.rowsForReopen.value, !Self.showsEmptyState(rows) {
                     SuggestRunStrip(progress: detail.suggestProgress) { detail.cancelSuggest() }
                     Divider()
                 }
             }
         }
+    }
+
+    /// No row to list and none hidden: the tab shows its empty state, which carries a running suggestion's steps
+    /// (`SuggestRunView`); anything else shows the list, whose run shows in the strip above it (`SuggestRunStrip`).
+    static func showsEmptyState(_ rows: ReviewRows) -> Bool {
+        rows.rows.isEmpty && rows.hidden.lowPriority == 0
     }
 
     /// The config's apply line (`assign.applyAbove`).
