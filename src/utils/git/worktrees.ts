@@ -232,9 +232,25 @@ export function worktreeUse(path: string, paths: string[], live: LiveUsers): Omi
     return groupWorktreeUsers(paths, live)(path);
 }
 
+/** Map.groupBy is ES2024: the dashboard programs that load this file target an older lib. */
+function groupByKey<T, K>(items: readonly T[], keyOf: (item: T) => K): Map<K, T[]> {
+    const groups = new Map<K, T[]>();
+    for (const item of items) {
+        const key = keyOf(item);
+        const group = groups.get(key);
+        if (group) {
+            group.push(item);
+        } else {
+            groups.set(key, [item]);
+        }
+    }
+
+    return groups;
+}
+
 function groupWorktreeUsers(paths: string[], live: LiveUsers): (path: string) => Omit<WorktreeUse, "locked"> {
-    const processes = Map.groupBy(live.processes, (process) => ownerOf(process.cwd, paths));
-    const sessions = Map.groupBy(live.sessions, (session) => ownerOf(session.cwd, paths));
+    const processes = groupByKey(live.processes, (process) => ownerOf(process.cwd, paths));
+    const sessions = groupByKey(live.sessions, (session) => ownerOf(session.cwd, paths));
     return (path) => ({
         processes: (processes.get(path) ?? []).map(({ pid, name }) => ({ pid, name })),
         sessions: (sessions.get(path) ?? []).map(({ cwd: _cwd, ...session }) => session),
