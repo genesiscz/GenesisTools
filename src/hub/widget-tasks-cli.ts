@@ -46,6 +46,7 @@ export function registerWidgetTasks(widget: Command): void {
     tasks
         .command("update <id>")
         .option("--after-resume", "Wait for the session just resumed by the user")
+        .option("--comment <text>", "Reason for dismissing a task")
         .option("--source-home <path>", "Native home of the selected receiving session")
         .requiredOption("--action [action]", "acknowledge, complete, reopen, dismiss, send to the agent, or take back")
         .requiredOption("--revision <revision>", "Revision shown by list", Number)
@@ -87,6 +88,7 @@ export function registerWidgetTasks(widget: Command): void {
                                 id,
                                 action,
                                 afterResume: options.afterResume,
+                                comment: options.comment,
                                 sourceHome: options.sourceHome,
                                 expected: {
                                     revision: options.revision,

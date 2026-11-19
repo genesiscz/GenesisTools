@@ -812,7 +812,7 @@ public struct LiveWidgetView: View {
                         Button("Acknowledge") { model.ledger(card, state: "acknowledged") }
                     }
                     Button("Mark complete") { holdMove(card, to: "implemented") }
-                    Button("Dismiss") { holdMove(card, to: "dismissed") }
+                    LegacyWidgetTodoDismissButton(card: card, model: model)
                 } else if card.kind == "decision" && card.needsAnswer {
                     // Send now is the card's one primary action while a pick or a note waits; Dismiss is quiet and
                     // sits at the right edge, so it never moves when staging adds the buttons before it (UX audit P13).
@@ -2013,10 +2013,27 @@ private struct WidgetInboxTaskButtons: View {
                     Button(action.title) { store.perform(action, on: task) }
                 }
             }.disabled(store.mutatingIDs.contains(task.id))
-            if let error = store.error { Text(error).foregroundStyle(.red) }
+            if let error = store.error(for: task) { Text(error).foregroundStyle(.red) }
             if let undo = store.undo, undo.task.id == task.id {
                 Button("Undo") { store.perform(undo.action, on: undo.task, then: undo.then) }
             }
         }.taskResumePrompt(store, taskID: task.id)
+    }
+}
+
+private struct LegacyWidgetTodoDismissButton: View {
+    let card: WidgetCard
+    let model: WidgetModel
+    @State private var asking = false
+    @State private var reason = ""
+
+    var body: some View {
+        Button("Dismiss") { reason = ""; asking = true }
+            .alert("Dismiss task", isPresented: $asking) {
+                TextField("Reason", text: $reason)
+                Button("Cancel", role: .cancel) {}
+                Button("Dismiss", role: .destructive) { model.ledger(card, state: "dismissed", comment: reason) }
+                    .disabled(reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
     }
 }

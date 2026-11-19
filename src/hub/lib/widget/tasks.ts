@@ -59,6 +59,7 @@ export const widgetTaskActionSchema = z.object({
     action: z.enum(WIDGET_TASK_ACTIONS),
     expected: shownTaskSchema,
     afterResume: z.boolean().optional(),
+    comment: z.string().trim().min(1).optional(),
     sourceHome: z.string().min(1).optional(),
 });
 export type WidgetTaskAction = z.infer<typeof widgetTaskActionSchema>;
@@ -424,7 +425,14 @@ export async function updateWidgetTask({
                   deliver,
               })
             : {
-                  row: await updateTodo({ ...files, id: request.id, state: states[request.action], expected, signal }),
+                  row: await updateTodo({
+                      ...files,
+                      id: request.id,
+                      state: states[request.action],
+                      comment: request.comment,
+                      expected,
+                      signal,
+                  }),
                   needsResume: false,
               };
     const { row, needsResume } = result;

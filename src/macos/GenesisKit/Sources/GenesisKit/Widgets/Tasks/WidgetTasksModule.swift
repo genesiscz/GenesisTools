@@ -625,6 +625,7 @@ public extension View {
     /// A user chooses whether to reopen the session before the task goes to its receiver.
     func taskResumePrompt(_ store: WidgetTasksStore, active: Bool = true, taskID: String? = nil) -> some View {
         modifier(WidgetTaskResumePrompt(store: store, active: active, taskID: taskID))
+            .modifier(WidgetTaskDismissPrompt(store: store, active: active, taskID: taskID))
     }
 }
 
@@ -638,9 +639,12 @@ private struct WidgetTaskResumePrompt: ViewModifier {
         content.confirmationDialog("Resume the session to send this task?", isPresented: Binding(
             get: { active && store.resumeRequest != nil && (taskID == nil || store.resumeRequest?.id == taskID) },
             set: { if !$0 { store.resumeRequest = nil } }
-        ), presenting: store.resumeRequest) { task in
+        ), presenting: store.resumeRequest) { request in
             Button("Resume in a new cmux workspace and send") {
-                guard let command = CmuxCommandRunner.resumeCommand(provider: task.provider, sessionId: task.sessionId) else {
+                let task = request.task
+                guard let command = CmuxCommandRunner.resumeCommand(
+                    provider: task.provider, sessionId: task.sessionId, sourceHome: request.sourceHome
+                ) else {
                     failure = "Cannot resume this session's provider."
                     return
                 }
@@ -650,13 +654,37 @@ private struct WidgetTaskResumePrompt: ViewModifier {
                                               name: task.sessionTitle ?? task.sessionId, at: .newWorkspace(window: nil))
                     }.value
                     if let reason { failure = reason }
-                    else { store.perform(.send, on: task, afterResume: true) }
+                    else { store.perform(.send, on: task, afterResume: true, sourceHome: request.sourceHome) }
                 }
             }
             Button("Cancel", role: .cancel) {}
-        } message: { task in Text(task.title) }
+        } message: { request in Text(request.task.title) }
         .alert("Could not resume the session", isPresented: Binding(
             get: { failure != nil }, set: { if !$0 { failure = nil } }
         )) { Button("OK") { failure = nil } } message: { Text(failure ?? "") }
+    }
+}
+
+private struct WidgetTaskDismissPrompt: ViewModifier {
+    @ObservedObject var store: WidgetTasksStore
+    let active: Bool
+    let taskID: String?
+    @State private var reason = ""
+
+    func body(content: Content) -> some View {
+        content.alert("Dismiss task", isPresented: Binding(
+            get: { active && store.dismissRequest.map { taskID == nil || $0.id == taskID } == true },
+            set: { if !$0 { store.dismissRequest = nil } }
+        ), presenting: store.dismissRequest) { task in
+            TextField("Reason", text: $reason)
+            Button("Cancel", role: .cancel) {}
+            Button("Dismiss", role: .destructive) { store.perform(.dismiss, on: task, comment: reason) }
+                .disabled(reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        } message: { task in
+            Text(task.title)
+        }
+        .onChange(of: store.dismissRequest?.id) { _, id in
+            if id != nil { reason = "" }
+        }
     }
 }

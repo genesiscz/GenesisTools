@@ -65,10 +65,17 @@ public enum CmuxCommandRunner {
     /// The command that resumes an agent session in a terminal, or nil for an agent with none. Claude resumes through
     /// `tools claude resume` (it picks the session's account); every other harness through its generated resume argv
     /// (`Harness.resumeArgs`, written from the TypeScript drivers), so Grok's flag is the `-r` the drivers use.
-    public static func resumeCommand(provider: String, sessionId: String) -> [String]? {
+    public static func resumeCommand(provider: String, sessionId: String, sourceHome: String? = nil) -> [String]? {
         guard let harness = Harness(rawValue: provider) else { return nil }
-        if harness == .claude { return ["tools", "claude", "resume", sessionId] }
-        return harness.resumeArgs(sessionId: sessionId)
+        let command = harness == .claude ? ["tools", "claude", "resume", sessionId] : harness.resumeArgs(sessionId: sessionId)
+        guard let sourceHome, !sourceHome.isEmpty else { return command }
+        let variable: String
+        switch harness {
+        case .claude: variable = "CLAUDE_CONFIG_DIR"
+        case .codex: variable = "CODEX_HOME"
+        case .grok: variable = "GROK_HOME"
+        }
+        return ["env", "\(variable)=\(sourceHome)"] + command
     }
 
     /// The `tools <agent>` that owns a session's cmux resolver: `tools codex cmux` and `tools grok cmux` know their own
