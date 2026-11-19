@@ -315,7 +315,7 @@ function findingFor(options: {
     const mixed = line.micShare > 1 - CHANNEL_SHARE && line.micShare < CHANNEL_SHARE;
     const micSure = energy !== undefined && energy >= ENERGY_MIC_SURE;
     const micLeans = mixed && energy !== undefined && energy >= ENERGY_MIC_LEANS;
-    const callSure = energy !== undefined && (energy <= ENERGY_CALL_SURE || (mixed && energy < ENERGY_CALL_LEANS));
+    const callMajority = energy !== undefined && energy < ENERGY_CALL_LEANS;
 
     // The platform's label and its speaking indicator agree on the label's person: a microphone lean does not win.
     const shown = speakingNames(line).filter((name) => !sameName(name, selfName) && !muted(name));
@@ -339,7 +339,7 @@ function findingFor(options: {
 
     // Wispr records the microphone itself, so a user muted in the call can still be heard on it: RM never overrules a
     // line the microphone won, only one the call's sound won.
-    if (line.winner === SELF && !callSure) {
+    if (line.winner === SELF && !callMajority) {
         if (isSelfLabel) {
             return undefined;
         }
@@ -760,6 +760,7 @@ function localVoiceFinding(options: {
     indicatorIgnored: boolean;
     eligible: Eligibility;
     mappedCall: boolean;
+    hasSeats: boolean;
     observedCallPeople: () => string[];
 }): EvidenceFinding | undefined {
     const { line, selfName, voices, found } = options;
@@ -780,6 +781,11 @@ function localVoiceFinding(options: {
         line.energyMic !== undefined &&
         (line.micShare - 0.5) * (line.energyMic - 0.5) < 0
     ) {
+        // Without a seat or another platform identity to reconcile, a coarse segment adds no speaker evidence
+        // against R4.3's calibrated reply. Full-line eligibility still filters the result.
+        if (!options.hasSeats && (!options.platformLabel || options.isSelfLabel)) {
+            return found;
+        }
         return {
             candidates: options.eligible.choices,
             rules: [MeetingRule.Channel, MeetingRule.Energy],
@@ -939,6 +945,8 @@ export function evidenceItems(options: {
             ? options.lines.map((line) => ({ ...line, present: presentAt(presence, line.startSec) }))
             : options.lines;
     const speakers = options.speakers ?? new LineSpeakers({ ...options, presence, selfName, lines: measured });
+    const seats = options.record.seats;
+    const hasSeats = !!(seats?.room.length || seats?.remote.length || seats?.microphones?.length);
     const unusable = unusableChannelSpans(measured, options.energyMicShare, selfName);
     const assessment = speakers.assessment;
     const stuck = assessment.ignored;
@@ -1206,6 +1214,7 @@ export function evidenceItems(options: {
                       isSelfLabel,
                       voices,
                       eligible,
+                      hasSeats,
                       platformLabel: platformLabels.has(label),
                       mappedCall:
                           eligible.channel.side === "call" &&
@@ -1257,6 +1266,12 @@ export function evidenceItems(options: {
             }
 
             close();
+            const micFinding =
+                eligible.channel.side === "mic" ||
+                (eligible.channel.side === "mixed" &&
+                    !finding.conflict &&
+                    finding.rules.includes(MeetingRule.Energy) &&
+                    (line.energyMic ?? 0) > ENERGY_CALL_LEANS);
             open = {
                 key,
                 shares: [finding.confidence],
@@ -1275,7 +1290,7 @@ export function evidenceItems(options: {
                     confidence: finding.confidence,
                     rules: finding.rules,
                     evidence: {
-                        channel: eligible.channel.side === "mic" ? "mic" : "system",
+                        channel: micFinding ? "mic" : "system",
                         ...(finding.elimination ? { reviewOnly: true, reason: "mute-elimination" } : {}),
                         ...(eligible.channel.side === "call" &&
                         !finding.speaker &&
