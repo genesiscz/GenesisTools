@@ -198,6 +198,7 @@ test("a salvaged track whose row cannot be written goes back to the piece folder
         folder,
         meetingId: "fixture",
         notes: [],
+        soundFiles: new Set<string>(),
     });
     const append = spyOn(soundModule, "appendAudioRow").mockImplementation(() => {
         throw new Error("disk full");

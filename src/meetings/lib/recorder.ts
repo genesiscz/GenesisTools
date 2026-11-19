@@ -177,8 +177,30 @@ function meetingRecorderConfig(run: MeetingRun, minSeparation?: number) {
                 },
                 afterLoop: async () => {
                     stopLevels?.();
-                    await Promise.all(salvages);
-                    await run.salvageTracks(run.pieceDir);
+                    const deadlineMs = deps.salvageDeadlineMs ?? SALVAGE_DEADLINE_MS;
+                    const expired = new Error(`sound recovery did not finish within ${deadlineMs / 1000}s`);
+                    try {
+                        await withTimeout(
+                            (async () => {
+                                await Promise.all(salvages);
+                                await run.salvageTracks(run.pieceDir);
+                            })(),
+                            deadlineMs,
+                            expired
+                        );
+                    } catch (err) {
+                        if (err !== expired) {
+                            throw err;
+                        }
+
+                        // The files stay in .piece/: the next start of this meeting recovers them (MeetingRun.begin).
+                        log.warn({ meetingId, dir: run.pieceDir }, "sound recovery did not finish before the stop");
+                        run.note(`${expired.message}; the unrecovered sound stays in .piece/ for the next start`);
+                        state.warning = run.notes.join("; ");
+                        run.saveState();
+                        return;
+                    }
+
                     run.finishSound(recording);
                     rmSync(run.pieceDir, { recursive: true, force: true });
                 },

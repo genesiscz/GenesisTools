@@ -8,7 +8,7 @@ import {
     statSync,
     writeFileSync,
 } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import {
     defaultOcrLanguages,
     errorText,
@@ -30,6 +30,7 @@ import {
     type AudioCaptureChange,
     type AudioSegment,
     audioCaptureChangeSchema,
+    finishAudioHandoffs,
     salvagedAudioTiming,
 } from "@genesiscz/utils/screen-recorder/audio-session";
 import { AUDIO_SOURCES, type AudioState, type RecorderSettings } from "@genesiscz/utils/screen-recorder/control";
@@ -43,7 +44,7 @@ import { appendFrameIndex, readFrameIndex } from "./frame-index";
 import { LiveOcrSettings, meetingOcrSettings, OCR_SETTINGS_FILE } from "./ocr-worker";
 import { type RecorderStateFile, RecordingRecord } from "./recorder-adapters";
 import { meetingMovieZeroMs } from "./recording-manifest";
-import { AUDIO_FOLDER, appendAudioRow } from "./sound";
+import { AUDIO_FOLDER, type AudioRow, appendAudioRow } from "./sound";
 import { markMeetingSoundLoss } from "./sound-loss";
 import { meetingSource, sourceRefOf } from "./sources";
 import { RETRY_AFTER_MS, readAuto } from "./watch-auto";
@@ -463,15 +464,8 @@ export class MeetingRun {
             moveAndIndex({ from: path, folder: this.folder, name, ...(row ? { row } : {}) });
             kept += 1;
 
-            if (source === "mic" || source === "system") {
-                this.soundFiles.add(`${AUDIO_FOLDER}/${name}`);
-                appendAudioRow(this.folder, {
-                    file: `${AUDIO_FOLDER}/${name}`,
-                    source,
-                    ...timing,
-                    mutedSpans: [],
-                    kept: "salvaged",
-                });
+            if (row) {
+                this.soundFiles.add(row.file);
             }
 
             log.warn({ meeting: this.meetingId, from: path, to: name }, "kept a sound file a capture left behind");

@@ -1021,6 +1021,7 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             return;
         }
 
+        this.soundSessionRan = true;
         this.currentSoundPath = { path: "session", sources: [...this.sound.sources] };
         hooks.onSoundPath?.(this.currentSoundPath);
     }

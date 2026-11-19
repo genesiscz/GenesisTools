@@ -312,20 +312,9 @@ export function meetingSound(inputs: SoundInputs): MeetingSound {
                     (one) =>
                         one.zeroSec <= request.fromSec &&
                         request.toSec <= one.zeroSec + one.durationSec &&
-                        !(
-                            track.from.kind === "recorder" &&
-                            inputs.rows.some(
-                                (row) =>
-                                    join(inputs.folder, row.file) === one.path &&
-                                    [
-                                        ...(row.lostSpans ?? []),
-                                        ...(request.purpose === "listen" ? row.mutedSpans : []),
-                                    ].some(
-                                        ([fromMs, toMs]) =>
-                                            request.fromSec - one.zeroSec < toMs / 1000 &&
-                                            request.toSec - one.zeroSec > fromMs / 1000
-                                    )
-                            )
+                        !one.unheard?.some(
+                            ([fromSec, toSec]) =>
+                                request.fromSec - one.zeroSec < toSec && request.toSec - one.zeroSec > fromSec
                         )
                 );
 
