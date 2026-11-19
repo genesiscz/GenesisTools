@@ -72,9 +72,10 @@ class FakeConnector implements Connector<unknown> {
 
         return intents.map((intent) => {
             const key = intent.pairing?.remoteKey || `R-${intent.item.id}`;
+            const prior = this.remote.get(key);
             this.remote.set(key, {
                 remoteKey: key,
-                title: intent.item.title,
+                title: intent.pairing?.origin.title === "remote" ? prior?.title : intent.item.title,
                 state: intent.item.state,
                 labels: intent.labels,
             });
@@ -266,6 +267,14 @@ describe("drift in the other direction", () => {
         expect(report.drift).toBe(1);
         expect(selectPairings(db, { item: id })[0]).toMatchObject({ state: "drift" });
         expect(selectPairings(db, { item: id })[0].note).toContain("title");
+        expect(fake.remote.get("R-5")?.title).toBe("made outside");
+
+        const local = await spot("s1", "bug");
+        await runSyncOnce(deps());
+        const key = selectPairings(db, { item: local })[0].remoteKey;
+        await write(ctx("s1"), { verb: "edit", ref: local, title: "locally owned edit" });
+        await runSyncOnce(deps());
+        expect(fake.remote.get(key)?.title).toBe("locally owned edit");
     });
 });
 

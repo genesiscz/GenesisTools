@@ -95,6 +95,8 @@ export const trackerConnector: Connector<unknown> = {
     settings: trackerSettings,
     can: { create: true, pull: true, labels: true, comments: false, parents: false },
 
+    stateMatches: (remote, local) => remote.status === STATUS_OF[local],
+
     async status(ctx) {
         const parsed = trackerSettings.safeParse(ctx.settings);
 
@@ -216,6 +218,7 @@ export const trackerConnector: Connector<unknown> = {
                         ...(typeof task.body === "string" ? { body: task.body } : {}),
                         ...(localType(task.type) !== undefined ? { type: localType(task.type) } : {}),
                         ...(status !== undefined && Object.hasOwn(STATE_OF, status) ? { state: STATE_OF[status] } : {}),
+                        ...(status !== undefined ? { status } : {}),
                         ...(labels !== undefined ? { labels } : {}),
                     });
                 }
