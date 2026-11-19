@@ -10,8 +10,9 @@
  * `tools github merge --rebase` and `tools git rebase-cascade` move children; a hand-made rebuild does not.
  *
  * A child counts as handled when the same push also moves its branch onto the new parent head (`git push origin
- * parent child`), or when its branch no longer holds the old parent head. GT_ALLOW_ORPHANED_CHILD_PRS=1 skips the
- * guard for one push. Without `gh`, or when GitHub does not answer, the guard warns and lets the push go.
+ * parent child`), or when its branch holds no commit of the old parent that the new parent lacks. That covers a child
+ * cut from an older parent commit too: it lacks the old head but still carries the commits under it.
+ * GT_ALLOW_ORPHANED_CHILD_PRS=1 skips the guard for one push. Without `gh`, or when GitHub does not answer, the guard warns and lets the push go.
  */
 
 import { env } from "@genesiscz/utils/env";
@@ -90,13 +91,23 @@ export function branchOf(remoteRef: string): string | null {
     return remoteRef.startsWith("refs/heads/") ? remoteRef.slice("refs/heads/".length) : null;
 }
 
+/** The two history questions the guard asks. Both answer "no" (false, empty) for a commit this clone does not have. */
+export interface CommitGraph {
+    /** Whether commit `ancestor` is in the history of `descendant`. */
+    isAncestor(ancestor: string, descendant: string): boolean;
+    /** The best common ancestors of two commits, as `git merge-base --all` prints them. */
+    mergeBases(a: string, b: string): string[];
+}
+
 /**
- * The children that keep the old commits of a rewritten parent. `isAncestor(a, b)` answers whether commit a is in b.
+ * The children that keep old commits of a rewritten parent. The commits a child shares with the old parent head are
+ * the merge bases of the two and everything under them, so a merge base that the new parent head does not contain is
+ * an old parent commit the child still carries.
  */
 export function findOrphanedChildren(
     updates: RefUpdate[],
     childrenOf: (branch: string) => ChildPr[],
-    isAncestor: (ancestor: string, descendant: string) => boolean
+    graph: CommitGraph
 ): OrphanedChild[] {
     const pushed = new Map<string, RefUpdate>();
     for (const update of updates) {
@@ -112,21 +123,19 @@ export function findOrphanedChildren(
             continue;
         }
 
-        if (isAncestor(update.remoteSha, update.localSha)) {
+        if (graph.isAncestor(update.remoteSha, update.localSha)) {
             continue;
         }
 
         for (const child of childrenOf(parent)) {
             const moved = pushed.get(child.headRefName);
-            if (moved && moved.localSha !== ZERO) {
-                if (!isAncestor(update.remoteSha, moved.localSha) && isAncestor(update.localSha, moved.localSha)) {
-                    continue;
-                }
-            } else if (!isAncestor(update.remoteSha, child.headSha)) {
-                continue;
+            const head = moved && moved.localSha !== ZERO ? moved.localSha : child.headSha;
+            const carriesOld = graph
+                .mergeBases(update.remoteSha, head)
+                .some((base) => !graph.isAncestor(base, update.localSha));
+            if (carriesOld) {
+                orphaned.push({ parent, child });
             }
-
-            orphaned.push({ parent, child });
         }
     }
 
@@ -211,9 +220,18 @@ async function main(): Promise<number> {
         children.set(parent, list);
     }
 
-    const isAncestor = (a: string, b: string): boolean =>
-        hasCommit(a) && hasCommit(b) && run(["git", "merge-base", "--is-ancestor", a, b]).ok;
-    const orphaned = findOrphanedChildren(updates, (b) => children.get(b) ?? [], isAncestor);
+    const graph: CommitGraph = {
+        isAncestor: (a, b) => hasCommit(a) && hasCommit(b) && run(["git", "merge-base", "--is-ancestor", a, b]).ok,
+        mergeBases: (a, b) => {
+            if (!hasCommit(a) || !hasCommit(b)) {
+                return [];
+            }
+
+            const bases = run(["git", "merge-base", "--all", a, b]);
+            return bases.ok ? bases.out.split("\n").filter(Boolean) : [];
+        },
+    };
+    const orphaned = findOrphanedChildren(updates, (b) => children.get(b) ?? [], graph);
     if (orphaned.length === 0) {
         return 0;
     }
@@ -223,7 +241,7 @@ async function main(): Promise<number> {
         "  GitHub would show each of them with every old parent commit as its own (2026-11-19: 133 commits instead of 8).",
         ...orphaned.map(
             ({ parent, child }) =>
-                `  - #${child.number} (${child.title}) on ${parent}: its branch ${child.headRefName} holds the old head`
+                `  - #${child.number} (${child.title}) on ${parent}: its branch ${child.headRefName} still holds old parent commits`
         ),
         "  Rebuild each child on the new parent head and push it in the same command:",
         "    git push --force-with-lease origin <parent> <child>   (or: tools git rebase-cascade <parent>)",
