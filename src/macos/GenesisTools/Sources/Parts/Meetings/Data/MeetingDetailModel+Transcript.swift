@@ -204,8 +204,7 @@ extension MeetingDetailModel {
             let applyAbove = window?.overview.value?.applyAbove ?? 0.5
             // Before the record arrives, the row's own confidence decides.
             let item = record.value?.items.first { $0.id == id }
-            let atLine: Set<String> = item.map { Set(Self.confirmable([$0], atOrAbove: applyAbove).map(\.id)) }
-                ?? ((row.confidence ?? 0) >= applyAbove ? [id] : [])
+            let atLine = Self.atLine([row], items: item.map { [$0] }, applyAbove: applyAbove)
             if itemsFilter.rows([row], atLine: atLine, applyAbove: applyAbove).isEmpty { itemsFilter = .all }
         } else {
             // The requested meeting's rows may still be loading.

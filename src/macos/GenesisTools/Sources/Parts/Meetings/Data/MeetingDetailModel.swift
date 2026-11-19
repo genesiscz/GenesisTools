@@ -937,6 +937,14 @@ extension MeetingDetailModel {
         }
     }
 
+    /// The ids at or above the apply line. With the record's items, the CLI's pick (`confirmable`); before the record
+    /// arrives, each open row that is no question decides by its own confidence, so the counts do not drop to zero
+    /// while the rows already show. The Items tab's projection and `reveal` ask this one rule.
+    static func atLine(_ rows: [ReviewRow], items: [MeetingItem]?, applyAbove: Double) -> Set<String> {
+        if let items { return Set(confirmable(items, atOrAbove: applyAbove).map(\.id)) }
+        return Set(rows.filter { $0.isOpen && !$0.isQuestion && ($0.confidence ?? 0) >= applyAbove }.map(\.id))
+    }
+
     /// The note after a bulk confirm: how many, at which line, and how many wait for the reader.
     static func bulkNote(_ result: DecideResult, threshold: Double) -> String {
         let line = threshold > 0 ? " at \(MeetingsWords.confidence(threshold) ?? "") or more" : ""
