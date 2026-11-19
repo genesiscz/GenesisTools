@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import type { AreaClients } from "@genesiscz/utils/genesis-tools";
+import * as requestJournal from "@genesiscz/utils/genesis-tools/areas/person/journal";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
@@ -376,6 +377,11 @@ describe("suggest runner word settings", () => {
             dispose: () => undefined,
         };
         spies.push(spyOn(opened, "wordCheck").mockResolvedValue({ check }));
+        // The request journal is the first step past the person area's test guard: posting starts there.
+        const dispatch = spyOn(requestJournal, "createRequestJournal").mockImplementation(() => {
+            throw new Error("the person request reached its journal in a test process");
+        });
+        spies.push(dispatch);
         meeting.transcript = [{ speaker: "Speaker 1", startSec: 0, text: "glorpix" }];
         const result = await runSuggest({
             store,
@@ -384,6 +390,7 @@ describe("suggest runner word settings", () => {
             actor: { kind: "agent", harness: "fixture", session: "session-1" },
         });
         expect(result.fresh.some((item) => item.kind === "question")).toBe(true);
+        expect(dispatch).not.toHaveBeenCalled();
         expect(result.warnings).toEqual([expect.stringContaining("no review request was sent")]);
     });
 
