@@ -611,3 +611,46 @@ func readWorkScreenshot(_ image: CGImage, with request: VNRecognizeTextRequest) 
         try VNImageRequestHandler(cgImage: image).perform([request])
     }
 }
+
+@MainActor
+extension WorkFindTests {
+    func testArrowSelectionTraversesOnlyMatchingVisibleRowsAndStopsAtTheEnds() async {
+        let model = WorkScreenModel(source: WorkFindSource())
+        model.activate()
+        defer { model.deactivate() }
+        await settle { model.snapshot != nil }
+        model.filter.text = "basket"
+        let rows = [WorkFindFixture.basketRef, WorkFindFixture.basketTaskRef]
+        XCTAssertEqual(model.visibleRefs, rows)
+        model.moveSelection(1)
+        XCTAssertEqual(model.selection, rows.first)
+        model.moveSelection(-1)
+        XCTAssertEqual(model.selection, rows.first)
+        model.moveSelection(1)
+        XCTAssertEqual(model.selection, rows.last)
+        model.moveSelection(1)
+        XCTAssertEqual(model.selection, rows.last)
+        model.moveSelection(-1)
+        XCTAssertEqual(model.selection, rows.first)
+        model.toggleContainer(WorkFindFixture.basketRef)
+        XCTAssertEqual(model.visibleRefs, [WorkFindFixture.basketRef])
+    }
+
+    func testAWorkRouteRevealsTheItemAndExplainsAReset() async {
+        let model = WorkScreenModel(source: WorkFindSource())
+        model.activate()
+        defer { model.deactivate() }
+        await settle { model.snapshot != nil }
+        model.filter = WorkFilter(text: "unrelated", types: ["feature"], mine: true)
+        await settle { !model.indexLoading }
+        model.openItem(WorkFindFixture.basketTaskRef)
+        await settle { model.visibleRefs.contains(WorkFindFixture.basketTaskRef) }
+        XCTAssertEqual(model.filter, .default)
+        XCTAssertEqual(model.filterNotice, "Filter cleared to show " + WorkFindFixture.basketTaskRef)
+        XCTAssertEqual(model.selection, WorkFindFixture.basketTaskRef)
+        model.closeItem()
+        model.openItem("w_finished1")
+        await settle { model.visibleRefs.contains("w_finished1") }
+        XCTAssertEqual(model.selection, "w_finished1")
+    }
+}

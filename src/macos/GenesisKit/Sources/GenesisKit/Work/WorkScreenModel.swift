@@ -65,7 +65,7 @@ public final class WorkScreenModel: ObservableObject {
     @Published public private(set) var snapshot: WorkSnapshotValue? {
         didSet {
             updateResults()
-            if snapshot != nil { loadIndexIfNeeded() }
+            if snapshot != nil { loadIndexIfNeeded(); revealRouteIfReady() }
         }
     }
     private var confirmedSnapshot: WorkSnapshotValue?
@@ -334,6 +334,7 @@ public final class WorkScreenModel: ObservableObject {
                 index = rows
                 indexedProject = project
                 updateResults()
+                revealRouteIfReady()
             } catch {
                 guard !Task.isCancelled, self.project == project else { return }
                 indexFailure = error.localizedDescription
@@ -350,6 +351,7 @@ public final class WorkScreenModel: ObservableObject {
         cachedDetails[ref] = detail
         if recentRefs.count > 20 { cachedDetails.removeValue(forKey: recentRefs.removeFirst()) }
         if snapshot == nil || companionReadNeeded { readListBesideDetail() }
+        revealRouteIfReady()
     }
 
     public func readListBesideDetail() {
@@ -421,6 +423,7 @@ public final class WorkScreenModel: ObservableObject {
     public func select(_ ref: String?) {
         guard let ref else { closeItem(); return }
         guard ref != itemRef else { return }
+        routeToReveal = nil
         movedFrom = nil
         parentRef = nil
         itemRef = ref
@@ -431,10 +434,68 @@ public final class WorkScreenModel: ObservableObject {
         else if cached == nil || isLoading || cached?.item.project != project { reload() }
     }
 
-    public func openItem(_ ref: String) { select(ref) }
+    public func moveSelection(_ step: Int) {
+        guard step != 0, !visibleRefs.isEmpty else { return }
+        let refs = visibleRefs
+        let current = itemRef.flatMap { refs.firstIndex(of: $0) }
+        let next = current.map { min(max(0, $0 + (step > 0 ? 1 : -1)), refs.count - 1) }
+            ?? (step > 0 ? 0 : refs.count - 1)
+        select(refs[next])
+    }
+
+    private var routeToReveal: String?
+    private var routeHadFilter = false
+
+    public func openItem(_ ref: String) {
+        let hadFilter = filter.isActive
+        select(ref)
+        routeToReveal = ref
+        routeHadFilter = hadFilter
+        revealRouteIfReady()
+    }
+
+    private func revealRouteIfReady() {
+        guard let ref = routeToReveal, ref == itemRef, let detail = itemDetail,
+              let snapshot, snapshot.project == detail.item.project else { return }
+        guard let results else { return }
+        if results.visibleRefs.contains(ref) { routeToReveal = nil; return }
+        if let parent = results.containers.first(where: { !$0.isExpanded && $0.members.contains(where: { $0.ref == ref }) }) {
+            routeToReveal = nil
+            toggleContainer(parent.ref)
+            return
+        }
+        let indexed = indexedProject == project
+        if filter.requiresIndex && !indexed { return }
+        routeToReveal = nil
+        let wasFiltered = routeHadFilter
+        let onTree = snapshot.containers.contains { $0.ref == ref || $0.members.contains { $0.ref == ref } }
+            || snapshot.spotted.contains { $0.ref == ref } || snapshot.reopened.contains { $0.ref == ref }
+        let next = onTree ? WorkFilter.default : WorkFilter(states: [])
+        if let container = snapshot.containers.first(where: { $0.members.contains { $0.ref == ref } }) {
+            expanded.insert(container.ref)
+            collapsedMatches.remove(container.ref)
+        }
+        // A closed item's archive page is part of its route. Reveal it even beyond the first 200.
+        if let position = index.firstIndex(where: { $0.ref == ref }), ["done", "dropped"].contains(detail.item.state) {
+            if !results.archive.contains(where: { $0.ref == ref }) && filter != next {
+                filter = next
+            }
+            archiveLimit = max(archiveLimit, ((position / 200) + 1) * 200)
+        } else {
+            filter = next
+        }
+        updateResults()
+        if wasFiltered { filterNotice = "Filter cleared to show \(ref)" }
+        if !indexed, filter.requiresIndex {
+            routeToReveal = ref
+            routeHadFilter = false
+            loadIndexIfNeeded()
+        }
+    }
 
     public func closeItem() {
         guard itemRef != nil else { return }
+        routeToReveal = nil
         parentRef = nil
         itemRef = nil
         itemDetail = nil

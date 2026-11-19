@@ -721,3 +721,42 @@ extension HubWorkTests {
         }
     }
 }
+
+extension HubWorkTests {
+    func testReplacePlacementShowsAllItemsAtWideWidth() async throws {
+        let preferences = HubPreferences(defaults: isolatedDefaults(), broadcasts: false, observeExternalChanges: false)
+        preferences.workDetailPlacement = "replace"
+        let model = HubWorkModel(source: FakeWorkSource(), defaults: isolatedDefaults())
+        defer { model.deactivate() }
+        await enter(model)
+        model.screen.openItem("w_spot0001")
+        await waitForDetail(model.screen, ref: "w_spot0001")
+        let text = try HubInboxUXTests.drawnText(inspectorShot(model.screen, name: "hub-work-wide-replace", width: 1500,
+                                                             preferences: preferences))
+        XCTAssertTrue(text.contains("All items"), text)
+        XCTAssertTrue(text.contains("Where"), text)
+        XCTAssertFalse(text.contains("Handoffs and epics"), "replace must hide the list:\n\(text)")
+    }
+
+    /// This is the keyboard selection handler and the hub's real Back/Forward actions, without a global key monitor.
+    /// WorkFindTests separately cover filtered order and end boundaries.
+    func testKeyboardSelectionHandlersEnterHubBackAndForwardHistory() async throws {
+        HubDefaults.isolate()
+        let hub = HubModel(wantedSession: nil, tab: .transcript, workSource: FakeWorkSource())
+        defer { hub.work.deactivate() }
+        await enter(hub.work)
+        XCTAssertTrue(hub.apply(HubRequest(["--mode", "work"])))
+        hub.work.screen.moveSelection(1)
+        let first = try XCTUnwrap(hub.work.screen.itemRef)
+        await waitForDetail(hub.work.screen, ref: first)
+        hub.work.screen.moveSelection(1)
+        let second = try XCTUnwrap(hub.work.screen.itemRef)
+        XCTAssertNotEqual(first, second)
+        await waitForDetail(hub.work.screen, ref: second)
+        XCTAssertEqual(HubPlace(entry: hub.navEntry, tab: .transcript).arguments, ["--work", second])
+        hub.goBack()
+        await waitForDetail(hub.work.screen, ref: first)
+        hub.goForward()
+        await waitForDetail(hub.work.screen, ref: second)
+    }
+}
