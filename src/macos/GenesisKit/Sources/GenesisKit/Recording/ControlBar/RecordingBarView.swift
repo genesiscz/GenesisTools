@@ -1018,8 +1018,8 @@ public struct RecordingBarView: View {
         row {
             pair("Frame rate") {
                 segmented("Frame rate", "liveFrameRate", values: [15, 24, 30, 60], current: setup.frameRate,
-                          title: { "\($0) fps" }, reason: reason("frameRate", live: caps.liveFrameRate)) {
-                    model.apply(.frameRate($0, still: setup.stillFrameRate))
+                          title: { "\($0) fps" }, reason: reason("frameRate", live: caps.liveFrameRate)) { (rate: Int) in
+                    model.changeFrameRate(active: rate)
                 }
             }
             pair("While still") { stillChoice }
