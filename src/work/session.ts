@@ -28,55 +28,63 @@ export async function openSession(
 ): Promise<OpenedSession> {
     const { actor, project } = options.actor ?? actorHere();
     const db = options.db ?? openWorkDb();
-    const loadRules = projectRuleLoader({ project, repoRoot: actor.repoRoot });
-    const loaded = await loadRules({ project });
+    try {
+        const loadRules = projectRuleLoader({ project, repoRoot: actor.repoRoot });
+        const loaded = await loadRules({ project });
 
-    if (!options.quiet) {
-        for (const problem of loaded.problems) {
-            out.printlnErr(`${problem.severity}: ${problem.code}: ${problem.message}`);
+        if (!options.quiet) {
+            for (const problem of loaded.problems) {
+                out.printlnErr(`${problem.severity}: ${problem.code}: ${problem.message}`);
+            }
         }
-    }
 
-    const delivery = sessionDelivery();
-    const session: WorkSession = {
-        ctx: {
-            db,
-            actor,
-            project,
-            rules: loaded.rules,
-            ports: {
-                legacy: legacyHandoffs(),
-                delivery,
-                lineage: t3Lineage(),
-                connectors: connectorPort(db, loadRules),
+        const delivery = sessionDelivery();
+        const session: WorkSession = {
+            ctx: {
+                db,
+                actor,
+                project,
+                rules: loaded.rules,
+                ports: {
+                    legacy: legacyHandoffs(),
+                    delivery,
+                    lineage: t3Lineage(),
+                    connectors: connectorPort(db, loadRules),
+                },
             },
-        },
-        call,
-        loadRules,
-        alive: async (sessionId, harness) => (await delivery.place(sessionId, harness))?.live ?? null,
-        context: async (network) => (await contextHere({ actor, db, network })).report,
-    };
-    return {
-        session,
-        afterWrite: async (syncSince) => {
-            try {
-                await runNotifyOnce({ db, loadRules, inbox: inboxLine });
-            } catch (error) {
-                log.warn({ err: error }, "work notify: the pass failed; the next write runs it again");
-            }
-
-            try {
-                if (syncSince !== undefined && (await syncNeededAfter({ db, seq: syncSince, loadRules }))) {
-                    spawnToolDetached(["work", "sync"], { reparent: true });
+            call,
+            loadRules,
+            alive: async (sessionId, harness) => (await delivery.place(sessionId, harness))?.live ?? null,
+            context: async (network) => (await contextHere({ actor, db, network })).report,
+        };
+        return {
+            session,
+            afterWrite: async (syncSince) => {
+                try {
+                    await runNotifyOnce({ db, loadRules, inbox: inboxLine });
+                } catch (error) {
+                    log.warn({ err: error }, "work notify: the pass failed; the next write runs it again");
                 }
-            } catch (error) {
-                log.warn({ err: error }, "work sync: could not schedule a pass after the write");
-            }
-        },
-        close: () => {
-            if (options.db === undefined) {
-                db.close();
-            }
-        },
-    };
+
+                try {
+                    if (syncSince !== undefined && (await syncNeededAfter({ db, seq: syncSince, loadRules }))) {
+                        spawnToolDetached(["work", "sync"], { reparent: true });
+                    }
+                } catch (error) {
+                    log.warn({ err: error }, "work sync: could not schedule a pass after the write");
+                }
+            },
+            close: () => {
+                if (options.db === undefined) {
+                    db.close();
+                }
+            },
+        };
+    } catch (error) {
+        if (options.db === undefined) {
+            db.close();
+        }
+
+        throw error;
+    }
 }
