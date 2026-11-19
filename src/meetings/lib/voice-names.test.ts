@@ -880,7 +880,8 @@ test("a live speaking indicator enrols its own line only when the existing rule 
             }),
         })
     );
-    const labelers = { ...meetingsConfigSchema.parse({}).global.speakerLabels, seat: { enabled: false } };
+    const labelers = meetingsConfigSchema.parse({}).global.speakerLabels;
+    labelers.seat.enabled = false;
     const preview = (applyAbove: number) =>
         proposeSpeakerLabels(opened, labelers, presence, { voiceOnly: true, applyAbove });
     const rows = await preview(0.7);

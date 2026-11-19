@@ -1,4 +1,4 @@
-import { nameKey, type RoomDevice, rosterAccountKey } from "@genesiscz/utils/meetings/people";
+import { nameKey, type RoomDevice, roomDeviceAccountKeys, rosterAccountKey } from "@genesiscz/utils/meetings/people";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { withoutEmptyRemoteSeats } from "@genesiscz/utils/meetings/room-people";
 import {
@@ -179,7 +179,7 @@ export function suggestSeats(options: {
     remote?: ReadonlyArray<string | RemoteSeat>;
 }): { seats: MeetingSeats; people: SeatPerson[] } {
     const { record, ranges, lines } = options;
-    const devices = new Set(options.devices?.map(({ account }) => rosterAccountKey(account)));
+    const devices = roomDeviceAccountKeys(options.devices);
     const human = (name: string) => !devices.has(rosterAccountKey(name));
     const facts = new Map<string, Facts>();
     function person(name: string): Facts {

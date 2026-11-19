@@ -130,6 +130,20 @@ test("J7 routes a book-mapped account to the room occupants and never treats its
     ).toEqual([room]);
     expect(speakersFor(line, { ...input, devices: [{ account, group: "absent" }] }).choices).toEqual([]);
     expect(speakersFor(line, { ...input, devices: [], seats: undefined }).choices).toContain(account);
+    const otherAccount = "Boardroom PC (Guest)";
+    expect(
+        speakersFor(line, {
+            ...input,
+            people: [account, otherAccount],
+            speaking: {},
+            muted: [account],
+            seats: {
+                room: [room],
+                remote: [{ name: otherAccount }],
+                microphones: [{ id: "table", deviceId: account, people: [room] }],
+            },
+        }).choices
+    ).toContain(otherAccount);
 });
 
 test("room and call choices use the whole half-open seat and attendance intervals", async () => {

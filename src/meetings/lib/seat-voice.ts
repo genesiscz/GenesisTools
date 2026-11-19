@@ -183,7 +183,7 @@ function discoverySpans({
         selfName: selfName ?? "",
         roomPeople: wholeMeetingRoomPeople(saved),
     });
-    const callStays = people.flatMap((name) => {
+    const callStays = [...people, ...devices.map(({ account }) => account)].flatMap((name) => {
         const stays = baselineStays(record, name);
         // An explicit empty stay list provides zero coverage. Missing attendance leaves an open candidate.
         if (stays?.length === 0) {

@@ -457,6 +457,19 @@ test("J7 offers a room device only for distinct roster joins and persists the ow
             createdAt: NOW.toISOString(),
             createdBy: "new",
             voiceRootMeeting: copyOf,
+            items: [
+                {
+                    id: "i1",
+                    kind: "speaker-range",
+                    label: "Voice 1",
+                    status: "suggested",
+                    fromSec: 1,
+                    toSec: 4,
+                    candidates: [account, guest],
+                    rules: [],
+                    suggestedAt: NOW.toISOString(),
+                },
+            ],
             participants: [account, guest].map((name) => ({
                 name,
                 from: ["platform-roster"],
@@ -508,6 +521,10 @@ test("J7 offers a room device only for distinct roster joins and persists the ow
         device: { account, group },
     });
     const mapped = await view();
+    const rows = await client.call("meeting.rows", { meeting: "first-room" });
+    const choices = rows.rows.find((row) => row.id === "i1")?.choices.map((choice) => choice.value);
+    expect(choices).toContain(guest);
+    expect(choices).not.toContain(account);
     expect(await client.call("people.devices.decide", answer)).toMatchObject({ changed: false });
     expect(mapped.suggestion.deviceOffers ?? []).toEqual([]);
     expect(mapped.suggestion.people.map((row) => row.name)).not.toContain(account);

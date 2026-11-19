@@ -1,6 +1,6 @@
 import { logger } from "@genesiscz/utils/logger";
 import { median, silentCallSpans } from "@genesiscz/utils/meetings/energy";
-import { type RoomDevice, rosterAccountKey } from "@genesiscz/utils/meetings/people";
+import { type RoomDevice, roomDeviceAccountKeys, rosterAccountKey } from "@genesiscz/utils/meetings/people";
 import type { MeetingItem, MeetingRecord } from "@genesiscz/utils/meetings/record";
 
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
@@ -39,7 +39,7 @@ export class LineSpeakers {
         people?: string[];
     }) {
         const { lines, record, meeting, presence, selfName } = options;
-        this.deviceAccounts = new Set(options.devices?.map(({ account }) => rosterAccountKey(account)));
+        this.deviceAccounts = roomDeviceAccountKeys(options.devices);
         this.assessment = assessIndicator({
             lines,
             selfName: selfName ?? "",
@@ -93,6 +93,9 @@ export class LineSpeakers {
     }
 
     allowsMatchedVoice(line: LineEvidence, person: string): boolean {
+        if (this.isRoomDevice(person)) {
+            return false;
+        }
         const eligible = this.eligibility.get(line.index)!;
         // A positive embedding comes from an audio track. On a disagreement, check its calibrated side's
         // occupants, attendance and transmitting-account mute across the full span.
@@ -1201,13 +1204,17 @@ export function speakerEvidence(options: EvidenceInput): EvaluatedEvidence {
                 continue;
             }
 
-            if (finding.speaker && !eligible.choices.some((name) => sameName(name, finding.speaker!))) {
+            if (
+                finding.speaker &&
+                (speakers.isRoomDevice(finding.speaker) ||
+                    !eligible.choices.some((name) => sameName(name, finding.speaker!)))
+            ) {
                 outcomes.push({ kind: "none", line, reason: "ineligible-speaker" });
                 continue;
             }
             if (finding.candidates) {
-                finding.candidates = finding.candidates.filter((name) =>
-                    eligible.choices.some((other) => sameName(name, other))
+                finding.candidates = finding.candidates.filter(
+                    (name) => !speakers.isRoomDevice(name) && eligible.choices.some((other) => sameName(name, other))
                 );
             }
 

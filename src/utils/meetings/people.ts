@@ -28,6 +28,10 @@ export function rosterAccountKey(account: string): string {
     return account.trim().normalize("NFC").toLowerCase();
 }
 
+export function roomDeviceAccountKeys(devices: readonly RoomDevice[] = []): Set<string> {
+    return new Set(devices.map(({ account }) => rosterAccountKey(account)));
+}
+
 export function latestDeviceDecisions(history: readonly DeviceDecision[]): Map<string, DeviceDecision> {
     return new Map(history.map((entry) => [rosterAccountKey(entry.account), entry]));
 }

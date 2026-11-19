@@ -2,7 +2,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { meetingsPeopleCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { logger } from "@genesiscz/utils/logger";
 import type { MeetingsConfig } from "./config";
-import { mappedRoomDevices, nameKey, type PersonRef, rosterAccountKey } from "./people";
+import { mappedRoomDevices, nameKey, type PersonRef, roomDeviceAccountKeys, rosterAccountKey } from "./people";
 import { type AddedPerson, PeopleBook, type PeopleMerge, type PersonRefValue } from "./people-book";
 import type { MeetingRecord, MeetingStore } from "./record";
 
@@ -847,7 +847,7 @@ export class PeopleDirectory {
         );
         const identities = new IdentityGroups();
         const book = this.options.book.read();
-        const devices = new Set(mappedRoomDevices(book.devices).map(({ account }) => rosterAccountKey(account)));
+        const devices = roomDeviceAccountKeys(mappedRoomDevices(book.devices));
 
         for (const { source, answer } of answers) {
             if (answer.state !== "ok") {

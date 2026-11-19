@@ -159,7 +159,7 @@ export function speakersFor(line: LineSpan, facts: SpeakerFacts): Eligibility {
     // A group id identifies a selected input. Only deviceId maps a roster account to that input.
     const deviceAccounts = new Map(
         (seats?.microphones ?? []).flatMap((group) =>
-            group.deviceId ? [[nameKey(group.deviceId), group] as const] : []
+            group.deviceId ? [[rosterAccountKey(group.deviceId), group] as const] : []
         )
     );
     const indicated = facts.endpoint ?? (shown.length === 1 ? shown[0] : undefined);
@@ -167,7 +167,7 @@ export function speakersFor(line: LineSpan, facts: SpeakerFacts): Eligibility {
         facts.endpoint !== undefined
             ? mappedMicrophone(seats, facts.endpoint)
             : indicated
-              ? deviceAccounts.get(nameKey(indicated))
+              ? deviceAccounts.get(rosterAccountKey(indicated))
               : undefined;
     const groupMappings = facts.endpoint ? facts.devices?.filter((row) => row.group === facts.endpoint) : undefined;
     const mapping =
@@ -229,7 +229,7 @@ export function speakersFor(line: LineSpan, facts: SpeakerFacts): Eligibility {
         const self = !!selfName && key === nameKey(selfName);
         const atMic = roomCover === "full" || (self && !room.size && !remoteCover);
         const micEligible = atMic && roomInput && (!micMembers || micMembers.has(key));
-        const mappedAccount = deviceAccounts.get(key);
+        const mappedAccount = deviceAccounts.get(rosterAccountKey(person));
         const onlyDevice = mappedAccount && !mappedAccount.people.some((member) => nameKey(member) === key);
         let callReason: string | undefined;
         if (device) {

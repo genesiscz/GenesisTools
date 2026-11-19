@@ -1,4 +1,4 @@
-import { nameKey, type RoomDevice, rosterAccountKey } from "@genesiscz/utils/meetings/people";
+import { nameKey, type RoomDevice, roomDeviceAccountKeys, rosterAccountKey } from "@genesiscz/utils/meetings/people";
 import {
     activeSeatPeople,
     type MeetingSeats,
@@ -80,7 +80,7 @@ export function planByChannel(options: {
         ...(options.seats?.microphones ? { microphones: options.seats.microphones } : {}),
     });
     const groups = seats.microphones ?? [];
-    const devices = new Set(options.devices?.map(({ account }) => rosterAccountKey(account)));
+    const devices = roomDeviceAccountKeys(options.devices);
     // The microphone channel is the owner's microphone (group `self`), else a group under this label; the system
     // channel narrows to a remote device group under this label. Without a group every seated person stays possible.
     const labelGroup = groups.find((group) => group.label === input.label);
