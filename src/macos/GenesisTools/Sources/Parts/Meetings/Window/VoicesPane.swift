@@ -34,6 +34,8 @@ final class VoicesModel {
     var busy: Set<String> = []
     /// The project the people were read for; a changed project reads them again.
     @ObservationIgnored private var listedProject: String?
+    /// Counts the reads of the people list; a read publishes its answer only while it is the newest one.
+    @ObservationIgnored private var listGeneration = 0
     /// The running Preview or Apply, so Cancel can stop it.
     @ObservationIgnored private var runTask: Task<Void, Never>?
 
@@ -47,12 +49,15 @@ final class VoicesModel {
     /// The project's people and samples (`voices.list`). A meeting without a project has no voices to show.
     func load(project: String?, quiet: Bool = false) {
         guard let project else {
+            listGeneration += 1
             listedProject = nil
             people = .idle
             return
         }
         guard quiet || project != listedProject || people == .idle else { return }
         listedProject = project
+        listGeneration += 1
+        let generation = listGeneration
         guard let service else {
             people = .failed(Self.noService, previous: people.value)
             return
@@ -62,9 +67,10 @@ final class VoicesModel {
         Task {
             do {
                 let result = try await service.call(MeetingsAPI.VoicesList.self, .init(project: project))
-                guard listedProject == project else { return }
+                guard generation == listGeneration else { return }
                 people = .loaded(VoicesPeople(result.people, meeting: meeting))
             } catch {
+                guard generation == listGeneration else { return }
                 people = .failed(asFailure(error), previous: people.value)
             }
         }
