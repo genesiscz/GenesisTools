@@ -13,6 +13,8 @@ tools video shrink ./talk.mp4 --to 400MB                     # try every preset,
 tools video encode ./clips --dry-run                         # what a batch re-encode would do; writes nothing
 tools video stream download ./page.har --list                # every source a saved HAR leads to
 tools video stream download ./page.har --out talk.mp4        # download one; run it again to resume
+tools video kick list-clips "https://kick.com/somechannel/clips?sort=date&range=day"  # a channel's clips
+tools video kick download somechannel --range day --out-dir ./clips    # save them as MP4
 ```
 
 `probe`, `frames`, `shrink` and `encode` need `ffmpeg` and `ffprobe` on the PATH (`brew install ffmpeg` installs both).
@@ -21,13 +23,15 @@ tools video stream download ./page.har --out talk.mp4        # download one; run
 
 ## Commands
 
-| Command                    | What it does                                          |
-|----------------------------|-------------------------------------------------------|
-| `probe <input>`            | Print a video's facts as JSON                         |
-| `frames <input>`           | Sample frames into PNGs and labeled contact sheets    |
-| `shrink <file>`            | Measure the presets, recommend one, encode, check     |
-| `encode <paths...>`        | Re-encode files or folders, keep only verified output |
-| `stream download [source]` | Save a broadcast from a HAR, a URL or a browser page  |
+| Command                      | What it does                                          |
+|------------------------------|-------------------------------------------------------|
+| `probe <input>`              | Print a video's facts as JSON                         |
+| `frames <input>`             | Sample frames into PNGs and labeled contact sheets    |
+| `shrink <file>`              | Measure the presets, recommend one, encode, check     |
+| `encode <paths...>`          | Re-encode files or folders, keep only verified output |
+| `stream download [source]`   | Save a broadcast from a HAR, a URL or a browser page  |
+| `kick list-clips <channel>`  | List a Kick channel's clips                           |
+| `kick download <targets...>` | Save Kick clips as MP4 (no re-encode)                 |
 
 `-v, --verbose` turns on debug logging, `--readme` prints this page, and `tools video help <command>` (or
 `<command> --help`) prints a command's flags.
@@ -392,6 +396,32 @@ playlist they were captured for, never to another host a playlist points at.
 
 A new platform is one file in `stream/providers/` that implements `StreamProvider` (find its answers in a HAR, ask the
 API now) and one entry in `STREAM_PROVIDERS`.
+
+### kick: list and download Kick clips
+
+```sh
+tools video kick list-clips "https://kick.com/somechannel/clips?sort=date&range=day"
+tools video kick list-clips somechannel --sort view --range week --limit 50 --json
+tools video kick download "https://kick.com/somechannel/clips/clip_01ABCDEFGHJKMNPQRSTVWXYZ01"
+tools video kick download somechannel --range day --limit 10 --out-dir ./clips
+```
+
+- `list-clips <channel>` takes a slug, a channel page, or a clips page URL copied from the browser. The page's own
+  `sort` and `range` are used; `--sort` and `--range` override them.
+- `download <targets...>` takes clip URLs (`kick.com/<channel>/clips/clip_…` or `?clip=clip_…`), bare clip ids, and
+  channel or clips page URLs. A channel downloads the clips that `list-clips` shows for the same flags.
+- `--sort date|view` (default `date`), `--range day|week|month|all` (default `all`), `--limit <n>` clips per channel
+  (default 20; the list is read page by page until the limit).
+- `--out-dir <dir>` (default the current folder), `--jobs <n>` clips at once (default 3), `--force` downloads a clip
+  again. Without `--force` a clip whose file exists is skipped, so a rerun only fetches new clips.
+- `--json` prints the clips (`list-clips`) or one row per clip with `status` `saved`, `exists` or `failed`
+  (`download`). A failed clip sets exit code 1.
+
+Files are named `<channel>-<YYYY-MM-DD>-<title>-<id>.mp4`. Kick serves a clip as one HLS playlist with byte-range
+segments (1080p H.264 and AAC on the clips checked on 2026-11-19); `ffmpeg -c copy` remuxes it into `<file>.part` and
+renames it only after ffmpeg exits 0. It needs `ffmpeg` on the PATH. The tool reads Kick's public web API
+(`kick.com/api/v2/channels/<channel>/clips` and `/api/v2/clips/<id>`), which needs no login. An HTTP 403 with a
+Cloudflare page means Kick refused the request for now; try again later.
 
 ## How it works
 
