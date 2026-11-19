@@ -414,6 +414,7 @@ private extension KeyedDecodingContainer {
         switch key.stringValue {
         case "inboxGrouping": return .init(wrappedValue: defaults.inboxGrouping)
         case "inboxFeedRuns": return .init(wrappedValue: defaults.inboxFeedRuns)
+        case "inboxFeedHeaders": return .init(wrappedValue: defaults.inboxFeedHeaders)
         case "previewView": return .init(wrappedValue: defaults.previewView)
         default: throw DecodingError.keyNotFound(key, .init(codingPath: codingPath, debugDescription: "Missing inbox preference"))
         }
@@ -496,6 +497,7 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     /// The newest-first feed, the grouped session list, or the waiting-first list.
     @WidgetInboxPreference public var inboxGrouping: String = "feed"
     @WidgetInboxPreference public var inboxFeedRuns: String = "session"
+    @WidgetInboxPreference public var inboxFeedHeaders: String = "groups"
     /// The filter a session's inbox opens with: "all" (default), "inbox" or "decisions".
     public var inboxFilter: String
     /// The filter the inbox of every session opens with: "all" (default), "needs" or "unread".

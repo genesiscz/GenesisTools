@@ -227,19 +227,15 @@ struct AgentWidgetPreview: View {
                          measured: { if $0 > 0 { model.previewListHeight = $0 } }) {
                 LazyVStack(alignment: .leading, spacing: 6) {
                     ForEach(model.inboxFeeds.all) { run in
-                        Section {
-                            ForEach(run.items, id: \.id) { item in
-                                let open = model.previewOpenItemID == item.id
-                                WidgetInboxEntry(model: model, item: item, open: open, focused: false,
-                                                 grouped: true, compact: true, surface: surface) {
-                                    GenMotion.perform(expanding: !open, reduceMotion: reduceMotion) {
-                                        model.togglePreviewEntry(item)
-                                    }
+                        WidgetFeedSection(run: run, model: model, surface: surface,
+                                          first: run.id == model.inboxFeeds.all.first?.id) { item, context in
+                            let open = model.previewOpenItemID == item.id
+                            WidgetInboxEntry(model: model, item: item, open: open, focused: false,
+                                             context: context, compact: true, surface: surface) {
+                                GenMotion.perform(expanding: !open, reduceMotion: reduceMotion) {
+                                    model.togglePreviewEntry(item)
                                 }
                             }
-                        } header: {
-                            WidgetFeedRunHeader(run: run, model: model, surface: surface).equatable()
-                                .padding(.top, run.id == model.inboxFeeds.all.first?.id ? 0 : 8)
                         }
                     }
                 }

@@ -358,20 +358,25 @@ private struct WidgetGeneralSettings: View {
                     }.labelsHidden().accessibilityIdentifier("widget.sendCloseSeconds")
                 }
                 Divider()
-                NativeSettingsRow("Inbox of every session", detail: "The inbox button's list: newest first under a header per run of one session, grouped under each session, or one list with waiting items first.") {
+                NativeSettingsRow("Inbox order", detail: "Read by arrival time, group items by session, or put waiting items first in one list.") {
                     Picker("Inbox of every session", selection: field(\.inboxGrouping)) {
                         Text("Newest first").tag("feed")
                         Text("By session").tag("session")
                         Text("One list").tag("list")
                     }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
                 }
-                if prefs.inboxGrouping == "feed" {
+                if prefs.inboxGrouping == "feed" || prefs.previewView == "items" {
                     Divider()
                     NativeSettingsSegmented(
-                        "Feed headers", detail: "A new header starts when the next item comes from another session (or project).",
+                        "Group consecutive items", detail: "Applies to the newest-first feed and the Items hover list.",
                         identifier: "widget.settings.feedHeaders",
                         options: [.init("session", "Per session"), .init("project", "Per project")],
                         selection: field(\.inboxFeedRuns))
+                    NativeSettingsSegmented(
+                        "Feed headers", detail: "For single items, show the source inside the row or in a separate header.",
+                        identifier: "widget.settings.inboxFeedHeaders",
+                        options: [.init("groups", "Groups only"), .init("all", "Every group")],
+                        selection: field(\.inboxFeedHeaders))
                 }
                 openingFilters
                 Divider()
