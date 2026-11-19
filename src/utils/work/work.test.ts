@@ -316,7 +316,7 @@ describe("triage", () => {
         const byRef = new Map(rows.map((r) => [r.ref, r]));
         expect(byRef.get(a)?.group).toBe("spotted");
         expect(byRef.get(a)?.where).toBe("a.ts:3");
-        expect(byRef.get(a)?.next.map((n) => n.call?.method)).toEqual(["accept", "drop", "add", "handoff"]);
+        expect(byRef.get(a)?.next.map((n) => n.call?.method)).toEqual(["accept", "drop", "addMember", "handoff"]);
         expect(byRef.get(b)?.group).toBe("reopened-no-worker");
     });
 });

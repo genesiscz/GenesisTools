@@ -3,11 +3,11 @@ import type { Database } from "bun:sqlite";
 import type { NextAction } from "@genesiscz/utils/output/reply";
 import type { Change } from "./model/change";
 import type { Item, ItemId, Pointer, Reference, WorkerStamp } from "./model/item";
-import { asItemId } from "./model/item";
+import { asItemId, stampOf } from "./model/item";
 import type { ItemState, ItemType, Severity } from "./model/vocab";
 import { isOpenState } from "./model/vocab";
 import { selectItem } from "./store/rows";
-import { type ListFilter, selectItems, sqlView } from "./store/view";
+import { type ListFilter, type StoreView, selectItems, sqlView } from "./store/view";
 
 export interface ListQuery extends ListFilter {
     /** Members of a handoff, or children of an item in the plan tree. */
@@ -146,7 +146,8 @@ function slotOrder(slot: string | undefined): number {
 }
 
 function intersect(current: string[] | undefined, next: string[]): string[] {
-    return current === undefined ? next : current.filter((id) => next.includes(id));
+    const ids = new Set(next);
+    return current === undefined ? next : current.filter((id) => ids.has(id));
 }
 
 export interface ShowResult {
@@ -196,34 +197,18 @@ export function workerOf(db: Database, id: ItemId): WorkerStamp | null {
         .find((c) => c.kind === "moved" && (c.payload as { to?: string }).to === "done" && c.actor.kind !== "legacy");
 
     if (finished !== undefined) {
-        const a = finished.actor;
-        return {
-            kind: a.kind,
-            harness: a.harness,
-            sessionId: a.sessionId,
-            sessionTitle: a.sessionTitle,
-            model: a.model,
-            host: a.host,
-        };
+        return stampOf(finished.actor);
     }
 
-    const own = view.claims({ item: id });
+    return latestClaim(view, item, false) ?? item.worker ?? null;
+}
 
-    if (own.length > 0) {
-        return own[own.length - 1].by;
-    }
-
-    for (const membership of view.memberships(id)) {
-        const claims = view.claims({ item: membership.handoff });
-        const active = claims.filter((c) => c.active);
-        const pick = active.length > 0 ? active[active.length - 1] : claims[claims.length - 1];
-
-        if (pick !== undefined) {
-            return pick.by;
-        }
-    }
-
-    return item.worker ?? null;
+function latestClaim(view: StoreView, item: Item, activeOnly: boolean): WorkerStamp | null {
+    const claims = [item.id, ...view.memberships(item.id).map(({ handoff }) => handoff)].flatMap((id) =>
+        view.claims({ item: id, ...(activeOnly ? { active: true } : {}) })
+    );
+    claims.sort((a, b) => Number(b.active) - Number(a.active) || b.ts.localeCompare(a.ts));
+    return claims[0]?.by ?? null;
 }
 
 export type TriageGroup = "spotted" | "reopened-no-worker" | "active-worker-gone" | "spotted-in-finished";
@@ -284,12 +269,26 @@ export async function triage(db: Database, project: string | undefined, alive: L
         const spottedRef = view.refsFrom(item.id).find((r) => r.kind === "spotted-in");
         const spottedIn = spottedRef !== undefined ? selectItem(db, spottedRef.to) : null;
         let group: TriageGroup | null = null;
+        let worker = item.worker ?? null;
 
         if (item.state === "spotted") {
             group = spottedIn !== null && !isOpenState(spottedIn.state) ? "spotted-in-finished" : "spotted";
         } else {
-            const worker = workerOf(db, item.id);
+            const workerFor = (row: Item) =>
+                row.state === "active" ? latestClaim(view, row, true) : workerOf(db, row.id);
+            worker = workerFor(item);
             const live = worker?.sessionId ? await alive(worker.sessionId, worker.harness) : false;
+            const current = view.item(item.id);
+
+            if (current?.rev !== item.rev || current.state !== item.state) {
+                continue;
+            }
+
+            const currentWorker = workerFor(current);
+
+            if (currentWorker?.sessionId !== worker?.sessionId || currentWorker?.harness !== worker?.harness) {
+                continue;
+            }
 
             if (live === false) {
                 group = item.state === "reopened" ? "reopened-no-worker" : "active-worker-gone";
@@ -314,7 +313,7 @@ export async function triage(db: Database, project: string | undefined, alive: L
                 ? { spottedIn: { ref: spottedIn.id, title: spottedIn.title, state: spottedIn.state } }
                 : {}),
             spottedBy: item.createdBy.sessionTitle ?? item.createdBy.sessionId ?? item.createdBy.harness,
-            ...(item.worker !== undefined ? { worker: workerLabel(item.worker) } : {}),
+            ...(worker !== null ? { worker: workerLabel(worker) } : {}),
             next: triageNext(item, group),
         });
     }
