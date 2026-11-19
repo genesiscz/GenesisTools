@@ -341,8 +341,9 @@ export class TodoStore {
 
     /** One native side effect per todo at a time, without holding the store's own write. */
     async withSyncLock<T>(todoId: string, fn: () => Promise<T>): Promise<T> {
-        mkdirSync(this.fileRoot, { recursive: true });
-        const lockPath = join(this.fileRoot, `sync-${projectHash(todoId)}.lock`);
+        const lockRoot = dirname(this.dbPath);
+        mkdirSync(lockRoot, { recursive: true });
+        const lockPath = join(lockRoot, `sync-${projectHash(`${this.projectRoot}\0${todoId}`)}.lock`);
         return withFileLock(lockPath, fn, STORE_LOCK_TIMEOUT_MS);
     }
 
