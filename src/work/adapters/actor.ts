@@ -13,7 +13,10 @@ export function actorHere(options: { model?: boolean } = {}): { actor: Actor; pr
     const cwd = identity.cwd ?? process.cwd();
     const common = gitCommonRoot(cwd);
     // The common git dir is `<main checkout>/.git`; the project is the main checkout's folder name.
-    const project = common !== null ? basename(dirname(common)) : (identity.project ?? basename(cwd));
+    const project =
+        common !== null && basename(common) === ".git" && identity.repoRoot !== null
+            ? basename(dirname(common))
+            : basename(identity.repoRoot ?? common ?? cwd);
     const actor: Actor = {
         kind: identity.isInAgent ? "agent" : "owner",
         harness: identity.agent,
