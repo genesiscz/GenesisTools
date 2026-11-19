@@ -2,10 +2,11 @@ import type { Database } from "bun:sqlite";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { errorDiagnostic, failReply, okReply, type Reply } from "@genesiscz/utils/output/reply";
 import type { Change } from "../model/change";
-import type { ItemId } from "../model/item";
+import type { Item, ItemId } from "../model/item";
 import type { LegacyAction } from "../ports";
 import { applyChange } from "./apply";
 import { decide, type WorkCommand, type WriteEnv } from "./decide";
+import { selectItem } from "./rows";
 import { sqlView } from "./view";
 
 /** What one transaction did; the service turns it into the reply of its verb. */
@@ -15,6 +16,7 @@ export interface WriteOutcome {
     /** Writes for the old handoff log that the caller still has to run. */
     legacy: LegacyAction[];
     noop: boolean;
+    projected?: Item[];
 }
 
 const REQUEST_DAYS = 30;
@@ -84,11 +86,21 @@ export function transact(
         }
 
         if (options.dryRun) {
+            const preview = decision.changes.map((change, index) => {
+                applyChange(db, change);
+                return { ...change, seq: -(index + 1) };
+            });
+            const projected = decision.items.map((id) => selectItem(db, id)).filter((item) => item !== null);
             db.run("ROLLBACK");
-            const preview = decision.changes.map((change, index) => ({ ...change, seq: -(index + 1) }));
             return okReply(
                 command.verb,
-                { items: decision.items, changes: preview, legacy: decision.legacy, noop: decision.noop === true },
+                {
+                    items: decision.items,
+                    changes: preview,
+                    legacy: decision.legacy,
+                    noop: decision.noop === true,
+                    projected,
+                },
                 { diagnostics: decision.diagnostics, next: decision.next, dryRun: true }
             );
         }
