@@ -344,6 +344,26 @@ final class AudioSessionTests: XCTestCase {
         }
     }
 
+    func testALongGapIsFilledAtMostTwoSecondsPerCallbackAndKeepsFileTime() async throws {
+        let url = try directory().appendingPathComponent("mic.m4a")
+        let track = AudioTrack(source: .mic, movieInput: nil, sidecarURL: url)
+        track.sidecarReady = ready
+        let zero = CMTime(value: 123, timescale: 1)
+        track.appendSidecar(try pcm(samples: 4800, at: zero), at: zero)
+        // A 5 s stall: two callbacks fill two seconds each and drop their own audio, the third catches up.
+        for (offsetMs, fileMs) in [(5100, 2100), (5200, 4100), (5300, 5400)] {
+            let at = CMTimeAdd(zero, CMTime(value: Int64(offsetMs), timescale: 1000))
+            track.appendSidecar(try pcm(samples: 4800, at: at), at: at)
+            XCTAssertEqual(track.fileTimeline.durationMs, fileMs, "after the callback at \(offsetMs) ms")
+        }
+        track.finishSidecar()
+        XCTAssertTrue(track.sidecarWritten, "\(track.failures)")
+        XCTAssertEqual(track.fileTimeline.durationMs, 5400)
+        XCTAssertEqual(track.lostSpans, [[100, 5300]])
+        let duration = try await AVURLAsset(url: url).load(.duration)
+        XCTAssertEqual(CMTimeGetSeconds(duration) * 1000, 5400, accuracy: 25)
+    }
+
     func testOverlappingBuffersAreTrimmedWithoutShiftingOrShorteningTheFile() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("audio-overlap-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
