@@ -407,7 +407,7 @@ function markLocalDrift(deps: SyncDeps, changes: readonly Change[], report: Sync
     }
 }
 
-/** One pass: take up to 500 journal entries after the cursor, then push the affected items under the lease. */
+/** Drain committed journal pages under one lease. Release only after atomically checking for more entries. */
 export async function runSyncOnce(deps: SyncDeps): Promise<SyncReport> {
     const { db } = deps;
     const now = deps.now();
@@ -420,41 +420,60 @@ export async function runSyncOnce(deps: SyncDeps): Promise<SyncReport> {
     const report: SyncReport = { pushed: 0, held: 0, failed: 0, drift: 0, cursor: 0 };
 
     try {
-        const cursor = (db.query("SELECT seq FROM cursors WHERE consumer = ?").get(CURSOR) as { seq: number }).seq;
-        const changes = selectChangesAfter(db, cursor, BATCH);
-        const touched = new Set<ItemId>();
+        let cursor = (db.query("SELECT seq FROM cursors WHERE consumer = ?").get(CURSOR) as { seq: number }).seq;
+        const retryBefore = new Date(Date.parse(now) - RETRY_AFTER_MS).toISOString();
+        let retryFailed = true;
+        for (;;) {
+            const changes = selectChangesAfter(db, cursor, BATCH);
+            const touched = new Set<ItemId>();
 
-        for (const change of changes) {
-            // A change a connector made (a pull, a pairing) is not pushed back.
-            if (change.origin.via !== "connector") {
-                touched.add(change.item);
+            for (const change of changes) {
+                // A change a connector made (a pull, a pairing) is not pushed back.
+                if (change.origin.via !== "connector") {
+                    touched.add(change.item);
+                }
+            }
+
+            const retries = retryFailed
+                ? db
+                      .query<{ item: ItemId }, [string, number]>(
+                          "SELECT DISTINCT item FROM pairings WHERE state = 'failed' AND updated_ts <= ? ORDER BY updated_ts LIMIT ?"
+                      )
+                      .all(retryBefore, BATCH)
+                : [];
+            retryFailed = false;
+            const ids = new Set([...touched, ...retries.map(({ item }) => item)]);
+            const items = [...ids].map((id) => selectItem(db, id)).filter((item) => item !== null);
+            await pushItems({ deps, items, mode: { kind: "sync", cursor, lease, touched, retryBefore }, report });
+
+            if (!renewLease(db, lease, deps.now())) {
+                return { ...report, cursor, skipped: "lease" };
+            }
+
+            markLocalDrift(deps, changes, report);
+            cursor = changes.at(-1)?.seq ?? cursor;
+            report.cursor = cursor;
+            const more = db
+                .transaction(() => {
+                    const updated = db.run(
+                        "UPDATE cursors SET seq = ? WHERE consumer = ? AND lease_owner = ? AND lease_until > ?",
+                        [cursor, CURSOR, lease, deps.now()]
+                    );
+                    if (updated.changes === 0) {
+                        report.skipped = "lease";
+                        return false;
+                    }
+                    if (db.query("SELECT 1 FROM changes WHERE seq > ? LIMIT 1").get(cursor) !== null) {
+                        return true;
+                    }
+                    dropLease(db, lease);
+                    return false;
+                })
+                .immediate();
+            if (!more) {
+                return report;
             }
         }
-
-        const retryBefore = new Date(Date.parse(now) - RETRY_AFTER_MS).toISOString();
-        const retries = db
-            .query<{ item: ItemId }, [string, number]>(
-                "SELECT DISTINCT item FROM pairings WHERE state = 'failed' AND updated_ts <= ? ORDER BY updated_ts LIMIT ?"
-            )
-            .all(retryBefore, BATCH);
-        const ids = new Set([...touched, ...retries.map(({ item }) => item)]);
-        const items = [...ids].map((id) => selectItem(db, id)).filter((item) => item !== null);
-        await pushItems({ deps, items, mode: { kind: "sync", cursor, lease, touched, retryBefore }, report });
-
-        if (!renewLease(db, lease, deps.now())) {
-            return { ...report, cursor, skipped: "lease" };
-        }
-
-        markLocalDrift(deps, changes, report);
-        const last = changes.length > 0 ? changes[changes.length - 1].seq : cursor;
-        db.run("UPDATE cursors SET seq = ? WHERE consumer = ? AND lease_owner = ? AND lease_until > ?", [
-            last,
-            CURSOR,
-            lease,
-            deps.now(),
-        ]);
-        report.cursor = last;
-        return report;
     } finally {
         dropLease(db, lease);
     }
