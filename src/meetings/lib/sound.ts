@@ -117,6 +117,8 @@ export interface SoundPiece {
     /** The piece's second 0 on the transcript clock. */
     zeroSec: number;
     durationSec: number;
+    /** Seconds of the file (from its second 0) with no real sound: the microphone was muted or the writer lost it. */
+    unheard?: ReadonlyArray<readonly [number, number]>;
 }
 
 export interface SoundTrack {
@@ -231,11 +233,17 @@ function recorderTrackRows(inputs: Pick<SoundInputs, "rows" | "clock">) {
 function recorderTracks(inputs: SoundInputs): SoundTrack[] {
     return recorderTrackRows(inputs).map(({ kind, source, rows, clock, correctionSec }) => {
         const pieces = rows
-            .map((row) => ({
-                path: join(inputs.folder, row.file),
-                zeroSec: (audioRowZeroMs(row) - inputs.timelineZeroMs) / 1000 + correctionSec,
-                durationSec: row.durationMs / 1000,
-            }))
+            .map((row): SoundPiece => {
+                const unheard = [...row.mutedSpans, ...(row.lostSpans ?? [])].map(
+                    ([fromMs, toMs]) => [fromMs / 1000, toMs / 1000] as const
+                );
+                return {
+                    path: join(inputs.folder, row.file),
+                    zeroSec: (audioRowZeroMs(row) - inputs.timelineZeroMs) / 1000 + correctionSec,
+                    durationSec: row.durationMs / 1000,
+                    ...(unheard.length > 0 ? { unheard } : {}),
+                };
+            })
             .sort((a, b) => a.zeroSec - b.zeroSec);
         return {
             kind,
@@ -292,22 +300,14 @@ export function meetingSound(inputs: SoundInputs): MeetingSound {
                     continue;
                 }
 
+                // A muted or lost span is silence in the file: neither listening nor a voice sample may take it.
                 const piece = track.pieces.find(
                     (one) =>
                         one.zeroSec <= request.fromSec &&
                         request.toSec <= one.zeroSec + one.durationSec &&
-                        !(
-                            request.purpose === "listen" &&
-                            track.from.kind === "recorder" &&
-                            inputs.rows.some(
-                                (row) =>
-                                    join(inputs.folder, row.file) === one.path &&
-                                    row.mutedSpans.some(
-                                        ([fromMs, toMs]) =>
-                                            request.fromSec - one.zeroSec < toMs / 1000 &&
-                                            request.toSec - one.zeroSec > fromMs / 1000
-                                    )
-                            )
+                        !one.unheard?.some(
+                            ([fromSec, toSec]) =>
+                                request.fromSec - one.zeroSec < toSec && request.toSec - one.zeroSec > fromSec
                         )
                 );
 
