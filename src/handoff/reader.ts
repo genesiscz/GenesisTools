@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { STAMP_FACETS, whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import { toRuntimeContext } from "@genesiscz/utils/agent/identity";
-import type { handoffQueries } from "@genesiscz/utils/work/legacy/handoff-read";
+import { type handoffQueries, listHandoffPage } from "@genesiscz/utils/work/legacy/handoff-read";
 import { attachmentFilePath } from "./attachments";
 import type { HandoffDeps } from "./executor";
 import { CANCELLED_INFO, claimMatches, DONE_INFO, isHumanOwner, sessionIdMatches, targetMatchesSession } from "./fold";
@@ -373,39 +373,26 @@ export class HandoffReader {
         const ignored = sections.filter((s) => s !== "tasks");
 
         return withHandoffReadDb(deps, (db) => {
-            let rows = this.queries.listHandoffRows(db, {
+            const agent = input.agent?.trim();
+            const session = input.session?.trim();
+            const matches =
+                input.mine || agent || session
+                    ? (h: Handoff) =>
+                          (!input.mine ||
+                              isPosterSession(h, by) ||
+                              isClaimedBy(h, by) ||
+                              targetMatchesSession(h.target?.sessionId ?? null, by.sessionId) ||
+                              (h.target?.sessionName != null && h.target.sessionName === by.sessionTitle)) &&
+                          (!agent || agentFilterMatches(h.target, agent)) &&
+                          (!session || sessionFilterMatches(h.target, session))
+                    : undefined;
+            const { page, total } = listHandoffPage(db, {
                 statuses: input.open === true ? ["open", "claimed"] : undefined,
                 project: input.project,
+                limit,
+                offset,
+                matches,
             });
-
-            if (input.mine === true) {
-                rows = rows.filter(
-                    (h) =>
-                        isPosterSession(h, by) ||
-                        isClaimedBy(h, by) ||
-                        targetMatchesSession(h.target?.sessionId ?? null, by.sessionId) ||
-                        (h.target?.sessionName != null &&
-                            by.sessionTitle != null &&
-                            h.target.sessionName === by.sessionTitle)
-                );
-            }
-
-            // Opt-in only: with neither flag the listing stays exactly what it was.
-            const agentFilter =
-                input.agent !== undefined && input.agent.trim().length > 0 ? input.agent.trim() : undefined;
-            const sessionFilter =
-                input.session !== undefined && input.session.trim().length > 0 ? input.session.trim() : undefined;
-
-            if (agentFilter !== undefined) {
-                rows = rows.filter((h) => agentFilterMatches(h.target, agentFilter));
-            }
-
-            if (sessionFilter !== undefined) {
-                rows = rows.filter((h) => sessionFilterMatches(h.target, sessionFilter));
-            }
-
-            const total = rows.length;
-            const page = rows.slice(offset, offset + limit);
             const now = Date.now();
             let proofsClipped = false;
             const handoffs = page.map((h): HandoffListRow & { taskList?: HandoffTaskPreview[] } => {

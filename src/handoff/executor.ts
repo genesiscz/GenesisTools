@@ -15,7 +15,6 @@ import {
     getEventOutcome,
     getHandoffById,
     listHandoffEvents,
-    listHandoffRows,
 } from "./read-model";
 import {
     buildBy,
@@ -110,7 +109,7 @@ function pasteAgentText(id: string): string {
     );
 }
 
-const legacyQueries = { getHandoffById, findHandoffsByName, listHandoffRows, listHandoffEvents };
+const legacyQueries = { getHandoffById, findHandoffsByName, listHandoffEvents };
 
 function resolveHandoffRef(db: Database, input: { id?: string; name?: string }): Handoff {
     return resolveRef({ db, input, queries: legacyQueries });

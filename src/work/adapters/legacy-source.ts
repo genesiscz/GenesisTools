@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import {
     catchUpHandoffs,
     handoffDbPath,
-    listHandoffEvents,
+    iterateHandoffEvents,
     listHandoffRows,
     openHandoffModel,
 } from "@app/handoff/read-model";
@@ -13,11 +13,9 @@ import {
 import type { Handoff } from "@app/handoff/types";
 import type { LegacyEventRef } from "@genesiscz/utils/work/legacy/shadow";
 
-const PAGE = 1000;
-
 export interface LegacySource {
     handoffs(): Handoff[];
-    events(handoffId: string): LegacyEventRef[];
+    events(handoffId: string): Iterable<LegacyEventRef>;
     close(): void;
 }
 
@@ -46,42 +44,10 @@ export function openLegacySource(options: { catchUp: boolean; dbPath?: string; b
             db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'handoffs'").get() !== null
                 ? listHandoffRows(db, {})
                 : [],
-        events(handoffId) {
-            const all: LegacyEventRef[] = [];
-            let before: { ts: string; uid: string } | undefined;
-
-            for (;;) {
-                const page = listHandoffEvents({
-                    db,
-                    handoffId,
-                    limit: PAGE,
-                    ...(before !== undefined ? { before: before.ts, beforeUid: before.uid } : {}),
-                });
-
-                for (const event of page.events) {
-                    all.push({
-                        event,
-                        outcome: event.outcome
-                            ? {
-                                  applied: event.outcome.applied,
-                                  ...(event.outcome.assignedTaskIds
-                                      ? { assignedTaskIds: event.outcome.assignedTaskIds }
-                                      : {}),
-                              }
-                            : null,
-                    });
-                }
-
-                const last = page.events[page.events.length - 1];
-
-                if (page.events.length < PAGE || last === undefined) {
-                    break;
-                }
-
-                before = { ts: last.ts, uid: last.uid };
+        *events(handoffId) {
+            for (const event of iterateHandoffEvents(db, handoffId)) {
+                yield { event, outcome: event.outcome ?? null };
             }
-
-            return all.reverse();
         },
         close: () => db.close(),
     };

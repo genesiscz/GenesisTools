@@ -335,6 +335,14 @@ function rowToPublicEvent(row: EventRow): HandoffPublicEvent {
     return { ...event, outcome: toOutcome({ ok: row.ok, error: row.error, extra: row.extra }) };
 }
 
+/** The insertion order is the order in which the model applied the events. */
+export function* iterateHandoffEvents(db: Database, handoffId: string): Iterable<HandoffPublicEvent> {
+    const rows = db.query<EventRow, [string]>(`${EVENT_SELECT} WHERE e.handoff_id = ? ORDER BY e.rowid`);
+    for (const row of rows.iterate(handoffId)) {
+        yield rowToPublicEvent(row);
+    }
+}
+
 export function listHandoffEvents({
     db,
     handoffId,
