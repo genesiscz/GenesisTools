@@ -260,9 +260,11 @@ export async function rowsRead(options: {
     minPriority?: number;
     lowPriority?: "hide" | "show";
     applyAbove?: number;
+    /** The caller's opened meeting, so a caller that reads the transcript again loads the source once. */
+    opened?: OpenedMeeting;
 }): Promise<ReviewRows> {
     const { store, record } = options;
-    const opened = OpenedMeeting.of(store, record, options.linked);
+    const opened = options.opened ?? OpenedMeeting.of(store, record, options.linked);
     const transcript = await opened
         .meeting()
         .then((meeting) => meeting.transcript)
