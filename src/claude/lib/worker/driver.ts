@@ -58,7 +58,7 @@ async function resolvePinnedAccount(name: string | undefined): Promise<PinnedAcc
         throw new Error(`${gate.reason} Recapture it with: ${gate.fix}`);
     }
 
-    return { name: match.name, label: match.label, token };
+    return { name: match.name, label: match.label, token, tokenScopes: match.credentials.longLivedTokenScopes };
 }
 
 function turnReport(result: ClaudeTurnResult): WorkerTurnReport {

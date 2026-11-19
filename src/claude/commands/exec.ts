@@ -204,7 +204,10 @@ export async function execCommand(args: string[]): Promise<never> {
         const proc = Bun.spawn({
             cmd: command,
             stdio: ["inherit", "inherit", "inherit"],
-            env: { ...env.getProcessEnv(), ...pinnedLaunchEnv(account, token) },
+            env: {
+                ...env.getProcessEnv(),
+                ...pinnedLaunchEnv(account, { value: token, scopes: account.credentials.longLivedTokenScopes }),
+            },
         });
 
         process.exit(await proc.exited);

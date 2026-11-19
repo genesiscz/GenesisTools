@@ -80,6 +80,11 @@ export const accountCredentialsSchema = z.looseObject({
     expiresAt: z.number().optional(),
     refreshExpiresAt: z.number().optional(),
     longLivedTokenExpiresAt: z.number().optional(),
+    /**
+     * The scopes the server granted `longLivedToken`, known only when we minted it. Absent means `user:inference`
+     * alone, as for a pasted `claude setup-token` token. Launches pass it as CLAUDE_CODE_OAUTH_SCOPES.
+     */
+    longLivedTokenScopes: z.array(z.string()).optional(),
     secondary: secondaryLoginSchema.optional(),
 });
 

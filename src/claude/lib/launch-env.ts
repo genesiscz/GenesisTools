@@ -84,16 +84,26 @@ export function subscriptionTypeOf(account: Pick<AIAccountEntry, "label">): stri
     return account.label?.split(" ")[0] ?? "max";
 }
 
+/** An account's long-lived token and the scopes the server granted it (`credentials.longLivedTokenScopes`). */
+export interface PinnedToken {
+    value: string;
+    /** Absent for a token whose grant is unknown (a pasted `claude setup-token` one): Claude Code then assumes `user:inference`. */
+    scopes?: readonly string[];
+}
+
 export function pinnedLaunchEnv(
     account: Pick<AIAccountEntry, "name" | "label">,
-    longLivedToken: string
+    token: PinnedToken
 ): Record<string, string> {
     return {
         [accountEnvVar("claude")]: account.name,
         // Survives Claude Code's hook env allowlist (the OAuth token does not).
         // SessionStart records this so cmux resume does not invent --keychain.
         TOOLS_CLAUDE_AUTH: "token",
-        CLAUDE_CODE_OAUTH_TOKEN: longLivedToken,
+        CLAUDE_CODE_OAUTH_TOKEN: token.value,
+        // Claude Code gives a token from the environment `user:inference` alone unless this names more. With
+        // `user:profile` it reads the organization policy, which Code Mode needs before it starts.
+        ...(token.scopes?.length ? { CLAUDE_CODE_OAUTH_SCOPES: token.scopes.join(" ") } : {}),
         // Interactive CC can't resolve the tier from an inference-only setup token,
         // which blocks opus/sonnet [1m] model switches (see claude-code#70124).
         CLAUDE_CODE_SUBSCRIPTION_TYPE: subscriptionTypeOf(account),

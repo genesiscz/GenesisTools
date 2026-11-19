@@ -105,6 +105,23 @@ describe("applyLongLivedToken", () => {
         expect(data.accounts[0].credentials.longLivedTokenExpiresAt).toBeUndefined();
     });
 
+    test("a minted token records its scopes, and a pasted one clears them", async () => {
+        const data = configWith({});
+        await applyLongLivedToken(data, {
+            accountId: "acc_personal",
+            token: "minted",
+            expiresAt: 999,
+            scopes: ["user:inference", "user:profile"],
+        });
+
+        expect(data.accounts[0].credentials.longLivedTokenScopes).toEqual(["user:inference", "user:profile"]);
+
+        // A pasted token's grant is unknown: keeping the old scopes would tell Claude Code it can read the profile.
+        await applyLongLivedToken(data, { accountId: "acc_personal", token: "pasted" });
+
+        expect(data.accounts[0].credentials.longLivedTokenScopes).toBeUndefined();
+    });
+
     test("the token never lands in the config as plaintext", async () => {
         const data = configWith({});
         await applyLongLivedToken(data, { accountId: "acc_personal", token: "sk-ant-oat01-secret" });

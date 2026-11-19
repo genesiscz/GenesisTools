@@ -40,6 +40,8 @@ import { toolDataDir } from "@genesiscz/utils/storage/root";
 
 export interface TeammateAuthEnv {
     oauthToken: string;
+    /** The token's granted scopes, space-separated (CLAUDE_CODE_OAUTH_SCOPES); absent when the grant is unknown. */
+    oauthScopes?: string;
     subscriptionType: string;
     accountName: string;
     fableModel?: string;
@@ -144,6 +146,10 @@ export function buildTeammateWrapperScript(input: { claudeBin: string; env: Team
         ["CLAUDE_CODE_OAUTH_TOKEN", auth.oauthToken],
         ["CLAUDE_CODE_SUBSCRIPTION_TYPE", auth.subscriptionType],
     ];
+
+    if (auth.oauthScopes) {
+        exports.push(["CLAUDE_CODE_OAUTH_SCOPES", auth.oauthScopes]);
+    }
 
     if (auth.fableModel) {
         exports.push(["ANTHROPIC_DEFAULT_FABLE_MODEL", auth.fableModel]);
