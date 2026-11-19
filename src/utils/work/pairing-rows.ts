@@ -64,8 +64,11 @@ export async function pairingsForRows(ctx: WorkContext, refs: string[]) {
 
     // An unfiltered triage can contain several projects with different names for the same connector.
     for (const [project, projectRows] of Map.groupBy(rows, (row) => row.project)) {
+        const current = project === ctx.project;
         const layers =
-            project === ctx.project ? (ctx.rules?.layers ?? []) : (await loadWorkRules({ project })).rules.layers;
+            current && ctx.rules !== undefined
+                ? ctx.rules.layers
+                : (await loadWorkRules({ project, repoRoot: current ? ctx.actor.repoRoot : null })).rules.layers;
 
         for (const [connector, connectorRows] of Map.groupBy(projectRows, (row) => row.connector)) {
             const details = connectorDetails(layers, connector);
