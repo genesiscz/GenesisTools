@@ -82,7 +82,7 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
             return
         }
         if recent.hasMovie {
-            EditorWindows.shared.open(path: recent.folder.path, atSourceSeconds: atSourceSeconds)
+            EditorWindows.shared.open(path: recent.folder.path, atSourceUs: atSourceSeconds.flatMap(RecorderRequest.microseconds))
             return
         }
         HubPerf.log("recorder: open frames-only \(recent.folder.path) through tools recorder edit")
@@ -436,16 +436,13 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
     @objc private func recordScreenWithAudio() { run(.recordScreenWithAudio) }
     @objc private func openPicker() { run(.picker) }
 
-    enum Command: String {
-        case recordScreen, recordScreenWithAudio, picker, openRecording, library, quit
+    enum Command: UInt8, Sendable {
+        case recordScreen = 1, recordScreenWithAudio, picker, openRecording, library, quit
     }
 
     func run(_ command: Command) {
         if routesToRecorder {
-            if command == .quit, recorderInstance.runningPID == nil { return }
-            FaceLaunch.start(["--recorder", "--menu-command", command.rawValue], activates: false) { error in
-                RecorderNotice.failure("Could not open Recorder.", more: error.localizedDescription)
-            }
+            RecorderMenuIPC.send(command)
             return
         }
         switch command {
@@ -455,6 +452,7 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         case .openRecording: chooseRecording()
         case .library: LibraryWindow.shared.show(focus: true)
         case .quit:
+            RecorderMenuIPC.unlinkOwnSocket()
             FaceLifecycle.recorderExiting(code: 0)
             exit(0)
         }
