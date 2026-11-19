@@ -256,6 +256,7 @@ public struct WorkItemsView: View {
         static func == (lhs: Self, rhs: Self) -> Bool {
             lhs.container == rhs.container && lhs.filtered == rhs.filtered && lhs.handoffs == rhs.handoffs
                 && lhs.pending == rhs.pending && lhs.selection == rhs.selection && lhs.selectable == rhs.selectable
+                && lhs.drafts === rhs.drafts
         }
 
         var body: some View {
@@ -315,6 +316,7 @@ public struct WorkItemsView: View {
                 && lhs.accept == rhs.accept && lhs.archive == rhs.archive && lhs.showActions == rhs.showActions
                 && lhs.choices == rhs.choices && lhs.pending == rhs.pending
                 && lhs.selected == rhs.selected && lhs.selectable == rhs.selectable
+                && lhs.drafts === rhs.drafts
         }
 
         var body: some View {

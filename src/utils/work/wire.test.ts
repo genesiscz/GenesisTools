@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { Reply } from "@genesiscz/utils/output/reply";
 import { workMethods } from "./api";
 import { originFor, type Pairing } from "./connectors/types";
 import { callWork, type WorkSession } from "./handlers";
 import { mirrorSessionTodos } from "./legacy/session-todos";
-import { type Actor, asItemId } from "./model/item";
+import type { Actor } from "./model/item";
 import { resolveWorkRules } from "./rules/resolve";
 import { type WorkContext, write } from "./service";
 import { applyChange } from "./store/apply";
@@ -70,26 +71,13 @@ describe("the wire schemas of the read methods match what the handlers return", 
         const db = openWorkDb(":memory:");
         try {
             const fixture = ctx(db);
-            db.transaction(() => {
-                for (let i = 0; i <= 5000; i++) {
-                    applyChange(db, {
-                        v: 1,
-                        item: asItemId(`w_${String(i).padStart(8, "0")}`),
-                        actor: fixture.actor,
-                        ts: "2026-11-19T06:00:00.000Z",
-                        origin: { via: "local" },
-                        kind: "created",
-                        payload: {
-                            type: "task",
-                            state: "done",
-                            project: "App",
-                            title: "Closed fixture",
-                            tags: [],
-                            fields: {},
-                        },
-                    });
-                }
-            })();
+            const ts = "2026-11-19T06:00:00.000Z";
+            db.run(
+                `WITH RECURSIVE numbers(i) AS (VALUES(0) UNION ALL SELECT i + 1 FROM numbers WHERE i < 5000)
+                 INSERT INTO items (id, type, state, project, rev, title, created_by, created_ts, updated_ts)
+                 SELECT printf('w_%08d', i), 'task', 'done', 'App', 1, 'Closed fixture', ?, ?, ? FROM numbers`,
+                [SafeJSON.stringify(fixture.actor), ts, ts]
+            );
             const session: WorkSession = {
                 ctx: fixture,
                 call: {},
@@ -99,7 +87,7 @@ describe("the wire schemas of the read methods match what the handlers return", 
                 },
             };
             const params = { project: "App", fields: ["ref"], limit: 5000 };
-            const first = data<{ ref: string }[]>(await callWork("list", params, session));
+            const first = workMethods.list.result.parse(data(await callWork("list", params, session)));
             expect(first).toHaveLength(5000);
             expect(data(await callWork("list", { ...params, after: first.at(-1)?.ref }, session))).toEqual([
                 { ref: "w_00005000" },
