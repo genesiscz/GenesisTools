@@ -673,7 +673,11 @@ class TerminalAdapter implements ListenAdapter {
             const record = this.deps.store.read(meeting.id);
             const decided = record?.items.find((item) => record && item.id === questionIdOf(record, note.label));
             const fixed =
-                decided?.kind === "question" && decided.group === "words" && decided.about === "term"
+                note.outcome !== "skip" &&
+                note.outcome.answer &&
+                decided?.kind === "question" &&
+                decided.group === "words" &&
+                decided.about === "term"
                     ? ` · ${heardTimes(decided)} places fixed`
                     : "";
             ui.ok(
@@ -953,8 +957,11 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
                     entry.changes.find((change) => change.after?.kind === "question")
                 )?.after;
                 const now = store.read(meeting.id) ?? meeting;
+                // A comment that leaves the question open fixed no place, so it reports none.
+                const confirmed =
+                    answered?.kind === "question" && answered.status === "confirmed" ? answered : undefined;
                 ui.ok(
-                    `${opts.item} → ${answered?.kind === "question" && answered.status === "confirmed" ? answered.answer : "comment saved; still open"}${answered?.kind === "question" ? wordOutcome(now, answered, entry) : ""}\n`
+                    `${opts.item} → ${confirmed ? `${confirmed.answer}${wordOutcome(now, confirmed, entry)}` : "comment saved; still open"}\n`
                 );
                 ui.dim(`  undo: ${TOOL} reopen ${meeting.id} --token ${result.entry.token}`);
             }

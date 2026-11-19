@@ -2591,6 +2591,56 @@ describe("listen answers without a service", () => {
             process.exitCode = 0;
         }
     });
+    test("a comment that leaves a word question open reports no fixed places", async () => {
+        const store = new MeetingStore();
+        const at = "2026-11-02T14:00:00.000Z";
+        const meeting = await store.create(
+            {
+                title: "Planning",
+                start: at,
+                createdBy: "new",
+                items: [
+                    {
+                        id: "i1",
+                        kind: "question",
+                        status: "suggested",
+                        about: "term",
+                        group: "words",
+                        heard: "zorb",
+                        fromSec: 10,
+                        toSec: 14,
+                        question: 'What is "zorb"?',
+                        choices: [],
+                        decides: [],
+                        rules: [],
+                        evidence: { occurrences: 6 },
+                        suggestedAt: at,
+                    },
+                ],
+            },
+            { command: "test", change: "fixture" }
+        );
+        const said: string[] = [];
+        const ok = spyOn(ui, "ok").mockImplementation((text) => {
+            said.push(String(text));
+        });
+        const dim = spyOn(ui, "dim").mockImplementation(() => {});
+
+        try {
+            const program = new Command().exitOverride();
+            await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "listen" });
+            await program.parseAsync(
+                ["listen", meeting.id, "--item", "i1", "--answer", "", "--comment", "ask the team"],
+                { from: "user" }
+            );
+            expect(new MeetingStore().read(meeting.id)?.items[0]?.status).toBe("suggested");
+            expect(said).toEqual(["i1 → comment saved; still open\n"]);
+        } finally {
+            ok.mockRestore();
+            dim.mockRestore();
+            process.exitCode = 0;
+        }
+    });
 });
 
 test("terminal listen stops its in-process playback before search and comment prompts, then restarts", async () => {
