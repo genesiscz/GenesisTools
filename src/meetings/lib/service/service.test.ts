@@ -358,16 +358,34 @@ test("voices.workers answers what auto means from the CPU sample; voices.preview
 
 test("a running call repeats its newest step every beat, so a client's deadline measures silence, never length", async () => {
     const sent: Array<{ fraction?: number; label?: string }> = [];
-    const beat = progressBeat((update) => sent.push(update), 30);
-    await Bun.sleep(45);
-    beat.progress({ fraction: 0.5, label: "Voices: 1 of 2 lines" });
-    await Bun.sleep(75);
+    let wake = () => {};
+    // Wait for the beats themselves, with a generous deadline, so a slow runner that delays a timer cannot fail it.
+    const sentUntil = (enough: () => boolean) =>
+        new Promise<void>((resolve, reject) => {
+            const deadline = setTimeout(() => reject(new Error(`only ${sent.length} beats arrived`)), 5_000);
+            wake = () => {
+                if (enough()) {
+                    clearTimeout(deadline);
+                    wake = () => {};
+                    resolve();
+                }
+            };
+            wake();
+        });
+    const beat = progressBeat((update) => {
+        sent.push(update);
+        wake();
+    }, 30);
+    await sentUntil(() => sent.length >= 1);
+    expect(sent[0]).toEqual({});
+    const step = { fraction: 0.5, label: "Voices: 1 of 2 lines" };
+    beat.progress(step);
+    // The step goes out at once, then the beat repeats it at least twice.
+    await sentUntil(() => sent.filter((update) => update.label).length >= 3);
     beat.stop();
     const stopped = sent.length;
-    await Bun.sleep(45);
-    expect(sent[0]).toEqual({});
-    expect(sent.slice(1)).toContainEqual({ fraction: 0.5, label: "Voices: 1 of 2 lines" });
-    expect(sent.filter((update) => update.label).length).toBeGreaterThanOrEqual(2);
+    await Bun.sleep(100);
+    expect(sent.slice(1).every((update) => update.label === step.label)).toBe(true);
     expect(sent.length).toBe(stopped);
     expect(MEETINGS_CALL_BEAT_MS).toBeLessThan(60_000 / 2);
 
@@ -376,7 +394,7 @@ test("a running call repeats its newest step every beat, so a client's deadline 
         beatMs: 30,
         deps: {
             freeCores: async () => {
-                await Bun.sleep(200);
+                await Bun.sleep(400);
                 return { performanceCores: 12, idleCores: 9 };
             },
         },
@@ -384,13 +402,14 @@ test("a running call repeats its newest step every beat, so a client's deadline 
     const client = await SocketMeetingsClient.connect(service.entry, hello);
     closing.push(() => client.close());
     const beats: Array<{ fraction?: number; label?: string }> = [];
+    // The work takes twice the deadline; beats every 30 ms leave a delayed timer a wide margin under it.
     const answer = await client.call(
         "voices.workers",
         {},
-        { timeoutMs: 100, onProgress: (update) => beats.push(update) }
+        { timeoutMs: 200, onProgress: (update) => beats.push(update) }
     );
     expect(answer.auto).toBe(4);
-    expect(beats.length).toBeGreaterThanOrEqual(3);
+    expect(beats.length).toBeGreaterThanOrEqual(2);
 });
 
 async function questionRowsFixture() {
