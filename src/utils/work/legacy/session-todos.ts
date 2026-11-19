@@ -125,7 +125,10 @@ export function readSessionTodos(db: Database): { rows: StoredSessionTodo[]; sta
             return [
                 {
                     ...rest,
-                    title: r.title,
+                    ...(rest.title !== undefined ||
+                    r.title !== mirrorTitle({ prompt: r.body ?? "", number: rest.number })
+                        ? { title: r.title }
+                        : {}),
                     for: r.owner ?? rest.for ?? "agent",
                     updatedTs: r.updatedTs > rest.updatedTs ? r.updatedTs : rest.updatedTs,
                     prompt: r.body ?? "",
@@ -161,6 +164,10 @@ function actorOf(row: SessionTodoRow): Actor {
     };
 }
 
+function mirrorTitle(row: Pick<SessionTodoRow, "title" | "prompt" | "number">): string {
+    return (row.title || row.prompt.split("\n")[0] || `TODO ${row.number}`).slice(0, 500);
+}
+
 function metaOf(row: SessionTodoRow): SessionTodoMeta {
     const { prompt: _prompt, state, ...rest } = row;
     return { ...rest, logState: state };
@@ -185,7 +192,7 @@ export function mirrorSessionTodos(
 
     for (const row of rows) {
         const key = sessionTodoKey(row);
-        const title = (row.title || row.prompt.split("\n")[0] || `TODO ${row.number}`).slice(0, 500);
+        const title = mirrorTitle(row);
         const state = sessionTodoState(row.state);
         const meta = metaOf(row);
         const metaJson = SafeJSON.stringify(meta);
