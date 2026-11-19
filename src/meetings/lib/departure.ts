@@ -77,14 +77,59 @@ interface DepartureEvidence {
 
 const onCall = (line: LineEvidence) => isStrongCallForNaming(channelFor(line));
 
+/** The lines of one departure pass, searchable by time, and the indicator reads it may trust, computed once. */
+class DeparturePass {
+    private readonly byStart: LineEvidence[];
+    private usable?: SpeakingObservation[];
+
+    constructor(private readonly options: DepartureEvidence) {
+        this.byStart = [...options.lines].sort((a, b) => a.startSec - b.startSec || a.index - b.index);
+    }
+
+    /** Lines after `intent` in transcript order that start within `withinSec` of it, found without a full scan. */
+    after(intent: LineEvidence, withinSec: number): LineEvidence[] {
+        let low = 0;
+        let high = this.byStart.length;
+        while (low < high) {
+            const mid = (low + high) >> 1;
+            if (this.byStart[mid].startSec < intent.startSec) {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+
+        const found: LineEvidence[] = [];
+        for (let i = low; i < this.byStart.length && this.byStart[i].startSec <= intent.startSec + withinSec; i++) {
+            if (this.byStart[i].index > intent.index) {
+                found.push(this.byStart[i]);
+            }
+        }
+
+        return found.sort((a, b) => a.index - b.index);
+    }
+
+    /**
+     * Part of a line may be unreadable while an individual read at the join is good. Keep that read,
+     * but never use an indicator assessed as stuck to identify either the joiner or a continuing speaker.
+     */
+    reads(): SpeakingObservation[] {
+        if (!this.usable) {
+            const ignored = this.options.lines.filter((other) => this.options.ignoredIndicator?.has(other.index));
+            this.usable = (this.options.speaking ?? []).filter(
+                (read) =>
+                    !read.speakingUnknown &&
+                    !ignored.some((other) => read.tSec >= other.startSec && read.tSec < other.endSec)
+            );
+        }
+
+        return this.usable;
+    }
+}
+
 /** The first return to the caller's label must be a short sign-off; the other side must answer the exchange. */
-function closingOf({ lines, intent }: { lines: LineEvidence[]; intent: LineEvidence }): LineEvidence | undefined {
-    const exchange = lines.filter(
-        (other) =>
-            other.index > intent.index &&
-            other.startSec >= intent.startSec &&
-            other.startSec <= intent.startSec + FAREWELL_REPLY_WITHIN_SEC
-    );
+function closingOf({ pass, intent }: { pass: DeparturePass; intent: LineEvidence }): LineEvidence | undefined {
+    const exchange = pass.after(intent, FAREWELL_REPLY_WITHIN_SEC);
     const closing = exchange.find((other) => other.label === intent.label);
     if (
         closing &&
@@ -99,24 +144,21 @@ function closingOf({ lines, intent }: { lines: LineEvidence[]; intent: LineEvide
 /** In an indicator gap, use a witnessed arrival and an answered sign-off, with another remote still speaking later. */
 function exchangeDeparture({
     options,
+    pass,
     line,
     present,
 }: {
     options: DepartureEvidence;
+    pass: DeparturePass;
     line: LineEvidence;
     present: Presence[];
 }): IdentifiedDeparture | undefined {
-    const closing = closingOf({ lines: options.lines, intent: line });
+    const closing = closingOf({ pass, intent: line });
     if (!closing || !options.speaking?.length) {
         return;
     }
-    // Part of a line may be unreadable while an individual read at the join is good. Keep that read,
-    // but never use an indicator assessed as stuck to identify either the joiner or a continuing speaker.
-    const ignored = options.lines.filter((other) => options.ignoredIndicator?.has(other.index));
-    const reads = options.speaking.filter(
-        (read) =>
-            !read.speakingUnknown && !ignored.some((other) => read.tSec >= other.startSec && read.tSec < other.endSec)
-    );
+
+    const reads = pass.reads();
     const history = present.map((stay) => {
         const inStay = reads.filter((read) => read.tSec >= stay.fromSec && read.tSec < stay.toSec);
         const heard = inStay.filter((read) => read.speaking.some((name) => sameName(name, stay.name)));
@@ -181,6 +223,7 @@ function exchangeDeparture({
 /** Resolve a goodbye independently of the diarizer label. Ambiguous identity remains unresolved. */
 export function identifiedDepartures(options: DepartureEvidence): IdentifiedDeparture[] {
     const departures: IdentifiedDeparture[] = [];
+    const pass = new DeparturePass(options);
     const hinted = new Map(
         options.hints.flatMap((hint) =>
             hint.kind === "leave-then-continues" ? hint.leaves.map((leave) => [leave.atSec, hint.label] as const) : []
@@ -256,7 +299,7 @@ export function identifiedDepartures(options: DepartureEvidence): IdentifiedDepa
                 !leaving.length &&
                 !matched &&
                 isLeavePhrase(line.text) &&
-                exchangeDeparture({ options, line, present });
+                exchangeDeparture({ options, pass, line, present });
             if (exchange && allowed(exchange.name)) {
                 departures.push(exchange);
             }
