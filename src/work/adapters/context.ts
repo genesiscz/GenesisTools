@@ -52,7 +52,9 @@ export async function contextHere({
                 return null;
             }
 
-            return (await cachedPrForHead({ driver, originUrl: origin.url, branch: actor.branch, head })).pr;
+            return (
+                await cachedPrForHead({ driver, originUrl: origin.url, branch: actor.branch, head, maxAgeSeconds: 0 })
+            ).pr;
         },
     };
     return { report: await gatherContext(view), view };
