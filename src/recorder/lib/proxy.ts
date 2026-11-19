@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { isInsideDir } from "@genesiscz/utils/fs/canonical";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { imageSize } from "@genesiscz/utils/macos/ocr-boxes";
@@ -384,7 +385,10 @@ export function readDisplayPlan(folder: string): DisplayPlan | undefined {
     return parsed.success ? parsed.data : undefined;
 }
 
-/** An audio file of a meeting: `audio.jsonl` rows `{ file, at }` (wall time of the piece's start). */
+/**
+ * An audio file of a meeting: `audio.jsonl` rows `{ file, at }` (wall time of the piece's start). A file outside the
+ * folder (by its path or through a symlink) is not mixed.
+ */
 function meetingAudioPieces(folder: string, startedMs: number): Array<{ path: string; delayMs: number }> {
     const index = join(folder, "audio.jsonl");
 
@@ -405,7 +409,7 @@ function meetingAudioPieces(folder: string, startedMs: number): Array<{ path: st
             }
         })
         .map((row) => ({ path: join(folder, row.file), delayMs: Math.max(0, Date.parse(row.at) - startedMs) }))
-        .filter((piece) => existsSync(piece.path));
+        .filter((piece) => existsSync(piece.path) && isInsideDir(folder, piece.path));
 }
 
 /** A sound file the proxy can mix, placed `delayMs` after the recording's start. */
