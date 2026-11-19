@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { listItems } from "../read";
@@ -23,19 +23,23 @@ function row(number: number, patch: Partial<SessionTodoRow> = {}): SessionTodoRo
 
 describe("session to-do items in the work store (P9)", () => {
     test("a transferred task has the same owner in the work item and session row after reopen", () => {
-        const file = join(mkdtempSync(join(tmpdir(), "gt-todo-transfer-")), "work.db");
-        let db = openWorkDb(file);
+        const directory = mkdtempSync(join(tmpdir(), "gt-todo-transfer-"));
+        const file = join(directory, "work.db");
+        let db: ReturnType<typeof openWorkDb> | undefined;
         try {
+            db = openWorkDb(file);
             mirrorSessionTodos(db, [row(1, { for: "human" })]);
             mirrorSessionTodos(db, [
                 row(1, { for: "agent", state: "acknowledged", updatedTs: "2026-11-18T09:00:00.000Z" }),
             ]);
             db.close();
+            db = undefined;
             db = openWorkDb(file);
             expect(db.query("SELECT state, for_who FROM items").get()).toEqual({ state: "active", for_who: "agent" });
             expect(readSessionTodos(db).rows[0]).toMatchObject({ state: "acknowledged", for: "agent" });
         } finally {
-            db.close();
+            db?.close();
+            rmSync(directory, { recursive: true, force: true });
         }
     });
 
