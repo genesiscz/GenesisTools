@@ -26,12 +26,13 @@ export const workChangedSchema = z.object({
 });
 
 function itemsOf(data: unknown): string[] {
-    const items = (data as { items?: unknown } | null)?.items;
-    return Array.isArray(items)
-        ? items.flatMap((item) =>
-              typeof (item as { id?: unknown }).id === "string" ? [(item as { id: string }).id] : []
-          )
-        : [];
+    if (typeof data !== "object" || data === null || !("items" in data) || !Array.isArray(data.items)) {
+        return [];
+    }
+
+    return data.items.flatMap((item: unknown) =>
+        typeof item === "object" && item !== null && "id" in item && typeof item.id === "string" ? [item.id] : []
+    );
 }
 
 function actionOf(name: WorkMethodName) {
