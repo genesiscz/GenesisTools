@@ -1,6 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import {
+    appendFileSync,
+    existsSync,
+    mkdirSync,
+    readdirSync,
+    readFileSync,
+    renameSync,
+    rmSync,
+    statSync,
+    writeFileSync,
+} from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
 import { getAudioInfo } from "@genesiscz/utils/audio/probe";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -46,6 +56,105 @@ const segmentStartedSchema = audioSegmentSchema.pick({ file: true, source: true,
     event: z.literal("segment-started"),
     primingFrames: z.number().int().nonnegative().optional(),
 });
+
+/** The ledger of a folder's closed sound segments, one `AudioSegment` per line. */
+const AUDIO_LEDGER = "audio.jsonl";
+/**
+ * Beside a closed segment while it moves into the folder and its ledger row is appended. A process death between the
+ * two steps leaves this marker, and `finishAudioHandoffs` completes the step that did not happen.
+ */
+const HANDOFF_SUFFIX = ".handoff.json";
+const handoffSchema = z.object({ from: z.string().min(1), row: audioSegmentSchema });
+
+function ledgerNames(folder: string, file: string): boolean {
+    let text: string;
+    try {
+        text = readFileSync(join(folder, AUDIO_LEDGER), "utf8");
+    } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+            return false;
+        }
+        throw error;
+    }
+    return text.split("\n").some((line) => {
+        if (!line.trim()) {
+            return false;
+        }
+        try {
+            return z.object({ file: z.string() }).safeParse(SafeJSON.parse(line, { strict: true })).data?.file === file;
+        } catch {
+            return false;
+        }
+    });
+}
+
+/**
+ * Moves the closed segment `from` (a name in `outDir`) to `row.file` in `folder` and appends its ledger row. The
+ * marker written first lets a later `finishAudioHandoffs` complete a handoff that a process death cut in two.
+ */
+function handOverSegment(outDir: string, folder: string, from: string, row: AudioSegment): void {
+    const marker = join(outDir, `${from}${HANDOFF_SUFFIX}`);
+    writeFileSync(marker, SafeJSON.stringify({ from, row }));
+    renameSync(join(outDir, from), join(folder, row.file));
+    try {
+        appendFileSync(join(folder, AUDIO_LEDGER), `${SafeJSON.stringify(row)}\n`);
+    } catch (error) {
+        // Put it back where crash recovery looks, before the piece folder is cleared.
+        renameSync(join(folder, row.file), join(outDir, from));
+        rmSync(marker, { force: true });
+        throw error;
+    }
+    rmSync(marker, { force: true });
+}
+
+/**
+ * Completes every segment handoff that a process death interrupted under `dir` (searched recursively): a segment
+ * still in its capture folder is moved, and a moved segment without a ledger row gets the row it was closed with.
+ * Run it before the files left in `dir` are salvaged or the folder is cleared. Answers the rows it appended.
+ */
+export function finishAudioHandoffs(dir: string, folder: string): AudioSegment[] {
+    let names: string[];
+    try {
+        names = readdirSync(dir, { recursive: true, encoding: "utf8" }).filter((name) => name.endsWith(HANDOFF_SUFFIX));
+    } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+            return [];
+        }
+        throw error;
+    }
+    const finished: AudioSegment[] = [];
+    for (const name of names) {
+        const marker = join(dir, name);
+        let handoff: z.infer<typeof handoffSchema>;
+        try {
+            handoff = handoffSchema.parse(SafeJSON.parse(readFileSync(marker, "utf8"), { strict: true }));
+        } catch (error) {
+            // A marker cut short: the segment is either still in the capture folder, where salvage finds it, or moved.
+            log.warn({ marker, error }, "an unreadable sound handoff marker was dropped");
+            rmSync(marker, { force: true });
+            continue;
+        }
+        const { from, row } = handoff;
+        const source = join(dirname(marker), from);
+        const target = join(folder, row.file);
+        if (basename(from) !== from || row.file !== `audio/${basename(row.file)}`) {
+            log.warn({ marker }, "a sound handoff marker names a file outside its folders; it was dropped");
+            rmSync(marker, { force: true });
+            continue;
+        }
+        if (!existsSync(target) && existsSync(source)) {
+            mkdirSync(dirname(target), { recursive: true });
+            renameSync(source, target);
+        }
+        if (existsSync(target) && !ledgerNames(folder, row.file)) {
+            appendFileSync(join(folder, AUDIO_LEDGER), `${SafeJSON.stringify(row)}\n`);
+            finished.push(row);
+            log.warn({ file: row.file }, "finished a sound segment handoff that a process death interrupted");
+        }
+        rmSync(marker, { force: true });
+    }
+    return finished;
+}
 
 const packetPrimingSchema = z.object({
     packets: z
@@ -319,15 +428,8 @@ export class AudioSession {
         }
         const closed = audioSegmentSchema.parse(raw);
         const file = `audio/${this.prefix}-${row.file}`;
-        renameSync(join(this.options.outDir, row.file), join(this.options.folder, file));
         const kept = { ...closed, file };
-        try {
-            appendFileSync(join(this.options.folder, "audio.jsonl"), `${SafeJSON.stringify(kept)}\n`);
-        } catch (error) {
-            // Put it back where crash recovery looks, before the piece folder is cleared.
-            renameSync(join(this.options.folder, file), join(this.options.outDir, row.file));
-            throw error;
-        }
+        handOverSegment(this.options.outDir, this.options.folder, row.file, kept);
         this.segments += 1;
         this.options.onSegment?.(kept);
     }
