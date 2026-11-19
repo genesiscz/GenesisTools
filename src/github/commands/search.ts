@@ -104,12 +104,14 @@ export async function searchCommand(query: string, options: SearchCommandOptions
     // Repo search uses a completely different endpoint
     if (options.type === "repo") {
         const repos = await searchRepos(query, options);
+        const format = options.format || "ai";
         verbose(options, `Found ${repos.length} repositories`);
         if (repos.length === 0) {
             out.printlnErr(chalk.yellow("No repositories found."));
-            return;
+            if (format !== "json") {
+                return;
+            }
         }
-        const format = options.format || "ai";
         const output = formatRepoResults(repos, format);
         if (options.output) {
             await Bun.write(options.output, output);
@@ -198,9 +200,10 @@ export async function searchCommand(query: string, options: SearchCommandOptions
         );
     }
 
+    const format = options.format || "ai";
     if (results.length === 0) {
         // If comment-reaction filter eliminated everything, still show the original search results
-        if (preFilterResults && preFilterResults.length > 0) {
+        if (format !== "json" && preFilterResults && preFilterResults.length > 0) {
             out.printlnErr(
                 chalk.yellow(
                     `\nNo issues matched --min-comment-reactions ${options.minCommentReactions}. Showing all ${preFilterResults.length} search results:\n`
@@ -209,12 +212,13 @@ export async function searchCommand(query: string, options: SearchCommandOptions
             results = preFilterResults;
         } else {
             out.printlnErr(chalk.yellow("No results found."));
-            return;
+            if (format !== "json") {
+                return;
+            }
         }
     }
 
     // Format output
-    const format = options.format || "ai";
     verbose(options, `Output format: ${format}`);
     const output = formatSearchResults(results, format);
 
