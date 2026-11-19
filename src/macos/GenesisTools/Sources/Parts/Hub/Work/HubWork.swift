@@ -33,8 +33,8 @@ final class HubWorkModel: ObservableObject {
                 // A session in a subfolder or linked worktree can carry that folder's name as its project.
                 // Match the named project first, then the closest Work project in the cached path.
                 let folders = (session.cwd as NSString).pathComponents
-                if let project = session.project, !project.isEmpty, project != folders.last { return [project] }
-                return Array(folders.reversed())
+                let named = session.project.flatMap { $0.isEmpty ? nil : $0 }
+                return [named].compactMap { $0 } + folders.reversed().filter { $0 != named }
             } ?? []
         case .lastOpened:
             candidates = [defaults.string(forKey: Self.lastOpenedKey)].compactMap { $0 }
