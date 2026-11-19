@@ -8,11 +8,18 @@ struct MeetingSeatsDraft: Equatable {
     var seats: MeetingSeats
     var joins: [String]
     var leaves: [String]
+    /// The older groups (made another way) that carried room people when the sheet opened. Their seat kind stays with
+    /// the group, so unticking the last member keeps the room's tick boxes instead of turning it into a remote device.
+    private let roomGroupIDs: Set<String>
 
     init(_ seats: MeetingSeats) {
         self.seats = seats
         joins = seats.remote.map { $0.fromSec.map(ListenPresenceStrip.clock) ?? "" }
         leaves = seats.remote.map { $0.toSec.map(ListenPresenceStrip.clock) ?? "" }
+        roomGroupIDs = Set((seats.microphones ?? []).filter { group in
+            guard case .other = Device(group) else { return false }
+            return !group.people.isEmpty && group.people.allSatisfy { Self.contains(seats.room, $0) }
+        }.map(\.id))
     }
 
     /// The device a microphone group stands for: the engine writes `self` for this Mac's microphone and
@@ -109,15 +116,14 @@ struct MeetingSeatsDraft: Equatable {
         return Device(groups[index])
     }
 
-    /// Whether the group at `index` holds room people: this Mac's microphone, or an older group whose members sit in
-    /// the room.
+    /// Whether the group at `index` holds room people: this Mac's microphone, or an older group whose members sat in
+    /// the room when the sheet opened, whatever is ticked now.
     func carriesRoom(_ index: Int) -> Bool {
         guard let groups = seats.microphones, groups.indices.contains(index) else { return false }
         switch Device(groups[index]) {
         case .thisMac: return true
         case .owner: return false
-        case .other:
-            return !groups[index].people.isEmpty && groups[index].people.allSatisfy { Self.contains(seats.room, $0) }
+        case .other: return roomGroupIDs.contains(groups[index].id)
         }
     }
 
