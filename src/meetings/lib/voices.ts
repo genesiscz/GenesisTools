@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { createReadStream, existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
+import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
 import { logger } from "@genesiscz/utils/logger";
 import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
@@ -284,12 +284,7 @@ export async function voiceSample(
         throw new Error("This sample's track has no audible sound covering its time.");
     }
 
-    const hash = createHash("sha256");
-    for await (const chunk of createReadStream(slice.path)) {
-        hash.update(chunk);
-    }
-
-    if (hash.digest("hex") !== sample.sourceSha) {
+    if ((await sha256FileAsync(slice.path)) !== sample.sourceSha) {
         throw new Error("This sample's sound changed since it was confirmed; confirm a new sample.");
     }
 
@@ -430,21 +425,26 @@ export async function addVoiceSample(
     });
     const embedded = await embedSeatLines({ lines: eligible, sound: await opened.sound() });
     let samples = 0;
+    // Many lines share one multi-hour source file: hash each file once.
+    const hashes = new Map<string, string>();
     for (const line of embedded) {
         const voice = line.channels[0];
         if (voice?.quality !== "ready") {
             continue;
         }
-        const hash = createHash("sha256");
-        for await (const chunk of createReadStream(voice.source.audioPath)) {
-            hash.update(chunk);
+
+        let sourceSha = hashes.get(voice.source.audioPath);
+        if (!sourceSha) {
+            sourceSha = await sha256FileAsync(voice.source.audioPath);
+            hashes.set(voice.source.audioPath, sourceSha);
         }
+
         addVoicePrint(
             record.project,
             options.person,
             {
                 meeting: record.id,
-                sourceSha: hash.digest("hex"),
+                sourceSha,
                 seat: line.seat,
                 track: line.track,
                 fromSec: line.fromSec!,

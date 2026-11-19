@@ -1,5 +1,4 @@
-import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import {
@@ -220,11 +219,7 @@ async function printsOf(options: {
 
         let sourceSha = hashes.get(channel.source.audioPath);
         if (!sourceSha) {
-            const hash = createHash("sha256");
-            for await (const chunk of createReadStream(channel.source.audioPath)) {
-                hash.update(chunk);
-            }
-            sourceSha = hash.digest("hex");
+            sourceSha = await sha256FileAsync(channel.source.audioPath);
             hashes.set(channel.source.audioPath, sourceSha);
         }
 
