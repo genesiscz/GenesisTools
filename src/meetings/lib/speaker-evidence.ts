@@ -914,8 +914,8 @@ export function inSwap(swaps: SwapStretch[], label: string, sec: number): boolea
     );
 }
 
-/** The channel and energy items, and the swapped stretches (R20) that the arrival rule must leave alone too. */
-export function evidenceItems(options: {
+/** Inputs shared by the pre-departure voice seeds and the final suggestion pass. */
+export interface EvidenceInput {
     meeting: SourceMeeting;
     evidence: MeetingEvidence;
     lines: LineEvidence[];
@@ -923,13 +923,30 @@ export function evidenceItems(options: {
     energyMicShare?: (fromSec: number, toSec: number) => number | undefined;
     voiceMatches?: Readonly<Record<string, VoiceMatch>>;
     speakers?: LineSpeakers;
-    /** The current pass can enrol an independently identified line before neighbouring findings are grouped. */
-    onIndicator?: (index: number, person: string, confidence: number) => void;
     /** The record's items: an agent's speaker ranges over the same lines score their speaker (the polish). */
     items?: readonly MeetingItem[];
     samePerson?: SamePerson;
     record: MeetingRecord;
-}): { items: NewItem[]; swaps: SwapStretch[] } {
+}
+
+/** One outcome per measured line, in the order used to build ranges for its label. */
+export type LineOutcome =
+    | { kind: "finding"; line: LineEvidence; finding: EvidenceFinding; nearby: string[]; indicatorReason?: string }
+    | { kind: "direct"; line: LineEvidence; item: NewItem }
+    | { kind: "none"; line: LineEvidence; reason: "swap-skipped" | "in-swap" | "no-finding" | "ineligible-speaker" };
+
+export interface SpeakerEvidence {
+    swapItems: NewItem[];
+    labels: Array<{ label: string; outcomes: LineOutcome[] }>;
+    swaps: SwapStretch[];
+}
+
+/** Grouped scores use the same eligibility and existing ranges that the line rules saw. */
+interface EvaluatedEvidence extends SpeakerEvidence {
+    rangeContext?: { selfName: string; speakers: LineSpeakers; items: readonly MeetingItem[]; samePerson?: SamePerson };
+}
+
+export function speakerEvidence(options: EvidenceInput): EvaluatedEvidence {
     const selfName = options.evidence.selfName ?? options.record.participants.find((person) => person.self)?.name;
 
     if (
@@ -939,7 +956,7 @@ export function evidenceItems(options: {
             !options.lines.some((line) => line.voice?.quality === "matched" || line.energyMic !== undefined))
     ) {
         log.debug({ selfName, segments: options.evidence.segments.length }, "no channel evidence");
-        return { items: [], swaps: [] };
+        return { swapItems: [], labels: [], swaps: [] };
     }
 
     // Teams attendance names the user by email; here the user is always `selfName`.
@@ -971,78 +988,7 @@ export function evidenceItems(options: {
               }
             : shown;
     });
-    const items: NewItem[] = [];
-    let open:
-        | {
-              item: Extract<NewItem, { kind: "speaker-range" }>;
-              key: string;
-              shares: number[];
-              echoLines: number;
-              endSec: number;
-              /** The range's lines and, per line, the platform labels talking within 10 s (R17). */
-              lines: LineEvidence[];
-              nearby: string[][];
-          }
-        | undefined;
-    const close = () => {
-        if (open) {
-            const mean = open.shares.reduce((sum, share) => sum + share, 0) / open.shares.length;
-            const confidence = Math.round(mean * 100) / 100;
-            open.item.confidence = confidence;
-            const tallies = lineTallies({
-                lines: open.lines,
-                selfName,
-                nearby: open.nearby,
-                eligibility: speakers.eligibility,
-                micHolds: micSure,
-                samePerson: options.samePerson,
-            });
-            addPolish(tallies, {
-                items: options.items ?? [],
-                label: open.item.label,
-                fromSec: open.item.fromSec,
-                toSec: open.endSec,
-            });
-            const eligible = speakers.eligibility.get(open.lines[0]!.index)!;
-            const candidateScores = scoreCandidates({
-                tallies: tallies.tallies.filter((tally) => eligible.choices.some((name) => sameName(name, tally.name))),
-                lines: open.lines.length,
-                label: open.item.label,
-                speaker: open.item.speaker,
-                confidence,
-                rules: open.item.rules,
-                samePerson: options.samePerson,
-            });
-            open.item.evidence = {
-                ...open.item.evidence,
-                lines: open.shares.length,
-                endSec: open.endSec,
-                ...(open.echoLines > 0 ? { echoLines: open.echoLines } : {}),
-                ...(open.item.rules.includes(MeetingRule.Voice)
-                    ? {
-                          voiceEvidence: open.lines.map((line) => ({
-                              index: line.index,
-                              fromSec: line.startSec,
-                              toSec: line.endSec,
-                              ...line.voice,
-                          })),
-                      }
-                    : {}),
-                ...(candidateScores.length > 0
-                    ? {
-                          candidateScores:
-                              open.item.rules.includes(MeetingRule.LocalVoice) && open.item.candidates
-                                  ? candidateScores.filter((score) =>
-                                        open!.item.candidates!.some((name) => sameName(name, score.speaker))
-                                    )
-                                  : candidateScores,
-                      }
-                    : {}),
-            };
-            items.push(open.item);
-            open = undefined;
-        }
-    };
+    const swapRanges: NewItem[] = [];
     const platformLabels = new Set(
         options.meeting.speakers.filter((speaker) => speaker.origin === "platform").map((speaker) => speaker.name)
     );
@@ -1099,7 +1045,7 @@ export function evidenceItems(options: {
                 item.evidence = { ...item.evidence, ...scoresEvidence(scores) };
             }
         }
-        items.push(...findings);
+        swapRanges.push(...findings);
     }
 
     const voices = microphoneVoices(
@@ -1146,7 +1092,10 @@ export function evidenceItems(options: {
         return [...labels];
     };
 
+    const labels: SpeakerEvidence["labels"] = [];
     for (const [label, labelLines] of byLabel) {
+        const outcomes: LineOutcome[] = [];
+        labels.push({ label, outcomes });
         const isSelfLabel = sameName(label, selfName);
 
         for (const line of labelLines) {
@@ -1156,7 +1105,7 @@ export function evidenceItems(options: {
                     swap.skipped?.includes(line.startSec)
             );
             if (skippedSwap && line.voice?.quality !== "matched") {
-                close();
+                outcomes.push({ kind: "none", line, reason: "swap-skipped" });
                 continue;
             }
             const voice = options.voiceMatches?.[String(line.index)];
@@ -1175,8 +1124,7 @@ export function evidenceItems(options: {
                 voice.person &&
                 speakers.allowsMatchedVoice(line, voice.person)
             ) {
-                close();
-                items.push({
+                const item: NewItem = {
                     kind: "speaker-range",
                     status: "suggested",
                     label,
@@ -1191,12 +1139,13 @@ export function evidenceItems(options: {
                         decisionGate: "cosine and margin",
                         confidenceMeaning: "rule gate passed; cosine is not probability",
                     },
-                });
+                };
+                outcomes.push({ kind: "direct", line, item });
                 continue;
             }
             // R20 already said who the line is.
             if (swapped(line) && line.voice?.quality !== "matched") {
-                close();
+                outcomes.push({ kind: "none", line, reason: "in-swap" });
                 continue;
             }
 
@@ -1238,9 +1187,13 @@ export function evidenceItems(options: {
                       found,
                   });
 
-            // A range holds only consecutive lines with its finding: a line without one stays its label's.
-            if (!finding || (finding.speaker && !eligible.choices.some((name) => sameName(name, finding.speaker!)))) {
-                close();
+            if (!finding) {
+                outcomes.push({ kind: "none", line, reason: "no-finding" });
+                continue;
+            }
+
+            if (finding.speaker && !eligible.choices.some((name) => sameName(name, finding.speaker!))) {
+                outcomes.push({ kind: "none", line, reason: "ineligible-speaker" });
                 continue;
             }
             if (finding.candidates) {
@@ -1248,16 +1201,145 @@ export function evidenceItems(options: {
                     eligible.choices.some((other) => sameName(name, other))
                 );
             }
+
+            outcomes.push({
+                kind: "finding",
+                line,
+                finding,
+                nearby,
+                ...(stuck.has(line.index) ? { indicatorReason: assessment.reasons.get(line.index) } : {}),
+            });
+        }
+    }
+
+    return {
+        swapItems: swapRanges,
+        labels,
+        swaps,
+        rangeContext: { selfName, speakers, items: options.items ?? [], samePerson: options.samePerson },
+    };
+}
+
+/** The independent speaking-indicator lines sure enough to seed the voice pass. */
+export function independentIndicatorLines(evidence: SpeakerEvidence, applyAbove: number): Map<number, string> {
+    const indicators = new Map<number, string>();
+    for (const { outcomes } of evidence.labels) {
+        for (const outcome of outcomes) {
+            if (outcome.kind !== "finding") {
+                continue;
+            }
+
+            const { finding, line } = outcome;
             if (
                 finding.speaker &&
                 finding.rules.includes(MeetingRule.SpeakingIndicator) &&
                 !finding.listen &&
                 !finding.echo &&
-                !finding.conflict
+                !finding.conflict &&
+                finding.confidence >= applyAbove
             ) {
-                options.onIndicator?.(line.index, finding.speaker, finding.confidence);
+                indicators.set(line.index, finding.speaker);
+            }
+        }
+    }
+    return indicators;
+}
+
+/** Group consecutive findings, preserving swap items first and the first-seen label order. */
+function rangesOf(evidence: EvaluatedEvidence): { items: NewItem[]; swaps: SwapStretch[] } {
+    const { swaps, rangeContext } = evidence;
+    const items = [...evidence.swapItems];
+    if (!rangeContext) {
+        return { items, swaps };
+    }
+
+    const { selfName, speakers, samePerson } = rangeContext;
+    let open:
+        | {
+              item: Extract<NewItem, { kind: "speaker-range" }>;
+              key: string;
+              shares: number[];
+              echoLines: number;
+              endSec: number;
+              /** The range's lines and, per line, the platform labels talking within 10 s (R17). */
+              lines: LineEvidence[];
+              nearby: string[][];
+          }
+        | undefined;
+    const close = () => {
+        if (open) {
+            const mean = open.shares.reduce((sum, share) => sum + share, 0) / open.shares.length;
+            const confidence = Math.round(mean * 100) / 100;
+            open.item.confidence = confidence;
+            const tallies = lineTallies({
+                lines: open.lines,
+                selfName,
+                nearby: open.nearby,
+                eligibility: speakers.eligibility,
+                micHolds: micSure,
+                samePerson,
+            });
+            addPolish(tallies, {
+                items: rangeContext.items,
+                label: open.item.label,
+                fromSec: open.item.fromSec,
+                toSec: open.endSec,
+            });
+            const eligible = speakers.eligibility.get(open.lines[0]!.index)!;
+            const candidateScores = scoreCandidates({
+                tallies: tallies.tallies.filter((tally) => eligible.choices.some((name) => sameName(name, tally.name))),
+                lines: open.lines.length,
+                label: open.item.label,
+                speaker: open.item.speaker,
+                confidence,
+                rules: open.item.rules,
+                samePerson,
+            });
+            open.item.evidence = {
+                ...open.item.evidence,
+                lines: open.shares.length,
+                endSec: open.endSec,
+                ...(open.echoLines > 0 ? { echoLines: open.echoLines } : {}),
+                ...(open.item.rules.includes(MeetingRule.Voice)
+                    ? {
+                          voiceEvidence: open.lines.map((line) => ({
+                              index: line.index,
+                              fromSec: line.startSec,
+                              toSec: line.endSec,
+                              ...line.voice,
+                          })),
+                      }
+                    : {}),
+                ...(candidateScores.length > 0
+                    ? {
+                          candidateScores:
+                              open.item.rules.includes(MeetingRule.LocalVoice) && open.item.candidates
+                                  ? candidateScores.filter((score) =>
+                                        open!.item.candidates!.some((name) => sameName(name, score.speaker))
+                                    )
+                                  : candidateScores,
+                      }
+                    : {}),
+            };
+            items.push(open.item);
+            open = undefined;
+        }
+    };
+
+    for (const { label, outcomes } of evidence.labels) {
+        for (const outcome of outcomes) {
+            // A range holds only consecutive lines with its finding: a line without one stays its label's.
+            if (outcome.kind !== "finding") {
+                close();
+                if (outcome.kind === "direct") {
+                    items.push(outcome.item);
+                }
+                continue;
             }
 
+            const { line, finding, nearby, indicatorReason } = outcome;
+            const indicatorIgnored = "indicatorReason" in outcome;
+            const eligible = speakers.eligibility.get(line.index)!;
             // A voice finding and a channel finding stay apart, so a range's rules and voice evidence fit every line.
             const key = `${speakers.key(line.index)}|${finding.elimination ?? false}|${finding.speaker ?? ""}|${(finding.candidates ?? []).join(",")}|${finding.listen ? "listen" : ""}|${finding.rules.includes(MeetingRule.Voice) ? "voice" : ""}|${finding.conflict ? "conflict" : ""}`;
 
@@ -1300,12 +1382,11 @@ export function evidenceItems(options: {
                         ...(finding.elimination ? { reviewOnly: true, reason: "mute-elimination" } : {}),
                         ...(eligible.channel.side === "call" &&
                         !finding.speaker &&
-                        (line.speakingUnknown || stuck.has(line.index))
+                        (line.speakingUnknown || indicatorIgnored)
                             ? { sharedCallUnknown: true }
                             : {}),
                         ...(finding.conflict ? { channelConflict: true } : {}),
-                        ...(stuck.has(line.index) ? { indicatorIgnored: assessment.reasons.get(line.index) } : {}),
-                        ...(stuck.has(line.index) ? { indicatorReason: assessment.reasons.get(line.index) } : {}),
+                        ...(indicatorIgnored ? { indicatorIgnored: indicatorReason, indicatorReason } : {}),
                         ...(finding.listen
                             ? { listen: true, note: "both channels in these lines: confirm by listening" }
                             : {}),
@@ -1317,6 +1398,12 @@ export function evidenceItems(options: {
         close();
     }
 
-    log.debug({ lines: lines.length, items: items.length, swaps }, "evidence items");
+    const lineCount = evidence.labels.reduce((sum, group) => sum + group.outcomes.length, 0);
+    log.debug({ lines: lineCount, items: items.length, swaps }, "evidence items");
     return { items, swaps };
+}
+
+/** The channel and energy items, and the swapped stretches (R20) that the arrival rule must leave alone too. */
+export function evidenceItems(input: EvidenceInput): { items: NewItem[]; swaps: SwapStretch[] } {
+    return rangesOf(speakerEvidence(input));
 }

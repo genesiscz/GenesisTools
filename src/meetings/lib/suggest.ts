@@ -70,7 +70,6 @@ import {
 } from "./suggest-terms";
 import { unlabeledStretches, unlabeledView } from "./unlabeled";
 
-export { evidenceItems } from "./speaker-evidence";
 export { dictionaryKeeps, knownWord, rawTerms, settledTermItems, spokenOnPurpose, wordFamily } from "./suggest-terms";
 
 const prof = profiler.scope("meetings-suggest");
