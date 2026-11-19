@@ -1241,6 +1241,92 @@
     }
   },
   {
+    "method": "work.configSet",
+    "params": {
+      "scope": "project",
+      "project": "fixture",
+      "notify": {
+        "type": "epic",
+        "action": "spotted",
+        "level": "off"
+      },
+      "restore": [
+        {
+          "type": "epic",
+          "action": "spotted",
+          "from": "off",
+          "to": "off"
+        }
+      ],
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": {
+          "changed": [],
+          "file": "fixture"
+        },
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "work.configSet",
+    "params": {
+      "scope": "project",
+      "project": "fixture",
+      "notify": {
+        "type": "epic",
+        "action": "spotted",
+        "level": null
+      },
+      "restore": [
+        {
+          "type": "epic",
+          "action": "spotted",
+          "from": null,
+          "to": null
+        }
+      ],
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
     "method": "work.spot",
     "params": {
       "title": "fixture",

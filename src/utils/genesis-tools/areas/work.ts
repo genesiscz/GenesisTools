@@ -68,7 +68,17 @@ function actionOf(name: WorkMethodName) {
             });
 
             if (reply.ok && write && call?.dryRun !== true) {
-                ctx.emit("changed", { method: name, items: reply.ok ? itemsOf(reply.data) : [] });
+                const changed =
+                    name !== "configSet" ||
+                    (typeof reply.data === "object" &&
+                        reply.data !== null &&
+                        "changed" in reply.data &&
+                        Array.isArray(reply.data.changed) &&
+                        reply.data.changed.length > 0);
+
+                if (changed) {
+                    ctx.emit("changed", { method: name, items: itemsOf(reply.data) });
+                }
             }
 
             return reply;

@@ -6,7 +6,7 @@
 import { z } from "zod";
 import { PAIRING_STATES } from "./connectors/types";
 import { ITEM_STATES, ITEM_TYPES, SEVERITIES } from "./model/vocab";
-import { NOTIFY_ACTIONS, NOTIFY_LEVELS } from "./rules/config";
+import { NOTIFY_ACTIONS, NOTIFY_LEVELS, notifyRuleSchema } from "./rules/config";
 
 const state = z.enum(ITEM_STATES);
 const type = z.enum(ITEM_TYPES);
@@ -101,6 +101,19 @@ export function replySchemaOf(data: z.ZodType) {
     });
 }
 
+export const notifyConfigChangeSchema = z.object({
+    path: z.string(),
+    type,
+    action: z.enum(NOTIFY_ACTIONS),
+    from: notifyRuleSchema.nullable(),
+    to: notifyRuleSchema.nullable(),
+});
+
+export const configSetResultSchema = z.object({
+    changed: z.array(notifyConfigChangeSchema),
+    file: z.string(),
+});
+
 const layerTrail = z.array(z.object({ layer: z.string(), value: z.unknown().optional() }));
 
 /** `config`: per type, its field rules and write roles (values of any shape) and its notify levels (typed). */
@@ -130,6 +143,24 @@ export const configResultSchema = z.object({
                         from: z.string(),
                         layers: z.array(z.object({ layer: z.string(), value: z.enum(NOTIFY_LEVELS).optional() })),
                     }),
+                    editor: z
+                        .object({
+                            level: z.enum(NOTIFY_LEVELS),
+                            from: z.string(),
+                            builtInLevel: z.enum(NOTIFY_LEVELS),
+                            minSeverity: z.enum(SEVERITIES).optional(),
+                            repoPath: z.string().nullable(),
+                            layers: z.array(
+                                z.object({
+                                    layer: z.string(),
+                                    value: z.enum(NOTIFY_LEVELS).optional(),
+                                    rule: notifyRuleSchema.nullable(),
+                                    wildcard: z.boolean(),
+                                    fallback: z.enum(NOTIFY_LEVELS).optional(),
+                                })
+                            ),
+                        })
+                        .optional(),
                 })
             ),
         })
