@@ -384,11 +384,13 @@ export async function addVoiceSample(
     const evidence = await opened.evidence();
     const { lineEvidence } = await import("@genesiscz/utils/transcribe/evidence");
     const stays = (await opened.presence())?.filter((stay) => sameName(stay.name, options.person)) ?? [];
+    // Only lines inside the interval can be enrolled, so only lines that start in it are measured.
     const eligible = lineEvidence(
         [...lines.entries],
         evidence ?? { segments: [], speaking: [] },
         undefined,
-        energy.share
+        energy.share,
+        { window: { fromSec: options.fromSec, toSec: options.toSec } }
     ).flatMap((line) => {
         const share = line.micShare ?? line.energyMic;
         if (

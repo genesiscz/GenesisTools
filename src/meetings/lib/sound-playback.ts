@@ -1,5 +1,6 @@
 import { LISTEN_PLAYERS, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
+import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import type { OpenedMeeting } from "./opened-meeting";
 import { PLAYERS, pickPlayer } from "./players";
 import type { SoundSlice, TrackKind } from "./sound";
@@ -86,11 +87,24 @@ export async function playbackSlice(options: {
     const sound = await opened.sound();
     let seat: "mic" | "call" | undefined = track ? sound.tracks.find((one) => one.kind === track)?.seat : undefined;
     if (!seat && !track) {
+        // Find the one line spoken at atSec first (its end comes from the next line), then measure only that line.
         const entries = (await opened.meeting()).transcript;
-        const energy = await opened.energy();
-        const evidence = await opened.evidence();
-        const lines = lineEvidence(entries, evidence ?? { segments: [], speaking: [] }, undefined, energy.share);
-        const line = lines.find((line) => line.startSec <= atSec && atSec < line.endSec);
+        const transcript = new TranscriptLines(entries);
+        const at = entries.findIndex((_, index) => {
+            const span = transcript.span(index);
+            return span !== undefined && span.fromSec <= atSec && atSec < span.toSec;
+        });
+        const startSec = entries[at]?.startSec;
+        const line =
+            startSec === undefined
+                ? undefined
+                : lineEvidence(
+                      entries,
+                      (await opened.evidence()) ?? { segments: [], speaking: [] },
+                      undefined,
+                      (await opened.energy()).share,
+                      { window: { fromSec: startSec, toSec: startSec } }
+                  ).find((one) => one.index === at);
         const share = line?.micShare ?? line?.energyMic;
         seat = share === undefined || share === 0.5 ? undefined : share > 0.5 ? "mic" : "call";
     }
