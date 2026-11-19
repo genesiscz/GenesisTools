@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,6 +16,7 @@ import {
     FrameRecorder,
 } from "@genesiscz/utils/screen-recorder/types";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { MeetingRun } from "./meeting-run";
 import { runRecorder } from "./recorder";
 import { meetingLiveId } from "./recorder-shared";
 import { type AudioRow, meetingSound, readAudioRows, type SoundInputs } from "./sound";
@@ -140,6 +141,51 @@ async function recordWithoutMicrophone() {
     });
     return { state, folder, requests: recorder.requests, rows: readAudioRows(folder) };
 }
+
+test("a stalled sound recovery ends the stop at its deadline and keeps .piece/ for the next start", async () => {
+    const store = new MeetingStore(new Storage("meetings-sound-salvage-deadline"));
+    const created = await store.create(
+        { title: "Stalled recovery", start: "2026-11-03T12:00:00.000Z", createdBy: "record" },
+        { command: "record start", change: "created" }
+    );
+    const folder = store.folder(created.id);
+    const liveDir = mkdtempSync(join(tmpdir(), "live-sound-deadline-"));
+    const recorder = new GrantRecorder(() => {
+        void callRecorder({ id: meetingLiveId(created.id), method: "stop", dir: liveDir }).catch(() => undefined);
+    });
+    const original = MeetingRun.prototype.salvageTracks;
+    let calls = 0;
+    // begin() recovers as usual; every later recovery never settles.
+    const salvage = spyOn(MeetingRun.prototype, "salvageTracks").mockImplementation(function (this: MeetingRun, dir) {
+        calls += 1;
+        return calls === 1 ? original.call(this, dir) : new Promise<number>(() => undefined);
+    });
+    try {
+        const state = await runRecorder({
+            store,
+            meetingId: created.id,
+            capture: meetingsConfigSchema.parse({}).global.capture,
+            audio: ["mic", "system"],
+            deps: {
+                recorder,
+                toJpeg: async (_png, jpg) => {
+                    await Bun.write(jpg, "jpeg");
+                },
+                startOcr: () => undefined,
+                notify: async () => undefined,
+                liveDir,
+                pieceSec: 1,
+                failurePauseMs: 0,
+                salvageDeadlineMs: 200,
+            },
+        });
+        expect(calls).toBeGreaterThan(1);
+        expect(state.warning).toContain("sound recovery did not finish within 0.2s");
+        expect(existsSync(join(folder, ".piece"))).toBe(true);
+    } finally {
+        salvage.mockRestore();
+    }
+});
 
 let recorded: ReturnType<typeof recordWithoutMicrophone> | undefined;
 const recording = () => {

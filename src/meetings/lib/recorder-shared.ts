@@ -205,6 +205,8 @@ export interface RecorderDeps {
     liveDir?: string;
     pieceSec: number;
     failurePauseMs: number;
+    /** How long the stop waits for the sound left in the piece folders (30 s by default). */
+    salvageDeadlineMs?: number;
 }
 
 export function defaultOcrLanguages(): string[] {

@@ -18,6 +18,7 @@ import {
     STOP_ANSWER_MS,
 } from "@app/meetings/lib/recorder-shared";
 import { writeMeetingRecordingManifest } from "@app/meetings/lib/recording-manifest";
+import { withTimeout } from "@genesiscz/utils/async";
 import { MeetingLevels } from "@genesiscz/utils/meetings/levels";
 import type { MeetingStore } from "@genesiscz/utils/meetings/record";
 import type { AudioLevelBlock } from "@genesiscz/utils/screen-recorder/audio-levels";
@@ -35,6 +36,9 @@ import { collectRecord } from "./collect";
 import { appendMeetingLevels } from "./levels";
 import { startOcrWorker } from "./ocr-worker";
 import { claimRecorderPid, RecorderStateFile } from "./recorder-adapters";
+
+/** How long the stop waits for the sound left in the piece folders by default; each probed file has its own 2 s limit. */
+const SALVAGE_DEADLINE_MS = 30_000;
 
 /**
  * The meetings recorder's configuration of the shared capture core. Its rules: the engine records the sound, the
@@ -173,8 +177,30 @@ function meetingRecorderConfig(run: MeetingRun, minSeparation?: number) {
                 },
                 afterLoop: async () => {
                     stopLevels?.();
-                    await Promise.all(salvages);
-                    await run.salvageTracks(run.pieceDir);
+                    const deadlineMs = deps.salvageDeadlineMs ?? SALVAGE_DEADLINE_MS;
+                    const expired = new Error(`sound recovery did not finish within ${deadlineMs / 1000}s`);
+                    try {
+                        await withTimeout(
+                            (async () => {
+                                await Promise.all(salvages);
+                                await run.salvageTracks(run.pieceDir);
+                            })(),
+                            deadlineMs,
+                            expired
+                        );
+                    } catch (err) {
+                        if (err !== expired) {
+                            throw err;
+                        }
+
+                        // The files stay in .piece/: the next start of this meeting recovers them (MeetingRun.begin).
+                        log.warn({ meetingId, dir: run.pieceDir }, "sound recovery did not finish before the stop");
+                        run.note(`${expired.message}; the unrecovered sound stays in .piece/ for the next start`);
+                        state.warning = run.notes.join("; ");
+                        run.saveState();
+                        return;
+                    }
+
                     run.finishSound(recording);
                     rmSync(run.pieceDir, { recursive: true, force: true });
                 },
