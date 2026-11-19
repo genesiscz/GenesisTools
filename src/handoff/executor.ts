@@ -57,6 +57,8 @@ export interface HandoffDeps {
     base?: string;
     /** Work database path override (tests). */
     dbPath?: string;
+    /** Connection borrowed from a Work transaction. */
+    transactionDb?: Database;
     /** AgentRuntimeContext overrides (tests / explicit session). */
     ctx?: Partial<AgentRuntimeContext>;
     /** Full actor override — the dashboard's owner-authority human actor (§7.1). */

@@ -1,6 +1,7 @@
 /**
  * What the work package needs from tool code. `src/work/adapters/` implements these; the package imports no `@app/*`.
  */
+import type { Database } from "bun:sqlite";
 import type { SyncDeps } from "./connectors/sync";
 import type { WorkerStamp } from "./model/item";
 
@@ -63,6 +64,8 @@ export interface LegacyHandoffs {
     write(action: LegacyAction, operationId?: string): Promise<LegacyWriteResult>;
     /** What the old store would answer to these actions, in order, without writing; one result per action. */
     check(actions: LegacyAction[]): Promise<LegacyWriteResult[]>;
+    /** When both models share a database, fold on the caller's write connection. */
+    atomic?(db: Database): { write(action: LegacyAction): LegacyWriteResult; flush(): void } | undefined;
 }
 
 /** Who else belongs to the caller: the sessions whose live claims a spotted item may pair with. */

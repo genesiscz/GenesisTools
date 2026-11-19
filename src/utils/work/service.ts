@@ -174,8 +174,15 @@ export async function write(
     // The check folds in memory; it cannot run inside the store's transaction, because the old executor opens the
     // same database itself.
     const preview = transact(ctx.db, command, env, { dryRun: true, projectItems: options.dryRun === true });
+    const atomic = options.dryRun ? undefined : ctx.ports.legacy.atomic?.(ctx.db);
 
-    if (!("replay" in preview) && !("pending" in preview) && preview.ok && preview.data.legacy.length > 0) {
+    if (
+        atomic === undefined &&
+        !("replay" in preview) &&
+        !("pending" in preview) &&
+        preview.ok &&
+        preview.data.legacy.length > 0
+    ) {
         const answers = await ctx.ports.legacy.check(preview.data.legacy);
         const refused = preview.data.legacy.flatMap((action, index) => {
             const answer = answers[index];
@@ -198,7 +205,7 @@ export async function write(
     const result =
         options.dryRun || "replay" in preview || "pending" in preview || !preview.ok
             ? preview
-            : transact(ctx.db, command, env, { approvedLegacy: preview.data.legacy });
+            : transact(ctx.db, command, env, { approvedLegacy: preview.data.legacy, writeLegacy: atomic?.write });
 
     if ("replay" in result) {
         return result.replay as Reply<WriteData>;
@@ -227,7 +234,10 @@ export async function write(
         );
     }
 
-    return finishWrite({ ctx, result, completed: [] });
+    if (result.data.completedLegacy?.length) {
+        atomic?.flush();
+    }
+    return finishWrite({ ctx, result, completed: result.data.completedLegacy ?? [] });
 }
 
 type WriteSuccess = Extract<Reply<WriteOutcome>, { ok: true }>;
@@ -282,6 +292,9 @@ async function completeRequest(
     }
 
     const row = claim.row;
+    if (row.outcome.ok && row.completed.length > 0 && row.completed.length === row.outcome.data.legacy.length) {
+        ctx.ports.legacy.atomic?.(ctx.db)?.flush();
+    }
     const save = (value: Reply<WriteData> | PendingWrite) =>
         ctx.db
             .transaction(() => {
