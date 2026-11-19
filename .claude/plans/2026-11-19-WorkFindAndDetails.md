@@ -10,7 +10,8 @@ on it there.
 - No new store, no new service, no new transport. Every read and write goes through `GenesisToolsRPC.work.*`
   (the actions service), which the screen uses today.
 - No server-side text search. The search runs in Swift over rows the screen already reads (decision 2 of P1).
-- No change to the widget's Tasks module or its links into Work, except that a link must still land on the item.
+- The Tasks widget supplies links into Work, including legacy session-task links. The widget link commits also
+  supply optional hover previews and plan shortcuts. Open the linked item in Work to read its full text.
 - No VoiceOver, Full Keyboard Access or OS accessibility settings work (ux skill, "Accessibility scope": not
   confirmed for this task). Keep every existing accessibility label and identifier, and give each new control a
   label and an identifier.
@@ -35,6 +36,7 @@ it alone commits. It reads only this file and what it links.
     `bun scripts/native/swift-package.ts ...` or `bun run app:test`, wait until
     `pgrep -x swift-build || pgrep -x swift-test || pgrep -x swift-frontend` finds nothing (loop with a 20 s sleep;
     2026-11-19 03:30: `pgrep -f` with the pattern matched the waiting shells themselves and deadlocked them).
+    Check every 20 s for up to 20 minutes. If the deadline expires, report the PIDs and mark the Swift check blocked.
   - Never `rm`. Delete with `tools rm <paths>`. Scratch files go under
     `/tmp/cc/GenesisTools/ae3ac312-7dbe-4045-970a-292aa93ed9ab/work-find-a/`.
   - No agent attribution in commits (no `Co-Authored-By`, no "Generated with"). Commit titles follow
@@ -282,11 +284,10 @@ names in the store code before you write the decoder, and write any kind you add
 1. The detail reads `work.show` once per selection and keeps the last 20 details in memory, refreshed when the store
    changes and the item is on screen. Ruled out: one `work.show` per visible row, because a project has 50 to 100
    open items and the reader looks at one.
-2. Text search runs in Swift over rows the screen has. The open rows come from the snapshot it already reads; done
-   and dropped rows come from ONE `work.list` call for the project (`fields: ref,state,type,severity,worker,title,
-   project,slot`, `limit: 5000`), made only while the filter needs them. Ruled out: a `query` parameter on
-   `work.list`, because it needs a TS change, a regenerated client and a store index for a list that fits in memory
-   (5,000 short rows).
+2. Text search runs in Swift. Open rows come from the snapshot. When a filter needs the project index, read
+   `work.list` with `fields: ref,state,type,severity,worker,title,project,slot` and `limit: 5000` per page.
+   With each full page, pass its final ref as `after`. A short page completes the index, including done and
+   dropped rows. Display the archive newest first across all pages.
 3. The matcher folds case and diacritics (`folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)`)
    and splits on whitespace and punctuation. It is a pure function with unit tests; no view calls `localizedCase...`.
 4. `fields` values decode as text: a string stays, a number or a bool is printed, an object or array is compact
@@ -370,8 +371,8 @@ restores the first rendering's text exactly. The picture pair `work-find-before.
      "Claim" and "Release" when the state allows them (`rpc.work.claim`, `rpc.work.release`).
    - "Where": a `PathLabel` when the value is `path` or `path:line` and the file exists under the project's main
      checkout; plain selectable text otherwise.
-   - "Why", "What a user sees", "Acceptance", other fields: label plus selectable text; the body as markdown through
-     the host's markdown renderer (the same one the transcript uses), clamped to 20 lines with "Show all".
+   - "Why", "What a user sees", "Acceptance", other fields: label plus selectable text. The host's Markdown renderer
+     displays the body, clamped to 20 lines with "Show all".
    - "Tasks" (a container): each member as a row with its state glyph and title; a click selects it (the inspector
      moves to the member; a back chevron in the inspector head returns to the container).
    - "References": grouped by kind in words ("Spotted in", "Member of", "Blocks", "Blocked by"); each one shows the
@@ -418,8 +419,8 @@ file that holds the hub's other General rows (find it with `rg -n 'NativeSetting
 2. The selected row scrolls into view with `ScrollViewReader` (`anchor: nil`, so it moves only when off screen),
    with no animation under Reduce Motion (`@GenReduceMotion`).
 3. The route writes `work=<ref>` on selection, so the hub's back and forward history steps through items. A route
-   to a ref outside the filter clears the filter's text and states so the row is visible, and says so in the find bar
-   ("Filter cleared to show w_x").
+   to a ref outside the filter resets the text and every facet. It selects the item's state when needed to show
+   the row and says so in the find bar ("Filter cleared to show w_x").
 4. The setting `workDetailPlacement` follows the rule in `.claude/rules/opinionated-settings.md` (default "beside").
 **Done when:** `WorkFindTests` cover `moveSelection` over a filtered list (skips hidden rows, stops at the ends) and
 the route clearing a filter; `HubWorkTests` covers the "replace" placement showing the back button; the hub settings
@@ -451,7 +452,7 @@ every pair exists, and Progress lists each checklist item that did not apply wit
 - A package is done when its "Done when" holds and the gate passes. Tick its handoff task with the command, where
   it ran and the commit. Then start the next package.
 - A number shows a direction. It is a gate only where the package says `gate: yes` (none here).
-- When a measurement shows a target is out of reach, write the number and the reason into Progress and go on. Ask
+- When a measurement misses a target, record the number and the reason in Progress. Ask
   the owner about all such limits in ONE question at the end.
 - While you verify, fix a new thing only when it loses data, shows an invented fact or blocks the package. Each other
   thing is one line under "Seen, not fixed", and a `tools work spot` item when it is outside this spec's views.
@@ -498,7 +499,7 @@ every pair exists, and Progress lists each checklist item that did not apply wit
 - The filter is not saved across launches.
 - No match highlighting in this round.
 - Comments are added from the inspector; editing an item's fields (title, severity, type) is not in this spec
-  (`rpc.work.edit` exists; it is a later step and goes under "Seen, not fixed" if the pass asks for it).
+  (record requests to add `rpc.work.edit` under "Seen, not fixed").
 - The detail cache keeps 20 items.
 - Keys: ↑ ↓ Return Esc ⌘F, list and inspector focus only.
 

@@ -4,7 +4,6 @@ import { decisionFiles } from "@app/question/lib/decisions/paths";
 // lint-rules-ignore: the session to-do items are read from the question tool's decision log until P9's switch
 import { kindOf, readDecisions } from "@app/question/lib/decisions/store";
 import { toCliCommands } from "@genesiscz/utils/api-descriptor/cli";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { FormatFlags } from "@genesiscz/utils/output/formats";
@@ -172,8 +171,8 @@ export function registerWorkCommands(program: Command): void {
             "after",
             `\nSupply exactly one of --notify or --restore as quoted JSON. Project scope requires a current project or --project.
 Set level to null to inherit the next applicable rule.
-  ${toolCommand("work", "config-set")} --scope project --project Orchard --notify '{"type":"bug","action":"spotted","level":null}'
-  ${toolCommand("work", "config-set")} --scope global --restore '[{"type":"bug","action":"spotted","from":null,"to":"inbox"}]'`
+  tools work config-set --scope project --project Orchard --notify '{"type":"bug","action":"spotted","level":null}'
+  tools work config-set --scope global --restore '[{"type":"bug","action":"spotted","from":null,"to":"inbox"}]'`
         );
 
     program

@@ -25,11 +25,6 @@ public final class WidgetTasksStore: ObservableObject {
     @Published public private(set) var isCreating = false
     @Published public private(set) var error: String?
     @Published private(set) var failures: [WidgetTaskFailure] = []
-    /// The newest failure as the widget words it (headline, next step, the tool's words behind Details), for a host
-    /// surface such as the hub's Inbox that shows one line of task feedback.
-    public var latestFailureReport: FailureReport? { failures.last?.report }
-    /// The failure of the last task creation, for the add-task form.
-    public var createFailureReport: FailureReport? { failures.last { $0.id == .create }?.report }
     @Published private(set) var earlierFailureCount = 0
     private static let retainedFailureLimit = 4
     @Published public private(set) var receipt: String?

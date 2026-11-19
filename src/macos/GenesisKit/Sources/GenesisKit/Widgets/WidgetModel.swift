@@ -165,11 +165,6 @@ public final class WidgetModel: ObservableObject {
     public var stagedLeftInPopup: (([WidgetInboxItem]) -> Void)?
     private var stagedStartChecked = false
     public func session(forKey key: String) -> WidgetSession? { sessionIndex[key] }
-    /// The session of the agent that stored a decision's answer, when the widget lists it (`WidgetAnsweredBy.sessionKey`):
-    /// the link on that agent's name opens it.
-    public func answererSession(_ agent: WidgetAnsweredBy?) -> WidgetSession? {
-        agent?.sessionKey.flatMap(session(forKey:))
-    }
     @Published public var moduleSelections: [String: String] = [:]
     @Published public var draggedSidePosition: Double?
     @Published public var draggingSide = false
@@ -271,17 +266,6 @@ public final class WidgetModel: ObservableObject {
     func closePreviewEntry() {
         guard previewEntryOpen else { return }
         previewOpenItemID = nil
-    }
-
-    /// The Open Widget shortcut: an entry the reader opened in the hover list opens in its session, so the expanded
-    /// widget keeps it; with none open, the agents pane opens as it last was.
-    func openFromShortcut(on surface: WidgetSurfaceID) {
-        if let id = previewOpenItemID, let item = inboxOverviewItems.first(where: { $0.id == id }) {
-            closePreviewEntry()
-            openInboxItem(item, on: surface)
-            return
-        }
-        openModule("agents", on: surface)
     }
 
     private func resumeHoverExit() {
@@ -823,7 +807,7 @@ public final class WidgetModel: ObservableObject {
     }
 
     /// `state.json` of this model's widget root, the file `hub widget` reads preferences from
-    /// (`src/utils/widget/storage.ts`: the state root, else `$GENESIS_TOOLS_HOME/.genesis-tools/hub/widget`).
+    /// (`src/hub/lib/widget/storage.ts`: the state root, else `$GENESIS_TOOLS_HOME/.genesis-tools/hub/widget`).
     nonisolated static func widgetStateFile(stateRoot: String?,
                                             environment: [String: String] = ProcessInfo.processInfo.environment) -> String {
         if let stateRoot {
@@ -1304,8 +1288,7 @@ public final class WidgetModel: ObservableObject {
         refreshInboxFeeds()
         applyAlertPopup(alertPopup.inboxChanged())
         let listed = value.sessions.flatMap { $0.items ?? [] }
-        // An incomplete snapshot (a failed decision read sends an empty staged list) proves no decision left the log.
-        reconcileStaged(value.staged ?? listed, listed: listed, complete: value.complete)
+        reconcileStaged(value.staged ?? listed, listed: listed)
         if value.complete, !stagedStartChecked {
             stagedStartChecked = true
             if !stagedItems.isEmpty { stagedAtStart?(stagedItems) }
@@ -1661,8 +1644,6 @@ public final class WidgetModel: ObservableObject {
     /// per-session list gives each session's pending and unread item. Stored when the inbox changes: up to 512
     /// sessions × 8 entries, sorted, is too much to derive in a body that reads it several times per pass.
     public private(set) var inboxOverviewItems: [WidgetInboxItem] = []
-    /// The entries the sessions' lists leave out for the per-session limit: the overview says they exist.
-    var inboxHiddenItems: Int { inbox.sessions.reduce(0) { $0 + ($1.hiddenItems ?? 0) } }
     /// Every staged decision of every session (the decision log's unsent picks and notes), stored with the inbox.
     @Published var stagedRows: [WidgetInboxItem] = []
     /// The staged decisions that may be sent: `stagedRows` without a decision dismissed or completed while its Undo
@@ -1683,15 +1664,14 @@ public final class WidgetModel: ObservableObject {
     var stageAgain: [String: () -> Void] = [:]
     /// Decisions whose send runs now, so their Send now says Sending… and a second press cannot send them twice.
     @Published public var sendingDecisionIDs: Set<String> = []
-    /// The stage each running send took (its version, pick, note and session): a newer one is staged again.
-    var sendingStages: [String: WidgetSendingStage] = [:]
+    /// The version of the pick each running send took (`decisions.version`): a newer one is staged again.
+    var sendingStageVersions: [String: UUID] = [:]
     /// Staged decisions the hub answered a send for (delivered, or kept for the session's next prompt), until a
     /// snapshot no longer lists them as staged: every list draws them as sent in that gap, and no close asks about
     /// them (`settleStagedSend`, `dropAgreedSends`).
     @Published public var sentDecisions: [String: WidgetSentDecision] = [:]
-    /// Why the last send of a staged decision did not take it, with the stage that send took: on its row until it is
-    /// staged, sent or cleared again, or a snapshot shows another stage (another inbox staged it anew).
-    @Published public var unsentReasons: [String: WidgetUnsentReason] = [:]
+    /// Why the last send of a staged decision did not take it, on its row until it is staged, sent or cleared again.
+    @Published public var unsentReasons: [String: String] = [:]
     /// The question about staged decisions before the panel closes (`requestCollapse`).
     @Published public var stagedLeavePrompt = false
     /// The staged decisions view: nil closed, "session" for the selected session's, "all" for every session's.
@@ -2572,10 +2552,10 @@ public final class WidgetModel: ObservableObject {
             submittedAssets.formUnion(submitted.assetIds)
             if let card, answering || choice != nil { submittedCards.insert(card.id) }
             let sentKey = selectedKey
-            action(["action": "draft-text", "key": .string(sentKey), "text": ""], completed: { [weak self] in
+            action(["action": "draft-text", "key": .string(sentKey), "text": ""]) { [weak self] in
                 guard let self, self.drafts[sentKey]?.text.isEmpty ?? true else { return }
                 self.draftLanded(sentKey)
-            })
+            }
             drainJournal()
         } catch { report(error) }
     }
@@ -2707,10 +2687,10 @@ public final class WidgetModel: ObservableObject {
                     self.draftRevisions[key, default: 0] += 1
                     self.draftOwnership.pending(key)
                     let saved = restored.text
-                    self.action(["action": "draft-text", "key": .string(key), "text": .string(saved)], completed: { [weak self] in
+                    self.action(["action": "draft-text", "key": .string(key), "text": .string(saved)]) { [weak self] in
                         guard let self, self.drafts[key]?.text == saved else { return }
                         self.draftLanded(key)
-                    })
+                    }
                 } else {
                     self.draftLanded(key)
                 }
@@ -2997,10 +2977,10 @@ public final class WidgetModel: ObservableObject {
             draftTasks[key] = nil
             if !stopping {
                 let merged = drafts[key]?.text ?? ""
-                action(["action": "draft-text", "key": .string(key), "text": .string(merged)], completed: { [weak self] in
+                action(["action": "draft-text", "key": .string(key), "text": .string(merged)]) { [weak self] in
                     guard let self, self.drafts[key]?.text == merged else { return }
                     self.draftLanded(key)
-                })
+                }
             }
         }
         voiceKey = nil

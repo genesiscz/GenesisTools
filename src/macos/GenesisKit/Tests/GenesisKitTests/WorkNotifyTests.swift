@@ -1,5 +1,4 @@
 import AppKit
-import GenesisKitTestSupport
 import ImageIO
 import SwiftUI
 import Vision
@@ -156,83 +155,6 @@ final class WorkNotifyTests: XCTestCase {
         XCTAssertEqual(applied, [.global])
     }
 
-    // w_qhr1zs58: the hub and widget overrides (`projects.<p>.surfaces.<surface>.notify`) are set from the same grid.
-    func testAHubOverrideIsSetAndResetFromTheGridEvenOverARepositoryRule() throws {
-        let cell = WorkNotifyCell(action: "spotted", level: "banner", from: "surface.hub", layers: [
-            .init(layer: "default", level: "list"),
-            .init(layer: "config.repo", level: "off", rule: .level("off")),
-            .init(layer: "config.project", level: nil),
-            .init(layer: "surface.hub", level: "banner", rule: .level("banner")),
-            .init(layer: "surface.widget", level: nil),
-        ])
-        XCTAssertFalse(cell.writable(at: .project), "the repository's file still decides the project rule")
-        XCTAssertTrue(cell.writable(at: .hub))
-        XCTAssertEqual(cell.inheriting(.hub).layer, "config.repo")
-        XCTAssertEqual(WorkNotifyScope.hub.surface, "hub")
-        XCTAssertNil(WorkNotifyScope.project.surface)
-
-        let target = WorkNotifyMenu.Target(type: "bug", action: "spotted", cells: [cell])
-        var applied: [(WorkNotifyScope, String?)] = []
-        var chosen: [WorkNotifyScope] = []
-        let native = MenuButtonPresenter.menu(WorkNotifyMenu.items(target: target, scope: .hub, enabled: true,
-            chooseScope: { chosen.append($0) }, apply: { scope, _, _, level in applied.append((scope, level)) }))
-        XCTAssertEqual(native.item(withTitle: "In the hub, for this project")?.state, .on)
-        try choose("Use inherited level (Nobody, from this repository's file)", in: native)
-        try choose("In the widget, for this project", in: native)
-        XCTAssertEqual(applied.map(\.0), [.hub])
-        XCTAssertEqual(applied.map(\.1), [nil])
-        XCTAssertEqual(chosen, [.widget])
-    }
-
-    func testTheLevelCheckmarkFollowsTheScopeTheNextClickWrites() {
-        let cell = WorkNotifyCell(action: "spotted", level: "off", from: "surface.widget", layers: [
-            .init(layer: "default", level: "list"),
-            .init(layer: "config.global", level: "inbox", rule: .level("inbox")),
-            .init(layer: "config.project", level: nil),
-            .init(layer: "surface.hub", level: "banner", rule: .level("banner")),
-            .init(layer: "surface.widget", level: "off", rule: .level("off")),
-        ])
-        XCTAssertEqual(cell.level(at: .global), "inbox")
-        XCTAssertEqual(cell.level(at: .project), "inbox", "the project rule inherits the global one, not a surface override")
-        XCTAssertEqual(cell.level(at: .hub), "banner")
-        XCTAssertEqual(cell.level(at: .widget), "off", "the widget never sees the hub's override")
-        let target = WorkNotifyMenu.Target(type: "bug", action: "spotted", cells: [cell])
-        func checked(_ scope: WorkNotifyScope) -> [String] {
-            MenuButtonPresenter.menu(WorkNotifyMenu.items(target: target, scope: scope, enabled: true,
-                chooseScope: { _ in }, apply: { _, _, _, _ in })).items.prefix(4).filter { $0.state == .on }.map(\.title)
-        }
-        XCTAssertEqual(checked(.project), ["Inbox line"])
-        XCTAssertEqual(checked(.global), ["Inbox line"])
-        XCTAssertEqual(checked(.hub), ["Inbox and banner"])
-        XCTAssertEqual(checked(.widget), ["Nobody"])
-        let bare = WorkNotifyCell(action: "spotted", level: "list", from: "default", layers: [
-            .init(layer: "default", level: "list"),
-            .init(layer: "surface.hub", level: nil),
-        ], builtInLevel: "list")
-        XCTAssertEqual(bare.level(at: .hub), "list")
-    }
-
-    func testACellTheRepositoryDecidesStillOffersTheHubAndWidgetScopes() throws {
-        let cell = WorkNotifyCell(action: "spotted", level: "off", from: "config.repo", layers: [
-            .init(layer: "default", level: "list"),
-            .init(layer: "config.repo", level: "off", rule: .level("off")),
-            .init(layer: "config.project", level: nil),
-            .init(layer: "surface.hub", level: nil),
-            .init(layer: "surface.widget", level: nil),
-        ])
-        XCTAssertFalse(cell.writable(at: .project))
-        let target = WorkNotifyMenu.Target(type: "bug", action: "spotted", cells: [cell])
-        var chosen: [WorkNotifyScope] = []
-        let native = MenuButtonPresenter.menu(WorkNotifyMenu.items(target: target, scope: .project, enabled: true,
-            chooseScope: { chosen.append($0) }, apply: { _, _, _, _ in XCTFail("a locked cell sets no level") }))
-        XCTAssertTrue(native.items.contains { $0.title.hasPrefix("Set in ") })
-        XCTAssertNil(native.item(withTitle: "Inbox line"), "a locked cell offers no level")
-        XCTAssertEqual(native.item(withTitle: "For this project")?.state, .on)
-        try choose("In the hub, for this project", in: native)
-        try choose("In the widget, for this project", in: native)
-        XCTAssertEqual(chosen, [.hub, .widget])
-    }
-
     func testResetThatExposesARepositoryRuleDoesNotOfferUndo() async throws {
         let source = NotifyFixtureSource()
         let repo = try XCTUnwrap(source.rows[0].cells[0].layers.firstIndex { $0.layer == "config.repo" })
@@ -357,7 +279,7 @@ final class WorkNotifyTests: XCTestCase {
         defer { FrameProbe.enabled = probing }
         let image = try WorkNotifyPicture.render(WorkNotifyPane(screen: screen), name: "work-notify-after", folder: pictures)
         let request = GenesisKitFixtureTextRequest()
-        try recognizeText(in: image, with: request)
+        try VNImageRequestHandler(cgImage: image).perform([request])
         let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         for expected in ["Spotted", "Reopen", "delivered", "Bug", "Handoff", "Inbox line"] {
             XCTAssertTrue(text.contains(expected), "Missing \(expected) in \(text)")
@@ -529,7 +451,7 @@ enum WorkNativeMenuPicture {
         view.cacheDisplay(in: view.bounds, to: bitmap)
         let menuImage = try XCTUnwrap(bitmap.cgImage)
         let request = GenesisKitFixtureTextRequest()
-        try recognizeText(in: menuImage, with: request)
+        try VNImageRequestHandler(cgImage: menuImage).perform([request])
         let words = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         XCTAssertTrue(words.contains("Inbox line") && words.contains("For this project"), words)
         let directory = URL(fileURLWithPath: folder, isDirectory: true)

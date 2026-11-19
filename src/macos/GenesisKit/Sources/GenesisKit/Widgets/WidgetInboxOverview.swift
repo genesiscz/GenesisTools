@@ -22,22 +22,9 @@ struct WidgetInboxOverview: View {
     private var items: [WidgetInboxItem] {
         let all = model.inboxOverviewItems
         switch filter {
-        // A decision a send took no longer waits, though a snapshot from before the send still says so.
-        case "needs": return all.filter(model.waitsForAnswer)
+        case "needs": return all.filter(\.needsAnswer)
         case "unread": return all.filter(\.isUnreadEntry)
         default: return all
-        }
-    }
-
-    /// The feed's runs for the filter. Waiting leaves out the decisions a send took, as `items` does; the runs are
-    /// stored per snapshot, while a send changes between snapshots.
-    private var feedRuns: [WidgetFeedRun] {
-        let runs = model.inboxFeeds[filter]
-        guard filter == "needs" else { return runs }
-        return runs.compactMap { run in
-            var kept = run
-            kept.items = run.items.filter(model.waitsForAnswer)
-            return kept.items.isEmpty ? nil : kept
         }
     }
 
@@ -46,7 +33,7 @@ struct WidgetInboxOverview: View {
 
     var body: some View {
         let items = items
-        let feedRows = WidgetFeedReadingPlace.split(feedRuns, at: readingBoundary)
+        let feedRows = WidgetFeedReadingPlace.split(model.inboxFeeds[filter], at: readingBoundary)
         let drawn = feed ? feedRows.runs.flatMap(\.items) : grouped ? Self.groups(items).flatMap(\.items) : items
         let _ = RenderProbe.hit("widget.overview")
         VStack(alignment: .leading, spacing: 8) {
@@ -74,7 +61,7 @@ struct WidgetInboxOverview: View {
                     }
                 }
                 .onChange(of: model.preferences.inboxGrouping) { _, _ in
-                    readingBoundary = feed && belowTop ? feedRuns.first?.items.first : nil
+                    readingBoundary = feed && belowTop ? model.inboxFeeds[filter].first?.items.first : nil
                     if let id = orderAnchor ?? visibleOpenID, id == openID { proxy.scrollTo(id, anchor: .top) }
                     orderAnchor = nil
                 }
@@ -233,7 +220,7 @@ struct WidgetInboxOverview: View {
                 .id("widget.overview.top")
                 .onGeometryChange(for: Bool.self, of: { $0.frame(in: .scrollView).minY < -1 }) { scrolled in
                     belowTop = scrolled
-                    readingBoundary = feed && scrolled ? feedRuns.first?.items.first : nil
+                    readingBoundary = feed && scrolled ? model.inboxFeeds[filter].first?.items.first : nil
                 }
             if items.isEmpty {
                 VStack(spacing: 10) {
@@ -253,7 +240,7 @@ struct WidgetInboxOverview: View {
                     }
                 }.frame(maxWidth: .infinity).padding(.vertical, 28)
             } else {
-                Text(Self.summary(items, waits: model.waitsForAnswer, hidden: model.inboxHiddenItems) + (feed ? " · newest first" : "")).font(.system(size: 11)).foregroundStyle(.secondary)
+                Text(Self.summary(items) + (feed ? " · newest first" : "")).font(.system(size: 11)).foregroundStyle(.secondary)
                     .padding(.bottom, 8)
                 // Hundreds of entries: lazy, so only the rows on screen exist (swift skill, dense lists).
                 LazyVStack(alignment: .leading, spacing: 10) {
@@ -327,7 +314,7 @@ struct WidgetInboxOverview: View {
 
     private func header(_ key: String, items: [WidgetInboxItem]) -> some View {
         let session = model.session(forKey: key)
-        let waiting = items.reduce(0) { $0 + (model.waitsForAnswer($1) ? $1.representedCount : 0) }
+        let waiting = items.reduce(0) { $0 + ($1.needsAnswer ? $1.representedCount : 0) }
         let total = items.reduce(0) { $0 + $1.representedCount }
         return HStack(spacing: 7) {
             if let session {
@@ -351,19 +338,15 @@ struct WidgetInboxOverview: View {
         .accessibilityElement(children: .contain)
     }
 
-    /// "12 items · 3 waiting · from 4 sessions". `waits`: whether an entry still waits for an answer
-    /// (`WidgetModel.waitsForAnswer`).
-    /// `hidden`: entries the sessions' lists leave out for the per-session limit, named so a missing entry has a reason.
-    static func summary(_ items: [WidgetInboxItem], waits: (WidgetInboxItem) -> Bool = \.needsAnswer, hidden: Int = 0) -> String {
-        let waiting = items.reduce(0) { $0 + (waits($1) ? $1.representedCount : 0) }
+    static func summary(_ items: [WidgetInboxItem]) -> String {
+        let waiting = items.reduce(0) { $0 + ($1.needsAnswer ? $1.representedCount : 0) }
         let total = items.reduce(0) { $0 + $1.representedCount }
         let sessions = Set(items.filter { $0.message?.origin == nil }.map(\.key)).count
         let senders = Set(items.compactMap { $0.message?.origin }).count
         let sources = [sessions > 0 ? Plural.count(sessions, "session") : nil,
                        senders > 0 ? Plural.count(senders, "sender") : nil].compactMap { $0 }.joined(separator: " and ")
         return [Plural.count(total, "item"), waiting > 0 ? WidgetWords.waiting(waiting) : nil,
-                sources.isEmpty ? nil : "from " + sources,
-                hidden > 0 ? Plural.count(hidden, "more item") + " in their sessions" : nil].compactMap { $0 }.joined(separator: " · ")
+                sources.isEmpty ? nil : "from " + sources].compactMap { $0 }.joined(separator: " · ")
     }
 
     private func toggle(_ item: WidgetInboxItem) {
@@ -433,10 +416,8 @@ struct WidgetInboxOverviewRow: View, Equatable {
         let _ = RenderProbe.hit("widget.overview.row.body")
         labels
             .rowButton(cornerRadius: 11) { toggle() }
-            // A staged decision says where its send is ("Decision · Sent"), as its line does: a snapshot from before the
-            // send still says it waits for your answer.
-            .accessibilityLabel([stagedLine.map { "Decision · " + $0.phase.label } ?? WidgetInboxOverview.kindLabel(item),
-                                 WidgetInboxOverview.title(item), source].compactMap { $0 }.joined(separator: ", "))
+            .accessibilityLabel([WidgetInboxOverview.kindLabel(item), WidgetInboxOverview.title(item),
+                                 source].compactMap { $0 }.joined(separator: ", "))
             .accessibilityValue(open ? "Expanded" : "Collapsed")
             .accessibilityAddTraits(focused ? .isSelected : [])
             .accessibilityIdentifier("widget.overview.row." + item.id)
@@ -466,7 +447,7 @@ struct WidgetInboxOverviewRow: View, Equatable {
                         Text(source).lineLimit(1).truncationMode(.middle).help(source)
                         Text("·")
                     }
-                    // A decision on its way no longer says it waits for your answer.
+                    // A decision on its way reads "Decision", no longer its waiting label.
                     let kind = waiting || !item.needsAnswer ? WidgetInboxOverview.kindLabel(item) : "Decision"
                     if WidgetInboxOverview.title(item) != kind {
                         Text(kind).lineLimit(1)
