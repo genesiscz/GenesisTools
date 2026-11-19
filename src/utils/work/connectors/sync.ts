@@ -195,7 +195,6 @@ async function pushProject({
                     : rolesOf(view, item, {
                           lineage: actor.sessionId !== null ? [actor.sessionId] : [],
                           ownerKind: actor.kind === "owner",
-                          ownerSaid: false,
                       });
 
             if (!release && actor !== null && actor.kind !== "connector" && !allows(rule, roles)) {

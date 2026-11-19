@@ -54,7 +54,7 @@ Also: `tree`, `context`, `config` (`config set <path> <json>`), `claim`, `releas
 commands `dump`, `migrate backfill`, `doctor --parity`.
 
 Every write takes `--request-id <id>` (a repeat returns the stored reply), `--dry-run` (writes nothing) and
-`--owner-said "<words>"` (the owner's words give the role owner; the journal keeps them). Every command takes
+`--owner-said "<words>"` (records the words in the journal). Every command takes
 `--json` (the whole reply object), `--json-compact`, `--toon`, `--md` or `--format <f>`. Warnings and next actions go
 to stderr.
 

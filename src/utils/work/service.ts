@@ -97,7 +97,6 @@ export async function envOf(ctx: WorkContext, request?: string): Promise<WriteEn
         ...(stampWithOwner(ctx) !== undefined ? { stamp: stampWithOwner(ctx) } : {}),
         ...(ctx.inferred !== undefined ? { inferred: ctx.inferred } : {}),
         ...(ctx.rules !== undefined ? { rules: ctx.rules } : {}),
-        ...(ctx.ownerSaid !== undefined ? { ownerSaid: ctx.ownerSaid } : {}),
     };
 }
 

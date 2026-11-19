@@ -183,14 +183,23 @@ describe("the write rules", () => {
         ]);
     });
 
-    test("another session may not accept an idea; the owner's words let it, and the journal keeps them", async () => {
+    test("accepting an idea requires an owner actor and records the supplied words", async () => {
         const spotted = await write(ctx("finder"), { verb: "spot", title: "an idea", type: "idea", fields: {} });
         const id = spotted.ok ? spotted.data.items[0].id : "";
         const refused = await write(ctx("other"), { verb: "accept", refs: [id] });
         expect(refused.ok).toBe(false);
         expect(refused.diagnostics[0].code).toBe("ROLE_REFUSED");
 
-        const allowed = await write(ctx("other", { ownerSaid: "yes, take the idea" }), { verb: "accept", refs: [id] });
+        const claimed = await write(ctx("other", { ownerSaid: "yes, take the idea" }), { verb: "accept", refs: [id] });
+        expect(claimed.diagnostics[0].code).toBe("ROLE_REFUSED");
+
+        const allowed = await write(
+            ctx("other", {
+                actor: actor("other", "owner"),
+                ownerSaid: "yes, take the idea",
+            }),
+            { verb: "accept", refs: [id] }
+        );
         expect(allowed.ok).toBe(true);
         const row = db.query("SELECT stamp FROM changes WHERE item = ? AND kind = 'moved'").get(id) as {
             stamp: string;
