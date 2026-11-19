@@ -7,6 +7,7 @@ export interface RoleAsk {
     /** The actor's own session first; then the sessions of its lead (a T3 parent thread's session). */
     lineage: readonly string[];
     ownerKind: boolean;
+    sessionId: string | null;
 }
 
 function claimedBy(view: StoreView, item: string, session: string): boolean {
@@ -49,25 +50,16 @@ function ancestors(view: StoreView, item: Item): Item[] {
 
 export function rolesOf(view: StoreView, item: Item, ask: RoleAsk): Role[] {
     const roles = new Set<Role>();
-    const self = ask.lineage[0];
+    const self = ask.sessionId;
 
     if (ask.ownerKind) {
         roles.add("owner");
     }
 
-    if (self !== undefined) {
-        const holders = [
-            item,
-            ...view
-                .memberships(item.id)
-                .map((m) => view.item(m.handoff))
-                .filter((i): i is Item => i !== null),
-        ];
-
+    if (self !== null) {
         if (
             claimedBy(view, item.id, self) ||
-            item.worker?.sessionId === self ||
-            holders.slice(1).some((h) => claimedBy(view, h.id, self))
+            view.memberships(item.id).some(({ handoff }) => claimedBy(view, handoff, self))
         ) {
             roles.add("worker");
         }
