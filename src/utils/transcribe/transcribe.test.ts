@@ -883,6 +883,13 @@ describe("mute state", () => {
         });
         expect(line?.muted).toEqual(["Alice Example"]);
 
+        // Shortly before the default ten-minute window ends (17.8 s + 600 s), the mute still holds.
+        const [late] = lineEvidence([{ speaker: "Bob Example", startSec: 610, text: "Čus." }], {
+            segments: [{ startSec: 610, endSec: 612, channel: "system" }],
+            speaking: [{ tSec: 17.8, speaking: [], muted: ["Alice Example"] }],
+        });
+        expect(late?.muted).toEqual(["Alice Example"]);
+
         const [stale] = lineEvidence([{ speaker: "Bob Example", startSec: 620, text: "Čus." }], {
             segments: [],
             speaking: [{ tSec: 17.8, speaking: [], muted: ["Alice Example"] }],
