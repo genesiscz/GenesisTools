@@ -103,6 +103,7 @@ struct MeetingsRequest {
                 case "all": request.place = .all
                 case "contacts": request.place = .contacts
                 case let other where other.hasPrefix("project:"): request.place = .project(String(other.dropFirst(8)))
+                case let other where other.hasPrefix("voices:"): request.place = .projectVoices(String(other.dropFirst(7)))
                 default: break
                 }
             case "--meeting": request.meeting = value()

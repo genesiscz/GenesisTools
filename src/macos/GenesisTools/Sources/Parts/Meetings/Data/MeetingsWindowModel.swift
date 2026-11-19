@@ -129,12 +129,14 @@ final class MeetingsWindowModel {
         case needs
         case all
         case project(String)
+        case projectVoices(String)
         /// Every person the directory knows (R24, G-PPL-5): a view of the window, not of a meeting.
         case contacts
     }
 
     var place: Place
     var selectedMeetingID: String?
+    var voiceFocus: String?
     private(set) var overview: Loadable<MeetingsOverview> = .idle
     /// How often an answer replaced the list. Each set redraws every view of it, so an unchanged answer must not set it
     /// (the perf tests read this).
@@ -267,7 +269,7 @@ final class MeetingsWindowModel {
         guard let overview = overview.value else { return [] }
         switch place {
         case .all: return overview.meetings
-        case .contacts: return []
+        case .contacts, .projectVoices: return []
         case .project(let name): return overview.meetings.filter { $0.project == name }
         case .needs:
             let waiting = Set(overview.needsYou.noProject + overview.needsYou.questions.map(\.id) + overview.needsYou.suggestions.map(\.id))
@@ -446,6 +448,7 @@ final class MeetingsWindowModel {
             people.ensure()
             return
         }
+        if case .projectVoices = place { return }
         if let id = selectedMeetingID, visibleMeetings.contains(where: { $0.id == id }) { return }
         select(visibleMeetings.first?.id)
     }
