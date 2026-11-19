@@ -630,4 +630,15 @@ describe("alignPiece", () => {
         const flat = new Float32Array(5 * rate).fill(0.1);
         expect(alignPiece({ piece: flat, reference, rate, stampSec })).toEqual({ zeroSec: stampSec, clear: false });
     });
+
+    test("a piece of several minutes is matched on its first seconds and still finds its offset", () => {
+        const call = bursts(400);
+        const stampSec = 10;
+        const reference = call.slice(alignReferenceFromSec(stampSec) * rate);
+        const piece = call.slice(10.37 * rate, 310.37 * rate);
+        const aligned = alignPiece({ piece, reference, rate, stampSec });
+
+        expect(aligned.clear).toBe(true);
+        expect(aligned.zeroSec).toBeCloseTo(10.37, 2);
+    });
 });

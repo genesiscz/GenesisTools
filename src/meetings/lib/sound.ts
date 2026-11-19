@@ -12,7 +12,7 @@ import { z } from "zod";
 import { probeAudio } from "./audio";
 import { CallTimeline } from "./call-timeline";
 import type { OpenedMeeting } from "./opened-meeting";
-import { ALIGN_SEARCH_SEC, alignPiece, alignReferenceFromSec } from "./sound-align";
+import { ALIGN_MATCH_SEC, ALIGN_SEARCH_SEC, alignPiece, alignReferenceFromSec } from "./sound-align";
 import { preservedSourceAudio } from "./source-audio";
 import { isMeetingSourceId } from "./sources";
 
@@ -493,7 +493,7 @@ export async function measureSoundClock(
 
         for (const row of chosen) {
             const stampSec = (audioRowZeroMs(row) - inputs.timelineZeroMs) / 1000;
-            const pieceSec = Math.min(row.durationMs / 1000, 60 - 2 * ALIGN_SEARCH_SEC);
+            const pieceSec = Math.min(row.durationMs / 1000, ALIGN_MATCH_SEC);
             const fromSec = alignReferenceFromSec(stampSec);
 
             if (stampSec + pieceSec <= 0) {
