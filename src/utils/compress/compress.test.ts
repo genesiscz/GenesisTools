@@ -2559,6 +2559,17 @@ describe.skipIf(process.platform !== "darwin")("transparent APFS compression", (
             expect(sampleRatio(c.path, bytes.length)).toBe(Number.POSITIVE_INFINITY);
         }
     });
+    it("keeps an ANSI-coloured text log in estimates and on the text preset", () => {
+        const c = fixture("ansi");
+        const line = (index: number) => `\x1b[32mINFO\x1b[0m ${index} ready \x1b[2m(worker)\x1b[0m\n`;
+        const bytes = Buffer.from(Array.from({ length: 4000 }, (_, index) => line(index)).join(""));
+        writeFileSync(c.path, bytes);
+        const sample = { ...c, size: bytes.length };
+        expect(sniffSample(bytes).kind).toBe("text");
+        expect(hasTextHeader(sample)).toBe(true);
+        expect(sampleRatio(c.path, bytes.length)).toBeLessThan(0.75);
+        expect(resolvePreset(c.path).preset.name).toBe("text");
+    });
     it("refreshes two clone partners to shared compressed blocks and preserves divergent bytes", async () => {
         const c = fixture("partners");
         const one = `${c.path}.one`;

@@ -360,9 +360,9 @@ folder archive.
 
 `--preset auto` (the default) picks by the data. A folder is `tree`, or `binary` when its name ends in `.app`. A file
 is sniffed: magic bytes first (zstd, gzip, xz, bzip2, zip, 7z, JPEG, PNG, GIF, WebP, HEIC/MP4/MOV/M4A, Matroska are
-`media`; SQLite is `database`; Mach-O, ELF and PE are `binary`), then text (no NUL byte, almost no control bytes),
-then entropy (over 7.5 bits per byte is `media`, else `binary`). A trial that saves under 3% turns any guess into
-`media`.
+`media`; SQLite is `database`; Mach-O, ELF and PE are `binary`), then text (no NUL byte, almost no control bytes;
+the ESC of ANSI colour codes counts as text, so a coloured log is text), then entropy (over 7.5 bits per byte is
+`media`, else `binary`). A trial that saves under 3% turns any guess into `media`.
 
 | Preset | Level | Long | Frame | Threads | For |
 |---|---|---|---|---|---|
