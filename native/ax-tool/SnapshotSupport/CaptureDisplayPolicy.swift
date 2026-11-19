@@ -85,13 +85,25 @@ public func focusDisplay(window: CGRect?, mouse: CGPoint?, displays: [DisplayFra
 
 /// `--follow-focus` across moves: the display the pointer is on and the display of the focused window, each read every
 /// tick. The one that moved last wins, so the recording jumps to a screen when the pointer goes there or when a window
-/// on it takes the focus (⌘Tab, a click), and stays put while neither moves.
+/// on it takes the focus (⌘Tab, a click), and stays put while neither moves. A new display must be asked for
+/// `holdTicks` ticks in a row before the take switches, so a pointer that only crosses a display on its way to
+/// another one leaves the take where it was.
 public struct FollowState: Equatable {
+    private enum Mover: Equatable { case pointer, focus }
+
     public private(set) var pointer: CGDirectDisplayID?
     public private(set) var focus: CGDirectDisplayID?
     public private(set) var chosen: CGDirectDisplayID?
+    /// The display the last move asks for while it waits out the hold, and for how many ticks it has asked.
+    public private(set) var candidate: CGDirectDisplayID?
+    private var candidateTicks = 0
+    private var mover: Mover?
+    /// Ticks in a row a new display must hold. 2 is half a second at the recorder's 250 ms tick; 1 switches at once.
+    public let holdTicks: Int
 
-    public init() {}
+    public init(holdTicks: Int = 2) {
+        self.holdTicks = max(1, holdTicks)
+    }
 
     /// The display to record after this tick's reads; the first tick takes the pointer's display, else the focus's.
     public mutating func next(pointer newPointer: CGDirectDisplayID?, focus newFocus: CGDirectDisplayID?) -> CGDirectDisplayID? {
@@ -102,12 +114,32 @@ public struct FollowState: Equatable {
 
         if chosen == nil {
             chosen = newPointer ?? newFocus
-        } else if let newPointer, newPointer != pointer {
-            chosen = newPointer
+            return chosen
+        }
+        if let newPointer, newPointer != pointer {
+            mover = .pointer
         } else if let newFocus, newFocus != focus {
-            chosen = newFocus
+            mover = .focus
         }
 
+        let wanted = mover == .pointer ? newPointer : mover == .focus ? newFocus : nil
+        guard let wanted, wanted != chosen else {
+            candidate = nil
+            candidateTicks = 0
+            return chosen
+        }
+
+        if wanted == candidate {
+            candidateTicks += 1
+        } else {
+            candidate = wanted
+            candidateTicks = 1
+        }
+        if candidateTicks >= holdTicks {
+            chosen = wanted
+            candidate = nil
+            candidateTicks = 0
+        }
         return chosen
     }
 }

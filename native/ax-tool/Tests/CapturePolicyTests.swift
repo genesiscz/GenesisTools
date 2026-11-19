@@ -234,7 +234,7 @@ final class DisplayChangeTests: XCTestCase {
     }
 
     func testFollowingTakesWhicheverMovedLastThePointerOrTheFocus() {
-        var state = FollowState()
+        var state = FollowState(holdTicks: 1)
         XCTAssertEqual(state.next(pointer: 1, focus: 2), 1, "the first tick takes the pointer's display")
         XCTAssertEqual(state.next(pointer: 1, focus: 2), 1, "nothing moved, so it stays")
         XCTAssertEqual(state.next(pointer: 1, focus: 1), 1)
@@ -246,6 +246,22 @@ final class DisplayChangeTests: XCTestCase {
         let displays = [DisplayFrame(id: 1, bounds: CGRect(x: 0, y: 0, width: 100, height: 100))]
         XCTAssertEqual(displayUnder(CGPoint(x: 50, y: 50), displays: displays), 1)
         XCTAssertNil(displayUnder(CGPoint(x: 500, y: 50), displays: displays))
+    }
+
+    func testFollowingWaitsOutAPointerThatOnlyCrossesADisplay() {
+        var state = FollowState()
+        XCTAssertEqual(state.holdTicks, 2, "half a second at the recorder's 250 ms tick")
+        XCTAssertEqual(state.next(pointer: 1, focus: 1), 1)
+        XCTAssertEqual(state.next(pointer: 2, focus: 1), 1, "one tick on display 2 is a pointer on its way")
+        XCTAssertEqual(state.candidate, 2)
+        XCTAssertEqual(state.next(pointer: 1, focus: 1), 1, "it came back: no switch, nothing pending")
+        XCTAssertNil(state.candidate)
+        XCTAssertEqual(state.next(pointer: 2, focus: 1), 1)
+        XCTAssertEqual(state.next(pointer: 2, focus: 1), 2, "two ticks on display 2: the take switches")
+        XCTAssertEqual(state.next(pointer: 2, focus: 3), 2, "a window on display 3 took the focus, one tick")
+        XCTAssertEqual(state.next(pointer: 2, focus: 3), 3, "and held it")
+        XCTAssertEqual(state.next(pointer: nil, focus: 3), 3, "a pointer on no display changes nothing")
+        XCTAssertEqual(FollowState(holdTicks: 0).holdTicks, 1, "a hold below one tick switches at once")
     }
 
     func testCursorTrackRectWidensASwitchedDisplayToTheMoviesShape() {
