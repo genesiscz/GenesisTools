@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { failReply, okReply, type Reply } from "@genesiscz/utils/output/reply";
+import { errorDiagnostic, failReply, okReply, type Reply } from "@genesiscz/utils/output/reply";
 import type { Change } from "../model/change";
 import type { ItemId } from "../model/item";
 import type { LegacyAction } from "../ports";
@@ -61,7 +61,7 @@ export function transact(
     db: Database,
     command: WorkCommand,
     env: WriteEnv,
-    options: { dryRun?: boolean } = {}
+    options: { dryRun?: boolean; approvedLegacy?: LegacyAction[] } = {}
 ): Reply<WriteOutcome> | { replay: Reply<unknown> } {
     const principal = principalOf(env);
     db.run("BEGIN IMMEDIATE");
@@ -91,6 +91,13 @@ export function transact(
                 { items: decision.items, changes: preview, legacy: decision.legacy, noop: decision.noop === true },
                 { diagnostics: decision.diagnostics, next: decision.next, dryRun: true }
             );
+        }
+
+        if (SafeJSON.stringify(decision.legacy) !== SafeJSON.stringify(options.approvedLegacy ?? [])) {
+            db.run("ROLLBACK");
+            return failReply(command.verb, [
+                errorDiagnostic("WRITE_CHANGED", "The handoff actions changed during preflight. Retry the write."),
+            ]);
         }
 
         const applied = decision.changes.map((change) => applyChange(db, change));

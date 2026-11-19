@@ -119,23 +119,28 @@ export async function write(
 
     if (!("replay" in preview) && preview.ok && preview.data.legacy.length > 0) {
         const answers = await ctx.ports.legacy.check(preview.data.legacy);
-        const refused = answers.flatMap((answer, index) =>
-            answer.ok
+        const refused = preview.data.legacy.flatMap((action, index) => {
+            const answer = answers[index];
+
+            return answer?.ok
                 ? []
                 : [
                       errorDiagnostic(
                           "LEGACY_REFUSED",
-                          `The old handoff store would refuse ${preview.data.legacy[index]?.action}: ${answer.error ?? "no reason"}. Nothing was written.`
+                          `The old handoff store would refuse ${action.action}: ${answer?.error ?? "no result"}. Nothing was written.`
                       ),
-                  ]
-        );
+                  ];
+        });
 
         if (refused.length > 0) {
             return failReply(command.verb, refused, preview.next);
         }
     }
 
-    const result = options.dryRun ? preview : transact(ctx.db, command, env);
+    const result =
+        options.dryRun || "replay" in preview || !preview.ok
+            ? preview
+            : transact(ctx.db, command, env, { approvedLegacy: preview.data.legacy });
 
     if ("replay" in result) {
         return result.replay as Reply<WriteData>;
