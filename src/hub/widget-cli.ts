@@ -1,5 +1,4 @@
 import { decisionFindArgv } from "@app/claude/lib/cmux/transcript-find";
-import { readInboxGroupEntries } from "@app/question/lib/inbox/unread";
 import { untilAborted } from "@genesiscz/utils/async";
 import { CODE_CHANGED_EXIT, onLoadedCodeChange } from "@genesiscz/utils/bun/loaded-modules";
 import { execToolInteractive, runTool } from "@genesiscz/utils/cli";
@@ -26,8 +25,8 @@ import {
     stageShelfImage,
     stageShelfMedia,
 } from "./lib/widget/shelf";
-import { discoverWidgetCatalog, widgetInboxWindow, widgetSnapshot } from "./lib/widget/snapshot";
-import { mutateWidgetState, readWidgetState } from "./lib/widget/storage";
+import { discoverWidgetCatalog, widgetSnapshot } from "./lib/widget/snapshot";
+import { mutateWidgetState } from "./lib/widget/storage";
 import { StdinLines, watchWidget, widgetDecisionLine, widgetSelectionLine } from "./lib/widget/watch";
 import { registerWidgetTasks } from "./widget-tasks-cli";
 import { registerWidgetVoiceNotes } from "./widget-voice-notes-cli";
@@ -51,22 +50,12 @@ widget
     .option("--limit <n>", "Maximum earlier answers (1 to 20)", "5")
     .action(async (id: string, options: { limit: string }, command) => {
         const root = command.optsWithGlobals().stateRoot;
-        const now = Date.now();
-        const window = widgetInboxWindow((await readWidgetState(root)).inboxClearedAt, now);
-        const limit = Number(options.limit);
-        const entries = readInboxGroupEntries({ id, limit, window: { ...window, staleBefore: 0 } });
-
-        if (entries.some((entry) => entry.at < window.staleBefore)) {
-            // Only a live or recently active session counts older entries. Use the snapshot's own count for it.
-            const snapshot = await widgetSnapshot({ root, now, sources: await oneShotWidgetSources(root) });
-            const head = snapshot.notifications?.sessions
-                .flatMap((session) => session.items ?? [])
-                .find((item) => item.id === `answer:${id}`);
-            out.result({ entries: entries.slice(0, (head?.count ?? 1) - 1) });
-            return;
-        }
-
-        out.result({ entries });
+        const snapshot = await widgetSnapshot({
+            root,
+            sources: await oneShotWidgetSources(root),
+            answerGroup: { id, limit: Number(options.limit) },
+        });
+        out.result({ entries: snapshot.groupEntries ?? [] });
     });
 widget
     .command("pin <session>")
