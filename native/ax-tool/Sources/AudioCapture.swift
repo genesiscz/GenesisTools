@@ -338,6 +338,10 @@ final class AudioTrack {
     var mutedSpans: [(start: CMTime, end: CMTime?)] = []
     var fileTimeline = AudioFileTimeline()
     private var expected: CMTime?
+    /// The most silence one capture callback encodes. A longer gap is filled over the next callbacks; audio
+    /// that arrives before the fill reaches it is dropped and becomes part of the lost span, so file time stays
+    /// capture time. `finishSidecar` fills the rest without this limit, off the capture queue.
+    static let fillSecondsPerAppend = 2.0
     private var sidecarEnd: CMTime?
     private var silenceTemplate: CMSampleBuffer?
     private var losses: [(start: Double, end: Double)] = []
@@ -390,7 +394,8 @@ final class AudioTrack {
         }
         guard let expected else { return }
         let delta = CMTimeGetSeconds(CMTimeSubtract(time, expected))
-        if delta > 0.005, !fillSidecar(to: time, using: buffer, rate: rate) { return }
+        if delta > 0.005, !fillSidecar(to: time, using: buffer, rate: rate,
+                                       limit: Int(Self.fillSecondsPerAppend * rate)) { return }
         var samples = buffer
         if delta < -0.005 {
             let skip = min(count, Int((-delta * rate).rounded()))
@@ -411,14 +416,19 @@ final class AudioTrack {
         _ = writeSidecar(samples, rate: rate, lost: false)
     }
 
-    /// Returns only after the entire missing interval was written. Refusal leaves `expected` at the last success.
-    private func fillSidecar(to time: CMTime, using buffer: CMSampleBuffer, rate: Double) -> Bool {
+    /// Answers true only after the entire missing interval was written. Refusal, or more missing samples than
+    /// `limit`, leaves `expected` at the last success.
+    private func fillSidecar(to time: CMTime, using buffer: CMSampleBuffer, rate: Double, limit: Int = .max) -> Bool {
+        var budget = limit
         while let expected {
             let missing = Int((CMTimeGetSeconds(CMTimeSubtract(time, expected)) * rate).rounded())
             if missing <= 0 { return true }
+            guard budget > 0 else { return false }
             // Bound allocation even after a long capture stall; no waiting or queue of captured buffers.
-            guard let silence = silentCopy(buffer, samples: min(missing, Int(rate)), at: expected),
+            let samples = min(missing, Int(rate), budget)
+            guard let silence = silentCopy(buffer, samples: samples, at: expected),
                   writeSidecar(silence, rate: rate, lost: true) else { return false }
+            budget -= samples
         }
         return false
     }
@@ -480,6 +490,14 @@ final class AudioTrack {
     }
 
     var sidecarWritten: Bool { sidecar?.status == .completed }
+
+    /// The capture time of the next sample the sidecar expects; nil before its writer started.
+    var sidecarNextTime: CMTime? { expected }
+
+    /// The sidecar ends no earlier than `time`: `finishSidecar` fills the missing samples with silence.
+    func extendSidecar(to time: CMTime) {
+        if sidecarEnd == nil || CMTimeCompare(time, sidecarEnd!) > 0 { sidecarEnd = time }
+    }
 }
 
 /// Receives ScreenCaptureKit's system audio and microphone buffers on its own queue, so a slow PNG on the frame
