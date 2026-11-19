@@ -523,35 +523,10 @@ function decideEdit(cmd: Extract<WorkCommand, { verb: "edit" }>, view: StoreView
             return notFound(cmd.parent);
         }
 
-        if (parent.item.id === item.id) {
-            return fail("PARENT_CYCLE", "An item cannot be its own parent.", "parent");
-        }
+        const invalid = setParent(view, env, item.id, parent.item.id, changes);
 
-        // Walk up from the new parent: the item must not be an ancestor of it.
-        let cursor: ItemId | null = parent.item.id;
-        const seen = new Set<string>();
-
-        while (cursor !== null && !seen.has(cursor)) {
-            if (cursor === item.id) {
-                return fail(
-                    "PARENT_CYCLE",
-                    `${parent.item.id} is under ${item.id}; that would make a cycle.`,
-                    "parent"
-                );
-            }
-
-            seen.add(cursor);
-            cursor = view.parentOf(cursor);
-        }
-
-        const current = view.parentOf(item.id);
-
-        if (current !== parent.item.id) {
-            if (current !== null) {
-                changes.push({ ...base(env, item.id), kind: "unlinked", payload: { kind: "parent", to: current } });
-            }
-
-            changes.push({ ...base(env, item.id), kind: "linked", payload: { kind: "parent", to: parent.item.id } });
+        if (invalid !== null) {
+            return invalid;
         }
     }
 
@@ -581,6 +556,38 @@ function decideEdit(cmd: Extract<WorkCommand, { verb: "edit" }>, view: StoreView
     return { ok: true, changes, legacy, items: [item.id], diagnostics: [], next: [], ...(noop ? { noop } : {}) };
 }
 
+function setParent(
+    view: StoreView,
+    env: WriteEnv,
+    item: ItemId,
+    parent: ItemId,
+    changes: NewChange[]
+): Decision | null {
+    const seen = new Set<ItemId>();
+    let cursor: ItemId | null = parent;
+
+    while (cursor !== null && !seen.has(cursor)) {
+        if (cursor === item) {
+            return fail("PARENT_CYCLE", `${parent} cannot be a parent of ${item}; that would make a cycle.`, "parent");
+        }
+
+        seen.add(cursor);
+        cursor = view.parentOf(cursor);
+    }
+
+    const current = view.parentOf(item);
+
+    if (current !== parent) {
+        if (current !== null) {
+            changes.push({ ...base(env, item), kind: "unlinked", payload: { kind: "parent", to: current } });
+        }
+
+        changes.push({ ...base(env, item), kind: "linked", payload: { kind: "parent", to: parent } });
+    }
+
+    return null;
+}
+
 function decideLink(cmd: Extract<WorkCommand, { verb: "link" | "unlink" }>, view: StoreView, env: WriteEnv): Decision {
     const from = view.resolve(cmd.ref);
 
@@ -592,6 +599,22 @@ function decideLink(cmd: Extract<WorkCommand, { verb: "link" | "unlink" }>, view
 
     if (to === null) {
         return notFound(cmd.to);
+    }
+
+    if (cmd.verb === "link" && cmd.kind === "parent") {
+        const changes: NewChange[] = [];
+        const invalid = setParent(view, env, from.item.id, to.item.id, changes);
+        return (
+            invalid ?? {
+                ok: true,
+                changes,
+                legacy: [],
+                items: [from.item.id],
+                diagnostics: [],
+                next: [],
+                ...(changes.length === 0 ? { noop: true } : {}),
+            }
+        );
     }
 
     if (from.item.id === to.item.id) {
