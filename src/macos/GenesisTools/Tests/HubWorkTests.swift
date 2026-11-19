@@ -223,7 +223,8 @@ final class HubWorkTests: XCTestCase {
 
     /// A launch with `--mode work` settles on the Work screen's first load (the snapshot waits for it).
     func testOnLoadedFiresOnceOnTheFirstLoad() async {
-        let model = HubWorkModel(source: FakeWorkSource(), defaults: isolatedDefaults())
+        let source = FakeWorkSource()
+        let model = HubWorkModel(source: source, defaults: isolatedDefaults())
         var calls = 0
         let loaded = expectation(description: "First Work load")
         model.onLoaded = {
@@ -233,11 +234,13 @@ final class HubWorkTests: XCTestCase {
         model.activate()
         await fulfillment(of: [loaded], timeout: 3)
         XCTAssertEqual(calls, 1)
-        let reloaded = expectation(description: "Reloaded Work snapshot")
-        let watch = model.screen.$snapshot.dropFirst().compactMap { $0 }.first().sink { _ in reloaded.fulfill() }
+        let reads = source.snapshotReads
+        let reloaded = expectation(description: "Reloaded Work")
+        let watch = model.screen.$isLoading.dropFirst().first(where: { !$0 }).sink { _ in reloaded.fulfill() }
         model.screen.reload()
         await fulfillment(of: [reloaded], timeout: 3)
         watch.cancel()
+        XCTAssertEqual(source.snapshotReads, reads + 1)
         XCTAssertEqual(calls, 1, "once only")
         model.deactivate()
     }
