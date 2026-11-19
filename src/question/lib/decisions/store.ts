@@ -1307,7 +1307,7 @@ export async function createTodo({
     const provider = providerName(todo.provider);
     return withDecisionsLock(file, () => {
         signal?.throwIfAborted();
-        const used = sessionNumbers(readDecisions(file), sessionId).todo;
+        const used = sessionNumbers(readDecisions(file, { kind: "todo", sessionId }), sessionId).todo;
         const number = used.size === 0 ? 1 : Math.max(...used) + 1;
         const ts = now();
         const row: DecisionRecord = {
@@ -1599,7 +1599,7 @@ export async function harvestDecisions(
     const name = providerName(provider);
 
     return withDecisionsLock(file, () => {
-        const used = sessionNumbers(readDecisions(file), sessionId).decision;
+        const used = sessionNumbers(readDecisions(file, { kind: "decision", sessionId }), sessionId).decision;
         const ts = now();
         const stored: DecisionRecord[] = [];
 
@@ -1876,24 +1876,37 @@ export async function moveDecisions(
  * reader relies on (a hand edit, an older shape) is skipped the same way: the state machine and the
  * sort would otherwise throw on it and break every listing and update. Any other read error throws.
  */
-export function readDecisions(file: string): DecisionRecord[] {
-    return readDecisionsWithIntegrity(file).rows;
+type DecisionReadScope = { kind?: "decision" | "todo"; sessionId?: string; logOnly?: boolean };
+
+export function readDecisions(file: string, scope?: DecisionReadScope): DecisionRecord[] {
+    return readDecisionsWithIntegrity(file, scope).rows;
 }
 
 /** The same decision read, including whether the file was missing or any torn or invalid row was skipped. */
-export function readDecisionsWithIntegrity(file: string): {
+export function readDecisionsWithIntegrity(
+    file: string,
+    scope: DecisionReadScope = {}
+): {
     rows: DecisionRecord[];
     complete: boolean;
     missing?: true;
 } {
-    const { rows: logged, torn, malformed, missing } = decisionLog(file).read();
+    const { rows: allLogged, torn, malformed, missing } = decisionLog(file).read();
+    const logged =
+        scope.kind === undefined && scope.sessionId === undefined
+            ? allLogged
+            : allLogged.filter(
+                  (row) =>
+                      (scope.kind === undefined || kindOf(row) === scope.kind) &&
+                      (scope.sessionId === undefined || row.sessionId === scope.sessionId)
+              );
 
     if (torn > 0 || malformed > 0) {
         logger.warn({ file, skipped: torn, malformed }, "[decisions] skipped unreadable lines in the decision log");
     }
 
-    const store = todoStoreOf(file);
-    const stored = store === null ? [] : storedTodoRows(store);
+    const store = scope.kind === "decision" || scope.logOnly ? null : todoStoreOf(file);
+    const stored = store === null ? [] : storedTodoRows(store, scope.sessionId);
     // One copy per id: the newer one. The store's copy is newer unless a process with older code wrote the log after
     // it; the next rewrite of the log moves that row into the store.
     const byId = new Map(stored.map((row) => [row.id, row]));
@@ -1924,17 +1937,19 @@ function todoStoreOf(file: string): string | null {
 }
 
 /** The to-do rows the work store holds, each checked like a row of the log; none when the store does not exist. */
-export function storedTodoRows(store: string = workDbPath()): DecisionRecord[] {
+export function storedTodoRows(store: string = workDbPath(), sessionId?: string): DecisionRecord[] {
     if (!existsSync(store)) {
         return [];
     }
 
-    return withWorkDb(store, readStoredTodoRows);
+    return withWorkDb(store, (db) => readStoredTodoRows(db, sessionId));
 }
 
 /** A widget snapshot already has a read-only connection to this store. */
-export function readStoredTodoRows(db: Database): DecisionRecord[] {
-    return readSessionTodos(db).rows.flatMap((row): DecisionRecord[] => (isStoredDecision(row) ? [row] : []));
+export function readStoredTodoRows(db: Database, sessionId?: string): DecisionRecord[] {
+    return readSessionTodos(db, sessionId).rows.flatMap((row): DecisionRecord[] =>
+        isStoredDecision(row) ? [row] : []
+    );
 }
 
 function isStoredDecision(value: unknown): value is DecisionRecord {

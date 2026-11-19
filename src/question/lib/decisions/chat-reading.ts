@@ -120,7 +120,7 @@ export async function backfillChatAnswers({
     transcript?: { kind: string; path: string };
     read?: ReadSession;
 }): Promise<ChatBackfill> {
-    const open = openChatDecisions(readDecisions(file), session);
+    const open = openChatDecisions(readDecisions(file, { kind: "decision", sessionId: session }), session);
     const result: ChatBackfill = {
         session,
         transcriptPath: null,
