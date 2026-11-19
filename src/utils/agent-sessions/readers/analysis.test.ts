@@ -82,6 +82,13 @@ test("resumes join a workflow revival, time streamed calls, and distinguish wait
         },
     ]);
     expect(claudeHistoryReader.analysis.lastContext(revived)).toBe(175);
+    const asText = call("five", 20, 300, 0, 0, "end_turn");
+    expect(
+        claudeHistoryReader.analysis.lastContext([
+            ...revived,
+            { ...asText, message: SafeJSON.stringify(asText.message) },
+        ])
+    ).toBe(300);
     expect(
         claudeHistoryReader.analysis.lastContext([
             ...revived,
