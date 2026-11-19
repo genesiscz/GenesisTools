@@ -659,7 +659,8 @@ export function checkHandoffActions(
         const states = new Map<string, Handoff>();
 
         return batches.map((batch) => {
-            let state: Handoff = states.get(batch.id) ?? resolveHandoffRef(db, { id: batch.id });
+            const resolved = resolveHandoffRef(db, { id: batch.id });
+            let state = states.get(resolved.id) ?? resolved;
             const editId = normalizeEditId(batch.editId);
             const stamp = (): { ts: string; uid: string; id: string; by: HandoffEventBy; editId?: string } => ({
                 ts: nowIso(deps),
