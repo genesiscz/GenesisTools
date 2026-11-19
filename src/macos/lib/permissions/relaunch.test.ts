@@ -5,15 +5,17 @@ function processRows(text: string): Array<{ pid: number; command: string }> {
     });
 }
 
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { parseRunningApplications } from "@genesiscz/utils/macos/launch-services";
+import * as processes from "@genesiscz/utils/process/processes";
 import { describeLinkRoute, holderArgs, linkHolderKind, linkRoute, linkRouteProblem } from "./links";
 import {
     argvFromPs,
+    captureRelaunch,
     faceHome,
     linkRelayOpenArgs,
     openEnvironment,
@@ -90,6 +92,60 @@ describe("windowFaceKind", () => {
         expect(windowFaceKind(["--review", "--repo", "/x", "--snapshot", "/tmp/a.png"])).toBeNull();
         expect(windowFaceKind(["--hub", "--bench", "/tmp/b.json"])).toBeNull();
         expect(windowFaceKind(["--clicky", "--page", "general", "--headless"])).toBeNull();
+    });
+});
+
+describe("captureRelaunch", () => {
+    it("starts a missing recorder only after a successful capture", () => {
+        const capture = captureRelaunch({
+            processes: [{ pid: 10, command: "/sbin/launchd", name: "launchd", zombie: false }],
+            launcherPath: LAUNCHER,
+            stalePids: [],
+            parts: ["recorder"],
+        });
+
+        expect(capture.steps.map(({ kind, pid }) => ({ kind, pid }))).toEqual([{ kind: "recorder", pid: null }]);
+        expect(capture.relay).toBe(true);
+    });
+
+    it("keeps Recorder closed if a live GenesisTools process has unreadable arguments", () => {
+        const capture = captureRelaunch({
+            processes: [
+                { pid: 10, command: "/sbin/launchd", name: "launchd", zombie: false },
+                { pid: 11, command: null, name: "GenesisTools", zombie: false },
+            ],
+            launcherPath: LAUNCHER,
+            stalePids: [],
+            parts: ["recorder"],
+        });
+
+        expect(capture.steps).toEqual([]);
+        expect(capture.relay).toBe(false);
+    });
+
+    it("restores only a known relay after a failed capture, including when Recorder is installed", () => {
+        const recorder = { pid: 41, command: `${LAUNCHER} --recorder`, name: "GenesisTools", zombie: false };
+        const relay = { pid: 42, command: `${LAUNCHER} --link-relay`, name: "GenesisTools", zombie: false };
+        const readEnvironment = spyOn(processes, "readProcessEnvironment").mockImplementation(() => {
+            throw new Error("fixture capture failed");
+        });
+
+        try {
+            for (const withRelay of [false, true]) {
+                const listing = withRelay ? [recorder, relay] : [recorder];
+                const capture = captureRelaunch({
+                    processes: listing,
+                    launcherPath: LAUNCHER,
+                    stalePids: listing.map(({ pid }) => String(pid)),
+                    parts: ["recorder"],
+                });
+
+                expect(capture.steps).toEqual([]);
+                expect(capture.relay).toBe(withRelay);
+            }
+        } finally {
+            readEnvironment.mockRestore();
+        }
     });
 });
 

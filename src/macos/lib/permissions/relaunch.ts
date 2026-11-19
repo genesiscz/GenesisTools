@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -592,27 +592,40 @@ export function readStoppedFaceRecords(
  * is read from its own home: a face started on a sandbox (`GENESIS_TOOLS_HOME`) wrote it there, not into the build's.
  */
 export function captureRelaunch(options: {
-    processes: Pick<ProcessEntry, "pid" | "command">[];
+    processes: Pick<ProcessEntry, "pid" | "command" | "name" | "zombie">[];
     launcherPath: string;
     stalePids: string[];
     parts?: readonly string[];
 }): RelaunchCapture {
-    const stalePids = new Set(options.stalePids);
-    const lines = staleLauncherLines({ processes: options.processes, launcherPath: options.launcherPath, stalePids });
-    const environments = new Map(lines.map(({ pid }) => [pid, readProcessEnvironment(pid)]));
-    const { records, windows, fronts, recordDirs } = readStoppedFaceRecords(environments);
-    const capture = planRelaunch({
-        processes: options.processes,
-        launcherPath: options.launcherPath,
-        stalePids,
-        records,
-        windows,
-        fronts,
-        frontPid: frontmostPid,
-        environment: (pid) => environments.get(pid) ?? null,
-        parts: options.parts,
-        recordDirs,
-    });
+    const listing = { ...options, stalePids: new Set(options.stalePids) };
+    let capture: RelaunchCapture;
+
+    try {
+        const lines = staleLauncherLines(listing);
+        const environments = new Map(lines.map(({ pid }) => [pid, readProcessEnvironment(pid)]));
+        const { records, windows, fronts, recordDirs } = readStoppedFaceRecords(environments);
+        const launcherName = basename(options.launcherPath);
+        // A live process whose argv the kernel withheld could be a recorder on another home.
+        const unreadableLauncher = options.processes.some(
+            ({ command, name, zombie }) => command === null && name === launcherName && !zombie
+        );
+        capture = planRelaunch({
+            ...listing,
+            parts: unreadableLauncher ? [] : options.parts,
+            records,
+            windows,
+            fronts,
+            frontPid: frontmostPid,
+            environment: (pid) => environments.get(pid) ?? null,
+            recordDirs,
+        });
+    } catch (err) {
+        // The listing still tells us whether we stopped a relay. A failed capture cannot establish a face's home.
+        const relay = linkRelayAmong(listing);
+        logger.warn({ err, relay }, "relaunch: faces could not be recorded; they stay closed after the reap");
+        return { steps: [], relay, unrestorable: [], recordDirs: [] };
+    }
+
     logger.info(
         {
             faces: capture.steps.map((entry) => ({
@@ -624,7 +637,7 @@ export function captureRelaunch(options: {
             unrestorable: capture.unrestorable.map((face) => ({ pid: face.pid, kind: face.kind, argv: face.argv })),
             relay: capture.relay,
             front: capture.steps.find((entry) => entry.activate)?.pid ?? null,
-            recordDirs,
+            recordDirs: capture.recordDirs,
         },
         "relaunch: faces recorded before the reap"
     );
