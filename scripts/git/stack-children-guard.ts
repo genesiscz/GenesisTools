@@ -16,6 +16,7 @@
 
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { captureSync } from "@genesiscz/utils/process/capture";
 
 const ZERO = "0000000000000000000000000000000000000000";
 
@@ -99,9 +100,10 @@ export function findOrphanedChildren(
     return orphaned;
 }
 
-function run(args: string[]): { ok: boolean; out: string } {
-    const proc = Bun.spawnSync(args, { stdout: "pipe", stderr: "pipe" });
-    return { ok: proc.exitCode === 0, out: proc.stdout.toString() };
+function run(args: string[]): { ok: boolean; out: string; err: string } {
+    const [command, ...rest] = args;
+    const result = captureSync(command, rest);
+    return { ok: result.status === 0, out: result.stdout, err: result.stderr.trim() };
 }
 
 function hasCommit(sha: string): boolean {
@@ -147,7 +149,7 @@ async function main(): Promise<number> {
         ]);
         if (!listed.ok) {
             process.stderr.write(
-                `⚠ stack guard: could not list the PRs based on ${parent}; children were not checked\n`
+                `⚠ stack guard: could not list the PRs based on ${parent}; children were not checked${listed.err ? ` (${listed.err})` : ""}\n`
             );
             continue;
         }
