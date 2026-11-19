@@ -61,7 +61,7 @@ struct PersonStay: Equatable {
                 }
                 result = result * 60 + number
             }
-            self = .seconds(result)
+            self = result.isFinite ? .seconds(result) : .invalid
         }
 
         var value: Double? {
