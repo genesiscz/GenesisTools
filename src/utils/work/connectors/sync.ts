@@ -59,6 +59,7 @@ export interface SyncDeps {
 const CURSOR = "sync";
 const LEASE_MS = 120_000;
 const BATCH = 500;
+const RETRY_AFTER_MS = 30_000;
 
 /** Who may push by default (design C, the last row of the write rules). */
 function defaultPush(type: ItemType): readonly Role[] | "anyone" {
@@ -168,7 +169,7 @@ export interface SyncReport {
 }
 
 type PushMode =
-    | { kind: "sync"; cursor: number; lease: string }
+    | { kind: "sync"; cursor: number; lease: string; touched: ReadonlySet<ItemId>; retryBefore: string }
     | { kind: "release" }
     | { kind: "pair"; connector: string };
 
@@ -275,6 +276,13 @@ async function pushProject({
             }
 
             if (mode.kind === "sync") {
+                if (
+                    !mode.touched.has(item.id) &&
+                    (pairing?.state !== "failed" || pairing.updatedTs > mode.retryBefore)
+                ) {
+                    continue;
+                }
+
                 const rule = config.push(item.type) ?? defaultPush(item.type);
                 const actors = rule === "anyone" ? [] : pushActors(db, item.id, mode.cursor);
                 const blocked = actors.some(
@@ -384,8 +392,13 @@ function markLocalDrift(deps: SyncDeps, changes: readonly Change[], report: Sync
                 inTransaction(deps.db, () =>
                     writePairing(deps.db, deps, {
                         ...pairing,
-                        state: "drift",
-                        note: `${DRIFT_NOTE_PREFIX.local} ${owned.join(", ")}`,
+                        state: pairing.state === "failed" || pairing.state === "held" ? pairing.state : "drift",
+                        note: [
+                            pairing.state === "failed" || pairing.state === "held" ? pairing.note : undefined,
+                            `${DRIFT_NOTE_PREFIX.local} ${owned.join(", ")}`,
+                        ]
+                            .filter(Boolean)
+                            .join("\n"),
                     })
                 );
                 report.drift++;
@@ -418,8 +431,15 @@ export async function runSyncOnce(deps: SyncDeps): Promise<SyncReport> {
             }
         }
 
-        const items = [...touched].map((id) => selectItem(db, id)).filter((item) => item !== null);
-        await pushItems({ deps, items, mode: { kind: "sync", cursor, lease }, report });
+        const retryBefore = new Date(Date.parse(now) - RETRY_AFTER_MS).toISOString();
+        const retries = db
+            .query<{ item: ItemId }, [string, number]>(
+                "SELECT DISTINCT item FROM pairings WHERE state = 'failed' AND updated_ts <= ? ORDER BY updated_ts LIMIT ?"
+            )
+            .all(retryBefore, BATCH);
+        const ids = new Set([...touched, ...retries.map(({ item }) => item)]);
+        const items = [...ids].map((id) => selectItem(db, id)).filter((item) => item !== null);
+        await pushItems({ deps, items, mode: { kind: "sync", cursor, lease, touched, retryBefore }, report });
 
         if (!renewLease(db, lease, deps.now())) {
             return { ...report, cursor, skipped: "lease" };
