@@ -128,8 +128,8 @@ describe("sessions range flags", () => {
                 startByType: [],
                 agentsByCacheRead: [],
                 largestItems: [
+                    { line: 0, carry: 9 },
                     { loop: "session", line: 1, carry: 1 },
-                    { line: 0, carry: 0 },
                 ],
             });
             expect(result.mock.calls[0]?.[0]).not.toHaveProperty("metrics");
