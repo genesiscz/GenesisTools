@@ -516,8 +516,7 @@ export interface PullReport {
  */
 export async function pullRemote(
     deps: SyncDeps & { newId: () => ItemId; project: string },
-    connectorId: string,
-    remoteKeys: readonly string[]
+    { connector: connectorId, remoteKeys }: { connector: string; remoteKeys: readonly string[] }
 ): Promise<PullReport> {
     const connector = Object.hasOwn(deps.connectors, connectorId) ? deps.connectors[connectorId] : undefined;
     const report: PullReport = { made: [], updated: [], drift: [] };
@@ -641,10 +640,17 @@ export async function pullRemote(
 /** `pair <ref> <connector> <key>`: one more pairing row on a local item; the next push brings the label outside. */
 export function pairItem(
     deps: Pick<SyncDeps, "db" | "now">,
-    item: ItemId,
-    connector: string,
-    remoteKey: string,
-    state: Pairing["state"] = "pending"
+    {
+        item,
+        connector,
+        remoteKey,
+        state = "pending",
+    }: {
+        item: ItemId;
+        connector: string;
+        remoteKey: string;
+        state?: Pairing["state"];
+    }
 ): Pairing {
     const pairing: Pairing = {
         item,
@@ -660,7 +666,10 @@ export function pairItem(
 }
 
 /** `unpair <ref> <connector>`: the pairing row goes; nothing changes outside. */
-export function unpairItem(deps: Pick<SyncDeps, "db" | "now">, item: ItemId, connector: string): boolean {
+export function unpairItem(
+    deps: Pick<SyncDeps, "db" | "now">,
+    { item, connector }: { item: ItemId; connector: string }
+): boolean {
     const had = selectPairings(deps.db, { item, connector }).length > 0;
 
     if (had) {

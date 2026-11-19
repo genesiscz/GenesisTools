@@ -503,7 +503,10 @@ export class TodoStore {
         }
 
         this.withDb((db) =>
-            pairItem({ db, now: () => new Date().toISOString() }, row.item.id, connector, remoteKey, "in-sync")
+            pairItem(
+                { db, now: () => new Date().toISOString() },
+                { item: row.item.id, connector, remoteKey, state: "in-sync" }
+            )
         );
     }
 
