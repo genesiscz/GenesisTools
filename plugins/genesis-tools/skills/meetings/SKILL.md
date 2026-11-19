@@ -243,5 +243,5 @@ worker count are `global.speakerLabels.voice.compute` (`priority: normal` by def
 performance cores, at most four).
 
 Set `global.capture.recorders.native.audio.mode` to `session` for continuous sound in 60-second files; the default
-`pieces` records the sound inside the screen pieces, with up to 5 seconds missing every 30 seconds, and `record status`
+`pieces` records the sound inside the screen pieces, where sound between two pieces can be missing, and `record status`
 explains a fall back.

@@ -87,7 +87,7 @@ const nativeRecorderSchema = z.object({
         .object({
             sources: z.array(z.enum(AUDIO_SOURCES)).default(["mic", "system"]),
             /**
-             * `pieces`: sound inside screen pieces, missing up to 5 seconds every 30 seconds;
+             * `pieces`: sound inside screen pieces; sound between two pieces can be missing;
              * `session`: one more native process, with 60-second sound files.
              */
             mode: z.enum(["pieces", "session"]).default("pieces"),
