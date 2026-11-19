@@ -24,7 +24,8 @@ final class MeetingsReviewRowTests: XCTestCase {
         panel.orderInForSnapshot()
         defer { panel.orderOut(nil); panel.close() }
         // Capture until the sheet shows its words (a slow runner draws later), at most 10 s, instead of one fixed sleep.
-        let expected = ["This also affects", "zorb", "Done"]
+        // Both places: the primary line ("The zorb is ready.") and its sibling ("Use the zorb again.").
+        let expected = ["This also affects", "is ready", "zorb again", "Done"]
         let deadline = ContinuousClock.now + .seconds(10)
         var shot: NSBitmapImageRep?
         var text = ""
@@ -40,9 +41,7 @@ final class MeetingsReviewRowTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(100))
         } while ContinuousClock.now < deadline
         let capture = try XCTUnwrap(shot, "the window server never captured the sheet")
-        XCTAssertTrue(text.contains("This also affects"), text)
-        XCTAssertTrue(text.contains("zorb"), text)
-        XCTAssertTrue(text.contains("Done"), text)
+        for words in expected { XCTAssertTrue(text.contains(words), "the sheet shows \"\(words)\": \(text)") }
         if let folder = ProcessInfo.processInfo.environment["MEETINGS_UI_SNAPSHOTS"] {
             let png = try XCTUnwrap(capture.representation(using: .png, properties: [:]))
             try png.write(to: URL(fileURLWithPath: folder).appendingPathComponent("2026-11-17-P3-occurrence-sheet-fixture.png"))
