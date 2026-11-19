@@ -15,6 +15,8 @@ final class VoicesModel {
 
     /// What a removal changes, asked before it runs: the samples it removes and the suggested lines that lose the name.
     struct PendingRemoval: Equatable, Identifiable {
+        /// The project the plan was read for: the removal deletes from this one, never from the project shown later.
+        let project: String
         let person: String
         let sample: Int?
         let plan: MeetingsAPI.VoicesRemove.Result
@@ -51,10 +53,12 @@ final class VoicesModel {
         guard let project else {
             listGeneration += 1
             listedProject = nil
+            pendingRemoval = nil
             people = .idle
             return
         }
         guard quiet || project != listedProject || people == .idle else { return }
+        if project != listedProject { pendingRemoval = nil }
         listedProject = project
         listGeneration += 1
         let generation = listGeneration
@@ -152,23 +156,32 @@ final class VoicesModel {
             do {
                 let plan = try await service.call(MeetingsAPI.VoicesRemove.self,
                                                   .init(project: project, person: person, sample: sample, preview: true))
-                pendingRemoval = PendingRemoval(person: person, sample: sample, plan: plan)
+                // A plan read for a project the pane no longer shows is not asked about.
+                guard listedProject == project else { return }
+                pendingRemoval = PendingRemoval(project: project, person: person, sample: sample, plan: plan)
             } catch {
                 detail?.notices.push(.meetingsFailure(error))
             }
         }
     }
 
+    /// Removes what the question showed, from the project it was asked for. A project that changed since the question
+    /// removes nothing.
     func remove(_ removal: PendingRemoval) {
-        guard let project = listedProject, let service, !busy.contains("remove") else { return }
         pendingRemoval = nil
+        guard let service, !busy.contains("remove") else { return }
+        let project = removal.project
+        guard listedProject == project else {
+            detail?.notices.push(StackedNotice(text: "The meeting's project changed; nothing was removed"))
+            return
+        }
         busy.insert("remove")
         Task {
             defer { busy.remove("remove") }
             do {
                 let result = try await service.call(MeetingsAPI.VoicesRemove.self,
                                                     .init(project: project, person: removal.person, sample: removal.sample))
-                load(project: project, quiet: true)
+                if listedProject == project { load(project: project, quiet: true) }
                 if !result.affected.isEmpty { detail?.refreshAfterDecision() }
                 detail?.notices.push(StackedNotice(text: Self.removedText(result)))
             } catch {

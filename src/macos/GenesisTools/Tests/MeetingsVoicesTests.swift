@@ -111,7 +111,7 @@ final class MeetingsVoicesTests: XCTestCase {
         let plan = MeetingsAPI.VoicesRemove.Result(project: "Atlas", person: "Bob Example", removed: 1,
                                                    affected: [.init(meeting: "m", item: "i1", fromSec: 1, toSec: 1),
                                                               .init(meeting: "m", item: "i4", fromSec: 9, toSec: 9)])
-        XCTAssertEqual(VoicesModel.removalQuestion(.init(person: "Bob Example", sample: 3, plan: plan)),
+        XCTAssertEqual(VoicesModel.removalQuestion(.init(project: "Atlas", person: "Bob Example", sample: 3, plan: plan)),
                        "Remove sample 3 of Bob Example? 2 suggested lines lose the name Bob Example.")
         XCTAssertEqual(VoicesModel.removedText(plan), "Removed 1 sample of Bob Example; 2 suggested lines lost the name")
         XCTAssertEqual(VoicesModel.decidedText(count: 1, confirm: false),
