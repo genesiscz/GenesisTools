@@ -19,6 +19,8 @@ import { isJsonObject, SafeJSON } from "@genesiscz/utils/json";
 import { captureSync } from "@genesiscz/utils/process/capture";
 
 const ZERO = "0000000000000000000000000000000000000000";
+/** `gh pr list` stops at 30 PRs unless asked for more; a branch with this many open children is reported as unchecked. */
+const PR_LIST_LIMIT = 1000;
 
 export interface RefUpdate {
     localSha: string;
@@ -175,6 +177,8 @@ async function main(): Promise<number> {
             "open",
             "--base",
             parent,
+            "--limit",
+            String(PR_LIST_LIMIT),
             "--json",
             "number,title,headRefName,headRefOid",
         ]);
@@ -191,6 +195,12 @@ async function main(): Promise<number> {
                 `⚠ stack guard: gh did not answer with a PR list for ${parent}; children were not checked\n`
             );
             continue;
+        }
+
+        if (list.length >= PR_LIST_LIMIT) {
+            process.stderr.write(
+                `⚠ stack guard: ${parent} has ${PR_LIST_LIMIT} or more open PRs; only the first ${PR_LIST_LIMIT} were checked\n`
+            );
         }
 
         for (const child of list) {
