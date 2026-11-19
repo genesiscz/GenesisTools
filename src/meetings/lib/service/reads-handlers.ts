@@ -83,18 +83,18 @@ export async function readRows(
     const linked = deps.linkedSource?.(record);
     const config = await (deps.config?.() ?? (deps.configStore?.() ?? new MeetingsConfigStore()).read());
     const warning = attendanceWarning(record);
+    const opened = OpenedMeeting.of(store, record, linked);
     const result = {
         ...(await rowsRead({
             store,
             record,
-            ...(linked ? { linked } : {}),
+            opened,
             minPriority: config.global.playback.listen.minPriority,
             ...(params.lowPriority ? { lowPriority: params.lowPriority } : {}),
             applyAbove: params.applyAbove ?? config.global.suggest.applyAbove,
         })),
         ...(warning ? { attendanceWarning: warning } : {}),
     };
-    const opened = OpenedMeeting.of(store, record, linked);
     const transcript = await opened.meeting().catch((error: unknown) => {
         logger.debug({ error, meeting: record.id }, "question line data needs a readable transcript");
         return undefined;
