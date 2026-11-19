@@ -155,6 +155,27 @@ function normalize(rows: Handoff[]): unknown {
     );
 }
 
+test("rebuild keeps an uncopied write and a legacy append that arrived after the native post", () => {
+    const env = freshEnv();
+    const posted = postHandoff({ title: "Fixture", tasks: [{ text: "one" }] }, env.depsFor(A));
+    const id = posted.handoff.id;
+    const db = openHandoffModel(env.dbPath);
+    try {
+        db.run("UPDATE handoff_transition SET copy_until = 0");
+        executeHandoffActions({ id, actions: [{ action: "add_tasks", tasks: [{ text: "two" }] }] }, env.depsFor(A));
+        appendHandoffEvents([addTasksEvent(id, ["three"])], env.base);
+
+        rebuildHandoffModel(db, env.base);
+        expect(getHandoffById(db, id)?.tasks.map(({ id, text }) => [id, text])).toEqual([
+            ["t1", "one"],
+            ["t2", "two"],
+            ["t3", "three"],
+        ]);
+    } finally {
+        db.close();
+    }
+});
+
 describe("duplicate post ids (§6.1 rule 5)", () => {
     test("first wins; second post never clobbers", () => {
         const env = freshEnv();
