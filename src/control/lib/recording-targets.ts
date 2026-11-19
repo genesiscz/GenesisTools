@@ -1,4 +1,9 @@
 import { logger } from "@genesiscz/utils/logger";
+import {
+    type ScreenRect,
+    type UnrecordableReason,
+    unrecordableReason,
+} from "@genesiscz/utils/screen-recorder/recordable-window";
 import { z } from "zod";
 import { parseScreenList } from "./native-record";
 import { type AxResult, runAxAsync } from "./runner";
@@ -73,44 +78,30 @@ export interface RecordingTargets {
     frontmostPid?: number;
 }
 
-/**
- * Window owners that are system chrome rather than something a person records. GenesisTools stays listed: the hub
- * and the review window are worth recording, and a host filters its own panels out by pid.
- */
-const SYSTEM_OWNERS = new Set([
-    "Dock",
-    "WindowServer",
-    "Window Server",
-    "Control Center",
-    "Notification Center",
-    "NotificationCenter",
-    "Spotlight",
-    "SystemUIServer",
-    "loginwindow",
-    "Screenshot",
-    "TextInputMenuAgent",
-    "Wallpaper",
-]);
-
-/** Smaller than this on either side is a strip, a badge or an invisible helper window, not a recording target. */
-const MIN_WINDOW_SIDE = 60;
-
 const frontRowSchema = z.object({
     pid: z.number().int(),
     app: z.string(),
     windowId: z.number().int().positive(),
     title: z.string().optional(),
     bounds: z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() }),
+    alpha: z.number().optional(),
+    sharingState: z.number().int().optional(),
+    ownerKind: z.enum(["regular", "accessory", "background", "none"]).optional(),
 });
 
-/** `ax-tool front` rows (layer 0, on screen, front to back) as recordable windows. Malformed rows are skipped. */
-export function parseRecordingWindows(raw: unknown): RecordingWindow[] {
+/**
+ * `ax-tool front` rows (layer 0, on screen, front to back) as recordable windows: malformed rows, system chrome,
+ * strips, unreadable windows and overlays over a whole display are skipped (`unrecordableReason`). `displays` are the
+ * displays' frames in global CG points; without them an overlay cannot be told from a window.
+ */
+export function parseRecordingWindows(raw: unknown, displays: readonly ScreenRect[] = []): RecordingWindow[] {
     const rows = (raw as { windows?: unknown } | null | undefined)?.windows;
     if (!Array.isArray(rows)) {
         return [];
     }
 
     const windows: RecordingWindow[] = [];
+    const skipped: Partial<Record<UnrecordableReason, number>> = {};
     for (const row of rows) {
         const parsed = frontRowSchema.safeParse(row);
         if (!parsed.success) {
@@ -118,15 +109,17 @@ export function parseRecordingWindows(raw: unknown): RecordingWindow[] {
         }
 
         const { pid, app, windowId, title, bounds } = parsed.data;
-        if (SYSTEM_OWNERS.has(app) || app.length === 0) {
-            continue;
-        }
-
-        if (bounds.width < MIN_WINDOW_SIDE || bounds.height < MIN_WINDOW_SIDE) {
+        const reason = unrecordableReason(parsed.data, displays);
+        if (reason) {
+            skipped[reason] = (skipped[reason] ?? 0) + 1;
             continue;
         }
 
         windows.push({ id: windowId, pid, app, title: title ?? "", bounds });
+    }
+
+    if (Object.keys(skipped).length > 0) {
+        log.debug({ skipped }, "windows left out of the recording targets");
     }
 
     return windows;
@@ -145,6 +138,16 @@ export function groupRecordingApps(windows: RecordingWindow[]): RecordingApp[] {
     }
 
     return [...apps.values()];
+}
+
+/** The displays' frames in global CG points, for telling an overlay over a whole display from a window. */
+export function displayFrames(raw: unknown): ScreenRect[] {
+    return parseScreenList(raw, "cocoa").map((screen) => ({
+        x: screen.originCG.x,
+        y: screen.originCG.y,
+        width: screen.points.width,
+        height: screen.points.height,
+    }));
 }
 
 export function parseRecordingDisplays(raw: unknown): RecordingDisplay[] {
@@ -175,12 +178,13 @@ export async function listRecordingTargets(
         throw new Error(`Cannot list displays: ${screens.error ?? "ax-tool screens failed"}`);
     }
 
-    const windows = parseRecordingWindows(front);
+    const displays = parseRecordingDisplays(screens);
+    const windows = parseRecordingWindows(front, displayFrames(screens));
     const frontmost = (front as { frontmostPid?: unknown }).frontmostPid;
     const targets: RecordingTargets = {
         windows,
         apps: groupRecordingApps(windows),
-        displays: parseRecordingDisplays(screens),
+        displays,
         ...(typeof frontmost === "number" ? { frontmostPid: frontmost } : {}),
     };
     log.debug(
