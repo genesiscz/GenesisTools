@@ -21,7 +21,16 @@ import type { Item } from "./model/item";
 import { ITEM_TYPES, type ItemType, isOpenState, OPEN_STATES, type Severity } from "./model/vocab";
 import { defaultNotify, type ResolvedNotify, resolveNotify } from "./notify";
 import { pairingsForRows, type RowPairings } from "./pairing-rows";
-import { type ItemRow, type Liveness, listItems, type ShowResult, showItem, type TriageRow, triage } from "./read";
+import {
+    type ItemRow,
+    type Liveness,
+    listItems,
+    membersByContainer,
+    type ShowResult,
+    showItem,
+    type TriageRow,
+    triage,
+} from "./read";
 import { type ReopenData, reopen } from "./reopen";
 import type { FieldRule, NotifyLevel, NotifyRule, RoleRule } from "./rules/config";
 import {
@@ -331,9 +340,12 @@ export const workHandlers: WorkHandlers = {
             ...(p.all === true ? {} : { states: [...OPEN_STATES] }),
             limit: 5000,
         });
+        const grouped = membersByContainer(
+            session.ctx.db,
+            containers.map((item) => item.id)
+        );
         const out: TreeContainer[] = containers.map((item) => {
-            const listed = listItems(session.ctx.db, { under: item.id });
-            const members = listed.ok ? listed.rows : [];
+            const members = grouped.get(item.id) ?? [];
             return {
                 ref: item.id,
                 type: item.type,
