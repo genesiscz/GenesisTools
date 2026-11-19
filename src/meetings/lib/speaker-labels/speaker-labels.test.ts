@@ -586,6 +586,30 @@ describe("speaker-label integration", () => {
         expect(asked[0]).toMatchObject({ fromSec: 0, choices: ["Alice Example", "Bob Example"] });
     });
 
+    test("a stranger stretch question counts against the question cap", async () => {
+        const { store, record, meeting, config } = await runnerFixture({
+            participants: [
+                { name: "Alice Example", self: true, from: ["fixture"] },
+                { name: "Bob Example", from: ["fixture"] },
+            ],
+            seats: { room: ["Alice Example"], remote: [{ name: "Bob Example" }] },
+        });
+        meeting.transcript = [0, 10, 20, 30].map((startSec) => ({ speaker: "Speaker 1", startSec, text: "Yes." }));
+        const labels: LineLabel[] = [0, 1, 2].map((index) => ({
+            labeler: "voice",
+            index,
+            seat: "mic",
+            reason: "not-the-seat-person",
+            score: 0.2,
+            next: { person: "Alice Example", score: 0.2 },
+        }));
+        spies.push(spyOn(labelers, "proposeSpeakerLabels").mockResolvedValue(labels));
+        config.global.suggest.questionCap = 0;
+        await runSuggest({ store, record: store.read(record.id)!, rules: ["speakers"] });
+        const asked = new MeetingStore(store.storage).read(record.id)!.items.filter((item) => item.kind === "question");
+        expect(asked).toEqual([]);
+    });
+
     test("a voice goodbye reaches the departure reason in the suggestion pass", async () => {
         const { record, meeting } = await runnerFixture({
             participants: [{ name: "Alice Example", self: true, from: ["fixture"] }],
