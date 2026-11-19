@@ -18,19 +18,27 @@ interface Options {
     json?: boolean;
 }
 
-function seatLabels(seats: MeetingSeats | null): Map<string, string> {
-    const labels = new Map<string, string>();
-    for (const name of seats?.room ?? []) {
-        labels.set(nameKey(name), "room");
+/** Every saved seat of a person, in order: one person can sit remote for several intervals. */
+export function seatLabels(seats: MeetingSeats | null): Map<string, string> {
+    const labels = new Map<string, string[]>();
+    function add(name: string, label: string): void {
+        const key = nameKey(name);
+        labels.set(key, [...(labels.get(key) ?? []), label]);
     }
+
+    for (const name of seats?.room ?? []) {
+        add(name, "room");
+    }
+
     for (const remote of seats?.remote ?? []) {
         const bounds =
             remote.fromSec !== undefined || remote.toSec !== undefined
                 ? ` ${formatClock(remote.fromSec ?? 0)}–${remote.toSec === undefined ? "end" : formatClock(remote.toSec)}`
                 : "";
-        labels.set(nameKey(remote.name), `remote${bounds}${remote.label ? ` (${remote.label})` : ""}`);
+        add(remote.name, `remote${bounds}${remote.label ? ` (${remote.label})` : ""}`);
     }
-    return labels;
+
+    return new Map([...labels].map(([key, list]) => [key, list.join(", ")]));
 }
 
 function handChoice(options: { command: string; opts: Options; name: string; seat: "room" | "remote" }): string {
@@ -93,8 +101,10 @@ async function seats(ref: string, opts: Options): Promise<void> {
             ...(report.current?.room ?? []),
             ...(report.current?.remote.map((seat) => seat.name) ?? []),
         ]) {
-            if (!listed.has(nameKey(name))) {
-                table.push([name, current.get(nameKey(name)) ?? "—", "—", "Only in the saved seats."]);
+            const key = nameKey(name);
+            if (!listed.has(key)) {
+                listed.add(key);
+                table.push([name, current.get(key) ?? "—", "—", "Only in the saved seats."]);
             }
         }
         if (!report.current) {
