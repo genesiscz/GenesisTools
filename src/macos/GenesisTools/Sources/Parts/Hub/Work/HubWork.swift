@@ -14,6 +14,7 @@ final class HubWorkModel: ObservableObject {
     /// launch with `--mode work` settles there, as the Timeline and Inbox modes settle on their first load.
     var onLoaded: (() -> Void)? { didSet { watchFirstLoad() } }
     private var loadWatch: AnyCancellable?
+    var preferredOpeningProject: String?
 
     init(source: WorkSource? = nil, defaults: UserDefaults = HubDefaults.store) {
         self.defaults = defaults
@@ -41,7 +42,9 @@ final class HubWorkModel: ObservableObject {
         case .firstInList:
             candidates = []
         }
-        screen.activate(preferring: candidates)
+        let preferred = preferredOpeningProject
+        preferredOpeningProject = nil
+        screen.activate(preferring: [preferred].compactMap { $0 } + candidates)
     }
 
     func openProject(_ name: String) {

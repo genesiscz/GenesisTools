@@ -49,6 +49,7 @@ struct HubRequest {
     var repo: String?
     var tab: HubTab?
     var mode: HubMode?
+    var workProject: String?
     var panes: [HubTab]?
     var width: CGFloat?
     var height: CGFloat?
@@ -138,6 +139,7 @@ struct HubRequest {
         if let mode { return mode }
         if agent != nil { return .agents }
         if opensUsage { return .usage }
+        if workProject != nil { return .work }
         if pr != nil { return .prs }
         if commit != nil || worktree != nil { return .worktrees }
         return inboxItem != nil ? .inbox : .sessions
@@ -168,6 +170,7 @@ struct HubRequest {
             case "--bench": benchPath = value; index += 1
             case "--session": session = value; index += 1
             case "--agent": agent = value; index += 1
+            case "--work-project": workProject = value; index += 1
             case "--pr": pr = value.flatMap(HubPRRef.init); index += 1
             case "--reveal": reveal = value; index += 1
             case "--commit": commit = value; index += 1
@@ -327,6 +330,7 @@ package func runHub(_ args: [String]) -> Never {
     }
     model.applyOverlays(request)
     MainActor.assumeIsolated {
+        model.work.preferredOpeningProject = request.workProject
         if let agent = request.agent {
             model.agents.request(parent: request.session, child: agent)
         } else if mode == .agents, let session = request.session {
@@ -2168,6 +2172,9 @@ final class HubModel {
             setMode(.sessions)
             pendingSession = wanted
             loadSessions()
+        } else if let project = request.workProject {
+            setMode(.work)
+            MainActor.assumeIsolated { work.openProject(project) }
         } else if let mode = request.mode {
             setMode(mode)
         } else if request.inboxItem != nil {

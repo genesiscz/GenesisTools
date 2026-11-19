@@ -641,7 +641,9 @@ final class HubNavigationTests: XCTestCase {
         for mode in HubMode.allCases {
             let selection = try XCTUnwrap(picked[mode], "\(mode) needs a sample place")
             let flags = HubPlace(entry: HubNavEntry(mode: mode, selection: selection), tab: .transcript).arguments
-            XCTAssertEqual(HubRequest(flags).launchMode, mode, "\(mode): \(flags)")
+            let request = HubRequest(flags)
+            XCTAssertEqual(request.launchMode, mode, "\(mode): \(flags)")
+            if mode == .work { XCTAssertEqual(request.workProject, selection) }
         }
     }
 
