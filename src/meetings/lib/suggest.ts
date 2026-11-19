@@ -473,6 +473,24 @@ function labeledItems(options: {
     const strangers = new Map<number, { owner: string; stretch: number }>();
     const covers = (item: NewItem, label: string, at: number) =>
         item.kind === "speaker-range" && item.label === label && item.fromSec <= at && item.toSec >= at;
+    // Indexed once by transcript label, so each proposed line reads only the ranges of its own label.
+    const byLabel = <T extends { label: string }>(items: readonly T[]) => {
+        const index = new Map<string, T[]>();
+        for (const item of items) {
+            const list = index.get(item.label) ?? [];
+            list.push(item);
+            index.set(item.label, list);
+        }
+        return index;
+    };
+    const ranges = (items: readonly NewItem[]) => byLabel(items.filter((item) => item.kind === "speaker-range"));
+    const confirmed = ranges(record.items.filter((item) => item.status === "confirmed"));
+    const assignments = byLabel(record.speakers.assignments ?? []);
+    const foundByLabel = ranges(options.found);
+    const storedByLabel = ranges(record.items.filter((one) => one.status === "suggested" || one.status === "rejected"));
+    // The lines a range covers: a binary search over the lines by start, then its own label.
+    const coveredLines = (item: Extract<NewItem, { kind: "speaker-range" }>) =>
+        spans.startingBetween(item.fromSec, item.toSec).filter(({ entry }) => entry.speaker === item.label);
 
     for (const label of [...options.labels].sort((a, b) => a.index - b.index)) {
         const entry = meeting.transcript[label.index];
@@ -483,10 +501,8 @@ function labeledItems(options: {
         }
 
         if (
-            record.items.some((item) => item.status === "confirmed" && covers(item, entry.speaker, at)) ||
-            record.speakers.assignments?.some(
-                (item) => item.label === entry.speaker && item.fromSec <= at && item.toSec >= at
-            )
+            confirmed.get(entry.speaker)?.some((item) => covers(item, entry.speaker, at)) ||
+            assignments.get(entry.speaker)?.some((item) => item.fromSec <= at && item.toSec >= at)
         ) {
             continue;
         }
@@ -585,7 +601,7 @@ function labeledItems(options: {
                     : {}),
             },
         };
-        const stored = record.items.filter(
+        const stored = (storedByLabel.get(entry.speaker) ?? []).filter(
             (one) =>
                 covers(one, entry.speaker, at) &&
                 (one.status === "suggested" ||
@@ -599,7 +615,10 @@ function labeledItems(options: {
                         one.speaker &&
                         sameName(one.speaker, label.person!)))
         );
-        const older = [...options.found.filter((one) => covers(one, entry.speaker, at)), ...stored];
+        const older = [
+            ...(foundByLabel.get(entry.speaker) ?? []).filter((one) => covers(one, entry.speaker, at)),
+            ...stored,
+        ];
 
         // A rerun keeps this line's item ID. Its confidence and voice support follow the current seat proposal.
         if (label.reason === "seat-of-one") {
@@ -679,10 +698,7 @@ function labeledItems(options: {
             !item.decision &&
             !item.rules.includes(MeetingRule.User) &&
             !item.rules.includes(MeetingRule.Agent) &&
-            ([...strangers.keys()].some((index) => {
-                const entry = meeting.transcript[index];
-                return entry.startSec !== undefined && covers(item, entry.speaker, entry.startSec);
-            }) ||
+            (coveredLines(item).some(({ index }) => strangers.has(index)) ||
                 independent.some(([index, winner]) => {
                     const entry = meeting.transcript[index]!;
                     return (
@@ -713,11 +729,7 @@ function labeledItems(options: {
             return [item];
         }
 
-        const lines = meeting.transcript.flatMap((entry, index) =>
-            entry.startSec !== undefined && covers(item, entry.speaker, entry.startSec)
-                ? [{ index, at: entry.startSec }]
-                : []
-        );
+        const lines = coveredLines(item).map(({ entry, index }) => ({ index, at: entry.startSec! }));
 
         if (!lines.some((line) => proposed.has(line.index))) {
             return [item];
