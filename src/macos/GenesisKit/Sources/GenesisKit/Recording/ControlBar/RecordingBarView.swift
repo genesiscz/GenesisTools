@@ -134,14 +134,6 @@ public struct RecordingBarView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityHidden(help != nil)
             phaseDetails
-            if let audioReason {
-                HStack {
-                    InfoStrip(audioReason, tone: .warning)
-                    if caps.targets.contains(.area) {
-                        word("Select an Area", "area", reason: reason("target", live: caps.liveTargetSwitch)) { pick(.area) }
-                    }
-                }
-            }
             if follows {
                 HStack {
                     let captured = actions.followedDisplay?.wrappedValue
@@ -223,10 +215,7 @@ public struct RecordingBarView: View {
         return Button { pick(nil) } label: {
             HStack(spacing: 4) {
                 Image(systemName: setup.target?.symbol ?? "display")
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(title).lineLimit(1).truncationMode(.middle)
-                    if audioReason != nil { Text("No audio").font(.caption).foregroundStyle(.secondary) }
-                }
+                Text(title).lineLimit(1).truncationMode(.middle)
             }.frame(minWidth: 28, maxWidth: .infinity, minHeight: 26, alignment: .leading)
         }
         .buttonStyle(.genHoverRow())
@@ -239,26 +228,12 @@ public struct RecordingBarView: View {
         actions.chooseTarget(kind)
     }
 
-    private var audioReason: String? { Self.audioNote(for: setup.target, capabilities: caps) }
-
-    /// What the target's movie leaves out of sound, said in view under the source line; nil when it records sound.
-    public static func audioNote(for target: RecordingTarget?, capabilities caps: RecordingCapabilities) -> String? {
-        guard let target else { return nil }
-        let live = caps.reasonUnavailable["microphone"] ?? caps.reasonUnavailable["systemAudio"]
-        switch target {
-        case .window: return caps.reasonUnavailable["windowAudio"] ?? live
-        case .app: return caps.reasonUnavailable["appAudio"] ?? live
-        default: return nil
-        }
-    }
-
     private func soundState(_ enabled: Bool, _ muted: Bool) -> String {
         enabled ? (muted ? "Muted" : "On") : "Off"
     }
 
     private var sourceSummary: String {
         let scope = configuring ? "Next recording" : "This take"
-        if audioReason != nil { return "\(scope) · No audio track" }
         let mic = soundState(setup.microphone.enabled, setup.microphone.muted).lowercased()
         let system = soundState(setup.systemAudio.enabled, setup.systemAudio.muted).lowercased()
         return "\(scope) · Microphone \(mic) · System audio \(system)"

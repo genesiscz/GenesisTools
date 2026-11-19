@@ -50,12 +50,9 @@ enum CaptureChoice: Equatable {
         }
     }
 
-    /// A display, an area or the screen in use; not a window or an app, whose movie has no audio track.
-    var recordsAudio: Bool {
-        switch self {
-        case .target(.window), .target(.app): false
-        case .target(.display), .target(.area), .target(.displays), .area, .followPointer: true
-        }
+    /// The target the picker listed; nil for a drawn area and for the screen in use.
+    var listedTarget: RecordingTarget? {
+        if case let .target(target) = self { target } else { nil }
     }
 
     /// Cocoa screen rect (bottom-left origin) to CoreGraphics global points, given the primary display's height.
@@ -94,17 +91,6 @@ enum CaptureChoice: Equatable {
 /// The capture picker's options, each its own key in the app's defaults so the menu's toggles and the picker share
 /// them. Every value applies to the next recording.
 struct CaptureOptions: Equatable {
-    /// What a choice on `tab` does not record, said beside the options; nil on the Displays tab. "Select an area…"
-    /// sits on every tab and records all of them, so the rows stay usable and only this line explains.
-    static func notRecorded(on tab: RecordingPickerTab) -> String? {
-        switch tab {
-        case .windows: "A window movie has no audio. Cursor positions and clicks are always kept; shortcuts follow the option below."
-        case .apps: "An app movie has no audio. Cursor positions and clicks are always kept; shortcuts follow the option below."
-        case .click: "A window movie has no audio. Cursor positions and clicks are always kept; shortcuts follow the option below."
-        case .displays, .area: nil
-        }
-    }
-
     static let frameRates = [15, 24, 30, 60]
     /// 0 is "the same as the frame rate" (a movie keeps one rate).
     static let idleRates: [Double] = [0, 0.5, 1, 2, 5]
@@ -132,6 +118,8 @@ struct CaptureOptions: Equatable {
     var threshold: Double = 0.5
     var systemAudio = false
     var microphone = false
+    /// Whose sound a window or app movie's system track keeps; shared with the widget through GenesisKit's key.
+    var systemAudioScope = SystemAudioScope.all
     var drawCursor = true
     var shortcutsOverlay = true
     var camera = false
@@ -148,6 +136,7 @@ struct CaptureOptions: Equatable {
         }
         options.systemAudio = bool(Key.systemAudio, options.systemAudio)
         options.microphone = bool(Key.microphone, options.microphone)
+        options.systemAudioScope = SystemAudioScope.load(defaults)
         options.drawCursor = bool(Key.drawCursor, options.drawCursor)
         options.shortcutsOverlay = bool(Key.shortcuts, options.shortcutsOverlay)
         options.camera = bool(Key.camera, options.camera)
@@ -162,6 +151,7 @@ struct CaptureOptions: Equatable {
         defaults.set(threshold, forKey: Key.threshold)
         defaults.set(systemAudio, forKey: Key.systemAudio)
         defaults.set(microphone, forKey: Key.microphone)
+        defaults.set(systemAudioScope.rawValue, forKey: SystemAudioScope.key)
         defaults.set(drawCursor, forKey: Key.drawCursor)
         defaults.set(shortcutsOverlay, forKey: Key.shortcuts)
         defaults.set(camera, forKey: Key.camera)
@@ -178,8 +168,9 @@ struct CaptureOptions: Equatable {
         args += ["--fps", String(fps)]
         if idleFps > 0 { args += ["--idle-fps", Self.number(idleFps)] }
         if threshold != 0.5 { args += ["--threshold", Self.number(threshold)] }
-        // A window or app movie is made from those windows alone and has no audio track; `start` refuses --audio there.
-        if !audioSources.isEmpty, choice.recordsAudio { args += ["--audio", audioSources.joined(separator: ",")] }
+        // Every target records sound, each source its own track.
+        if !audioSources.isEmpty { args += ["--audio", audioSources.joined(separator: ",")] }
+        args += systemAudioScope.arguments(target: choice.listedTarget, recordsSystemAudio: systemAudio)
         if !drawCursor { args.append("--system-cursor") }
         if !shortcutsOverlay { args.append("--no-shortcuts") }
         if camera { args.append("--camera") }
@@ -193,8 +184,10 @@ struct CaptureOptions: Equatable {
 
     /// The bar owns the draft. The shortcuts and change threshold retain their existing preference keys.
     static func barArguments(_ setup: RecordingSetup, threshold: Double, shortcuts: Bool, excluding ids: [Int],
-                             screens: [CGRect], displayIDs: [UInt32?]) throws -> [String] {
+                             screens: [CGRect], displayIDs: [UInt32?],
+                             systemAudioScope: SystemAudioScope = .all) throws -> [String] {
         var options = CaptureOptions()
+        options.systemAudioScope = systemAudioScope
         options.fps = setup.frameRate
         options.idleFps = setup.stillFrameRate == Double(setup.frameRate) ? 0 : setup.stillFrameRate
         options.threshold = threshold
@@ -218,7 +211,7 @@ struct CaptureOptions: Equatable {
             throw RecordingEngineError.unsupported("The movie recorder uses the target’s native size. Choose Standard quality to record.")
         }
         var arguments = options.startArguments(choice, excludeWindowIds: ids, targetArguments: targetArguments)
-        if options.microphone, choice.recordsAudio, let device = setup.microphone.deviceID {
+        if options.microphone, let device = setup.microphone.deviceID {
             arguments += ["--mic-device", device]
         }
         if !targetArguments.contains("--frames") { arguments.append("--no-controls") }

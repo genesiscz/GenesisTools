@@ -29,24 +29,6 @@ public struct RecordingCapabilities: Equatable, Sendable {
         self.reasonUnavailable = reasonUnavailable
     }
 
-    /// Requested sources stay in the draft when the chosen capture format has no sound track.
-    func effective(for target: RecordingTarget?) -> Self {
-        let reason: String
-        switch target {
-        case .window: reason = "A window movie has no audio."
-        case .app: reason = "An app movie has no audio."
-        default: return self
-        }
-        var result = self
-        result.liveMicrophoneMute = false
-        result.liveMicrophoneDevice = false
-        result.liveSystemAudioMute = false
-        result.reasonUnavailable["microphone"] = reason
-        result.reasonUnavailable["microphoneDevice"] = reason
-        result.reasonUnavailable["systemAudio"] = reason
-        return result
-    }
-
     public func unavailableReason(for change: RecordingSetupChange, in setup: RecordingSetup) -> String? {
         let supported: Bool
         switch change {

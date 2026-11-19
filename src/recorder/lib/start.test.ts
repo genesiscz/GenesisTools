@@ -16,6 +16,7 @@ import { listLiveRecordings, liveRecordingsDir, RecorderClient } from "@genesisc
 import { skip } from "@genesiscz/utils/test/skip";
 import { readMediaFacts } from "@genesiscz/utils/video/media-facts";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
+import { Command } from "commander";
 import { type CameraHost, startRecordingCamera, stopRecordingCamera } from "./camera-recorder";
 import { framesDoneLine } from "./frames-recording";
 import { alreadyInState, liveRecordingRef, markerLabelProblem } from "./library";
@@ -26,6 +27,7 @@ import {
     refuseTargetOffScreen,
     startArgsOf,
     startAudioOf,
+    withStartOptions,
 } from "./start-options";
 import {
     announcedCountdown,
@@ -707,6 +709,9 @@ describe("a window or app movie", () => {
         expect(() => parseStartFlags({ window: "83493", audio: "system", systemAudioScope: "window" })).toThrow(
             /--system-audio-scope takes all or app/
         );
+        // Registered once: a second declaration made commander refuse every `recorder start`.
+        const longs = withStartOptions(new Command("start")).options.map((option) => option.long);
+        expect(longs.filter((flag) => flag === "--system-audio-scope")).toHaveLength(1);
         // The REPL door writes the same flag, so movies.record() and the CLI agree.
         expect(startArgsOf({ window: [83493], audio: ["system"], systemAudioScope: "app" })).toEqual(
             expect.arrayContaining(["--system-audio-scope", "app"])

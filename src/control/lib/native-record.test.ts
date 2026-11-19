@@ -217,7 +217,7 @@ describe("nativeCaptureArgv", () => {
                 micDevice: "BuiltInMicrophoneDevice",
             })
         ).toThrow(/micDevice/);
-        const isolated = { mode: "isolated", windowIds: [12], duration: 1, videoOut: "/v.mp4" } as const;
+        const isolated = { mode: "isolated" as const, windowIds: [12], duration: 1, videoOut: "/v.mp4" };
         expect(() => validateCaptureOptions({ ...isolated, audio: ["system", "mic"] })).not.toThrow();
         expect(nativeCaptureArgv({ ...isolated, audio: ["system"], systemAudioScope: "app" }, "/o").slice(-4)).toEqual([
             "--audio",

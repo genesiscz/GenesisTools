@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { chmod, mkdir } from "node:fs/promises";
+import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -8,11 +9,14 @@ import { LiveRecordingServer, liveRecordingId } from "@genesiscz/utils/screen-re
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import { ancestorPids } from "../lib/decision/frontmost";
+import { CAPTURE_AUDIO_SOURCES, CAPTURE_SYSTEM_AUDIO_SCOPES, type CaptureSystemAudioScope } from "../lib/native-record";
 import {
-    ffmpegSegmentJoiner,
+    audioTrackTitles,
     movieLengthMs,
+    type NativeRecorderOptions,
     nativeSegmentRecorder,
     SESSION_MOTION_THRESHOLD,
+    segmentJoiner,
 } from "../lib/recording-native";
 import {
     parseRecordingCommand,
@@ -42,6 +46,54 @@ interface SessionFlags {
     indicator?: boolean;
     maxSeconds?: string;
     output?: string;
+    audio?: string;
+    micDevice?: string;
+    systemAudioScope?: string | boolean;
+}
+
+/** `--audio`, `--mic-device` and `--system-audio-scope` as the movie's sound: one track per source, system first. */
+export function sessionAudioOf(
+    flags: Pick<SessionFlags, "audio" | "micDevice" | "systemAudioScope">
+): Pick<NativeRecorderOptions, "audio" | "micDevice" | "systemAudioScope"> {
+    const given = (flags.audio ?? "")
+        .split(",")
+        .map((one) => one.trim())
+        .filter(Boolean);
+
+    if (given.some((one) => !CAPTURE_AUDIO_SOURCES.some((source) => source === one))) {
+        throw new Error(`--audio takes system, mic or system,mic (got "${flags.audio}")`);
+    }
+
+    const audio = CAPTURE_AUDIO_SOURCES.filter((source) => given.includes(source));
+
+    if (flags.micDevice !== undefined && !audio.includes("mic")) {
+        throw new Error("--mic-device needs --audio mic (or system,mic): without the microphone it records nothing");
+    }
+
+    let systemAudioScope: CaptureSystemAudioScope | undefined;
+
+    if (flags.systemAudioScope !== undefined) {
+        const raw = flags.systemAudioScope;
+        systemAudioScope = CAPTURE_SYSTEM_AUDIO_SCOPES.find((one) => one === raw);
+
+        if (!systemAudioScope) {
+            throw new Error(
+                suggestEnumFlag("tools control capture session", "--system-audio-scope", CAPTURE_SYSTEM_AUDIO_SCOPES, {
+                    given: typeof raw === "string" ? raw : undefined,
+                })
+            );
+        }
+
+        if (!audio.includes("system")) {
+            throw new Error("--system-audio-scope needs --audio system (or system,mic)");
+        }
+    }
+
+    return {
+        ...(audio.length ? { audio } : {}),
+        ...(flags.micDevice ? { micDevice: flags.micDevice } : {}),
+        ...(systemAudioScope ? { systemAudioScope } : {}),
+    };
 }
 
 function parseIds(raw: string | undefined): number[] | undefined {
@@ -158,6 +210,12 @@ export function registerCaptureSessionCommands(capture: Command): void {
         .option("--no-indicator", "Hide the red border around what is recorded (never in the movie either way)")
         .option("--max-seconds <n>", `Longest recording, 1–${RECORDING_SESSION_MAX_SECONDS} s`)
         .option("--output <path>", "Where the joined movie goes (default ~/.genesis-tools/control/recordings/)")
+        .option("--audio <sources>", "Sound tracks for every target: system, mic or system,mic, one track each")
+        .option("--mic-device <uid>", "The microphone, an id from `ax-tool audio-devices` (needs --audio mic)")
+        .option(
+            "--system-audio-scope [scope]",
+            "With --audio system: a window or app keeps all (everything the Mac plays, the default) or app (only its app)"
+        )
         .action(async (flags: SessionFlags) => {
             // A host that dies closes the pipe: the next write fails with EPIPE, which would end this process with
             // the segments on disk and no movie. Stop instead, and keep what was recorded.
@@ -211,6 +269,7 @@ export function registerCaptureSessionCommands(capture: Command): void {
                 // The default output and every session folder live here, so the folder is owner only.
                 await mkdir(recordingsDir(), { recursive: true, mode: 0o700 });
                 await chmod(recordingsDir(), 0o700);
+                const sound = sessionAudioOf(flags);
                 const activeFps = boundedNumber(flags.fps, "--fps", 0.5, 120) ?? 60;
                 const idleFps = Math.min(boundedNumber(flags.idleFps, "--idle-fps", 0.1, 5) ?? activeFps, activeFps);
                 session = new RecordingSession({
@@ -222,8 +281,9 @@ export function registerCaptureSessionCommands(capture: Command): void {
                     recorder: nativeSegmentRecorder({
                         excludeWindowIds: parseIds(flags.excludeWindowIds),
                         indicator: flags.indicator,
+                        ...sound,
                     }),
-                    join: ffmpegSegmentJoiner,
+                    join: segmentJoiner(audioTrackTitles(sound.audio)),
                     measure: movieLengthMs,
                     emit,
                     maxSeconds: boundedNumber(flags.maxSeconds, "--max-seconds", 1, RECORDING_SESSION_MAX_SECONDS),
@@ -232,6 +292,7 @@ export function registerCaptureSessionCommands(capture: Command): void {
                 const sessionControl = new SessionRecorderControl(session, {
                     target,
                     onProgress: (event) => live?.emit("progress", { ...event }),
+                    audio: { sources: sound.audio ?? [], ...(sound.micDevice ? { micDevice: sound.micDevice } : {}) },
                 });
                 control = sessionControl;
                 live = new LiveRecordingServer({

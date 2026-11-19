@@ -96,17 +96,19 @@ final class RecordingBarModelTests: XCTestCase {
         XCTAssertEqual(engine.calls.count, 3)
     }
 
-    func testWindowAudioReasonPreservesTheChoiceAndBlocksALiveCall() async {
+    /// A window take records sound as a display take does (2026-11-19: "all should have audio available"), so the
+    /// engine's live sound controls stay offered and a mute reaches the engine.
+    func testAWindowTakeKeepsTheEnginesLiveSoundControls() async {
         let source = MicrophoneSetup(enabled: true, muted: false, deviceID: "desk")
         let (model, engine) = await recording(target: .window(ids: [7], app: nil, title: nil, pid: nil), mic: source)
-        XCTAssertFalse(model.capabilities.liveMicrophoneMute)
-        XCTAssertFalse(model.capabilities.liveSystemAudioMute)
-        model.apply(.microphone(MicrophoneSetup(enabled: true, muted: true, deviceID: "desk")))
+        XCTAssertTrue(model.capabilities.liveMicrophoneMute)
+        XCTAssertTrue(model.capabilities.liveSystemAudioMute)
+        let muted = MicrophoneSetup(enabled: true, muted: true, deviceID: "desk")
+        model.apply(.microphone(muted))
         await model.pendingCommand?.value
-        XCTAssertEqual(model.setup.microphone, source)
-        XCTAssertEqual(model.notice?.message, model.capabilities.reasonUnavailable["microphone"])
-        XCTAssertNotNil(model.notice?.message)
-        XCTAssertEqual(engine.calls.count, 1)
+        XCTAssertEqual(model.setup.microphone, muted)
+        XCTAssertNil(model.notice)
+        XCTAssertEqual(engine.calls.count, 2)
     }
 
     func testDiscardFromManualPauseKeepsTheSetupForAnotherTake() async {

@@ -3,21 +3,30 @@ import XCTest
 @testable import GenesisToolsRecorder
 
 final class CapturePickerTests: XCTestCase {
-    /// The defect: on the Windows and Apps tabs the audio, cursor and shortcuts toggles looked live, and only their
-    /// tooltips said that a window or an app movie records none of them (round 2, 2026-11-07). The setup bar says it in
-    /// view under its source line, before a take as well, and only for those targets. The bar draws exactly the note
-    /// this function returns (an offscreen render of the bar panel is blank, so the rule is checked here).
+    /// The defect (2026-11-19): "a window movie has no audio? why the hell not? all should have audio available." The
+    /// bar disabled the sound for a window or an app and its start left `--audio` out. Every target now starts with the
+    /// draft's sources and its microphone, and only a window or an app takes the "only that app" scope.
     @MainActor
-    func testTheWindowsAndAppsTabsSayInViewWhatTheirMoviesLeaveOut() throws {
+    func testTheBarStartsEveryTargetWithItsSoundAndTheScopeOnlyForAWindowOrApp() throws {
         let caps = ToolsRecorderEngine().capabilities
+        XCTAssertNil(caps.reasonUnavailable["windowAudio"])
+        XCTAssertNil(caps.reasonUnavailable["appAudio"])
+        let screens = [CGRect(x: 0, y: 0, width: 800, height: 600)]
         let targets: [(RecordingTarget, Bool)] = [
             (.window(ids: [1], app: "Editor", title: "Example", pid: nil), true),
             (.app(app: "editor", name: "Editor"), true),
             (.display(index: 0, name: "Example display"), false),
+            (.area(rect: CGRect(x: 10, y: 10, width: 100, height: 80), display: 0), false),
         ]
-        for (target, shown) in targets {
-            let note = RecordingBarView.audioNote(for: target, capabilities: caps)
-            XCTAssertEqual(note?.contains("no audio") ?? false, shown, "\(target): \(note ?? "no note")")
+        for (target, scoped) in targets {
+            let setup = RecordingSetup(target: target, microphone: .init(enabled: true, deviceID: "input"),
+                                       systemAudio: .init(enabled: true))
+            let arguments = try CaptureOptions.barArguments(setup, threshold: 0.5, shortcuts: true, excluding: [],
+                                                           screens: screens, displayIDs: [55], systemAudioScope: .app)
+            let audio = try XCTUnwrap(arguments.firstIndex(of: "--audio"), "\(target)")
+            XCTAssertEqual(arguments[audio + 1], "system,mic", "\(target)")
+            XCTAssertEqual(arguments.firstIndex(of: "--mic-device").map { arguments[$0 + 1] }, "input", "\(target)")
+            XCTAssertEqual(arguments.contains("--system-audio-scope"), scoped, "\(target)")
         }
     }
 
@@ -74,17 +83,24 @@ final class CapturePickerTests: XCTestCase {
         ])
     }
 
-    /// The defect: with an audio toggle on, a window or app choice passed --audio, which a window movie cannot record,
-    /// so the start was refused. Its audio flags stay out; a display and an area keep them.
-    func testAWindowOrAppChoiceLeavesTheAudioOutAndADisplayOrAreaKeepsIt() {
+    /// Every picker choice records the chosen sound; "only that app" reaches a window or an app alone, and the default
+    /// scope adds no flag.
+    func testEveryChoiceKeepsTheAudioAndOnlyAWindowOrAppTakesTheAppScope() {
         var options = CaptureOptions()
         options.systemAudio = true
         options.microphone = true
-        let window = options.startArguments(.target(.window(ids: [501], app: "Editor", title: nil, pid: 4101)))
-        XCTAssertFalse(window.contains("--audio"))
-        XCTAssertFalse(options.startArguments(.target(.app(app: "Editor", name: nil))).contains("--audio"))
-        XCTAssertTrue(options.startArguments(.area(CGRect(x: 0, y: 0, width: 10, height: 10))).contains("--audio"))
-        XCTAssertTrue(options.startArguments(.followPointer).contains("--audio"))
+        let window = CaptureChoice.target(.window(ids: [501], app: "Editor", title: nil, pid: 4101))
+        let choices: [CaptureChoice] = [window, .target(.app(app: "Editor", name: nil)),
+                                        .area(CGRect(x: 0, y: 0, width: 10, height: 10)), .followPointer]
+        for choice in choices {
+            XCTAssertTrue(options.startArguments(choice).contains("--audio"), "\(choice)")
+            XCTAssertFalse(options.startArguments(choice).contains("--system-audio-scope"), "\(choice)")
+        }
+        options.systemAudioScope = .app
+        XCTAssertTrue(options.startArguments(window).contains("--system-audio-scope"))
+        XCTAssertFalse(options.startArguments(.followPointer).contains("--system-audio-scope"))
+        options.systemAudio = false
+        XCTAssertFalse(options.startArguments(window).contains("--system-audio-scope"), "no system track, no scope")
     }
 
     func testOptionsRoundTripThroughDefaultsAndRefuseValuesThePickerDoesNotOffer() throws {
@@ -95,6 +111,7 @@ final class CapturePickerTests: XCTestCase {
         options.countdownSeconds = 5
         options.fps = 24
         options.camera = true
+        options.systemAudioScope = .app
         options.save(defaults)
         XCTAssertEqual(CaptureOptions.load(defaults), options)
         defaults.set(7, forKey: CaptureOptions.Key.fps)

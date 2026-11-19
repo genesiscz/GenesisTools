@@ -14,6 +14,7 @@ import { LiveRecordingServer, RecorderClient } from "@genesiscz/utils/screen-rec
 import * as mediaFacts from "@genesiscz/utils/video/media-facts";
 import * as videoProbe from "@genesiscz/utils/video/probe";
 import * as videoProcess from "@genesiscz/utils/video/process";
+import { sessionAudioOf } from "../commands/capture-session";
 import { captureDiagnostics, validateBenchmark } from "../scripts/recorder-benchmark-policy";
 import * as captureRunner from "./capture-runner";
 import {
@@ -1873,6 +1874,24 @@ describe("start flags for a target", () => {
         expect(() => parseWindowIdList("41,x", "--exclude-window-ids")).toThrow(
             "--exclude-window-ids takes CG window ids"
         );
+    });
+
+    it("gives the widget's capture session the movie recorder's sound flags, system first", () => {
+        expect(sessionAudioOf({})).toEqual({});
+        expect(sessionAudioOf({ audio: "mic,system", micDevice: "BuiltInMicrophoneDevice" })).toEqual({
+            audio: ["system", "mic"],
+            micDevice: "BuiltInMicrophoneDevice",
+        });
+        expect(sessionAudioOf({ audio: "system", systemAudioScope: "app" })).toEqual({
+            audio: ["system"],
+            systemAudioScope: "app",
+        });
+        expect(() => sessionAudioOf({ audio: "speakers" })).toThrow("--audio takes system, mic or system,mic");
+        expect(() => sessionAudioOf({ micDevice: "BuiltInMicrophoneDevice" })).toThrow(
+            "--mic-device needs --audio mic"
+        );
+        expect(() => sessionAudioOf({ audio: "mic", systemAudioScope: "app" })).toThrow("needs --audio system");
+        expect(() => sessionAudioOf({ audio: "system", systemAudioScope: true })).toThrow("--system-audio-scope");
     });
 });
 

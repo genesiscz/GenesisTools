@@ -22,6 +22,28 @@ public struct SystemAudioSetup: Equatable, Codable, Sendable {
     }
 }
 
+/// Whose sound the system track of a window or app take keeps (Settings → Recorder → What the movie keeps). A display
+/// or area take keeps everything the Mac plays whatever it says. ScreenCaptureKit filters sound per app, never per
+/// window, so `.app` keeps the recorded window's whole app.
+public enum SystemAudioScope: String, CaseIterable, Sendable {
+    case all, app
+
+    public static let key = "recorder.capture.audio.systemScope"
+
+    public static func load(_ defaults: UserDefaults = .standard) -> Self {
+        defaults.string(forKey: key).flatMap(Self.init(rawValue:)) ?? .all
+    }
+
+    /// `--system-audio-scope app` for a window or app take that keeps its system sound; nothing for the default.
+    public func arguments(target: RecordingTarget?, recordsSystemAudio: Bool) -> [String] {
+        guard self == .app, recordsSystemAudio else { return [] }
+        switch target {
+        case .window, .app: return ["--system-audio-scope", rawValue]
+        default: return []
+        }
+    }
+}
+
 public struct CameraSetup: Equatable, Codable, Sendable {
     public var enabled: Bool
     public var size: Int

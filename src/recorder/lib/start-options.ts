@@ -111,10 +111,6 @@ export function withStartOptions(command: Command): Command {
             "with --audio system: whose sound a window or app take keeps, all (everything the Mac plays, the default) or app (only the recorded app)"
         )
         .option(
-            "--system-audio-scope [scope]",
-            `with --audio system, a window or an app: whose sound the system track keeps, all (everything the Mac plays, the default) or app (only the recorded app)`
-        )
-        .option(
             "--fps <n>",
             `frames per second while something moves, ${fps.min}–${fps.max} for a movie (default ${DEFAULT_MOVIE_FPS}), ${frames.fps.min}–${frames.fps.max} with --frames`
         )

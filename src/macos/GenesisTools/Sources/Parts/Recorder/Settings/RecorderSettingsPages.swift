@@ -102,6 +102,21 @@ private struct RecorderRecordingSettings: View {
             NativeSettingsToggle("System audio", detail: "What the Mac plays, as its own track.",
                                  identifier: "recorder.settings.systemAudio", isOn: model.capture(\.systemAudio))
             Divider()
+            NativeSettingsSegmented(
+                "System audio of a window or app",
+                detail: model.capture(\.systemAudio).wrappedValue
+                    ? "Whose sound a window or app movie keeps. A display or an area keeps everything the Mac plays."
+                    : "Turn System audio on to use it.",
+                identifier: "recorder.settings.systemAudioScope",
+                options: [
+                    NativeSettingsOption(SystemAudioScope.all, "Everything",
+                                         detail: "Everything the Mac plays, as a display movie keeps it."),
+                    NativeSettingsOption(SystemAudioScope.app, "Only that app",
+                                         detail: "Only the recorded window's app. Other apps, alerts and music stay out."),
+                ],
+                selection: model.capture(\.systemAudioScope), minSegmentWidth: 96)
+                .disabled(!model.capture(\.systemAudio).wrappedValue)
+            Divider()
             NativeSettingsToggle("Microphone", detail: "Your voice, as its own track.",
                                  identifier: "recorder.settings.microphone", isOn: model.capture(\.microphone))
             Divider()
