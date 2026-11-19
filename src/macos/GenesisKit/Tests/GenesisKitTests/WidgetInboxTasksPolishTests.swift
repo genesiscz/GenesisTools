@@ -172,6 +172,7 @@ final class WidgetTasksPolishTests: XCTestCase {
         var snap = WidgetTaskSnapshot(tasks: [], total: 0, activeCount: 0, truncated: false,
                                       sourcePath: "/fixture/work.db", sourceStamp: "fixture", projects: ["App"], sessions: [])
         snap.claimedHandoffs = [handoff]
+        snap.work = [.init(project: "Design & build", spotted: 7, reopened: 0, held: 0)]
         let data = try JSONEncoder().encode(snap)
         let store = WidgetTasksStore(request: { _ in data })
         defer { store.stop() }
@@ -181,12 +182,15 @@ final class WidgetTasksPolishTests: XCTestCase {
         var clickStarted: TimeInterval?
         var dispatchMS: Double?
         let opened = expectation(description: "The task button requested a URL")
+        let projectOpened = expectation(description: "The project count opened its own project")
         let card = WidgetTasksModuleView(store: store, presentation: .preview, handoffDisplay: .expanded)
             .frame(width: 432, height: 300, alignment: .top)
             .environment(\.openURL, OpenURLAction { url in
                 dispatchMS = clickStarted.map { (ProcessInfo.processInfo.systemUptime - $0) * 1_000 }
                 urls.append(url)
-                opened.fulfill()
+                if URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first?.name == "work-project" {
+                    projectOpened.fulfill()
+                } else { opened.fulfill() }
                 return .handled
             })
             .background(Color.black).environment(\.colorScheme, .dark)
@@ -207,20 +211,23 @@ final class WidgetTasksPolishTests: XCTestCase {
         let ocr = VNRecognizeTextRequest()
         ocr.recognitionLevel = .accurate
         try VNImageRequestHandler(cgImage: XCTUnwrap(bitmap.cgImage)).perform([ocr])
-        let line = try XCTUnwrap(ocr.results?.first { $0.topCandidates(1).first?.string.contains("Inspect the archive") == true })
-        let location = NSPoint(x: line.boundingBox.midX * host.bounds.width, y: line.boundingBox.midY * host.bounds.height)
-        func mouse(_ type: NSEvent.EventType) throws -> NSEvent {
-            try XCTUnwrap(NSEvent.mouseEvent(with: type, location: location, modifierFlags: [],
-                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
-                eventNumber: 0, clickCount: 1, pressure: 1))
+        func click(_ label: String) throws {
+            let line = try XCTUnwrap(ocr.results?.first { $0.topCandidates(1).first?.string.contains(label) == true })
+            let location = NSPoint(x: line.boundingBox.midX * host.bounds.width, y: line.boundingBox.midY * host.bounds.height)
+            func mouse(_ type: NSEvent.EventType) throws -> NSEvent {
+                try XCTUnwrap(NSEvent.mouseEvent(with: type, location: location, modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                    eventNumber: 0, clickCount: 1, pressure: 1))
+            }
+            // Supply mouse-up before mouse-down enters a control's tracking loop.
+            NSApp.postEvent(try mouse(.leftMouseUp), atStart: true)
+            window.sendEvent(try mouse(.leftMouseDown))
+            if let up = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) {
+                window.sendEvent(up)
+            }
         }
-        // Supply mouse-up before mouse-down enters a control's tracking loop.
         clickStarted = ProcessInfo.processInfo.systemUptime
-        NSApp.postEvent(try mouse(.leftMouseUp), atStart: true)
-        window.sendEvent(try mouse(.leftMouseDown))
-        if let up = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) {
-            window.sendEvent(up)
-        }
+        try click("Inspect the archive")
         await fulfillment(of: [opened], timeout: 2)
         let url = try XCTUnwrap(urls.first)
         let ms = try XCTUnwrap(dispatchMS)
@@ -230,6 +237,9 @@ final class WidgetTasksPolishTests: XCTestCase {
         XCTAssertEqual(url.host, "hub")
         XCTAssertEqual(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
                        [URLQueryItem(name: "work", value: "w_build001")])
+        try click("7 spotted")
+        await fulfillment(of: [projectOpened], timeout: 2)
+        XCTAssertEqual(urls.last, WidgetWorkLink.project("Design & build"))
     }
 
     func testATickShowsAtOnceRunsBesideAnotherAndStaysVisibleWithUndo() async throws {
@@ -601,6 +611,107 @@ final class WidgetTasksPolishTests: XCTestCase {
         XCTAssertEqual(closed, 1, "a saved edit closes the editor")
         XCTAssertEqual(savedRevisions, [2], "and hands over the task as the ledger saved it")
         XCTAssertEqual(store.receipt, "Saved: Water every plant")
+    }
+
+    func testEditingSurvivesFilteringAndRequiresReviewOfAChangedRevision() async throws {
+        let original = task()
+        var latest = original
+        var writes: [[String]] = []
+        let store = WidgetTasksStore(request: { args in
+            if args.first == "edit" {
+                writes.append(args)
+                latest.revision += 1
+                latest.title = "Keep this draft"
+                return try self.saved(latest, action: "edit")
+            }
+            return try self.snapshot(args.contains("completed") ? [] : [latest])
+        })
+        defer { store.stop() }
+        store.beginEditing(original)
+        let editor = try XCTUnwrap(store.editSessions[original.id])
+        editor.title = "Keep this draft"
+        store.scope = "completed"
+        await settled(store)
+        latest.revision += 1
+        latest.title = "Edited elsewhere"
+        store.scope = "active"
+        await settled(store)
+        store.beginEditing(latest)
+        XCTAssertTrue(editor === store.editSessions[original.id])
+        XCTAssertTrue(editor.needsReview(latest))
+        editor.useReviewedVersion(latest)
+        store.draft.owner = "agent"
+        editor.save(in: store)
+        await settled(store)
+        let write = try XCTUnwrap(writes.first)
+        XCTAssertEqual(write[try XCTUnwrap(write.firstIndex(of: "--revision")) + 1], "2")
+        XCTAssertFalse(write.contains("--for"))
+        XCTAssertEqual(write[try XCTUnwrap(write.firstIndex(of: "--title")) + 1], "Keep this draft")
+        XCTAssertNil(store.editSessions[original.id])
+    }
+
+    func testAConfirmedCreateDoesNotMoveAFilterChosenWhileSaving() async throws {
+        let held = HeldEdit()
+        let created = task(title: "New task")
+        let store = WidgetTasksStore(request: { args in
+            if args.first == "create" {
+                await withCheckedContinuation { held.release = $0 }
+                return try self.saved(created, action: "create")
+            }
+            return try self.snapshot([])
+        })
+        defer { store.stop() }
+        store.draft.title = created.title
+        store.create()
+        await untilHeld(held)
+        store.scope = "completed"
+        store.draft.project = "Next project"
+        held.release?.resume()
+        await settled(store)
+        XCTAssertEqual(store.scope, "completed")
+        XCTAssertEqual(store.draft.project, "Next project")
+        XCTAssertTrue(store.draft.title.isEmpty)
+    }
+
+    func testAReceiptForADifferentTaskCannotCloseTheEditor() async throws {
+        let original = task()
+        var edited = original
+        edited.revision += 1
+        let mismatched = WidgetTaskSaved(task: edited, receipt: .init(id: "t_other", action: "edit",
+            state: edited.state, revision: edited.revision, at: edited.updatedTs, saved: true))
+        let store = WidgetTasksStore(request: { args in
+            if args.first == "edit" { return try JSONEncoder().encode(mismatched) }
+            return try self.snapshot([original])
+        })
+        defer { store.stop() }
+        store.beginEditing(original)
+        let editor = try XCTUnwrap(store.editSessions[original.id])
+        editor.title = "My unsaved change"
+        editor.save(in: store)
+        await settled(store)
+        XCTAssertTrue(editor.isOpen)
+        XCTAssertEqual(editor.title, "My unsaved change")
+        XCTAssertEqual(store.failures.first?.id, .change(original.id))
+    }
+
+    func testARefusedActionShowsItsOwnFailureWithoutAnnouncingAnEmptyList() async throws {
+        let original = task()
+        let store = WidgetTasksStore(request: { args in
+            if args.first == "update" { throw ToolsBridgeError.refused("fixture stderr line") }
+            return try self.snapshot([original])
+        })
+        defer { store.stop() }
+        store.refresh()
+        await settled(store)
+        store.toggle(original)
+        await settled(store)
+        XCTAssertEqual(store.failures.first?.id, .change(original.id))
+        let text = try renderTasks(WidgetTasksModuleView(store: store, presentation: .preview).frame(width: 324), name: "widget-task-refused")
+        XCTAssertTrue(text.contains("Water the plants"), text)
+        XCTAssertTrue(text.contains("Could not mark"), text)
+        XCTAssertFalse(text.contains("did not load"), text)
+        XCTAssertFalse(text.contains("fixture stderr"), text)
+        XCTAssertFalse(text.contains("Nothing waiting"), text)
     }
 
     /// A store whose edit request waits until the test lets it answer, so the editor can be used meanwhile.
