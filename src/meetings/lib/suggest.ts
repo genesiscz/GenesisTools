@@ -1492,5 +1492,10 @@ export function applySuggestionChanges(current: MeetingRecord, changes: SuggestC
 }
 
 export function suggestItems(options: SuggestInputs): MeetingItem[] {
-    return planSuggestions(options).fresh;
+    const changes = planSuggestions(options);
+    // Legacy callers append the returned items themselves and save the edited ranges and stays in the same update.
+    if (changes.updated.length || changes.stays.length) {
+        applySuggestionChanges(options.record, { ...changes, fresh: [] });
+    }
+    return changes.fresh;
 }
