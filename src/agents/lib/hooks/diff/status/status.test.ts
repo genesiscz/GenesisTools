@@ -19,10 +19,12 @@ import { createWorktreeService } from "@genesiscz/utils/genesis-tools/worktree/s
 import { TestRepo } from "@genesiscz/utils/git/test-repo";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { MetricsRecorder } from "@genesiscz/utils/metrics";
+import type { MetricEventRow } from "@genesiscz/utils/metrics/types";
 import { DEFAULT_HOOKS_CONFIG, HOOK_CONFIG_SECTIONS } from "../../config";
 import { statusOf } from "../../git";
 import { callDir } from "../../paths";
 import { applySetting } from "../../set-config";
+import { buildStatusReport, gateRows, reportFromEvents } from "./gates";
 import { gitMode } from "./git";
 import { armsFor, STATUS_MODES } from "./modes";
 import { narrowGitMode } from "./narrow-git";
@@ -406,5 +408,112 @@ describe("the snapshot mode", () => {
         expect(stopped.state === "unavailable" && stopped.reason).toBe("no-service");
         const fallback = await prepareStatus({ phase: "post", roots, need: "all", call: snapshotCall, config, arms });
         expect(fallback.read(repo.dir).entries).toEqual(statusOf(repo.dir).entries);
+    });
+});
+
+describe("the report and the gates", () => {
+    let id = 0;
+    const event = (options: {
+        arm: string;
+        mode: string;
+        phase: "pre" | "post";
+        need: "all" | "deletions";
+        parity: string;
+        outcome?: string;
+        reason?: string | null;
+        cause?: string | null;
+        call: string;
+        at: number;
+        differences?: Array<{ path: string; reference: string | null; got: string | null }>;
+    }): MetricEventRow => ({
+        id: ++id,
+        at: options.at,
+        value: 12,
+        dims: {
+            arm: options.arm,
+            mode: options.mode,
+            role: options.arm === "git" ? "reference" : "shadow",
+            phase: options.phase,
+            need: options.need,
+            outcome: options.outcome ?? "answered",
+            reason: options.reason ?? null,
+            parity: options.parity,
+            cause: options.cause ?? null,
+            harness: "claude",
+            root: "r1",
+            linked: false,
+        },
+        context: { session: "s", toolUseId: options.call, fullStatus: false, differences: options.differences ?? [] },
+    });
+    const day = 86_400_000;
+    const cpu = [
+        event({ arm: "git", mode: "git", phase: "pre", need: "all", parity: "none", call: "a", at: 0 }),
+        event({
+            arm: "snapshot:watchman",
+            mode: "snapshot",
+            phase: "pre",
+            need: "all",
+            parity: "same",
+            call: "a",
+            at: 0,
+        }),
+        event({
+            arm: "snapshot:watchman",
+            mode: "snapshot",
+            phase: "pre",
+            need: "all",
+            parity: "missing-dirty",
+            call: "b",
+            at: day,
+            differences: [{ path: "src/held.ts", reference: ".M", got: null }],
+        }),
+        event({
+            arm: "snapshot:watchman",
+            mode: "snapshot",
+            phase: "post",
+            need: "all",
+            parity: "none",
+            outcome: "fallback",
+            reason: "fence-timeout",
+            call: "b",
+            at: day,
+        }),
+    ];
+
+    it("a recorded missing-dirty at a writer's pre fails its gate, and the unexplained difference comes first", () => {
+        const report = reportFromEvents({ cpu, wall: [] });
+        const arm = report.arms.find((row) => row.arm === "snapshot:watchman");
+        expect(arm?.calls).toBe(2);
+        expect(arm?.observations).toBe(3);
+        expect(arm?.answered).toBe(2);
+        expect(arm?.missingDirtyAtWriterPre).toBe(1);
+        expect(arm?.unexplained).toBe(1);
+        expect(arm?.reasons).toEqual({ "fence-timeout": 1 });
+        expect(arm?.days).toBe(1);
+        const gates = arm ? gateRows(arm) : [];
+        expect(gates.find((gate) => gate.id === "missing-dirty")).toMatchObject({ value: 1, holds: false });
+        expect(gates.find((gate) => gate.id === "cpu")).toMatchObject({ value: null, holds: null });
+        expect(report.differences[0]).toEqual({
+            arm: "snapshot:watchman",
+            cause: null,
+            count: 1,
+            examples: ["src/held.ts"],
+        });
+        const git = report.arms.find((row) => row.arm === "git");
+        expect(git ? gateRows(git) : null).toEqual([]);
+    });
+
+    it("buildStatusReport pages the events newest first and drops the rows it saw twice", async () => {
+        const asked: Array<number | undefined> = [];
+        const report = await buildStatusReport({
+            since: 0,
+            read: async (query) => {
+                asked.push(query.until);
+                const rows = query.metric.endsWith("cpu_ms") ? [...cpu].reverse() : [];
+                return { project: query.project, metric: query.metric, known: true, rows };
+            },
+        });
+        expect(asked).toEqual([undefined, undefined]);
+        expect(report.arms.map((row) => row.arm)).toEqual(["git", "snapshot:watchman"]);
     });
 });
