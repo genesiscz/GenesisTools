@@ -689,3 +689,7 @@ checklist.md or motion.md as well.
   lived in other files. Now every Swift path goes through `GenesisToolsHome` (GenesisKitBase/Paths), and lint-rules
   `swift-hand-joined-genesis-tools` fails a hand join. Rule: before you keep a picture made under a sandbox home,
   look for one real title or name in it; one hit means some path still reads the real home.
+- 2026-11-19 01:36 — **Test what fits in the first window.** The Work drawing test found the Spotted heading below one
+  handoff. A long list of handoffs hid every spotted item in a 1300 × 820 pt window. Opening the same window with
+  that group folded showed the spotted items immediately (**40ec20ac50**). Test a crowded first group in
+  a fixed-height window. Check which rows are visible before scrolling and which section a count opens.
