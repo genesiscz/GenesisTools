@@ -323,7 +323,15 @@ final class WorkFindTests: XCTestCase {
         let mention = WorkFilter.Row(ref: "w_other001", title: "See w_abcd1234", type: "task", state: "open")
         XCTAssertEqual(filter.fullRef, target.ref)
         XCTAssertTrue(filter.matches(target))
-        XCTAssertFalse(filter.matches(mention))
+        // One row still matches a mention (the fallback when the item is not loaded); the list keeps only the item.
+        XCTAssertTrue(filter.matches(mention))
+        let snapshot = WorkSnapshotValue(project: "Orchard", containers: [], triage: [
+            WorkTriageValue(ref: mention.ref, group: "spotted", type: "task", state: "spotted", title: mention.title),
+            WorkTriageValue(ref: target.ref, group: "spotted", type: "task", state: "spotted", title: target.title),
+        ])
+        XCTAssertEqual(WorkItemsProjection(snapshot: snapshot, filter: filter).visibleRefs, [target.ref])
+        XCTAssertEqual(WorkItemsProjection(snapshot: snapshot, filter: WorkFilter(text: "w_abcd1234")).visibleRefs,
+                       [target.ref])
         XCTAssertEqual(WorkFilter(text: "H_ABCD1234:T5").fullRef, "h_abcd1234:T5")
     }
 
