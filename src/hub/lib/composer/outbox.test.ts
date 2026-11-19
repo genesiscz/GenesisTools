@@ -5395,10 +5395,11 @@ describe("background Widget roster", () => {
             ours.run("INSERT INTO rows VALUES (1)");
             expect(reads.needed(false)).toBe(false);
             expect(reads.needed(true)).toBe(true);
+            expect(reads.reading()).toBe(true);
             // Another listing indexes a transcript after the last read; this worker's refresh then writes nothing.
             theirs.run("INSERT INTO rows VALUES (2)");
             expect(reads.needed(false)).toBe(true);
-            reads.reading();
+            expect(reads.reading()).toBe(false);
             expect(reads.needed(false)).toBe(false);
         } finally {
             ours.close();

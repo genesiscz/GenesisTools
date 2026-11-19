@@ -57,6 +57,8 @@ self.onmessage = async (event: MessageEvent<WidgetRosterRequest | { id: number; 
             }
         }
 
+        // The scoped refresh writes through the same HistoryDatabase connection read by WidgetRosterReads.
+        // Only another connection can change its data_version while refreshWidgetIndex is in flight.
         const sameIndex = reads.reading();
         const roster = await prof.measureAsync(
             "background roster",
