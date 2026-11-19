@@ -1,5 +1,6 @@
 /**
- * `rebranch apply`: build one branch per group from the base with `git cherry-pick -x`, in source
+ * `rebranch apply`: build one branch per group from the base with `git cherry-pick` (no `-x`: the
+ * trailer showed on every PR commit, and `verify` proves the split by content), in source
  * order, resumable after a conflict. The state file lives in the git common dir like
  * `rebase-cascade`'s, so `--continue` and `--abort` find it from any worktree, and every command
  * runs in the checkout that started the operation.
@@ -169,7 +170,7 @@ export function applyCommands(plan: ResolvedPlan, opts: { base: string; returnTo
         lines.push(`git switch -c ${group.branch} --no-track ${opts.base}`);
 
         for (const pick of picks) {
-            lines.push(`git cherry-pick -x ${short(pick.sha)}   # ${pick.subject}`);
+            lines.push(`git cherry-pick ${short(pick.sha)}   # ${pick.subject}`);
 
             if (pick.decision === "paths-only" && pick.outsidePaths.length > 0) {
                 lines.push(`#   paths-only: put back ${pick.outsidePaths.length} path(s) outside ${group.name}`);
@@ -461,7 +462,7 @@ export async function runApply(run: ApplyRun): Promise<ApplyResult> {
         while (state.position.pick < picks.length) {
             const pick = picks[state.position.pick];
             const prePick = await git.getSha("HEAD");
-            const picked = await exec(run, ["cherry-pick", "-x", pick.sha]);
+            const picked = await exec(run, ["cherry-pick", pick.sha]);
 
             if (!picked.success) {
                 state.phase = "stopped";
