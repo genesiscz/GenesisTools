@@ -1,6 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { toFloat32AudioWindow } from "@genesiscz/utils/audio/converter";
+import { isInsideDir } from "@genesiscz/utils/fs/canonical";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
@@ -37,10 +38,18 @@ export type SoundPurpose = "listen" | "voice";
 /** How a row of `audio.jsonl` came to be: absent or `normal` is a track the capture handed over. */
 export const AUDIO_ROW_KEPT = ["normal", "salvaged"] as const;
 
+/** `audio/<name>`: one file directly in the audio folder, never a path that climbs out of it. */
+function isAudioFolderFile(file: string): boolean {
+    const [folder, name, ...rest] = file.split("/");
+    return (
+        folder === AUDIO_FOLDER && !!name && rest.length === 0 && name !== "." && name !== ".." && !name.includes("\\")
+    );
+}
+
 /** A row of `<meeting>/audio.jsonl`. Rows from before `zeroAt` and `kept` stay valid. */
 export const audioRowSchema = z.object({
     /** The file, relative to the meeting folder (`audio/<frame name>-<source>.m4a`). */
-    file: z.string(),
+    file: z.string().refine(isAudioFolderFile, "an audio row names a file directly in audio/"),
     source: z.enum(AUDIO_SOURCES),
     /** The capture's first frame on the wall clock. */
     at: z.string(),
@@ -59,7 +68,10 @@ export function audioRowZeroMs(row: AudioRow): number {
     return Date.parse(row.zeroAt ?? row.at);
 }
 
-/** The rows of a meeting's `audio.jsonl`; a malformed row is skipped with a warning. */
+/**
+ * The rows of a meeting's `audio.jsonl`; a malformed row is skipped with a warning, and so is a row whose file
+ * resolves (through a symlink) outside the meeting's `audio/` folder.
+ */
 export function readAudioRows(folder: string): AudioRow[] {
     const index = join(folder, AUDIO_INDEX);
 
@@ -73,6 +85,14 @@ export function readAudioRows(folder: string): AudioRow[] {
         .flatMap((line) => {
             try {
                 const row = audioRowSchema.safeParse(SafeJSON.parse(line, { strict: true }));
+
+                if (row.success && !isInsideDir(join(folder, AUDIO_FOLDER), join(folder, row.data.file))) {
+                    log.warn(
+                        { index, file: row.data.file },
+                        "skipping an audio row whose file leaves the audio folder"
+                    );
+                    return [];
+                }
 
                 if (row.success) {
                     return [row.data];

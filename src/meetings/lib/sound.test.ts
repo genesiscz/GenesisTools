@@ -1,8 +1,9 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { callRecorder } from "@genesiscz/utils/screen-recorder/live";
@@ -333,6 +334,36 @@ describe("audio.jsonl rows", () => {
                 zeroAt: "2026-11-03T12:00:29.900Z",
             },
         ]);
+    });
+
+    test("a row whose file leaves the audio folder, by its path or through a symlink, is skipped", () => {
+        const root = mkdtempSync(join(tmpdir(), "audio-rows-escape-"));
+        const folder = join(root, "meeting");
+        mkdirSync(join(folder, "audio"), { recursive: true });
+        writeFileSync(join(root, "outside.m4a"), "not this meeting's sound");
+        writeFileSync(join(folder, "audio", "inside.m4a"), "sound");
+        symlinkSync(join(root, "outside.m4a"), join(folder, "audio", "link.m4a"));
+        const row = (file: string) =>
+            SafeJSON.stringify({
+                file,
+                source: "mic",
+                at: "2026-11-03T12:00:00.000Z",
+                durationMs: 900,
+                mutedSpans: [],
+            });
+        writeFileSync(
+            join(folder, "audio.jsonl"),
+            [
+                row("../outside.m4a"),
+                row("audio/../../outside.m4a"),
+                row(join(root, "outside.m4a")),
+                row("audio/nested/inside.m4a"),
+                row("audio/link.m4a"),
+                row("audio/inside.m4a"),
+            ].join("\n")
+        );
+
+        expect(readAudioRows(folder).map((one) => one.file)).toEqual(["audio/inside.m4a"]);
     });
 });
 
