@@ -1288,7 +1288,8 @@ public final class WidgetModel: ObservableObject {
         refreshInboxFeeds()
         applyAlertPopup(alertPopup.inboxChanged())
         let listed = value.sessions.flatMap { $0.items ?? [] }
-        reconcileStaged(value.staged ?? listed, listed: listed)
+        // An incomplete snapshot (a failed decision read sends an empty staged list) proves no decision left the log.
+        reconcileStaged(value.staged ?? listed, listed: listed, complete: value.complete)
         if value.complete, !stagedStartChecked {
             stagedStartChecked = true
             if !stagedItems.isEmpty { stagedAtStart?(stagedItems) }
@@ -1664,14 +1665,15 @@ public final class WidgetModel: ObservableObject {
     var stageAgain: [String: () -> Void] = [:]
     /// Decisions whose send runs now, so their Send now says Sending… and a second press cannot send them twice.
     @Published public var sendingDecisionIDs: Set<String> = []
-    /// The version of the pick each running send took (`decisions.version`): a newer one is staged again.
-    var sendingStageVersions: [String: UUID] = [:]
+    /// The stage each running send took (its version, pick, note and session): a newer one is staged again.
+    var sendingStages: [String: WidgetSendingStage] = [:]
     /// Staged decisions the hub answered a send for (delivered, or kept for the session's next prompt), until a
     /// snapshot no longer lists them as staged: every list draws them as sent in that gap, and no close asks about
     /// them (`settleStagedSend`, `dropAgreedSends`).
     @Published public var sentDecisions: [String: WidgetSentDecision] = [:]
-    /// Why the last send of a staged decision did not take it, on its row until it is staged, sent or cleared again.
-    @Published public var unsentReasons: [String: String] = [:]
+    /// Why the last send of a staged decision did not take it, with the stage that send took: on its row until it is
+    /// staged, sent or cleared again, or a snapshot shows another stage (another inbox staged it anew).
+    @Published public var unsentReasons: [String: WidgetUnsentReason] = [:]
     /// The question about staged decisions before the panel closes (`requestCollapse`).
     @Published public var stagedLeavePrompt = false
     /// The staged decisions view: nil closed, "session" for the selected session's, "all" for every session's.

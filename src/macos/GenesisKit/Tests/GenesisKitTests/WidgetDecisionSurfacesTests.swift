@@ -188,9 +188,9 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         let item = WidgetInboxItem(id: "decision:d7", sourceId: "d7", kind: "decision", key: key, at: 0, needsAnswer: true,
                                    title: "x", number: 7, options: Self.threeOptions, draftOption: "b",
                                    draft: "keep the old path")
-        XCTAssertEqual(WidgetStagedText.line(item, option: "b"), "b) drop it · keep the old path")
+        XCTAssertEqual(WidgetStagedText.line(item, option: "b", note: item.draft), "b) drop it · keep the old path")
         // F14: a ⇧-pick of two letters in the hub names both, each with its own text.
-        XCTAssertEqual(WidgetStagedText.line(item, option: "ac"), "a) keep it / c) ask the agent first · keep the old path",
+        XCTAssertEqual(WidgetStagedText.line(item, option: "ac", note: item.draft), "a) keep it / c) ask the agent first · keep the old path",
                        "it read \"ac) keep it\"")
     }
 

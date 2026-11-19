@@ -153,6 +153,9 @@ public struct WidgetDecisionSendOutcome {
     /// The sessions a live receiver took the answers of, and the hub's error for each session whose send threw.
     public var deliveredSessions: Set<String> = []
     public var failedSessions: [String: String] = [:]
+    /// The decision numbers the hub sent for each session (its `numbers`): a decision of a listed session that is not
+    /// among them was not sent (another surface cleared it before the hub read the log). Absent from an older hub.
+    public var sessionNumbers: [String: Set<Int>] = [:]
     /// Whether the hub listed its sessions; an answer without the list is read by its counts.
     public var listsSessions = false
 
@@ -161,7 +164,7 @@ public struct WidgetDecisionSendOutcome {
         case delivered
         /// Stored as answered, but no receiver took it: it goes with the session's next prompt, for `reason`.
         case waiting(reason: String)
-        /// The send threw: the decisions stay staged, for `reason` (the hub's words).
+        /// The send threw before the hub stored the answers: the decisions stay staged, for `reason` (the hub's words).
         case failed(reason: String)
         /// The hub sent nothing for it (it was no longer staged there).
         case skipped
@@ -171,9 +174,11 @@ public struct WidgetDecisionSendOutcome {
     /// Every answer reached a live receiver.
     public var delivered: Bool { waiting.isEmpty && failed == 0 && queued == 0 }
 
-    /// What the hub did with the answers of `session` (its id). An answer that lists no sessions says it for the whole
-    /// send: delivered when every answer went out, else nothing per session.
-    public func result(forSession session: String) -> SessionResult {
+    /// What the hub did with the answers of `session` (its id), for the decision `number` in it: a listed session
+    /// whose numbers leave the decision out sent nothing for it. An answer that lists no sessions says it for the
+    /// whole send: delivered when every answer went out, else nothing per session.
+    public func result(forSession session: String, number: Int? = nil) -> SessionResult {
+        if let number, let numbers = sessionNumbers[session], !numbers.contains(number) { return .skipped }
         if let error = failedSessions[session] { return .failed(reason: error) }
         if let entry = waiting.first(where: { $0.session == session }) { return .waiting(reason: entry.reason) }
         if deliveredSessions.contains(session) { return .delivered }
@@ -195,9 +200,22 @@ public struct WidgetDecisionSendOutcome {
         for case .object(let entry) in sessions {
             guard case .string(let session) = entry["session"] else { continue }
             let title = titles[session] ?? "the session"
+            if case .array(let numbers) = entry["numbers"] {
+                sessionNumbers[session] = Set(numbers.compactMap { value in
+                    if case .number(let number) = value { return Int(number) }
+                    return nil
+                })
+            }
+            let later = entry["deliversLater"].map { $0 == .bool(true) } ?? true
             if case .string(let error) = entry["error"], !error.isEmpty {
-                failures.append("\(title): \(error)")
-                failedSessions[session] = error
+                // `stored`: the hub saved the answers before the error (their delivery, or its receipt, failed). They
+                // are answered, not staged, so a staged retry has nothing to send: they wait like an undelivered send.
+                guard entry["stored"] == .bool(true) else {
+                    failures.append("\(title): \(error)")
+                    failedSessions[session] = error
+                    continue
+                }
+                waiting.append((session, title, Self.storedSentence, error, later))
                 continue
             }
             guard case .object(let answer) = entry["result"] else { continue }
@@ -207,10 +225,13 @@ public struct WidgetDecisionSendOutcome {
             }
             var detail: String?
             if case .string(let text) = answer["detail"], !text.isEmpty { detail = text }
-            let later = entry["deliversLater"].map { $0 == .bool(true) } ?? true
             waiting.append((session, title, Self.sentence(for: detail), detail, later))
         }
     }
+
+    /// The answers were saved, then their delivery or its receipt failed: they may have arrived, so the words say only
+    /// what is known.
+    public static let storedSentence = "The hub saved the answers but could not confirm their delivery."
 
     /// Why no receiver took the answers, in one sentence. The hub words its reasons for logs ("No native Claude
     /// receiver claims this session.", "no cmux pane runs this session"); the known ones are matched here, and

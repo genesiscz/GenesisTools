@@ -64,7 +64,7 @@ struct WidgetInboxEntry: View {
         let note = model.shownStagedNote(item.sourceId, item.draft)
         guard item.kind == "decision", item.needsAnswer, option != nil || note != nil else { return nil }
         return WidgetStageLine(phase: model.stagePhase(item.sourceId, draftedAt: item.draftedAt),
-                               pick: WidgetStagedText.line(item, option: option))
+                               pick: WidgetStagedText.line(item, option: option, note: note))
     }
 }
 
@@ -107,7 +107,7 @@ struct WidgetInboxEntryDetail: View {
         WidgetSetSendBar(
             letters: model.shownStagedOption(item.sourceId, stored: item.draftOption),
             recommended: DecisionAnswering.recommendedSet(item.recommended, count: item.options?.count ?? 0),
-            sending: model.sendingDecisionIDs.contains(item.sourceId),
+            phase: model.stagePhase(item.sourceId, draftedAt: item.draftedAt),
             identifier: "widget.overview.sendSet." + item.sourceId,
             pick: { model.pickSet(item, option: $0) },
             send: { model.sendStaged([item.sourceId], known: [item]) })

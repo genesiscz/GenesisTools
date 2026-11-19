@@ -663,8 +663,7 @@ public struct LiveWidgetView: View {
             WidgetInboxCardRow(
                 card: card, open: open, selected: card.id == model.card?.id, staged: staged,
                 stage: staged ? WidgetStageLine(phase: model.stagePhase(card.sourceId, draftedAt: card.draftedAt),
-                    pick: WidgetStagedText.line(WidgetModel.inboxItem(card),
-                        option: model.shownStagedOption(card.sourceId, stored: card.draftOption))) : nil,
+                    pick: model.shownStagedLine(WidgetModel.inboxItem(card))) : nil,
                 toggle: { toggle(card) })
                 .equatable()
             if open {
@@ -698,6 +697,7 @@ public struct LiveWidgetView: View {
         // A decision that takes any set of its options: a check box per option, and a click only ticks it.
         let multiple = card.takesSeveral
         let text = Self.choiceText(choice)
+        let pickedWord = model.stagePhase(card.sourceId, draftedAt: card.draftedAt).word
         Button {
             model.choose(card, option: choice.id)
         } label: {
@@ -705,8 +705,7 @@ public struct LiveWidgetView: View {
             // its text. Up and Down move through the options; the chosen one wears the focus ring.
             WidgetOptionLabel(badge: key ?? choice.id, letter: key == nil ? nil : choice.id, text: text, picked: picked,
                               recommended: choice.recommended, focused: focused, rationale: choice.rationale,
-                              multiple: multiple,
-                              pickedWord: model.stagePhase(card.sourceId, draftedAt: card.draftedAt).word)
+                              multiple: multiple, pickedWord: pickedWord)
         }
         .buttonStyle(RowButtonStyle(cornerRadius: WidgetOptionLabel.cornerRadius))
         // An answer on its way takes no second, conflicting pick (forms say "Answer queued" the same way).
@@ -721,7 +720,8 @@ public struct LiveWidgetView: View {
                                                                 recommended: choice.recommended, multiple: multiple,
                                                                 picked: picked)
             + (choice.rationale.map { ". " + $0 } ?? ""))
-        .accessibilityValue(WidgetOptionText.accessibilityValue(picked: picked, multiple: multiple))
+        .accessibilityValue(WidgetOptionText.accessibilityValue(picked: picked, multiple: multiple,
+                                                                pickedWord: pickedWord))
         // Selected is the staged pick; the keyboard's option shows by its focus ring and VoiceOver's own cursor.
         .accessibilityAddTraits(picked ? .isSelected : [])
         .accessibilityHint(picked && stages && !multiple ? "Click again to unstage" : "")
@@ -829,14 +829,15 @@ public struct LiveWidgetView: View {
                     // sits at the right edge, so it never moves when staging adds the buttons before it (UX audit P13).
                     if staged(card) {
                         let sending = model.sendingDecisionIDs.contains(card.sourceId)
+                        let phase = model.stagePhase(card.sourceId, draftedAt: card.draftedAt)
                         // A set's Send names the ticked letters: "Send a + b + c".
                         let letters = model.shownStagedOption(card.sourceId, stored: card.draftOption)
                         let namesSet = card.takesSeveral && letters != nil
-                        Button(sending ? "Sending…" : DecisionAnswering.sendTitle(letters, multiple: card.takesSeveral)) {
+                        Button(phase.sendTitle(letters, multiple: card.takesSeveral)) {
                             model.sendStaged([card.sourceId], known: [WidgetModel.inboxItem(card)])
                         }
                         .buttonStyle(.genPrimary())
-                        .disabled(sending)
+                        .disabled(sending || phase.onItsWay)
                         .instantTooltip(namesSet ? DecisionAnswering.setSendTooltip(letters)
                                                  : "Sends this staged decision alone, without the others.")
                         Button("Unstage") { model.unstage(card) }

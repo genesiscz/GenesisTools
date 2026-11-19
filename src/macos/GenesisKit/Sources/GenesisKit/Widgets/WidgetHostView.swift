@@ -587,10 +587,9 @@ struct WidgetPeekView: View {
         if isReminder {
             let count = model.stagedToSend.count
             guard count == 0 else { return Plural.count(count, "decision") + " staged and not sent yet" }
-            let sending = model.stagedItems.filter { model.sendingDecisionIDs.contains($0.sourceId) }.count
-            let sent = model.stagedItems.filter { model.sentDecisions[$0.sourceId] != nil }.count
-            return sending + sent == 0 ? "Nothing is staged now."
-                : WidgetStagedChip.onTheirWay(sending: sending, sent: sent)
+            let counts = model.onTheirWayCounts(model.stagedItems)
+            return counts.sending + counts.sent + counts.waiting == 0 ? "Nothing is staged now."
+                : WidgetStagedChip.onTheirWay(sending: counts.sending, sent: counts.sent, waiting: counts.waiting)
         }
         let plain = item.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return plain.isEmpty ? "Open the inbox to see it." : plain
@@ -951,15 +950,16 @@ struct WidgetPeekView: View {
                 .accessibilityIdentifier("widget.peek.sendStaged")
         } else if staged {
             let sending = model.sendingDecisionIDs.contains(item.sourceId)
+            let phase = model.stagePhase(item.sourceId, draftedAt: item.draftedAt)
             // A set's Send names the ticked letters: "Send a + b + c".
             let letters = model.shownStagedOption(item.sourceId, stored: item.draftOption)
             let namesSet = item.takesSeveral && letters != nil
-            Button(sending ? "Sending…" : DecisionAnswering.sendTitle(letters, multiple: item.takesSeveral)) {
+            Button(phase.sendTitle(letters, multiple: item.takesSeveral)) {
                 model.sendStaged([item.sourceId], known: [item])
                 if Self.sendOpensSession(model.preferences) { open() }
             }
                 .buttonStyle(.genPrimary())
-                .disabled(sending)
+                .disabled(sending || phase.onItsWay)
                 .instantTooltip(namesSet ? DecisionAnswering.setSendTooltip(letters)
                                          : "Sends this staged decision alone, without the others.")
         } else {
