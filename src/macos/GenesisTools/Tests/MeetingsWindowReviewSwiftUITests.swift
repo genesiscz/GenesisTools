@@ -98,4 +98,21 @@ final class MeetingsWindowReviewSwiftUITests: XCTestCase {
         XCTAssertEqual(PersonStay.Clock("1:05:30"), .seconds(3_930))
         XCTAssertEqual(SidePanelWords.number(1e300, key: "meetings.notices.count"), "1e+300")
     }
+
+    /// eve t80: a new filter query filters the blocks already built and gives what a full rebuild with it gives.
+    func testTheTranscriptFilterReusesTheBuiltBlocks() {
+        let entries = [
+            TranscriptLine(id: "a", startSec: 0, speaker: "Alice Example", text: "the budget is ready"),
+            TranscriptLine(id: "b", startSec: 4, speaker: "Bob Example", text: "the plan waits"),
+        ]
+        let input = TranscriptPaneProjection.Input(entries: entries, applyAbove: 0)
+        var projection = TranscriptPaneProjection.make(input)
+        let built = projection.built
+        projection.refilter("budget")
+        XCTAssertEqual(projection, TranscriptPaneProjection.make(input, filter: "budget"))
+        XCTAssertEqual(projection.built, built, "the base blocks stay as they were")
+        XCTAssertLessThan(projection.blocks.flatMap(\.lines).count, built.flatMap(\.lines).count, "the filter keeps fewer lines")
+        projection.refilter("")
+        XCTAssertEqual(projection.blocks, built, "an empty query shows every block again")
+    }
 }

@@ -181,9 +181,11 @@ struct TranscriptBlocksPane: View {
         }
         .onChange(of: projectionInput, initial: true) { _, input in
             let span = HubPerf.begin("meetings.transcript.projection", "\(input.entries.count) lines")
-            projection = TranscriptPaneProjection.make(input)
+            projection = TranscriptPaneProjection.make(input, filter: filter)
             span.end()
         }
+        // Typing in the filter only filters the blocks already built (eve t80): no remap, marks or names per key.
+        .onChange(of: filter) { _, query in projection?.refilter(query) }
         // The selection's facts follow a reload of the record, the rows or the lines while the popover is open.
         .onChange(of: selectionInput) { _, input in selectionCache.update(input) }
         .onAppear {
@@ -211,11 +213,12 @@ struct TranscriptBlocksPane: View {
     // MARK: Blocks
 
     /// What the projection is made from; a change of any part makes it again. The arrays compare by their storage first.
+    /// The filter is not part of it: a new query filters the built blocks again (`refilter`).
     private var projectionInput: TranscriptPaneProjection.Input {
         .init(entries: entries, applyAbove: applyAbove, hints: detail.speakers.value?.hints ?? [],
               items: detail.record.value?.items ?? [], comments: detail.comments.value?.comments ?? [],
               evidence: detail.rows.value?.lineEvidence ?? [], echoAbove: echoAbove, blockBreakSec: blockBreakSec,
-              durationSec: durationSec, filter: filter, people: detail.record.value?.participants?.count ?? 0)
+              durationSec: durationSec, people: detail.record.value?.participants?.count ?? 0)
     }
 
     private var durationSec: Double? {
@@ -627,7 +630,6 @@ struct TranscriptPaneProjection: Equatable {
         var echoAbove = MeetingsPreferences.Transcript.defaultEchoAbove
         var blockBreakSec = 0.0
         var durationSec: Double?
-        var filter = ""
         /// The meeting's participants, the rows of "Who was there".
         var people = 0
     }
@@ -645,19 +647,24 @@ struct TranscriptPaneProjection: Equatable {
     var people = 0
 
     @MainActor
-    static func make(_ input: Input) -> Self {
+    static func make(_ input: Input, filter: String = "") -> Self {
         var result = Self()
         result.shown = TranscriptBlocksPane.shownLines(input.entries, applyAbove: input.applyAbove)
         let marks = MeetingDetailModel.lineMarks(entries: input.entries, hints: input.hints, items: input.items, comments: input.comments)
         result.built = TranscriptBlock.build(from: result.shown, durationSec: input.durationSec, marks: marks, evidence: input.evidence,
                                              items: input.items, echoAbove: input.echoAbove,
                                              breakAfterGapSec: MeetingsPreferences.Transcript.breakAfterGapSec(input.blockBreakSec))
-        result.blocks = TranscriptBlock.filter(result.built, query: input.filter)
+        result.refilter(filter)
         result.names = TranscriptBlock.names(result.built)
         result.bands = TranscriptBlocksPane.BandCount(result.shown)
         result.spotCheck = SpotCheckRate.of(input.items)
         result.people = input.people
         return result
+    }
+
+    /// Filters the blocks already built with a new query; the rest of the projection stays as it is.
+    mutating func refilter(_ query: String) {
+        blocks = TranscriptBlock.filter(built, query: query)
     }
 }
 
