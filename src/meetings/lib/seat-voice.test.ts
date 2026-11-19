@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import * as voice from "@genesiscz/utils/meetings/voice";
 import {
@@ -100,7 +101,7 @@ async function fixture(examples: Example[], fields: Partial<MeetingRecord> = {})
             path: audio,
             source: "wisprflow",
             layout: record.evidence?.channels?.layout ?? "unknown",
-            durationSec: 200,
+            durationSec: Math.max(200, examples.length * 4 + 5),
         },
     });
     const embed = spyOn(voice, "embedVoiceLines").mockImplementation(async ({ spans, channels, audioPath }) =>
@@ -169,7 +170,14 @@ function sample(person: string, options: Partial<VoicePrint> & { seat: VoicePrin
 const mic = { share: 0.95, embedding: [1, 0] };
 const call = { share: 0.05, embedding: [0, 1] };
 
-test("seat preview finds both unseated voices in one read-only batch per channel", async () => {
+function setOppositeShare(seatOppositeShare: number) {
+    return new MeetingsConfigStore().update((raw) => {
+        raw.global = { speakerLabels: { voice: { seatOppositeShare } } };
+    });
+}
+
+test("seat preview at share 0 finds both unopposed voices in one read-only batch per channel", async () => {
+    await setOppositeShare(0);
     const f = await fixture([mic, mic, call, call]);
     sample(finch, { seat: "mic" });
     sample(lark, { seat: "call" });
@@ -323,7 +331,8 @@ test("unavailable call embeddings leave the microphone count visible and the cal
     expect(person.reason).not.toContain("0 call");
 });
 
-test("one opposite-side match keeps the whole seat unsure and incompatible tracks, models and dimensions cannot vote", async () => {
+test("at share 0 one opposite-side match keeps the seat unsure and incompatible tracks, models and dimensions cannot vote", async () => {
+    await setOppositeShare(0);
     const f = await fixture([
         mic,
         mic,
@@ -340,6 +349,60 @@ test("one opposite-side match keeps the whole seat unsure and incompatible track
         { name: finch, seat: "unsure", reason: expect.stringContaining("2 microphone, 1 call") },
         { name: lark, seat: "unsure", reason: expect.stringContaining("0 microphone, 0 call") },
     ]);
+    expect(suggestion.people[0]?.reason).toContain("Voice matches occur on both sides");
+});
+
+test("the default share seats a voice with 3 microphone and 129 call matches remotely", async () => {
+    const f = await fixture([
+        ...Array.from({ length: 3 }, () => mic),
+        ...Array.from({ length: 129 }, () => ({ ...call, embedding: [1, 0] })),
+    ]);
+    sample(finch, { seat: "mic" });
+    sample(finch, { seat: "call" });
+    const { suggestion } = await f.preview();
+    expect(suggestion.seats.remote).toEqual([{ name: finch }]);
+    expect(suggestion.people[0]).toMatchObject({
+        seat: "remote",
+        reason: expect.stringContaining("3 microphone, 129 call"),
+    });
+    await setOppositeShare(0);
+    const strict = await f.preview();
+    expect(strict.suggestion.people[0]).toMatchObject({
+        seat: "unsure",
+        reason: expect.stringContaining("3 microphone, 129 call). Voice matches occur on both sides."),
+    });
+});
+
+test("the configured share handles a microphone majority and rejects out-of-range settings", async () => {
+    const f = await fixture([mic, mic, mic, mic, { ...call, embedding: [1, 0] }]);
+    sample(finch, { seat: "mic" });
+    sample(finch, { seat: "call" });
+    const atDefault = await f.preview();
+    expect(atDefault.suggestion.people[0]).toMatchObject({
+        seat: "unsure",
+        reason: expect.stringContaining("4 microphone, 1 call). Voice matches occur on both sides."),
+    });
+    await setOppositeShare(0.5);
+    expect((await f.preview()).suggestion.seats.room).toEqual([finch]);
+    await expect(setOppositeShare(-0.01)).rejects.toThrow("seatOppositeShare");
+    await expect(setOppositeShare(0.51)).rejects.toThrow("seatOppositeShare");
+});
+
+test("one microphone and ten call matches resolve remotely at the inclusive 10% boundary", async () => {
+    const f = await fixture([mic, ...Array.from({ length: 10 }, () => ({ ...call, embedding: [1, 0] }))]);
+    sample(finch, { seat: "mic" });
+    sample(finch, { seat: "call" });
+    const boundary = await f.preview();
+    expect(boundary.suggestion.people[0]).toMatchObject({
+        seat: "remote",
+        reason: expect.stringContaining("1 microphone, 10 call"),
+    });
+    await setOppositeShare(0.099);
+    const above = await f.preview();
+    expect(above.suggestion.people[0]).toMatchObject({
+        seat: "unsure",
+        reason: expect.stringContaining("1 microphone, 10 call). Voice matches occur on both sides."),
+    });
 });
 
 test("a copied target and a refused line cannot supply independent votes", async () => {

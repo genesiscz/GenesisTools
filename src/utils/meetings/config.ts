@@ -400,6 +400,8 @@ const speakerLabelsSchema = z.object({
             enabled: z.boolean().default(true),
             /** The samples prediction may consult. Browsing and corrections carry their own scope. */
             sampleScope: z.enum(["all", "project"]).default("all"),
+            /** Seat preview's limit on opposite-side matches as a fraction of the stronger side's count. */
+            seatOppositeShare: z.number().min(0).max(0.5).default(0.1),
             /** Mean cosine below which a sample is offered for human review. */
             outlierBelow: z.number().min(-1).max(1).default(0.5),
             /**

@@ -281,6 +281,11 @@ it (172 minutes: about 90 s at normal priority); later passes read the cache in 
 worker count are `global.speakerLabels.voice.compute` (`priority: normal` by default, `workers: auto` takes the free
 performance cores, at most four).
 
+For seat previews, `global.speakerLabels.voice.seatOppositeShare` sets how many matches on the other side a seat
+can tolerate. The stronger side needs at least two independent matches. At the default of 0.1, one microphone
+match and ten call matches suggest a remote seat. The range is 0 to 0.5, inclusive. Set it to 0 to require
+every match to be on the same side.
+
 Set `global.capture.recorders.native.audio.mode` to `session` for continuous sound in 60-second files; the default
 `pieces` records the sound inside the screen pieces, with up to 5 seconds missing every 30 seconds, and `record status`
 explains a fall back.

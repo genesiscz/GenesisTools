@@ -39,7 +39,7 @@ export interface SeatVoiceInput {
     root: string;
     lineKeys: readonly string[];
     prediction: Pick<ReturnType<typeof meetingPredictionVoices>, "store" | "sources">;
-    settings: Pick<MeetingsConfig["global"]["speakerLabels"]["voice"], "gate" | "minSeconds">;
+    settings: Pick<MeetingsConfig["global"]["speakerLabels"]["voice"], "gate" | "minSeconds" | "seatOppositeShare">;
     allows: (person: string, index: number) => boolean;
 }
 
@@ -111,7 +111,7 @@ export function suggestSeatByVoice(input: SeatVoiceInput): ReadonlyArray<SeatVoi
     const incomplete = missing.some((side) => failures[side] !== undefined);
     return Array.from(votes, ([person, bySide]) => {
         const count = { mic: 0, call: 0 };
-        let weakest = 1;
+        const weakest = { mic: 1, call: 1 };
         for (const side of sides) {
             // Earliest finish retains the largest set of disjoint half-open spans.
             let end = -Infinity;
@@ -121,23 +121,21 @@ export function suggestSeatByVoice(input: SeatVoiceInput): ReadonlyArray<SeatVoi
                     end = vote.toSec;
                     seen.add(vote.key);
                     count[side]++;
-                    weakest = Math.min(weakest, vote.score);
+                    weakest[side] = Math.min(weakest[side], vote.score);
                 }
             }
         }
         const { mic, call } = count;
-        const seat: SeatVoiceHint["seat"] = incomplete
-            ? "unsure"
-            : mic >= 2 && !call
-              ? "room"
-              : call >= 2 && !mic
-                ? "remote"
-                : "unsure";
+        const stronger = mic > call ? "mic" : "call";
+        const opposite = Math.min(mic, call);
+        const dominant =
+            !incomplete && count[stronger] >= 2 && opposite / count[stronger] <= input.settings.seatOppositeShare;
+        const seat = dominant ? (stronger === "mic" ? "room" : "remote") : "unsure";
         const counts = sides
             .filter((side) => compared.has(side))
             .map((side) => `${count[side]} ${side === "mic" ? "microphone" : "call"}`);
         const detail =
-            mic && call
+            !dominant && mic && call
                 ? "Voice matches occur on both sides."
                 : seat === "unsure" && !incomplete && counts.length
                   ? "Two lines on one side are needed."
@@ -147,7 +145,7 @@ export function suggestSeatByVoice(input: SeatVoiceInput): ReadonlyArray<SeatVoi
             seat,
             ...(compared.has("mic") ? { mic } : {}),
             ...(compared.has("call") ? { call } : {}),
-            confidence: seat === "unsure" ? 0 : weakest,
+            confidence: dominant ? weakest[stronger] : 0,
             reason: [counts.length ? `Independent voice matches (${counts.join(", ")}).` : "", coverage, detail]
                 .filter(Boolean)
                 .join(" "),
