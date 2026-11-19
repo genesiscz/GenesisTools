@@ -794,10 +794,11 @@ final class MeetingsServiceTests: XCTestCase {
         try JSONSerialization.data(withJSONObject: entry).write(to: folder.appendingPathComponent("service.json"))
     }
 
-    private func makeService(checkout: MeetingsService.Checkout? = nil) -> MeetingsService {
+    private func makeService(checkout: MeetingsService.Checkout? = nil,
+                             callDeadlines: JSONRPCSocketClient.DeadlineScheduler? = nil) -> MeetingsService {
         let log = commands!
         return MeetingsService(folder: folder, timing: .init(helloTimeout: 2, startThrottle: 30, refusedBackoff: 60, idleClose: 60,
-                                                             reconnectDelay: 0.05),
+                                                             reconnectDelay: 0.05, callDeadlines: callDeadlines),
                                pid: 4242, checkout: checkout, startService: {
                                    log.starts += 1
                                    if let failure = log.startFailure { throw failure }
@@ -1424,7 +1425,9 @@ final class MeetingsServiceTests: XCTestCase {
     func testALongCallOutlivesItsDeadlineWhileTheServiceKeepsSendingSteps() async throws {
         try writeServiceEntry()
         fake.silent = ["meeting.suggest"]
-        let service = makeService()
+        // The deadlines run on a clock the test moves, so a loaded runner cannot expire a call between two beats.
+        let clock = ManualDeadlineClock()
+        let service = makeService(callDeadlines: clock.schedule)
         final class Steps { var seen: [MeetingsCallProgress] = [] }
         let steps = Steps()
         let call = Task { @MainActor in
@@ -1438,13 +1441,31 @@ final class MeetingsServiceTests: XCTestCase {
         // 1.8 s of work, three times the deadline: an empty beat first (before any step), then the newest step again.
         for beat: [String: Any] in [[:], ["fraction": 0.5, "label": "Voices: 60 of 120 lines"], ["fraction": 0.5, "label": "Voices: 60 of 120 lines"],
                                     ["fraction": 0.5, "label": "Voices: 60 of 120 lines"]] {
-            try await Task.sleep(for: .milliseconds(450))
+            clock.advance(by: 0.45)
+            let armed = clock.armed
             fake.send(["jsonrpc": "2.0", "method": "$/progress", "params": beat.merging(["id": id]) { $1 }])
+            let rearmed = await waitUntil(5) { clock.armed > armed }
+            XCTAssertTrue(rearmed, "each beat starts the call's deadline again")
         }
-        try await Task.sleep(for: .milliseconds(300))
+        clock.advance(by: 0.3)
         fake.send(["jsonrpc": "2.0", "id": id, "result": ["added": 1, "warnings": [String]()]])
         let result = try await call.value
-        XCTAssertEqual(result, .init(added: 1, warnings: []), "the call answered after 2.1 s with a 0.6 s deadline")
+        XCTAssertEqual(result, .init(added: 1, warnings: []), "the call answered after 2.1 s of its clock with a 0.6 s deadline")
+        XCTAssertGreaterThan(clock.now, 0.6 * 3, "the call outlived its deadline three times over")
+        // Control: the same clock ends a call that hears nothing past its deadline, so the beats above kept it alive.
+        let before = clock.armed
+        let silent = Task { @MainActor in
+            try await service.call(MeetingsAPI.MeetingSuggest.self, .init(meeting: Self.design, attendance: nil), timeout: 0.6) { _ in }
+        }
+        let armedSilent = await waitUntil(5) { clock.armed > before }
+        XCTAssertTrue(armedSilent, "the silent call armed its deadline")
+        clock.advance(by: 0.7)
+        do {
+            _ = try await silent.value
+            XCTFail("a call with no beat ends at its deadline")
+        } catch {
+            XCTAssertTrue("\(error)".contains("meeting.suggest"), "the deadline named the call: \(error)")
+        }
         XCTAssertEqual(steps.seen.first, MeetingsCallProgress(fraction: 0.5, label: "Voices: 60 of 120 lines"),
                        "an empty beat keeps the call alive and shows nothing")
         XCTAssertEqual(steps.seen.count, 3)
@@ -2067,5 +2088,31 @@ extension MeetingsServiceTests {
         XCTAssertEqual(segments.count, 2)
         XCTAssertEqual(segments[1]["fromWord"] as? Int, 3)
         XCTAssertEqual(segments[1]["speaker"] as? String, "Bob Example")
+    }
+}
+
+/// A clock for call deadlines that moves only when a test advances it; due deadlines fire in order of their time.
+final class ManualDeadlineClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var current: TimeInterval = 0
+    private var timers: [(at: TimeInterval, fire: @Sendable () -> Void)] = []
+    private var count = 0
+
+    var now: TimeInterval { lock.withLock { current } }
+    /// How many deadlines were armed so far.
+    var armed: Int { lock.withLock { count } }
+
+    var schedule: JSONRPCSocketClient.DeadlineScheduler {
+        { [self] seconds, fire in lock.withLock { timers.append((current + seconds, fire)); count += 1 } }
+    }
+
+    func advance(by seconds: TimeInterval) {
+        let due: [@Sendable () -> Void] = lock.withLock {
+            current += seconds
+            let ready = timers.filter { $0.at <= current }.sorted { $0.at < $1.at }
+            timers.removeAll { $0.at <= current }
+            return ready.map(\.fire)
+        }
+        for fire in due { fire() }
     }
 }

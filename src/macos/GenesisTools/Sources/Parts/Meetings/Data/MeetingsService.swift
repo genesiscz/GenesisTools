@@ -470,6 +470,8 @@ final class MeetingsService {
         /// A kept subscription with no connection looks again after this long, then twice as long each time, up to
         /// `refusedBackoff`.
         var reconnectDelay: TimeInterval = 1
+        /// The clock each call's silence deadline runs on; nil is the real clock (tests advance their own).
+        var callDeadlines: JSONRPCSocketClient.DeadlineScheduler? = nil
     }
 
     enum State: Equatable {
@@ -831,7 +833,7 @@ final class MeetingsService {
         case .socket(let found):
             socket = found
         }
-        let candidate = JSONRPCSocketClient(path: socket, callbackQueue: callbackQueue)
+        let candidate = JSONRPCSocketClient(path: socket, callbackQueue: callbackQueue, scheduleDeadline: timing.callDeadlines)
         // The handlers are set before the connection opens, so no notification or close reaches a client whose
         // handlers are being set on another thread (Wave A review, Unproven list).
         install(on: candidate)
