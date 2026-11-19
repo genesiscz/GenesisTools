@@ -16,7 +16,16 @@ final class MeetingsVoiceSettingsTests: XCTestCase {
 
     func testSampleScopeAndOutlierThresholdComeFromTheSameSpeakerConfig() throws {
         let custom = try raw(#"{"global":{"speakerLabels":{"voice":{"sampleScope":"project","outlierBelow":0.63}}}}"#)
-        XCTAssertNotEqual(MeetingsVoiceCompute(raw: custom), MeetingsVoiceCompute(raw: nil))
+        let loaded = MeetingsVoiceCompute(raw: custom)
+        XCTAssertEqual(loaded.sampleScope, "project")
+        XCTAssertEqual(loaded.outlierBelow, 0.63)
+        XCTAssertEqual(MeetingsVoiceCompute(raw: nil).sampleScope, "all")
+        XCTAssertEqual(MeetingsVoiceCompute(raw: nil).outlierBelow, 0.5)
+        var writes = [String: String]()
+        let card = MeetingsVoiceLibraryCard(config: loaded) { path, value in writes[path.joined(separator: ".")] = "\(value)" }
+        card.chooseScope("all")
+        card.chooseThreshold(-0.12)
+        XCTAssertEqual(writes, ["global.speakerLabels.voice.sampleScope": "all", "global.speakerLabels.voice.outlierBelow": "-0.12"])
     }
 
     func testTheCardReadsTheConfigAndADefaultForAMissingBlock() throws {

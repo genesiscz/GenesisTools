@@ -349,7 +349,7 @@ struct VoiceSampleRows: View {
     var focus: String?
     var reveal: (String) -> Void = { _ in }
     var waiting: VoicesPreviewSummary?
-    @AppStorage("meetings.voices.doubtfulFirst") private var doubtfulFirst = true
+    @AppStorage(MeetingsVoiceCompute.doubtfulFirstKey) private var doubtfulFirst = true
     @State private var expanded: Set<String> = []
     @State private var full: Set<String> = []
     @State private var othersOpen = false

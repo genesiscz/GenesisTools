@@ -240,7 +240,7 @@ struct VoicesPane: View {
     let detail: MeetingDetailModel
     let close: () -> Void
     @State private var namedLines: [VoiceNamedLine] = []
-    @AppStorage("meetings.voices.meetingOnly") private var preferredMeetingOnly = false
+    @AppStorage(MeetingsVoiceCompute.meetingOnlyKey) private var preferredMeetingOnly = false
     @State private var showAllPreview = false
     @State private var showAllNamed = false
 

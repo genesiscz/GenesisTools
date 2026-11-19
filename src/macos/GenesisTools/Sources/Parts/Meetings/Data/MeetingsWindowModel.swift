@@ -367,6 +367,8 @@ final class MeetingsWindowModel {
                     if settingsRaw?.at(["global", "playback", "listen"]) != shown.raw.at(["global", "playback", "listen"]) {
                         player.invalidateClipCache()
                     }
+                    let qualityPath = MeetingsVoiceCompute.libraryPath + ["outlierBelow"]
+                    if settingsRaw != nil, settingsRaw?.at(qualityPath) != shown.raw.at(qualityPath) { voiceLibrary.refresh() }
                     settingsRaw = shown.raw
                 }
                 next = .loaded(shown.value)
