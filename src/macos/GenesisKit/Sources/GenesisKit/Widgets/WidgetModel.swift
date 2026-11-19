@@ -1783,6 +1783,7 @@ public final class WidgetModel: ObservableObject {
             selectedKey == item.key, let displayed = cards.first(where: { $0.id == item.id }), displayed.at == item.at
         else { return }
         selectedCardID = item.id
+        if item.kind == "todo" { openingInbox = nil; return }
         if !displayed.needsAnswer && displayed.read { openingInbox = nil; return }
         let token = item.key + "|" + item.id + "|" + String(item.at)
         guard inboxReadRequests.insert(token).inserted else { openingInbox = nil; return }
