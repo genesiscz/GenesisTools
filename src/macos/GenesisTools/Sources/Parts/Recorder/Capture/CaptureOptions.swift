@@ -25,7 +25,9 @@ enum CaptureChoice: Equatable {
         case let .area(rect):
             let parts = [rect.minX, rect.minY, rect.width, rect.height].map { String(Int($0.rounded())) }
             return ["--region", parts.joined(separator: ",")]
-        case .followPointer:
+        case .followPointer, .target(.followDisplay):
+            // No target flag: `tools recorder start` follows the display in use (`--display follow` names it too, but
+            // an older CLI reads only an index there).
             return []
         }
     }
@@ -45,7 +47,7 @@ enum CaptureChoice: Equatable {
             return app.flatMap { $0.isEmpty ? nil : $0 }
         case let .app(_, name):
             return name.flatMap { $0.isEmpty ? nil : $0 }
-        case .display, .area, .displays:
+        case .display, .area, .displays, .followDisplay:
             return nil
         }
     }
