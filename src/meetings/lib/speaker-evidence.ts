@@ -758,6 +758,7 @@ function localVoiceFinding(options: {
     indicatorIgnored: boolean;
     eligible: Eligibility;
     mappedCall: boolean;
+    observedCallPeople: () => string[];
 }): EvidenceFinding | undefined {
     const { line, selfName, voices, found } = options;
 
@@ -823,16 +824,20 @@ function localVoiceFinding(options: {
         };
     }
     if (
-        (options.indicatorIgnored ||
-            (line.speakingUnknown && Object.keys(line.speaking).length === 0 && choices.length >= 2)) &&
-        isStrongCallForNaming(options.eligible.channel)
+        isStrongCallForNaming(options.eligible.channel) &&
+        (options.indicatorIgnored || (line.speakingUnknown && Object.keys(line.speaking).length === 0))
     ) {
-        return {
-            candidates: choices,
-            rules: [MeetingRule.Channel],
-            confidence: 0.4,
-            listen: true,
-        };
+        // A platform label can be eligible for review without proving that several people shared the call.
+        const observed = options.observedCallPeople();
+        const remote = choices.filter((name) => observed.some((person) => sameName(name, person)));
+        if (options.indicatorIgnored || remote.length >= 2) {
+            return {
+                candidates: options.indicatorIgnored ? choices : remote,
+                rules: [MeetingRule.Channel],
+                confidence: 0.4,
+                listen: true,
+            };
+        }
     }
 
     if (options.unusable) {
@@ -1207,7 +1212,11 @@ export function evidenceItems(options: {
                               (group) => group.deviceId && sameName(group.deviceId, speakingNames(line)[0]!)
                           ),
                       indicatorIgnored: stuck.has(line.index),
-
+                      observedCallPeople: () => [
+                          ...(line.present ??
+                              assessment.candidates.filter((p) => p.fromSec <= line.startSec).map((p) => p.name)),
+                          ...(options.record.seats?.remote.map((seat) => seat.name) ?? []),
+                      ],
                       unusable: within(unusable, line.startSec),
                       found,
                   });
