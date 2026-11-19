@@ -152,11 +152,6 @@ struct WorkMain: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            if let notice = screen.notice {
-                NoticePill(text: notice.message, isError: !notice.ok, dismiss: { screen.clearNotice() })
-                    .padding(.horizontal, 18)
-                    .padding(.top, 8)
-            }
             if screen.pane == .notify, screen.project != nil, screen.itemRef == nil {
                 WorkNotifyPane(screen: screen).id(screen.project)
             } else {
@@ -169,7 +164,7 @@ struct WorkMain: View {
                     }
             }
         }
-        .noticeStack(screen.notifyNotices)
+        .noticeStack(screen.noticeStack)
         .hubSurface(.content)
     }
 

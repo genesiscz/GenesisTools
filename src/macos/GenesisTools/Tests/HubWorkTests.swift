@@ -1,6 +1,8 @@
 import AppKit
 import Combine
 import GenesisKit
+import GenesisKitTestHooks
+import Vision
 import SwiftUI
 import XCTest
 @testable import GenesisToolsHub
@@ -185,7 +187,7 @@ final class HubWorkTests: XCTestCase {
         }
         .frame(width: 1000, height: 460).background(Color.black).environment(\.colorScheme, .dark)
         let rep = try HubInboxUXTests.render(view: AnyView(view), name: "hub-work-linked", folderKey: "HUB_WORK_SHOTS")
-        let text = try HubInboxUXTests.drawnText(rep)
+        let text = try workFixtureText(try XCTUnwrap(rep.cgImage))
         XCTAssertEqual(source.requestedItems, [ref])
         XCTAssertEqual(hub.mode, .work)
         XCTAssertEqual(hub.work.screen.project, "App")
@@ -238,7 +240,7 @@ final class HubWorkTests: XCTestCase {
         defer { header.close() }
         try await Task.sleep(for: .milliseconds(60))
         let resting = try header.capture("work-header-after")
-        let restingText = try HubInboxUXTests.drawnText(resting)
+        let restingText = try headerText(resting)
         for word in ["Work", "App", "Items", "Notifications", "1 container"] {
             XCTAssertTrue(restingText.contains(word), restingText)
         }
@@ -252,6 +254,8 @@ final class HubWorkTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(60))
         let beforeImage = try before.capture("work-header-before")
         let beforeLoadingImage = try beforeLoading.capture("work-header-before-loading")
+        XCTAssertGreaterThan(try trailingControlInk(beforeImage), 0, "the original reload control must be visible")
+        XCTAssertEqual(try trailingControlInk(resting), 0, "live Work must have no reload button")
         let oldMovement = try changedHeaderPixels(beforeImage, beforeLoadingImage, ignoringTrailingPoints: 120)
         XCTAssertGreaterThan(oldMovement, 0, "the baseline must expose the production header's moving tabs")
 
@@ -294,7 +298,7 @@ final class HubWorkTests: XCTestCase {
         }
         try await Task.sleep(for: .milliseconds(60))
         let stopped = try header.capture("work-header-stopped")
-        let stoppedText = try HubInboxUXTests.drawnText(stopped)
+        let stoppedText = try headerText(stopped)
         XCTAssertTrue(stoppedText.contains("Not live"), stoppedText)
         let stoppedLeft = try changedHeaderPixels(resting, stopped, ignoringTrailingPoints: 120)
         XCTAssertEqual(stoppedLeft, 0, "the recovery pill must not move the title, counts or tabs")
@@ -365,7 +369,7 @@ final class HubWorkTests: XCTestCase {
         .background(Color.black)
         .environment(\.colorScheme, .dark)
         let rep = try HubInboxUXTests.render(view: AnyView(view), name: "hub-work", folderKey: "HUB_WORK_SHOTS")
-        let text = try HubInboxUXTests.drawnText(rep)
+        let text = try workFixtureText(try XCTUnwrap(rep.cgImage))
         for expected in ["Work", "App", "Quiet", "Items", "Notifications", "Build the work items", "1 of 2 open",
                          "Spotted", "The widget counts lag a write", "1 container"] {
             XCTAssertTrue(text.contains(expected), "missing \(expected) in:\n\(text)")
@@ -427,23 +431,66 @@ private final class WorkHeaderWindow {
 }
 
 /// Compare canonical RGBA pixels, rather than encoded PNG data or an assumed view width.
+private func workFixtureText(_ image: CGImage) throws -> String {
+    let request = GenesisKitFixtureTextRequest()
+    try VNImageRequestHandler(cgImage: image).perform([request])
+    return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+}
+
+/// Vision misses small words when it scales an entire 25:1 strip. Use overlapping native-resolution tiles.
+@MainActor
+private func headerText(_ rep: NSBitmapImageRep) throws -> String {
+    let image = try XCTUnwrap(rep.cgImage)
+    var words: [String] = []
+    for x in stride(from: 0, to: image.width, by: 420) {
+        let width = min(640, image.width - x)
+        let tile = try XCTUnwrap(image.cropping(to: CGRect(x: x, y: 0, width: width, height: image.height)))
+        let canvas = try XCTUnwrap(CGContext(data: nil, width: width, height: 256, bitsPerComponent: 8,
+                                            bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        canvas.setFillColor(NSColor.black.cgColor)
+        canvas.fill(CGRect(x: 0, y: 0, width: width, height: 256))
+        canvas.draw(tile, in: CGRect(x: 0, y: 76, width: width, height: tile.height))
+        let text = try workFixtureText(try XCTUnwrap(canvas.makeImage()))
+        words.append(text)
+    }
+    return words.joined(separator: " ")
+}
+
+/// The trailing 55 points contain only the old reload glyph (or the recovery pill when stopped).
+private func trailingControlInk(_ rep: NSBitmapImageRep) throws -> Int {
+    let pixels = try headerRGBA(rep)
+    let width = rep.pixelsWide, height = rep.pixelsHigh
+    let start = width - width * 55 / 1300
+    var count = 0
+    for y in 0..<height {
+        for x in start..<width {
+            let offset = 4 * (y * width + x)
+            if max(pixels[offset], pixels[offset + 1], pixels[offset + 2]) > 100 { count += 1 }
+        }
+    }
+    return count
+}
+
+private func headerRGBA(_ rep: NSBitmapImageRep) throws -> [UInt8] {
+    let width = rep.pixelsWide, height = rep.pixelsHigh
+    let image = try XCTUnwrap(rep.cgImage)
+    let context = try XCTUnwrap(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                                         bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+    context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    let data = try XCTUnwrap(context.data)
+    return Array(UnsafeBufferPointer(start: data.assumingMemoryBound(to: UInt8.self), count: width * height * 4))
+}
+
 private func changedHeaderPixels(_ first: NSBitmapImageRep, _ second: NSBitmapImageRep,
                                  ignoringTrailingPoints: CGFloat = 0) throws -> Int {
     XCTAssertEqual(first.pixelsWide, second.pixelsWide)
     XCTAssertEqual(first.pixelsHigh, second.pixelsHigh)
     let width = first.pixelsWide
     let height = first.pixelsHigh
-    func rgba(_ rep: NSBitmapImageRep) throws -> [UInt8] {
-        let image = try XCTUnwrap(rep.cgImage)
-        let context = try XCTUnwrap(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
-                                             bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
-                                             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
-        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-        let data = try XCTUnwrap(context.data)
-        return Array(UnsafeBufferPointer(start: data.assumingMemoryBound(to: UInt8.self), count: width * height * 4))
-    }
-    let lhs = try rgba(first)
-    let rhs = try rgba(second)
+    let lhs = try headerRGBA(first)
+    let rhs = try headerRGBA(second)
     let right = width - Int(ignoringTrailingPoints * CGFloat(width) / 1300)
     var changed = 0
     for y in 0..<height {

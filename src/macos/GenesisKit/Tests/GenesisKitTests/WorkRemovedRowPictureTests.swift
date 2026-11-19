@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Vision
+import GenesisKitTestHooks
 import XCTest
 @testable import GenesisKitBase
 @testable import GenesisKit
@@ -48,19 +49,19 @@ private struct WorkRemovalPictureView: View {
 final class WorkScreenTestsRemoval: XCTestCase {
     func testTheProductionLastRowFadesWhenTheSnapshotRemovesIt() async throws {
         let samples = try await capture(reduceMotion: false)
-        let middle = samples.filter { $0.oldInk > 0.08 && $0.oldInk < 0.92 && $0.residual < 0.2 }
+        let middle = samples.filter { WorkMotionPictureEvidence.isIntermediate($0) }
         XCTAssertGreaterThanOrEqual(Set(middle.map { Int(($0.oldInk * 100).rounded()) }).count, 2,
             "Production disappearance must contain at least two measured opacity frames, not just distinct images")
     }
 
     func testTheProductionLastRowLeavesInstantlyUnderReduceMotion() async throws {
         let samples = try await capture(reduceMotion: true)
-        let middle = samples.filter { $0.oldInk > 0.08 && $0.oldInk < 0.92 && $0.residual < 0.2 }
+        let middle = samples.filter { WorkMotionPictureEvidence.isIntermediate($0) }
         XCTAssertEqual(middle.count, 0)
         XCTAssertLessThan(try XCTUnwrap(samples.last?.oldInk), 0.01)
     }
 
-    private func capture(reduceMotion: Bool) async throws -> [(time: Double, oldInk: Double, residual: Double)] {
+    private func capture(reduceMotion: Bool) async throws -> [WorkMotionPictureEvidence.FadeSample] {
         let source = WorkRemovalPictureSource()
         let screen = WorkScreenModel(source: source, reloadInterval: 0.02, settle: 0.005)
         screen.activate()
@@ -87,9 +88,7 @@ final class WorkScreenTestsRemoval: XCTestCase {
         XCTAssertTrue(try recognizedText(before).contains("Expanded member retained"), "container starts expanded")
         XCTAssertTrue(try recognizedText(after).contains("Expanded member retained"),
                       "the same container stays expanded after the model replaces the project snapshot")
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = false
+        let request = GenesisKitFixtureTextRequest()
         try VNImageRequestHandler(cgImage: before).perform([request])
         let text = try XCTUnwrap(request.results?.first {
             $0.topCandidates(1).first?.string.contains("Fading evidence row") == true
@@ -111,9 +110,7 @@ final class WorkScreenTestsRemoval: XCTestCase {
     }
 
     private func recognizedText(_ image: CGImage) throws -> String {
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = false
+        let request = GenesisKitFixtureTextRequest()
         try VNImageRequestHandler(cgImage: image).perform([request])
         return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
     }

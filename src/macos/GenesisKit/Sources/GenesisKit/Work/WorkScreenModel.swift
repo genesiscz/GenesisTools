@@ -65,7 +65,8 @@ public final class WorkScreenModel: ObservableObject {
     @Published public private(set) var pending: Set<String> = []
     @Published public private(set) var notifyPending: [String: String] = [:]
     @Published public private(set) var notifyCommand: String?
-    public let notifyNotices = NoticeStackModel()
+    public let noticeStack = NoticeStackModel()
+    private var itemNoticeID: StackedNotice.ID?
     private var notifyGeneration = UUID()
 
     private let source: WorkSource
@@ -377,6 +378,15 @@ public final class WorkScreenModel: ObservableObject {
         } catch {
             notice = WorkActionOutcome(ok: false, message: error.localizedDescription)
         }
+        if let notice {
+            if notice.ok {
+                itemNoticeID = noticeStack.push(.init(text: notice.message))
+            } else {
+                let outcome = "The work item could not be changed"
+                let report = FailureReport.unexpected(notice.message, outcome: outcome, action: "Change the work item")
+                itemNoticeID = noticeStack.push(.init(text: outcome, tone: .error, actions: [.details(report)]))
+            }
+        }
         pendingItemStates[action.ref] = nil
         if notice?.ok != true { showPendingItemStates() }
         await readAfterWrite()
@@ -401,7 +411,10 @@ public final class WorkScreenModel: ObservableObject {
         while let current = loading { await current.value }
     }
 
-    public func clearNotice() { notice = nil }
+    public func clearNotice() {
+        if let itemNoticeID { noticeStack.dismiss(itemNoticeID); self.itemNoticeID = nil }
+        notice = nil
+    }
 
     // MARK: - Notify
 
@@ -475,7 +488,7 @@ public final class WorkScreenModel: ObservableObject {
                     await self?.undoNotify(project: project, scope: scope, changes: result.changes, noticeID: id)
                 } }
             ]
-            notifyNotices.push(.init(text: message, actions: fixes))
+            noticeStack.push(.init(text: message, actions: fixes))
         } catch {
             showNotifyFailure(error, outcome: "The notification rules could not be saved")
         }
@@ -487,7 +500,7 @@ public final class WorkScreenModel: ObservableObject {
             let result = try await source.restoreNotify(project: project, scope: scope, changes: changes)
             guard result.ok else { throw WorkSourceError(result.message) }
             if self.project == project, pane == .notify { await readAfterWrite() }
-            notifyNotices.push(.init(text: "Restored the previous notification rules"), replacing: noticeID)
+            noticeStack.push(.init(text: "Restored the previous notification rules"), replacing: noticeID)
         } catch {
             showNotifyFailure(error, outcome: "The previous rules could not be restored", replacing: noticeID)
         }
@@ -495,7 +508,7 @@ public final class WorkScreenModel: ObservableObject {
 
     private func showNotifyFailure(_ error: Error, outcome: String, replacing: StackedNotice.ID? = nil) {
         let report = FailureReport.unexpected(error.localizedDescription, outcome: outcome, action: "Change notification rules")
-        notifyNotices.push(.init(text: outcome, tone: .error, actions: [.details(report)]), replacing: replacing)
+        noticeStack.push(.init(text: outcome, tone: .error, actions: [.details(report)]), replacing: replacing)
     }
 
     private func command(for change: WorkNotifyChange, scope: WorkNotifyScope, project: String) -> String? {
