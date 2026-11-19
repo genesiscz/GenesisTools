@@ -393,15 +393,24 @@ extension MeetingsQuestionRowsTests {
         let key = MeetingsAPI.MeetingRows.Params(meeting: "copy", lowPriority: "show")
         let rows = ReviewRows(meeting: "copy", rows: [], hidden: .init(lowPriority: 0, minPriority: 0))
         var loads = 0
+        var arrived = 0
         refresh.beginWrite()
         let readers = (0..<10).map { _ in Task {
-            try await refresh.read(key) {
+            // The reader runs on the main actor from here into `read` without a suspension point in between.
+            arrived += 1
+            return try await refresh.read(key) {
                 loads += 1
                 try await Task.sleep(for: .milliseconds(20))
                 return rows
             }
         } }
-        for _ in 0..<10 { await Task.yield() }
+        // Every reader called `read`, and the one shared load is parked at the write gate, before the gate opens.
+        let deadline = ContinuousClock.now + .seconds(5)
+        while (arrived < 10 || refresh.loadsWaitingForWrites < 1) && loads == 0 && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        XCTAssertEqual(arrived, 10, "every reader reached the rows read")
+        XCTAssertEqual(refresh.loadsWaitingForWrites, 1, "the readers' one shared load waits for the answer")
         XCTAssertEqual(loads, 0, "Rows wait while an answer is in flight")
         refresh.endWrite()
         for reader in readers { let value = try await reader.value; XCTAssertEqual(value, rows) }
