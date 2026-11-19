@@ -7,7 +7,7 @@ argument-hint: "[<commit-count>] [<source-branch>] [<pattern,pattern,…>]"
 # Recompose branches
 
 Analyse the commits of a source branch, group them by path patterns, rebuild one branch per
-group with `git cherry-pick -x`, and prove the groups together equal the source.
+group with `git cherry-pick` (no `-x`), and prove the groups together equal the source.
 
 ## Usage
 

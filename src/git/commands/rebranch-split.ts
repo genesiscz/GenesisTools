@@ -248,7 +248,7 @@ export function registerRebranchSplitCommands(rebranch: Command): void {
 
     rebranch
         .command("apply")
-        .description("Build one branch per group from a plan file with git cherry-pick -x, then verify the split")
+        .description("Build one branch per group from a plan file with git cherry-pick, then verify the split")
         .option("-p, --plan <file>", "The plan file, or - for stdin")
         .option("--dry-run", "Print the exact git commands and write nothing")
         .option("--yes", "Skip the single confirmation")

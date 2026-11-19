@@ -402,8 +402,8 @@ describe("plan file (pure)", () => {
         expect(applyCommands(resolved, { base: "master", returnTo: "feat/x" })).toEqual([
             "# api → feat/x-api (2 commits)",
             "git switch -c feat/x-api --no-track master",
-            "git cherry-pick -x aaaa1111   # one",
-            "git cherry-pick -x bbbbbbb2   # two",
+            "git cherry-pick aaaa1111   # one",
+            "git cherry-pick bbbbbbb2   # two",
             "#   paths-only: put back 1 path(s) outside api",
             "git restore --source=HEAD~1 --staged --worktree -- web/y.ts",
             "git commit --amend --no-edit --no-verify",
@@ -636,7 +636,9 @@ describe("rebranch against a real repository", () => {
                 "chore(web): web config",
             ].join("\n")
         );
-        expect(await r.git(["log", "-1", "--format=%B", "feat/messy-docs"])).toContain("(cherry picked from commit");
+        expect(await r.git(["log", "-1", "--format=%B", "feat/messy-docs"])).not.toContain(
+            "(cherry picked from commit"
+        );
         expect(await r.git(["diff", "--name-status", "--no-renames", "master", "feat/messy-web"])).toBe(
             "M\tweb/app.ts\nD\tweb/legacy.ts\nD\tweb/stale.ts\nA\tweb/widget.ts"
         );
