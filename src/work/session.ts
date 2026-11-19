@@ -45,6 +45,7 @@ export async function openSession(
                 actor,
                 project,
                 rules: loaded.rules,
+                loadRules,
                 ports: {
                     legacy: legacyHandoffs(),
                     delivery,

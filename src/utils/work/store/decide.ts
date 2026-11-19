@@ -75,6 +75,7 @@ export interface WriteEnv {
     inferred?: { during: string; evidence: string };
     /** The effective rules of the project (P3); the built-in defaults when absent. */
     rules?: ResolvedRules;
+    rulesByProject?: ReadonlyMap<string, ResolvedRules>;
 }
 
 export type Decision =
@@ -259,21 +260,28 @@ function flagOf(field: RuleField): string {
     return FLAG_OF[field] ?? `--${field}`;
 }
 
+function rulesFor(env: WriteEnv, project: string): ResolvedRules {
+    return (
+        env.rulesByProject?.get(project) ??
+        (project === env.project || env.rulesByProject === undefined ? env.rules : undefined) ??
+        DEFAULT_RULES
+    );
+}
+
 /** Checks the field rules of the project: a missing required field refuses; a missing recommended field warns. */
 function checkFields({
-    env,
+    rules,
     type,
     values,
     id,
     recommend,
 }: {
-    env: WriteEnv;
+    rules: ResolvedRules;
     type: ItemType;
     values: Partial<Record<RuleField, unknown>>;
     id: ItemId;
     recommend: boolean;
 }): { errors: Diagnostic[]; warnings: Diagnostic[]; next: NextAction[] } {
-    const rules = env.rules ?? DEFAULT_RULES;
     const errors: Diagnostic[] = [];
     const warnings: Diagnostic[] = [];
     const next: NextAction[] = [];
@@ -317,7 +325,8 @@ function decideSpot(cmd: Extract<WorkCommand, { verb: "spot" }>, view: StoreView
 
     const id = env.newId();
     const fields = cleanFields(cmd.fields);
-    const route = (env.rules ?? DEFAULT_RULES).routeSpotted({
+    const rules = rulesFor(env, cmd.project ?? env.project);
+    const route = rules.routeSpotted({
         type: cmd.type,
         ...(cmd.severity !== undefined ? { severity: cmd.severity } : {}),
         ...(fields.existedBefore !== undefined ? { existedBefore: fields.existedBefore } : {}),
@@ -361,7 +370,7 @@ function decideSpot(cmd: Extract<WorkCommand, { verb: "spot" }>, view: StoreView
     );
 
     const checked = checkFields({
-        env,
+        rules,
         type: cmd.type,
         values: fieldValues({ title, ...(cmd.severity !== undefined ? { severity: cmd.severity } : {}) }, fields),
         id,
@@ -398,7 +407,7 @@ function decideAdd(cmd: Extract<WorkCommand, { verb: "add" }>, view: StoreView, 
         ...(cmd.for !== undefined ? { for: cmd.for } : {}),
     };
     const checked = checkFields({
-        env,
+        rules: rulesFor(env, cmd.project ?? env.project),
         type: cmd.type,
         values: fieldValues(
             {
@@ -1199,7 +1208,6 @@ function decideHandoff(cmd: Extract<WorkCommand, { verb: "handoff" }>, view: Sto
 
 /** The role check of each write (P3): the rule of the item's type, against the roles the rows give the caller. */
 function guard(command: WorkCommand, view: StoreView, env: WriteEnv): Decision | null {
-    const rules = env.rules ?? DEFAULT_RULES;
     const ask = { lineage: env.lineage, ownerKind: env.actor.kind === "owner", sessionId: env.actor.sessionId };
     const check = (ref: string, verb: WriteVerb, workerMay = false): Decision | null => {
         const resolved = view.resolve(ref);
@@ -1209,7 +1217,7 @@ function guard(command: WorkCommand, view: StoreView, env: WriteEnv): Decision |
         }
 
         const item = resolved.item;
-        const resolvedRule = rules.mayWrite(item.type, verb);
+        const resolvedRule = rulesFor(env, item.project).mayWrite(item.type, verb);
         const rule = resolvedRule.value;
 
         if (rule === "anyone") {
@@ -1238,7 +1246,7 @@ function guard(command: WorkCommand, view: StoreView, env: WriteEnv): Decision |
 
     switch (command.verb) {
         case "spot": {
-            const rule = rules.mayWrite(command.type, "spot").value;
+            const rule = rulesFor(env, command.project ?? env.project).mayWrite(command.type, "spot").value;
             const roles: Role[] = [];
 
             if (ask.ownerKind) {
