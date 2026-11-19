@@ -81,7 +81,10 @@ export function readRosterRows(filePaths: string[], now: number): Promise<AgentS
     );
 }
 
-/** The next page always starts at the preceding page's next cursor. A retry uses the same manifest and offset. */
+/**
+ * Pages start at 32 paths, then grow to 64, 192 and at most 512. Small initial pages get sessions on screen
+ * sooner. Retries use the same manifest and cursor, and the publisher waits for each page to be consumed.
+ */
 export async function* rosterRowPages(
     paths: readonly string[],
     read: (paths: string[]) => Promise<AgentSessionRow[]>,
