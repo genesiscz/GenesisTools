@@ -181,12 +181,14 @@ final class VoiceLibraryModel {
     @ObservationIgnored private var duringRead: [String: VoiceJob] = [:]
     /// Offscreen snapshots can replay one recorded service response at a specific point in the job.
     @ObservationIgnored var snapshotJobs: [VoiceJob]?
+    @ObservationIgnored private var shownBy: UUID?
     @ObservationIgnored private var historyOwner: VoiceOwner?
     @ObservationIgnored private var historyMeetings: Set<String> = []
 
     init(window: MeetingsWindowModel) { self.window = window }
 
-    func show(_ destination: VoiceDestination, doubtfulFirst: Bool) {
+    func show(_ destination: VoiceDestination, doubtfulFirst: Bool, by viewer: UUID? = nil) {
+        shownBy = viewer
         if self.destination == destination {
             if self.doubtfulFirst != doubtfulFirst {
                 self.doubtfulFirst = doubtfulFirst
@@ -204,8 +206,10 @@ final class VoiceLibraryModel {
         loadJobs()
     }
 
-    func hide(_ old: VoiceDestination) {
-        guard destination == old else { return }
+    /// A list that a layout pass re-creates shows itself before the old copy's onDisappear runs, so only the copy that
+    /// showed the destination last may hide it; otherwise the new list waits on "Reading voice samples…" for good.
+    func hide(_ old: VoiceDestination, by viewer: UUID? = nil) {
+        guard destination == old, shownBy == viewer else { return }
         read?.cancel()
         jobRead?.cancel()
         jobRead = nil
@@ -416,6 +420,7 @@ struct VoiceSampleRows: View {
     @State private var search: PeopleSearch?
     @State private var query = ""
     @State private var revealedInitialFocus = false
+    @State private var viewer = UUID()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -459,13 +464,13 @@ struct VoiceSampleRows: View {
         .onChange(of: destination, initial: true) { _, next in
             expanded = []; full = []; othersOpen = false
             revealedInitialFocus = false
-            model.show(next, doubtfulFirst: doubtfulFirst)
+            model.show(next, doubtfulFirst: doubtfulFirst, by: viewer)
             revealFocus()
         }
-        .onChange(of: doubtfulFirst) { _, first in model.show(destination, doubtfulFirst: first) }
+        .onChange(of: doubtfulFirst) { _, first in model.show(destination, doubtfulFirst: first, by: viewer) }
         .onChange(of: model.rowsVersion, initial: true) { _, _ in revealFocus() }
         .onChange(of: focus) { _, _ in revealFocus() }
-        .onDisappear { model.hide(destination); search?.cancel() }
+        .onDisappear { model.hide(destination, by: viewer); search?.cancel() }
         .sheet(item: $moving, onDismiss: { search?.cancel(); search = nil }) { row in
             PersonPicker(people: search?.people ?? [], query: $query, sources: search?.sources ?? [],
                          title: "Move this sample to", prompt: "Search people", pick: { person in

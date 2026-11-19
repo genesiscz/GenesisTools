@@ -166,6 +166,32 @@ final class MeetingsVoiceLibraryTests: XCTestCase {
         }
     }
 
+    func testARecreatedListKeepsItsDestinationWhenTheOldCopyDisappears() async throws {
+        let fake = try FakeMeetingsService()
+        fake.fixtureMethods = ["voices.list", "voices.jobs"]
+        fake.fixtureReply = { method, _ in
+            switch method {
+            case "voices.jobs": return [] as [Any]
+            default: return ["people": [] as [Any]] as [String: Any]
+            }
+        }
+        try await fake.withVoiceWindow { window in
+            let library = window.voiceLibrary
+            let destination = VoiceDestination.inspector(meeting: "one", project: "Orchard", meetingOnly: true)
+            let old = UUID()
+            let new = UUID()
+            library.show(destination, doubtfulFirst: true, by: old)
+            // A layout pass shows the new copy of the list before the old copy's onDisappear runs.
+            library.show(destination, doubtfulFirst: true, by: new)
+            library.hide(destination, by: old)
+            XCTAssertEqual(library.destination, destination)
+            let loaded = await waitUntil(3) { library.rows.value != nil }
+            XCTAssertTrue(loaded)
+            library.hide(destination, by: new)
+            XCTAssertNil(library.destination)
+        }
+    }
+
     func testSameNamedOwnersAndTheirSampleIDsSurviveListing() throws {
         let json = #"""
         {"people":[
