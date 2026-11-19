@@ -24,6 +24,7 @@ import { Storage } from "@genesiscz/utils/storage/storage";
 import { createCanvas } from "@napi-rs/canvas";
 import { Command } from "commander";
 import { z } from "zod";
+import { seatLabels } from "../commands/seats";
 import { MEETINGS_REGISTRARS } from "../registrars";
 import { meetingAudioPath } from "./audio";
 import { MeetingComments } from "./comments";
@@ -268,6 +269,18 @@ test("meeting help lists each handle method once", () => {
         const methods = handle.methods.map((method) => method.name);
         expect(new Set(methods).size).toBe(methods.length);
     }
+});
+
+test("the seats preview keeps every saved interval of a person", () => {
+    const labels = seatLabels({
+        room: ["Ash"],
+        remote: [
+            { name: "Wren", fromSec: 0, toSec: 60 },
+            { name: "wren", fromSec: 120, label: "phone" },
+        ],
+    });
+    expect(labels.get("wren")).toBe("remote 00:00–01:00, remote 02:00–end (phone)");
+    expect(labels.get("ash")).toBe("room");
 });
 
 test("voices has one tree, the voice alias, and all old and new subcommands", async () => {

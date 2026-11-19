@@ -19,7 +19,8 @@ interface Options {
     json?: boolean;
 }
 
-function seatLabels(seats: MeetingSeats | null): Map<string, string> {
+/** Every saved seat of a person, in order: one person can sit remote for several intervals. */
+export function seatLabels(seats: MeetingSeats | null): Map<string, string> {
     const labels = new Map<string, string>();
     for (const side of ["room", "remote"] as const) {
         for (const row of seats?.[side] ?? []) {
