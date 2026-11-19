@@ -98,7 +98,10 @@ For setup, use `movies.record({ display: 0, audio: ["mic"], camera: true })` or
 `movies.record({ window: [WINDOW_ID], audio: ["system", "mic"], systemAudioScope: "app" })` or
 `tools recorder start --window WINDOW_ID --audio system,mic --system-audio-scope app` keeps only that app's sound in
 the system track (the default `all` keeps everything the Mac plays). Use `recorder.start({ displays: "all" })` or
-`tools recorder start --frames --displays all` for several displays.
+`tools recorder start --frames --displays all` for several displays. `--display follow` (REPL `movies.record({ display:
+"follow" })`, the bar's "Follow display") records the display in use and follows the pointer and the focus to another
+one after half a second; it is also what a start with no target does. The pickers never offer an overlay (a dimmer
+over a whole display) as a window.
 Countdown and threshold use `countdown` and `threshold` in `movies.record()` or `--countdown` and `--threshold` at start.
 To keep the system cursor, use `systemCursor: true` or `--system-cursor`.
 Use Standard quality for movies. For frames, High and Max use `maxLongSide` or `--max-long-side` with 3840 or 16384.
