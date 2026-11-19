@@ -492,14 +492,18 @@ export function siblingChoices(record: MeetingRecord, answered: QuestionItem, an
             item.status !== "suggested" ||
             item.group !== "words" ||
             item.about !== "term" ||
-            !item.heard ||
-            item.heard.length <= stem.length ||
-            !item.heard.toLowerCase().startsWith(stem)
+            !item.heard
         ) {
             continue;
         }
 
-        const choice = answer + item.heard.slice(stem.length);
+        const end = lowerPrefixEnd(item.heard, stem);
+
+        if (end === undefined || end >= item.heard.length) {
+            continue;
+        }
+
+        const choice = answer + item.heard.slice(end);
 
         if (!item.choices.includes(choice)) {
             item.choices.unshift(choice);
@@ -507,6 +511,24 @@ export function siblingChoices(record: MeetingRecord, answered: QuestionItem, an
 
         item.evidence = { ...item.evidence, derivedFrom: answered.id };
     }
+}
+
+/**
+ * Where the part of `text` that lowercases to `prefix` ends in `text` itself, or undefined when no start of it does.
+ * Lowercasing can change a length ("İ" becomes "i" and a combining dot), so the stem's own length cannot cut `text`.
+ */
+function lowerPrefixEnd(text: string, prefix: string): number | undefined {
+    if (!text.toLowerCase().startsWith(prefix)) {
+        return undefined;
+    }
+
+    for (let end = 1; end <= text.length; end++) {
+        if (text.slice(0, end).toLowerCase() === prefix) {
+            return end;
+        }
+    }
+
+    return undefined;
 }
 
 /** The two answers of a dictionary question. */
