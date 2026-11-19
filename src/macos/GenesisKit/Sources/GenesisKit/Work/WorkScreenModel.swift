@@ -236,12 +236,12 @@ public final class WorkScreenModel: ObservableObject {
         do {
             let names = try await source.projects()
             guard !Task.isCancelled else { return }
-            if project == nil && itemRef == nil { failure = nil }
-            projects = names
+            if project == nil && itemRef == nil && failure != nil { failure = nil }
+            if projects != names { projects = names }
             if itemRef != nil {
                 // The item owns its project, even when the default project's list finishes last.
                 openingCandidates = nil
-                projectsLoaded = true
+                if !projectsLoaded { projectsLoaded = true }
                 return
             }
             let candidates = openingCandidates ?? [project].compactMap { $0 }
@@ -255,7 +255,7 @@ public final class WorkScreenModel: ObservableObject {
             guard !Task.isCancelled else { return }
             if itemRef == nil { failure = error.localizedDescription }
         }
-        projectsLoaded = true
+        if !projectsLoaded { projectsLoaded = true }
     }
 
     // MARK: - Find and select
