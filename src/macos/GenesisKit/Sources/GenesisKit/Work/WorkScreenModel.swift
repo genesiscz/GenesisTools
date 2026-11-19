@@ -24,8 +24,18 @@ public final class WorkScreenModel: ObservableObject {
     @Published public var project: String? {
         didSet {
             openingCandidates = nil // A row click or history navigation takes precedence over the pending opening choice.
-            if adoptingItemProject { return }
+            if adoptingItemProject {
+                // A later read can discover a move. Keep the reader in the original list until they follow it.
+                if let oldValue, project != oldValue, itemDetail?.item.project == oldValue || movedFrom == oldValue {
+                    movedFrom = oldValue
+                    project = oldValue
+                } else if project != oldValue {
+                    resetFind()
+                }
+                return
+            }
             if project != oldValue || itemRef != nil {
+                resetFind()
                 itemRef = nil
                 itemDetail = nil
                 snapshot = nil
@@ -47,9 +57,16 @@ public final class WorkScreenModel: ObservableObject {
         }
     }
     @Published public private(set) var itemRef: String?
-    @Published public private(set) var itemDetail: WorkItemDetail?
+    @Published public private(set) var itemDetail: WorkItemDetail? {
+        didSet { if let itemDetail { receivedDetail(itemDetail) } }
+    }
     private var adoptingItemProject = false
-    @Published public private(set) var snapshot: WorkSnapshotValue?
+    @Published public private(set) var snapshot: WorkSnapshotValue? {
+        didSet {
+            updateResults()
+            if snapshot != nil { loadIndexIfNeeded() }
+        }
+    }
     private var confirmedSnapshot: WorkSnapshotValue?
     private var pendingItemStates: [String: String] = [:]
     public private(set) var rowAnimation: Bool?
@@ -213,12 +230,147 @@ public final class WorkScreenModel: ObservableObject {
         projectsLoaded = true
     }
 
-    public func openItem(_ ref: String) {
-        itemRef = ref
-        itemDetail = nil
-        failure = nil
-        if pane == .items { reload() } else { pane = .items }
+    // MARK: - Find and select
+
+    @Published public var filter = WorkFilter.default {
+        didSet {
+            guard oldValue != filter else { return }
+            collapsedMatches.removeAll()
+            archiveLimit = 200
+            filterNotice = nil
+            updateResults()
+            loadIndexIfNeeded()
+        }
     }
+    @Published public private(set) var index: [WorkRowValue] = []
+    @Published public private(set) var results: WorkItemsProjection?
+    @Published public private(set) var indexLoading = false
+    @Published public private(set) var indexFailure: String?
+    @Published public private(set) var listFailure: String?
+    @Published public private(set) var movedFrom: String?
+    @Published public private(set) var filterNotice: String?
+    public var selection: String? { itemRef }
+    public var visibleRefs: [String] { results?.visibleRefs ?? [] }
+
+    private var indexedProject: String?
+    private var indexTask: Task<Void, Never>?
+    private var listTask: Task<Void, Never>?
+    private var expanded: Set<String> = []
+    private var collapsedMatches: Set<String> = []
+    private var archiveLimit = 200
+    private var cachedDetails: [String: WorkItemDetail] = [:]
+    private var recentRefs: [String] = []
+    private var companionReadNeeded = false
+
+    private func resetFind() {
+        indexTask?.cancel()
+        listTask?.cancel()
+        indexTask = nil
+        listTask = nil
+        indexedProject = nil
+        indexLoading = false
+        indexFailure = nil
+        listFailure = nil
+        index = []
+        expanded.removeAll()
+        collapsedMatches.removeAll()
+        filter = .default
+        filterNotice = nil
+        movedFrom = nil
+    }
+
+    private func updateResults() {
+        results = snapshot.map { WorkItemsProjection(snapshot: $0, filter: filter, index: index,
+                                                     archiveLimit: archiveLimit, expanded: expanded,
+                                                     collapsed: collapsedMatches) }
+    }
+
+    public func toggleContainer(_ ref: String) {
+        guard let container = results?.containers.first(where: { $0.value.ref == ref }) else { return }
+        if container.isExpanded {
+            expanded.remove(ref)
+            collapsedMatches.insert(ref)
+        } else {
+            expanded.insert(ref)
+            collapsedMatches.remove(ref)
+        }
+        updateResults()
+    }
+
+    public func showMore() {
+        archiveLimit += 200
+        updateResults()
+    }
+
+    public func loadIndexIfNeeded() {
+        guard let project, filter.requiresIndex, indexedProject != project, indexTask == nil else { return }
+        indexLoading = true
+        indexFailure = nil
+        indexTask = Task {
+            do {
+                let rows = try await source.list(project: project)
+                guard !Task.isCancelled, self.project == project else { return }
+                index = rows
+                indexedProject = project
+                updateResults()
+            } catch {
+                guard !Task.isCancelled, self.project == project else { return }
+                indexFailure = error.localizedDescription
+            }
+            indexLoading = false
+            indexTask = nil
+        }
+    }
+
+    private func receivedDetail(_ detail: WorkItemDetail) {
+        guard let ref = itemRef else { return }
+        recentRefs.removeAll { $0 == ref }
+        recentRefs.append(ref)
+        cachedDetails[ref] = detail
+        if recentRefs.count > 20 { cachedDetails.removeValue(forKey: recentRefs.removeFirst()) }
+        if snapshot == nil || companionReadNeeded { readListBesideDetail() }
+    }
+
+    public func readListBesideDetail() {
+        guard let project else { return }
+        companionReadNeeded = false
+        listTask?.cancel()
+        listFailure = nil
+        listTask = Task {
+            do {
+                let value = try await source.snapshot(project: project)
+                guard !Task.isCancelled, self.project == project else { return }
+                snapshot = value
+            } catch {
+                guard !Task.isCancelled, self.project == project else { return }
+                listFailure = error.localizedDescription
+            }
+        }
+    }
+
+    private func invalidateFindReads() {
+        cachedDetails.removeAll()
+        recentRefs.removeAll()
+        indexedProject = nil
+        indexTask?.cancel()
+        indexTask = nil
+        indexLoading = false
+        companionReadNeeded = true
+    }
+
+    public func select(_ ref: String?) {
+        guard let ref else { closeItem(); return }
+        guard ref != itemRef else { return }
+        movedFrom = nil
+        itemRef = ref
+        let cached = cachedDetails[ref]
+        itemDetail = cached
+        failure = nil
+        if pane != .items { pane = .items }
+        else if cached == nil || isLoading || cached?.item.project != project { reload() }
+    }
+
+    public func openItem(_ ref: String) { select(ref) }
 
     public func closeItem() {
         guard itemRef != nil else { return }
@@ -228,6 +380,8 @@ public final class WorkScreenModel: ObservableObject {
         if project == nil, let first = projects.first { project = first }
         else { reload() }
     }
+
+    // MARK: - Reload
 
     public func reload() {
         read(explicit: true)
@@ -311,6 +465,7 @@ public final class WorkScreenModel: ObservableObject {
     /// A change of the store: the screen is stale, and one reload follows by the rules above.
     func changed() {
         PerfSpans.measure("work.live.tick") {
+            invalidateFindReads()
             stale = true
             schedule()
         }
@@ -359,6 +514,7 @@ public final class WorkScreenModel: ObservableObject {
         }
         pendingItemStates[action.ref] = nil
         if notice?.ok != true { showPendingItemStates() }
+        invalidateFindReads()
         await readAfterWrite()
     }
 
