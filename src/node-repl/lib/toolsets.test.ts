@@ -315,6 +315,49 @@ describe("browser toolset", () => {
 });
 
 describe("toolset method names", () => {
+    test("meetings.look documents its CLI twin and accepts a meeting and two clocks", async () => {
+        const help = describeMethod([new MeetingsToolset().api], "meetings.look");
+        expect(help).toContain("meetings look");
+        expect(help).toContain("attendance");
+        const meetings = await loadMeetings();
+        const input = { meeting: "missing-look-fixture", from: 4293, to: "1:37:20" };
+        await expect(meetings.look(input)).rejects.toThrow('No meeting "missing-look-fixture"');
+        await expect(meetings.look({ ...input, to: 4292 })).rejects.toThrow("to must be at or after from");
+        const record = await new MeetingStore().create(
+            {
+                title: "Harbour bell rehearsal",
+                start: "2026-10-01T09:00:00.000Z",
+                createdBy: "new",
+                attendance: { from: "fixture", people: [{ name: "Ash Example", fromSec: 4000, toSec: 6000 }] },
+            },
+            { command: "test", change: "fixture" }
+        );
+        expect(await meetings.look({ ...input, meeting: record.id })).toMatchObject({
+            meeting: record.id,
+            fromSec: 4293,
+            toSec: 5840,
+            lines: [],
+            attendance: [{ name: "Ash Example", fromSec: 4293, toSec: 5840 }],
+            screen: null,
+        });
+    });
+
+    test("meetings.levels documents live and saved reads and opens a transcript-free meeting", async () => {
+        const toolset = new MeetingsToolset();
+        const doc = toolset.api.methods.find((method) => method.name === "levels")?.doc;
+        expect(doc).toContain("tools meetings evidence");
+        expect(doc).toContain("--levels");
+        expect(doc).toContain("live");
+        const store = new MeetingStore();
+        const record = await store.create(
+            { title: "Silent room", start: new Date().toISOString(), createdBy: "new" },
+            { command: "new", change: "fixture" }
+        );
+        const { meetings } = (await toolset.bootstrap()) as {
+            meetings: { levels(input: { meeting: string }): Promise<unknown> };
+        };
+        expect(await meetings.levels({ meeting: record.id })).toEqual([]);
+    });
     test("the Recording handle lists switchTarget, restart and capabilities with their effects and CLI help", () => {
         const methods = recorderApi.handles.find((handle) => handle.name === "Recording")?.methods;
         for (const [name, effect] of [

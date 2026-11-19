@@ -39,6 +39,8 @@ final class CapturePicker {
     private var focus = true
     private var onHide: (() -> Void)?
     private let preview: (Bool) -> Void
+    /// Whether this setup may start the camera preview by itself (see `show`).
+    private var previewsCamera = true
 
     init(engine: ToolsRecorderEngine? = nil, defaults: UserDefaults = .standard,
          preview: ((Bool) -> Void)? = nil, listTargets: (() async throws -> RecordingTargets)? = nil) {
@@ -57,8 +59,18 @@ final class CapturePicker {
     var isVisible: Bool { controls?.window.isVisible == true }
 
     /// The menu, window.show and the picker shortcut all open setup. Record is the only start action in this flow.
-    func show(focus: Bool = true, preset: CaptureOptions? = nil) {
+    /// A launch or forwarded window intent passes `previewCamera: false`: it can open setup before a person touches
+    /// it, so the camera starts only when a later show comes from a person.
+    func show(focus: Bool = true, preset: CaptureOptions? = nil, previewCamera: Bool = true) {
         self.focus = focus
+        if isVisible {
+            if previewCamera, !previewsCamera {
+                previewsCamera = true
+                if let bar, bar.phase == .setup { preview(bar.setup.camera.enabled) }
+            }
+        } else {
+            previewsCamera = previewCamera
+        }
         if let bar, bar.phase != .setup, !isFinished {
             controls?.show(focus: focus)
             return
@@ -170,8 +182,8 @@ final class CapturePicker {
             }
         }.store(in: &observers)
         if onHide == nil {
-            bar.$setup.map(\.camera.enabled).removeDuplicates().sink { [weak bar, preview] enabled in
-                if bar?.phase == .setup { preview(enabled) }
+            bar.$setup.map(\.camera.enabled).removeDuplicates().sink { [weak self, weak bar, preview] enabled in
+                if bar?.phase == .setup, self?.previewsCamera == true { preview(enabled) }
             }.store(in: &observers)
         }
     }
