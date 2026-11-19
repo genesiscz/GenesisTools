@@ -1,5 +1,9 @@
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { type AudioFacts, audioLanesOf } from "./audio-lanes";
 import { bubbleRect } from "./camera";
+import { layerOrderOf } from "./layers";
 import { isPictureFile } from "./overlays";
 import {
     applyOp,
@@ -51,6 +55,8 @@ export interface EditFacts {
     hasTranscript: boolean;
     hasCursorTrack: boolean;
     musicFileExists: boolean;
+    /** Allows check() to find missing source files before an old edit has saved its lanes. */
+    audioFacts?: AudioFacts;
     /** The markers set while it recorded (its recording.json), at source milliseconds; the edit does not hold them. */
     recordedMarkers?: ReadonlyArray<{ atMs: number; label: string }>;
     // R4 voiceover clips
@@ -80,10 +86,12 @@ const SHORTEST_ZOOM_US = 600_000;
 /**
  * What to look at before an export, from the edit alone plus a few facts about files: items whose whole time is cut
  * (they never show), a missing music file, captions, subtitles or ducking without a transcript, a part that follows
- * a cursor the movie does not have, items too short to read, and texts drawn over each other. Pure: it reads nothing.
+ * a cursor the movie does not have, items too short to read, and texts drawn over each other. Relative lane and layer
+ * files are checked beside the source movie, where the renderer opens them.
  */
 export function checkProject(project: EditProject, facts: EditFacts): EditIssue[] {
     const issues: EditIssue[] = cutIssues(project, facts.recordedMarkers);
+    issues.push(...layerAndLaneIssues(project, facts.audioFacts));
     const seconds = (us: number) => Math.round(us / 100_000) / 10;
     const span = (startUs: number, endUs: number) => `${seconds(startUs)} to ${seconds(endUs)} s`;
     const kept = (startUs: number, endUs: number) => keptUs(project, startUs, endUs) > 0;
@@ -380,6 +388,61 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
 }
 /** Source seconds to a tenth, as the messages say them. */
 const tenths = (us: number) => Math.round(us / 100_000) / 10;
+
+function layerAndLaneIssues(project: EditProject, facts: AudioFacts | undefined): EditIssue[] {
+    const issues: EditIssue[] = [];
+    const folder = dirname(project.source.video);
+    const lanes = project.audio.lanes ?? (facts ? audioLanesOf(project, facts) : []);
+    for (const lane of lanes) {
+        if (lane.file && !existsSync(resolve(folder, lane.file))) {
+            issues.push({
+                severity: "fix",
+                kind: "audio-lane-missing",
+                item: `audio lane ${lane.id}`,
+                message: `Sound lane ${lane.name ?? lane.id} cannot play "${lane.file}". The export continues without that file.`,
+            });
+        }
+    }
+
+    const stack = project.layers;
+    if (!stack) {
+        return issues;
+    }
+
+    const present = new Set(layerOrderOf(project).map((layer) => layer.id));
+    for (const id of new Set(stack.order)) {
+        if (!present.has(id)) {
+            issues.push({
+                severity: "note",
+                kind: "layer-order-missing",
+                item: `layer ${id}`,
+                message: `The stack names missing layer ${id}. Its entry will be removed on the next save.`,
+            });
+        }
+    }
+
+    for (const layer of stack.media) {
+        if (!existsSync(resolve(folder, layer.file))) {
+            issues.push({
+                severity: "fix",
+                kind: "media-layer-missing",
+                item: `layer ${layer.id}`,
+                message: `Layer ${layer.name ?? layer.id} cannot open "${layer.file}". The export continues without that ${layer.kind}.`,
+            });
+        }
+
+        if (layer.endUs > project.source.durationUs || layer.startUs >= project.source.durationUs) {
+            issues.push({
+                severity: "note",
+                kind: "layer-past-end",
+                item: `layer ${layer.id}`,
+                message: `Layer ${layer.id} extends past the source end (${project.source.durationUs} µs). Its span will be clamped on the next save.`,
+            });
+        }
+    }
+
+    return issues;
+}
 
 /** " (about N frames at F fps)" for `playedUs` of the export at `fps`; nothing when the rate is not known. */
 function framesAt(playedUs: number, fps: number | undefined): string {

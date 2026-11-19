@@ -58,6 +58,13 @@ reopened by a worktree build carried that build's `node_modules/.bin` PATH and i
 moved every face onto it. A face whose environment the kernel withholds stays closed, and the build output says so
 ("did not reopen the … face").
 
+**🛑 Any worktree's `bun run app` replaces the install, while `tools` always runs the main checkout.** So a caller never
+sends what an older build refuses: a Swift rule that callers rely on gets a name in `APP_ACCEPTS`
+(`src/macos/lib/permissions/app.ts`), written into the manifest, and the caller asks `installedAppAccepts(<name>)`
+(`src/utils/macos/genesis-app.ts`) first. 2026-11-18 00:24: a worktree build without the `--config=` rule replaced the
+install, and every `tools claude embed`, `tools codex embed`, `tools say` and the usage poll showed a once-only vault
+window until the main checkout's build went back in (`launcherConfigArgs`, `launcherConfigForSavedCommand`).
+
 **Which commit is installed? One command: `bun run app:status`.** Its `source` line reads
 `<branch> @ <12-char sha>[+dirty] (<checkout>)`, written into `~/.genesis-tools/app/manifest.json` by every build
 (`sourceRoot`, `sourceBranch`, `sourceCommit`, `sourceDirty`). `+dirty` means the Swift sources had uncommitted changes,
@@ -76,6 +83,12 @@ prints it in UTC. The widget stayed off for two days from 2026-11-02 with no tra
 the next stop has one. Every window face other than the widget also starts the widget while "Show the widget" is on
 (`WidgetLaunch.ensureRunningIfShown`), so quitting the hub with "Quit All" and opening it again brings the widget back.
 
+**🛑 Start another face (`--hub`, `--review`, `--window`, `--features`, `--widget`) only with `FaceLaunch.start`**
+(`Sources/Host/FaceLaunch.swift`), never with `Process`. Launch Services makes the face an app job, and launchd stops
+it when the login session ends. A plain child belongs to no job: on 2026-11-18 WindowServer crashed at 08:36, the hub
+the relay had started as a child lived on with no screen, kept `hub.lock`, and every open of the app went to it for
+seven hours. A one-shot helper whose output you read (`--permission-status`) stays a `Process`.
+
 **Before believing an app-face bug report, check what is actually running:**
 `ps -Ao pid,lstart,command | rg "MacOS/GenesisTools" | rg -v "gt-cc|gt-claude|bun "`. A bare entry
 with no program argument is a window instance, and its start time tells you which build it is.
@@ -86,6 +99,16 @@ AppKit open the link in argv as a file (modal "document could not be opened") an
 documents were closed"; find it with `command log show --predicate 'processID == <pid>' | rg -i terminat`). A router
 now quits with `exit(0)`, never `NSApp.terminate`, and a build is not done until one `open -a ~/Applications/GenesisTools.app
 https://example.org/` leaves no router running after ~8 s.
+
+**Every link, banner click and Dock reopen goes to the OLDEST GenesisTools process that checked in with Launch
+Services, a launcher included** (`Sources/Host/LinkRelay.swift`). A launcher run (`GenesisTools <program>`, every
+`tools` run) never checks in (`marksBackgroundHelper` in `Sources/Host/Launcher.swift`): from 2026-11-13 to 11-17 each
+one did (TransformProcessType), a rebuild restarted the relay, and every click went to a Claude session's launcher
+("The application GenesisTools.app is not open anymore", -600 procNotFound). A delivery even turns a `BackgroundOnly`
+instance into a `UIElement`, so its type is no shield, and nothing can take another process out of Launch Services:
+such a launcher holds the links until it exits. `bun run app:status` prints a `links` line naming the process macOS
+hands links to (`src/macos/lib/permissions/links.ts`), and every build runs `<launcher> /bin/sleep 3` and fails when
+that run checks in.
 
 **Notifications specifically** (`src/macos/GenesisTools/Sources/Host/Notify.swift`, reached from
 `src/utils/macos/notifications.ts` via `genesis-app-rpc.ts`): `tools macos permissions build`, then

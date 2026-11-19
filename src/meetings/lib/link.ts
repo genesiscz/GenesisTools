@@ -11,7 +11,7 @@ import {
     type MeetingStore,
     parseSourceRef,
 } from "@genesiscz/utils/meetings/record";
-import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
+import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import { resolveProject } from "./project";
 import { type SourceAudioSync, syncSourceAudio } from "./source-audio";
@@ -168,6 +168,8 @@ async function linkSourceUnlocked(options: {
     quiet?: boolean;
     /** The source ended the meeting: its title and end replace those it had while live. */
     refresh?: boolean;
+    /** The source to read; tests pass a fake one, production opens the reference's source. */
+    source?: TranscriptSource;
 }): Promise<LinkResult> {
     const ref = parseSourceRef(options.sourceRef);
 
@@ -175,7 +177,7 @@ async function linkSourceUnlocked(options: {
         throw new Error(`"${options.sourceRef}" is not a source reference; write it as wisprflow:<meeting id>`);
     }
 
-    const source = await meetingSource(ref.source);
+    const source = options.source ?? (await meetingSource(ref.source));
     const meeting = await source.load(ref.id);
     const block = source.describe(meeting);
     const existing = options.meetingRef

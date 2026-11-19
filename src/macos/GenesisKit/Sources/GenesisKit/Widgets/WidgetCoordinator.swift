@@ -127,13 +127,14 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             undoSeconds: { [weak model] in model?.undoSeconds ?? WidgetModel.undoSeconds(.hubDefaults) })
         self.shelf = shelf
         let tasks = WidgetTasksStore(
-            binaryPath: binaryPath,
+            binaryPath: binaryPath, stateRoot: stateRoot,
             sessions: { [weak model] in model?.snapshot?.sessions ?? [] },
             openSession: { [weak self] session, cardID in
                 self?.showShelfDraft(for: session)
                 self?.model.selectedCardID = cardID
             })
         self.tasks = tasks
+        model.taskActions = tasks
         let voiceNotes = WidgetVoiceNotesStore(binaryPath: binaryPath, stateRoot: stateRoot,
             micLauncher: micLauncher ?? "", acquireAudio: { try await runtime.acquireExternalAudio() },
             settings: { [weak model] in
@@ -173,7 +174,13 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
                 ) { [model] presentation in AgentWidgetModuleView(model: model, presentation: presentation) })
             try modules.register(shelf.captureModule())
             try modules.register(shelf.shelfModule())
-            try modules.register(tasks.taskModule())
+            try modules.register(tasks.taskModule(handoffs: { [weak model] in
+                model?.preferences.tasks?.handoffs ?? .folded
+            }, showTaskTooltips: { [weak model] in
+                model?.preferences.tasks?.showTooltips ?? true
+            }, openHandoffSettings: { [weak model] in
+                model?.showSettingsPage?("widgets.general#tasks")
+            }))
             try modules.register(FlowWidget.module(runtime: runtime))
             try modules.register(voiceNotes.voiceNotesModule())
             // The host routes a Usage launch (`--mode usage`, `--usage-account <id>`) like its other hub launches, so

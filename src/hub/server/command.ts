@@ -6,6 +6,7 @@ import { askHubServer } from "./client";
 import { HUB_SERVER_DOORS } from "./doors";
 import { hubServerSocketPath } from "./paths";
 import { startHubServer } from "./server";
+import { watchHubStalls } from "./stall-watch";
 
 /**
  * The selected session's folds live in the server's door worker, so one very large session (749 MB with 151
@@ -78,13 +79,24 @@ async function serve(flags: ServeFlags): Promise<void> {
             return;
         }
 
+        let stopWatch: (() => void) | undefined;
+        try {
+            stopWatch = watchHubStalls(hubServerSocketPath());
+        } catch (error) {
+            logger.warn({ error }, "hub server could not start its stall watcher");
+        }
+
         const stop = (): void => {
             void handle.drain("signal");
         };
         signal.addEventListener("abort", stop, { once: true });
         process.once("SIGTERM", stop);
         out.printlnErr(`hub server listening on ${hubServerSocketPath()} (pid ${process.pid})`);
-        await done;
+        try {
+            await done;
+        } finally {
+            stopWatch?.();
+        }
     });
     // The orphan watchdog, the fs watchers and the logger may keep the loop alive; the server is done.
     process.exit(0);

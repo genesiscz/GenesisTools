@@ -356,16 +356,8 @@ enum PRRefMenu {
 
     @MainActor
     private static func launch(_ args: [String], model: ReviewModel) {
-        guard let executable = Bundle.main.executableURL else { return }
-        let process = Process()
-        process.executableURL = executable
-        process.arguments = args
-        do {
-            try process.run()
-            HubPerf.log("review.prRef launch \(args.joined(separator: " "))")
-        } catch {
-            model.notice = "Could not open \(args.first ?? "it"): \(error.localizedDescription)"
-        }
+        HubPerf.log("review.prRef launch \(args.joined(separator: " "))")
+        FaceLaunch.start(args) { model.notice = "Could not open \(args.first ?? "it"): \($0.localizedDescription)" }
     }
 }
 
@@ -454,15 +446,9 @@ enum CommitMenu {
         case .thisReview:
             model.setScope(.commit(sha: full, title: found.subject))
         case .newWindow:
-            guard let executable = Bundle.main.executableURL else { return }
-            let process = Process()
-            process.executableURL = executable
-            process.arguments = newWindowArguments(repo: model.repo.path, sha: full, subject: found.subject)
-            do {
-                try process.run()
-                HubPerf.log("review.commitRef new window \(full.prefix(10))")
-            } catch {
-                model.notice = "Could not open a review window: \(error.localizedDescription)"
+            HubPerf.log("review.commitRef new window \(full.prefix(10))")
+            FaceLaunch.start(newWindowArguments(repo: model.repo.path, sha: full, subject: found.subject)) {
+                model.notice = "Could not open a review window: \($0.localizedDescription)"
             }
         case .host:
             break

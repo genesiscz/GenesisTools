@@ -3,6 +3,7 @@ import Darwin
 import XCTest
 
 @testable import GenesisKit
+@testable import GenesisKitBase
 
 /// A one-connection JSON-RPC server on a Unix socket: answers `status`, refuses `pause`, never answers `slow`, and
 /// sends a `frame` notification after `subscribe`. Every request line it read is kept for the assertions.

@@ -13,6 +13,34 @@ struct MatchRulesDraft: Equatable {
     }
 }
 
+/// The originating meeting can be older than the overview's date range. Keep it in the selector in that case.
+struct DictionaryPreviewMeetings {
+    var selection = ""
+    private var source: String?
+    private var recent: [NativeSettingsOption<String>] = []
+    private static let placeholder = NativeSettingsOption("", "Choose a meeting…")
+    private(set) var options = [Self.placeholder]
+
+    mutating func open(from meeting: String?) {
+        source = meeting
+        selection = meeting ?? ""
+        updateOptions()
+    }
+
+    mutating func receive(_ meetings: [OverviewMeeting]) {
+        recent = meetings.map { NativeSettingsOption($0.id, $0.displayTitle) }
+        updateOptions()
+    }
+
+    private mutating func updateOptions() {
+        options = [Self.placeholder]
+        if let source, !recent.contains(where: { $0.value == source }) {
+            options.append(NativeSettingsOption(source, source))
+        }
+        options += recent
+    }
+}
+
 /// The Settings → Meetings pages: the meetings config (read with `config.read` and written with `config.set` and
 /// `config.unset` through the Meetings service, or `config show`, `config set` and `config unset` when no service
 /// answers; library reads and writes use the same typed service with a command compatibility fallback), the cost of each capture
@@ -44,6 +72,8 @@ final class MeetingsSettingsModel {
         didSet { if oldValue != dictionaryScope { loadDictionary(); testPhrase(phrase) } }
     }
     var phrase = ""
+    var dictionaryPreviewMeetings = DictionaryPreviewMeetings()
+    var thresholdsReady = false
     /// False in a snapshot: nothing is written.
     let writes: Bool
     /// The Meetings service the config reads and writes go through; nil runs them as commands (XCTest, the preview).
@@ -484,8 +514,8 @@ final class MeetingsSettingsModel {
         case library(@MainActor () async throws -> Void)
     }
 
-    private func readLibrary<M: MeetingsServiceMethod>(_ method: M.Type, _ params: M.Params,
-                                                       orRun args: [String]) async throws -> M.Result {
+    func readLibrary<M: MeetingsServiceMethod>(_ method: M.Type, _ params: M.Params,
+                                              orRun args: [String]) async throws -> M.Result {
         let read = MeetingsRead.service(method, params, orRun: args)
         return try await read.run(service: service, command: { [self] args, _ in
             try await readCommand(M.Result.self, args)

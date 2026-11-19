@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import GenesisKitFixtures
 import SwiftUI
+import Vision
 import XCTest
 @testable import GenesisKitBase
 @testable import GenesisKit
@@ -44,6 +45,192 @@ final class WidgetTasksPolishTests: XCTestCase {
             try? await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertFalse(store.isMutating || store.isLoading || store.isCreating, "store did not settle in time")
+    }
+
+    /// Work-items P8: the snapshot's counts per project show under the header, follow the project filter, and a
+    /// project with nothing to count is left out.
+    func testTheWorkCountsShowUnderTheHeaderAndFollowTheProjectFilter() async throws {
+        let first = task()
+        var snap = WidgetTaskSnapshot(tasks: [first], total: 1, activeCount: 1, truncated: false,
+            sourcePath: "/fixture/work/work.db-wal", sourceStamp: "store:1", projects: ["Fixture", "Other"],
+            sessions: [.init(id: "codex:fixture", title: "Fixture session")])
+        snap.work = [
+            .init(project: "Fixture", spotted: 7, reopened: 1, held: 0),
+            .init(project: "Other", spotted: 2, reopened: 0, held: 3),
+            .init(project: "Quiet", spotted: 0, reopened: 0, held: 0),
+        ]
+        let data = try JSONEncoder().encode(snap)
+        let store = WidgetTasksStore(request: { _ in data })
+        store.refresh(force: true)
+        await settled(store)
+        XCTAssertEqual(store.workCounts.map(\.project), ["Fixture", "Other"])
+        XCTAssertEqual(store.workCounts.first?.summary, "7 spotted · 1 reopened")
+        XCTAssertEqual(store.workCounts.last?.summary, "2 spotted · 3 held links")
+
+        let all = try renderTasks(WidgetTasksModuleView(store: store, presentation: .preview).frame(width: 432),
+                                  name: "widget-tasks-work-counts")
+        XCTAssertTrue(all.contains("7 spotted"), all)
+        XCTAssertTrue(all.contains("2 spotted"), all)
+        XCTAssertFalse(all.contains("Quiet"), all)
+
+        store.project = "Other"
+        await settled(store)
+        XCTAssertEqual(store.workCounts.map(\.project), ["Other"])
+
+        // A snapshot from before the store (no `work` key) decodes and shows no line.
+        let old = Data(#"{"tasks":[],"total":0,"activeCount":0,"truncated":false,"sourcePath":"/x","sourceStamp":"s","projects":[],"sessions":[]}"#.utf8)
+        XCTAssertNil(try JSONDecoder().decode(WidgetTaskSnapshot.self, from: old).work)
+    }
+
+    func testWorkOnlyProjectsAndTheWholeMatchingCountSurviveThePreviewLimit() async throws {
+        var snap = WidgetTaskSnapshot(tasks: (0..<4).map { task("t_\($0)_fixture") }, total: 250,
+                                      activeCount: 250, truncated: true, sourcePath: "/fixture/tasks.jsonl",
+                                      sourceStamp: "fixture", projects: [], sessions: [])
+        snap.work = [.init(project: "Studio & Tools", spotted: 1, reopened: 0, held: 1)]
+        let data = try JSONEncoder().encode(snap)
+        let store = WidgetTasksStore(request: { _ in data })
+        defer { store.stop() }
+        store.refresh()
+        await settled(store)
+        XCTAssertEqual(store.remainingPreviewCount, 246)
+        XCTAssertEqual(store.projects, ["Studio & Tools"])
+        let url = WidgetWorkLink.project("Studio & Tools")
+        XCTAssertEqual(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+                       [URLQueryItem(name: "work-project", value: "Studio & Tools")])
+    }
+
+    private func renderTasks<V: View>(_ view: V, name: String) throws -> String {
+        let renderer = ImageRenderer(content: view.padding(10).background(Color.black).environment(\.colorScheme, .dark))
+        renderer.scale = 2
+        let image = try XCTUnwrap(renderer.cgImage)
+        if let folder = ProcessInfo.processInfo.environment["TASKS_SNAPSHOT_DIR"] {
+            let url = URL(fileURLWithPath: folder).appendingPathComponent("\(name).png")
+            let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil))
+            CGImageDestinationAddImage(destination, image, nil)
+            XCTAssertTrue(CGImageDestinationFinalize(destination))
+        }
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: image).perform([request])
+        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+    }
+
+    func testClaimedHandoffsRenderFoldedExpandedAndHiddenInTasks() async throws {
+        let wire = Data(#"""
+        {"tasks":[],"total":0,"activeCount":0,"truncated":false,"sourcePath":"/fixture/work/work.db-wal",
+         "sourceStamp":"store:1","projects":["App"],"sessions":[{"id":"codex:s-a","title":"Release session"}],
+         "claimedHandoffs":[{"id":"h_release1","project":"App","title":"Prepare the release",
+         "claimants":[{"sessionId":"s-a","harness":"codex","title":"Release session"}],
+         "members":[{"id":"w_notes001","slot":"t1","title":"Write release notes","state":"done"},
+                    {"id":"w_build001","slot":"t2","title":"Check the build","state":"active"}]}]}
+        """#.utf8)
+        let store = WidgetTasksStore(request: { _ in wire })
+        defer { store.stop() }
+        store.refresh()
+        await settled(store)
+
+        let folded = try renderTasks(WidgetTasksModuleView(store: store, presentation: .preview).frame(width: 432),
+                                     name: "widget-handoffs-folded")
+        for word in ["Claimed handoffs", "Prepare the release", "App", "2 tasks", "Release session"] {
+            XCTAssertTrue(folded.contains(word), folded)
+        }
+        XCTAssertFalse(folded.contains("Write release notes"), folded)
+
+        let expanded = try renderTasks(WidgetTasksModuleView(store: store, presentation: .preview, handoffDisplay: .expanded)
+            .frame(width: 432), name: "widget-handoffs-expanded")
+        for word in ["Write release notes", "Done", "Check the build", "Active"] {
+            XCTAssertTrue(expanded.contains(word), expanded)
+        }
+
+        let hidden = try renderTasks(WidgetTasksModuleView(store: store, presentation: .preview, handoffDisplay: .hidden)
+            .frame(width: 432), name: "widget-handoffs-hidden")
+        XCTAssertTrue(hidden.contains("Tasks"), hidden)
+        XCTAssertFalse(hidden.contains("Prepare the release"), hidden)
+    }
+
+    func testTheHandoffShowsEveryClaimantAtTheWidgetsNarrowWidth() throws {
+        let handoff = WidgetClaimedHandoff(id: "h_fixture", project: "Build and release automation",
+                                           title: "Prepare the release", claimants: [
+                                               .init(title: "Archive verification session"), .init(title: "Signing review"),
+                                           ], members: [])
+        let text = try renderTasks(WidgetClaimedHandoffSection(handoffs: [handoff], initiallyExpanded: false)
+            .frame(width: 288), name: "widget-handoff-narrow")
+        for word in ["verification", "Signing", "review", "0 tasks"] {
+            XCTAssertTrue(text.contains(word), text)
+        }
+    }
+
+    /// Send a window-local click to the real member row. Vision locates its text so the same test can
+    /// press the old static row and the new button, without moving the pointer or opening the hub.
+    func testTaskRowAsksForWorkWithItsItemID() async throws {
+        let handoff = try JSONDecoder().decode(WidgetClaimedHandoff.self, from: Data(#"""
+            {"id":"h_release1","project":"App","title":"Prepare the release","claimants":[],
+             "members":[{"id":"w_build001","slot":"t2","title":"Inspect the archive","state":"active",
+                         "acceptance":"The archive contains the receipt."}]}
+            """#.utf8))
+        var snap = WidgetTaskSnapshot(tasks: [], total: 0, activeCount: 0, truncated: false,
+                                      sourcePath: "/fixture/work.db", sourceStamp: "fixture", projects: ["App"], sessions: [])
+        snap.claimedHandoffs = [handoff]
+        snap.work = [.init(project: "Design & build", spotted: 7, reopened: 0, held: 0)]
+        let data = try JSONEncoder().encode(snap)
+        let store = WidgetTasksStore(request: { _ in data })
+        defer { store.stop() }
+        store.refresh()
+        await settled(store)
+        var urls: [URL] = []
+        let opened = expectation(description: "The task button requested a URL")
+        let projectOpened = expectation(description: "The project count opened its own project")
+        let card = WidgetTasksModuleView(store: store, presentation: .preview, handoffDisplay: .expanded)
+            .frame(width: 432, height: 300, alignment: .top)
+            .environment(\.openURL, OpenURLAction { url in
+                urls.append(url)
+                if URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first?.name == "work-project" {
+                    projectOpened.fulfill()
+                } else { opened.fulfill() }
+                return .handled
+            })
+            .background(Color.black).environment(\.colorScheme, .dark)
+        let drawn = try renderTasks(card, name: "widget-work-linked")
+        XCTAssertTrue(drawn.contains("Inspect the archive"), drawn)
+        let host = NSHostingView(rootView: card)
+        let window = NSPanel(contentRect: NSRect(x: -10000, y: -10000, width: 432, height: 300),
+                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.alphaValue = 0
+        window.contentView = host
+        window.order(.below, relativeTo: 0)
+        defer { window.close() }
+        window.displayIfNeeded()
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let ocr = VNRecognizeTextRequest()
+        ocr.recognitionLevel = .accurate
+        ocr.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: XCTUnwrap(bitmap.cgImage)).perform([ocr])
+        func click(_ label: String) throws {
+            let line = try XCTUnwrap(ocr.results?.first { $0.topCandidates(1).first?.string.contains(label) == true })
+            let location = NSPoint(x: line.boundingBox.midX * host.bounds.width, y: line.boundingBox.midY * host.bounds.height)
+            func mouse(_ type: NSEvent.EventType) throws -> NSEvent {
+                try XCTUnwrap(NSEvent.mouseEvent(with: type, location: location, modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                    eventNumber: 0, clickCount: 1, pressure: 1))
+            }
+            window.sendEvent(try mouse(.leftMouseDown))
+            window.sendEvent(try mouse(.leftMouseUp))
+        }
+        try click("Inspect the archive")
+        await fulfillment(of: [opened], timeout: 2)
+        let url = try XCTUnwrap(urls.first)
+        XCTAssertEqual(urls.count, 1)
+        XCTAssertEqual(url.scheme, "genesis-tools")
+        XCTAssertEqual(url.host, "hub")
+        XCTAssertEqual(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+                       [URLQueryItem(name: "work", value: "w_build001")])
+        try click("7 spotted")
+        await fulfillment(of: [projectOpened], timeout: 2)
+        XCTAssertEqual(urls.last, WidgetWorkLink.project("Design & build"))
     }
 
     func testATickShowsAtOnceRunsBesideAnotherAndStaysVisibleWithUndo() async throws {
@@ -339,6 +526,44 @@ final class WidgetTasksPolishTests: XCTestCase {
         XCTAssertEqual(WidgetTaskAction.returning(to: "open"), [.reopen])
     }
 
+    func testOfflineTaskOffersResumeWithoutClaimingDelivery() async throws {
+        let row = task()
+        let home = "/fixture/second home"
+        let store = WidgetTasksStore(request: { args in
+            if args.first != "update" { return try self.snapshot([row]) }
+            XCTAssertEqual(Array(args.suffix(2)), ["--source-home", home])
+            return try JSONEncoder().encode(WidgetTaskUpdate(task: row, receipt: .init(
+                id: row.id, action: "send", from: row.state, state: row.state, revision: row.revision,
+                at: row.updatedTs, saved: false, needsResume: true)))
+        })
+        defer { store.stop() }
+        store.perform(.send, on: row, sourceHome: home)
+        await settled(store)
+        XCTAssertEqual(store.resumeRequest?.id, row.id)
+        XCTAssertEqual(store.resumeRequest?.sourceHome, home)
+        for harness in Harness.allCases {
+            let command = try XCTUnwrap(CmuxCommandRunner.resumeCommand(
+                provider: harness.rawValue, sessionId: row.sessionId, sourceHome: home))
+            XCTAssertEqual(Array(command.prefix(2)), ["env", "\(harness.homeOverrideVariable)=\(home)"])
+        }
+        XCTAssertNil(store.receipt)
+    }
+
+    func testTaskAssignmentActionsFollowOwnerAndReceipt() {
+        var row = task()
+        row.owner = "human"
+        XCTAssertEqual(row.addressee, "For you")
+        XCTAssertTrue(row.actions.contains(.send))
+        XCTAssertFalse(row.actions.contains(.take))
+        row.owner = "agent"
+        row.state = "acknowledged"
+        XCTAssertEqual(row.addressee, "For agent")
+        XCTAssertTrue(row.actions.contains(.take))
+        XCTAssertFalse(row.actions.contains(.send))
+        row.state = "implemented"
+        XCTAssertEqual(row.actions, [.reopen])
+    }
+
     func testSessionChoicesPutLiveLeadSessionsFirstAndSkipSubagents() async throws {
         let target = WidgetTarget(hostId: "local", provider: "claude", sessionId: "live", sourceHome: "", cwd: "/fixture")
         let live = WidgetSession(key: "live", target: target, title: "Live lead", project: "Fixture", activityAt: 20,
@@ -385,6 +610,127 @@ final class WidgetTasksPolishTests: XCTestCase {
         XCTAssertEqual(closed, 1, "a saved edit closes the editor")
         XCTAssertEqual(savedRevisions, [2], "and hands over the task as the ledger saved it")
         XCTAssertEqual(store.receipt, "Saved: Water every plant")
+    }
+
+    func testEditingSurvivesFilteringAndRequiresReviewOfAChangedRevision() async throws {
+        let original = task()
+        var latest = original
+        var writes: [[String]] = []
+        let store = WidgetTasksStore(request: { args in
+            if args.first == "edit" {
+                writes.append(args)
+                latest.revision += 1
+                latest.title = "Keep this draft"
+                return try self.saved(latest, action: "edit")
+            }
+            return try self.snapshot(args.contains("completed") ? [] : [latest])
+        })
+        defer { store.stop() }
+        store.beginEditing(original)
+        let editor = try XCTUnwrap(store.editSessions[original.id])
+        editor.title = "Keep this draft"
+        store.scope = "completed"
+        await settled(store)
+        latest.revision += 1
+        latest.title = "Edited elsewhere"
+        store.scope = "active"
+        await settled(store)
+        store.beginEditing(latest)
+        XCTAssertTrue(editor === store.editSessions[original.id])
+        XCTAssertTrue(editor.needsReview(latest))
+        editor.useReviewedVersion(latest)
+        store.draft.owner = "agent"
+        editor.save(in: store)
+        await settled(store)
+        let write = try XCTUnwrap(writes.first)
+        XCTAssertEqual(write[try XCTUnwrap(write.firstIndex(of: "--revision")) + 1], "2")
+        XCTAssertFalse(write.contains("--for"))
+        XCTAssertEqual(write[try XCTUnwrap(write.firstIndex(of: "--title")) + 1], "Keep this draft")
+        XCTAssertNil(store.editSessions[original.id])
+    }
+
+    func testAConfirmedCreateDoesNotMoveAFilterChosenWhileSaving() async throws {
+        let held = HeldEdit()
+        let created = task(title: "New task")
+        let store = WidgetTasksStore(request: { args in
+            if args.first == "create" {
+                await withCheckedContinuation { held.release = $0 }
+                return try self.saved(created, action: "create")
+            }
+            return try self.snapshot([])
+        })
+        defer { store.stop() }
+        store.draft.title = created.title
+        store.create()
+        await untilHeld(held)
+        store.scope = "completed"
+        store.draft.project = "Next project"
+        held.release?.resume()
+        await settled(store)
+        XCTAssertEqual(store.scope, "completed")
+        XCTAssertEqual(store.draft.project, "Next project")
+        XCTAssertTrue(store.draft.title.isEmpty)
+    }
+
+    func testAReceiptForADifferentTaskCannotCloseTheEditor() async throws {
+        let original = task()
+        var edited = original
+        edited.revision += 1
+        let mismatched = WidgetTaskSaved(task: edited, receipt: .init(id: "t_other", action: "edit",
+            state: edited.state, revision: edited.revision, at: edited.updatedTs, saved: true))
+        let store = WidgetTasksStore(request: { args in
+            if args.first == "edit" { return try JSONEncoder().encode(mismatched) }
+            return try self.snapshot([original])
+        })
+        defer { store.stop() }
+        store.beginEditing(original)
+        let editor = try XCTUnwrap(store.editSessions[original.id])
+        editor.title = "My unsaved change"
+        editor.save(in: store)
+        await settled(store)
+        XCTAssertTrue(editor.isOpen)
+        XCTAssertEqual(editor.title, "My unsaved change")
+        XCTAssertEqual(store.failures.first?.id, .change(original.id))
+    }
+
+    func testARefusedActionShowsItsOwnFailureWithoutAnnouncingAnEmptyList() async throws {
+        let original = task()
+        let store = WidgetTasksStore(request: { args in
+            if args.first == "update" { throw ToolsBridgeError.refused("fixture stderr line") }
+            return try self.snapshot([original])
+        })
+        defer { store.stop() }
+        store.refresh()
+        await settled(store)
+        store.toggle(original)
+        await settled(store)
+        XCTAssertEqual(store.failures.first?.id, .change(original.id))
+        let text = try renderTasks(WidgetTasksModuleView(store: store, presentation: .preview).frame(width: 324), name: "widget-task-refused")
+        XCTAssertTrue(text.contains("Water the plants"), text)
+        XCTAssertTrue(text.contains("Could not mark"), text)
+        XCTAssertFalse(text.contains("did not load"), text)
+        XCTAssertFalse(text.contains("fixture stderr"), text)
+        XCTAssertFalse(text.contains("Nothing waiting"), text)
+    }
+
+    func testTaskFeedbackKeepsFourRecentFailuresAndSummarizesTheRest() async throws {
+        let tasks = (1...6).map { task("t_\($0)_fixture") }
+        let store = WidgetTasksStore(request: { args in
+            if args.first == "update" { throw ToolsBridgeError.refused("fixture stderr line") }
+            return try self.snapshot(tasks)
+        })
+        defer { store.stop() }
+        store.refresh()
+        await settled(store)
+        for task in tasks {
+            store.toggle(task)
+            await settled(store)
+        }
+        XCTAssertEqual(store.failures.map(\.id), tasks.suffix(4).map { .change($0.id) })
+        XCTAssertEqual(store.earlierFailureCount, 2)
+        store.clearFeedback()
+        XCTAssertTrue(store.failures.isEmpty)
+        XCTAssertEqual(store.earlierFailureCount, 0)
     }
 
     /// A store whose edit request waits until the test lets it answer, so the editor can be used meanwhile.
@@ -2862,6 +3208,24 @@ final class WidgetComposerClickTests: XCTestCase {
         let fieldInWindow = NSRect(x: text.minX, y: Self.size.height - text.maxY, width: text.width, height: text.height)
         XCTAssertLessThanOrEqual(editor.visibleRect.minY, 1, "the editor does not scroll its first line away")
         XCTAssertLessThanOrEqual(editorInWindow.maxY, fieldInWindow.maxY + 2, "the first line is inside the field")
+    }
+
+    func testStandaloneMessagePopupRendersMultipleBodyLines() throws {
+        _ = NSApplication.shared
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        let item = WidgetInboxItem(message: .init(text: "First line\n\nThird line", origin: "Orchard · cli"),
+                                   id: "answer:a", sourceId: "a", kind: "answer", key: "local:unknown:unknown:",
+                                   at: 1, needsAnswer: false, title: "Backup", tag: "message")
+        FrameProbe.enabled = true
+        FrameProbe.reset()
+        defer { FrameProbe.enabled = false }
+        let window = hosted(AnyView(WidgetPeekView(model: model, item: item).frame(width: 310)),
+                            size: NSSize(width: 310, height: 240))
+        defer { window.orderOut(nil); window.close() }
+        pump(0.5)
+        let body = try XCTUnwrap(FrameProbe.frames["widget.peek.message"])
+        XCTAssertGreaterThan(body.height, 30)
     }
 
     func testAlertContentPreferencesChangeTheRenderedControls() throws {

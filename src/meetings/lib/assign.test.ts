@@ -112,6 +112,7 @@ function setup(
         liveRecording: async () => null,
         calendarEntries: async () => ({ ok: true, from: "wisprflow", entries: options.entries ?? [] }),
         folders: async () => state.folders,
+        meetingsBetween: async () => null,
         meetingFolders: async () => state.folders,
         folderWrite: { supported: false, reason: "No write", manualStep: "move it by hand" },
     };
@@ -901,6 +902,7 @@ test("folder questions persist before posting and recover the same choices and i
                 liveRecording: async () => null,
                 calendarEntries: async () => ({ ok: true, from: "fixture", entries: [] }),
                 folders: async () => [],
+                meetingsBetween: async () => null,
                 meetingFolders: async () => ["Notes"],
                 folderWrite: { supported: false, reason: "fixture", manualStep: "fixture" },
             },

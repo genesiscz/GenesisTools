@@ -4,6 +4,7 @@ import { PROXY_FILE } from "@app/recorder/lib/proxy";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { RECORDED_SOUND_PATHS } from "@genesiscz/utils/meetings/source-audio-paths";
 import { transcriptCachePath } from "@genesiscz/utils/recording-editor/project";
 import {
     defaultRuleContext,
@@ -21,7 +22,12 @@ const { log } = logger.scoped("meetings-retention");
 
 const DAY_MS = 86_400_000;
 /** The capture `capture.retentionDays` removes from a meeting folder, and dates by. The record and its items stay. */
-const CAPTURE_PATHS = ["frames", "frames.jsonl", "ocr.jsonl", "audio", "audio.jsonl"] as const;
+const CAPTURE_PATHS = ["frames", "frames.jsonl", "ocr.jsonl"] as const;
+/**
+ * The recorded sound: kept for ever, unless `capture.audioRetentionDays` is set (`audioDays`); then it goes that many
+ * days after its own newest file. The source's own recording (`source-audio/`) is never a capture.
+ */
+const SOUND_PATHS = RECORDED_SOUND_PATHS;
 /**
  * Made from the capture when the meeting opens in the editor: the frame list, the proxy movie (the same screen, with
  * the meeting audio) and its caption cache. They go with the capture; opening the editor rewrites them, so their
@@ -113,20 +119,30 @@ function newestMtime(paths: string[]): number {
     return newest;
 }
 
+/** How long each part of a meeting's capture is kept. */
+export interface RetentionDays {
+    /** The frames, OCR and editor files (`capture.retentionDays`). */
+    days: number;
+    /** The recorded sound (`capture.audioRetentionDays`); unset keeps it for ever. */
+    audioDays?: number;
+}
+
 /**
  * The meetings whose frames and OCR are older than `days`: their newest capture file changed before the cut-off.
- * Each plan also takes the editor files made from that capture.
+ * Each plan also takes the editor files made from that capture, and the recorded sound when `audioDays` is set and
+ * its newest file is older than that.
  * `skip` is the meeting a recorder is recording now.
  */
 export function capturesToPrune(
     store: MeetingStore,
-    options: { days: number; now: number; skip?: string }
+    options: RetentionDays & { now: number; skip?: string }
 ): PrunePlan[] {
     if (!existsSync(store.root)) {
         return [];
     }
 
     const cutoff = options.now - options.days * DAY_MS;
+    const soundCutoff = options.audioDays === undefined ? undefined : options.now - options.audioDays * DAY_MS;
     const plans: PrunePlan[] = [];
 
     for (const entry of readdirSync(store.root, { withFileTypes: true })) {
@@ -138,18 +154,33 @@ export function capturesToPrune(
         const captured = CAPTURE_PATHS.map((name) => join(folder, name)).filter((path) => existsSync(path));
         const derived = DERIVED_PATHS.map((name) => join(folder, name)).filter((path) => existsSync(path));
         const dated = captured.length > 0 ? captured : derived;
+        const sound =
+            soundCutoff === undefined
+                ? []
+                : SOUND_PATHS.map((name) => join(folder, name)).filter((path) => existsSync(path));
+        const due: Array<{ newest: number; paths: string[] }> = [];
 
-        if (dated.length === 0) {
-            continue;
+        if (dated.length > 0) {
+            const newest = newestMtime(dated);
+
+            if (newest < cutoff) {
+                due.push({ newest, paths: [...captured, ...derived] });
+            }
         }
 
-        const newest = newestMtime(dated);
+        if (soundCutoff !== undefined && sound.length > 0) {
+            const newest = newestMtime(sound);
 
-        if (newest < cutoff) {
+            if (newest < soundCutoff) {
+                due.push({ newest, paths: sound });
+            }
+        }
+
+        if (due.length > 0) {
             plans.push({
                 meetingId: entry.name,
-                lastCaptureAt: new Date(newest).toISOString(),
-                paths: [...captured, ...derived],
+                lastCaptureAt: new Date(Math.max(...due.map((one) => one.newest))).toISOString(),
+                paths: due.flatMap((one) => one.paths),
             });
         }
     }
@@ -178,12 +209,17 @@ export const trashWithRm: TrashPaths = (paths) => {
     return batch?.id ?? null;
 };
 
-/** Moves the frames, OCR and editor files of every meeting past `days` into the trash. */
+/** Moves the frames, OCR and editor files of every meeting past `days`, and its sound past `audioDays`, into the trash. */
 export function pruneCaptures(
     store: MeetingStore,
-    options: { days: number; now?: number; skip?: string; trash?: TrashPaths }
+    options: RetentionDays & { now?: number; skip?: string; trash?: TrashPaths }
 ): PruneResult {
-    const plans = capturesToPrune(store, { days: options.days, now: options.now ?? Date.now(), skip: options.skip });
+    const plans = capturesToPrune(store, {
+        days: options.days,
+        ...(options.audioDays !== undefined ? { audioDays: options.audioDays } : {}),
+        now: options.now ?? Date.now(),
+        skip: options.skip,
+    });
 
     if (plans.length === 0) {
         return { plans, batch: null };
@@ -191,7 +227,7 @@ export function pruneCaptures(
 
     const batch = (options.trash ?? trashWithRm)(plans.flatMap((plan) => plan.paths));
     log.info(
-        { meetings: plans.map((plan) => plan.meetingId), batch, days: options.days },
+        { meetings: plans.map((plan) => plan.meetingId), batch, days: options.days, audioDays: options.audioDays },
         "old captures moved to the trash"
     );
 
@@ -214,7 +250,7 @@ function lastPassAt(store: MeetingStore): number {
 /** `pruneCaptures` at most once a day: the watcher calls it on every look, and it runs when a day has passed. */
 export function pruneCapturesDaily(
     store: MeetingStore,
-    options: { days: number; now?: number; skip?: string; trash?: TrashPaths }
+    options: RetentionDays & { now?: number; skip?: string; trash?: TrashPaths }
 ): PruneResult | undefined {
     const now = options.now ?? Date.now();
 

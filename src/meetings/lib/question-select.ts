@@ -135,7 +135,8 @@ export function selectQuestions(candidates: NewQuestion[], items: MeetingItem[])
         const unsure = 1 - (question.confidence ?? 0);
         const impact = Math.max(1, numberOf(question, "impact") / 3);
         const shared = Math.max(1, new Set(question.decides).size);
-        const priority = Math.round(Math.max(1, Math.min(3, unsure * impact)) * shared * 100) / 100;
+        // The documented 1 to 3 scale holds for every question; the reach stays in `evidence.reach` and in the rank.
+        const priority = Math.round(Math.min(3, Math.max(1, unsure * impact) * shared) * 100) / 100;
         // The rank as asked (`askedRank`): the review rows keep it when a later answer changes the live rank.
         return {
             ...question,

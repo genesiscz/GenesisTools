@@ -21,6 +21,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import * as apfs from "@genesiscz/utils/macos/apfs";
 import { getCloneId } from "@genesiscz/utils/macos/apfs";
 import * as genesisApp from "@genesiscz/utils/macos/genesis-app";
+import { appNeedFixture } from "@genesiscz/utils/macos/testing/app-need";
 import * as commands from "@genesiscz/utils/process/bounded-command";
 import * as processes from "@genesiscz/utils/process/processes";
 import * as prompts from "@genesiscz/utils/prompts/p";
@@ -31,6 +32,8 @@ import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 import { skip } from "@genesiscz/utils/test/skip";
 import { ClickyLibraryUnavailableError, ensureClickyLibrary, unpackClickyLibrary } from "../clicky-library";
 import {
+    appBuildSdkProblem,
+    appRebuildCommand,
     appStatus,
     buildApp,
     bundleClickyLibrary,
@@ -81,6 +84,16 @@ it("waits for a timed-out Swift command to exit before releasing its build slot"
 });
 
 describe("readAppFaceProcesses", () => {
+    it("reports an unavailable snapshot when no process command was read", () => {
+        const list = spyOn(processes, "listProcesses").mockReturnValue([]);
+
+        try {
+            expect(readAppFaceProcesses()).toBeNull();
+        } finally {
+            list.mockRestore();
+        }
+    });
+
     it("lists the faces oldest first, so they start again in the order they first started", () => {
         const entry = (pid: number, startMs: number | null) => ({
             pid,
@@ -103,7 +116,7 @@ describe("readAppFaceProcesses", () => {
         ]);
 
         try {
-            expect(readAppFaceProcesses().map((process) => process.pid)).toEqual([33573, 33590, 33602, 40000]);
+            expect(readAppFaceProcesses()?.map((process) => process.pid)).toEqual([33573, 33590, 33602, 40000]);
         } finally {
             list.mockRestore();
         }
@@ -495,6 +508,14 @@ describe("runningExecutableInodes", () => {
 });
 
 describe("requireAppBuildSdk", () => {
+    it("keeps SDK instructions with the builder and uses its command for a manual retry", () => {
+        expect(appBuildSdkProblem({ kind: "unsupported", toolchain: { kind: "none" } })).toContain(
+            "install Xcode, select it with `sudo xcode-select"
+        );
+        expect(appBuildSdkProblem({ kind: "xcode" })).toBeNull();
+        expect(appRebuildCommand(appNeedFixture().builder)).toBe("fixture-build");
+    });
+
     it("builds with Xcode's own SDK when the full Xcode toolchain is active", () => {
         expect(requireAppBuildSdk({ kind: "xcode" })).toEqual({});
     });
@@ -550,6 +571,12 @@ describe("isGatedInvocation", () => {
 
     it("does not gate --help after a control subcommand", () => {
         expect(isGatedInvocation("control", ["see", "--help"])).toBe(false);
+    });
+
+    it("skips the build offer for a report through either control entry point", () => {
+        expect(isGatedInvocation("control", ["report", "shots.json"])).toBe(false);
+        expect(isGatedInvocation("macos", ["control", "report", "shots.json"])).toBe(false);
+        expect(isGatedInvocation("control", ["see", "--app", "report"])).toBe(true);
     });
 
     // Regression test: PR #456 review round 2 — reading a README is documentation, like --help,

@@ -14,15 +14,18 @@ import { collectAndReport } from "../lib/collect";
 import { contextFileRevision } from "../lib/context-file";
 import { duplicateMeeting } from "../lib/duplicate";
 import { linkSource } from "../lib/link";
+import { askProjectAtEnd } from "../lib/meeting-end";
 import { setMeetingFields } from "../lib/meeting-fields";
 import { mergeMeetings } from "../lib/merge";
+import { OpenedMeeting } from "../lib/opened-meeting";
 import { resolveProject } from "../lib/project";
 import { withMeetingsClient } from "../lib/service/client";
-import { fail, TOOL } from "../lib/shared";
+import { fail, hintIfSeatsUnset, locateMeeting, TOOL } from "../lib/shared";
 import { showText } from "../lib/show-text";
+import { listSoundTracks } from "../lib/sound";
 import { sourceAudioSummary } from "../lib/source-audio";
+import { voiceReadiness } from "../lib/voice-readiness";
 import { windowJson } from "../lib/window-reads";
-import { askProjectAtEnd } from "./watch";
 
 /** A row of `meetings.list` with full: true, which answers the whole records. */
 function isRecord(row: object): row is MeetingRecord {
@@ -70,12 +73,13 @@ async function create(
             } else {
                 ui.ok(`Created ${record.id}${record.project ? ` (project ${record.project})` : ""}`);
             }
-            await collectAndReport(store, record);
+            hintIfSeatsUnset(await collectAndReport(store, record));
 
             if (record.end || !sourceAudioSummary(record)) {
                 await askProjectAtEnd(store, record.id);
             }
 
+            voiceReadiness(store.read(record.id) ?? record, { seatsHint: false }).hints.forEach(ui.info);
             return;
         }
 
@@ -201,22 +205,41 @@ async function revisions(ref: string, opts: { json?: boolean }): Promise<void> {
     }
 }
 
-async function show(ref: string, opts: { json?: boolean }): Promise<void> {
-    let record: MeetingRecord;
+/** The explicit search of the meetings stores; a missing meeting only names this command. */
+function locate(ref: string): void {
+    const root = new MeetingStore().root;
+    const found = locateMeeting({ ref, root });
+    if (!found) {
+        ui.err(`No store holds "${ref}". Searched from ${root}; it takes an exact meeting id.`);
+        process.exitCode = 1;
+        return;
+    }
 
+    out.print(
+        found.setting
+            ? `"${ref}" is in ${found.store}. Open it with ${found.setting}.\n`
+            : `"${ref}" is in this store: ${found.store}\n`
+    );
+}
+
+async function show(ref: string, opts: { json?: boolean }): Promise<void> {
     try {
-        record = await withMeetingsClient((client) => client.call("meeting.show", { ref }));
+        const record = await withMeetingsClient((client) => client.call("meeting.show", { ref }));
+        if (opts.json) {
+            out.result(windowJson({ ...record, voice: voiceReadiness(record) }));
+            return;
+        }
+
+        const tracks = await listSoundTracks(OpenedMeeting.of(new MeetingStore(), record));
+        const lines = tracks.map(({ kind, holder, clock }) => {
+            const origin = holder === "record" ? "this record" : `linked source app (${holder})`;
+            return `- ${kind} (${clock}) from ${origin}`;
+        });
+        const text = showText(record);
+        out.print(lines.length ? `${text}\n## Sound tracks\n\n${lines.join("\n")}\n` : text);
     } catch (err) {
         fail(err);
-        return;
     }
-
-    if (opts.json) {
-        out.result(windowJson(record));
-        return;
-    }
-
-    out.print(showText(record));
 }
 
 import { meetingSeatsSchema } from "@genesiscz/utils/meetings/seats";
@@ -256,6 +279,9 @@ async function set(
         ui.ok(
             `${record.id}: ${changes.join(", ")}${updated.labels.length > 0 ? ` (labels: ${updated.labels.join(", ")})` : ""}`
         );
+        if (opts.project) {
+            voiceReadiness(updated).hints.forEach(ui.info);
+        }
     } catch (err) {
         fail(err);
     }
@@ -488,15 +514,21 @@ export function registerMeetingCommands(program: Command): void {
             "--json",
             "print one row per meeting: id, title, start, end, project, labels, sources, context, items, recording"
         )
-        .option("--full", "with --json: the whole records, as show --json prints each")
+        .option("--full", "with --json: the whole stored records")
         .action(list);
 
     program
         .command("show")
         .argument("<meeting>", MEETING_REF)
         .description("One meeting record")
-        .option("--json", "print the record")
+        .option("--json", "print the record and its project voice readiness")
         .action(show);
+
+    program
+        .command("locate")
+        .argument("<meeting>", "an exact meeting id")
+        .description("Search the other meetings stores (the ordinary home, agent scratch homes) for a meeting id")
+        .action(locate);
 
     program
         .command("revisions")
@@ -508,12 +540,15 @@ export function registerMeetingCommands(program: Command): void {
     program
         .command("set")
         .argument("<meeting>", MEETING_REF)
-        .description("Change a meeting's project, title or labels")
+        .description("Change a meeting's project, title, labels or seats")
         .option("--project <name>", "its project (a new name joins the known projects)")
         .option("--title <text>", "its title")
         .option("--label <text...>", "add labels (a new one joins the project's known labels)")
         .option("--unlabel <text...>", "remove labels from the meeting")
-        .option("--seats <json>", "explicit room, remote and microphone groups")
+        .option(
+            "--seats <json>",
+            "room and remote seats as names or {name, fromSec?, toSec?}, with optional microphone groups"
+        )
         .action(set);
 
     program

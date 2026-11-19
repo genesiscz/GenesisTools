@@ -19,6 +19,15 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import {
+    DIALOG_PROGRAM_PATHS,
+    type DialogResult,
+    type DialogSystem,
+    dialogEnvironment,
+    isTrustedDialogProgram,
+    PERSON_DIALOGS,
+    WINDOWS_DIALOG_SCRIPT,
+} from "@genesiscz/utils/genesis-tools/areas/person/system-dialog";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { sessionScratchPath } from "../../../plugins/genesis-tools/hooks/session-scratch";
@@ -41,12 +50,8 @@ import {
     confirmByPerson,
     createAsideRequest,
     createRmRequest,
-    DIALOG_PROGRAM_PATHS,
-    type DialogResult,
-    type DialogSystem,
     defaultRmConfig,
     defaultTempRoots,
-    dialogEnvironment,
     disposalGraceMinutes,
     drainDue,
     drainerNeeded,
@@ -60,7 +65,6 @@ import {
     isInside,
     isRootActive,
     isTrashRootName,
-    isTrustedDialogProgram,
     itemGitState,
     keepDiskReserve,
     ledgerAgent,
@@ -85,7 +89,6 @@ import {
     notMovableReason,
     type PathFact,
     type PathFacts,
-    PERSON_DIALOGS,
     parseRmConfig,
     pathPresent,
     pendingAsideDirs,
@@ -322,7 +325,7 @@ describe("presets", () => {
         expect(verdictOf(join(base, "work", "loose", "node_modules"))).toEqual({ kind: "ask", rule: "default" });
     });
 
-    test("automatic presets retain permanent meeting source audio under a custom home and through ancestors", async () => {
+    test("automatic presets retain meeting source audio and recorded sound under a custom home and through ancestors", async () => {
         const customHome = dir("permanent-audio-home");
         await env.testing.withOverrides({ GENESIS_TOOLS_HOME: customHome }, () => {
             const root = toolDataDir("meetings");
@@ -334,15 +337,14 @@ describe("presets", () => {
             const kept = file(join(source, "digest.ogg"), "permanent source fixture");
             const named = { id: "custom-source", description: "fixture", names: ["source-audio", "audio"] };
             const ancestors = [root, meeting, source, dirname(root)];
-            expect(scanPresets(root, [named]).map((match) => match.path)).toEqual([capture]);
+            // The recorded sound is kept for ever while capture.audioRetentionDays is unset, like the source audio.
+            expect(scanPresets(root, [named]).map((match) => match.path)).toEqual([]);
             expect(matchPreset(source, [named])).toBeNull();
-            expect(matchPreset(capture, [named])?.id).toBe("custom-source");
+            expect(matchPreset(capture, [named])).toBeNull();
             const alias = join(dir("permanent-audio-alias"), "meetings");
             symlinkSync(root, alias);
             expect(matchPreset(join(alias, "2026-11-01_10-00-planning", "source-audio"), [named])).toBeNull();
-            expect(scanPresets(alias, [named]).map((match) => match.path)).toEqual([
-                join(alias, "2026-11-01_10-00-planning", "audio"),
-            ]);
+            expect(scanPresets(alias, [named]).map((match) => match.path)).toEqual([]);
             expect(matchPreset(kept, [{ ...named, names: ["*.ogg"] }])).toBeNull();
             for (const candidate of ancestors) {
                 const broad = { id: "custom-broad", description: "fixture", names: [], within: dirname(candidate) };
@@ -2325,6 +2327,7 @@ describe("the dialog on each platform (PERSON_DIALOGS)", () => {
     ) {
         const runs: string[][] = [];
         const environments: Array<Record<string, string>> = [];
+        const inputs: Array<string | undefined> = [];
         const asked: string[] = [];
         const installed = new Set<string>(programs.map((program) => DIALOG_PROGRAM_PATHS[program][0]));
         const fake: DialogSystem = {
@@ -2332,14 +2335,15 @@ describe("the dialog on each platform (PERSON_DIALOGS)", () => {
                 asked.push(path);
                 return installed.has(path);
             },
-            run: (argv, environment) => {
+            run: (argv, environment, input) => {
                 runs.push(argv);
                 environments.push(environment);
+                inputs.push(input);
                 return result;
             },
             hasDisplay: () => options.display ?? true,
         };
-        return { fake, runs, environments, asked };
+        return { fake, runs, environments, inputs, asked };
     }
 
     test("macOS: osascript, Cancel the default, and only the Approve button approves", () => {
@@ -2378,24 +2382,34 @@ describe("the dialog on each platform (PERSON_DIALOGS)", () => {
         expect(kde.runs[0]?.[4]).toContain("/work/shop/cache  2.0 MB");
     });
 
-    test("Windows: a PowerShell message box, No the default, the text as base64 so no path is read as PowerShell", () => {
+    test("Windows: a PowerShell message box, No the default, a fixed script and the text as base64 on stdin", () => {
         const yes = system(["powershell"], { exitCode: 0, stdout: "Yes\r\n" });
         const no = system(["powershell"], { exitCode: 0, stdout: "No\r\n" });
 
         expect(showPersonDialog(prompt, "win32", yes.fake)).toBe(true);
         expect(showPersonDialog(prompt, "win32", no.fake)).toBe(false);
 
-        const [program, noProfile, command, script = ""] = yes.runs[0] ?? [];
-        expect([program, noProfile, command]).toEqual([
+        // The command line is the same whatever the text says: no caller text is ever read as PowerShell.
+        expect(yes.runs[0]).toEqual([
             "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
             "-NoProfile",
             "-Command",
+            WINDOWS_DIALOG_SCRIPT,
         ]);
-        expect(script).toContain("[System.Windows.Forms.MessageBox]::Show(");
-        expect(script).toContain("'YesNo', 'Warning', 'Button2'");
-        expect(script).not.toContain("$HOME");
-        const encoded = /FromBase64String\('([^']+)'\)/.exec(script)?.[1] ?? "";
-        expect(Buffer.from(encoded, "base64").toString("utf8")).toContain("/work/shop/it's $HOME");
+        expect(WINDOWS_DIALOG_SCRIPT).toContain("[System.Windows.Forms.MessageBox]::Show(");
+        expect(WINDOWS_DIALOG_SCRIPT).toContain("'YesNo', 'Warning', 'Button2'");
+        const [title = "", text = ""] = (yes.inputs[0] ?? "").split("\n");
+        expect(Buffer.from(title, "base64").toString("utf8")).not.toBe("");
+        expect(Buffer.from(text, "base64").toString("utf8")).toContain(`${prompt.title}\n\n/work/shop/cache`);
+        expect(Buffer.from(text, "base64").toString("utf8")).toContain("/work/shop/it's $HOME");
+
+        // A text far past the 32,767 characters of a Windows command line still leaves the command line as it was.
+        const long = system(["powershell"], { exitCode: 0, stdout: "Yes" });
+        showPersonDialog({ ...prompt, lines: ["漢".repeat(12_000)] }, "win32", long.fake);
+        expect(long.runs[0]).toEqual(yes.runs[0]);
+        expect(Buffer.from((long.inputs[0] ?? "").split("\n")[1] ?? "", "base64").toString("utf8")).toContain(
+            "漢".repeat(12_000)
+        );
     });
 
     test("no dialog program, no display, or a platform without one: null, and nothing runs", () => {

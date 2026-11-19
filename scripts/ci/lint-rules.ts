@@ -43,6 +43,7 @@ import {
     RAW_AGENT_ENV_RATCHET,
     RAW_TERMINAL_ENV_RATCHET,
 } from "./agent-context-ratchet";
+import { APP_CHECK_RATCHET } from "./app-check-ratchet";
 import { EXEC_DEADLINE_RATCHET } from "./exec-deadline-ratchet";
 import { HARNESS_GUARD_STRICT, strictViolations } from "./harness-guard";
 import { AGENT_PROCESS_MATCH_RATCHET, HARNESS_BRANCH_RATCHET, HOOK_PAYLOAD_READ_RATCHET } from "./harness-ratchet";
@@ -870,6 +871,39 @@ export function execCallWithoutDeadline(node: SgNode): boolean {
 }
 
 const RULES: Rule[] = [
+    {
+        name: "no-hand-rolled-app-check",
+        severity: "error",
+        kinds: ["call_expression"],
+        matcher: {
+            rule: {
+                kind: "call_expression",
+                has: {
+                    field: "function",
+                    regex: "(?:isGenesisAppBundleInstalled|installedGenesisAppLauncher|isGenesisAppRpcAvailable|appCannotAnswer|genesisAppBuildHint|existsSync|exists)$",
+                },
+            },
+        },
+        onlyIn: /^src\//,
+        allowedIn: /^src\/utils\/(?:genesis-tools\/|macos\/(?:genesis-app(?:-rpc)?|xcode)\.ts$)/,
+        allowedCounts: APP_CHECK_RATCHET,
+        message:
+            "Declare an action need or fix instead of checking the app in a caller. Existing sites are in scripts/ci/app-check-ratchet.ts and may only shrink.",
+        test: (_text, node) => {
+            const fn = node.field("function")?.text() ?? "";
+            if (
+                /(?:^|\.)(?:isGenesisAppBundleInstalled|installedGenesisAppLauncher|isGenesisAppRpcAvailable|appCannotAnswer|genesisAppBuildHint)$/.test(
+                    fn
+                )
+            ) {
+                return true;
+            }
+            return (
+                /(?:^|\.)(?:existsSync|exists)$/.test(fn) &&
+                /genesisAppBundlePath\s*\(/.test(node.field("arguments")?.text() ?? "")
+            );
+        },
+    },
     {
         name: "no-exec-without-deadline",
         severity: "error",
@@ -2440,13 +2474,15 @@ export function withinCountRatchets(
  * Established exemption lists are also compared with the base before scoping.
  */
 const RATCHET_INPUTS = [
+    "scripts/ci/app-check-ratchet.ts",
     "scripts/ci/agent-context-ratchet.ts",
     "scripts/ci/exec-deadline-ratchet.ts",
     "scripts/ci/harness-ratchet.ts",
     "scripts/ci/model-facts-ratchet.ts",
     "scripts/ci/native-home-ratchet.ts",
     "scripts/ci/proxy-provider-ratchet.ts",
-    ...(includeRosters ? ["scripts/ci/rosters/rosters.json"] : []),
+    // Its growth check stays on with --no-rosters: comparing two manifests is cheap, and only the roster scan is deferred.
+    "scripts/ci/rosters/rosters.json",
     "scripts/ci/tool-command-ratchet.ts",
     "scripts/ci/transcript-format-ratchet.ts",
 ];
@@ -2591,7 +2627,14 @@ function checkRatchetGrowth({ from, cwd, changed }: { from: string; cwd: string;
     }
 }
 
-export function changedFiles(base: string, { cwd = process.cwd() }: { cwd?: string } = {}): Set<string> | null {
+/**
+ * `workingTree` compares the base with the files on disk (staged and unstaged edits of tracked files), not with HEAD:
+ * a local run lints what an agent is about to commit, and the pre-push hook and CI keep comparing commits.
+ */
+export function changedFiles(
+    base: string,
+    { cwd = process.cwd(), workingTree = false }: { cwd?: string; workingTree?: boolean } = {}
+): Set<string> | null {
     // Prefer the merge base, but fall back to diffing the ref directly. CI
     // checks out at depth 1 and fetches only the PR's base commit, so there is
     // no shared history for `merge-base` to walk — and GitHub's
@@ -2599,7 +2642,7 @@ export function changedFiles(base: string, { cwd = process.cwd() }: { cwd?: stri
     const merged = spawnWithDeadline(["git", "merge-base", base, "HEAD"], { cwd });
     const from = merged.exitCode === 0 ? merged.stdout.toString().trim() : base;
     const diff = spawnWithDeadline(
-        ["git", "diff", "--no-textconv", "--no-ext-diff", "--name-only", "-z", from, "HEAD"],
+        ["git", "diff", "--no-textconv", "--no-ext-diff", "--name-only", "-z", from, ...(workingTree ? [] : ["HEAD"])],
         {
             cwd,
         }
@@ -2682,7 +2725,11 @@ export async function targetFiles(): Promise<string[]> {
         throw new Error(`lint-rules: git ls-files exited ${listed.exitCode}: ${listed.stderr.toString().trim()}`);
     }
 
-    const files = listed.stdout.toString().split("\0").filter(Boolean);
+    // `git ls-files` lists the index, so a file deleted on disk but not staged is still there; nothing can read it.
+    const files = listed.stdout
+        .toString()
+        .split("\0")
+        .filter((file) => file && existsSync(file));
 
     const included = files.filter(
         (file) => !excludes.some((prefix) => file === prefix || file.startsWith(`${prefix}/`))
@@ -2691,10 +2738,20 @@ export async function targetFiles(): Promise<string[]> {
     const changedIndex = process.argv.indexOf("--changed");
 
     if (changedIndex === -1) {
+        const ratchetIndex = process.argv.indexOf("--ratchet-base");
+
+        // A full audit lints every file and still refuses a ratchet list or roster allowance that grew against the
+        // base, as a changed-files run does (`changedFiles` throws on growth).
+        if (ratchetIndex !== -1) {
+            changedFiles(process.argv[ratchetIndex + 1] ?? "origin/master", { workingTree: true });
+        }
+
         return included;
     }
 
-    const changed = changedFiles(process.argv[changedIndex + 1] ?? "origin/master");
+    const changed = changedFiles(process.argv[changedIndex + 1] ?? "origin/master", {
+        workingTree: process.argv.includes("--working-tree"),
+    });
 
     return changed === null ? included : included.filter((file) => changed.has(file));
 }

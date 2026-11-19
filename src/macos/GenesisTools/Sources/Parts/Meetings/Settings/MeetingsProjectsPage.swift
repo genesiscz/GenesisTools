@@ -727,6 +727,12 @@ struct MeetingsDictionaryPage: View {
                 model.testPhrase(model.phrase, entry: entry)
             }.disabled(!canSave || model.phrase.isEmpty)
 
+            MeetingDictionaryPreview(model: model, entry: SavedDictionaryEntry(type: type, value: value,
+                substitution: type == "fix" || type == "abbr" ? substitution : nil,
+                spoken: type == "term" ? MeetingsDictionaryRules.spokenForms(spoken) : nil,
+                meaning: type == "term" && !meaning.isEmpty ? meaning : nil,
+                caseSensitive: type == "fix" ? caseSensitive : nil), valid: canSave)
+
             FillersCard(model: model, language: settings.global.language, fillers: settings.meetingLanguage?.fillers)
                 .nativeSettingsAnchor("fillers")
 
@@ -850,6 +856,79 @@ struct MeetingsDictionaryPage: View {
         meaning = ""
         spoken = ""
         caseSensitive = false
+    }
+}
+
+/// The caller's meeting is selected on open. The picker also works when Settings opens on its own.
+private struct MeetingDictionaryPreview: View {
+    @Bindable var model: MeetingsSettingsModel
+    let entry: SavedDictionaryEntry
+    let valid: Bool
+    @State private var result: PhraseTest?
+    @State private var failure: MeetingsCLI.Failure?
+    @State private var busy = false
+    @State private var task: Task<Void, Never>?
+    private var meeting: String { model.dictionaryPreviewMeetings.selection }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            NativeSettingsPicker("Preview meeting", identifier: "meetings.dictionary.previewMeeting",
+                options: model.dictionaryPreviewMeetings.options, selection: $model.dictionaryPreviewMeetings.selection)
+            Button("Preview draft on this meeting") { preview() }
+                .buttonStyle(.genHoverPlain()).disabled(!valid || meeting.isEmpty || busy)
+                .instantTooltip("Show the source lines this draft entry would change, without saving it")
+            if busy { ProgressView("Checking the meeting's lines…").controlSize(.small) }
+            if let failure { NoticePill(text: failure.sentence, more: failure.detail, tone: .error) }
+            if let lines = result?.lines {
+                DictionaryChangedLines(lines: lines)
+            }
+        }.font(.system(size: 12))
+        .onChange(of: entry) { _, _ in clear() }
+        .onChange(of: meeting) { _, _ in clear() }
+        .onChange(of: model.dictionaryScope) { _, _ in clear() }
+        .onDisappear { task?.cancel() }
+        .task {
+            do {
+                let meetings = try await MeetingsWindowModel.overviewRead(days: MeetingsPreferences.days(.standard)).run(service: model.service).meetings
+                guard !Task.isCancelled else { return }
+                model.dictionaryPreviewMeetings.receive(meetings)
+            }
+            catch { if !Task.isCancelled { failure = asFailure(error) } }
+        }
+    }
+
+    private func clear() { task?.cancel(); result = nil; failure = nil; busy = false }
+    private func preview() {
+        guard !meeting.isEmpty else { return }
+        busy = true; result = nil; failure = nil
+        task = Task {
+            defer { if !Task.isCancelled { busy = false } }
+            do {
+                let json = String(decoding: try JSONEncoder().encode(entry), as: UTF8.self)
+                let read = MeetingsRead<PhraseTest>.service(MeetingsAPI.DictionaryTest.self,
+                    .init(entry: entry, phrase: model.phrase, project: model.dictionaryScope, meeting: meeting),
+                    orRun: ["dictionary", "test", model.phrase, "--json", "--entry", json, "--meeting", meeting]
+                        + (model.dictionaryScope.map { ["--project", $0] } ?? []))
+                let answer = try await read.run(service: model.service)
+                guard !Task.isCancelled else { return }; result = answer
+            } catch { if !Task.isCancelled { failure = asFailure(error) } }
+        }
+    }
+}
+
+struct DictionaryChangedLines: View {
+    let lines: [PhraseTest.Line]
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(lines.isEmpty ? "This draft changes no source line." : "Changes \(Plural.count(lines.count, "source line"))")
+            ForEach(lines, id: \.index) { line in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(line.startSec.map(MeetingsFormat.clock) ?? "Untimed") · \(line.speaker)").foregroundStyle(.secondary)
+                    Text(verbatim: line.before)
+                    Text(verbatim: "→ \(line.after)").foregroundStyle(KitPalette.added)
+                }.textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            }
+        }.font(.system(size: 12))
     }
 }
 

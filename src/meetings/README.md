@@ -237,10 +237,18 @@ capture without a restart, and frames reach the socket as they land. A recorder 
 capture. The OCR backlog, the summary and the collect run on the shared job runner (`@genesiscz/utils/jobs`) as
 `progress` notifications. `stop` answers after them, or at once with `{wait: false}` and the job id.
 
-Sound is off by default (the transcript source records it). `capture.recorders.native.audio` (`sources`,
-`micDevice`) or `record start --audio` turn it on. One capture per piece records it as `--audio-sidecar` `.m4a`
-files, moved to `audio/`, with muted spans in `audio.jsonl`. Peekaboo records one display at a time (its
-ScreenCaptureKit lock), so `displays: "all"` falls back to the main display with a warning.
+The native recorder captures microphone and system sound by default. Its `session` mode writes 60-second
+sound files alongside the screen recording, so sound continues when a frame piece restarts. Set `sources`
+and `micDevice` under `capture.recorders.native.audio` to choose the inputs, or use `record start --audio`
+to override the sources for one recording.
+
+Set `capture.recorders.native.audio.mode` to `pieces` to save the fallback choice. In this mode one screen
+capture per piece records the sound. The recorder also falls back to pieces if the sound session cannot
+start, or if it fails again within a minute of a restart. Both modes keep their `.m4a` files in `audio/`.
+In `audio.jsonl`, `mutedSpans` marks intentional mutes and `lostSpans` marks gaps in the captured samples.
+
+Peekaboo records one display at a time (its ScreenCaptureKit lock), so `displays: "all"` falls back to the main
+display with a warning.
 
 The `recording` block of the record has a schema (`RecordingBlock` in `src/utils/meetings/record.ts`): `spans` (from,
 to and stop reason: `requested`, `paused`, `failed`, `error`), `frames` and `bytes` (every frame in `frames/`, also
@@ -268,15 +276,27 @@ people) on each look until the record has an end, for up to 10 min.
 ## Items
 
 A rule's finding is an item with a confidence and the rules that produced it. A person confirms or rejects it; only
-confirmed items change a transcript. `--with-suggested` previews the rest: it applies a suggested item at
-`global.suggest.applyAbove` (0.5) or more, and one with no confidence (a person's own); a lower one is marked unclear,
-as an open question is. A range owned by an open speaker question stays a guess at every confidence until
-answered or confirmed.
+confirmed items change a transcript. With `--with-suggested`, proposed terms apply at
+`global.suggest.terms.applyAbove` and speaker suggestions at `global.suggest.applyAbove`. Both default to 0.7.
+Items without a confidence, such as a person's own correction, also apply. A range owned by an open speaker
+question stays a guess until answered or confirmed.
+
+`tools meetings thresholds <meeting>` lists the effective thresholds, their global values, defaults and sources.
+With the default settings, a 79% term applies. Preview a higher cutoff to see where the term would stop applying.
+
+```sh
+tools meetings thresholds <meeting> --set term.applyAbove=0.8 --preview
+```
+
+Add `--json` for the before and after states, line times, text and reasons. The preview compares fresh automatic
+findings using the meeting's available evidence and preserves decisions and manual items on both copies. Omit
+`--preview` to save the named settings globally in one write. In the window, open **Context → Thresholds…**
+to compare draft values on that meeting. **Save globally** stores only the changed settings.
 
 Suggest uses the linked source's title and transcript clock when it looks up attendance, including for a renamed
-copy. Unavailable platform attendance produces a warning, skips E2 and saves the other suggestions. A missing or
-ambiguous Teams chat lists cached candidate titles and IDs, ordered by last-message proximity rather than call
-start. These candidates do not prove which chat belongs to the call. Select a known chat with
+copy. Unavailable platform attendance produces a warning, skips E2 and saves the other suggestions. If several
+Teams chats match, the warning shows the first three by last cached call, with the full ID, chat participant
+count and attendance command for each. Select a known chat with
 `tools meetings suggest <meeting> --attendance teams --attendance-id <threadId>` or the REPL's
 `meeting.items.suggest({ attendance: 'teams', attendanceId: '<threadId>' })`. Invalid input and unreadable or
 malformed attendance files still fail.
@@ -292,6 +312,11 @@ malformed attendance files still fail.
   microphone is the user (0.85, or 0.75 where the segments said the call; E3 and E4 never overrule it), 10 % or less
   is never the user. Where the segments are mixed (neither channel holds 90 %), 70 % or more is the user (0.55, to
   ask) and under 50 % is not. A line no segment covers is the user only at 90 % or more.
+- Channel calibration compares the median left-channel RMS share of microphone tags with that of call tags.
+  It skips intervals tagged as both. A difference of at least 0.30 identifies the microphone side in either order.
+  Change it with `tools meetings config set global.speakerLabels.channels.minSeparation <fraction>`.
+  When too few tags qualify, Wispr's stereo order can identify the microphone if loud windows on both sides
+  show separation. `tools meetings acoustic collect <meeting>` refreshes the saved layout and acoustic evidence.
 - The label's own voice: a label the platform named after a person (`origin: platform`) is that person's voice. The
   rules do not move its call lines to another person, even when E3 and E4 both name someone else. A mixed line under
   it stays with that person when E3 shows only that person speaking, unless 80 % or more of the energy is on the
@@ -485,6 +510,41 @@ hidden people). One person is the same email, or, when either side has no email,
 - A `people.json` that is not JSON reads as empty, and the next write moves it aside to `people.json.broken-<time>`.
   A value this build cannot read (a newer build's) is kept and written back.
 
+### Voice library
+
+`tools meetings voices` lists each person once across projects. Use `--person <name>` to filter, or choose one scope with `--all`, `--project <name>` or `--meeting <id>`. A meeting view includes its attendees even when they have no confirmed sample. `voice` is an alias for `voices`.
+
+```sh
+tools meetings voices samples "Finch Example" --project harbor --json
+tools meetings voices quality --person "Finch Example" --project harbor
+tools meetings voices play "Finch Example" --sample "$sample_id" --no-start --json
+tools meetings voices move "Finch Example" --sample "$sample_id" --to "Wren Example <wren@example.com>"
+tools meetings voices undo "$correction_token"
+tools meetings voices reject "Finch Example" --sample "$sample_id" --reason bad-audio
+```
+
+Take `sample_id` from `people[].samples[].id` in the first command. Each `vs_` ID follows the clip through a move or a change in list order. Playback checks the recording hash. With `--no-start` it prints the source track, file, channel and seconds in JSON. Without that flag it plays the clip. Quality groups show the independent sample count and cosine scores for compatible recordings. An outlier is a clip to listen to. Temporary evidence from a speaker suggestion pass has no sample ID.
+
+Moving a clip blocks its former owner from learning that line again. Use `wrong-person` to reject the current owner, or `bad-audio` or `several-voices` to reject the source for everyone. Move, reject and remove return the correction token that `voices undo` accepts.
+
+`voices remove <person>` forgets samples, so a later eligible backfill can recover them. For a numbered selection, give the project and its one-based sample number. Omitting the number selects all of that person's samples in the project. When several projects or people match, use a project or a stable ID. To inspect and confirm a removal across invocations, pass the returned `planToken` with the same selector. A change to the selection or revision makes the plan stale. An all-project bulk removal requires this preview.
+
+```sh
+tools meetings voices remove "Finch Example" --project harbor --sample 1 --preview --json
+tools meetings voices remove "Finch Example" --project harbor --sample 1 --plan-token "$plan_token"
+```
+
+In the node REPL, browse with `meetings.voices({ scope: "project", project })`. Its methods also work without opening a meeting.
+
+```js
+const { people } = await meetings.voices.samples({ person: "Finch Example", project: "harbor" })
+const { id } = people[0].samples[0]
+await meetings.voices.play({ id, start: false })
+const plan = await meetings.voices.remove({ id, preview: true })
+```
+
+`list` and `quality` accept the same filters, including `scope: { kind: "meeting", meeting: meetingId }`. Use `sample({ id })` to resolve the verified slice or `play({ id })` to hear it. `move({ id, to: { name, email } })` and `reject({ id, reason })` return a receipt on success. Pass its token to `undo({ token })`. To confirm the removal above, call `remove({ id, planToken: plan.planToken })` on the same group.
+
 ## The dictionary
 
 - `fix`: a misheard spelling, replaced at every whole-word match in any letter case (`DTLčko` becomes `DTOčko`, and so
@@ -504,7 +564,11 @@ stripped (`jenezetkama` and `jenezetka` share `jenezet`). A level's `fuzzy: { ap
 0.8) decides what happens: at `apply` or above the word is replaced, from `suggest` up to `apply` `suggest` makes a
 term item with the score (rule `dictionary-fuzzy`), below nothing. `--meaning` stores what a term means.
 
-Levels merge in this order, a later one winning: global, the project, the meeting. Abbreviations expand at every
+The global Meetings thresholds `global.suggest.terms.fuzzy` supply the initial values. Each dictionary can
+override either cutoff independently. A meeting dictionary wins over its project, the project wins over the global
+dictionary, and the global dictionary wins over the global Meetings thresholds.
+
+Dictionary entries also merge in order from global to project to meeting. Abbreviations expand at every
 mention by default (`every`); `first` expands only the first mention in a transcript, `off` none.
 
 ## Config
@@ -688,7 +752,7 @@ Line-scoped terms with a dead or ambiguous anchor are refused. The diagnostic di
 
 The Meetings window offers Add question or term, clean duplication, question priority, saved document revision, and an indicator tooltip naming a stuck signal and why it was ignored. Its dictionary editor can preview an unsaved entry on pasted transcript lines. The read-only command equivalent is `dictionary test '<lines>' --entry '<dictionary-entry JSON>' --json`.
 
-The transcript's native confidence selector defaults to 70 percent. The service loads the available threshold previews together, and changing the selector chooses a loaded result without a new source read. The selector is saved per app; it changes no meeting or global suggestion configuration. CLI `transcript --with-suggested --apply-above 70` uses the same corrections engine for a one-off preview. Open question ranges keep their guessed speaker percentage until answered.
+The transcript's native confidence selector defaults to 70 percent. The service loads the threshold previews together. Changing the selector chooses a loaded preview and saves the threshold in `global.suggest.applyAbove`. CLI `transcript --with-suggested --apply-above 70` uses the same corrections engine for a one-off preview. While a speaker question is open, the CLI keeps the name in brackets. It prints the percentage below the threshold and keeps the numeric confidence in JSON at every level.
 
 For a meeting-local room person, use `attendance <meeting> --add "Alice Example" --from 0 --to 600 --at-mic`. `--via "Bob Example"` instead names a remote device owner. These finite stays and canonical microphone groups reopen from the meeting record. The native people strip and `meeting.people.edit` use the same implementation. Imported platform speaking and muted names also join automatic question candidates. `Meeting.editPerson` exposes the same operation in the REPL.
 
@@ -698,7 +762,8 @@ Speaker-question selection and the terminal/native queue rank by `(1 - confidenc
 The displayed priority and its minimum filter keep their existing scale. Questions without word counts, including older
 records, retain priority order. Matching candidate names alone never multiply reach or establish one voice identity.
 
-Suggested speaker names under 70% remain explicit guesses by default. `transcript <meeting> --with-suggested
+Suggested speaker names under the transcript threshold (`global.suggest.applyAbove`, default 70%) remain explicit
+guesses, as every other kind of suggestion does. `transcript <meeting> --with-suggested
 --apply-above 80` and `rows <meeting> --apply-above 80` change the read's threshold; they do not change saved
 confidences. The Meetings transcript has the same local threshold picker and Probe. Confirmed answers remain applied.
 
@@ -745,6 +810,10 @@ observations produce unresolved candidate ranges, never an inferred shared voice
 `null` means no overlapping channel segment, and is distinct from a measured zero. `energyMicShare` remains the
 separate calibrated energy measurement. People found only in speaking or muted observations have `origin: "indicator"`.
 
+A roster mute holds until the next mute list omits that person, the indicator shows them speaking, or
+`global.suggest.mutedCarrySec` elapses after the last mute read (600 seconds by default). A mute must cover the
+whole transcript line to exclude a call speaker. A participant muted in the call can still speak on the room microphone.
+
 `evidence <meeting> --voice-features` (or `--voices <n>`, which clusters the lines into that many voices) measures
 each line's RMS, low-band share, tilt and pitch for both physical audio channels and puts them in a new field,
 `voiceFeatures`, on each JSON or raw line. `voice` stays the voice match. Without one of those flags nothing is
@@ -789,6 +858,12 @@ processes while retaining the signed identity needed for TCC. AppleScript can se
 A desktop check after the parent installs the reconciled app must verify two independent windows and that process selection.
 
 ### Seats, project roles and channel attribution
+
+`tools meetings seats <meeting>` previews who sat at the room microphone and who joined the call. The table gives the reason for each person. The recorder is in the room. For other speakers a channel needs at least 60% of five or more decided lines, with raw microphone share above 0.65 for room or below 0.35 for remote. A call roster entry with no decided lines suggests remote unless every read while present shows the person muted. A calendar invite alone leaves the seat unsure.
+
+Use `--apply` to save the suggested seats once. Use `--room "River Example"` or `--remote "Lake Example"` to apply a hand choice over the suggestion. Both keep existing seats unless you pass `--replace`, which replaces the entire seating plan, including microphone groups. Unsure people stay unseated. Remote seats use the first join and final leave on the transcript clock. The original roster keeps each separate stay.
+
+`--json` returns the resolved meeting ID, `current` (seats before the command, or null), `suggestion` (seats and each person's name, seat, reason and numeric confidence), `saved`, and `unresolved` with room and remote commands. The window reads the same preview through `meeting.seats.suggest`. In the meeting header, **Seats not set: voice naming is off** opens the editor. **Use suggestion** saves the selected seats.
 
 Store confirmed seating with `tools meetings set <meeting> --seats '<json>'` or `meeting.set({seats})`. The shared shape is `{room: string[], remote: {name, label?, fromSec?, toSec?}[], microphones?: {id, label?, people: string[], deviceId?}[]}`. A microphone group contains only room people or only remote people. ID `self` is the owner's microphone; `deviceId` identifies the device owner. Join is inclusive, leave exclusive. Old remote strings load as named remote seats without changing the source file.
 

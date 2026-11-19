@@ -1,8 +1,6 @@
-import type { Correction } from "@genesiscz/utils/meetings/corrections";
-import { voiceRuns } from "@genesiscz/utils/meetings/energy";
-import { nameKey } from "@genesiscz/utils/meetings/people";
-import { type MeetingItem, type MeetingRecord, meetingItemSchema, nextId } from "@genesiscz/utils/meetings/record";
+import type { MeetingItem, MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
+import { presentAt } from "@genesiscz/utils/transcribe/evidence";
 import { importanceOf } from "@genesiscz/utils/transcribe/importance";
 import {
     type HeardContext,
@@ -10,13 +8,13 @@ import {
     LAST_LINE_SEC,
     TranscriptLines,
 } from "@genesiscz/utils/transcribe/lines";
-import { formatClock } from "@genesiscz/utils/transcribe/render";
+import { formatClock, voiceNameText } from "@genesiscz/utils/transcribe/render";
 import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
 import { citesPoint, keyWords, type SummaryPoint } from "@genesiscz/utils/transcribe/summary";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
-import { parsePersonAnswer, personPresent, recordPeople, sentenceSegments } from "./listen-answers";
-import { anchorScores, speakerScoresOf } from "./speaker-scores";
-import { decisionLedger, ledgerEntryFor } from "./transcript-corrections";
+import type { MutedCallLines } from "./call-mutes";
+import type { LineSpeakers } from "./speaker-evidence";
+import { needsSpeakerReview, speakerScoresOf } from "./speaker-scores";
 
 export type { HeardContext } from "@genesiscz/utils/transcribe/lines";
 
@@ -25,13 +23,23 @@ export const NONE_OF_THESE = "none of these";
 
 export type QuestionItem = Extract<MeetingItem, { kind: "question" }>;
 export type NewQuestion = Omit<QuestionItem, "id" | "suggestedAt">;
-type RangeItem = Extract<MeetingItem, { kind: "speaker-range" }>;
+/** A prepared stretch keeps the lowest confidence of its lines. An older unscored question stays reviewable. */
+export function withinListenThreshold(question: QuestionItem, applyAbove: number | undefined): boolean {
+    return (
+        question.group !== "long-stretch" ||
+        applyAbove === undefined ||
+        question.confidence === undefined ||
+        question.confidence < applyAbove
+    );
+}
+
+export type RangeItem = Extract<MeetingItem, { kind: "speaker-range" }>;
 
 /** Items below this confidence are asked by ear, unless the config sets `global.suggest.listenBelow`. */
 export const DEFAULT_LISTEN_BELOW = 0.6;
 
 /** A term question hears this much after the word's line starts. */
-const TERM_CLIP_SEC = 4;
+export const TERM_CLIP_SEC = 4;
 /** A range with this many words or fewer never matters enough to ask. */
 const TOO_SHORT_WORDS = 5;
 /** Below this many words a range is asked only when it holds a decision or an action word. */
@@ -42,6 +50,8 @@ const IMPACT = { decision: 3, cited: 3, owner: 2 } as const;
 /** What a question needs to know about the meeting besides the item. */
 export interface QuestionContext {
     listenBelow: number;
+    callMutes?: MutedCallLines;
+    speakers?: LineSpeakers;
     /** Canonical candidate names from the meeting roster and people added to this meeting. */
     candidates?: readonly string[];
     /** Who was in the call, the user under their own name (`CallTimeline.named`, as `OpenedMeeting.presence` gives it). */
@@ -55,7 +65,7 @@ export interface QuestionContext {
 const linesCache = new WeakMap<readonly TranscriptEntry[], TranscriptLines>();
 
 /** The transcript as addressed lines, built once per transcript array. */
-function linesOf(transcript: readonly TranscriptEntry[] | TranscriptLines): TranscriptLines {
+export function linesOf(transcript: readonly TranscriptEntry[] | TranscriptLines): TranscriptLines {
     if (transcript instanceof TranscriptLines) {
         return transcript;
     }
@@ -69,6 +79,39 @@ function linesOf(transcript: readonly TranscriptEntry[] | TranscriptLines): Tran
     const lines = new TranscriptLines(transcript);
     linesCache.set(transcript, lines);
     return lines;
+}
+
+const itemIndexes = new WeakMap<readonly MeetingItem[], Map<string, number>>();
+
+/**
+ * The items of `record` that `ids` name, in the record's order, through an id index kept per items array, so rendering
+ * a batch of questions does not scan every item for each one. A position that no longer holds its id rebuilds it.
+ */
+export function itemsNamed(record: MeetingRecord, ids: readonly string[]): MeetingItem[] {
+    const items = record.items;
+    const build = () => {
+        const index = new Map(items.map((item, at) => [item.id, at]));
+        itemIndexes.set(items, index);
+        return index;
+    };
+    let index = itemIndexes.get(items) ?? build();
+
+    const found = new Set<number>();
+
+    for (const id of ids) {
+        let at = index.get(id);
+
+        if (at === undefined || items[at]?.id !== id) {
+            index = build();
+            at = index.get(id);
+        }
+
+        if (at !== undefined) {
+            found.add(at);
+        }
+    }
+
+    return [...found].sort((a, b) => a - b).map((at) => items[at]!);
 }
 
 /** The lines of a label from `fromSec` to `toSec`, each with its end (`TranscriptLines.end`). */
@@ -125,6 +168,161 @@ function capitalMidSentence(heard: string, transcript: readonly TranscriptEntry[
 }
 
 /**
+ * Who the presence places in the call at `atSec`, and who it knows of but places outside the call then. Every
+ * speaker question offers only the first and never the second (I13: a person is offered only inside their window).
+ */
+export function presenceAt(presence: Presence[] | undefined, atSec: number): { present: string[]; absent: string[] } {
+    const present = presentAt(presence ?? [], atSec);
+    const absent = [...new Set((presence ?? []).map((stay) => stay.name))].filter(
+        (name) => !present.some((other) => sameName(name, other))
+    );
+    return { present, absent };
+}
+
+function speakerChoices(
+    names: readonly string[],
+    allowed: string[] | undefined,
+    excluded: readonly string[],
+    speakers?: LineSpeakers
+): string[] {
+    const humans = [...names, ...(allowed ?? [])].filter((name) => !speakers?.isRoomDevice(name));
+    return humans.filter(
+        (name, index, all) =>
+            name &&
+            (allowed
+                ? allowed.some((other) => sameName(name, other))
+                : !excluded.some((other) => sameName(name, other))) &&
+            all.findIndex((other) => sameName(name, other)) === index
+    );
+}
+
+/** Voice exclusions, stranger stretches and roster eliminations need a direct listen even on a short line. */
+export function groupSpeakerQuestions(
+    items: MeetingItem[],
+    asked: Set<string>,
+    context: QuestionContext
+): NewQuestion[] {
+    const groups: RangeItem[][] = [];
+    let previousKey: string | undefined;
+    for (const item of items) {
+        if (item.kind !== "speaker-range" || item.status !== "suggested" || asked.has(item.id)) {
+            continue;
+        }
+        const ev = item.evidence;
+        const stretch = ev?.strangerStretch ?? ev?.exclusionStretch;
+        if (typeof stretch !== "number" && ev?.reviewOnly !== true) {
+            continue;
+        }
+        const indices = context.speakers?.linesFor(item).map((line) => line.index) ?? [];
+        const key = [
+            ev?.reason,
+            stretch ?? item.id,
+            ev?.exclusionPerson ?? ev?.seatPerson,
+            ...new Set(indices.map((i) => context.speakers?.key(i))),
+        ].join("|");
+        if (key !== previousKey) {
+            groups.push([]);
+        }
+        groups.at(-1)!.push(item);
+        previousKey = key;
+    }
+    return groups.map((ranges) => {
+        const first = ranges[0]!;
+        const owner = first.evidence?.seatPerson;
+        const person = first.evidence?.exclusionPerson ?? first.speaker ?? first.candidates?.[0];
+        const stranger = first.evidence?.reason === "not-the-seat-person";
+        let fromSec = first.fromSec;
+        let toSec = -Infinity;
+        for (const range of ranges) {
+            fromSec = Math.min(fromSec, range.fromSec);
+            const end = range.evidence?.endSec;
+            toSec = Math.max(toSec, typeof end === "number" ? end : range.toSec);
+        }
+        const indices = ranges.flatMap((r) => context.speakers?.linesFor(r).map((line) => line.index) ?? []);
+        const choices = speakerChoices(
+            [
+                ...(typeof person === "string" ? [person] : []),
+                ...(typeof owner === "string" ? [owner] : []),
+                ...ranges.flatMap((r) => r.candidates ?? []),
+                ...(context.candidates ?? []),
+            ],
+            context.speakers?.choices(indices),
+            presenceAt(context.presence, fromSec).absent,
+            context.speakers
+        );
+        return {
+            kind: "question",
+            status: "suggested",
+            about: "speaker",
+            group: "rules",
+            fromSec,
+            toSec,
+            question: stranger
+                ? `This does not sound like ${owner}. Who is speaking?`
+                : typeof person === "string"
+                  ? `Is ${person} speaking here, or someone else?`
+                  : "Who is speaking here?",
+            choices,
+            decides: ranges.map((r) => r.id),
+            rules: first.rules,
+            evidence: {
+                reason: first.evidence?.reason,
+                ...(stranger ? { seatPerson: owner } : { reviewOnly: true, margin: first.evidence?.margin }),
+            },
+        };
+    });
+}
+
+/** Re-evaluate still-open generated questions when old targets split or acquire a different set of speakers. */
+export function refreshSpeakerQuestions(items: MeetingItem[], context: QuestionContext) {
+    const speakers = context.speakers;
+    if (!speakers) {
+        return;
+    }
+    const byId = new Map(items.map((item) => [item.id, item]));
+    for (const question of items) {
+        if (
+            question.kind !== "question" ||
+            question.about !== "speaker" ||
+            question.status !== "suggested" ||
+            question.decision ||
+            question.rules.includes(MeetingRule.Agent) ||
+            question.rules.includes(MeetingRule.User)
+        ) {
+            continue;
+        }
+        const ranges = question.decides.flatMap((id) => {
+            const target = byId.get(id);
+            return target?.kind === "speaker-range" ? [target] : [];
+        });
+        const indices = ranges.flatMap((r) => speakers.linesFor(r).map((row) => row.index));
+        if (
+            ranges.some((r) => r.status === "rejected" && r.evidence?.retired) ||
+            (new Set(indices.map((i) => speakers.key(i))).size > 1 && ranges.length > 1)
+        ) {
+            question.status = "rejected";
+            question.evidence = { ...question.evidence, retired: "speaker-eligibility" };
+            continue;
+        }
+        const allowed = speakers.choices(indices);
+        if (allowed) {
+            const choices = speakerChoices(question.choices, allowed, [], speakers);
+            if (!Bun.deepEquals(choices, question.choices)) {
+                question.choices = choices;
+                delete question.signature;
+            }
+        }
+        if (indices.some((i) => speakers.unknownCall(i))) {
+            delete question.signature;
+        }
+        if (ranges.some(needsSpeakerReview)) {
+            delete question.signature;
+            question.evidence = { ...question.evidence, reviewOnly: true };
+        }
+    }
+}
+
+/**
  * The question a suggested item needs before anyone confirms it, or nothing when it is not worth a person's time
  * (Martin, 2026-11-02: "just on those which are really important and not sure of"):
  * - a speaker range under `listenBelow` with more than 5 words that are not all fillers, and 15 words or a decision;
@@ -159,23 +357,21 @@ export function questionFor(item: MeetingItem, context: QuestionContext): NewQue
             return undefined;
         }
 
-        const present = (context.presence ?? [])
-            .filter((stay) => stay.fromSec <= item.fromSec && stay.toSec > item.fromSec)
-            .map((stay) => stay.name);
-        const absent = (context.presence ?? [])
-            .filter((stay) => !present.some((name) => sameName(name, stay.name)))
-            .map((stay) => stay.name);
+        const { present, absent } = presenceAt(context.presence, item.fromSec);
+        const excluded = [...absent, ...(context.callMutes?.forRange(item) ?? [])];
         // The people the range's typed scores weigh come last, so the first two choices (the signature) stay as before.
-        const choices = [
-            ...(item.speaker ? [item.speaker] : []),
-            ...(item.candidates ?? []),
-            ...present,
-            ...(context.candidates ?? []),
-            ...speakerScoresOf(item).map((score) => score.speaker),
-        ].filter(
-            (name, index, names) =>
-                !absent.some((other) => sameName(name, other)) &&
-                names.findIndex((other) => sameName(name, other)) === index
+        const indices = context.speakers?.linesFor(item).map((line) => line.index) ?? [];
+        const choices = speakerChoices(
+            [
+                ...(item.speaker ? [item.speaker] : []),
+                ...(item.candidates ?? []),
+                ...present,
+                ...(context.candidates ?? []),
+                ...speakerScoresOf(item).map((score) => score.speaker),
+            ],
+            context.speakers?.choices(indices),
+            excluded,
+            context.speakers
         );
 
         if (choices.length < 2) {
@@ -196,9 +392,10 @@ export function questionFor(item: MeetingItem, context: QuestionContext): NewQue
             ...(item.confidence === undefined ? {} : { confidence: item.confidence }),
             ...(longest ? { clip: { fromSec: longest.startSec, toSec: longest.endSec } } : {}),
             // Missing indicator evidence never establishes a shared voice identity for propagation.
-            signature: item.evidence?.sharedCallUnknown
-                ? undefined
-                : `${choices.slice(0, 2).sort().join("+")}|${[...new Set(present)].sort().join(",")}`,
+            signature:
+                item.evidence?.sharedCallUnknown || indices.some((i) => context.speakers?.unknownCall(i))
+                    ? undefined
+                    : `${choices.slice(0, 2).sort().join("+")}|${[...new Set(present)].sort().join(",")}`,
             evidence: { words: importance.words, impact, labels: [item.label] },
         };
     }
@@ -221,39 +418,128 @@ export function questionFor(item: MeetingItem, context: QuestionContext): NewQue
             return undefined;
         }
 
-        const lines = linesOf(context.transcript);
-        const transcriptLine = item.evidence?.transcriptLine;
-        const said = lines
-            .occurrences({ heard: item.heard, fromSec: item.atSec, toSec: item.atSec })
-            .find((one) => typeof transcriptLine !== "number" || one.index === transcriptLine);
-        const clip = said ? lines.clip(said) : undefined;
+        const heard = heardTerm(item, item.atSec, context);
 
         return {
-            kind: "question",
-            status: "suggested",
-            about: "term",
-            fromSec: item.atSec,
-            toSec: item.atSec + TERM_CLIP_SEC,
+            ...heard.question,
             // No proposal: no layer knows the word and no term resembles it, so the listener types it.
             question: item.proposed
                 ? `Is "${item.heard}" at ${formatClock(item.atSec)} really "${item.proposed}"?`
                 : `What is "${item.heard}" at ${formatClock(item.atSec)}?`,
-            heard: item.heard,
             choices: item.proposed ? [item.proposed] : [],
-            decides: [item.id],
-            rules: item.rules,
             ...(item.confidence === undefined ? {} : { confidence: item.confidence }),
-            ...(clip ? { clip } : {}),
-            signature: `term|${item.heard.toLowerCase()}`,
             evidence: {
                 impact: Math.log2(1 + occurrences) + (decision ? IMPACT.decision : 0) + (personName ? IMPACT.owner : 0),
                 occurrences,
-                ...(typeof transcriptLine === "number" ? { transcriptLine } : {}),
+                ...heard.evidence,
             },
         };
     }
 
     return undefined;
+}
+
+type TermItem = Extract<MeetingItem, { kind: "term" }>;
+
+/** The part of a term question that names the heard word: where it is said, the clip that plays it, its line. */
+function heardTerm(item: TermItem, atSec: number, context: Pick<QuestionContext, "transcript">) {
+    const lines = linesOf(context.transcript);
+    const transcriptLine = item.evidence?.transcriptLine;
+    const said = lines
+        .occurrences({ heard: item.heard, fromSec: atSec, toSec: atSec })
+        .find((one) => typeof transcriptLine !== "number" || one.index === transcriptLine);
+    const clip = said ? lines.clip(said) : undefined;
+
+    return {
+        question: {
+            kind: "question" as const,
+            status: "suggested" as const,
+            about: "term" as const,
+            fromSec: atSec,
+            toSec: atSec + TERM_CLIP_SEC,
+            heard: item.heard,
+            decides: [item.id],
+            rules: item.rules,
+            ...(clip ? { clip } : {}),
+            signature: `term|${item.heard.toLowerCase()}`,
+        },
+        evidence: typeof transcriptLine === "number" ? { transcriptLine } : {},
+    };
+}
+
+/** A word form heard this many times that no layer knows is asked in the group `words` (`global.suggest.words`). */
+export const DEFAULT_WORD_MIN_OCCURRENCES = 2;
+
+/** How many times an item's words are heard in the meeting (`evidence.occurrences`; 1 when it does not say). */
+export function heardTimes(item: Pick<MeetingItem, "evidence">): number {
+    const occurrences = item.evidence?.occurrences;
+    return typeof occurrences === "number" ? occurrences : 1;
+}
+
+/** The priority filter uses three bands; listen orders words within them by their exact occurrence count. */
+export function wordPriority(occurrences: number): number {
+    if (occurrences >= 8) {
+        return 3;
+    }
+
+    return occurrences >= 4 ? 2 : 1;
+}
+
+/**
+ * One question of the group `words` per unknown word form heard `minOccurrences` times or more (the owner's answer to
+ * M3): a suggested term with nothing proposed, a known time, and no question that decides it already. One answer
+ * fixes every place the form is heard. The most heard come first; they stand outside the question budget.
+ */
+export function wordQuestions(items: MeetingItem[], context: QuestionContext, minOccurrences: number): NewQuestion[] {
+    const asked = new Set(items.flatMap((item) => (item.kind === "question" ? item.decides : [])));
+    // A form some question asks about through one of its terms is asked already.
+    const askedForms = new Set(
+        items.flatMap((item) => (item.kind === "term" && asked.has(item.id) ? [item.heard.toLowerCase()] : []))
+    );
+    const forms = new Map<string, Array<{ item: TermItem; atSec: number; occurrences: number }>>();
+
+    for (const item of items) {
+        if (
+            item.kind !== "term" ||
+            item.status !== "suggested" ||
+            item.atSec === undefined ||
+            item.proposed ||
+            item.meaning ||
+            item.quote ||
+            !item.rules.includes(MeetingRule.UnknownWord) ||
+            heardTimes(item) < minOccurrences ||
+            askedForms.has(item.heard.toLowerCase())
+        ) {
+            continue;
+        }
+
+        const form = item.heard.toLowerCase();
+        forms.set(form, [...(forms.get(form) ?? []), { item, atSec: item.atSec, occurrences: heardTimes(item) }]);
+    }
+
+    return [...forms.values()]
+        .map((terms) => {
+            const ordered = [...terms].sort((a, b) => a.atSec - b.atSec);
+            return {
+                ...ordered[0]!,
+                occurrences: Math.max(...terms.map((term) => term.occurrences)),
+                decides: ordered.map((term) => term.item.id),
+            };
+        })
+        .sort((a, b) => b.occurrences - a.occurrences || a.atSec - b.atSec)
+        .map(({ item, atSec, occurrences, decides }) => {
+            const heard = heardTerm(item, atSec, context);
+            return {
+                ...heard.question,
+                decides,
+                group: "words" as const,
+                question: `What is "${item.heard}"? It is heard ${occurrences} times.`,
+                choices: [],
+                ...(item.confidence === undefined ? {} : { confidence: item.confidence }),
+                priority: wordPriority(occurrences),
+                evidence: { occurrences, impact: Math.log2(1 + occurrences), ...heard.evidence },
+            };
+        });
 }
 
 /** Two questions are the same when they ask about the same range for the same items. */
@@ -299,476 +585,20 @@ export function askedRank(question: NewQuestion): number {
     return typeof rank === "number" && Number.isFinite(rank) ? rank : questionRank(question);
 }
 
-/** The open questions, the most valuable first, then in transcript order. */
+/**
+ * The open questions, the most valuable first, then in transcript order. The group `words` comes after every other
+ * group, the most heard word first.
+ */
 export function openQuestions(record: MeetingRecord): QuestionItem[] {
+    const words = (item: QuestionItem) => (item.group === "words" ? 1 : 0);
     return record.items
         .filter((item): item is QuestionItem => item.kind === "question" && item.status === "suggested")
-        .sort((a, b) => questionRank(b) - questionRank(a) || a.fromSec - b.fromSec);
-}
-
-/** An answer raises compatible questions for the same labelled passage by this much, up to `PROPAGATED_MAX`. */
-const PROPAGATED_BONUS = 0.3;
-const PROPAGATED_MAX = 0.9;
-
-/**
- * One answer settles compatible open speaker questions for the same single label and evidence group. They must share
- * its signature and offer the answer, which raises their items by +0.3 up to 0.9. A question that reaches
- * `listenBelow` is closed as settled; the others stay, scored higher. Returns the questions it closed. Mutates `record`.
- */
-export function propagateAnswer(
-    record: MeetingRecord,
-    answered: QuestionItem,
-    options: { answer: string; listenBelow: number; now: string; except?: readonly string[] }
-): string[] {
-    if (answered.about !== "speaker" || !answered.signature || options.answer.toLowerCase() === NONE_OF_THESE) {
-        return [];
-    }
-
-    const labels = answered.evidence?.labels;
-    if (!Array.isArray(labels) || labels.length !== 1) {
-        return [];
-    }
-
-    const settled: string[] = [];
-
-    for (const question of openQuestions(record)) {
-        const offers = question.choices.some((choice) => sameName(choice, options.answer));
-
-        const otherLabels = question.evidence?.labels;
-        if (
-            question.id === answered.id ||
-            options.except?.includes(question.id) ||
-            question.signature !== answered.signature ||
-            !offers ||
-            !Array.isArray(otherLabels) ||
-            otherLabels.length !== 1 ||
-            otherLabels[0] !== labels[0]
-        ) {
-            continue;
-        }
-
-        detachTargets({ question, except: options.except });
-        let lowest = 1;
-
-        for (const item of record.items) {
-            if (item.kind !== "speaker-range" || !question.decides.includes(item.id)) {
-                continue;
-            }
-
-            item.speaker = options.answer;
-            item.confidence = Math.min(
-                PROPAGATED_MAX,
-                Math.round(((item.confidence ?? 0) + PROPAGATED_BONUS) * 100) / 100
-            );
-            item.rules = [...new Set([...item.rules, MeetingRule.User])];
-            lowest = Math.min(lowest, item.confidence);
-            const scores = speakerScoresOf(item);
-
-            // The answer raised its speaker: the other candidates keep their proportions in the room it leaves.
-            if (scores.length > 0) {
-                item.evidence = {
-                    ...item.evidence,
-                    candidateScores: anchorScores(scores, options.answer, item.confidence, [
-                        { kind: "answer", rule: MeetingRule.User },
-                    ]),
-                };
-            }
-        }
-
-        question.confidence = lowest;
-
-        if (lowest >= options.listenBelow) {
-            for (const item of record.items) {
-                if (item.kind === "speaker-range" && question.decides.includes(item.id)) {
-                    item.status = "confirmed";
-                    item.decidedAt = options.now;
-                }
-            }
-
-            question.status = "rejected";
-            question.decidedAt = options.now;
-            question.comment = `settled by the answer to ${answered.id}`;
-            settled.push(question.id);
-        }
-    }
-
-    const askedTargets = new Set(record.items.flatMap((item) => (item.kind === "question" ? item.decides : [])));
-    for (const item of record.items) {
-        if (
-            item.kind !== "speaker-range" ||
-            item.status !== "suggested" ||
-            askedTargets.has(item.id) ||
-            options.except?.includes(item.id) ||
-            item.label !== labels[0] ||
-            item.evidence?.signature !== answered.signature ||
-            !Array.isArray(item.evidence?.choices) ||
-            !item.evidence.choices.some((name) => typeof name === "string" && sameName(name, options.answer))
-        ) {
-            continue;
-        }
-        item.speaker = options.answer;
-        item.confidence = Math.min(PROPAGATED_MAX, Math.round(((item.confidence ?? 0) + PROPAGATED_BONUS) * 100) / 100);
-        item.rules = [...new Set([...item.rules, MeetingRule.User])];
-        const scores = speakerScoresOf(item);
-        item.evidence = {
-            ...item.evidence,
-            propagatedFrom: answered.id,
-            ...(scores.length
-                ? {
-                      candidateScores: anchorScores(scores, options.answer, item.confidence, [
-                          { kind: "answer", rule: MeetingRule.User },
-                      ]),
-                  }
-                : {}),
-        };
-    }
-
-    return settled;
-}
-
-/** A line shorter than this is one voice; a longer one is cut where the voice moves between the channels. */
-const SPLIT_LINE_MIN_SEC = 3;
-
-/** The words of a part of a line, by its place in the line's time: the transcript has no time per word. */
-function partWords(text: string, line: { fromSec: number; toSec: number }, part: { fromSec: number; toSec: number }) {
-    const words = text.split(/\s+/).filter(Boolean);
-    const span = Math.max(0.001, line.toSec - line.fromSec);
-    const from = Math.round((words.length * (part.fromSec - line.fromSec)) / span);
-    const to = Math.round((words.length * (part.toSec - line.fromSec)) / span);
-    return words.slice(from, Math.max(from + 1, to)).join(" ");
-}
-
-const SIDE_HINT = { mic: ", on your microphone", call: ", from the call", mixed: "" } as const;
-
-/**
- * "Several voices": the question is cut into one question per line inside it, and a long line also where the voice
- * moves between the microphone and the call (`micShare`). Each part shows its words and plays only its own audio.
- * A part that is a whole line of a range the question decides gets its own range. The question and its ranges are
- * rejected only when there are two parts or more; otherwise nothing changes and no question is returned.
- * Mutates `record`.
- */
-export function splitQuestion(
-    record: MeetingRecord,
-    id: string,
-    options: {
-        transcript: TranscriptEntry[];
-        now: string;
-        micShare?: (fromSec: number, toSec: number) => number | undefined;
-    }
-): QuestionItem[] {
-    const question = record.items.find((item): item is QuestionItem => item.id === id && item.kind === "question");
-
-    if (!question) {
-        throw new Error(`${record.id} has no question ${id}`);
-    }
-
-    const addressed = linesOf(options.transcript);
-    const lastTimed = options.transcript.findLastIndex((entry) => entry.startSec !== undefined);
-    const ranges = record.items.filter(
-        (item): item is RangeItem => item.kind === "speaker-range" && question.decides.includes(item.id)
-    );
-    const inQuestion = (startSec: number) =>
-        startSec >= question.fromSec - 0.5 && (startSec < question.toSec || startSec === question.fromSec);
-    const lines = options.transcript.flatMap((entry, index) => {
-        const startSec = entry.startSec;
-
-        if (startSec === undefined) {
-            return [];
-        }
-
-        const range = ranges.find(
-            (candidate) =>
-                entry.speaker === candidate.label && startSec >= candidate.fromSec && startSec <= candidate.toSec
+        .sort(
+            (a, b) =>
+                words(a) - words(b) ||
+                (words(a) === 1 ? heardTimes(b) - heardTimes(a) : questionRank(b) - questionRank(a)) ||
+                a.fromSec - b.fromSec
         );
-
-        if (ranges.length > 0 ? !range : !inQuestion(startSec)) {
-            return [];
-        }
-
-        const end = addressed.end(index) ?? startSec + LAST_LINE_SEC;
-        // The transcript's last line has no next start: it lasts at least to the question's end.
-        const next = index >= lastTimed ? Math.max(end, question.toSec) : end;
-        const toSec = range || question.toSec <= startSec ? next : Math.min(next, question.toSec);
-        return [{ entry, range, fromSec: startSec, toSec }];
-    });
-    const parts = lines.flatMap((line) => {
-        const runs =
-            options.micShare && line.toSec - line.fromSec >= SPLIT_LINE_MIN_SEC
-                ? voiceRuns(options.micShare, line.fromSec, line.toSec)
-                : [];
-        return runs.length > 1
-            ? runs.map((run) => ({ line, run, whole: false }))
-            : [{ line, run: { fromSec: line.fromSec, toSec: line.toSec, side: "mixed" as const }, whole: true }];
-    });
-
-    if (parts.length < 2) {
-        return [];
-    }
-
-    const created: QuestionItem[] = [];
-
-    for (const range of ranges) {
-        if (parts.some((part) => part.line.range === range && !part.whole)) {
-            continue;
-        }
-
-        range.status = "rejected";
-        range.decidedAt = options.now;
-    }
-
-    for (const { line, run, whole } of parts) {
-        const words = whole ? line.entry.text : partWords(line.entry.text, line, run);
-        const decided =
-            whole && line.range
-                ? meetingItemSchema.parse({
-                      ...line.range,
-                      id: nextId("i", record.items),
-                      status: "suggested",
-                      fromSec: line.fromSec,
-                      toSec: line.fromSec,
-                      evidence: { ...line.range.evidence, endSec: line.toSec, splitFrom: line.range.id },
-                      suggestedAt: options.now,
-                      decidedAt: undefined,
-                  })
-                : undefined;
-
-        if (decided) {
-            record.items.push(decided);
-        }
-
-        // A part counts its own words, not the whole question's, and ranks by them from the moment it is asked. A
-        // legacy question without a word count keeps its priority for its parts.
-        const part = {
-            ...question,
-            decides: decided ? [decided.id] : [],
-            evidence:
-                typeof question.evidence?.words === "number"
-                    ? { ...question.evidence, words: importanceOf(words).words }
-                    : question.evidence,
-        };
-        const asked = meetingItemSchema.parse({
-            ...part,
-            id: nextId("i", record.items),
-            status: "suggested",
-            fromSec: run.fromSec,
-            toSec: run.toSec,
-            question: `Who says "${words.length > 120 ? `${words.slice(0, 120)}…` : words}" (${formatClock(run.fromSec)} to ${formatClock(run.toSec)}${SIDE_HINT[run.side]})?`,
-            evidence: { ...part.evidence, rank: questionRank(part) },
-            answer: undefined,
-            comment: undefined,
-            clip: undefined,
-            signature: undefined,
-            suggestedAt: options.now,
-            decidedAt: undefined,
-        });
-        record.items.push(asked);
-
-        if (asked.kind === "question") {
-            created.push(asked);
-        }
-    }
-
-    question.status = "rejected";
-    question.decidedAt = options.now;
-    question.comment = `split into ${created.length} parts, one per line and voice`;
-    return created;
-}
-
-function detachTargets(options: { question: QuestionItem; except?: readonly string[] }): void {
-    if (options.except?.length) {
-        const excluded = new Set(options.except);
-        options.question.decides = options.question.decides.filter((id) => !excluded.has(id));
-    }
-}
-
-/**
- * Writes an answer into the record: the question is confirmed, and each item it decides is confirmed with the answer
- * (a range's speaker, a term's spelling, a join's speaker) or rejected when the answer is "none of these". Returns
- * the confirmed term and join corrections for the ledger. Mutates `record`.
- */
-export function answerQuestion(
-    record: MeetingRecord,
-    id: string,
-    options: {
-        answer: string;
-        comment?: string;
-        now: string;
-        except?: readonly string[];
-        transcript?: readonly TranscriptEntry[];
-        people?: readonly string[];
-        segments?: Array<{ fromWord: number; speaker: string }>;
-    }
-): Correction[] {
-    const question = record.items.find((item): item is QuestionItem => item.id === id && item.kind === "question");
-
-    if (!question) {
-        throw new Error(`${record.id} has no question ${id}`);
-    }
-
-    let answer = options.answer.trim();
-    if (!answer && options.comment?.trim()) {
-        question.comment = [question.comment, options.comment.trim()].filter(Boolean).join("\n");
-        return [];
-    }
-    if (!answer) {
-        throw new Error("An empty answer decides nothing: answer with a person, word or comment");
-    }
-    const parsed =
-        question.about === "speaker" && answer.toLowerCase() !== NONE_OF_THESE
-            ? parsePersonAnswer({
-                  text: answer,
-                  people: [...question.choices, ...recordPeople(record), ...(options.people ?? [])].filter((name) =>
-                      personPresent(record, name, question.fromSec)
-                  ),
-                  self: record.participants.find((person) => person.self)?.name,
-              })
-            : undefined;
-    if (parsed?.kind === "comment") {
-        question.comment = [question.comment, parsed.text, options.comment].filter(Boolean).join("\n");
-        return [];
-    }
-    const voices = parsed?.kind === "people" ? parsed.people : undefined;
-    if (
-        options.segments &&
-        (!voices ||
-            options.segments[0]?.fromWord !== 0 ||
-            options.segments.some(
-                (segment, index) =>
-                    !voices.includes(segment.speaker) ||
-                    (index > 0 && segment.fromWord <= options.segments![index - 1]!.fromWord)
-            ))
-    ) {
-        throw new Error("Voice segments need known speakers, start at word zero and increase strictly");
-    }
-    if (voices) {
-        answer = voices.join(" + ");
-    }
-
-    if (!answer) {
-        throw new Error(`An empty answer decides nothing: answer ${id} with a name or a word, or "${NONE_OF_THESE}"`);
-    }
-
-    const none = answer.toLowerCase() === NONE_OF_THESE;
-    if (
-        question.about === "speaker" &&
-        (question.group === "spot-check" || question.group === "long-stretch") &&
-        !none &&
-        question.decides.length === 0 &&
-        options.transcript
-    ) {
-        const lines = new TranscriptLines(options.transcript);
-        const at = options.transcript.findLastIndex(
-            (entry) => entry.startSec !== undefined && entry.startSec <= question.fromSec
-        );
-        const source = options.transcript[at];
-        if (source?.startSec !== undefined && (lines.end(at) ?? source.startSec) >= question.fromSec) {
-            const target = meetingItemSchema.parse({
-                id: nextId("i", record.items),
-                kind: "speaker-range",
-                label: source.speaker,
-                fromSec: source.startSec,
-                toSec: source.startSec,
-                status: "suggested",
-                rules: question.rules,
-                suggestedAt: options.now,
-                evidence: { transcriptLine: at, endSec: lines.end(at), splitQuestion: question.id },
-            });
-            record.items.push(target);
-            question.decides.push(target.id);
-        }
-    }
-    question.status = "confirmed";
-    question.answer = answer;
-    question.decidedAt = options.now;
-
-    if (options.comment?.trim()) {
-        question.comment = options.comment.trim();
-    }
-
-    // A target struck from the answer leaves the question: it stays as it was, for its own decision.
-    detachTargets({ question, except: options.except });
-
-    const ledger: Correction[] = [];
-
-    for (const item of record.items) {
-        if (!question.decides.includes(item.id) || item.kind === "question") {
-            continue;
-        }
-
-        item.decidedAt = options.now;
-        const prior = ledgerEntryFor(record, item, options.now);
-
-        if (none) {
-            item.status = "rejected";
-            ledger.push(...decisionLedger(prior, undefined));
-            continue;
-        }
-
-        item.status = "confirmed";
-
-        if (item.kind === "speaker-range" || item.kind === "join") {
-            item.speaker = answer;
-
-            // A new answer replaces the whole split of an earlier one: a one-person answer leaves no voices behind.
-            if (item.kind === "speaker-range") {
-                delete item.voices;
-                delete item.segments;
-            }
-
-            if (item.kind === "speaker-range" && voices && voices.length > 1) {
-                const source = options.transcript?.find(
-                    (line) => line.speaker === item.label && line.startSec === item.fromSec
-                );
-                item.voices = voices;
-                item.segments = options.segments ?? (source ? sentenceSegments(source.text, voices) : undefined);
-                if (
-                    source &&
-                    item.segments?.some((segment) => segment.fromWord >= source.text.trim().split(/\s+/).length)
-                ) {
-                    throw new Error("Voice split is outside the source words");
-                }
-            }
-        }
-
-        if (item.kind === "term") {
-            item.proposed = answer;
-            delete item.quote;
-            delete item.meaning;
-        }
-
-        ledger.push(...decisionLedger(prior, ledgerEntryFor(record, item, options.now)));
-    }
-
-    return ledger;
-}
-
-/** A skipped question is rejected; the items it decides stay as they were. Mutates `record`. */
-export function skipQuestion(record: MeetingRecord, id: string, now: string): void {
-    const question = record.items.find((item) => item.id === id && item.kind === "question");
-
-    if (!question) {
-        throw new Error(`${record.id} has no question ${id}`);
-    }
-
-    question.status = "rejected";
-    question.decidedAt = now;
-}
-
-/**
- * The names and words an answer may be: the attendees, the participants, the calendar, then the people the people
- * directory knows for the meeting (`known`, ranked: its people first, then everyone else it knows), then the
- * dictionary. A name the record holds keeps its place, so the terminal's choices only gain names (R10, G3).
- */
-export function answerVocabulary(record: MeetingRecord, dictionaryValues: string[], known: string[] = []): string[] {
-    const values = [
-        ...(record.attendance?.people.map((person) => person.name) ?? []),
-        ...record.participants.map((person) => person.name),
-        ...(record.calendar?.attendees ?? []),
-        ...recordPeople(record),
-    ];
-    const keys = new Set(values.map((value) => nameKey(value)));
-    const others = known.filter((name) => !keys.has(nameKey(name)));
-    return [...new Set([...values, ...others, ...dictionaryValues])].filter((value) => value.trim().length > 0);
 }
 
 /** The `occurrence`-th whole-word occurrence of a word question's heard words in its range. */
@@ -882,13 +712,9 @@ function spokenIn(
     }
 
     const text = linesOf(transcript)
-        .entries.filter(
-            (entry) =>
-                entry.startSec !== undefined &&
-                entry.startSec >= question.fromSec - 0.5 &&
-                (entry.startSec <= question.toSec || entry.startSec === question.fromSec)
-        )
-        .map((entry) => entry.text)
+        .startingBetween(question.fromSec - 0.5, Math.max(question.toSec, question.fromSec))
+        .filter(({ entry }) => entry.startSec! <= question.toSec || entry.startSec === question.fromSec)
+        .map(({ entry }) => entry.text)
         .join(" ");
     return text.length > maxChars ? `${text.slice(0, maxChars)}…` : text || undefined;
 }
@@ -919,9 +745,37 @@ export function questionView(
             ? undefined
             : heardContext(question, transcript, maxChars, questionOccurrence(record, question));
     const said = question.about === "speaker" ? spokenIn(question, transcript, maxChars) : undefined;
+    const voiceSources =
+        question.about === "speaker"
+            ? [
+                  ...linesOf(transcript)
+                      .startingBetween(question.fromSec, question.toSec)
+                      .flatMap(({ entry }) =>
+                          entry.nameSource === "voice" && entry.startSec! < question.toSec ? [entry] : []
+                      ),
+                  ...itemsNamed(record, question.decides).flatMap((item) =>
+                      item.kind === "speaker-range" &&
+                      item.status === "suggested" &&
+                      item.speaker &&
+                      !needsSpeakerReview(item) &&
+                      item.rules.includes(MeetingRule.VoiceEmbedding)
+                          ? [
+                                {
+                                    nameSource: "voice" as const,
+                                    nameScore:
+                                        typeof item.evidence?.score === "number"
+                                            ? item.evidence.score
+                                            : item.confidence,
+                                },
+                            ]
+                          : []
+                  ),
+              ]
+            : [];
+    const voice = [...new Set(voiceSources.map(voiceNameText))].join(", ");
     return {
         label: questionLabel(record, question.id),
-        question: question.question,
+        question: `${question.question}${voice ? ` (${voice})` : ""}`,
         range: `${formatClock(question.fromSec)}–${formatClock(question.toSec)}`,
         ...(question.priority === undefined ? {} : { priority: question.priority }),
         ...(context ? { context } : {}),
@@ -929,68 +783,9 @@ export function questionView(
     };
 }
 
-function heardKey(question: QuestionItem): string | undefined {
+export function heardKey(question: QuestionItem): string | undefined {
     const heard = question.heard?.trim().toLocaleLowerCase();
     return heard || undefined;
-}
-
-/**
- * One answer settles its look-alikes. A speaker answer raises the questions with its signature (`propagateAnswer`).
- * A word answer answers every other open word question on the same heard words the same way, so the same word is not
- * asked twice; each is marked "settled by the answer to iN". "None of these" settles nothing. Mutates `record`.
- */
-export function settleLookAlikes(
-    record: MeetingRecord,
-    answered: QuestionItem,
-    options: { answer: string; listenBelow: number; now: string; except?: readonly string[] }
-): { settled: string[]; corrections: Correction[] } {
-    if (answered.about === "speaker") {
-        return { settled: propagateAnswer(record, answered, options), corrections: [] };
-    }
-
-    const heard = heardKey(answered);
-    const globalTerms = (question: QuestionItem) =>
-        question.decides.length > 0 &&
-        question.decides.every((id) => {
-            const item = record.items.find((item) => item.id === id);
-            return (
-                item?.kind === "term" &&
-                (item.scope ?? (item.quote || item.meaning ? "line" : "everywhere")) === "everywhere"
-            );
-        });
-
-    if (!heard || !globalTerms(answered) || options.answer.trim().toLowerCase() === NONE_OF_THESE) {
-        return { settled: [], corrections: [] };
-    }
-
-    const settled: string[] = [];
-    const corrections: Correction[] = [];
-
-    for (const question of openQuestions(record)) {
-        if (
-            question.id === answered.id ||
-            options.except?.includes(question.id) ||
-            question.about === "speaker" ||
-            heardKey(question) !== heard ||
-            !globalTerms(question) ||
-            question.choices.length !== answered.choices.length ||
-            question.choices.some((choice, index) => choice !== answered.choices[index])
-        ) {
-            continue;
-        }
-
-        corrections.push(
-            ...answerQuestion(record, question.id, {
-                answer: options.answer,
-                comment: `settled by the answer to ${answered.id}`,
-                now: options.now,
-                except: options.except,
-            })
-        );
-        settled.push(question.id);
-    }
-
-    return { settled, corrections };
 }
 
 /**

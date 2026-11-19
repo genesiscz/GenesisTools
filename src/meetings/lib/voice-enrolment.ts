@@ -1,142 +1,31 @@
-import { join } from "node:path";
-import { SafeJSON } from "@genesiscz/utils/json";
-import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
-import { type MeetingStore, nextId } from "@genesiscz/utils/meetings/record";
+import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
-import {
-    embedVoiceLines,
-    type LineEmbedding,
-    saveVoiceSample,
-    scoreVoice,
-    type VoiceMatch,
-    type VoiceSample,
-} from "@genesiscz/utils/meetings/voice";
-import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
-import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
+import { type LineEmbedding, scoreVoice, type VoiceMatch, type VoiceSample } from "@genesiscz/utils/meetings/voice";
 import type { Presence } from "@genesiscz/utils/transcribe/speakers";
 import { personKey } from "./listen-answers";
 import type { OpenedMeeting } from "./opened-meeting";
 
+/** The legacy command delegates to the shared suggestion writer; it never invents training prints. */
 export async function enrolMeetingVoices(options: {
     opened: OpenedMeeting;
     store: MeetingStore;
 }): Promise<{ samples: number; matched: number; unknown: number }> {
+    const { runSuggest } = await import("./suggest-run");
     const record = options.opened.record;
-    const layout = (await options.opened.energy()).calibration?.layout;
-    if (!layout || layout === "unknown") {
-        throw new Error("Calibrate physical microphone/call channels before voice enrolment");
+    if (!record.project) {
+        throw new Error("Choose a project before naming voices");
     }
-    if (!record.seats?.remote.length) {
-        throw new Error("Set remote seats before voice enrolment");
-    }
-    const callChannel = layout === "left-mic" ? 1 : 0;
-    const transcript = (await options.opened.meeting()).transcript;
-    const lines = lineEvidence(transcript, { segments: [], speaking: [] });
-    const embeddings = await embedVoiceLines({
-        audioPath: await options.opened.audioPath(),
-        spans: lines.map((line) => ({ index: line.index, fromSec: line.startSec, toSec: line.endSec })),
-        channels: [{ channel: callChannel, track: "isolated-call" }],
-    });
-    const end = Math.max(0, ...lines.map((line) => line.endSec));
-    const remote = remoteStays({ record, presence: await options.opened.presence(), endSec: end });
-    const samples = enrolRemoteVoices({
-        record,
-        embeddings,
-        remote,
-        labels: new Map(lines.map((line) => [line.index, line.label])),
-    });
-    const matches = scoreRemoteLines({ embeddings, samples });
-    const enrolment = join(options.store.folder(record.id), "voice-enrolment.json");
-    // Preserve both unavailable reasons and exact source/channel provenance; failed extraction is not a zero vector.
-    atomicWriteFileSync(join(options.store.folder(record.id), "voice-embeddings.json"), SafeJSON.stringify(embeddings));
-    for (const sample of samples) {
-        saveVoiceSample(enrolment, sample);
-    }
-    await options.store.update(record.id, { command: "listen", change: "enrol isolated-call voices" }, (current) => {
-        current.evidence ??= {};
-        current.evidence.voice = {
-            version: 1,
-            source: embeddings[0]?.channels[0]?.source.audioPath ?? "",
-            enrolment,
-            lines: Object.fromEntries(matches.map((line) => [String(line.index), line.match])),
-        };
-        for (const item of current.items) {
-            if (
-                item.kind !== "speaker-range" ||
-                item.status !== "suggested" ||
-                item.evidence?.decisionGate !== "cosine and margin"
-            ) {
-                continue;
-            }
-            const index = lines.find((line) => line.label === item.label && line.startSec === item.fromSec)?.index;
-            const latest = matches.find((line) => line.index === index)?.match;
-            if (latest?.quality !== "matched") {
-                item.status = "rejected";
-                item.evidence = {
-                    ...item.evidence,
-                    retired: "Latest canonical voice evidence is unknown",
-                    ...(latest ? { voice: latest } : {}),
-                };
-            }
-        }
-        for (const { index, match } of matches) {
-            const line = lines.find((one) => one.index === index);
-            if (
-                !line ||
-                match.quality !== "matched" ||
-                !match.person ||
-                !remote.some(
-                    (stay) => stay.name === match.person && line.startSec >= stay.fromSec && line.endSec <= stay.toSec
-                )
-            ) {
-                continue;
-            }
-            const confirmed = current.items.some(
-                (item) =>
-                    item.kind === "speaker-range" &&
-                    item.status === "confirmed" &&
-                    item.label === line.label &&
-                    line.startSec >= item.fromSec &&
-                    line.startSec <= item.toSec
-            );
-            const existing = current.items.find(
-                (item) =>
-                    item.kind === "speaker-range" &&
-                    item.status === "suggested" &&
-                    item.label === line.label &&
-                    item.fromSec === line.startSec &&
-                    item.toSec === line.startSec &&
-                    item.evidence?.decisionGate === "cosine and margin"
-            );
-            if (existing?.kind === "speaker-range") {
-                existing.speaker = match.person;
-                existing.rules = [...new Set([...existing.rules, MeetingRule.VoiceEmbedding])];
-                existing.evidence = { ...existing.evidence, voice: match };
-            } else if (!confirmed) {
-                current.items.push({
-                    kind: "speaker-range",
-                    id: nextId("i", current.items),
-                    label: line.label,
-                    fromSec: line.startSec,
-                    toSec: line.startSec,
-                    speaker: match.person,
-                    status: "suggested",
-                    confidence: 0.8,
-                    rules: [MeetingRule.VoiceEmbedding],
-                    suggestedAt: new Date().toISOString(),
-                    evidence: {
-                        voice: match,
-                        decisionGate: "cosine and margin",
-                        confidenceMeaning: "rule gate passed; cosine is not probability",
-                    },
-                });
-            }
-        }
-    });
+    const { readVoiceStore } = await import("@genesiscz/utils/meetings/voice-store");
+    const result = await runSuggest({ store: options.store, record, rules: ["speakers"] });
     return {
-        samples: samples.length,
-        matched: matches.filter((line) => line.match.quality === "matched").length,
-        unknown: embeddings.length - matches.filter((line) => line.match.quality === "matched").length,
+        samples: Object.values(readVoiceStore(record.project).people).reduce(
+            (sum, person) => sum + person.samples.length,
+            0
+        ),
+        matched: result.fresh.filter(
+            (item) => item.kind === "speaker-range" && item.rules.includes(MeetingRule.VoiceEmbedding)
+        ).length,
+        unknown: result.fresh.filter((item) => item.kind === "question" && item.about === "speaker").length,
     };
 }
 

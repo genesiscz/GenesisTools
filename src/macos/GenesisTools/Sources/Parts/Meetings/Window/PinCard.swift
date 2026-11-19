@@ -1,5 +1,12 @@
 import SwiftUI
 
+extension ReviewRow {
+    var questionPriority: String? {
+        guard isOpen, isQuestion, let priority else { return nil }
+        return "Priority \(priority.formatted(.number.precision(.fractionLength(0...2))))"
+    }
+}
+
 // MARK: - The pin's hover card (R5, R37, G-CARD-1)
 
 /// The whole context of one review row, large enough that nothing is cut to one line (R37): its label and time, what
@@ -16,6 +23,8 @@ struct PinCard: View {
     var onShowSource: (RowSource) -> Void = { _ in }
     /// The words for a row this one settles ("Speaker range 1:45:15–1:53:22"), by its id; nil when it is not known.
     var reference: (String) -> String? = { _ in nil }
+    @Environment(\.meetingDetail) private var detail
+    private var evidence: QuestionDetails? { detail?.rows.value?.questionDetailsByID[row.id] }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -23,6 +32,9 @@ struct PinCard: View {
             Text(verbatim: ReviewRowView.title(row))
                 .font(.system(size: 14, weight: .semibold))
                 .fixedSize(horizontal: false, vertical: true)
+            if let priority = row.questionPriority {
+                Text(verbatim: priority).font(.caption).foregroundStyle(.secondary)
+            }
             if !row.isOpen {
                 // How it was decided stands under the title: at the card's end, in small grey text under five
                 // choices, a decided row read as an open one.
@@ -42,6 +54,12 @@ struct PinCard: View {
             ForEach(Array(row.parts.enumerated()), id: \.offset) { _, part in
                 partView(part)
             }
+            if row.isQuestion, let evidence {
+                FittedScroll(maxHeight: 260, initialHeight: 260) {
+                    QuestionLines(evidence: evidence, expanded: true, answered: !row.isOpen, speaker: ReviewRowView.who(row),
+                                  player: detail?.window?.player, meeting: detail?.id)
+                }
+            }
             if !Self.shownChoices(row).isEmpty { choices }
             if !shownSources.isEmpty { sources }
         }
@@ -55,14 +73,15 @@ struct PinCard: View {
     private var header: some View {
         HStack(spacing: 8) {
             Badge(row.label, color: row.isQuestion ? .purple : .accentColor, monospaced: true)
-            Text(verbatim: ReviewRowView.kindWord(row.kind)).font(.system(size: 11)).foregroundStyle(.secondary)
+            Text(verbatim: row.kindWord).font(.system(size: 11)).foregroundStyle(.secondary)
             if let time = whenText {
                 Text(verbatim: time).font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
             }
-            if let confidence = row.confidence, let words = MeetingsWords.confidence(confidence) {
+            if let confidence = row.confidence, let words = MeetingsWords.score(confidence, cosine: row.isVoiceModel) {
+                // A voice cosine reads "0.61", never as a percent (U13).
                 Text(verbatim: words)
                     .font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
-                    .accessibilityLabel("Confidence \(Int((confidence * 100).rounded())) percent")
+                    .accessibilityLabel(row.isVoiceModel ? "Voice match \(words)" : "Confidence \(Int((confidence * 100).rounded())) percent")
             }
             Spacer(minLength: 8)
             IconButton(systemName: "play.fill", tooltip: "Play this item's Moment", action: onPlay)
@@ -84,7 +103,7 @@ struct PinCard: View {
         switch part {
         case .who(let text):
             if row.isQuestion || !ReviewRowView.whoRepeatsTitle(text, title: row.what, when: row.whenText) { line("Who", text) }
-        case .said(let text, let speaker, _):
+        case .said(let text, let speaker, _) where evidence == nil:
             VStack(alignment: .leading, spacing: 2) {
                 if let speaker { Text(verbatim: speaker).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary) }
                 Text(verbatim: text).italic()
@@ -93,6 +112,7 @@ struct PinCard: View {
             }
             .padding(.leading, 9)
             .overlay(alignment: .leading) { Rectangle().fill(Color.purple.opacity(0.6)).frame(width: 2) }
+        case .said: EmptyView()
         case .when:
             EmptyView()
         case .asks(let pieces):
@@ -133,9 +153,19 @@ struct PinCard: View {
             default: return lhs.offset < rhs.offset
             }
         }.map(\.element)
+        let voicePeople = voicePeople
         return PinChoiceChips(items: sorted.map { choice in
-            MeetingsWords.confidence(choice.confidence).map { "\(choice.label) \($0)" } ?? choice.label
+            MeetingsWords.score(choice.confidence, cosine: row.scoresByVoice(choice, voicePeople: voicePeople))
+                .map { "\(choice.label) \($0)" } ?? choice.label
         })
+    }
+
+    /// A speaker question's people whose choice score is a voice cosine (`VoiceScore.people`), as the Items row reads
+    /// them: the card is built only while its pin is hovered, so it reads them here.
+    private var voicePeople: Set<String> {
+        guard row.isQuestion, row.isOpen, let items = detail?.record.value?.items,
+              let question = items.first(where: { $0.id == row.id }) else { return [] }
+        return VoiceScore.people(decidedBy: question) { id in items.first { $0.id == id } }
     }
 
     /// Only the sources a click can open: a transcript line, a document, a commit, a work item, a URL.

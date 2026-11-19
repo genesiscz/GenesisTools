@@ -3,8 +3,15 @@ import SwiftUI
 /// A speaker's name, and the time when one is given, on a transcript block. Inside a meeting (`meetingDetail` in the
 /// environment) the name is a menu (R44, Amie's "Jamie ▾ · 00:03"): Rename the label for this meeting, Assign this
 /// stretch to someone, Play. Both picks open the person picker (`PersonPicker`).
+///
+/// The three states look different (window audit H2a, ux genesiscz.md 12a): a name in the window's ink; a guess as the
+/// name with a percent chip in the tentative hue and a question-mark glyph, whose menu confirms it in one click; an open
+/// question as "Who is this?" in the ask hue, whose menu lists the answers on offer and "Somebody else…", never a rename.
 struct SpeakerChip: View {
+    /// The speaker the engine sent: the label a rename or an assignment acts on. Never drawn when `who` is given.
     let speaker: String
+    /// What the chip draws; nil draws `speaker` as a name.
+    var who: TranscriptSpeaker? = nil
     /// When the block starts; nil shows the name alone.
     var startSec: Double? = nil
     /// Plays from `startSec`; nil shows the time as text.
@@ -36,34 +43,128 @@ struct SpeakerChip: View {
         }
     }
 
-    /// An empty label is a voice the source did not name.
-    var name: String { speaker.isEmpty ? "Unknown voice" : speaker }
+    private var shown: TranscriptSpeaker { who ?? .name(speaker) }
+
+    /// An empty label is a voice the source did not name; an open question reads "Who is this?".
+    var name: String { shown.title }
 
     @ViewBuilder
     private var nameView: some View {
-        if let detail, !speaker.isEmpty {
+        if let detail, !speaker.isEmpty || shown.isOpen {
             MenuButton(items: { menuItems(detail) }) {
-                HStack(spacing: 3) {
-                    Text(verbatim: name).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    face
                     Image(systemName: "chevron.down").font(.system(size: 7.5, weight: .bold)).foregroundStyle(.tertiary)
                         .accessibilityHidden(true)
                 }
+                .frame(minHeight: 20)
+                .contentShape(Rectangle())
             }
-            .instantTooltip("Rename \(name), give this stretch to someone, or play it")
-            .accessibilityLabel("\(name), speaker menu")
+            .instantTooltip(tooltip)
+            .accessibilityLabel(accessibilityName + ", speaker menu")
             .popover(item: $picking, arrowEdge: .bottom) { mode in picker(mode, detail: detail) }
         } else {
-            Text(verbatim: name)
-                .font(.system(size: 11.5, weight: .semibold)).foregroundStyle(.secondary)
+            face
         }
     }
 
+    /// The chip's look per state: plain name; name plus "63 %" in the care hue with a question mark; "Who is this?"
+    /// in the ask hue.
+    @ViewBuilder
+    private var face: some View {
+        switch shown {
+        case .name:
+            Text(verbatim: name).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(.secondary)
+        case .guess(let guessed, let percent):
+            HStack(spacing: 4) {
+                Text(verbatim: guessed).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(.secondary)
+                Badge(percent.map { "\($0) %" } ?? "guess", color: KitHue.care.ink, look: .tone, symbol: "questionmark")
+            }
+        case .voice(let named):
+            HStack(spacing: 4) {
+                Text(verbatim: named).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(.secondary)
+                Badge("by voice", color: KitHue.play.ink, look: .tone, symbol: "waveform")
+            }
+        case .open:
+            Badge("Who is this?", color: KitHue.ask.ink, look: .tone, symbol: "person.fill.questionmark")
+        }
+    }
+
+    private var tooltip: String {
+        switch shown {
+        case .name: return "Rename \(name), give this stretch to someone, or play it"
+        case .guess(let guessed, let percent):
+            return "A guess\(percent.map { ", \($0) % sure" } ?? ""): confirm \(guessed), give the stretch to someone else, or play it"
+        case .voice(let named):
+            return "Named by the voice model: confirm \(named) by ear, say it is not \(named), give the stretch to someone else, or play it"
+        case .open(_, let candidates):
+            return candidates.isEmpty ? "Nobody is named for these lines yet: give the stretch to someone, or play it"
+                                      : "Not settled between \(candidates.joined(separator: ", ")): pick who it is, or play it"
+        }
+    }
+
+    private var accessibilityName: String {
+        switch shown {
+        case .name: return name
+        case .guess(let guessed, let percent): return "\(guessed), a guess\(percent.map { ", \($0) percent" } ?? "")"
+        case .voice(let named): return "\(named), named by the voice model"
+        case .open: return "Who is this?"
+        }
+    }
+
+    /// The label a rename acts on: an open question names its source label, a name or a guess the label it stands for.
+    private func actingLabel(_ detail: MeetingDetailModel) -> String {
+        Self.actingLabel(shown, speaker: speaker, detail: detail)
+    }
+
+    private static func actingLabel(_ shown: TranscriptSpeaker, speaker: String, detail: MeetingDetailModel) -> String {
+        if case .open(let label?, _) = shown { return label }
+        return detail.speakerLabel(forShown: speaker)
+    }
+
+    /// Built at the click (`MenuButton`): the question that covers the block is looked up then, never in a body.
     private func menuItems(_ detail: MeetingDetailModel) -> [MenuButtonItem] {
-        var items: [MenuButtonItem] = [
-            .action("Rename \(detail.speakerLabel(forShown: speaker)) for this meeting…") { open(.rename, detail: detail) },
-        ]
-        if startSec != nil {
-            items.append(.action("Assign this stretch…") { open(.assign, detail: detail) })
+        Self.menuItems(shown, speaker: speaker, startSec: startSec, play: play, detail: detail,
+                       pick: { mode in open(mode, detail: detail) })
+    }
+
+    /// The chip's menu. A name or a guess offers "Rename <label> for this meeting…" and "Assign this stretch…"; an open
+    /// chip asks who it is, so it offers answers and "Somebody else…" and no rename (U7: "Who is this?" listed nothing,
+    /// then "Rename Alice Example", a person it had just said it did not know). `pick` opens the person picker.
+    static func menuItems(_ shown: TranscriptSpeaker, speaker: String, startSec: Double?, play: ((Double) -> Void)?,
+                          detail: MeetingDetailModel, pick: @escaping (PickerMode) -> Void) -> [MenuButtonItem] {
+        var items: [MenuButtonItem] = []
+        switch shown {
+        case .guess(let guessed, _):
+            if let startSec {
+                items.append(.action("It is \(guessed)") {
+                    detail.startAssign(detail.blockStretch(speaker: speaker, startSec: startSec), to: guessed, email: nil)
+                })
+                items.append(.divider)
+            }
+        case .voice(let named):
+            if let startSec {
+                let stretch = detail.blockStretch(speaker: speaker, startSec: startSec)
+                items.append(.note("Named by the voice model"))
+                items.append(.action("Confirm \(named)") {
+                    detail.voices.decide(detail.voices.items(named: named, in: stretch), confirm: true)
+                })
+                items.append(.action("Not \(named)") {
+                    detail.voices.decide(detail.voices.items(named: named, in: stretch), confirm: false)
+                })
+                items.append(.divider)
+            }
+        case .open(let sourceLabel, let candidates):
+            items += answers(speaker: speaker, label: actingLabel(shown, speaker: speaker, detail: detail),
+                              sourceLabel: sourceLabel, startSec: startSec, candidates: candidates, detail: detail, pick: pick)
+        case .name:
+            break
+        }
+        if !shown.isOpen {
+            items.append(.action("Rename \(actingLabel(shown, speaker: speaker, detail: detail)) for this meeting…") { pick(.rename) })
+            if startSec != nil {
+                items.append(.action("Assign this stretch…") { pick(.assign) })
+            }
         }
         if let startSec, let play {
             items.append(.divider)
@@ -72,8 +173,50 @@ struct SpeakerChip: View {
         return items
     }
 
+    /// The answers of an open block. The choices of the open question that covers its start answer that question in the
+    /// journal with an Undo (`reviewAnswerItems`), and "Show in Items" leads to its row. Without one, the facts the window
+    /// has (`OpenSpeakerOffer`): the covering suggestion with its score, the mark's candidates and the meeting's people.
+    /// "Somebody else…" opens the person picker for the stretch.
+    private static func answers(speaker: String, label: String, sourceLabel: String?, startSec: Double?, candidates: [String],
+                                detail: MeetingDetailModel, pick: @escaping (PickerMode) -> Void) -> [MenuButtonItem] {
+        var items: [MenuButtonItem] = [.note("Who said this?")]
+        guard let startSec else {
+            items.append(.note("This line has no time, so it cannot be given to someone here"))
+            return items
+        }
+        let somebodyElse = MenuButtonItem.action("Somebody else…") { pick(.assign) }
+        let question = Self.speakerQuestion(in: detail.record.value?.items ?? [], at: startSec, label: label)
+        if let question, let row = detail.rows.value?.rows.first(where: { $0.id == question.id }) {
+            items += reviewAnswerItems(for: row, detail: detail)
+            items.append(somebodyElse)
+            items.append(.divider)
+            items.append(.action("Show in Items") { detail.reveal(row: row.id) })
+            return items
+        }
+        items += OpenSpeakerOffer.items(speaker: speaker, sourceLabel: sourceLabel, startSec: startSec,
+                                        candidates: candidates, detail: detail)
+        items.append(somebodyElse)
+        return items
+    }
+
+    /// The open speaker question a block starting at `startSec` answers. A question covers the half-open range from
+    /// its start to its end, so at a boundary shared by two questions the later one answers, never the one that ended
+    /// there; a zero-length question covers its one instant. When several still cover the start, the one about the
+    /// block's source label (`evidence.labels`) wins.
+    static func speakerQuestion(in items: [MeetingItem], at startSec: Double, label: String) -> MeetingItem? {
+        let covering = items.filter { item in
+            guard item.kind == "question", item.status == "suggested", item.about == "speaker",
+                  let from = item.fromSec, let to = item.toSec else { return false }
+            return from <= startSec && (startSec < to || (from == to && startSec == to))
+        }
+        return covering.first { item in
+            if case .array(let labels) = item.evidence?["labels"] ?? .null { return labels.contains(.string(label)) }
+            return false
+        } ?? covering.first
+    }
+
     private func open(_ mode: PickerMode, detail: MeetingDetailModel) {
-        let label = detail.speakerLabel(forShown: speaker)
+        let label = actingLabel(detail)
         let next = detail.peopleSearch(atSec: startSec, renaming: mode == .rename ? label : nil)
         search?.cancel()
         search = next
@@ -83,7 +226,7 @@ struct SpeakerChip: View {
     }
 
     private func picker(_ mode: PickerMode, detail: MeetingDetailModel) -> some View {
-        let label = detail.speakerLabel(forShown: speaker)
+        let label = actingLabel(detail)
         return PersonPicker(
             people: search?.people ?? [], query: $query, sources: search?.sources ?? [],
             warning: mode == .rename ? search?.warning : nil,

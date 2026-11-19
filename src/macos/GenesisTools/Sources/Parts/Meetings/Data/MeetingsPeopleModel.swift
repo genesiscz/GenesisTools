@@ -36,13 +36,14 @@ final class MeetingsPeopleModel {
     var pendingAssign: PendingAssign?
     struct History: Identifiable {
         let person: KnownPerson
+        var voices = false
         var meetings: Loadable<MeetingsAPI.PeopleMeetings.Result>
         var id: String { person.id }
     }
     var history: History?
     /// The most people the Contacts view lists at once.
     static let contactsLimit = 500
-    @ObservationIgnored private weak var window: MeetingsWindowModel?
+    @ObservationIgnored private(set) weak var window: MeetingsWindowModel?
     @ObservationIgnored private var loadTask: Task<Void, Never>?
     @ObservationIgnored private var mergeClear: Task<Void, Never>?
 
@@ -93,14 +94,17 @@ final class MeetingsPeopleModel {
         window?.loadSettings(quiet: true)
     }
 
-    func showMeetings(_ person: KnownPerson) {
-        history = History(person: person, meetings: .loading(previous: nil))
+    func showMeetings(_ person: KnownPerson, voices: Bool = false) {
+        history = History(person: person, voices: voices, meetings: .loading(previous: nil))
         Task { [weak self] in
             guard let self else { return }
             do {
                 let result = try await MeetingsRead.service(MeetingsAPI.PeopleMeetings.self, .init(person: person.id),
                                                             orRun: ["people", "meetings", person.id, "--json"]).run(service: service)
-                if history?.id == person.id { history?.meetings = .loaded(result) }
+                if history?.id == person.id {
+                    history?.meetings = .loaded(result)
+                    window?.voiceLibrary.rememberMeetings(result)
+                }
             } catch {
                 if history?.id == person.id { history?.meetings = .failed(asFailure(error), previous: nil) }
             }
@@ -127,12 +131,21 @@ final class MeetingsPeopleModel {
     }
 
     func setHidden(_ person: KnownPerson, hidden: Bool) {
-        let params = MeetingsAPI.PeopleHide.Params(person: person.id, hidden: hidden)
         perform({ [service] in
-            _ = try await PeopleCalls.write(MeetingsAPI.PeopleHide.self, params, orRun: PeopleCalls.hideArgs(params), service: service)
+            try await Self.writeHidden(person, hidden: hidden, service: service)
             return hidden ? "\(person.name) is hidden" : "\(person.name) shows again"
-        }, undo: { [weak self] in self?.setHidden(person, hidden: !hidden) },
-           retry: { [weak self] in self?.setHidden(person, hidden: hidden) })
+        }, undo: { [weak notices = window?.notices, weak self, service] notice in
+            let done = hidden ? "Undone: \(person.name) shows again" : "Undone: \(person.name) is hidden again"
+            notices?.settleUndo(notice, done: done) {
+                try await Self.writeHidden(person, hidden: !hidden, service: service)
+                self?.load()
+            }
+        }, retry: { [weak self] in self?.setHidden(person, hidden: hidden) })
+    }
+
+    private static func writeHidden(_ person: KnownPerson, hidden: Bool, service: MeetingsService?) async throws {
+        let params = MeetingsAPI.PeopleHide.Params(person: person.id, hidden: hidden)
+        _ = try await PeopleCalls.write(MeetingsAPI.PeopleHide.self, params, orRun: PeopleCalls.hideArgs(params), service: service)
     }
 
     /// "Merge with…" picked a second person: the plan names the meetings it changes before anything is written.
@@ -201,13 +214,13 @@ final class MeetingsPeopleModel {
     }
 
     /// Runs one write, says what it did in the window's notices (with an Undo when given), and reads the list again.
-    private func perform(_ write: @escaping @MainActor () async throws -> String, undo: (@MainActor () -> Void)? = nil,
-                         retry: @escaping @MainActor () -> Void) {
+    private func perform(_ write: @escaping @MainActor () async throws -> String,
+                         undo: (@MainActor (StackedNotice.ID) -> Void)? = nil, retry: @escaping @MainActor () -> Void) {
         lastMerge = nil
         Task {
             do {
                 let done = try await write()
-                let actions = undo.map { undo in [StackedNotice.Action.undo { _ in undo() }] } ?? []
+                let actions = undo.map { undo in [StackedNotice.Action.undo { notice in undo(notice) }] } ?? []
                 window?.notices.push(StackedNotice(text: done, actions: actions))
             } catch {
                 window?.notices.push(.meetingsFailure(error, retry: retry))

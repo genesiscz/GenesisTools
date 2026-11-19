@@ -1,5 +1,6 @@
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { microphoneCandidates } from "@genesiscz/utils/meetings/room-people";
+import { seatIntervalsFor } from "@genesiscz/utils/meetings/seats";
 import { clusterVoices, type LineVoice, lineVoices, voiceFrames } from "@genesiscz/utils/meetings/voice-features";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
@@ -45,11 +46,7 @@ export function anchoredMeetingVoices(options: {
 }): LineVoice[] {
     const { record, channel, micChannel } = options;
     const lines = lineEvidence(options.transcript, { segments: [], speaking: [] });
-    const allowed = record.seats
-        ? channel === micChannel
-            ? record.seats.room
-            : record.seats.remote.map((person) => person.name)
-        : undefined;
+    const seats = record.seats;
     const anchors = new Map<number, string>();
     const levels = new Map(options.features.map((feature) => [feature.index, feature.channels]));
     for (const line of lines) {
@@ -80,7 +77,16 @@ export function anchoredMeetingVoices(options: {
             ...confirmed.flatMap((item) => (item.kind === "speaker-range" && item.speaker ? [item.speaker] : [])),
         ]);
         const speaker = names.size === 1 ? [...names][0] : undefined;
-        if (speaker && (!allowed || allowed.some((name) => sameName(name, speaker)))) {
+        if (
+            speaker &&
+            (!seats ||
+                seatIntervalsFor(seats, speaker).some(
+                    (span) =>
+                        span.side === (channel === micChannel ? "mic" : "call") &&
+                        span.fromSec <= line.startSec &&
+                        line.endSec <= (span.toSec ?? Infinity)
+                ))
+        ) {
             anchors.set(line.index, speaker);
         }
     }

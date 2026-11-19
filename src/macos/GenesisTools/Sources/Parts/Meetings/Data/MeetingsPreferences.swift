@@ -195,7 +195,9 @@ extension MeetingsPreferences {
     enum Rows {
         enum ReturnKey: String, CaseIterable { case edit, confirm }
         enum ChoiceKeys: String, CaseIterable { case on, off }
-        enum Decided: String, CaseIterable { case inPlace, hidden }
+        /// Where a decided row goes: `atEnd` folds it and moves it below the open rows (U15, U16: 32 rejected questions
+        /// stood above the 9 open ones), `inPlace` folds it where it is, `hidden` takes it out of the list.
+        enum Decided: String, CaseIterable { case inPlace, hidden, atEnd }
         enum Order: String, CaseIterable { case priority, time }
         enum LowPriority: String, CaseIterable { case hide, show }
         enum AskReach: String, CaseIterable { case always, never }
@@ -215,8 +217,9 @@ extension MeetingsPreferences {
             key: "meetings.rows.choiceKeys", defaultValue: ChoiceKeys.on, choices: ChoiceKeys.allCases,
             title: "Number keys pick a choice", detail: "1 to 9 answer the selected row with that choice.")
         static let decided = MeetingsWindowSetting(
-            key: "meetings.rows.decided", defaultValue: Decided.inPlace, choices: Decided.allCases,
-            title: "Decided rows", detail: "In place: a decided row folds where it is. Hidden: it leaves the list.")
+            key: "meetings.rows.decided", defaultValue: Decided.atEnd, choices: Decided.allCases,
+            title: "Decided rows",
+            detail: "At the end: a decided row folds and moves below the open ones. In place: it folds where it is. Hidden: it leaves the list.")
         static let order = MeetingsWindowSetting(
             key: "meetings.rows.order", defaultValue: Order.priority, choices: Order.allCases,
             title: "Row order", detail: "Priority: the order the terminal asks. Time: the transcript's order.")
@@ -243,6 +246,23 @@ extension MeetingsPreferences {
             key: "meetings.rows.keepPlace", defaultValue: true, choices: [true, false],
             title: "Keep the next row in place",
             detail: "An answered row keeps its height until you scroll, so the rows under it do not move. Off folds it at once.")
+    }
+
+    /// The checks by ear the Items tab prepares (`listen --spot-check`, `listen --long-stretch-words`). The keys are the
+    /// ones the Items tab stored before these settings had names, so saved counts stay.
+    enum Listen {
+        static let spotCheckCount = MeetingsWindowSetting(
+            key: "meetings.listen.spotCheckCount", defaultValue: 20, choices: [10, 20, 40, 80],
+            title: "Lines in a spot check", detail: "How many guessed lines (50 to 69 %) one spot check asks about, picked at random.")
+        static let longStretchWords = MeetingsWindowSetting(
+            key: "meetings.listen.longStretchWords", defaultValue: 50, choices: [30, 50, 100, 200],
+            title: "Words in a long stretch", detail: "A guessed stretch of this many words or more becomes one question.")
+        static let showPrepared = MeetingsWindowSetting(
+            key: "meetings.listen.showPrepared", defaultValue: true, choices: [true, false],
+            title: "Show the prepared questions", detail: "After Prepare, the Items list shows only the new group of questions.")
+        /// The range the Items tab's number fields take for the two counts.
+        static let spotCheckRange = 1...100
+        static let longStretchRange = 10...500
     }
 
     /// The notice stack (F4 keys stay in `MeetingsPreferences`; this adds the visible count).
@@ -315,12 +335,20 @@ extension MeetingsPreferences {
 
     /// The transcript blocks and a selection's clip (F9).
     enum Transcript {
-        static let applyAbove = MeetingsWindowSetting(
-            key: "meetings.transcript.applyAbove", defaultValue: 70, choices: [50, 60, 70, 80, 90],
-            title: "Apply suggestions above", detail: "Lower confidence voices keep a percentage mark. Filters loaded suggestions without reloading.")
+        // 70% explained microphone power makes the inline echo cue selective; the popover keeps every measurement.
+        static let defaultEchoAbove = 70
+        static let echoAbove = MeetingsWindowSetting(
+            key: "meetings.transcript.echoAbove", defaultValue: defaultEchoAbove, choices: [0, 50, 60, 70, 80, 90],
+            title: "Mark echo above", detail: "Explained microphone power that shows an echo glyph on a line. 0 turns the glyph off; measurements stay in its popover.")
         static let wordHighlights = MeetingsWindowSetting(
             key: "meetings.transcript.wordHighlights", defaultValue: true, choices: [true, false],
             title: "Highlight the spoken word", detail: "Use saved ASR timing evidence for exact matched words; untimed words keep the line highlight.")
+        static let flashRaised = MeetingsWindowSetting(
+            key: "meetings.transcript.flashRaised", defaultValue: true, choices: [true, false],
+            title: "Flash lines raised by an answer", detail: "Briefly highlight the source lines whose confidence an answer raised, once per answer.")
+        static let raisedFlashSec = MeetingsWindowSetting(
+            key: "meetings.transcript.raisedFlashSec", defaultValue: 1.2, choices: [0.5, 1.2, 2],
+            title: "Raised-line flash length", detail: "Seconds the raised source lines stay highlighted.")
         static let dimPast = MeetingsWindowSetting(
             key: "meetings.transcript.dimPast", defaultValue: true, choices: [true, false],
             title: "Dim what was heard", detail: "Blocks the playback has passed turn fainter.")
@@ -333,6 +361,27 @@ extension MeetingsPreferences {
         static let clipSec = MeetingsWindowSetting(
             key: "meetings.selection.clipSec", defaultValue: 5.0, choices: [3, 5, 10],
             title: "Clip of a selection", detail: "Seconds “Clip” plays from the first selected line.")
+
+        /// The cached timestamp model "Word timings…" uses (`word-timings generate --model`); nothing is downloaded.
+        enum TimingModel: String, CaseIterable { case whisperTurbo = "onnx-community/whisper-large-v3-turbo_timestamped" }
+        static let timingModel = MeetingsWindowSetting(
+            key: "meetings.transcript.timingModel", defaultValue: TimingModel.whisperTurbo, choices: TimingModel.allCases,
+            title: "Word timings model", detail: "The cached model that times the words of a range. Nothing is downloaded.")
+        /// The language "Word timings…" listens for: the meeting's (`global.language` of the config), none (the model
+        /// detects it), or one named.
+        enum TimingLanguage: String, CaseIterable { case meeting, detect, cs, en }
+        static let timingLanguage = MeetingsWindowSetting(
+            key: "meetings.transcript.timingLanguage", defaultValue: TimingLanguage.meeting, choices: TimingLanguage.allCases,
+            title: "Word timings language", detail: "The language the model listens for when it times words.")
+
+        /// The language code the timings ask for: nil lets the model detect it.
+        static func timingLanguageCode(_ choice: TimingLanguage, meeting: String?) -> String? {
+            switch choice {
+            case .meeting: meeting
+            case .detect: nil
+            case .cs, .en: choice.rawValue
+            }
+        }
 
         /// The pause that starts a new block, nil for one block per turn.
         static func breakAfterGapSec(_ stored: Double) -> Double? { stored > 0 ? stored : nil }
@@ -384,6 +433,11 @@ extension MeetingsPreferences {
         static let transcriptPane = MeetingsWindowSetting(
             key: "meetings.items.transcriptPane", defaultValue: TranscriptPane.auto, choices: TranscriptPane.allCases,
             title: "Transcript beside the rows", detail: "Auto shows it when the window is wide enough.")
+        /// The window's width moves the sidebar by default (window audit H5); off, only the toolbar button does (eve t101).
+        static let autoHideSidebar = MeetingsWindowSetting(
+            key: "meetings.window.autoHideSidebar", defaultValue: true, choices: [true, false],
+            title: "Hide the sidebar in a narrow window",
+            detail: "Below 1150 pt wide the sidebar steps aside and comes back when the window widens. Off: only the toolbar button shows or hides it.")
         /// 700, not the first pick of 560: 560 is the window's smallest height (`MeetingsFace.minimumSize`), so the dock
         /// never folded at any size, and at 600 pt the full dock (about 330 pt) left about 90 pt of rows.
         static let collapseHeight = MeetingsWindowSetting(

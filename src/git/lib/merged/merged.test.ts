@@ -121,7 +121,7 @@ describe("verdict ladder", () => {
 
         const report = await collectRefReport(await ctxFor(r), "feat/x");
         expect(report).toMatchObject({ verdict: "MERGED", how: "content", ahead: 2, cherryPlus: 2, touched: 2 });
-        expect(report.commands).toEqual(["git branch -D feat/x"]);
+        expect(report.commands).toEqual(["git branch -D -- 'feat/x'"]);
     });
 
     it("MERGED by content when three commits were recomposed into two with the same final tree", async () => {
@@ -264,7 +264,7 @@ describe("verdict ladder", () => {
         const ctx = await ctxFor(r);
         const byPath = await collectRefReport(ctx, detached);
         expect(byPath).toMatchObject({ verdict: "MERGED", how: "content", branch: null, worktree: detached, dirty: 0 });
-        expect(byPath.commands).toEqual([`git worktree remove ${SafeJSON.stringify(detached)}`]);
+        expect(byPath.commands).toEqual([`git worktree remove -- '${detached}'`]);
 
         const byBranch = await collectRefReport(ctx, "feat/x");
         expect(byBranch).toMatchObject({ verdict: "MERGED", worktree: onBranch, dirty: 1, commands: [] });

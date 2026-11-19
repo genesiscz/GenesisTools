@@ -211,6 +211,27 @@ private struct WidgetGeneralSettings: View {
                     }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
                 }
             }
+            NativeSettingsCard("Tasks") {
+                NativeSettingsRow("Claimed handoffs", detail: "Choose how handoffs claimed by sessions on this Mac appear in Tasks.") {
+                    Picker("Claimed handoffs", selection: Binding(
+                        get: { prefs.tasks?.handoffs ?? .folded },
+                        set: { value in write {
+                            if $0.tasks == nil { $0.tasks = WidgetTasksPreferences() }
+                            $0.tasks?.handoffs = value
+                        } })) {
+                        Text("Folded").tag(WidgetHandoffDisplay.folded)
+                        Text("Expanded").tag(WidgetHandoffDisplay.expanded)
+                        Text("Hidden").tag(WidgetHandoffDisplay.hidden)
+                    }.labelsHidden().pickerStyle(.segmented)
+                }
+                Divider()
+                NativeSettingsToggle("Task tooltips", detail: "Preview task or handoff text and available acceptance criteria on hover.",
+                                     isOn: Binding(get: { prefs.tasks?.showTooltips ?? true }, set: { value in write {
+                                         if $0.tasks == nil { $0.tasks = WidgetTasksPreferences() }
+                                         $0.tasks?.showTooltips = value
+                                     } }))
+            }
+            .nativeSettingsAnchor("tasks")
             NativeSettingsCard("Shape") {
                 NativeSettingsRow("Side style", detail: "Classic keeps a compact monochrome rail with its handle below.") {
                     Picker("Side style", selection: field(\.sideStyle)) {
@@ -337,11 +358,25 @@ private struct WidgetGeneralSettings: View {
                     }.labelsHidden().accessibilityIdentifier("widget.sendCloseSeconds")
                 }
                 Divider()
-                NativeSettingsRow("Inbox of every session", detail: "The inbox button's list: grouped under each session, or one list.") {
+                NativeSettingsRow("Inbox order", detail: "Read by arrival time, group items by session, or put waiting items first in one list.") {
                     Picker("Inbox of every session", selection: field(\.inboxGrouping)) {
+                        Text("Newest first").tag("feed")
                         Text("By session").tag("session")
                         Text("One list").tag("list")
                     }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
+                }
+                if prefs.inboxGrouping == "feed" || prefs.previewView == "items" {
+                    Divider()
+                    NativeSettingsSegmented(
+                        "Group consecutive items", detail: "Applies to the newest-first feed and the Items hover list.",
+                        identifier: "widget.settings.feedHeaders",
+                        options: [.init("session", "Per session"), .init("project", "Per project")],
+                        selection: field(\.inboxFeedRuns))
+                    NativeSettingsSegmented(
+                        "Feed headers", detail: "For single items, show the source inside the row or in a separate header.",
+                        identifier: "widget.settings.inboxFeedHeaders",
+                        options: [.init("all", "Every run"), .init("groups", "Groups only")],
+                        selection: field(\.inboxFeedHeaders))
                 }
                 openingFilters
                 Divider()
@@ -714,11 +749,14 @@ private struct WidgetSessionSettings: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            previewCard
-            NativeSettingsCard("Your sessions", subtitle: "Pin a session to keep it in the widget's rail. Click one to open it in the widget.") {
-                WidgetSessionBrowser(model: model, onOpen: openSession)
+            WidgetSettingsLoading(model: model)
+            if model.settingsLoaded {
+                previewCard
+                NativeSettingsCard("Your sessions", subtitle: "Pin a session to keep it in the widget's rail. Click one to open it in the widget.") {
+                    WidgetSessionBrowser(model: model, onOpen: openSession)
+                }
+                filterCard
             }
-            filterCard
             WidgetSettingsError(model: model)
         }.task { model.refreshSettings() }
     }
@@ -727,14 +765,25 @@ private struct WidgetSessionSettings: View {
     private var previewCard: some View {
         NativeSettingsCard("Inbox preview", subtitle: "The list that opens when the pointer rests on the agents button.") {
             NativeSettingsSegmented(
-                "Show", identifier: "widget.preview.filter",
-                options: WidgetPreviewChoices.filters,
-                selection: Binding(get: { model.previewFilter }, set: { model.setPreview(filter: $0) }),
-                minSegmentWidth: 96)
-            NativeSettingsPicker(
-                "Order", identifier: "widget.preview.sort",
-                options: WidgetPreviewChoices.sorts,
-                selection: Binding(get: { model.previewSort }, set: { model.setPreview(sort: $0) }))
+                "Hover list shows", detail: "Sessions with their state, or every inbox item newest first.",
+                identifier: "widget.settings.previewView",
+                options: [.init("sessions", "Sessions"), .init("items", "Inbox items")],
+                selection: Binding(get: { prefs.previewView }, set: { view in
+                    model.writePreferences { $0.previewView = view }
+                }))
+            if prefs.previewView == "sessions" {
+                NativeSettingsSegmented(
+                    "Show", identifier: "widget.preview.filter",
+                    options: WidgetPreviewChoices.filters,
+                    selection: Binding(get: { model.previewFilter }, set: { model.setPreview(filter: $0) }),
+                    minSegmentWidth: 96)
+            }
+            if prefs.previewView == "sessions" || prefs.railOrder != "stable" {
+                NativeSettingsPicker(
+                    prefs.previewView == "sessions" ? "Session order" : "Rail session order", identifier: "widget.preview.sort",
+                    options: WidgetPreviewChoices.sorts,
+                    selection: Binding(get: { model.previewSort }, set: { model.setPreview(sort: $0) }))
+            }
         }
         .nativeSettingsAnchor("inbox-preview")
     }
@@ -1004,7 +1053,7 @@ private struct WidgetDictationSettings: View {
                         if let missing = prefs.voiceAccount,
                             provider?.accounts.contains(where: { $0.id == missing }) != true
                         {
-                            Text("Unavailable — select another account").tag(missing)
+                            Text("Unavailable. Select another account").tag(missing)
                         }
                     }.labelsHidden().frame(width: 230, alignment: .trailing)
                 }

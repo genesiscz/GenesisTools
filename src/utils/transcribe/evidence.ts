@@ -2,7 +2,7 @@ import { similarityScore } from "@genesiscz/utils/fuzzy-match";
 import type { AcousticShare, EchoMetric } from "@genesiscz/utils/meetings/echo";
 import type { VoiceMatch } from "@genesiscz/utils/meetings/voice";
 import { TranscriptLines } from "./lines";
-import type { Presence } from "./speakers";
+import { type Presence, sameName } from "./speakers";
 import type { TranscriptEntry } from "./types";
 
 /** A stretch of the recording and the audio channel it came from: the user's microphone, or the call's sound. */
@@ -29,8 +29,52 @@ export interface SpeakingObservation {
     muted?: string[];
 }
 
-/** A mute state read this long before a line still holds at its start: mute is a state, not an event. */
-const MUTED_CARRY_SEC = 10;
+export const DEFAULT_MUTED_CARRY_SEC = 600;
+
+/** A missing mute field is an unread roster. An explicit list replaces the last one. */
+function muteIntervals(readings: SpeakingObservation[], carrySec: number) {
+    type Span = { fromSec: number; toSec: number };
+    const intervals = new Map<string, Span[]>();
+    const active = new Map<string, Span>();
+    const matches = (names: string[], name: string) => names.some((other) => other === name || sameName(other, name));
+    const changes = readings.filter(
+        (read) => read.muted !== undefined || (!read.speakingUnknown && read.speaking.length)
+    );
+    for (const read of changes.sort((a, b) => a.tSec - b.tSec)) {
+        const speaking = read.speakingUnknown ? [] : read.speaking;
+        for (const [name, span] of active) {
+            if (matches(speaking, name) || (read.muted && !matches(read.muted, name)) || span.toSec < read.tSec) {
+                span.toSec = Math.min(span.toSec, read.tSec);
+                active.delete(name);
+            }
+        }
+        for (const name of read.muted ?? []) {
+            if (matches(speaking, name)) {
+                continue;
+            }
+            const until = read.tSec + carrySec;
+            const current = active.get(name) ?? [...active].find(([other]) => sameName(other, name))?.[1];
+            if (current) {
+                current.toSec = until;
+            } else {
+                const span = { fromSec: read.tSec, toSec: until };
+                const prior = intervals.get(name) ?? [];
+                prior.push(span);
+                intervals.set(name, prior);
+                active.set(name, span);
+            }
+        }
+    }
+    return (line: Span) => {
+        const muted: string[] = [];
+        for (const [name, spans] of intervals) {
+            if (spans.some((span) => span.fromSec <= line.fromSec && line.toSec <= span.toSec)) {
+                muted.push(name);
+            }
+        }
+        return muted;
+    };
+}
 
 /** The identity of the recording user in evidence: the microphone channel is always them. */
 export const SELF = "self";
@@ -75,7 +119,7 @@ export interface LineEvidence {
      * microphone picked up the speakers (echo), so the microphone does not prove the user spoke.
      */
     echo?: number;
-    /** The people the platform showed muted in every reading over the line (rule RM: they did not speak it). */
+    /** People whose observed mute state covers the whole line. They cannot have spoken on the call channel. */
     muted?: string[];
     /**
      * The microphone channel's share of the audio energy in the line; undefined without audio, when quiet, or when the
@@ -113,19 +157,9 @@ function echoScore(segments: EvidenceSegment[]): number | undefined {
     return best;
 }
 
-/** E1 channel, E3 speaking indicator and E4 live name for every timed line, plus E2 attendance when given. */
-export function lineEvidence(
-    entries: TranscriptEntry[],
-    evidence: { segments: EvidenceSegment[]; speaking: SpeakingObservation[] },
-    presence?: Presence[],
-    /** The microphone channel's share of the audio energy over a time range, when the audio is at hand. */
-    energyMicShare?: AcousticShare,
-    /** Only the lines that start in this window are measured; each keeps its index in the whole transcript. */
-    options: { window?: { fromSec: number; toSec: number } } = {}
-): LineEvidence[] {
+function timedLines(entries: TranscriptEntry[], window?: { fromSec: number; toSec: number }) {
     const lines = new TranscriptLines(entries);
-    const { window } = options;
-    const timed = entries.flatMap((entry, at) => {
+    return entries.flatMap((entry, at) => {
         if (
             window &&
             (entry.startSec === undefined || entry.startSec < window.fromSec || entry.startSec > window.toSec)
@@ -136,40 +170,79 @@ export function lineEvidence(
         const span = lines.span(at);
         return span ? [{ entry, span, index: at }] : [];
     });
+}
 
-    return timed.map(({ entry, span, index }) => {
-        const startSec = entry.startSec!;
-        const fromSec = span.fromSec;
-        const endSec = span.toSec;
-        const overlap = new Map<string, { sec: number; liveName?: string; voiceId?: number; longest: number }>();
-        const touching: EvidenceSegment[] = [];
+function channelOverlap(segments: EvidenceSegment[], span: { fromSec: number; toSec: number }) {
+    const overlap = new Map<string, { sec: number; liveName?: string; voiceId?: number; longest: number }>();
+    const touching: EvidenceSegment[] = [];
 
-        for (const segment of evidence.segments) {
-            const sec = Math.min(endSec, segment.endSec) - Math.max(fromSec, segment.startSec);
+    for (const segment of segments) {
+        const sec = Math.min(span.toSec, segment.endSec) - Math.max(span.fromSec, segment.startSec);
 
-            if (sec <= 0) {
-                continue;
-            }
-
-            touching.push(segment);
-            const identity = segment.channel === "mic" ? SELF : (segment.liveName ?? "?");
-            const seen = overlap.get(identity);
-            const longer = sec > (seen?.longest ?? 0);
-            overlap.set(identity, {
-                sec: (seen?.sec ?? 0) + sec,
-                liveName: segment.liveName ?? seen?.liveName,
-                voiceId: longer ? segment.voiceId : seen?.voiceId,
-                longest: longer ? sec : (seen?.longest ?? 0),
-            });
+        if (sec <= 0) {
+            continue;
         }
 
+        touching.push(segment);
+        const identity = segment.channel === "mic" ? SELF : (segment.liveName ?? "?");
+        const seen = overlap.get(identity);
+        const longer = sec > (seen?.longest ?? 0);
+        overlap.set(identity, {
+            sec: (seen?.sec ?? 0) + sec,
+            liveName: segment.liveName ?? seen?.liveName,
+            voiceId: longer ? segment.voiceId : seen?.voiceId,
+            longest: longer ? sec : (seen?.longest ?? 0),
+        });
+    }
+
+    const total = [...overlap.values()].reduce((sum, value) => sum + value.sec, 0);
+    return { overlap, touching, total, micShare: total > 0 ? (overlap.get(SELF)?.sec ?? 0) / total : undefined };
+}
+
+/** A seat uses the line's calibrated energy. A quiet or uncalibrated line falls back to capture segments. */
+export function lineChannelShares({
+    entries,
+    segments,
+    energy,
+}: {
+    entries: TranscriptEntry[];
+    segments: EvidenceSegment[];
+    energy?: AcousticShare;
+}) {
+    return timedLines(entries).map(({ span, index }) => {
+        const energyMic = energy?.(span.fromSec, span.toSec) ?? energy?.raw?.(span.fromSec, span.toSec);
+        return { index, ...span, energyMic, share: energyMic ?? channelOverlap(segments, span).micShare };
+    });
+}
+
+export function presentAt(presence: Presence[], startSec: number): string[] {
+    return [
+        ...new Set(
+            presence.filter((stay) => startSec >= stay.fromSec && startSec < stay.toSec).map((stay) => stay.name)
+        ),
+    ];
+}
+
+/** E1 channel, E3 speaking indicator and E4 live name for every timed line, plus E2 attendance when given. */
+export function lineEvidence(
+    entries: TranscriptEntry[],
+    evidence: { segments: EvidenceSegment[]; speaking: SpeakingObservation[]; mutedCarrySec?: number },
+    presence?: Presence[],
+    energyMicShare?: AcousticShare,
+    /** Only the lines that start in this window are measured; each keeps its index in the whole transcript. */
+    options: { window?: { fromSec: number; toSec: number } } = {}
+): LineEvidence[] {
+    const mutedDuring = muteIntervals(evidence.speaking, evidence.mutedCarrySec ?? DEFAULT_MUTED_CARRY_SEC);
+    return timedLines(entries, options.window).map(({ entry, span, index }) => {
+        const startSec = entry.startSec!;
+        const { fromSec, toSec: endSec } = span;
+        const { overlap, touching, total, micShare } = channelOverlap(evidence.segments, span);
         const echo = echoScore(touching);
         const energyMic = energyMicShare?.(fromSec, endSec);
         const energyMicRaw = energyMicShare?.raw?.(fromSec, endSec);
         const acoustic = energyMicShare?.acoustic?.(fromSec, endSec);
         const voice = energyMicShare?.voice?.(fromSec, endSec);
 
-        const total = [...overlap.values()].reduce((sum, value) => sum + value.sec, 0);
         const ranked = [...overlap.entries()].sort((a, b) => b[1].sec - a[1].sec);
         const tie = ranked.length > 1 && total > 0 && (ranked[0]![1].sec - ranked[1]![1].sec) / total < TIE_SHARE;
         const [winner, best] = tie ? [] : (ranked[0] ?? []);
@@ -204,24 +277,7 @@ export function lineEvidence(
             }
         }
 
-        // Only readings that read the mute state count, and the last one before the line still holds in it.
-        const muteReads = evidence.speaking.filter(
-            (observation) =>
-                observation.muted !== undefined &&
-                (observation.validUntilSec ?? observation.tSec + MUTED_CARRY_SEC) > startSec &&
-                observation.tSec >= startSec - MUTED_CARRY_SEC &&
-                observation.tSec < endSec
-        );
-        const lastBefore = muteReads.findLast((observation) => observation.tSec <= startSec);
-        const counted = [
-            ...(lastBefore ? [lastBefore] : []),
-            ...muteReads.filter((observation) => observation.tSec > startSec),
-        ];
-        const muted = counted[0]?.muted?.filter((name) => counted.every((reading) => reading.muted?.includes(name)));
-
-        const present = presence
-            ?.filter((stay) => startSec >= stay.fromSec && startSec < stay.toSec)
-            .map((stay) => stay.name);
+        const muted = mutedDuring(span);
 
         return {
             index,
@@ -229,7 +285,7 @@ export function lineEvidence(
             endSec,
             label: entry.speaker,
             text: entry.text,
-            ...(total > 0 ? { micShare: (overlap.get(SELF)?.sec ?? 0) / total } : {}),
+            ...(micShare !== undefined ? { micShare } : {}),
             ...(winner && best ? { winner, winnerShare: best.sec / total } : {}),
             ...(tie ? { tie: true } : {}),
             ...(winner && winner !== SELF && best?.liveName ? { liveName: best.liveName } : {}),
@@ -238,7 +294,7 @@ export function lineEvidence(
                 !validAtStart ||
                 atStart?.speakingUnknown === true ||
                 readings.some((reading) => reading.speakingUnknown),
-            ...(present ? { present: [...new Set(present)] } : {}),
+            ...(presence ? { present: presentAt(presence, startSec) } : {}),
             ...(entry.speakerId !== undefined ? { refinedSpeakerId: entry.speakerId } : {}),
             ...(best?.voiceId !== undefined ? { liveVoiceId: best.voiceId } : {}),
             ...(echo !== undefined ? { echo } : {}),
@@ -247,7 +303,7 @@ export function lineEvidence(
             ...(acoustic ? { acoustic, echoOfCall: acoustic.echoOfCall, echoLagMs: acoustic.lagMs } : {}),
             acousticQuality: acoustic?.quality ?? "unknown",
             ...(voice ? { voice } : {}),
-            ...(muted && muted.length > 0 ? { muted } : {}),
+            ...(muted.length ? { muted } : {}),
         };
     });
 }

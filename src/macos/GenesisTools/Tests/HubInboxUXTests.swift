@@ -26,6 +26,22 @@ private final class WriteLog: @unchecked Sendable {
 /// card's words, keys and states.
 final class HubInboxUXTests: XCTestCase {
     @MainActor
+    func testSessionTodoDecodesAsATaskWithItsOwnActions() throws {
+        let json = #"""
+            {"kind":"todo","id":"t_1_fixture","at":"2026-01-01T00:00:00Z","status":"waiting",
+             "task":{"id":"t_1_fixture","number":1,"title":"Check draft","summary":"Check draft",
+                     "truncated":false,"revision":1,"state":"open","updatedTs":"2026-01-01T00:00:00Z",
+                     "blocking":false,"owner":"human","sessionId":"fixture","provider":"codex",
+                     "sourceContext":{"sessionId":"fixture"}}}
+            """#
+        let item = try JSONDecoder().decode(InboxItem.self, from: Data(json.utf8))
+        let task = try XCTUnwrap(item.task)
+        XCTAssertFalse(item.isDecision)
+        XCTAssertEqual(task.addressee, "For you")
+        XCTAssertEqual(task.actions, [.acknowledge, .complete, .dismiss, .send])
+    }
+
+    @MainActor
     func testFormDraftsSurviveCardRecreationWithoutCrossingForms() {
         let inbox = HubInboxModel()
         let first = inbox.formDraft(for: "form-a")
@@ -43,6 +59,115 @@ final class HubInboxUXTests: XCTestCase {
         XCTAssertEqual(reopened.texts["question"], "A draft answer")
         XCTAssertEqual(reopened.fileTagsText["question"], "@src/example.swift")
         XCTAssertEqual(other.texts["question"], "Another answer")
+    }
+
+    @MainActor
+    func testHidingAFormDuringAnImageImportKeepsItsDraftAndBlocksEarlySubmission() async throws {
+        let inbox = HubInboxModel()
+        let form = try Self.decision("""
+        {"kind":"form","title":"Pick a sample","questions":[{"itemId":"sample","prompt":"Which sample?",
+         "multiple":false,"freeText":true,"required":true,"fileTags":false,"imagePaste":true,"choices":[]}]}
+        """)
+        let sent = expectation(description: "The staged form reaches its sender")
+        sent.assertForOverFulfill = true
+        let reloaded = expectation(description: "The confirmed answer releases its draft before reload")
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let bytes = Data([1, 2, 3])
+        inbox.captureWrite = { args in
+            XCTAssertTrue(args.contains("sample=\(file.path)"))
+            XCTAssertTrue(args.contains { $0.contains("The small basket") })
+            XCTAssertEqual(try Data(contentsOf: file), bytes)
+            sent.fulfill()
+            return ProcessCapture(status: 0, stdout: Data(#"{"channel":"form","delivered":true}"#.utf8), stderr: Data())
+        }
+        inbox.reloadAfterWrite = { reloaded.fulfill() }
+        let session = Self.session("orchard", items: [form])
+        inbox.received(InboxEnvelope(sessions: [session], elapsedMs: nil, pendingFormIDs: [form.id]))
+        let draft = inbox.formDraft(for: form.id)
+        draft.texts["sample"] = "The small basket"
+        XCTAssertTrue(draft.reserveImage(for: "sample"))
+        XCTAssertTrue(draft.importingImages)
+        inbox.answerForm(form, choices: [:], texts: draft.texts)
+        XCTAssertFalse(inbox.sending.contains(form.id), "The image has not finished staging.")
+        inbox.received(InboxEnvelope(sessions: [], elapsedMs: nil, pendingFormIDs: [form.id]))
+        try bytes.write(to: file)
+        let image = QaAttachedImage(path: file.path, thumbnail: NSImage(size: .init(width: 2, height: 2)))
+        defer { try? FileManager.default.removeItem(at: file) }
+        draft.finishImage(.staged(image), for: "sample")
+        inbox.received(InboxEnvelope(sessions: [session], elapsedMs: nil, pendingFormIDs: [form.id]))
+        let restored = inbox.formDraft(for: form.id)
+        XCTAssertFalse(restored.importingImages)
+        XCTAssertEqual(restored.texts["sample"], "The small basket")
+        let path = try XCTUnwrap(restored.images["sample"]?.first?.path)
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path)), bytes)
+        inbox.answerForm(form, choices: [:], texts: restored.texts, imagePaths: ["sample": [path]])
+        await fulfillment(of: [sent, reloaded], timeout: 3)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: path))
+        XCTAssertTrue(inbox.formDraft(for: form.id).texts.isEmpty)
+    }
+
+    @MainActor
+    func testConfirmedClosureAndExplicitDiscardCleanUpStagedAndInFlightImages() throws {
+        for explicitly in [false, true] {
+            let inbox = HubInboxModel()
+            let draft = inbox.formDraft(for: "ask_fixture")
+            draft.texts["sample"] = "A draft"
+            let staged = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            let late = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            defer {
+                try? FileManager.default.removeItem(at: staged)
+                try? FileManager.default.removeItem(at: late)
+            }
+            try Data([1]).write(to: staged)
+            try Data([2]).write(to: late)
+            let thumbnail = NSImage(size: .init(width: 2, height: 2))
+            XCTAssertTrue(draft.reserveImage(for: "sample"))
+            draft.finishImage(.staged(QaAttachedImage(path: staged.path, thumbnail: thumbnail)), for: "sample")
+            XCTAssertTrue(draft.reserveImage(for: "sample"))
+            inbox.received(InboxEnvelope(sessions: [], elapsedMs: nil))
+            XCTAssertTrue(inbox.formDraft(for: "ask_fixture") === draft, "An older CLI cannot confirm closure.")
+            if explicitly { inbox.discardFormDraft("ask_fixture") }
+            else { inbox.received(InboxEnvelope(sessions: [], elapsedMs: nil, pendingFormIDs: [])) }
+            draft.finishImage(.staged(QaAttachedImage(path: late.path, thumbnail: thumbnail)), for: "sample")
+            XCTAssertFalse(FileManager.default.fileExists(atPath: staged.path))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: late.path))
+            XCTAssertTrue(inbox.formDraft(for: "ask_fixture").texts.isEmpty)
+            XCTAssertFalse(draft.reserveImage(for: "sample"))
+        }
+    }
+
+    @MainActor
+    func testHeldDismissalRejectsAnOptionOrSendUntilUndo() throws {
+        let item = try Self.setDecision(draftOption: "a")
+        let session = Self.session("orchard", items: [item])
+        let inbox = HubInboxModel()
+        inbox.dismiss(item, in: session)
+        defer { inbox.undoDismiss(item) }
+        inbox.choose(item, in: session, letter: "b", note: nil, shift: false, command: false)
+        inbox.sendStaged([item.id], in: session)
+        XCTAssertTrue(inbox.staging.held.contains(item.id))
+        XCTAssertTrue(inbox.staging.writing.isEmpty)
+        XCTAssertTrue(inbox.sendingSessions.isEmpty)
+        XCTAssertEqual(inbox.letters(item), "a")
+        inbox.undoDismiss(item)
+        XCTAssertEqual(inbox.sendableIDs(session), [item.id])
+    }
+
+    @MainActor
+    func testAFormOffersEveryChoiceAtNarrowWidth() throws {
+        let form = try Self.decision("""
+        {"kind":"form","title":"Pick a sample","questions":[{"itemId":"sample","prompt":"Which sample?",
+         "multiple":false,"freeText":false,"required":true,"fileTags":false,"imagePaste":true,
+         "choices":[{"id":"a","label":"First basket of apples"},{"id":"b","label":"Second basket of pears"},
+                    {"id":"c","label":"Third basket of berries"}]}]}
+        """)
+        let inbox = HubInboxModel()
+        let card = InboxFormCard(inbox: inbox, item: form)
+            .frame(width: 300).padding(8).background(Color.black).environment(\.colorScheme, .dark)
+        let text = try Self.drawnText(Self.render(view: AnyView(card), name: "narrow-form", folderKey: "HUB_INBOX_SHOTS"))
+        for phrase in ["First basket of apples", "Second basket of pears", "Third basket of berries", "Send answer"] {
+            XCTAssertTrue(text.contains(phrase), text)
+        }
     }
 
     /// P4: the Decisions pane's caption follows the Decision click setting, and its empty text says what is empty.
@@ -620,7 +745,15 @@ final class HubInboxUXTests: XCTestCase {
             .padding(10)
             .background(Color.black)
             .environment(\.colorScheme, .dark)
-        let host = NSHostingView(rootView: AnyView(view))
+        return try render(view: AnyView(view), name: name, folderKey: "HUB_INBOX_SHOTS")
+    }
+
+    /// Any view hosted in a window that is never ordered front, drawn after a second of run loop; written to
+    /// `<folderKey>/<name>.png` when that variable is set.
+    @MainActor
+    static func render(view: AnyView, name: String, folderKey: String) throws -> NSBitmapImageRep {
+        _ = NSApplication.shared
+        let host = NSHostingView(rootView: view)
         let size = host.fittingSize
         let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: size.width, height: size.height),
                               styleMask: [.borderless], backing: .buffered, defer: false)
@@ -635,7 +768,7 @@ final class HubInboxUXTests: XCTestCase {
         host.layoutSubtreeIfNeeded()
         let rep = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         host.cacheDisplay(in: host.bounds, to: rep)
-        if let folder = ProcessInfo.processInfo.environment["HUB_INBOX_SHOTS"] {
+        if let folder = ProcessInfo.processInfo.environment[folderKey] {
             try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
             let url = URL(fileURLWithPath: folder).appendingPathComponent(name + ".png")
             try XCTUnwrap(rep.representation(using: .png, properties: [:])).write(to: url)

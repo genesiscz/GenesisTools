@@ -59,7 +59,25 @@ describe("updateTask", () => {
         );
         await expect(updateTask("hourly", { missedRun: { mode: "retry-at" } })).rejects.toThrow(/at least one time/);
         await expect(updateTask("missing", { priority: "low" })).rejects.toThrow(/not found/);
+        await expect(updateTask("hourly", { command: "  ", priority: "low" })).rejects.toThrow(
+            /command must not be empty/
+        );
         expect((await getTask("hourly"))?.priority).toBeUndefined();
+        expect((await getTask("hourly"))?.command).toBe("true");
+    });
+
+    test("replaces the command together with the schedule in one write", async () => {
+        const { registerTask } = await import("./register");
+        const { getTask, updateTask } = await import("./config");
+        await registerTask({
+            name: "purge",
+            command: "case x in y) exec true ;; esac",
+            every: "every day at 00:00",
+            overwrite: true,
+        });
+
+        await updateTask("purge", { command: "exec true", every: "every 2 hours" });
+        expect(await getTask("purge")).toMatchObject({ command: "exec true", every: "every 2 hours" });
     });
 });
 

@@ -139,8 +139,11 @@ final class MeetingsSidePanelTests: XCTestCase {
     /// The engine section of `listen`, with the presets above unless `presets` says otherwise; `files` exist.
     private func engine(_ listen: [String: JSONValue], presets: TonePresetList? = nil,
                         files: Set<String> = []) -> (SidePanelSection, [String: SidePanelRow]) {
+        // Its own threshold: the shared one is loaded by any test that renders the transcript pane, which would add
+        // the threshold row to this section.
         let section = SidePanelCatalog.engineSection(listen: .object(listen), presets: presets ?? .loaded(Self.presets),
-                                                     fileExists: { files.contains($0) })
+                                                     fileExists: { files.contains($0) },
+                                                     threshold: MeetingsApplyThreshold(defaults: UserDefaults(suiteName: "test.threshold.\(UUID().uuidString)")!, migrates: false))
         return (section, Dictionary(uniqueKeysWithValues: section.rows.map { ($0.id, $0) }))
     }
 
@@ -340,6 +343,14 @@ final class MeetingsSidePanelTests: XCTestCase {
         XCTAssertFalse(MeetingsRootView.panelHidesList(width: 1320, panelOpen: true))
         XCTAssertFalse(MeetingsRootView.panelHidesList(width: 900, panelOpen: false))
         XCTAssertFalse(MeetingsRootView.panelHidesList(width: 0, panelOpen: true), "before the first layout: three columns")
+        // w_21k9ux1b: below 1150 pt the sidebar steps aside in the same three columns, so the toolbar's sidebar button
+        // toggles the sidebar, not the meeting list; the places are a menu above the list while it is hidden.
+        XCTAssertTrue(MeetingsRootView.sidebarHides(width: 1149))
+        XCTAssertFalse(MeetingsRootView.sidebarHides(width: 1150))
+        XCTAssertEqual(MeetingsRootView.columns(sidebarHides: true), .doubleColumn)
+        XCTAssertEqual(MeetingsRootView.columns(sidebarHides: false), .all)
+        XCTAssertTrue(MeetingsRootView.listShowsPlaces(.doubleColumn))
+        XCTAssertFalse(MeetingsRootView.listShowsPlaces(.all), "the sidebar shows the places itself")
     }
 
     /// F8: a config write names the value it replaces, the same on the service and the command (decision 13).

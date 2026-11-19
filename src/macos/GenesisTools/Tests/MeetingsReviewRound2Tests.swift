@@ -161,22 +161,20 @@ final class MeetingsReviewRound2Tests: XCTestCase {
         XCTAssertNil(MeetingsSettingsModel.personIndex(of: PairedPerson(name: "Alex Example", email: nil, pairedBy: []), in: saved))
     }
 
-    // MARK: The seats editor keeps typed lists until Save (PR 809)
+    // MARK: Picked names stay whole through Save
 
-    func testTheSeatsDraftKeepsATypedCommaAndParsesOnSave() {
+    func testTheSeatsDraftKeepsACommaInsideAPickedName() {
         var seats = MeetingSeats()
         seats.room = ["Alice Example"]
         var draft = MeetingSeatsDraft(seats)
-        draft.room = "Alice Example, "
-        XCTAssertEqual(draft.room, "Alice Example, ", "the comma stays while the next name is typed")
-        draft.room = "Alice Example, Bob Example"
-        draft.addMicrophone()
-        draft.members[0] = "Carol Example,  Dana Example,"
-        XCTAssertEqual(draft.parsed.room, ["Alice Example", "Bob Example"])
-        XCTAssertEqual(draft.parsed.microphones?.first?.people, ["Carol Example", "Dana Example"])
+        draft.seatInRoom("Example, Robin")
+        draft.seatInRoom("robin.example")
+        draft.addMicrophone(.thisMac)
+        XCTAssertEqual(draft.parsed.room, ["Alice Example", "Example, Robin"])
+        XCTAssertEqual(draft.parsed.microphones?.first?.people, draft.parsed.room)
         draft.removeMicrophone(at: 0)
-        XCTAssertEqual(draft.members, [])
-        XCTAssertEqual(draft.parsed.microphones, [])
+        XCTAssertNil(draft.parsed.microphones)
+        XCTAssertEqual(seats.room, ["Alice Example"], "edits stay in the draft")
     }
 
     // MARK: The presence strip draws each stay apart (PR 807)

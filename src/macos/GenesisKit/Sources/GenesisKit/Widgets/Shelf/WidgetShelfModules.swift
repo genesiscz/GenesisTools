@@ -91,11 +91,10 @@ struct WidgetShelfModuleView: View {
                 .disabled(store.isBusy && !store.isCapturing)
                 .accessibilityIdentifier("shelf-capture")
                 Button(action: store.isRecording ? store.showRecordingControls : store.recordScreen) {
-                    Label(store.isRecording ? "Recording…" : "Record screen…", systemImage: "record.circle")
+                    Label(store.isRecording ? "Show recording controls" : ScreenRecorder.entryTitle, systemImage: "record.circle")
                 }
                 .disabled(store.isCapturing || !store.canRecord)
-                .instantTooltip(store.isRecording ? "Show the recording's controls"
-                                : "Record a window, an app or a display, then keep the movie here")
+                .instantTooltip(store.isRecording ? "Show the setup or running recording" : ScreenRecorder.entryDetail)
                 .accessibilityIdentifier("shelf-record")
             } else {
                 Button { store.chooseFiles() } label: { Label("Add files", systemImage: "plus") }

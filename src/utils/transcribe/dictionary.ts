@@ -130,8 +130,12 @@ function termForms(dictionary: ResolvedDictionary): Array<{ value: string; form:
  * Single words that are not a term or a spoken form but come close to one, after the Czech ending is stripped
  * (normalised edit distance on the stem). Only matches at `fuzzy.suggest` or above are returned.
  */
-export function fuzzyMatches(entries: TranscriptEntry[], dictionary: ResolvedDictionary): FuzzyMatch[] {
-    const threshold = (dictionary.fuzzy ?? DEFAULT_FUZZY).suggest;
+export function fuzzyMatches(options: {
+    entries: TranscriptEntry[];
+    dictionary: ResolvedDictionary;
+    threshold?: number;
+}): FuzzyMatch[] {
+    const { entries, dictionary, threshold = (options.dictionary.fuzzy ?? DEFAULT_FUZZY).suggest } = options;
     const forms = termForms(dictionary);
     const exact = new Set(forms.map((form) => form.form.toLowerCase()));
     const matches: FuzzyMatch[] = [];
@@ -147,7 +151,8 @@ export function fuzzyMatches(entries: TranscriptEntry[], dictionary: ResolvedDic
             let best: FuzzyMatch | undefined;
 
             for (const form of forms) {
-                if (Math.min(stem.length, form.stem.length) / Math.max(stem.length, form.stem.length) < 0.7) {
+                // Even a perfect shared prefix cannot score higher than this length ratio.
+                if (Math.min(stem.length, form.stem.length) / Math.max(stem.length, form.stem.length) < threshold) {
                     continue;
                 }
 
@@ -224,7 +229,7 @@ export function applyDictionary(
     const applyAt = (dictionary.fuzzy ?? DEFAULT_FUZZY).apply;
     const sure = new Map<number, FuzzyMatch[]>();
 
-    for (const match of fuzzyMatches(entries, dictionary).filter((candidate) => candidate.score >= applyAt)) {
+    for (const match of fuzzyMatches({ entries, dictionary, threshold: applyAt })) {
         sure.set(match.line, [...(sure.get(match.line) ?? []), match]);
     }
 

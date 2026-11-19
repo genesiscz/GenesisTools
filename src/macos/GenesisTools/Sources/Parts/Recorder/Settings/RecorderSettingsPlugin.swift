@@ -114,6 +114,10 @@ final class RecorderSettingsModel: ObservableObject {
     private func write(_ value: Any, _ key: String) {
         objectWillChange.send()
         defaults.set(value, forKey: key)
+        if broadcasts, key == MenuBarSettings.recorderKey {
+            MenuBarSettings.postChanged()
+            if MenuBarSettings.separateRecorder(in: defaults) { WidgetLaunch.ensureRunningIfShown() }
+        }
         changed()
     }
 

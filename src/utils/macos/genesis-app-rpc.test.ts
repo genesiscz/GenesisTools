@@ -1,11 +1,24 @@
 import { describe, expect, test } from "bun:test";
 import {
+    appCannotAnswer,
     exitedOrLingering,
     isGenesisAppRpcAvailable,
     isNotifyPostResult,
     parseReply,
 } from "@genesiscz/utils/macos/genesis-app-rpc";
 import { parseNotificationOptions } from "@genesiscz/utils/macos/notifications";
+
+describe("appCannotAnswer", () => {
+    test("only a missing app, a missing method and a foreign reply mean the app cannot answer", () => {
+        for (const code of ["unavailable", "method_unknown", "handshake"]) {
+            expect(appCannotAnswer({ code, message: "" })).toBe(true);
+        }
+
+        for (const code of ["timeout", "denied", "no_key", "refused_in_test", "internal"]) {
+            expect(appCannotAnswer({ code, message: "" })).toBe(false);
+        }
+    });
+});
 
 describe("parseReply", () => {
     test("unwraps a success envelope", () => {

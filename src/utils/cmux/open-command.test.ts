@@ -46,6 +46,33 @@ describe("raiseThenSend", () => {
         ]);
     });
 
+    test("types nothing when the caller's deadline passes during the settle wait", async () => {
+        const calls: string[] = [];
+        const deadline = new AbortController();
+
+        await expect(
+            raiseThenSend(
+                { workspaceId: WORKSPACE, surfaceId: SURFACE, payload: "cmd\n", signal: deadline.signal },
+                {
+                    selectWorkspace: async () => {
+                        calls.push("select");
+                    },
+                    send: async () => {
+                        calls.push("send");
+                    },
+                    focusWindow: async () => {
+                        calls.push("focus");
+                    },
+                    sleep: async () => {
+                        calls.push("sleep");
+                        deadline.abort(new Error("action deadline"));
+                    },
+                }
+            )
+        ).rejects.toThrow("action deadline");
+        expect(calls).toEqual(["select", "sleep"]);
+    });
+
     test("resolves the window from identify when none is given", async () => {
         const calls: string[] = [];
 

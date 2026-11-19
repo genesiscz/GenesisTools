@@ -77,6 +77,7 @@ example between two launchd restarts in a crash loop), `--uninstall` does nothin
 | `--missed-run [asap\|on-wake\|retry-at\|skip]` | Daily tasks: what a run missed while the Mac slept does |
 | `--retry-at <times>` | Comma-separated `HH:MM` times; implies `--missed-run retry-at` |
 | `--description <text>` | A one-line description |
+| `--command <cmd>` | The shell command the task runs; replaces the old one whole |
 | `--json` | Print the updated task as JSON |
 
 A flag that takes a choice, given with no value, prints the possible values and exits 1. `--missed-run asap` removes
@@ -130,8 +131,8 @@ scripts: the view you named, else `run` when you gave `--run`, `task` when you g
 | `--json` | Print the stats as JSON |
 
 ```bash
-# Every task: runs, OK, failed, timed out, killed, still open, failure rate, P50, P90, max, last run,
-# and the daemon's own health lines
+# Every task: runs, OK, failed, timed out, killed, still open, failure rate, P50, P90, max, CPU P50, CPU max,
+# last run, and the daemon's own health lines
 tools daemon stats --view overview
 
 # One task: counts, a duration histogram, runs per hour (or per day past 48 hours), the last failure
@@ -178,6 +179,7 @@ changes took 1669 ms.
 | `~/.genesis-tools/daemon/config.json` | The tasks |
 | `~/.genesis-tools/daemon/daemon.pid` | The running daemon's PID and command line |
 | `~/.genesis-tools/daemon/logs/<task>/` | One JSONL run log per run |
+| `~/.genesis-tools/daemon/task-cwd/` | One empty working folder per run, removed after it; a folder a task wrote into stays |
 | `~/.genesis-tools/daemon/logs/daemon-stderr.log` | The launchd job's stdout and stderr (launchd writes both here) |
 | `~/.genesis-tools/daemon/logs/daemon-stdout.log` | Only from an older plist; `logs --tail` follows it too |
 | `~/.genesis-tools/logs/<date>.log` | The day log: the daemon's structured log lines, among every tool's |
@@ -238,6 +240,11 @@ run, without a restart.
 
 Each run is `sh -c "<command>"` with stdin closed, in its own process group. The PATH starts with the checkout's root,
 so `tools <name>` in a command is that checkout's `tools`, then the daemon's PATH, then `/usr/sbin` and `/sbin`.
+Each run starts in a new empty folder of its own, `~/.genesis-tools/daemon/task-cwd/<task>-<run id>/`, so nothing
+another run writes changes it. The daemon removes it after the run; a folder the task wrote files into stays, with a
+warning in the day log. GenesisTools.app will not remember or auto-allow a vault-key request from a bun process whose
+working folder changed after it started, and the home folder changes every few seconds: from `$HOME`, 24 of 1771
+usage polls put up a Touch ID window (2026-11-16 to 11-17).
 
 - **Timeout**: 10 minutes unless `timeoutMs` says otherwise. At the timeout the daemon sends SIGTERM to the whole
   process group, and SIGKILL 3 s later. A task that cleans up on SIGTERM has 2 s for it. The grace was 500 ms, and 123
@@ -380,6 +387,11 @@ The launchd job gets only `HOME` and `PATH`. These variables set in your shell c
   stdout and exits 1. A wrong value writes nothing.
 - `run <name> --json`: `{ task, ok, exitCode, duration_ms, logFile, runId }`. `exitCode` is null when the run timed
   out. The process exits 0 when the task exited 0, else 1.
+- Every run log's `exit` record carries `usage: { userMs, systemMs, cpuMs, maxRssMb, wallMs }` since 2026-11-18: the
+  rusage of the task process, which includes every child it waited for, and `wallMs`, the process's own lifetime on a
+  monotonic clock (`duration_ms` also holds the wait for its output pipes). `cpuMs / wallMs` is the average number of
+  cores the run kept busy. `stats` shows it per run, and CPU P50 and CPU max per task in the overview and the task
+  view; older runs show none. A negative or non-finite figure in a log counts as missing.
 - `stats --json`: `DaemonStats` version 1 (`lib/stats.ts`). Times are ISO UTC, durations are ms. A run's status is
   `ok`, `failed`, `timedOut`, `killed` (no exit code and no timeout) or `unfinished` (no exit record). The
   GenesisTools settings window reads it, so fields are only added; `version` goes up when a meaning changes.

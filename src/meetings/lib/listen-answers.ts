@@ -1,5 +1,94 @@
-import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
+import type { MeetingItem, MeetingRecord } from "@genesiscz/utils/meetings/record";
+import { heardLineAt } from "@genesiscz/utils/transcribe/apply";
+import type { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
+import { termFixPattern } from "@genesiscz/utils/transcribe/terms";
 import { storedPresentAt } from "./person-stays";
+
+export interface DecidedLine {
+    index: number;
+    startSec?: number;
+    endSec?: number;
+    speaker: string;
+    text: string;
+}
+
+/** The source lines an item changes. Ranges keep the correction engine's inclusive end and label filter. */
+export function itemLines(item: MeetingItem, transcript: TranscriptLines): DecidedLine[] {
+    const matches = lineMatcher(item, transcript);
+
+    return transcript.entries.flatMap((entry, index) =>
+        matches(entry, index) && entry.text.trim()
+            ? [
+                  {
+                      index,
+                      startSec: entry.startSec,
+                      endSec: transcript.end(index),
+                      speaker: entry.speaker,
+                      text: entry.text,
+                  },
+              ]
+            : []
+    );
+}
+
+/**
+ * Whether a source line belongs to `item`. A term's pattern and anchors depend on the item only, so they are resolved
+ * once here and not again for every line; every anchor must still resolve, and the line must be one of them.
+ */
+function lineMatcher(
+    item: MeetingItem,
+    transcript: TranscriptLines
+): (entry: TranscriptLines["entries"][number], index: number) => boolean {
+    if (item.kind === "speaker-range" || item.kind === "label") {
+        return (entry) =>
+            entry.startSec !== undefined &&
+            entry.startSec >= item.fromSec &&
+            entry.startSec <= item.toSec &&
+            entry.speaker === item.label;
+    }
+
+    if (item.kind === "term") {
+        const found = termFixPattern({ ...item, replacement: item.proposed ?? item.heard });
+        // One test per line: a global pattern would carry its position from one line to the next.
+        const pattern = new RegExp(found.source, found.flags.replace("g", ""));
+        const local = item.scope === "line" || item.quote !== undefined || item.meaning !== undefined;
+        const anchorLine = item.evidence?.transcriptLine;
+        const anchors =
+            item.reach?.lines ??
+            (local && item.atSec !== undefined
+                ? [{ atSec: item.atSec, ...(typeof anchorLine === "number" ? { line: anchorLine } : {}) }]
+                : undefined);
+        const targets = anchors?.map((anchor) => heardLineAt(transcript, anchor, found));
+        const lines =
+            targets === undefined
+                ? undefined
+                : targets.every((target) => target.kind === "found")
+                  ? new Set(targets.flatMap((target) => (target.kind === "found" ? [target.index] : [])))
+                  : new Set<number>();
+        return (entry, index) => (lines === undefined || lines.has(index)) && pattern.test(entry.text);
+    }
+
+    if (item.kind === "join") {
+        return (entry) => entry.startSec === item.atSec;
+    }
+
+    return (entry) =>
+        entry.startSec !== undefined &&
+        entry.startSec >= item.fromSec &&
+        (entry.startSec < item.toSec || entry.startSec === item.fromSec);
+}
+
+/** A question decides its targets wherever they are, or its own half-open span when it has no targets. */
+export function decidedLines(options: {
+    record: MeetingRecord;
+    question: Extract<MeetingItem, { kind: "question" }>;
+    transcript: TranscriptLines;
+}): DecidedLine[] {
+    const { record, question, transcript } = options;
+    const targets = record.items.filter((item) => question.decides.includes(item.id));
+    const lines = (targets.length ? targets : [question]).flatMap((item) => itemLines(item, transcript));
+    return [...new Map(lines.map((line) => [line.index, line])).values()].sort((a, b) => a.index - b.index);
+}
 
 export function personKey(text: string): string {
     return nameTokens(text).sort().join(" ");

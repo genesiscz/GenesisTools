@@ -9,14 +9,34 @@ import XCTest
 @MainActor
 final class MeetingsTranscriptViewsTests: XCTestCase {
 
-    func testWordTimingFormValidatesItsInitialRangeAndEveryEdit() {
-        XCTAssertEqual(WordTimingOptions.range(from: "64.0", to: "84.0")?.0, 64)
-        XCTAssertEqual(WordTimingOptions.range(from: " 1796 ", to: "1816")?.1, 1816)
-        XCTAssertNil(WordTimingOptions.range(from: "64", to: "85"))
-        XCTAssertNil(WordTimingOptions.range(from: "-1", to: "10"))
-        XCTAssertNil(WordTimingOptions.range(from: "nan", to: "10"))
-        XCTAssertNil(WordTimingOptions.range(from: "1", to: "inf"))
-        XCTAssertNil(WordTimingOptions.range(from: "1", to: "1"))
+    /// Word timings ask for no number, model id or language code (audit M7): the range comes from the selected lines or
+    /// the heard line, and the model and the language are settings with their words.
+    func testWordTimingsTakeTheRangeFromTheSelectionOrTheHeardLine() {
+        typealias Range = WordTimingOptions.Range
+        let selected = Range.of(selected: [(start: 64, end: 70), (start: 70, end: 75.5)])
+        XCTAssertEqual(selected, Range(from: 64, to: 75.5, source: "the 2 selected lines"))
+        let long = Range.of(selected: [(start: 100, end: 110), (start: 110, end: 140)])
+        XCTAssertEqual(long, Range(from: 100, to: 120, source: "the 2 selected lines, cut at 20 s"), "never more than 20 s")
+        XCTAssertNil(Range.of(selected: [(start: nil, end: nil)]), "no timed line selected: the heard line decides")
+        let lines: [(start: Double?, end: Double?)] = [(start: 0, end: 30), (start: 30, end: 40), (start: 40, end: 52)]
+        XCTAssertEqual(Range.near(lines, position: 41), Range(from: 40, to: 60, source: "from the line at the heard spot"))
+        XCTAssertEqual(Range.near(lines, position: 0).from, 30, "a line longer than 20 s is skipped")
+        XCTAssertEqual(Range.near(lines, position: 500), Range(from: 32, to: 52, source: "the 20 s at the heard spot"),
+                       "past the end: the last 20 s of the transcript, never the first short line")
+        let longLast: [(start: Double?, end: Double?)] = [(start: 0, end: 10), (start: 10, end: 100)]
+        XCTAssertEqual(Range.near(longLast, position: 50), Range(from: 50, to: 70, source: "the 20 s at the heard spot"),
+                       "a long last line plays: the range starts at the heard spot, not at the meeting's start")
+
+        typealias Transcript = MeetingsPreferences.Transcript
+        XCTAssertEqual(Transcript.timingLanguageCode(.meeting, meeting: "cs"), "cs")
+        XCTAssertNil(Transcript.timingLanguageCode(.detect, meeting: "cs"))
+        XCTAssertEqual(Transcript.timingLanguageCode(.en, meeting: "cs"), "en")
+        XCTAssertEqual(WordTimingOptions.languageWords(.meeting, code: "cs"), "Czech, the meeting's language")
+        XCTAssertEqual(SidePanelWords.choice(Transcript.TimingModel.whisperTurbo.rawValue, key: Transcript.timingModel.key),
+                       "Whisper large v3 turbo", "the model's name, never its repository id")
+        let titles = SidePanelCatalog.windowSections(UserDefaults(suiteName: "timings-\(UUID())")!)
+            .first { $0.id == "transcript" }?.rows.map(\.title) ?? []
+        XCTAssertTrue(titles.contains("Word timings model") && titles.contains("Word timings language"), "\(titles)")
     }
 
     func testWordTimingHighlightsUseExactUTF16RangesAndKeepUntimedLineFallback() {
@@ -359,6 +379,45 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         XCTAssertEqual(TranscriptAvatar.initials("…"), "?")
     }
 
+    /// U8: the pointer on a line never moves the lines below it. "Play from 00:10" stood beside the text and took about
+    /// 90 pt of its width, so the text wrapped again, the line grew, and every line under it jumped down.
+    func testALineKeepsItsSizeWithThePointerOnIt() throws {
+        let text = String(repeating: "We can rename the staging pipeline before the release, or keep the old name. ", count: 5)
+        let line = TranscriptBlockLine(id: "l1", index: 0, startSec: 10, endSec: 40, text: text)
+        let rest = try lineFrame(line, hovering: false)
+        let hovered = try lineFrame(line, hovering: true)
+        XCTAssertGreaterThan(rest.height, 60, "the line wraps over several rows at 360 pt: \(rest)")
+        XCTAssertEqual(hovered.height, rest.height, accuracy: 0.5, "the pointer changed the line's height: \(rest) to \(hovered)")
+        XCTAssertEqual(hovered.width, rest.width, accuracy: 0.5, "the pointer changed the line's width: \(rest) to \(hovered)")
+    }
+
+    /// One transcript line at `width` in a window that never shows and takes no pointer; its frame from `FrameProbe`.
+    private func lineFrame(_ line: TranscriptBlockLine, hovering: Bool, width: CGFloat = 360) throws -> CGRect {
+        FrameProbe.enabled = true
+        FrameProbe.reset()
+        defer { FrameProbe.enabled = false; FrameProbe.reset() }
+        let root = VStack(spacing: 0) {
+            TranscriptBlockLineView(line: line, speaker: "Alice Example", heard: false, wordRange: nil, selected: false,
+                                    past: false, play: { _ in }, select: { _, _ in }, selectWords: { _, _ in },
+                                    hovering: hovering)
+                .frameProbe("transcript.line")
+            Spacer(minLength: 0)
+        }
+        .frame(width: width, height: 400, alignment: .top)
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 400), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.alphaValue = 0
+        window.ignoresMouseEvents = true
+        window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
+        window.contentView = NSHostingView(rootView: root)
+        window.orderFrontRegardless()
+        defer { window.orderOut(nil); window.close() }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+        return try XCTUnwrap(FrameProbe.frames["transcript.line"], "the line reported its frame")
+    }
+
     func testSnapshotTranscriptBlocks() throws {
         var blocks = TranscriptBlock.build(from: Self.entries, durationSec: 3300,
                                            marks: ["l2": [.unclearSpeaker], "l4": [.corrected], "l7": [.commented]])
@@ -523,6 +582,96 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         let choices = SpeakerTalkTimeLanes.bannerChoices(merged[0], questions: near)
         XCTAssertEqual(choices.map(\.id), ["q7", "q9"])
         XCTAssertEqual(choices.map(\.title), ["Q7 at 06:40", "Q9 at 07:40"])
+    }
+
+    /// U2: a "?" banner answers its question where it stands ("the ? should be clickable so i can pick no?"). Its menu is
+    /// the question's choices without Skip, a divider and "Show in Items"; a merged banner has one submenu per question.
+    func testABannerMenuOffersItsQuestionsChoicesAndTheWayToItsRow() {
+        let detail = MeetingDetailModel(id: "m", window: nil)
+        XCTAssertEqual(Self.titles(reviewChoiceItems(for: TimelineFixture.questionRow, detail: detail)),
+                       ["Mira Holt", "Jonas Petr", "—", "Show in Items"], "every choice but Skip, then the way to the row")
+
+        let near = [TalkTimeQuestion(id: "q7", atSec: 400, label: "Q7"), TalkTimeQuestion(id: "q9", atSec: 460, label: "Q9")]
+        let menu: (String) -> [MenuButtonItem] = { id in [.action("Answer \(id)") {}] }
+        let merged = TalkTimeLayout.banners(near, durationSec: 1000, width: 500)
+        XCTAssertEqual(merged.count, 1, "the two questions share one banner")
+        XCTAssertEqual(Self.titles(SpeakerTalkTimeLanes.bannerItems(merged[0], questions: near, menu: menu)),
+                       ["Q7 at 06:40 ▸ Answer q7", "Q9 at 07:40 ▸ Answer q9"])
+        let single = TalkTimeLayout.banners([near[0]], durationSec: 1000, width: 500)
+        XCTAssertEqual(Self.titles(SpeakerTalkTimeLanes.bannerItems(single[0], questions: near, menu: menu)), ["Answer q7"],
+                       "one question opens its own menu at once")
+    }
+
+    /// U7: an open chip that no question covers offered nothing under "Who said this?", and then "Rename Alice Example for
+    /// this meeting…" for a person it had just said it does not know. It now offers the covering suggestion with its
+    /// score, the meeting's people from the seats, and "Somebody else…"; a name or a guess keeps its rename.
+    func testAnOpenChipWithoutAQuestionOffersTheSuggestionAndThePeopleButNoRename() throws {
+        let detail = MeetingDetailModel(id: "m", window: nil)
+        detail.settleDecisionRecord(try JSONDecoder().decode(MeetingRecordView.self, from: Data(Self.openChipRecord.utf8)))
+        var picked: [SpeakerChip.PickerMode] = []
+        let open = SpeakerChip.menuItems(.open(label: "Speaker 5", candidates: []), speaker: "Speaker 5", startSec: 10,
+                                         play: { _ in }, detail: detail, pick: { picked.append($0) })
+        XCTAssertEqual(Self.titles(open), ["(Who said this?)", "Alice Example (suggested, 85 % sure)", "—", "Bob Example",
+                                           "Carol Example", "Somebody else…", "—", "Play from 00:10"],
+                       "the open suggestion first (not the rejected one), then the seats once each")
+        XCTAssertFalse(Self.titles(open).contains { $0.hasPrefix("Rename") }, "a chip that asks who it is offers no rename")
+        Self.run("Somebody else…", in: open)
+        XCTAssertEqual(picked, [.assign], "Somebody else opens the person picker that assigns the stretch")
+
+        let voice = SpeakerChip.menuItems(.open(label: "Speaker 5", candidates: []), speaker: "Speaker 5", startSec: 120,
+                                          play: nil, detail: detail, pick: { _ in })
+        XCTAssertEqual(Self.titles(voice).dropFirst().first, "Dan Example (by voice 0.61)",
+                       "the cosine from the evidence, never a percent and never the rule's gate")
+
+        detail.rows = .loaded(ReviewRows(meeting: "m", rows: [TimelineFixture.questionRow],
+                                         hidden: .init(lowPriority: 0, minPriority: 0)))
+        let asked = SpeakerChip.menuItems(.open(label: nil, candidates: []), speaker: "Speaker 3", startSec: 6590,
+                                          play: nil, detail: detail, pick: { _ in })
+        XCTAssertEqual(Self.titles(asked), ["(Who said this?)", "Mira Holt", "Jonas Petr", "Somebody else…", "—", "Show in Items"],
+                       "a covering question offers its own answers")
+
+        let guess = SpeakerChip.menuItems(.guess("Alice Example", percent: 63), speaker: "Speaker 5", startSec: 10,
+                                          play: nil, detail: detail, pick: { _ in })
+        XCTAssertTrue(Self.titles(guess).contains("Rename Speaker 5 for this meeting…"), "\(Self.titles(guess))")
+    }
+
+    /// Bob in the room; Carol and Alice remote. Speaker 5 has an open suggestion (Alice, 85 %) and a rejected one (Erin)
+    /// over 0 to 40 s, a voice model's suggestion (Dan, cosine 0.61, the rule's gate 0.8 as its confidence) over 100 to
+    /// 140 s, and a question covers 6588 to 6602 s.
+    private static let openChipRecord = #"""
+    {"id":"m","title":"Practice","labels":[],"start":"2026-01-01T10:00:00Z","context":[],"sources":{},
+     "speakers":{"labels":{}},
+     "seats":{"room":["Bob Example"],"remote":[{"name":"Carol Example","fromSec":1.4},{"name":"Alice Example","fromSec":1.4}]},
+     "items":[
+      {"id":"i622","kind":"speaker-range","status":"suggested","confidence":0.85,"rules":["agent"],"label":"Speaker 5",
+       "fromSec":0,"toSec":40,"speaker":"Alice Example"},
+      {"id":"i623","kind":"speaker-range","status":"rejected","confidence":0.95,"rules":["agent"],"label":"Speaker 5",
+       "fromSec":0,"toSec":40,"speaker":"Erin Example"},
+      {"id":"overlap","kind":"speaker-range","status":"suggested","confidence":0.99,"label":"Speaker 6",
+       "fromSec":0,"toSec":40,"speaker":"Erin Example"},
+      {"id":"i700","kind":"speaker-range","status":"suggested","confidence":0.8,"rules":["voice-embedding"],
+       "label":"Speaker 5","fromSec":100,"toSec":140,"speaker":"Dan Example","evidence":{"score":0.61}},
+      {"id":"q12","kind":"question","status":"suggested","about":"speaker","fromSec":6588,"toSec":6602,
+       "question":"Who says this?"}
+     ]}
+    """#
+
+    /// A menu's entries as text: an action by its title, a note in brackets, a divider as "—", and a submenu's entries
+    /// after its title and "▸".
+    private static func titles(_ items: [MenuButtonItem]) -> [String] {
+        items.flatMap { item -> [String] in
+            switch item {
+            case .action(let title, _, _, _, _, _, _): return [title]
+            case .submenu(let title, let inner): return titles(inner).map { "\(title) ▸ \($0)" }
+            case .note(let text): return ["(\(text))"]
+            case .divider: return ["—"]
+            }
+        }
+    }
+
+    /// Runs the action entry with `title`, as a click on it does.
+    private static func run(_ title: String, in items: [MenuButtonItem]) {
+        for case .action(let name, _, _, _, _, _, let action) in items where name == title { action() }
     }
 
     func testRulerMarksUseARoundStep() {

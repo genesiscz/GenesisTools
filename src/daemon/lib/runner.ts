@@ -1,11 +1,14 @@
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, rmdirSync } from "node:fs";
 import { delimiter, join, resolve } from "node:path";
+import { launcherConfigForSavedCommand } from "@genesiscz/utils/bun/launcher-config";
 import { formatLocalFileTimestamp } from "@genesiscz/utils/date";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { type PriorityTools, priorityShellArgv } from "@genesiscz/utils/process/priority";
+import { taskWorkingDir } from "./config";
 import { taskLogDirName } from "./run-log-name";
-import type { DaemonTask, RunContext, RunResult, TaskPriority } from "./types";
+import type { DaemonTask, RunContext, RunResult, RunUsage, TaskPriority } from "./types";
 
 /** This checkout's root, where the `tools` entry lives. */
 const REPO_ROOT = resolve(import.meta.dir, "../../..");
@@ -85,43 +88,51 @@ async function streamLines(
     }
 }
 
-const PERL = "/usr/bin/perl";
-const TASKPOLICY = "/usr/sbin/taskpolicy";
+/**
+ * The argv a task runs with, by priority (`priorityShellArgv`, src/utils/process/priority.ts). The launchd job is
+ * `ProcessType=Standard` (launchd.ts); a plist installed before that is `Background`, and then every child inherits
+ * background QoS (throttled CPU and disk), which `high` clears.
+ */
+export function taskArgv(command: string, priority: TaskPriority, onDisk?: PriorityTools): string[] {
+    return priorityShellArgv(command, priority, onDisk);
+}
 
 /**
- * Lifts the process out of darwin background (`setpriority(PRIO_DARWIN_PROCESS, 0, 0)`, PRIO_DARWIN_PROCESS = 4),
- * then execs the task. A process may clear its own background state even when it inherited it, which `taskpolicy -B`
- * cannot do for another process (measured 2026-10-12: a `taskpolicy -b` child stays at priority 4 after
- * `taskpolicy -B -p`, and reaches 31 after clearing its own).
+ * Bun's rusage of a reaped child (microseconds, bytes) as the run log's usage record, with `wallMs`, the child's own
+ * lifetime on a monotonic clock.
  */
-const RAISE_FROM_BACKGROUND =
-    'setpriority(4, 0, 0) or warn "setpriority: $!\\n"; exec { $ARGV[0] } @ARGV or die "exec $ARGV[0]: $!\\n"';
+export function runUsage(raw: ReturnType<Bun.Subprocess["resourceUsage"]>, wallMs: number): RunUsage | undefined {
+    if (!raw) {
+        return undefined;
+    }
+
+    const userMs = Math.round(Number(raw.cpuTime.user) / 1000);
+    const systemMs = Math.round(Number(raw.cpuTime.system) / 1000);
+    return {
+        userMs,
+        systemMs,
+        cpuMs: userMs + systemMs,
+        maxRssMb: Math.round(Number(raw.maxRSS) / 1_048_576),
+        wallMs: Math.round(wallMs),
+    };
+}
 
 /**
- * The argv a task runs with, by priority. The launchd job is `ProcessType=Standard` (launchd.ts); a plist installed
- * before that is `Background`, and then every child inherits background QoS (throttled CPU and disk):
- * - `low`: `taskpolicy -b`, background QoS whatever the daemon's own QoS is. Without /usr/sbin/taskpolicy (any
- *   system but macOS) it runs as `normal`.
- * - `normal`: the daemon's QoS.
- * - `high`: the child clears any inherited background state before the command starts, so it is never throttled.
- *   Without /usr/bin/perl it runs as `normal`.
+ * Removes a run's working folder when the run left it empty. Files a task wrote there stay, with a warning naming the
+ * folder: they are the task's output, and no later run starts in that folder.
  */
-export function taskArgv(
-    command: string,
-    priority: TaskPriority,
-    onDisk = { perl: existsSync(PERL), taskpolicy: existsSync(TASKPOLICY) }
-): string[] {
-    const shell = ["sh", "-c", command];
+function releaseRunWorkingDir(cwd: string, taskName: string): void {
+    try {
+        rmdirSync(cwd);
+    } catch (error) {
+        const code = error instanceof Error && "code" in error ? error.code : undefined;
 
-    if (priority === "low" && onDisk.taskpolicy) {
-        return [TASKPOLICY, "-b", ...shell];
+        if (code === "ENOTEMPTY" || code === "EEXIST") {
+            logger.warn({ task: taskName, cwd }, "[daemon] the task left files in its working folder; they stay there");
+        } else {
+            logger.warn({ task: taskName, cwd, error }, "[daemon] the run's working folder could not be removed");
+        }
     }
-
-    if (priority === "high" && onDisk.perl) {
-        return [PERL, "-e", RAISE_FROM_BACKGROUND, ...shell];
-    }
-
-    return shell;
 }
 
 export async function runTask(
@@ -152,7 +163,7 @@ export async function runTask(
         ...(context.scheduledFor ? { scheduledFor: context.scheduledFor.toISOString() } : {}),
     });
 
-    const argv = taskArgv(task.command, context.priority);
+    const argv = taskArgv(launcherConfigForSavedCommand(task.command), context.priority);
     logger.info(
         { task: task.name, attempt, timeoutMs, logFile, reason: context.reason, priority: context.priority },
         "[daemon] spawning task process"
@@ -164,13 +175,18 @@ export async function runTask(
     // it, killing the Bun.spawn child only reaps `sh`; a runaway grandchild
     // survives, holds the stdout pipe open, and hangs the result forever.
     const inherited = env.getProcessEnv();
+    // A folder of this run's own, new and empty: what one run writes there never reaches another task or a later run.
+    const cwd = join(taskWorkingDir(), `${taskLogDirName(task.name)}-${runId}`);
+    mkdirSync(cwd, { recursive: true });
     const proc = Bun.spawn(argv, {
+        cwd,
         env: { ...inherited, PATH: taskPath(inherited.PATH) },
         stdout: "pipe",
         stderr: "pipe",
         stdin: "ignore",
         detached: true,
     });
+    const spawnedAt = performance.now();
 
     // POSIX: negative pid signals the whole process group (sh + descendants).
     // pid-verified: negative pid = the process group of a child this function just spawned
@@ -216,6 +232,7 @@ export async function runTask(
     timeoutTimer.unref?.();
 
     const rawExitCode = await proc.exited;
+    const wallMs = performance.now() - spawnedAt;
     exited = true;
     clearTimeout(timeoutTimer);
 
@@ -232,6 +249,8 @@ export async function runTask(
 
     const duration_ms = Date.now() - startMs;
     const exitCode = timedOut ? null : rawExitCode;
+    const usage = runUsage(proc.resourceUsage(), wallMs);
+    releaseRunWorkingDir(cwd, task.name);
 
     appendJsonl(logFile, {
         type: "exit",
@@ -239,13 +258,17 @@ export async function runTask(
         code: exitCode,
         duration_ms,
         ...(timedOut ? { timedOut: true } : {}),
+        ...(usage ? { usage } : {}),
     });
 
     if (timedOut) {
-        logger.warn({ task: task.name, attempt, duration_ms, logFile }, "[daemon] task process timed out");
+        logger.warn({ task: task.name, attempt, duration_ms, usage, logFile }, "[daemon] task process timed out");
     } else {
-        logger.info({ task: task.name, attempt, exitCode, duration_ms, logFile }, "[daemon] task process exited");
+        logger.info(
+            { task: task.name, attempt, exitCode, duration_ms, usage, logFile },
+            "[daemon] task process exited"
+        );
     }
 
-    return { exitCode, duration_ms, logFile, runId };
+    return { exitCode, duration_ms, logFile, runId, ...(usage ? { usage } : {}) };
 }

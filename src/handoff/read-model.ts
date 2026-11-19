@@ -1,19 +1,23 @@
 import { Database } from "bun:sqlite";
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { parseJsonlChunk } from "@genesiscz/utils/jsonl";
 import { logger } from "@genesiscz/utils/logger";
-import { genesisToolsDir } from "@genesiscz/utils/storage/root";
+import { ingestLegacyHandoff } from "@genesiscz/utils/work/legacy/shadow";
+import { openWorkDb, workDbPath } from "@genesiscz/utils/work/store/db";
 import { applyHandoffEvent } from "./fold";
-import { handoffLogDir } from "./log-store";
+import { appendHandoffEvents, handoffLogDir } from "./log-store";
 import type { FoldOutcome, Handoff, HandoffEvent, HandoffPublicEvent } from "./types";
 
 const log = logger.child({ component: "handoff:read-model" });
 
-/** Same db the /qa dashboard opens — handoffs ARE the QA family (spec §6.2). */
+/**
+ * The handoff tables live in the work store since P6 of the work-items spec; before that they lived in the question
+ * store (`question/qa.db`), which still holds the old copy, never written again.
+ */
 export function handoffDbPath(): string {
-    return genesisToolsDir("question", "qa.db");
+    return workDbPath();
 }
 
 function ensureColumn(db: Database, table: string, column: string, ddl: string): void {
@@ -85,6 +89,18 @@ function createTables(db: Database): { eventsTableCreated: boolean } {
         payload    TEXT NOT NULL
     );`);
     db.exec("CREATE INDEX IF NOT EXISTS idx_handoff_events_handoff ON handoff_events(handoff_id, ts);");
+    // Private journal. Unlike handoff_events, these payloads must retain the fold credentials.
+    db.exec(`CREATE TABLE IF NOT EXISTS handoff_replay (
+        seq INTEGER PRIMARY KEY,
+        uid TEXT NOT NULL UNIQUE,
+        payload TEXT NOT NULL,
+        copy_to TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_handoff_replay_pending ON handoff_replay(seq) WHERE copy_to IS NOT NULL;
+    CREATE TABLE IF NOT EXISTS handoff_transition (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        copy_until INTEGER NOT NULL
+    );`);
     ensureColumn(
         db,
         "handoffs",
@@ -100,11 +116,13 @@ function createTables(db: Database): { eventsTableCreated: boolean } {
     return { eventsTableCreated: !hadEventsTable && tableExists(db, "handoff_events") };
 }
 
+export function ensureHandoffModel(db: Database): void {
+    createTables(db);
+}
+
 export function openHandoffModel(dbPath?: string): Database {
     const path = dbPath ?? handoffDbPath();
-    mkdirSync(dirname(path), { recursive: true });
-    const db = new Database(path);
-    db.exec("PRAGMA journal_mode = WAL;");
+    const db = openWorkDb(path);
     db.exec("PRAGMA busy_timeout = 5000;");
     const { eventsTableCreated } = createTables(db);
 
@@ -120,6 +138,34 @@ export function openHandoffModel(dbPath?: string): Database {
 
     log.debug({ path }, "handoff read-model opened");
     return db;
+}
+
+/** Apply unseen log entries to an in-memory snapshot for a read-only action preview. */
+export function withHandoffPreview<T>(options: { dbPath?: string; base?: string }, fn: (db: Database) => T): T {
+    const path = options.dbPath ?? handoffDbPath();
+    let preview: Database;
+    if (existsSync(path)) {
+        const source = new Database(path, { readonly: true });
+        try {
+            const image = source.serialize();
+            // SQLite cannot deserialize a WAL-mode image. These are the file header's read/write version bytes.
+            // https://www.sqlite.org/c3ref/deserialize.html
+            image[18] = 1;
+            image[19] = 1;
+            preview = Database.deserialize(image);
+        } finally {
+            source.close();
+        }
+    } else {
+        preview = new Database(":memory:");
+    }
+    try {
+        createTables(preview);
+        catchUpHandoffs(preview, options.base);
+        return fn(preview);
+    } finally {
+        preview.close();
+    }
 }
 
 interface HandoffRow {
@@ -281,6 +327,13 @@ export function listHandoffRows(db: Database, opts: { statuses?: string[]; proje
     return (db.query(sql).all(...params) as HandoffRow[]).map(rowToHandoff);
 }
 
+function recordReplay(db: Database, events: readonly HandoffEvent[], copyTo: string | null): void {
+    const put = db.prepare("INSERT OR IGNORE INTO handoff_replay (uid, payload, copy_to) VALUES (?, ?, ?)");
+    for (const event of events) {
+        put.run(event.uid, SafeJSON.stringify(event, { strict: true }), copyTo);
+    }
+}
+
 /** The fold's verdict for one event, rebuilt from its stored columns. */
 function toOutcome(row: { ok: number; error: string | null; extra: string | null }): FoldOutcome {
     const extra = row.extra !== null ? (SafeJSON.parse(row.extra, { strict: true }) as Partial<FoldOutcome>) : {};
@@ -331,6 +384,14 @@ function rowToPublicEvent(row: EventRow): HandoffPublicEvent {
     }
 
     return { ...event, outcome: toOutcome({ ok: row.ok, error: row.error, extra: row.extra }) };
+}
+
+/** The insertion order is the order in which the model applied the events. */
+export function* iterateHandoffEvents(db: Database, handoffId: string): Iterable<HandoffPublicEvent> {
+    const rows = db.query<EventRow, [string]>(`${EVENT_SELECT} WHERE e.handoff_id = ? ORDER BY e.rowid`);
+    for (const row of rows.iterate(handoffId)) {
+        yield rowToPublicEvent(row);
+    }
 }
 
 export function listHandoffEvents({
@@ -397,7 +458,7 @@ export function listHandoffEvents({
  * the offset it landed on, not that it reached THIS read's end, so each file
  * is retried from the freshly committed offset until it is fully caught up.
  */
-export function catchUpHandoffs(db: Database, base?: string): void {
+export function catchUpHandoffs(db: Database, base?: string, replayPrefix?: ReadonlyMap<string, number>): void {
     const dir = handoffLogDir(base);
 
     if (!existsSync(dir)) {
@@ -415,7 +476,8 @@ export function catchUpHandoffs(db: Database, base?: string): void {
             let size: number;
 
             try {
-                size = statSync(file).size;
+                const currentSize = statSync(file).size;
+                size = replayPrefix === undefined ? currentSize : Math.min(currentSize, replayPrefix.get(file) ?? 0);
             } catch (err) {
                 log.warn({ err, file }, "skipping handoff log file — stat failed (likely removed concurrently)");
                 break;
@@ -454,7 +516,15 @@ export function catchUpHandoffs(db: Database, base?: string): void {
                 break;
             }
 
-            const applied = applyHandoffBatch({ db, file, prevOffset: prev, events, consumed, base });
+            const applied = applyHandoffBatch({
+                db,
+                file,
+                prevOffset: prev,
+                events,
+                consumed,
+                base,
+                rebuilding: replayPrefix !== undefined,
+            });
 
             if (applied) {
                 break;
@@ -499,6 +569,7 @@ export interface ApplyBatchInput {
     events: HandoffEvent[];
     consumed: number;
     base?: string;
+    rebuilding?: boolean;
 }
 
 /**
@@ -506,15 +577,17 @@ export interface ApplyBatchInput {
  * another process advanced the offset first — the batch then already folded
  * elsewhere and its outcomes are readable via getEventOutcome.
  */
-export function applyHandoffBatch({ db, file, prevOffset, events, consumed, base }: ApplyBatchInput): boolean {
+export function applyHandoffBatch({
+    db,
+    file,
+    prevOffset,
+    events,
+    consumed,
+    base,
+    rebuilding,
+}: ApplyBatchInput): boolean {
     const getOff = db.prepare("SELECT byte_offset FROM handoff_ingest_offsets WHERE file = ?");
     const setOff = db.prepare("INSERT OR REPLACE INTO handoff_ingest_offsets (file, byte_offset) VALUES (?, ?)");
-    const putOutcome = db.prepare(
-        "INSERT OR REPLACE INTO handoff_event_results (uid, handoff_id, ev, ok, error, extra, ts) VALUES (?,?,?,?,?,?,?)"
-    );
-    const putEvent = db.prepare(
-        "INSERT OR IGNORE INTO handoff_events (uid, handoff_id, ts, ev, payload) VALUES (?,?,?,?,?)"
-    );
     let applied = false;
 
     const tx = db.transaction(() => {
@@ -526,65 +599,22 @@ export function applyHandoffBatch({ db, file, prevOffset, events, consumed, base
             return;
         }
 
-        const states = new Map<string, Handoff | null>();
-
-        for (const event of events) {
-            if (!states.has(event.id)) {
-                states.set(event.id, getHandoffById(db, event.id));
-            }
-
-            const previous = states.get(event.id) ?? null;
-            const { state, outcome } = applyHandoffEvent(previous, event, { base });
-            states.set(event.id, state);
-            const publicEvent =
-                event.ev === "modify_handoff" && event.project !== undefined
-                    ? { ...event, fromProject: previous?.project ?? null }
-                    : event;
-
-            if (event.ev === "post" && !outcome.applied) {
-                log.error({ id: event.id, file }, "duplicate handoff post id — first wins, event skipped");
-            }
-
-            const extra: Partial<FoldOutcome> = {};
-
-            if (outcome.info !== undefined) {
-                extra.info = outcome.info;
-            }
-
-            if (outcome.noop !== undefined) {
-                extra.noop = outcome.noop;
-            }
-
-            if (outcome.assignedTaskIds !== undefined) {
-                extra.assignedTaskIds = outcome.assignedTaskIds;
-            }
-
-            putOutcome.run(
-                event.uid,
-                event.id,
-                event.ev,
-                outcome.applied ? 1 : 0,
-                outcome.error ?? null,
-                Object.keys(extra).length > 0 ? SafeJSON.stringify(extra, { strict: true }) : null,
-                event.ts
+        if (rebuilding) {
+            const recorded = db.prepare("SELECT 1 FROM handoff_replay WHERE uid = ?");
+            foldEvents(
+                db,
+                events.filter((event) => recorded.get(event.uid) === null),
+                base,
+                file
             );
-
-            // editId stripped at insert — never stored in handoff_events (G3).
-            putEvent.run(
-                event.uid,
-                event.id,
-                event.ts,
-                event.ev,
-                SafeJSON.stringify(toPublicEvent(publicEvent), { strict: true })
+        } else {
+            const outcomes = foldEvents(db, events, base, file);
+            recordReplay(
+                db,
+                events.filter((event) => outcomes.has(event.uid)),
+                null
             );
         }
-
-        for (const state of states.values()) {
-            if (state !== null) {
-                upsertHandoff(db, state);
-            }
-        }
-
         setOff.run(file, prevOffset + consumed);
         applied = true;
     });
@@ -597,13 +627,209 @@ export function applyHandoffBatch({ db, file, prevOffset, events, consumed, base
     return applied;
 }
 
-/** Drop + full re-fold (§6.1 rule 6). Also clears + refills handoff_events (G1). */
+/**
+ * Folds events into the tables of the caller's transaction: each event's outcome and public copy, then the folded
+ * handoffs. An event whose uid is already stored is skipped: since the work store commits an event first and copies
+ * it into the log after (P6), the log carries events the store already folded. In the work store the fold also brings
+ * the items up to date (the ingest of the shadow mode, now in the same transaction).
+ */
+export function foldEvents(
+    db: Database,
+    events: readonly HandoffEvent[],
+    base?: string,
+    file?: string
+): Map<string, FoldOutcome> {
+    const putOutcome = db.prepare(
+        "INSERT OR REPLACE INTO handoff_event_results (uid, handoff_id, ev, ok, error, extra, ts) VALUES (?,?,?,?,?,?,?)"
+    );
+    const putEvent = db.prepare(
+        "INSERT OR IGNORE INTO handoff_events (uid, handoff_id, ts, ev, payload) VALUES (?,?,?,?,?)"
+    );
+    const states = new Map<string, Handoff | null>();
+    const outcomes = new Map<string, FoldOutcome>();
+    const folded = new Map<string, { event: HandoffEvent; outcome: FoldOutcome }[]>();
+
+    for (const event of events) {
+        if (getEventOutcome(db, event.uid) !== null) {
+            continue;
+        }
+
+        if (!states.has(event.id)) {
+            states.set(event.id, getHandoffById(db, event.id));
+        }
+
+        const previous = states.get(event.id) ?? null;
+        const { state, outcome } = applyHandoffEvent(previous, event, { base });
+        states.set(event.id, state);
+        outcomes.set(event.uid, outcome);
+        const bucket = folded.get(event.id);
+        if (bucket === undefined) {
+            folded.set(event.id, [{ event, outcome }]);
+        } else {
+            bucket.push({ event, outcome });
+        }
+        const publicEvent =
+            event.ev === "modify_handoff" && event.project !== undefined
+                ? { ...event, fromProject: previous?.project ?? null }
+                : event;
+
+        if (event.ev === "post" && !outcome.applied) {
+            log.error({ id: event.id, file }, "duplicate handoff post id — first wins, event skipped");
+        }
+
+        const extra: Partial<FoldOutcome> = {};
+
+        if (outcome.info !== undefined) {
+            extra.info = outcome.info;
+        }
+
+        if (outcome.noop !== undefined) {
+            extra.noop = outcome.noop;
+        }
+
+        if (outcome.assignedTaskIds !== undefined) {
+            extra.assignedTaskIds = outcome.assignedTaskIds;
+        }
+
+        putOutcome.run(
+            event.uid,
+            event.id,
+            event.ev,
+            outcome.applied ? 1 : 0,
+            outcome.error ?? null,
+            Object.keys(extra).length > 0 ? SafeJSON.stringify(extra, { strict: true }) : null,
+            event.ts
+        );
+
+        // editId stripped at insert — never stored in handoff_events (G3).
+        putEvent.run(
+            event.uid,
+            event.id,
+            event.ts,
+            event.ev,
+            SafeJSON.stringify(toPublicEvent(publicEvent), { strict: true })
+        );
+    }
+
+    for (const state of states.values()) {
+        if (state !== null) {
+            upsertHandoff(db, state);
+        }
+    }
+
+    if (tableExists(db, "items")) {
+        for (const [id, state] of states) {
+            if (state !== null) {
+                ingestLegacyHandoff(db, state, folded.get(id) ?? []);
+            }
+        }
+    }
+
+    return outcomes;
+}
+
+const ROLLBACK_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+
+/** Fold the private replay event and its pending legacy copy in the same transaction. */
+export function commitHandoffEvents(
+    db: Database,
+    events: readonly HandoffEvent[],
+    base?: string
+): Map<string, FoldOutcome> {
+    const nested = db.inTransaction;
+    const outcomes = db
+        .transaction(() => {
+            const results = foldEvents(db, events, base);
+            const now = Date.now();
+            db.run("INSERT OR IGNORE INTO handoff_transition (id, copy_until) VALUES (1, ?)", [
+                now + ROLLBACK_WINDOW_MS,
+            ]);
+            const transition = db
+                .query<{ copy_until: number }, []>("SELECT copy_until FROM handoff_transition WHERE id = 1")
+                .get();
+            recordReplay(
+                db,
+                events.filter((event) => results.has(event.uid)),
+                transition !== null && now < transition.copy_until ? handoffLogDir(base) : null
+            );
+            return results;
+        })
+        .immediate();
+    if (!nested) {
+        flushHandoffCopies(db);
+    }
+    return outcomes;
+}
+
+/** The writer lock keeps different processes from appending out of commit order. */
+export function flushHandoffCopies(db: Database): void {
+    try {
+        for (;;) {
+            const drained = db
+                .transaction(() => {
+                    const rows = db
+                        .query<{ seq: number; payload: string; copy_to: string }, []>(
+                            "SELECT seq, payload, copy_to FROM handoff_replay WHERE copy_to IS NOT NULL ORDER BY seq LIMIT 100"
+                        )
+                        .all();
+                    if (rows.length === 0) {
+                        return true;
+                    }
+
+                    const file = rows[0].copy_to;
+                    const nextFile = rows.findIndex((row) => row.copy_to !== file);
+                    const batch = nextFile < 0 ? rows : rows.slice(0, nextFile);
+                    appendHandoffEvents(
+                        batch.map((row) => SafeJSON.parse(row.payload, { strict: true }) as HandoffEvent),
+                        file,
+                        // The legacy reader walks files by day. Copies use drain time even when an event was backdated.
+                        new Date().toISOString()
+                    );
+                    db.run("UPDATE handoff_replay SET copy_to = NULL WHERE seq <= ?", [batch[batch.length - 1].seq]);
+                    return false;
+                })
+                .immediate();
+            if (drained) {
+                return;
+            }
+        }
+    } catch (error) {
+        log.warn({ err: error }, "handoff: legacy log copy remains queued for retry");
+    }
+}
+
+/** Rebuild from the older log prefix and the private journal in committed order. */
 export function rebuildHandoffModel(db: Database, base?: string): void {
-    db.exec("DROP TABLE IF EXISTS handoffs;");
-    db.exec("DROP TABLE IF EXISTS handoff_ingest_offsets;");
-    db.exec("DROP TABLE IF EXISTS handoff_event_results;");
-    db.exec("DROP TABLE IF EXISTS handoff_events;");
-    createTables(db);
-    catchUpHandoffs(db, base);
-    log.info("handoff read-model rebuilt from JSONL");
+    db.transaction(() => {
+        catchUpHandoffs(db, base);
+        const offsets = db
+            .query<{ file: string; byte_offset: number }, []>("SELECT file, byte_offset FROM handoff_ingest_offsets")
+            .all();
+        const prefix = new Map(offsets.map((entry) => [entry.file, entry.byte_offset]));
+        db.exec("DROP TABLE IF EXISTS handoffs;");
+        db.exec("DROP TABLE IF EXISTS handoff_ingest_offsets;");
+        db.exec("DROP TABLE IF EXISTS handoff_event_results;");
+        db.exec("DROP TABLE IF EXISTS handoff_events;");
+        createTables(db);
+        catchUpHandoffs(db, base, prefix);
+        let seq = 0;
+        for (;;) {
+            const rows = db
+                .query<{ seq: number; payload: string }, [number]>(
+                    "SELECT seq, payload FROM handoff_replay WHERE seq > ? ORDER BY seq LIMIT 1000"
+                )
+                .all(seq);
+            if (rows.length === 0) {
+                break;
+            }
+            foldEvents(
+                db,
+                rows.map((row) => SafeJSON.parse(row.payload, { strict: true }) as HandoffEvent),
+                base
+            );
+            seq = rows[rows.length - 1].seq;
+        }
+    }).immediate();
+    flushHandoffCopies(db);
+    log.info("handoff read-model rebuilt from the legacy log and private journal");
 }

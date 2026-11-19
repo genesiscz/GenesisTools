@@ -182,15 +182,21 @@ public final class JSONRPCSocketClient: @unchecked Sendable {
     }
 
     private var deadlines: [Int: Deadline] = [:]
+    /// Runs `fire` once `seconds` have passed. A call's deadline measures silence on it; nil is the real clock, and a
+    /// test passes a clock it advances by hand, so a deadline never depends on how fast the runner schedules work.
+    public typealias DeadlineScheduler = @Sendable (_ seconds: TimeInterval, _ fire: @escaping @Sendable () -> Void) -> Void
+    private let scheduleDeadline: DeadlineScheduler?
     private var handlers: [String: Handler] = [:]
     /// The peer's requests still waiting for their answer, by `key(of:)` of their id.
     private var incoming: [String: Incoming] = [:]
     private var closed = false
 
-    public init(path: String, callbackQueue: DispatchQueue = .main, sendTimeout: TimeInterval = 2) {
+    public init(path: String, callbackQueue: DispatchQueue = .main, sendTimeout: TimeInterval = 2,
+                scheduleDeadline: DeadlineScheduler? = nil) {
         self.path = path
         self.callbackQueue = callbackQueue
         self.sendTimeout = sendTimeout
+        self.scheduleDeadline = scheduleDeadline
     }
 
     deinit {
@@ -324,12 +330,17 @@ public final class JSONRPCSocketClient: @unchecked Sendable {
     /// Fails the call when its deadline passes with no answer and no newer step.
     private func armDeadline(_ id: Int) {
         guard let deadline = deadlines[id] else { return }
-        queue.asyncAfter(deadline: .now() + deadline.timeout) {
+        let expire = {
             guard self.deadlines[id]?.generation == deadline.generation,
                   let waiting = self.pending.removeValue(forKey: id) else { return }
             self.deadlines[id] = nil
             self.progressHandlers[id] = nil
             self.deliver(waiting, .failure(Failure.timeout(method: deadline.method)))
+        }
+        if let scheduleDeadline {
+            scheduleDeadline(deadline.timeout) { self.queue.async(execute: expire) }
+        } else {
+            queue.asyncAfter(deadline: .now() + deadline.timeout, execute: expire)
         }
     }
 

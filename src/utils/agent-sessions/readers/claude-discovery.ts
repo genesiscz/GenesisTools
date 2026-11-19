@@ -232,6 +232,7 @@ export async function discoverClaudeHistorySources(
         filtered,
         filePaths: options.filePaths,
         signal: options.signal,
+        mtimeFrom: options.mtimeFrom,
         ...(shallowMainOnly ? { maxDepth: 1 } : {}),
         includeFile: ({ path }) => claudeTranscriptFile(path),
     });

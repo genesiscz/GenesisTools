@@ -14,14 +14,18 @@ extension MeetingsAPI {
 }
 
 extension MeetingDetailModel {
-    func prepareListenQuality(_ group: String, count: Int = 20, words: Int = 50) async throws {
+    /// Prepares the questions of one check by ear and returns how many new questions it added (0 when every fitting
+    /// line is asked already).
+    @discardableResult
+    func prepareListenQuality(_ group: String, count: Int = 20, words: Int = 50) async throws -> Int {
         let flag = group == "spot-check" ? "--spot-check" : "--long-stretch-words"
         let number = group == "spot-check" ? count : words
-        _ = try await PeopleCalls.write(MeetingsAPI.ListenPrepare.self,
+        let result = try await PeopleCalls.write(MeetingsAPI.ListenPrepare.self,
             .init(meeting: id, group: group, count: group == "spot-check" ? number : nil, words: group == "long-stretch" ? number : nil),
             orRun: ["listen", id, flag, String(number), "--prepare-only"], service: service)
         reloadRecord()
         readRows(quiet: true)
+        return result.questions.count
     }
 
     func enrolListenVoices() async throws -> MeetingsAPI.VoiceEnrol.Result {

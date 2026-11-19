@@ -1,0 +1,18 @@
+/** Existing app checks. Counts may only decrease as actions replace callers. */
+export const APP_CHECK_RATCHET: ReadonlyMap<string, number> = new Map<string, number>([
+    ["src/control/commands/osascript.ts", 1],
+    ["src/control/lib/runner.ts", 1],
+    ["src/hub/lib/widget/autostart.ts", 1],
+    ["src/macos/lib/permissions/app.ts", 1],
+    ["src/macos/lib/permissions/build-offer.ts", 1],
+    ["src/meetings/lib/grants.ts", 2],
+    ["src/notify/index.ts", 1],
+    ["src/question/lib/hub-link.ts", 1],
+    ["src/utils/ai/stt/capture/pcm-source.ts", 1],
+    ["src/utils/browser-router/capabilities.ts", 1],
+    ["src/utils/macos/full-disk-access.ts", 1],
+    ["src/utils/macos/native-inbox.ts", 1],
+    ["src/utils/macos/voice-capsule.ts", 1],
+    ["src/utils/rm/approval.ts", 1],
+    ["src/utils/security/keyring/app-gate.ts", 2],
+]);

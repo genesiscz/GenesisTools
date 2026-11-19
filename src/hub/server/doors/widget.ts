@@ -182,8 +182,8 @@ export const widgetTasksListDoor: CallDoor<TasksListArgs> = {
     async run(filters, { signal }) {
         try {
             signal.throwIfAborted();
-            const { listWidgetTasks } = await import("../../lib/widget/tasks");
-            return ok(asResult(listWidgetTasks({ filters, signal })));
+            const { listLiveWidgetTasks } = await import("../../lib/widget/tasks");
+            return ok(asResult(await listLiveWidgetTasks({ filters, signal })));
         } catch (error) {
             return failed(error);
         }

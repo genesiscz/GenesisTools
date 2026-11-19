@@ -13,8 +13,11 @@ import {
     type HarvestedDecision,
     kindOf,
 } from "../decisions/store";
+import { type WidgetTask, widgetTask } from "../decisions/todo-view";
 import type { AskForm } from "../pending/types";
 import { INBOX_STALE_MS, inboxSessionFresh, waitsOnHuman } from "../waiting/set";
+import { DEFAULT_INBOX_KINDS, type InboxKinds, inboxKind } from "./kinds";
+import type { WidgetInboxGroup } from "./unread";
 
 /**
  * The "Waiting for you" inbox: every session whose last reply asks a ❓ DECISION, every open or
@@ -172,7 +175,24 @@ export interface InboxDialog {
     at: string;
 }
 
-export type InboxItem = InboxDecision | InboxForm | InboxDialog;
+export interface InboxTodo {
+    kind: "todo";
+    id: string;
+    number: number;
+    title: string;
+    at: string;
+    status: InboxStatus;
+    task: WidgetTask;
+}
+export interface InboxMessage {
+    kind: "answer" | "message";
+    id: string;
+    title: string;
+    at: string;
+    status: "sent";
+    count: number;
+}
+export type InboxItem = InboxDecision | InboxForm | InboxDialog | InboxTodo | InboxMessage;
 
 /** A delivery as the inbox shows it: the stored record, plus the raw dump an old row kept, behind `raw`. */
 export type InboxDeliveryView = DecisionDelivery & { raw?: string };
@@ -583,6 +603,8 @@ export function inboxForm(form: AskForm): InboxForm {
 }
 
 export interface BuildInboxInput {
+    kinds?: InboxKinds;
+    unread?: readonly WidgetInboxGroup[];
     sessions: readonly InboxSessionInfo[];
     /** Transcript scans by session id; a session without an entry asks nothing in its last reply. */
     scans: ReadonlyMap<string, TranscriptScan>;
@@ -615,6 +637,8 @@ export function buildInbox({
     scans,
     rows,
     forms,
+    kinds = DEFAULT_INBOX_KINDS,
+    unread = [],
     dialogs = [],
     now = Date.now(),
 }: BuildInboxInput): InboxSession[] {
@@ -688,6 +712,43 @@ export function buildInbox({
         target.info.branch ??= row.branch ?? null;
     }
 
+    for (const row of rows) {
+        if (kindOf(row) !== "todo" || (row.state !== "open" && row.state !== "acknowledged")) {
+            continue;
+        }
+        const target = group(row.sessionId, row.sessionId);
+        target.info.provider ??= row.provider ?? null;
+        target.info.title ??= row.sessionTitle ?? null;
+        target.info.project ??= row.project ?? null;
+        target.info.cwd ??= row.cwd ?? null;
+        const task = widgetTask(row);
+        target.items.push({
+            kind: "todo",
+            id: row.id,
+            number: row.number,
+            title: task.title,
+            task,
+            status: STATUS[row.state],
+            at: row.createdTs ?? row.updatedTs,
+        });
+    }
+    for (const entry of unread) {
+        const target = group(entry.sessionId, entry.sessionId);
+        target.info.provider ??= entry.provider;
+        target.info.title ??= entry.title;
+        target.info.cwd ??= entry.cwd;
+        target.info.project ??= entry.project;
+        const kind = entry.itemTag === "message" ? "message" : "answer";
+        target.items.push({
+            kind,
+            id: `${kind}:${entry.id}`,
+            title: entry.itemTitle || kind,
+            at: new Date(entry.at).toISOString(),
+            status: "sent",
+            count: entry.count,
+        });
+    }
+
     for (const question of dialogs) {
         if (question.closedAt !== undefined) {
             continue;
@@ -719,6 +780,9 @@ export function buildInbox({
     const result: InboxSession[] = [];
 
     for (const entry of groups.values()) {
+        const policy = (item: InboxItem) =>
+            inboxKind(kinds, item.kind, item.kind === "todo" ? item.task.owner : undefined);
+        entry.items = entry.items.filter((item) => policy(item).show);
         if (entry.items.length === 0) {
             continue;
         }
@@ -735,9 +799,15 @@ export function buildInbox({
             account: entry.info.account ?? null,
             sourceHome: entry.info.sourceHome ?? null,
             lastAt,
-            waiting: entry.items.filter(
-                (item) => item.kind === "form" || (isOpen(item.status) && !notWaiting.has(item.id))
-            ).length,
+            waiting: entry.items.reduce((count, item) => {
+                if (!policy(item).countInBadge) {
+                    return count;
+                }
+                if (item.kind === "message" || item.kind === "answer") {
+                    return count + item.count;
+                }
+                return count + Number(item.kind === "todo" || (isOpen(item.status) && !notWaiting.has(item.id)));
+            }, 0),
             drafted: entry.items.filter((item) => item.kind === "decision" && hasDraft(item)).length,
             queued: entry.items.filter((item) => item.kind === "decision" && item.status === "answered").length,
             stale: !inboxSessionFresh({ activityAt: entry.activityAt, newestAskAt: Date.parse(lastAt) || 0, now }),

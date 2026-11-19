@@ -6,3 +6,11 @@ export {
     ensureDiarizationModels,
     SEGMENTATION_MODEL,
 } from "./models";
+export {
+    createSpeakerEmbedder,
+    SPEAKER_EMBEDDING_RATE,
+    type SpeakerEmbedder,
+    type SpeakerEmbeddingResult,
+    type SpeakerExtractor,
+    speakerEmbeddingOf,
+} from "./speaker-embedding";

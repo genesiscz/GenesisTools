@@ -8,7 +8,7 @@ import SwiftUI
 struct RecorderNoticeOutlets {
     /// The failure window: the report, and the action to run again when there is one.
     var notice: @MainActor (_ report: FailureReport, _ retry: (@MainActor () -> Void)?) -> Void
-    var alert: @MainActor (_ text: String, _ more: String?) -> Void
+    var alert: @MainActor (_ text: String, _ more: String?, _ retry: (@MainActor () -> Void)?) -> Void
     var note: @MainActor (_ title: String, _ detail: String) -> Void
     var beep: @MainActor () -> Void
     var titlePanel: @MainActor (_ request: RecorderTitleRequest, _ done: @escaping (String?) -> Void) -> Void
@@ -16,7 +16,7 @@ struct RecorderNoticeOutlets {
 
     static let live = RecorderNoticeOutlets(
         notice: { RecorderNoticePanel.shared.show($0, retry: $1) },
-        alert: { RecorderNotice.modalAlert($0, more: $1) },
+        alert: { RecorderNotice.modalAlert($0, more: $1, retry: $2) },
         note: { CopyToast.post(title: $0, detail: $1, style: .problem) },
         beep: { NSSound.beep() },
         titlePanel: { RecorderTitlePrompt.show($0, done: $1) },
@@ -63,7 +63,7 @@ enum RecorderNotice {
         case .notice: outlets.notice(report, retry)
         case .alert:
             let more = [report.summary, report.hasLog ? report.rawText() : nil].compactMap { $0 }.joined(separator: "\n\n")
-            outlets.alert(report.headline, more.isEmpty ? nil : more)
+            outlets.alert(report.headline, more.isEmpty ? nil : more, retry)
         }
     }
 
@@ -134,14 +134,16 @@ enum RecorderNotice {
     }
 
     /// The "Alert" choice: the dialog the recorder showed before the setting existed.
-    static func modalAlert(_ text: String, more: String?) {
+    static func modalAlert(_ text: String, more: String?, retry: (@MainActor () -> Void)? = nil) {
         let alert = NSAlert()
         alert.messageText = text
         if let more { alert.informativeText = more }
+        alert.addButton(withTitle: "OK")
+        if retry != nil { alert.addButton(withTitle: "Try Again") }
         // It asks nothing, so it never holds up a quit or an update.
         alert.window.preventsApplicationTerminationWhenModal = false
         NSApp.activate(ignoringOtherApps: true)
-        alert.runModal()
+        if alert.runModal() == .alertSecondButtonReturn { retry?() }
     }
 
     static func modalTitleAlert(_ request: RecorderTitleRequest) -> String? {

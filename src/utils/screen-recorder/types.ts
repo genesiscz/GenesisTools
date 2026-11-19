@@ -1,3 +1,4 @@
+import type { AudioLevelBlock } from "./audio-levels";
 import type { AudioDevices, AudioSource } from "./control";
 
 export const FRAME_RECORDER_IDS = ["native", "peekaboo"] as const;
@@ -18,6 +19,8 @@ export type CaptureTarget = { kind: "display"; displayId: number } | { kind: "fo
 
 export interface CaptureRequest {
     target: CaptureTarget;
+    /** CG window IDs the display filter must exclude. */
+    excludeWindowIds?: number[];
     /** At most 180. */
     durationSec: number;
     activeFps: number;
@@ -44,8 +47,12 @@ export interface AudioTrack {
     path?: string;
     durationMs: number;
     peakDbfs?: number;
+    /** The file's second 0 relative to `CaptureResult.startedAtMs`, from ax-tool's `startMs`. Absent from an older ax-tool. */
+    startOffsetMs?: number;
     /** `[fromMs, toMs]` on the audio file's timeline while the source was muted. */
     mutedSpans: Array<[number, number]>;
+    /** Missing samples replaced by silence, in milliseconds on the file timeline. */
+    lostSpans?: Array<[number, number]>;
     /** What went wrong with this track (its sidecar did not start or finish); a track without `path` lost its sound. */
     warnings?: string[];
 }
@@ -65,6 +72,7 @@ export interface LiveCapture {
 }
 
 export interface CaptureHooks {
+    onLevels?: (block: AudioLevelBlock) => void;
     /** A frame the recorder kept, as it lands; its `path` is the recorder's own file until the capture ends. */
     onFrame?: (frame: CapturedFrame) => void;
     /** The capture accepts commands from now on. */

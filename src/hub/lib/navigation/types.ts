@@ -23,6 +23,8 @@ export const NAV_TARGET_KEYS = [
     "commit",
     "tab",
     "worktree",
+    "work",
+    "work-project",
     "selection",
 ] as const;
 export type NavTargetKey = (typeof NAV_TARGET_KEYS)[number];

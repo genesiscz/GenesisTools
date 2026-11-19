@@ -1,11 +1,21 @@
-import { appendFileSync, existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import {
+    appendFileSync,
+    existsSync,
+    mkdirSync,
+    readdirSync,
+    renameSync,
+    rmSync,
+    statSync,
+    writeFileSync,
+} from "node:fs";
+import { basename, dirname, join } from "node:path";
 import {
     defaultOcrLanguages,
     errorText,
     frameName,
     framesOnDisk,
     log,
+    microphoneRefused,
     type NativeKeys,
     type RecorderDeps,
     type RecorderState,
@@ -13,21 +23,63 @@ import {
 } from "@app/meetings/lib/recorder-shared";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { type MeetingsConfig, recorderSettings } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord, MeetingStore, RecordingBlock } from "@genesiscz/utils/meetings/record";
-import type { AudioState, RecorderSettings } from "@genesiscz/utils/screen-recorder/control";
+import {
+    type AudioCaptureChange,
+    type AudioSegment,
+    audioCaptureChangeSchema,
+    finishAudioHandoffs,
+    salvagedAudioTiming,
+} from "@genesiscz/utils/screen-recorder/audio-session";
+import { AUDIO_SOURCES, type AudioState, type RecorderSettings } from "@genesiscz/utils/screen-recorder/control";
 import { PolicyDisplays } from "@genesiscz/utils/screen-recorder/display-choice";
 import type { FrameOutput, KeptFrame } from "@genesiscz/utils/screen-recorder/frame-output";
 import type { FrameRecording } from "@genesiscz/utils/screen-recorder/recording";
 import type { PieceTarget } from "@genesiscz/utils/screen-recorder/targets";
 import type { CaptureResult } from "@genesiscz/utils/screen-recorder/types";
+import { z } from "zod";
 import { CallTimeline } from "./call-timeline";
 import { appendFrameIndex, readFrameIndex } from "./frame-index";
 import { LiveOcrSettings, meetingOcrSettings, OCR_SETTINGS_FILE } from "./ocr-worker";
 import { type RecorderStateFile, RecordingRecord } from "./recorder-adapters";
 import { meetingMovieZeroMs } from "./recording-manifest";
+import { AUDIO_FOLDER, type AudioRow, appendAudioRow } from "./sound";
+import { markMeetingSoundLoss } from "./sound-loss";
 import { meetingSource, sourceRefOf } from "./sources";
 import { RETRY_AFTER_MS, readAuto } from "./watch-auto";
+
+/** How ax-tool names a capture's sound file. */
+const SALVAGED_TRACK = /^audio-(?:\d+-)?(mic|system)\.m4a$/;
+const recordedSound = z.object({ sources: z.array(z.enum(AUDIO_SOURCES)) });
+const savedSoundChange = audioCaptureChangeSchema.and(z.object({ fromMs: z.number().optional() }));
+
+/**
+ * Moves a sound file into the meeting's `audio/` and lists it in `audio.jsonl`. When the row cannot be written, the
+ * file goes back where it was, so the next pass (salvage reads `.piece/`) finds it again instead of an unlisted file.
+ */
+function moveAndIndex(options: { from: string; folder: string; name: string; row?: AudioRow }): void {
+    const { from, folder, name, row } = options;
+    const to = join(folder, AUDIO_FOLDER, name);
+    mkdirSync(dirname(to), { recursive: true });
+    renameSync(from, to);
+    if (!row) {
+        return;
+    }
+
+    try {
+        appendAudioRow(folder, row);
+    } catch (error) {
+        try {
+            renameSync(to, from);
+        } catch (back) {
+            log.error({ error: back, from: to, to: from }, "a sound file whose row failed could not move back");
+        }
+
+        throw error;
+    }
+}
 
 /**
  * One run of the meetings recorder: the meeting's folder and record, its spans, the recorder state file and the
@@ -45,6 +97,7 @@ export class MeetingRun {
     readonly pieceDir: string;
     readonly settings: RecorderSettings;
     readonly audio: AudioState;
+    readonly audioMode: "pieces" | "session";
     readonly nativeKeys: NativeKeys;
     readonly state: RecorderState;
     readonly notes: string[] = [];
@@ -58,7 +111,13 @@ export class MeetingRun {
     private readonly ocrSettings: LiveOcrSettings;
     private runFrames = 0;
     private audioFiles = 0;
+    private readonly soundFiles = new Set<string>();
+    private readonly interruptedFrom?: number;
+    private readonly soundChanges: AudioCaptureChange[] = [];
+    private readonly soundEventsFile: string;
+    private soundJournalReady = false;
     private zeroMs?: number;
+    private microphoneDropped = false;
 
     constructor(
         options: RunRecorderOptions & {
@@ -73,13 +132,29 @@ export class MeetingRun {
         this.capture = capture;
         this.deps = deps;
         this.initial = initial;
+        const spans = initial?.recording?.spans ?? [];
+        const previous = spans.at(-1);
+        if (
+            previous &&
+            previous.stopReason !== "requested" &&
+            (!previous.to ||
+                previous.interrupted ||
+                previous.stopReason === "error" ||
+                previous.stopReason === "failed")
+        ) {
+            // A pause or another interrupted start may precede this one. An explicit stop ends that recording.
+            const lastStop = spans.findLastIndex((span) => span.stopReason === "requested");
+            this.interruptedFrom = Date.parse(spans[lastStop + 1]?.from ?? previous.from);
+        }
         this.stateFile = options.stateFile;
         this.folder = store.folder(meetingId);
         this.framesDir = join(this.folder, "frames");
         this.pieceDir = join(this.folder, ".piece");
+        this.soundEventsFile = join(this.pieceDir, "sound-events.jsonl");
         this.ocrSettings = new LiveOcrSettings(join(this.folder, OCR_SETTINGS_FILE));
         const { audio: audioConfig, ...nativeKeys } = recorderSettings(capture, deps.recorder.id);
         this.nativeKeys = nativeKeys;
+        this.audioMode = options.withoutScreen ? "session" : (audioConfig?.mode ?? "pieces");
         this.settings = {
             activeFps: capture.activeFps,
             idleFps: capture.idleFps,
@@ -94,13 +169,18 @@ export class MeetingRun {
             ...(audioConfig?.micDevice ? { micDevice: audioConfig.micDevice } : {}),
         };
         const policy = options.display ?? capture.displays;
-        mkdirSync(this.framesDir, { recursive: true });
+        if (!options.withoutScreen) {
+            mkdirSync(this.framesDir, { recursive: true });
+        }
         this.state = {
             meetingId,
             pid: process.pid,
             startedAt: new Date().toISOString(),
             display: policy,
             backend: deps.recorder.id,
+            ...(options.withoutScreen
+                ? { withoutScreen: options.withoutScreen, warning: `Screen frames omitted: ${options.withoutScreen}` }
+                : {}),
             frames: 0,
             bytes: 0,
         };
@@ -158,8 +238,45 @@ export class MeetingRun {
      * meeting's OCR worker.
      */
     async begin(recording: FrameRecording<string[]>): Promise<void> {
+        const recovering = existsSync(this.pieceDir);
+        await this.salvageTracks(this.pieceDir);
+        if (recovering) {
+            const saved = readJsonlRows<unknown>(this.soundEventsFile).rows.flatMap((raw) => {
+                const change = savedSoundChange.safeParse(raw);
+                return change.success ? [change.data] : [];
+            });
+            this.finishDeferredSound(saved);
+            if (this.interruptedFrom !== undefined) {
+                for (const change of saved) {
+                    if (change.kind !== "stop") {
+                        this.soundChanges.push(change);
+                    }
+                }
+            }
+        }
+        this.soundFiles.clear();
+        if (this.interruptedFrom !== undefined) {
+            // A new run opens unmuted, even when the killed recorder had no chance to close its mute.
+            for (const source of AUDIO_SOURCES) {
+                const last = this.soundChanges.findLast((change) => change.kind === "mute" && change.source === source);
+                if (last?.kind === "mute" && last.muted) {
+                    this.soundChanges.push({
+                        kind: "mute",
+                        source,
+                        muted: false,
+                        atMs: Date.parse(this.state.startedAt),
+                    });
+                }
+            }
+        }
         rmSync(this.pieceDir, { recursive: true, force: true });
         mkdirSync(this.pieceDir, { recursive: true });
+        if (this.soundChanges.length > 0) {
+            writeFileSync(
+                this.soundEventsFile,
+                this.soundChanges.map((change) => `${SafeJSON.stringify(change)}\n`).join("")
+            );
+        }
         this.saveState();
         // A span still open here is a run whose process died without a stop: it ends at its last kept frame.
         this.recordingRecord.closeSpan("interrupted", this.lastFrameAt());
@@ -169,7 +286,13 @@ export class MeetingRun {
             backend: this.deps.recorder.id,
             displayPolicy: this.displays.policy,
             displaySpans: recording.displayBook.intervals,
+            withoutScreen: this.state.withoutScreen,
         });
+        this.soundJournalReady = true;
+        if (this.state.withoutScreen) {
+            this.note(`Screen frames omitted: ${this.state.withoutScreen}`);
+            return;
+        }
 
         // The second phase: the meeting's OCR worker follows the frame index until this recording stops.
         this.writeOcrSettings(recording);
@@ -234,10 +357,11 @@ export class MeetingRun {
         });
     }
 
-    /** Moves a capture's `.m4a` files to the meeting's `audio/` and lists each in `audio.jsonl`. */
+    /**
+     * Moves a capture's `.m4a` files to the meeting's `audio/` and lists each in `audio.jsonl`, with `zeroAt`, the
+     * wall time of the file's second 0, when the engine reported where the track started.
+     */
     keepTracks(result: CaptureResult, target: PieceTarget): void {
-        const audioDir = join(this.folder, "audio");
-
         for (const track of result.tracks ?? []) {
             for (const warning of track.warnings ?? []) {
                 log.warn({ display: target.label, source: track.source, warning }, "a sound track had a problem");
@@ -250,14 +374,189 @@ export class MeetingRun {
 
             const at = new Date(result.startedAtMs);
             const name = frameName(at, target.displayId).replace(/\.jpg$/, `-${track.source}.m4a`);
-            mkdirSync(audioDir, { recursive: true });
-            renameSync(track.path, join(audioDir, name));
-            appendFileSync(
-                join(this.folder, "audio.jsonl"),
-                `${SafeJSON.stringify({ file: `audio/${name}`, source: track.source, at: at.toISOString(), durationMs: track.durationMs, mutedSpans: track.mutedSpans })}\n`
-            );
-            this.audioFiles += 1;
+            moveAndIndex({
+                from: track.path,
+                folder: this.folder,
+                name,
+                row: {
+                    file: `${AUDIO_FOLDER}/${name}`,
+                    source: track.source,
+                    at: at.toISOString(),
+                    durationMs: track.durationMs,
+                    mutedSpans: track.mutedSpans,
+                    ...(track.lostSpans !== undefined ? { lostSpans: track.lostSpans } : {}),
+                    ...(track.startOffsetMs !== undefined
+                        ? { zeroAt: new Date(result.startedAtMs + track.startOffsetMs).toISOString() }
+                        : {}),
+                },
+            });
+            this.keptSound({ file: `${AUDIO_FOLDER}/${name}` });
         }
+    }
+
+    /** The engine has already moved and indexed a closed continuous sound segment. */
+    keptSound(segment: Pick<AudioSegment, "file">): void {
+        this.soundFiles.add(segment.file);
+        this.audioFiles += 1;
+        if (this.state.withoutScreen) {
+            this.saveState();
+        }
+    }
+
+    /** Keep control and stop times until the sound from this run has been recovered and indexed. */
+    noteSoundChange(change: AudioCaptureChange): void {
+        this.soundChanges.push(change);
+        if (this.soundJournalReady) {
+            try {
+                const row =
+                    change.kind === "stop"
+                        ? { ...change, fromMs: this.interruptedFrom ?? Date.parse(this.state.startedAt) }
+                        : change;
+                appendFileSync(this.soundEventsFile, `${SafeJSON.stringify(row)}\n`);
+            } catch (error) {
+                log.warn({ error, meeting: this.meetingId }, "could not save the sound event for crash recovery");
+                this.note("sound event times could not be saved for crash recovery");
+            }
+        }
+    }
+
+    /** Account for a completed run before the new run can put sound on the other side of its requested stop. */
+    private finishDeferredSound(changes: readonly z.infer<typeof savedSoundChange>[]): void {
+        const previous = this.initial?.recording;
+        const spans = previous?.spans ?? [];
+        const last = spans.at(-1);
+        if (
+            !last?.to ||
+            (last.stopReason !== "requested" && !(last.stopReason === "paused" && previous?.stopReason === "requested"))
+        ) {
+            return;
+        }
+
+        const stop = changes.findLast((change) => change.kind === "stop");
+        const priorStops = spans.slice(0, -1).findLastIndex((span) => span.stopReason === "requested");
+        const deferredFrom = stop?.fromMs ?? Date.parse(spans[priorStops + 1].from);
+        const deferredSpans = spans.filter((span) => Date.parse(span.from) >= deferredFrom);
+        // Older journals did not include the stop event. Their closed recording span is the best available bound.
+        const stoppedMs =
+            stop?.atMs ?? Date.parse(last.stopReason === "paused" ? (previous?.stoppedAt ?? last.to) : last.to);
+        if (!Number.isFinite(deferredFrom) || !Number.isFinite(stoppedMs)) {
+            throw new Error("The previous recording's sound recovery has invalid time bounds.");
+        }
+
+        markMeetingSoundLoss({
+            folder: this.folder,
+            files: this.soundFiles,
+            deferredFrom,
+            spans: deferredSpans,
+            changes: changes.filter((change) => change.atMs >= deferredFrom && change.atMs <= stoppedMs),
+            sources: recordedSound.safeParse(previous?.audio).data?.sources ?? [],
+            stoppedMs,
+        });
+    }
+
+    /** Every writer has drained, including retired sessions whose last file arrived after the replacement's. */
+    finishSound(recording: FrameRecording<string[]>): void {
+        markMeetingSoundLoss({
+            folder: this.folder,
+            files: this.soundFiles,
+            interruptedFrom: this.interruptedFrom,
+            spans: this.recordingRecord.spans,
+            changes: this.soundChanges,
+            sources: recording.audio.sources,
+            stoppedMs: this.soundChanges.find((change) => change.kind === "stop")?.atMs ?? Date.now(),
+        });
+    }
+
+    /**
+     * Moves every sound file a capture left in `dir` (a crash, a kill, a failed capture) to the meeting's `audio/`,
+     * so clearing `dir` loses no sound. A file named as ax-tool names a track (`audio-<source>.m4a`) gets a row with
+     * `kept: "salvaged"`, its saved sample clock and decoded length (file times only as a marked fallback).
+     * Any other `.m4a` is moved without a row. A continuous segment whose move or ledger row a process death cut
+     * off is finished first, with the row it was closed with (`finishAudioHandoffs`).
+     * Answers how many files it kept.
+     */
+    async salvageTracks(dir: string, signal?: AbortSignal): Promise<number> {
+        signal?.throwIfAborted();
+        const handedOver = finishAudioHandoffs(dir, this.folder);
+        for (const segment of handedOver) {
+            this.soundFiles.add(segment.file);
+        }
+        let names: string[];
+
+        try {
+            names = readdirSync(dir, { recursive: true, encoding: "utf8" }).filter((name) => name.endsWith(".m4a"));
+        } catch (err) {
+            if (err instanceof Error && "code" in err && err.code === "ENOENT") {
+                return handedOver.length;
+            }
+
+            throw err;
+        }
+
+        const audioDir = join(this.folder, AUDIO_FOLDER);
+        let kept = handedOver.length;
+
+        for (const relative of names) {
+            const path = join(dir, relative);
+            const stat = statSync(path, { throwIfNoEntry: false });
+
+            if (!stat?.isFile() || stat.size === 0) {
+                continue;
+            }
+
+            const source = SALVAGED_TRACK.exec(basename(path))?.[1];
+            const timing = await salvagedAudioTiming(path);
+            signal?.throwIfAborted();
+            const at = new Date(timing.at);
+            const stem = frameName(at, 0).replace(/\.jpg$/, `-${source ?? basename(path, ".m4a")}`);
+            let name = `${stem}-salvaged.m4a`;
+
+            for (let copy = 2; existsSync(join(audioDir, name)); copy++) {
+                name = `${stem}-salvaged-${copy}.m4a`;
+            }
+
+            const row: AudioRow | undefined =
+                source === "mic" || source === "system"
+                    ? { file: `${AUDIO_FOLDER}/${name}`, source, ...timing, mutedSpans: [], kept: "salvaged" }
+                    : undefined;
+            moveAndIndex({ from: path, folder: this.folder, name, ...(row ? { row } : {}) });
+            kept += 1;
+
+            if (row) {
+                this.soundFiles.add(row.file);
+            }
+
+            log.warn({ meeting: this.meetingId, from: path, to: name }, "kept a sound file a capture left behind");
+        }
+
+        if (kept > 0) {
+            this.note(`kept ${kept} sound file(s) a capture left behind`);
+        }
+
+        return kept;
+    }
+
+    /**
+     * A capture refused for the microphone grant: the recording goes on with the system sound only (the microphone
+     * counts as muted, so the next capture leaves it out) and says so once. Answers whether it dropped it now.
+     */
+    dropRefusedMicrophone(recording: FrameRecording<string[]>, error: unknown): boolean {
+        const audio = recording.audio;
+
+        if (!microphoneRefused(error) || !audio.sources.includes("mic") || audio.muted.mic) {
+            return false;
+        }
+
+        if (!this.microphoneDropped) {
+            this.microphoneDropped = true;
+            this.note("the microphone is not granted; the recording keeps the system sound only");
+            log.warn({ meeting: this.meetingId }, "no microphone grant; recording the system sound only");
+        }
+
+        void recording.muteAudio("mic", true).catch((err: unknown) => {
+            log.warn({ err, meeting: this.meetingId }, "the microphone could not be left out of the next capture");
+        });
+        return true;
     }
 
     /**
@@ -334,7 +633,7 @@ export class MeetingRun {
         const { store, meetingId, state } = this;
         state.stopReason ??= "requested";
 
-        if (this.runFrames === 0) {
+        if (this.runFrames === 0 && !state.withoutScreen) {
             this.note(
                 `No frame was recorded${state.stopReason === "requested" ? " before the stop" : ""}. Check the recorder: ${toolCommand("control", "doctor")}`
             );
@@ -343,6 +642,15 @@ export class MeetingRun {
         state.warning = this.notes.length > 0 ? this.notes.join("; ") : undefined;
         this.recordingRecord.closeSpan(state.stopReason);
         this.saveState();
+        if (
+            !this.soundJournalReady &&
+            this.initial?.recording?.stopReason === "requested" &&
+            existsSync(this.pieceDir)
+        ) {
+            // A retry that never began must leave the earlier stop and its sources available for recovery.
+            return;
+        }
+
         const stoppedAt = new Date().toISOString();
         const total = existsSync(this.framesDir)
             ? framesOnDisk(this.framesDir)
@@ -382,7 +690,7 @@ export class MeetingRun {
                     status: "stopped",
                     stopReason: state.stopReason,
                     displayPolicy: this.displays.policy,
-                    ...(this.audio.sources.length > 0
+                    ...(this.soundJournalReady && this.audio.sources.length > 0
                         ? { audio: { sources: recording.audio.sources, files: this.audioFiles } }
                         : {}),
                     spans: this.recordingRecord.spans,

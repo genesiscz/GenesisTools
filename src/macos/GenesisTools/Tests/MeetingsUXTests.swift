@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import Observation
 import SwiftUI
+import Vision
 import XCTest
 @testable import GenesisToolsMeetings
 
@@ -9,6 +10,38 @@ import XCTest
 /// and states of the panes (the deep manual test of 2026-11-06, findings MU1 to MU19).
 @MainActor
 final class MeetingsUXTests: XCTestCase {
+    func testItemsWithoutAProjectShowsThePickerAndNoSuggestActionAtNarrowWidths() throws {
+        let detail = MeetingDetailModel(id: "m", window: nil)
+        let record = try JSONDecoder().decode(MeetingRecordView.self, from: Data(#"{"id":"m","title":"Word review","labels":[],"start":"2026-11-12T14:00:00Z","items":[],"context":[],"speakers":{"labels":{}},"sources":{}}"#.utf8))
+        detail.settleDecisionRecord(record)
+        detail.rows = .loaded(.init(meeting: "m", rows: [], hidden: .init(lowPriority: 0, minPriority: 0.5)))
+        var picked: [String?] = []
+        let picker = MeetingProjectPicker(detail: detail, record: record, known: ["Alpha Project"], select: { picked.append($0) })
+        XCTAssertFalse(MeetingDetailView.headerShowsProjectPicker(project: nil, tab: .items), "the Items tab holds the menu instead of the header")
+        XCTAssertTrue(MeetingDetailView.headerShowsProjectPicker(project: nil, tab: .transcript))
+        XCTAssertTrue(MeetingDetailView.headerShowsProjectPicker(project: "Alpha Project", tab: .items))
+        let proposed = [AssignProposals.Project(project: "Beta Project", score: 7.4)]
+        let menu = MeetingProjectPicker.items(current: nil, proposed: proposed, reading: false, known: ["Alpha Project", "Beta Project"],
+                                              select: { picked.append($0) })
+        var titles: [String] = []
+        for item in menu {
+            guard case .action(let title, let checked, _, _, _, _, let run) = item else { continue }
+            titles.append(checked ? "\(title) ✓" : title)
+            run()
+        }
+        XCTAssertEqual(titles, ["Beta Project  (7 points)", "Alpha Project", "No project ✓"], "a proposed project is listed once, with its points")
+        XCTAssertEqual(picked, ["Beta Project", "Alpha Project", nil], "each pick writes its project, and No project clears it")
+        for width in [300.0, 600.0] {
+            // Drawn in a window: the menu button holds an AppKit view, which an ImageRenderer picture leaves out.
+            let text = try MeetingQuestionPicture.text(ItemsTab(detail: detail, projectPicker: AnyView(picker)).frame(height: 240),
+                                                       name: "items-no-project-\(Int(width))", native: true, width: width)
+            XCTAssertTrue(text.contains("This meeting has no project."), text)
+            XCTAssertTrue(text.contains("dictionary."), text)
+            XCTAssertTrue(text.contains("No project"), "the production project menu is in the empty state: \(text)")
+            XCTAssertFalse(text.contains("Suggest items"), text)
+        }
+    }
+
     func testSourceAudioStatusDecodesAlongsideOlderServiceReplies() throws {
         let old = try JSONDecoder().decode(MeetingsOverview.self, from: Self.overviewJSON())
         XCTAssertNil(old.meetings[0].sourceAudio)
@@ -300,11 +333,12 @@ final class MeetingsUXTests: XCTestCase {
                        "the meeting with questions and suggestions stands once, so no group is left for its suggestions")
         XCTAssertEqual(needs.groups.flatMap(\.rows).count, needs.total, "the list has as many rows as the sidebar counts")
         let both = try XCTUnwrap(needs.groups.last?.rows.first)
-        XCTAssertEqual(both.reason(applyAbove: 0.5), "2 questions · 3 suggestions at 50 % or more")
+        // The apply line is said once, in the "Ready to confirm" section title, not at the end of every row (L1).
+        XCTAssertEqual(both.reason(), "2 questions · 3 suggestions")
         typealias Row = MeetingsOverview.NeedsYou.Row
-        XCTAssertEqual(Row(id: "x", noProject: false, questions: 1, suggestions: 0).reason(applyAbove: 0.5), "1 question to answer by ear")
-        XCTAssertEqual(Row(id: "x", noProject: false, questions: 0, suggestions: 3).reason(applyAbove: 0.5), "3 suggestions at 50 % or more")
-        XCTAssertEqual(Row(id: "x", noProject: true, questions: 2, suggestions: 3).reason(applyAbove: 0.5),
+        XCTAssertEqual(Row(id: "x", noProject: false, questions: 1, suggestions: 0).reason(), "1 question to answer by ear")
+        XCTAssertEqual(Row(id: "x", noProject: false, questions: 0, suggestions: 3).reason(), "3 suggestions to confirm")
+        XCTAssertEqual(Row(id: "x", noProject: true, questions: 2, suggestions: 3).reason(),
                        "Choose its project · 2 questions · 3 suggestions")
         XCTAssertEqual(Row(id: "x", noProject: true, questions: 0, suggestions: 0).tag, "x", "a bare id opens the meeting's first tab")
         XCTAssertEqual(Row(id: "x", noProject: true, questions: 0, suggestions: 3).tag, "s:x", "suggestions open Items")
@@ -352,6 +386,55 @@ final class MeetingsUXTests: XCTestCase {
         """.utf8))
         XCTAssertEqual(MeetingDetailModel.readdArgs(meeting: "a", refs[0]), ["context", "add", "a", "--note", "Budget is fixed", "--title", "Budget"])
         XCTAssertEqual(MeetingDetailModel.readdArgs(meeting: "a", refs[1]), ["context", "add", "a", "/tmp/spec.md", "--note", "the second part"])
+    }
+
+    func testUndoRestoresPinnedContextAfterTheSourceChanges() throws {
+        let fixture = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: fixture, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let tools = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent("../../../../tools").standardizedFileURL
+        let git = URL(fileURLWithPath: "/usr/bin/git")
+        let page = fixture.appendingPathComponent("Practice notes.md")
+        let original = "Use the original wording.\n"
+        @discardableResult
+        func run(_ executable: URL, _ args: [String]) throws -> Data {
+            let process = Process()
+            process.executableURL = executable
+            process.arguments = args
+            process.currentDirectoryURL = fixture
+            var environment = ProcessInfo.processInfo.environment
+            environment["GENESIS_TOOLS_HOME"] = fixture.path
+            process.environment = environment
+            process.standardInput = FileHandle.nullDevice
+            let output = try process.runCapturing()
+            return try XCTUnwrap(output.status == 0 ? output.stdout : nil, String(decoding: output.stderr, as: UTF8.self))
+        }
+        func context() throws -> [MeetingContextRef] {
+            try JSONDecoder().decode([MeetingContextRef].self, from: run(tools, ["meetings", "context", "list", "last", "--json"]))
+        }
+
+        try run(git, ["init", "-q"])
+        try original.write(to: page, atomically: true, encoding: .utf8)
+        try run(git, ["add", "--", page.lastPathComponent])
+        try run(git, ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.com",
+                      "commit", "--no-gpg-sign", "-qm", "original document"])
+        let commit = String(decoding: try run(git, ["rev-parse", "HEAD"]), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        try run(tools, ["meetings", "new", "Practice", "--yes"])
+        try run(tools, ["meetings", "context", "add", "last", page.path, "--rev", commit, "--title", "Practice", "--note", "Read aloud"])
+        let saved = try XCTUnwrap(context().first)
+        XCTAssertEqual(saved.file?.revision.text, original)
+        try run(tools, ["meetings", "context", "remove", "last", saved.id])
+        XCTAssertTrue(try context().isEmpty)
+        try "Replacement wording.\n".write(to: page, atomically: true, encoding: .utf8)
+        try run(git, ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.com",
+                      "commit", "--no-gpg-sign", "-qam", "changed document"])
+        try run(tools, ["meetings"] + MeetingDetailModel.readdArgs(meeting: "last", saved))
+        let restored = try XCTUnwrap(context().first)
+        XCTAssertEqual(restored.file?.revision.commit, commit)
+        XCTAssertEqual(restored.file?.revision.text, original)
+        XCTAssertEqual(restored.title, saved.title)
+        XCTAssertEqual(restored.note, saved.note)
     }
 
     func testARecordKnowsWhyItsRecordingStopped() throws {

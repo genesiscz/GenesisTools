@@ -1,6 +1,7 @@
 import type { EvidenceSegment, SpeakingObservation } from "@genesiscz/utils/transcribe/evidence";
 import type { Participant, TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import type { CalendarLookup } from "./calendar-entry";
+import type { ChannelLayout } from "./energy";
 import type { MeetingCalendar, MeetingParticipant } from "./record";
 
 /** The sources a meeting's transcript can come from. A new source is one entry here and one implementation. */
@@ -46,6 +47,8 @@ export interface MeetingEvidence {
     platform?: string;
     segments: EvidenceSegment[];
     speaking: SpeakingObservation[];
+    /** Applied by the opened meeting when its rules read the source observations. */
+    mutedCarrySec?: number;
     participants?: MeetingParticipant[];
     /** Words recognized per channel: the user's share of the speech. */
     tokens?: { mic: number; system: number };
@@ -72,6 +75,8 @@ export interface LiveRecording {
  */
 export interface TranscriptSource {
     readonly id: MeetingSourceId;
+    /** Physical order, if the source's stereo encoder specifies one. Also applies to preserved copies of its audio. */
+    readonly sourceLayout?: Exclude<ChannelLayout, "unknown">;
     /** A short name for messages. */
     readonly label: string;
     /** The source's meeting with its transcript. Throws when it does not exist. */
@@ -99,6 +104,11 @@ export interface TranscriptSource {
     calendarEntries(range: { from: Date; to: Date }): Promise<CalendarLookup>;
     /** Every folder the source has; null when the source keeps no folders on this Mac. */
     folders(): Promise<string[] | null>;
+    /**
+     * The source's meetings that started in `range`, newest first, without their transcripts (a window offers them to
+     * link to a record); null when the source keeps no list on this Mac.
+     */
+    meetingsBetween(range: { from: Date; to: Date }): Promise<SourceMeetingSummary[] | null>;
     /** The folders one meeting is in now; null when the source cannot tell. */
     meetingFolders(sourceMeetingId: string): Promise<string[] | null>;
     /**
@@ -106,6 +116,15 @@ export interface TranscriptSource {
      * hand. A source that can will add `supported: true` and a write member here.
      */
     readonly folderWrite: FolderWriteSupport;
+}
+
+/** One meeting of a source as a list shows it: no transcript. */
+export interface SourceMeetingSummary {
+    sourceMeetingId: string;
+    title: string;
+    start: string;
+    end?: string;
+    hasTranscript: boolean;
 }
 
 /** A source's folder write capability: none yet, with the evidence and the step the owner takes instead. */

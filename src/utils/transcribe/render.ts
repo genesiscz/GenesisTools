@@ -21,6 +21,8 @@ export interface Paragraph {
 
 export interface Turn {
     speaker: string;
+    nameSource?: "voice";
+    nameScore?: number;
     startSec?: number;
     paragraphs: Paragraph[];
 }
@@ -40,8 +42,18 @@ export function groupTurns(entries: TranscriptEntry[], useFirstNames = false): T
 
         const turn = turns.at(-1);
 
-        if (!turn || turn.speaker !== speaker) {
-            turns.push({ speaker, startSec: entry.startSec, paragraphs: [{ startSec: entry.startSec, text }] });
+        if (
+            !turn ||
+            turn.speaker !== speaker ||
+            turn.nameSource !== entry.nameSource ||
+            turn.nameScore !== entry.nameScore
+        ) {
+            turns.push({
+                speaker,
+                ...(entry.nameSource ? { nameSource: entry.nameSource, nameScore: entry.nameScore } : {}),
+                startSec: entry.startSec,
+                paragraphs: [{ startSec: entry.startSec, text }],
+            });
             previousStart = entry.startSec;
             continue;
         }
@@ -63,6 +75,12 @@ export function groupTurns(entries: TranscriptEntry[], useFirstNames = false): T
     }
 
     return turns;
+}
+
+export function voiceNameText(entry: Pick<TranscriptEntry, "nameSource" | "nameScore">): string {
+    return entry.nameSource === "voice"
+        ? `by voice${entry.nameScore === undefined ? "" : ` ${entry.nameScore.toFixed(2)}`}`
+        : "";
 }
 
 export function formatClock(totalSec: number): string {
@@ -142,7 +160,9 @@ export function transcriptBlocks(
 
             return {
                 p: transcriptParagraph({
-                    ...(index === 0 ? { speaker: turn.speaker } : {}),
+                    ...(index === 0
+                        ? { speaker: [turn.speaker, voiceNameText(turn)].filter(Boolean).join(" · ") }
+                        : {}),
                     ...(at === undefined ? {} : { time: formatClock(at), play: options.playLink?.(at) ?? undefined }),
                     text: paragraph.text,
                 }),
@@ -176,7 +196,7 @@ export function transcriptTextLines(turns: Turn[], timestamps: boolean): string[
 
     for (const turn of turns) {
         const stamp = timestamps && turn.startSec !== undefined ? ` [${formatClock(turn.startSec)}]` : "";
-        lines.push(`${turn.speaker}${stamp}:`);
+        lines.push(`${[turn.speaker, voiceNameText(turn)].filter(Boolean).join(" · ")}${stamp}:`);
 
         for (const paragraph of turn.paragraphs) {
             lines.push(paragraph.text, "");

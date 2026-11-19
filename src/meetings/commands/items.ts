@@ -1,5 +1,8 @@
 import { readFileSync } from "node:fs";
 import { appliedLine, itemWhat } from "@app/meetings/lib/item-text";
+import { isInteractive } from "@genesiscz/utils/cli";
+import { isQuietOutput } from "@genesiscz/utils/cli/output-mode";
+import { createQuietSpinner } from "@genesiscz/utils/cli/quiet-spinner";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { parseDuration } from "@genesiscz/utils/format";
@@ -15,6 +18,7 @@ import {
     QUESTION_TOPICS,
 } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
+import * as p from "@genesiscz/utils/prompts/p";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
 import type { CorrectionOutcome } from "@genesiscz/utils/transcribe/apply";
 import {
@@ -32,18 +36,22 @@ import { z } from "zod";
 import { planFindings } from "../lib/add-findings";
 import { decideResult, decisionOf, filteredNothing, reopenResult } from "../lib/decide";
 import { decisionActionSchema } from "../lib/decision-actions";
+import { callerActor } from "../lib/decision-journal";
 import { FINDING_KINDS, findingProblems, findingSchema, findingsFileSchema } from "../lib/findings";
-import { OpenedMeeting } from "../lib/opened-meeting";
+import { setMeetingFields } from "../lib/meeting-fields";
+import { attendanceDetail, attendanceIdRefusal, attendanceWarning, OpenedMeeting } from "../lib/opened-meeting";
 import { MEETING_PLATFORMS } from "../lib/platforms";
+import { missingProjectWarning, projectRequired, resolveProject } from "../lib/project";
 import { questionLabel, questionWarnings } from "../lib/questions";
 import { type ReviewRow, type RowPart, reviewRow } from "../lib/review-rows";
 import { withMeetingsClient } from "../lib/service/client";
-import { errorText, fail, formatFlag, resolveEnum, TOOL } from "../lib/shared";
+import { errorText, fail, formatFlag, hintIfSeatsUnset, resolveEnum, TOOL } from "../lib/shared";
 import { localMeetingTranscript, meetingTranscript } from "../lib/sources";
 import { printSpeakerStats } from "../lib/speakers-view";
 import { isSuggestRule, SUGGEST_RULES } from "../lib/suggest";
 import { runSuggest } from "../lib/suggest-run";
 import { correctTranscript, outcomeText } from "../lib/transcript-corrections";
+import { voiceReadiness } from "../lib/voice-readiness";
 import { correctedTranscriptRead, speakerStatsRead, windowJson } from "../lib/window-reads";
 import { DEFAULT_WORD_CHECK, WORD_CHECKS } from "../lib/word-check";
 
@@ -122,7 +130,11 @@ function printRow(row: ReviewRow): void {
     const asks = row.parts.find((part) => part.kind === "asks");
     const time = when?.kind === "when" ? `${when.from.text}${when.to ? `–${when.to.text}` : ""}` : "";
     const head = asks?.kind === "asks" ? asks.pieces.map((piece) => piece.text).join("") : row.what;
-    const state = row.decision ? `${row.status} by ${row.decision.by}` : row.status;
+    const state = row.guess
+        ? `guess ${percent(row.confidence)}`
+        : row.decision
+          ? `${row.status} by ${row.decision.by}`
+          : row.status;
     out.println(`${pc.cyan(row.label.padEnd(5))} ${STATUS_COLOR[row.status](state)}  ${pc.dim(time)}  ${head}`);
 
     for (const part of row.parts) {
@@ -192,14 +204,38 @@ function readRows(options: { meeting: string; all: boolean; applyAbove?: number 
     );
 }
 
+/**
+ * The project comes before suggestions (the owner's answer to M4): in a terminal the picker sets it, through the same
+ * code as `tools meetings set`; without one, or with "No project for now", the refusal names the command that sets it.
+ */
+async function withProject(store: MeetingStore, record: MeetingRecord): Promise<MeetingRecord | undefined> {
+    const config = new MeetingsConfigStore();
+    const refusal = projectRequired(record, await config.read());
+
+    if (!refusal) {
+        return record;
+    }
+
+    const picked = isInteractive() ? await resolveProject({ config }) : { how: "none" as const };
+
+    if (!picked.project) {
+        fail(refusal);
+        return undefined;
+    }
+
+    const { record: updated } = await setMeetingFields({ store, config, record, change: { project: picked.project } });
+    ui.ok(`Project ${picked.project} set on ${record.id}.`);
+    return updated;
+}
+
 async function suggest(
     ref: string,
     opts: { rules?: string; attendance?: string; attendanceId?: string; wordCheck?: string; json?: boolean }
 ): Promise<void> {
     const store = new MeetingStore();
-    const record = requireMeeting(store, ref);
+    const found = requireMeeting(store, ref);
 
-    if (!record) {
+    if (!found) {
         return;
     }
 
@@ -227,18 +263,63 @@ async function suggest(
         return;
     }
 
+    const attendanceRefusal = attendanceIdRefusal(opts.attendance, opts.attendanceId);
+
+    if (attendanceRefusal) {
+        fail(attendanceRefusal);
+        return;
+    }
+
+    // Every option is valid before the project picker may write the record.
+    const record = await withProject(store, found);
+
+    if (!record) {
+        return;
+    }
+
+    const quiet = isQuietOutput(opts.json ? "json" : undefined) || !process.stderr.isTTY;
+    const spinner = quiet ? createQuietSpinner() : p.spinner();
+    let voiceLabel: string | undefined;
+    hintIfSeatsUnset(record);
     try {
-        const { fresh, retired, warnings } = await runSuggest({
+        const { fresh, retired, warnings, deviceOffers } = await runSuggest({
             store,
             record,
             rules,
             attendance: opts.attendance,
             attendanceId: opts.attendanceId,
             wordCheck: wordCheckChoice,
+            actor: callerActor(),
+            onProgress: quiet
+                ? undefined
+                : (done, total) => {
+                      const label = `Voices: ${done} of ${total} lines`;
+                      if (voiceLabel === undefined) {
+                          spinner.start(label);
+                      } else {
+                          spinner.message(label);
+                      }
+                      voiceLabel = label;
+                      if (done === total) {
+                          spinner.stop(label);
+                          voiceLabel = undefined;
+                      }
+                  },
         });
 
+        const saved = store.read(record.id) ?? record;
+        const attendance = attendanceWarning(saved);
         for (const warning of warnings) {
             ui.warn(warning);
+
+            if (warning === attendance) {
+                // The terminal also prints the full failure: the error and the commands that fix it.
+                ui.dim(`  ${attendanceDetail(saved)}`);
+            }
+        }
+        voiceReadiness(saved, { seatsHint: false }).hints.forEach(ui.info);
+        for (const offer of deviceOffers ?? []) {
+            ui.info(`${offer.question} (${offer.meetings.join(", ")})`);
         }
 
         if (opts.json) {
@@ -253,13 +334,18 @@ async function suggest(
         }
 
         if (fresh.length === 0) {
-            ui.info("Nothing new to suggest.");
+            if (!deviceOffers?.length) {
+                ui.info("Nothing new to suggest.");
+            }
             return;
         }
 
         printItems(store.read(record.id) ?? record, fresh);
         ui.dim(`Confirm or reject: ${TOOL} confirm ${record.id} <ids> · ${TOOL} reject ${record.id} <ids>`);
     } catch (err) {
+        if (voiceLabel !== undefined) {
+            spinner.stop(voiceLabel);
+        }
         fail(err);
     }
 }
@@ -728,7 +814,6 @@ function reportOutcomes(outcomes: CorrectionOutcome[]): void {
 }
 
 import { qualityLines, thresholdProbe } from "../lib/listen-quality";
-import { missingProjectWarning } from "../lib/project";
 
 async function transcript(
     ref: string,
@@ -875,7 +960,7 @@ export function registerItemCommands(program: Command): void {
         .command("rows")
         .argument("<meeting>", MEETING_REF)
         .description(
-            "The review rows: each item as the window shows it, in the order listen asks, with its question as parts, its choices with confidence and who decided it"
+            "The review rows: each item as the window shows it, open rows first in the order listen asks and decided rows after them, with its question as parts, its choices with confidence and who decided it"
         )
         .option("--all", "also the open questions below playback.listen.minPriority")
         .option("--apply-above <percent>", "mark lower-confidence speaker suggestions in the loaded rows")
@@ -1005,7 +1090,7 @@ export function registerItemCommands(program: Command): void {
         )
         .option(
             "--reason <text>",
-            "why: the facts and context it rests on (required for speaker-range, label, join and term)"
+            "why: the facts and context it rests on, written in plain words in the meeting's language for the person who reviews the meeting; never a field name (meeting.indicatorGaps), a rule id (RA) or a labeler code (required for speaker-range, label, join and term)"
         )
         .option("--plan", "print each finding's affected transcript line indices and first words; write nothing")
         .option("--allow-duplicates", "append even when an equal open finding exists")

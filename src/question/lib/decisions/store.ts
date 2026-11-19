@@ -1,10 +1,11 @@
+import type { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
-import { canonicalAgent, runtimeAgentName } from "@app/handoff/targeting";
 import { STAMP_FACETS, whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import { toRuntimeContext } from "@genesiscz/utils/agent/identity";
 import type { CallerHost } from "@genesiscz/utils/agent/identity/types";
+import { canonicalAgent, runtimeAgentName } from "@genesiscz/utils/agent/recipient";
 import { type AgentRuntimeContext, callerCwd } from "@genesiscz/utils/agent/runtime";
 import { createTranscriptAnchor, type TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { letterPastOptions } from "@genesiscz/utils/agents/dialogs/keys";
@@ -13,9 +14,12 @@ import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { appendFeedEvent, type JsonlLog, jsonlLog } from "@genesiscz/utils/storage/locked-document";
 import { isTestProcess } from "@genesiscz/utils/test-process";
+import { mirrorSessionTodos, readSessionTodos } from "@genesiscz/utils/work/legacy/session-todos";
+import { withWorkDb, workDbPath } from "@genesiscz/utils/work/store/db";
 import type { z } from "zod";
 import { closeNoticeItemsLater, noticeItem } from "../notices/notices";
 import { decisionOptionLabels } from "./option-labels";
+import { decisionFiles } from "./paths";
 import {
     type ANSWERED_VIA,
     type DECISION_KINDS,
@@ -261,11 +265,11 @@ const NEXT: Record<DecisionKind, Record<DecisionState, DecisionState[]>> = {
     },
     // A todo is done, not answered: whoever it is for takes it and finishes it.
     todo: {
-        open: ["acknowledged", "implemented", "dismissed"],
+        open: ["acknowledged", "implemented", "dismissed", "superseded"],
         drafted: [],
         answered: [],
         sent: [],
-        acknowledged: ["implemented", "dismissed"],
+        acknowledged: ["implemented", "dismissed", "superseded"],
         implemented: ["open"],
         dismissed: ["open"],
         superseded: [],
@@ -792,7 +796,11 @@ function contentOf(decision: PostedDecision, excerpt: string | undefined): Conte
         ...(decision.title ? { title: decision.title } : {}),
         ...(decision.proposal ? { proposal: decision.proposal } : {}),
         ...(decision.recommended ? { recommended: decision.recommended } : {}),
-        ...(decision.for ? { for: decision.for } : {}),
+        ...(kindOf(decision) === "todo"
+            ? { for: decision.for?.trim() || "agent" }
+            : decision.for
+              ? { for: decision.for }
+              : {}),
         ...(decision.reevaluateWhen ? { reevaluateWhen: decision.reevaluateWhen } : {}),
         ...(decision.reasoning ? { reasoning: decision.reasoning } : {}),
         ...(decision.confidence ? { confidence: decision.confidence } : {}),
@@ -938,6 +946,10 @@ function patched(
         throw new Error(
             `cannot move ${row.id} from ${row.state} to acknowledged without the user's answer: pass option or answer`
         );
+    }
+
+    if (kindOf(row) === "todo" && patch.state === "dismissed" && !comment?.trim()) {
+        throw new Error("Dismissing a todo requires a comment saying why");
     }
 
     if (patch.state === "superseded" && !patch.supersededBy && !comment?.trim()) {
@@ -1094,8 +1106,10 @@ function checkSupersededBy(
     }
 
     const replacement = stored.get(target);
-    if (!replacement || kindOf(replacement) !== "decision") {
-        throw new Error(`${row.id}: supersededBy names no stored decision (${target}); post the new decision first`);
+    if (!replacement || kindOf(replacement) !== kindOf(row)) {
+        throw new Error(
+            `${row.id}: supersededBy names no stored ${kindOf(row)} (${target}); post the new ${kindOf(row)} first`
+        );
     }
 }
 
@@ -1147,6 +1161,7 @@ export async function updateTodo({
     events,
     id,
     state,
+    comment,
     expected,
     signal,
     now = () => new Date().toISOString(),
@@ -1155,13 +1170,18 @@ export async function updateTodo({
     events: string;
     id: string;
     state: "acknowledged" | "implemented" | "dismissed" | "open";
+    comment?: string;
     expected: TodoUpdateSnapshot;
     signal?: AbortSignal;
     now?: () => string;
 }): Promise<DecisionRecord> {
     const patch = parseDecisionInput(
         decisionPatchSchema,
-        { state, expectedRevision: expected.revision },
+        {
+            state,
+            expectedRevision: expected.revision,
+            ...(comment !== undefined ? { comment } : {}),
+        },
         "todo update"
     );
     const [row] = await applyUpdates({
@@ -1200,7 +1220,56 @@ function checkShownTodo(current: DecisionRecord, expected: TodoUpdateSnapshot): 
     }
 }
 
+/** Compare and save a single task assignment. A send reserves its displayed version before any external delivery. */
+export function changeTodoAssignment({
+    file,
+    events,
+    id,
+    expected,
+    change,
+    reservedAt,
+}: {
+    file: string;
+    events: string;
+    id: string;
+    expected: TodoUpdateSnapshot;
+    /** Finish this send even if the receiving agent closed the task before its transport returned. */
+    reservedAt?: string;
+    change: (current: DecisionRecord) => Pick<DecisionRecord, "for" | "state" | "delivery">;
+}): Promise<DecisionRecord> {
+    return withDecisionsLock(file, () => {
+        const rows = readDecisions(file);
+        const row = rows.find((entry) => entry.id === id);
+        if (!row) {
+            throw new Error(`No todo ${id}`);
+        }
+        if (reservedAt !== undefined) {
+            if (
+                row.delivery?.at !== reservedAt ||
+                !row.delivery.uncertain ||
+                (row.revision ?? 1) !== expected.revision
+            ) {
+                throw new Error("Task delivery changed while sending. Check the receiving session.");
+            }
+        } else {
+            checkShownTodo(row, expected);
+            if ((row.revision ?? 1) !== expected.revision || (row.state !== "open" && row.state !== "acknowledged")) {
+                throw new Error("This task changed or is already closed.");
+            }
+        }
+        const updatedTs = laterThan(row.updatedTs, () => new Date().toISOString());
+        const next = { ...row, ...change(row), updatedTs };
+        rewrite(
+            file,
+            rows.map((entry) => (entry.id === id ? next : entry))
+        );
+        appendEvent(events, { ev: "updated", id, ts: updatedTs, state: next.state });
+        return next;
+    });
+}
+
 export interface NewTodo {
+    for?: "human" | "agent";
     title: string;
     /** The longer text; the title alone when absent. */
     details?: string;
@@ -1240,7 +1309,7 @@ export async function createTodo({
     const provider = providerName(todo.provider);
     return withDecisionsLock(file, () => {
         signal?.throwIfAborted();
-        const used = sessionNumbers(readDecisions(file), sessionId).todo;
+        const used = sessionNumbers(readDecisions(file, { kind: "todo", sessionId }), sessionId).todo;
         const number = used.size === 0 ? 1 : Math.max(...used) + 1;
         const ts = now();
         const row: DecisionRecord = {
@@ -1252,6 +1321,7 @@ export async function createTodo({
             options: [],
             ...(details ? { title } : {}),
             ...(provider ? { provider } : {}),
+            for: todo.for ?? "human",
             ...(todo.sessionTitle ? { sessionTitle: todo.sessionTitle } : {}),
             ...(todo.project ? { project: todo.project } : {}),
             ...(todo.cwd ? { cwd: todo.cwd } : {}),
@@ -1531,7 +1601,7 @@ export async function harvestDecisions(
     const name = providerName(provider);
 
     return withDecisionsLock(file, () => {
-        const used = sessionNumbers(readDecisions(file), sessionId).decision;
+        const used = sessionNumbers(readDecisions(file, { kind: "decision", sessionId }), sessionId).decision;
         const ts = now();
         const stored: DecisionRecord[] = [];
 
@@ -1808,27 +1878,87 @@ export async function moveDecisions(
  * reader relies on (a hand edit, an older shape) is skipped the same way: the state machine and the
  * sort would otherwise throw on it and break every listing and update. Any other read error throws.
  */
-export function readDecisions(file: string): DecisionRecord[] {
-    return readDecisionsWithIntegrity(file).rows;
+type DecisionReadScope = { kind?: "decision" | "todo"; sessionId?: string; logOnly?: boolean };
+
+export function readDecisions(file: string, scope?: DecisionReadScope): DecisionRecord[] {
+    return readDecisionsWithIntegrity(file, scope).rows;
+}
+
+/** Reads a session task that has yet to be imported. The Work reader has already checked the store. */
+export function readLegacySessionTodo(file: string, id: string): DecisionRecord | undefined {
+    return decisionLog(file)
+        .read()
+        .rows.find((row) => row.id === id && kindOf(row) === "todo");
 }
 
 /** The same decision read, including whether the file was missing or any torn or invalid row was skipped. */
-export function readDecisionsWithIntegrity(file: string): {
+export function readDecisionsWithIntegrity(
+    file: string,
+    scope: DecisionReadScope = {}
+): {
     rows: DecisionRecord[];
     complete: boolean;
     missing?: true;
 } {
-    const { rows, torn, malformed, missing } = decisionLog(file).read();
+    const { rows: allLogged, torn, malformed, missing } = decisionLog(file).read();
+    const logged =
+        scope.kind === undefined && scope.sessionId === undefined
+            ? allLogged
+            : allLogged.filter(
+                  (row) =>
+                      (scope.kind === undefined || kindOf(row) === scope.kind) &&
+                      (scope.sessionId === undefined || row.sessionId === scope.sessionId)
+              );
 
     if (torn > 0 || malformed > 0) {
         logger.warn({ file, skipped: torn, malformed }, "[decisions] skipped unreadable lines in the decision log");
     }
 
+    const store = scope.kind === "decision" || scope.logOnly ? null : todoStoreOf(file);
+    const stored = store === null ? [] : storedTodoRows(store, scope.sessionId);
+    // One copy per id: the newer one. The store's copy is newer unless a process with older code wrote the log after
+    // it; the next rewrite of the log moves that row into the store.
+    const byId = new Map(stored.map((row) => [row.id, row]));
+
+    for (const row of logged) {
+        const held = byId.get(row.id);
+
+        if (held !== undefined && kindOf(row) === "todo" && row.updatedTs > held.updatedTs) {
+            byId.set(row.id, row);
+        }
+    }
+
+    const rows = stored.length === 0 ? logged : [...logged.filter((row) => !byId.has(row.id)), ...byId.values()];
+
     return {
         rows,
         complete: !missing && torn === 0 && malformed === 0,
-        ...(missing ? { missing: true } : {}),
+        ...(missing && stored.length === 0 ? { missing: true } : {}),
     };
+}
+
+/**
+ * The work store holds the to-do rows of the default log (work-items P9): an item of type `task` with the tag
+ * `session-todo` each. Null for any other log, so a test or a scratch log keeps its to-do rows in the file.
+ */
+function todoStoreOf(file: string): string | null {
+    return file === decisionFiles().file ? workDbPath() : null;
+}
+
+/** The to-do rows the work store holds, each checked like a row of the log; none when the store does not exist. */
+export function storedTodoRows(store: string = workDbPath(), sessionId?: string): DecisionRecord[] {
+    if (!existsSync(store)) {
+        return [];
+    }
+
+    return withWorkDb(store, (db) => readStoredTodoRows(db, sessionId));
+}
+
+/** A widget snapshot already has a read-only connection to this store. */
+export function readStoredTodoRows(db: Database, sessionId?: string): DecisionRecord[] {
+    return readSessionTodos(db, sessionId).rows.flatMap((row): DecisionRecord[] =>
+        isStoredDecision(row) ? [row] : []
+    );
 }
 
 function isStoredDecision(value: unknown): value is DecisionRecord {
@@ -1879,6 +2009,13 @@ function appendEvent(events: string, value: Record<string, unknown>): void {
 
 /** Starts on a fresh line when the last write was torn, so one bad row cannot swallow the next. */
 function append(file: string, row: DecisionRecord): void {
+    const store = todoStoreOf(file);
+
+    if (store !== null && kindOf(row) === "todo") {
+        writeTodos(store, [row]);
+        return;
+    }
+
     decisionLog(file).append(row);
 }
 
@@ -1888,5 +2025,27 @@ function append(file: string, row: DecisionRecord): void {
  * for good. Every caller holds the decisions lock, so the file has not changed since that read.
  */
 function rewrite(file: string, rows: DecisionRecord[]): void {
-    decisionLog(file).rewrite(rows);
+    const store = todoStoreOf(file);
+
+    if (store === null) {
+        decisionLog(file).rewrite(rows);
+        return;
+    }
+
+    // The store first: when it fails, the log is untouched and still holds what it held.
+    writeTodos(
+        store,
+        rows.filter((row) => kindOf(row) === "todo")
+    );
+    decisionLog(file).rewrite(rows.filter((row) => kindOf(row) !== "todo"));
+}
+
+/** Writes to-do rows into the work store; a failure throws, so a caller never reports a to-do it did not keep. */
+function writeTodos(store: string, todos: readonly DecisionRecord[]): void {
+    if (todos.length === 0) {
+        return;
+    }
+
+    const report = withWorkDb(store, (db) => mirrorSessionTodos(db, todos));
+    logger.debug({ store, ...report }, "[decisions] session to-do items written to the work store");
 }

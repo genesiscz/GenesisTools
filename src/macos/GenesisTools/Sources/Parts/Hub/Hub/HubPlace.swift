@@ -8,6 +8,7 @@ import Foundation
 struct HubPlace: Codable, Equatable {
     var mode: String
     var selection: String?
+    var workItem: String?
     var tab: String?
 
     static let resumeFlag = "--resume"
@@ -31,6 +32,7 @@ struct HubPlace: Codable, Equatable {
 
     init(entry: HubNavEntry, tab: HubTab) {
         self.init(mode: entry.mode.rawValue, selection: entry.selection, tab: tab.rawValue)
+        workItem = entry.workItem
     }
 
     /// The `--hub` flags that open this place.
@@ -50,6 +52,8 @@ struct HubPlace: Codable, Equatable {
             return ["--mode", mode.rawValue]
         case .usage:
             return ["--mode", "usage"] + (picked.flatMap(HubUsagePlace.init(selection:))?.arguments ?? [])
+        case .work:
+            return workItem.map { ["--work", $0] } ?? picked.map { ["--work-project", $0] } ?? ["--mode", "work"]
         case .agents:
             guard let picked, let key = AgentTree.split(picked) else { return ["--mode", "agents"] }
             if key.child == AgentTree.mainChild, let parent = key.parent {

@@ -13,9 +13,19 @@ public final class WidgetModel: ObservableObject {
 
     @Published public private(set) var snapshot: WidgetSnapshot? {
         didSet {
+            if oldValue?.state.preferences.hoverPreviews == true, snapshot?.state.preferences.hoverPreviews == false {
+                hoverTask?.cancel()
+                cancelHoverPrewarm()
+                if alertPopup.item == nil, livePreviewWidth == nil, expanded == nil {
+                    closePreviewEntry()
+                    hoveredSurface = nil
+                    presentationChanged?()
+                }
+            }
             // Only the preferences changed (a live setting): the sessions and the inbox are the same, so only what
             // the preferences decide is computed again. Rebuilding the inbox was most of a live apply (2026-10-28).
             if preferencesOnlyChange {
+                if oldValue?.state.preferences.inboxFeedRuns != snapshot?.state.preferences.inboxFeedRuns { refreshInboxFeeds() }
                 refreshPreferenceDerived()
                 return
             }
@@ -113,6 +123,8 @@ public final class WidgetModel: ObservableObject {
     /// The expanded agents pane shows the inbox entries of every session instead of one session (the inbox button).
     /// Opening a session ends it.
     @Published public var inboxOverview = false { didSet { if inboxOverview != oldValue { presentationChanged?() } } }
+    /// The current visit's tab. A badge opens its own tab without changing the saved opening filter.
+    @Published var overviewFilterPick: String?
     @Published public var selectedCardID: String? {
         didSet {
             presentationChanged?()
@@ -226,11 +238,60 @@ public final class WidgetModel: ObservableObject {
             appearance.reduceTransparency = reduceTransparency
         }
     }
-    @Published private var hostDialogOpen = false
+    @Published private var hostDialogOpen = false {
+        didSet { if oldValue && !hostDialogOpen { resumeHoverExit() } }
+    }
     /// Set by the session chooser alone, so closing it (or its view going away) cannot release a window still open.
-    @Published public var sessionChooserOpen = false
+    @Published public var sessionChooserOpen = false {
+        didSet { if oldValue && !sessionChooserOpen { resumeHoverExit() } }
+    }
     /// Set by a session's cmux popover alone, for the same reason.
-    @Published public var cmuxPopoverOpen = false
+    @Published public var cmuxPopoverOpen = false {
+        didSet { if oldValue && !cmuxPopoverOpen { resumeHoverExit() } }
+    }
+    @Published private(set) var previewOpenItemID: String? {
+        didSet { if oldValue != nil && previewOpenItemID == nil { resumeHoverExit() } }
+    }
+    public var previewEntryOpen: Bool { previewOpenItemID != nil }
+
+    func togglePreviewEntry(_ item: WidgetInboxItem) {
+        if previewOpenItemID == item.id {
+            closePreviewEntry()
+        } else {
+            hoverTask?.cancel()
+            previewOpenItemID = item.id
+        }
+    }
+
+    func closePreviewEntry() {
+        guard previewEntryOpen else { return }
+        previewOpenItemID = nil
+    }
+
+    private func resumeHoverExit() {
+        guard !stopping, !dialogOpen, let surface = hoveredSurface,
+              !pointerInside.contains(surface.key) else { return }
+        scheduleHoverExit(surface)
+    }
+
+    private func scheduleHoverExit(_ surface: WidgetSurfaceID) {
+        guard layout.hoverPreviews else { return }
+        if dragging {
+            exitedDuringDrag = surface
+            return
+        }
+        hoverTask?.cancel()
+        hoverTask = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(220)) } catch { return }
+            guard let self, !self.dialogOpen, !self.pointerInside.contains(surface.key) else { return }
+            if self.hoveredSession?.surface == surface { self.cancelHoverPrewarm() }
+            guard self.hoveredSurface == surface else { return }
+            self.hoveredSurface = nil
+            if self.expanded == nil { self.transcriptCache.cancelPending() }
+            self.presentationChanged?()
+        }
+    }
+
     /// A list row's "Open cmux" accessibility action, for that row's `WidgetCmuxButton` (which exists only under the
     /// pointer) to open its popover. The button clears it.
     @Published public var cmuxRequest: WidgetCmuxRequest?
@@ -241,7 +302,7 @@ public final class WidgetModel: ObservableObject {
     }
     /// Hover previews and the outside-click collapse stay off while a window, picker or the chooser is open.
     public var dialogOpen: Bool {
-        get { hostDialogOpen || sessionChooserOpen || cmuxPopoverOpen }
+        get { hostDialogOpen || sessionChooserOpen || cmuxPopoverOpen || previewEntryOpen }
         set { hostDialogOpen = newValue }
     }
     private var mediaPicker: NSOpenPanel?
@@ -424,6 +485,7 @@ public final class WidgetModel: ObservableObject {
     /// Sending replaces the composer; bindings retained by its disposed field cannot write into the new draft.
     @Published private var composerGeneration = 0
     var actionRunner: ((WidgetJSON) async throws -> WidgetJSON)?
+    var entryBodyReader: ((String) async throws -> WidgetEntryBody)?
     private var submittedAssets: Set<String> = []
     private var submittedCards: Set<String> = []
     private var lastSelected: WidgetSession?
@@ -584,10 +646,12 @@ public final class WidgetModel: ObservableObject {
         presentationChanged?()
     }
     /// The selected session's cards: from the snapshot that names it, else as last seen (`sessionCache`).
+    weak var taskActions: WidgetTasksStore?
+
     public var cards: [WidgetCard] {
         guard let snapshot else { return [] }
-        if snapshot.selectedKey != selectedKey, let cached = sessionCache[selectedKey] { return cached.cards }
-        return snapshot.cards.filter { $0.sessionKey == selectedKey }
+        if snapshot.selectedKey != selectedKey, let cached = sessionCache[selectedKey] { return cached.cards.filter { $0.hiddenFromInbox != true } }
+        return snapshot.cards.filter { $0.sessionKey == selectedKey && $0.hiddenFromInbox != true }
     }
     /// Nothing is known about the selected session yet: no snapshot named it, and none carried its cards.
     public var inboxLoading: Bool {
@@ -755,8 +819,10 @@ public final class WidgetModel: ObservableObject {
     private func watchSettingsState() {
         guard settingsWatcher == nil else { return }
         let file = URL(fileURLWithPath: Self.widgetStateFile(stateRoot: stateRoot)).resolvingSymlinksInPath().path
+        let folder = (file as NSString).deletingLastPathComponent
+        let roster = folder + "/roster-cache.json"
         settingsWatcher = DirectoryWatcher(
-            paths: [(file as NSString).deletingLastPathComponent], latency: 0.2, accepts: { $0 == file }
+            paths: [folder], latency: 0.2, accepts: { $0 == file || $0 == roster }
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshSettings() }
         }
@@ -826,6 +892,7 @@ public final class WidgetModel: ObservableObject {
         sendCloseRevision += 1
         // A Discard still in its Undo window is what the user chose: it goes out now, not never.
         commitHeldDiscard()
+        commitMarkAllRead()
         alertPopup.stop()
         preferenceStore.stop()
         settingsTask?.cancel()
@@ -934,9 +1001,12 @@ public final class WidgetModel: ObservableObject {
             }
             // A cold roster holds only the sessions synthesized from Decisions and forms; choosing
             // and persisting one of those would orphan the selection once the roster arrives.
-            if selectedKey.isEmpty && next.rosterLoading != true {
-                selectedKey = WidgetSelection.initial(
-                    persisted: next.state.selectedKey, visibleKeys: next.sessions.filter(\.visible).map(\.key))
+            if selectedKey.isEmpty {
+                let visible = next.sessions.filter(\.visible)
+                let keys = next.rosterLoading == true ? visible.filter { $0.transcriptPath != nil }.map(\.key) : visible.map(\.key)
+                // A saved selection may still be in an older page. Wait for it before persisting a replacement.
+                let waiting = next.rosterLoading == true && next.state.selectedKey.map { !$0.isEmpty && !keys.contains($0) } == true
+                selectedKey = waiting ? "" : WidgetSelection.initial(persisted: next.state.selectedKey, visibleKeys: keys)
                 selectedCardID = nil
                 if !selectedKey.isEmpty && !settingsOnly {
                     pickOnWatch(selectedKey)
@@ -1086,21 +1156,13 @@ public final class WidgetModel: ObservableObject {
             guard presentation(for: surface) != .expanded else { return }
             hoverTask = Task { [weak self] in
                 do { try await Task.sleep(for: .milliseconds(160)) } catch { return }
-                guard let self, !self.dialogOpen else { return }
+                guard let self, self.layout.hoverPreviews, !self.dialogOpen else { return }
                 self.hoveredSurface = surface
                 self.prewarmTranscript(on: surface)
                 self.presentationChanged?()
             }
         } else {
-            hoverTask = Task { [weak self] in
-                do { try await Task.sleep(for: .milliseconds(220)) } catch { return }
-                guard let self else { return }
-                if self.hoveredSession?.surface == surface { self.cancelHoverPrewarm() }
-                guard self.hoveredSurface == surface else { return }
-                self.hoveredSurface = nil
-                if self.expanded == nil { self.transcriptCache.cancelPending() }
-                self.presentationChanged?()
-            }
+            scheduleHoverExit(surface)
         }
     }
 
@@ -1223,6 +1285,7 @@ public final class WidgetModel: ObservableObject {
         inboxSessions = Dictionary(value.sessions.map { ($0.key, $0) }, uniquingKeysWith: { _, last in last })
         refreshRailActivity()
         inboxOverviewItems = Self.overviewItems(value.sessions)
+        refreshInboxFeeds()
         applyAlertPopup(alertPopup.inboxChanged())
         let listed = value.sessions.flatMap { $0.items ?? [] }
         reconcileStaged(value.staged ?? listed, listed: listed)
@@ -1233,6 +1296,8 @@ public final class WidgetModel: ObservableObject {
         refreshOpeningFilterAndPreview()
     }
 
+    public var previewView: String { preferences.previewView }
+    var previewSegment: String { previewView == "items" ? "items" : previewFilter }
     public var previewFilter: String { preferences.previewFilter }
     public var previewSort: String { preferences.previewSort }
 
@@ -1279,10 +1344,20 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
-    /// Stores the hover list's filter or order.
-    public func setPreview(filter: String? = nil, sort: String? = nil) {
-        guard filter != nil || sort != nil else { return }
+    func choosePreviewSegment(_ segment: String) {
+        switch segment {
+        case "items": setPreview(view: "items")
+        case "needs-you", "active": setPreview(view: "sessions", filter: segment)
+        default: break
+        }
+    }
+
+    /// A session segment writes its view and filter together. Items keeps the saved session filter.
+    public func setPreview(view: String? = nil, filter: String? = nil, sort: String? = nil) {
+        guard view != nil || filter != nil || sort != nil else { return }
+        if view == "sessions" { closePreviewEntry() }
         writePreferences { preferences in
+            if let view { preferences.previewView = view }
             if let filter { preferences.previewFilter = filter }
             if let sort { preferences.previewSort = sort }
         }
@@ -1325,10 +1400,8 @@ public final class WidgetModel: ObservableObject {
     }
     /// Every unread or waiting inbox item: what "Mark all read" acts on.
     public var inboxCount: Int { max(0, inbox.unread) + max(0, inbox.needsAnswer) }
-    /// The rail badge: only the items that wait for the user's answer (open or drafted decisions and pending
-    /// questions), the kind of item the hub's Inbox counts. Unread answers and results do not count: a badge of weeks
-    /// of read-later items read as 99+ while the hub said 26 (ux catalogue R1).
-    public var waitingCount: Int { max(0, inbox.needsAnswer) }
+    /// The rail badge follows the shared inbox kind settings. Older snapshots count only items waiting for an answer.
+    public var waitingCount: Int { max(0, inbox.badgeCount ?? inbox.needsAnswer) }
 
     /// Expands one inbox card in place. An unread answer or result counts as read once the user opens it, the same
     /// way opening it from a notification does.
@@ -1498,13 +1571,43 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
-    /// "Mark all read": every answer up to now is read, and older questions, decisions and results stop counting in
-    /// the badges. Nothing is deleted or answered; each item stays in its session's inbox.
+    private static let pendingMarkReadNotice = "All sessions will be marked read."
+    @Published private(set) var readThrough: Double?
+    @Published private(set) var markingRead = false
+    private var markReadDelay: Task<Void, Never>?
+
+    /// Capture the cutoff on the click, so arrivals during Undo keep their unread state.
     public func markAllRead() {
-        guard !stopping else { return }
-        let at = (Date().timeIntervalSince1970 * 1000).rounded(.down)
-        action(["action": "inbox-clear", "at": .number(at)], completed: { [weak self] in
-            self?.notice = "Inbox marked read. Every item stays in its session."
+        guard !stopping, readThrough == nil, !markingRead, inboxCount > 0 else { return }
+        readThrough = (Date().timeIntervalSince1970 * 1000).rounded(.down)
+        let seconds = undoSeconds
+        postNote(Self.pendingMarkReadNotice, action: .init(title: "Undo") { [weak self] in self?.undoMarkAllRead() })
+        markReadDelay = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
+            self?.commitMarkAllRead()
+        }
+    }
+
+    func undoMarkAllRead() {
+        guard readThrough != nil else { return }
+        markReadDelay?.cancel()
+        markReadDelay = nil
+        readThrough = nil
+        postNote("Kept the unread items.")
+    }
+
+    func commitMarkAllRead() {
+        guard let at = readThrough else { return }
+        markReadDelay?.cancel()
+        markReadDelay = nil
+        readThrough = nil
+        if notice == Self.pendingMarkReadNotice { notice = nil }
+        markingRead = true
+        action(["action": "inbox-clear", "at": .number(at)], failed: { [weak self] in
+            self?.markingRead = false
+        }, completed: { [weak self] in
+            self?.markingRead = false
+            self?.postNote("Inbox marked read. Every item stays in its session.")
         })
     }
 
@@ -1590,6 +1693,12 @@ public final class WidgetModel: ObservableObject {
     /// When this widget last saved a decision's draft, by card id, for the card's "Draft saved" line.
     @Published public var draftSavedAt: [String: Date] = [:]
 
+    private(set) var inboxFeeds = WidgetInboxFeeds()
+
+    private func refreshInboxFeeds() {
+        inboxFeeds = WidgetInboxFeeds(inboxOverviewItems, by: preferences.inboxFeedRuns) { sessionIndex[$0.key]?.project }
+    }
+
     nonisolated static func overviewItems(_ sessions: [WidgetInboxSession]) -> [WidgetInboxItem] {
         sessions.flatMap { entry in entry.items ?? [entry.pendingItem, entry.unreadItem].compactMap { $0 } }
             .sorted { lhs, rhs in
@@ -1615,7 +1724,16 @@ public final class WidgetModel: ObservableObject {
         return true
     }
 
-    /// Opens `item` in its session's inbox, unfolded; with `surface`, the panel opens there too.
+    /// Open the session's entire inbox even when the previous visit had a narrower filter.
+    public func openSessionInbox(_ session: WidgetSession, on surface: WidgetSurfaceID? = nil) {
+        listOrigin = .overview
+        select(session.key)
+        inboxFilterPicked = true
+        inboxFilter = "all"
+        section = "Inbox"
+        if let surface { openModule("agents", on: surface) }
+    }
+
     public func openInboxItem(_ item: WidgetInboxItem, on surface: WidgetSurfaceID? = nil) {
         guard !stopping else { return }
         listOrigin = .overview
@@ -1654,14 +1772,16 @@ public final class WidgetModel: ObservableObject {
         openModule("agents", on: surface)
     }
 
-    /// The inbox button: every session's entries in one list. A second click while that list is open hides the panel.
-    public func toggleInboxOverview(on surface: WidgetSurfaceID) {
+    /// With no filter, toggles the inbox overview. A filter opens or selects that tab without changing the saved default.
+    public func toggleInboxOverview(on surface: WidgetSurfaceID, filter: String? = nil) {
         guard !stopping else { return }
-        if presentation(for: surface) == .expanded, activeModuleID == "agents", inboxOverview {
+        if filter == nil, presentation(for: surface) == .expanded, activeModuleID == "agents", inboxOverview {
             requestCollapse()
             return
         }
 
+        overviewFilterPick = filter
+        stagedView = nil
         inboxOverview = true
         section = "Inbox"
         openModule("agents", on: surface)
@@ -1685,6 +1805,7 @@ public final class WidgetModel: ObservableObject {
             selectedKey == item.key, let displayed = cards.first(where: { $0.id == item.id }), displayed.at == item.at
         else { return }
         selectedCardID = item.id
+        if item.kind == "todo" { openingInbox = nil; return }
         if !displayed.needsAnswer && displayed.read { openingInbox = nil; return }
         let token = item.key + "|" + item.id + "|" + String(item.at)
         guard inboxReadRequests.insert(token).inserted else { openingInbox = nil; return }
@@ -2591,13 +2712,14 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
-    public func ledger(_ card: WidgetCard, state: String) {
+    public func ledger(_ card: WidgetCard, state: String, comment: String? = nil) {
         guard let selected, let revision = card.revision else { return }
         var fields: [String: WidgetJSON] = [
             "action": "ledger", "id": .string(card.sourceId), "sessionId": .string(selected.target.sessionId),
             "expectedRevision": .number(Double(revision)), "state": .string(state),
         ]
         if state == "drafted" { fields["draft"] = .string(draft.text) }
+        if let comment { fields["comment"] = .string(comment) }
         action(.object(fields))
     }
 
@@ -2920,6 +3042,28 @@ public final class WidgetModel: ObservableObject {
         }
         receiptContextCache[key] = (Date(), value)
         return value
+    }
+
+    func messageBody(for item: WidgetInboxItem) async throws -> WidgetEntryBody {
+        try await entryBody(id: item.sourceId)
+    }
+
+    func entryBody(id: String) async throws -> WidgetEntryBody {
+        if let entryBodyReader { return try await entryBodyReader(id) }
+        let result = try await bridge.run(subcommand: "hub", args: widgetArgs + ["message-body", id],
+                                          timeoutSeconds: 8)
+        try Task.checkCancellation()
+        guard result.exitCode == 0 else { throw ToolsBridgeError.refused(String(result.stderr.suffix(1000))) }
+        return try JSONDecoder().decode(WidgetEntryBody.self, from: Data(result.stdout.utf8))
+    }
+
+    func answerGroup(for item: WidgetInboxItem, limit: Int = 5) async throws -> [WidgetGroupEntry] {
+        struct Response: Decodable { let entries: [WidgetGroupEntry] }
+        let result = try await bridge.run(subcommand: "hub",
+            args: widgetArgs + ["answer-group", item.sourceId, "--limit", String(limit)], timeoutSeconds: 8)
+        try Task.checkCancellation()
+        guard result.exitCode == 0 else { throw ToolsBridgeError.refused(String(result.stderr.suffix(1000))) }
+        return try JSONDecoder().decode(Response.self, from: Data(result.stdout.utf8)).entries
     }
 
     private func transcriptQuery(_ session: WidgetSession) -> SessionTranscriptCache.Query {

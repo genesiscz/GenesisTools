@@ -20,7 +20,7 @@ struct ScreenTab: View {
         if detail.record.value?.recording?.frames ?? 0 == 0, detail.record.value != nil {
             EmptyState(symbol: "rectangle.on.rectangle.slash", text: "This meeting has no screen recording",
                        detail: "A recording started with the meeting takes a frame when the screen changes.",
-                       actionTitle: "Recording settings…") { FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.recordingPage) }
+                       actionTitle: "Recording settings…") { FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.recordingPage, context: detail.id) }
         } else {
             LoadablePane(state: detail.timeline, reading: "Reading the screen timeline…", retry: detail.loadTimeline) { timeline in
                 VStack(spacing: 0) {

@@ -12,22 +12,25 @@ import {
     isGateProvider,
     listGrants,
     listVaultGrants,
+    listVaultSessionGrants,
     loadVaultAutoAllow,
     readAuditTail,
     requestAccountAccess,
     revokeGrants,
     revokeVaultGrants,
+    revokeVaultSessionGrants,
     updateVaultAutoAllow,
     type VaultAutoAllowSettings,
     vaultAutoAllowPath,
     vaultGrantsPath,
+    vaultSessionGrantsPath,
 } from "@genesiscz/utils/ai/gate";
 import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { liveEngineDeps } from "@genesiscz/utils/genesis-tools/actions/registry";
+import { checkNeed, describeNeedFailure, Need, type NeedEnv } from "@genesiscz/utils/genesis-tools/capability/needs";
 import { parseJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
-import { isGenesisAppRpcAvailable } from "@genesiscz/utils/macos/genesis-app-rpc";
-import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import { createBoxTable, renderCliHeader, renderCliSection, truncateDisplay } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -65,7 +68,7 @@ interface RequestOpts {
  * default here, because `tools` runs this command under the GenesisTools.app launcher, and a
  * grant keyed on the launcher would cover every tool run.
  */
-export function registerGateCommands(program: Command): void {
+export function registerGateCommands(program: Command, needEnv?: NeedEnv): void {
     const gate = program
         .command("gate")
         .description("Hand an AI account access token or API key to another app after native approval");
@@ -146,9 +149,10 @@ export function registerGateCommands(program: Command): void {
         .action((opts: { json?: boolean }) => {
             const grants = listGrants();
             const vault = listVaultGrants();
+            const sessions = listVaultSessionGrants();
 
             if (opts.json) {
-                out.result({ grants, vault });
+                out.result({ grants, vault, vaultSessions: sessions });
                 return;
             }
 
@@ -182,13 +186,30 @@ export function registerGateCommands(program: Command): void {
             }
 
             out.println(vaultTable.toString());
+
+            renderCliHeader("Vault key, whole sessions", `${sessions.length} live`);
+            const sessionTable = createBoxTable(["AGENT", "SESSION", "UNTIL", "BY"]);
+
+            for (const grant of sessions) {
+                sessionTable.push([
+                    `${grant.anchor.harness} (pid ${grant.anchor.pid})`,
+                    truncateDisplay(grant.title ?? grant.sessionId ?? "", 40),
+                    new Date(grant.until).toLocaleString("sv-SE").slice(0, 16),
+                    grant.method,
+                ]);
+            }
+
+            out.println(sessionTable.toString());
             renderCliSection("Files");
             out.println(`  ${pc.dim(grantsPath())}`);
             out.println(`  ${pc.dim(vaultGrantsPath())}`);
+            out.println(`  ${pc.dim(vaultSessionGrantsPath())}`);
         });
 
     gate.command("revoke [client]")
-        .description("Forget remembered approvals for a client name or key; `--all` forgets every one")
+        .description(
+            "Forget remembered approvals for a client name or key, or a session approval by session id or agent pid; `--all` forgets every one"
+        )
         .option("--all", "Revoke every grant (a [client] argument is then ignored)")
         .action(async (client: string | undefined, opts: { all?: boolean }) => {
             const selector = opts.all ? "*" : client;
@@ -202,8 +223,9 @@ export function registerGateCommands(program: Command): void {
 
             const removed = await revokeGrants(selector);
             const vault = await revokeVaultGrants(selector);
+            const sessions = await revokeVaultSessionGrants(selector);
             out.log.info(
-                `Revoked ${removed} grant${removed === 1 ? "" : "s"} and ${vault} vault-key approval${vault === 1 ? "" : "s"}.`
+                `Revoked ${removed} grant${removed === 1 ? "" : "s"}, ${vault} vault-key approval${vault === 1 ? "" : "s"} and ${sessions} session approval${sessions === 1 ? "" : "s"}.`
             );
         });
 
@@ -241,10 +263,16 @@ export function registerGateCommands(program: Command): void {
 
     gate.command("status")
         .description("Is the approval window reachable? (read-only)")
-        .action(() => {
-            const available = isGenesisAppRpcAvailable();
+        .action(async () => {
+            const approval = await checkNeed(Need.app.rpc("gate.approve"), {
+                ...(needEnv ?? liveEngineDeps({})),
+                fresh: false,
+                write: false,
+            });
             out.println(
-                `${available ? pc.green("● ok") : pc.red("● missing")} GenesisTools.app RPC ${available ? "installed" : `not installed or switched off: ${genesisAppBuildHint()}`}`
+                approval.ok
+                    ? `${pc.green("● ok")} GenesisTools.app RPC installed`
+                    : `${pc.red("● missing")} GenesisTools.app RPC: ${describeNeedFailure(approval)}`
             );
             out.println(`${pc.dim("grants")} ${grantsPath()}`);
             out.println(`${pc.dim("audit ")} ${auditPath()}`);

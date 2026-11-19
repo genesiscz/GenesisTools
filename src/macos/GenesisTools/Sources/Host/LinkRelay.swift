@@ -32,7 +32,7 @@ enum LinkRelay {
     /// re-run, so only an explicit window request runs itself again.
     static func mayRunAgain(_ arguments: [String]) -> Bool {
         let first = arguments.first ?? ""
-        return first == "--hub" || first == "--review" || first == "--window"
+        return first == "--hub" || first == "--review" || first == "--window" || first == "--requests"
     }
 
     /// Another process holds the relay lock. Asks the kernel, not a pid file.
@@ -49,7 +49,7 @@ enum LinkRelay {
     }
 
     /// For a window face, before NSApplication exists: start the relay when none runs, and when this
-    /// process is already registered with Launch Services, run this face again as a child and exit.
+    /// process is already registered with Launch Services, run this face again as a new instance and exit.
     static func ensure(_ arguments: [String]) {
         guard !isRunning else { return }
         let bundleId = Bundle.main.bundleIdentifier ?? ""
@@ -90,26 +90,25 @@ enum LinkRelay {
         }
     }
 
+    /// Through Launch Services (FaceLaunch.swift), never as a plain child: a child outlived the WindowServer crash of
+    /// 2026-11-18 as a hub with no screen that kept the hub lock.
     private static func runAgainAsChild(_ arguments: [String]) -> Never {
-        guard let executable = Bundle.main.executablePath else {
-            LinkRelay.note("no executable path, this face stays older than the relay")
+        switch FaceLaunch.startAndWait(arguments, timeout: startDeadline) {
+        case .success(let pid):
+            LinkRelay.note("\(arguments.first ?? "") runs again as pid \(pid), younger than the relay")
+            exit(0)
+        case .failure(let error):
+            LinkRelay.note("running \(arguments.first ?? "") again failed: \(error.localizedDescription)")
             return runOn(arguments)
         }
-        let child = Process()
-        child.executableURL = URL(fileURLWithPath: executable)
-        child.arguments = arguments
-        do {
-            try child.run()
-        } catch {
-            LinkRelay.note("running \(arguments.first ?? "") again failed: \(error)")
-            return runOn(arguments)
-        }
-        LinkRelay.note("\(arguments.first ?? "") runs again as pid \(child.processIdentifier), younger than the relay")
-        exit(0)
     }
 
     /// Unreachable in practice; keeps the face running when it cannot run itself again.
     private static func runOn(_ arguments: [String]) -> Never {
+        // The host's own resident face: the settings window would leave its requests with no renderer.
+        if arguments.first == "--requests" {
+            MainActor.assumeIsolated { runRequestFace(Array(arguments.dropFirst())) }
+        }
         if let face = arguments.first, AppParts.has(face: face) {
             AppParts.run(face: face, Array(arguments.dropFirst()))
         }
@@ -276,20 +275,13 @@ private final class LinkRelayDelegate: NSObject, NSApplicationDelegate {
         }
 
         let showSettings: @MainActor () -> Void = {
-            guard let executable = Bundle.main.executablePath else { return }
-            let child = Process()
-            child.executableURL = URL(fileURLWithPath: executable)
-            child.arguments = ["--window"]
-            do { try child.run() } catch { LinkRelay.note("settings launch failed: \(error)") }
+            FaceLaunch.start(["--window"]) { LinkRelay.note("settings launch failed: \($0.localizedDescription)") }
         }
         if (AppMainWindow.current == .hub || HubSingleInstance.isRunningElsewhere), AppDock.showHub(nil, onFailure: showSettings) {
             LinkRelay.note("reopen, showing the hub")
-        } else if let executable = Bundle.main.executablePath {
+        } else {
             LinkRelay.note("reopen, opening the settings window")
-            let child = Process()
-            child.executableURL = URL(fileURLWithPath: executable)
-            child.arguments = ["--window"]
-            try? child.run()
+            showSettings()
         }
         return false
     }

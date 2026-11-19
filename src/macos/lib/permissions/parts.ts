@@ -121,12 +121,11 @@ const PARTS = [
  * The host's own window, which no part serves: the permissions window. A bare launch (Finder, `open -a`) and macOS's
  * `-psn_…` argument start it too.
  */
-export const HOST_WINDOW_FACE = {
-    flag: "--window",
-    window: true,
-    reopen: "settings",
-    quit: { name: "Permissions", order: 100 },
-} as const satisfies AppFace;
+export const HOST_FACES = [
+    { flag: "--window", window: true, reopen: "settings", quit: { name: "Permissions", order: 100 } },
+    { flag: "--requests", window: true, reopen: "requests", quit: { name: "Requests", order: 101 } },
+] as const satisfies readonly AppFace[];
+export const HOST_WINDOW_FACE = HOST_FACES[0];
 
 export const APP_PARTS: readonly AppPart[] = PARTS;
 
@@ -135,7 +134,7 @@ export const ALL_PART_IDS: readonly string[] = APP_PARTS.map((part) => part.id);
 type ReopenOf<Face> = Face extends { reopen: infer Kind } ? Kind : never;
 
 /** The names a rebuild reopens a face under: every `reopen` of the declarations. */
-export type WindowFaceKind = ReopenOf<(typeof PARTS)[number]["faces"][number]> | ReopenOf<typeof HOST_WINDOW_FACE>;
+export type WindowFaceKind = ReopenOf<(typeof PARTS)[number]["faces"][number]> | ReopenOf<(typeof HOST_FACES)[number]>;
 
 /** A face with the part that serves it; `part` is undefined for the host's own window. */
 export interface DeclaredFace extends Omit<AppFace, "reopen"> {
@@ -152,7 +151,9 @@ function declareFaces(): DeclaredFace[] {
         }
     }
 
-    faces.push({ ...HOST_WINDOW_FACE, part: undefined });
+    for (const face of HOST_FACES) {
+        faces.push({ ...face, part: undefined });
+    }
     return faces;
 }
 

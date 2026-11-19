@@ -42,6 +42,17 @@ export function getPidFile(): string {
     return join(resolveBaseDir(), "daemon.pid");
 }
 
+/**
+ * The parent of every run's working folder. Each run starts in an empty folder of its own below it (`runTask`), which
+ * no other run writes into. GenesisTools.app refuses to remember, or to auto-allow, a vault-key request from a bun
+ * process whose working folder changed after it started, because a self-deleting bunfig.toml preload looks exactly
+ * like that (`untrustedBunfigPreloads` in VaultUnlock.swift). The home folder changes every few seconds, so in it 24
+ * of 1771 usage polls (2026-11-16..17) put up a Touch ID window.
+ */
+export function taskWorkingDir(): string {
+    return join(resolveBaseDir(), "task-cwd");
+}
+
 export async function ensureStorage(): Promise<void> {
     await getStorage().ensureDirs();
     mkdirSync(getLogsBaseDir(), { recursive: true });
@@ -141,6 +152,8 @@ export interface TaskPatch {
     priority?: TaskPriority | null;
     missedRun?: MissedRunPolicy | null;
     description?: string;
+    /** The shell command the task runs; replaces the old one whole. */
+    command?: string;
 }
 
 /** Every reason the patch cannot be applied, as sentences; empty when it can. */
@@ -167,6 +180,10 @@ export function validateTaskPatch(patch: TaskPatch): string[] {
 
     if (patch.priority !== undefined && patch.priority !== null && !TASK_PRIORITIES.includes(patch.priority)) {
         errors.push(`priority must be one of ${TASK_PRIORITIES.join(", ")}; got ${patch.priority}`);
+    }
+
+    if (patch.command !== undefined && patch.command.trim() === "") {
+        errors.push("command must not be empty");
     }
 
     const missed = patch.missedRun;
@@ -239,6 +256,10 @@ function applyPatch(task: DaemonTask, patch: TaskPatch): void {
 
     if (patch.description !== undefined) {
         task.description = patch.description;
+    }
+
+    if (patch.command !== undefined) {
+        task.command = patch.command;
     }
 }
 

@@ -4,10 +4,13 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { z } from "zod";
+import { audioLevelEvent } from "./audio-levels";
+import { AudioSession, type RecorderAudioOptions } from "./audio-session";
 import { AUDIO_SOURCES, type AudioDevices, type AudioSource } from "./control";
 import { mainDisplay, outputScaleFor, parseDisplayList } from "./displays";
 import { runCaptureProcess } from "./process";
 import {
+    type AudioTrack,
     CAPTURE_ENDINGS,
     CAPTURE_TIMEOUT_GRACE_MS,
     type CapturedFrame,
@@ -29,6 +32,7 @@ const { log } = logger.scoped("screen-recorder-native");
 /** The `ax-tool capture` options that came after the first release; each is used only when `--help` names it. */
 export const NATIVE_OPTIONAL_FLAGS = [
     "--display-id",
+    "--exclude-window-ids",
     "--follow-focus",
     "--max-long-side",
     "--quiet-ms",
@@ -39,6 +43,10 @@ export const NATIVE_OPTIONAL_FLAGS = [
     "--mic-device",
     "--audio-sidecar",
     "audio-devices",
+    "audio-record",
+    "--without-screen",
+    "--monitor",
+    "--levels",
     // `--control-stdin` commands, named in the same help text.
     "mute",
     "set-mic",
@@ -65,10 +73,33 @@ const nativeTrack = z.object({
     path: z.string().optional(),
     durationMs: z.number().default(0),
     peakDbfs: z.number().nullable().optional(),
+    /** The track's first sample relative to the first frame (`timestampMs` 0); negative when the sound started first. */
+    startMs: z.number().optional(),
     mutedSpans: z.array(z.tuple([z.number(), z.number()])).default([]),
+    lostSpans: z.array(z.tuple([z.number(), z.number()])).optional(),
     /** Why the track's sidecar failed or lost sound (a full disk, a failed writer); it then has no `path`. */
     warnings: z.array(z.string()).default([]),
 });
+type NativeTrack = z.infer<typeof nativeTrack>;
+
+function audioTrackOf(track: NativeTrack): AudioTrack {
+    return {
+        source: track.source,
+        ...(track.path ? { path: track.path } : {}),
+        durationMs: track.durationMs,
+        ...(typeof track.peakDbfs === "number" ? { peakDbfs: track.peakDbfs } : {}),
+        ...(track.startMs !== undefined ? { startOffsetMs: track.startMs } : {}),
+        mutedSpans: track.mutedSpans,
+        ...(track.lostSpans !== undefined ? { lostSpans: track.lostSpans } : {}),
+        ...(track.warnings.length > 0 ? { warnings: track.warnings } : {}),
+    };
+}
+
+/** One track of ax-tool's capture result, as the recorder hands it on; throws on a row of an unknown shape. */
+export function parseNativeTrack(raw: unknown): AudioTrack {
+    return audioTrackOf(nativeTrack.parse(raw));
+}
+
 const nativeResult = z.object({
     data: z.object({
         frames: z.array(nativeFrame).default([]),
@@ -186,6 +217,13 @@ export function nativeArgv(options: {
         }
     }
 
+    if (request.excludeWindowIds?.length) {
+        if (!flags.has("--exclude-window-ids")) {
+            throw new CaptureError("unavailable", "this ax-tool has no --exclude-window-ids; rebuild it");
+        }
+        argv.push("--exclude-window-ids", request.excludeWindowIds.join(","));
+    }
+
     if (request.maxLongSidePx !== undefined) {
         if (flags.has("--max-long-side")) {
             argv.push("--max-long-side", String(request.maxLongSidePx));
@@ -247,6 +285,7 @@ export function audioArgv(request: CaptureRequest, flags: ReadonlySet<NativeOpti
         audio.sources.join(","),
         ...(audio.micDeviceId && flags.has("--mic-device") ? ["--mic-device", audio.micDeviceId] : []),
         "--audio-sidecar",
+        ...(request.hooks?.onLevels && flags.has("--levels") ? ["--levels"] : []),
     ];
 }
 
@@ -282,6 +321,7 @@ function salvagedFrames(outDir: string, displayId: number | undefined): CaptureR
 const SWITCH_TIMEOUT_MS = 5_000;
 
 const controlEvent = z.discriminatedUnion("event", [
+    audioLevelEvent,
     z.object({
         event: z.literal("frame"),
         path: z.string(),
@@ -456,6 +496,11 @@ export class NativeLiveCapture implements LiveCapture {
 
         const event = parsed.data;
 
+        if (event.event === "levels") {
+            this.hooks.onLevels?.(event);
+            return;
+        }
+
         if (event.event === "frame") {
             this.hooks.onFrame?.({
                 path: event.path,
@@ -607,6 +652,39 @@ export class NativeFrameRecorder extends FrameRecorder {
         return parseAudioDevices(SafeJSON.parse(result.stdout, { strict: true }));
     }
 
+    /** An older tool leaves the recording on its piece sound path. */
+    async startAudioSession(options: RecorderAudioOptions): Promise<AudioSession | undefined> {
+        const argv = await this.axTool(options.signal);
+
+        if (!this.flags.has("audio-record")) {
+            return undefined;
+        }
+
+        if (options.withoutScreen && !this.flags.has("--without-screen")) {
+            throw new CaptureError("unavailable", "Rebuild ax-tool for recording sound without Screen Recording.");
+        }
+        return AudioSession.start({
+            ...options,
+            onLevels: this.flags.has("--levels") ? options.onLevels : undefined,
+            argv,
+            launch: this.context.launch,
+        });
+    }
+
+    async monitorLevels(options: Omit<RecorderAudioOptions, "outDir" | "folder">): Promise<AudioSession> {
+        const argv = await this.axTool(options.signal);
+        if (!this.flags.has("--monitor") || !this.flags.has("--levels")) {
+            throw new CaptureError("unavailable", "Rebuild ax-tool to use the microphone test.");
+        }
+        return AudioSession.start({
+            ...options,
+            argv,
+            launch: this.context.launch,
+            withoutScreen: true,
+            monitorOnly: true,
+        });
+    }
+
     async capture(request: CaptureRequest, signal?: AbortSignal): Promise<CaptureResult> {
         const axTool = await this.axTool(signal);
         const byIndex = request.target.kind === "display" && !this.flags.has("--display-id");
@@ -637,15 +715,6 @@ export class NativeFrameRecorder extends FrameRecorder {
                   }
                 : {}),
         });
-        log.debug({ exitCode: run.exitCode, argv, timedOut: run.timedOut }, "native capture");
-
-        if (run.timedOut) {
-            throw new CaptureError(
-                "timeout",
-                `ax-tool capture did not end within ${request.durationSec} s + ${CAPTURE_TIMEOUT_GRACE_MS / 1000} s`
-            );
-        }
-
         let json: unknown = null;
 
         try {
@@ -653,10 +722,22 @@ export class NativeFrameRecorder extends FrameRecorder {
         } catch (error) {
             log.debug({ error }, "native capture result is incomplete; trying frame salvage");
         }
-        const parsed = nativeResult.safeParse(json);
+        const data = nativeResult.safeParse(json).data?.data;
+        log.debug(
+            {
+                exitCode: run.exitCode,
+                argv,
+                timedOut: run.timedOut,
+                spawnedAt,
+                firstFrameEpochMs: data?.firstFrameEpochMs,
+                stats: data?.stats,
+            },
+            "native capture"
+        );
 
-        if (run.exitCode === 0 && parsed.success) {
-            const { frames, cancelled, endedEarly, stats, tracks, firstFrameEpochMs } = parsed.data.data;
+        // A piece can cross its deadline while closing sound sidecars after its screen frames landed.
+        if (run.exitCode === 0 && data && (!run.timedOut || data.frames.length > 0)) {
+            const { frames, cancelled, endedEarly, stats, tracks, firstFrameEpochMs } = data;
             const first = frames[0];
             // The first PNG lands up to a second after its frame was captured, while markers use the true wall
             // clock, so its file time is only the fallback for an ax-tool that does not report the capture time.
@@ -675,7 +756,9 @@ export class NativeFrameRecorder extends FrameRecorder {
                     : {}),
                 ...(frame.motionBoxes ? { motionBoxes: frame.motionBoxes } : {}),
             }));
-            const ending = endedEarly ?? (cancelled || run.aborted ? "stopped" : undefined);
+            const ending = run.timedOut
+                ? "stream-error"
+                : (endedEarly ?? (cancelled || run.aborted ? "stopped" : undefined));
             return {
                 startedAtMs:
                     firstFrameEpochMs ??
@@ -683,18 +766,7 @@ export class NativeFrameRecorder extends FrameRecorder {
                 frames: kept,
                 ...(ending ? { endedEarly: ending } : {}),
                 ...(stats ? { stats } : {}),
-                ...(tracks
-                    ? {
-                          tracks: tracks.map((track) => ({
-                              source: track.source,
-                              ...(track.path ? { path: track.path } : {}),
-                              durationMs: track.durationMs,
-                              ...(typeof track.peakDbfs === "number" ? { peakDbfs: track.peakDbfs } : {}),
-                              mutedSpans: track.mutedSpans,
-                              ...(track.warnings.length > 0 ? { warnings: track.warnings } : {}),
-                          })),
-                      }
-                    : {}),
+                ...(tracks ? { tracks: tracks.map(audioTrackOf) } : {}),
             };
         }
 
@@ -705,6 +777,13 @@ export class NativeFrameRecorder extends FrameRecorder {
         if (salvaged) {
             log.warn({ message, frames: salvaged.frames.length }, "native capture failed; kept its frames");
             return salvaged;
+        }
+
+        if (run.timedOut) {
+            throw new CaptureError(
+                "timeout",
+                `ax-tool capture did not end within ${request.durationSec} s + ${CAPTURE_TIMEOUT_GRACE_MS / 1000} s`
+            );
         }
 
         throw new CaptureError(

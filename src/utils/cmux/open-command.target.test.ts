@@ -231,3 +231,25 @@ describe("livePlacementIO() window", () => {
         expect(argv).toEqual([["focus-window", "--window", WINDOW]]);
     });
 });
+
+describe("openCommandAt with the caller's signal", () => {
+    test("an aborted signal creates no workspace and types nothing, silent or shown", async () => {
+        const gaveUp = new AbortController();
+        gaveUp.abort(new Error("action deadline"));
+
+        for (const silent of [true, false]) {
+            await expect(
+                openCommandAt({
+                    command: "echo late",
+                    target: { kind: "window", windowId: WINDOW },
+                    title: "late",
+                    workspaceName: "late",
+                    silent,
+                    signal: gaveUp.signal,
+                })
+            ).rejects.toThrow("action deadline");
+        }
+
+        expect(argv).toEqual([]);
+    });
+});

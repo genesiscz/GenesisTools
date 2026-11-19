@@ -7,17 +7,21 @@ import type { LazyRegistrar } from "@genesiscz/utils/cli/lazy-registrars";
  */
 export const MEETINGS_REGISTRARS: LazyRegistrar[] = [
     { names: ["audio"], load: async () => (await import("./commands/audio")).registerAudioCommands },
-    { names: ["acoustic", "voice"], load: async () => (await import("./commands/acoustic")).registerAcousticCommands },
+    { names: ["acoustic"], load: async () => (await import("./commands/acoustic")).registerAcousticCommands },
+    { names: ["seats"], load: async () => (await import("./commands/seats")).registerSeatsCommand },
+    { names: ["voices", "voice"], load: async () => (await import("./commands/voices")).registerVoicesCommand },
     {
-        names: ["new", "list", "ls", "show", "revisions", "set", "link", "merge", "duplicate", "context"],
+        names: ["new", "list", "ls", "show", "locate", "revisions", "set", "link", "merge", "duplicate", "context"],
         load: async () => (await import("./commands/meeting")).registerMeetingCommands,
     },
     {
         names: ["decide", "suggest", "rows", "items", "confirm", "reject", "reopen", "speakers", "transcript"],
         load: async () => (await import("./commands/items")).registerItemCommands,
     },
+    { names: ["thresholds"], load: async () => (await import("./commands/thresholds")).registerThresholdsCommand },
     { names: ["journal"], load: async () => (await import("./commands/journal")).registerJournalCommand },
-    { names: ["evidence"], load: async () => (await import("./commands/evidence")).registerEvidenceCommand },
+    { names: ["levels", "evidence"], load: async () => (await import("./commands/evidence")).registerEvidenceCommand },
+    { names: ["look"], load: async () => (await import("./commands/look")).registerLookCommand },
     { names: ["attendance"], load: async () => (await import("./commands/attendance")).registerAttendanceCommand },
     { names: ["record", "screen"], load: async () => (await import("./commands/record")).registerRecordCommands },
     { names: ["screen-note"], load: async () => (await import("./commands/screen-note")).registerScreenNoteCommand },

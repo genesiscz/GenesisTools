@@ -3,6 +3,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { runMigrations } from "@genesiscz/utils/database/migrations";
 import type {
     CommentRecord,
     FetchMetadataRecord,
@@ -16,6 +17,10 @@ import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 
 const DEFAULT_CACHE_DIR = genesisToolsDir("github");
 const DB_NAME = "cache.db";
+
+export function githubCachePath(): string {
+    return join(DEFAULT_CACHE_DIR, DB_NAME);
+}
 
 let _db: Database | null = null;
 
@@ -118,6 +123,20 @@ export function initSchema(db: Database): void {
     CREATE INDEX IF NOT EXISTS idx_comments_date ON comments(created_at);
     CREATE INDEX IF NOT EXISTS idx_events_issue ON timeline_events(issue_id);
   `);
+    runMigrations(
+        db,
+        [
+            {
+                id: "issue-search-counts",
+                description: "Keep the observed issue reaction and comment totals for offline search",
+                apply(connection) {
+                    connection.run("ALTER TABLE issues ADD COLUMN reaction_total INTEGER");
+                    connection.run("ALTER TABLE issues ADD COLUMN comment_total INTEGER");
+                },
+            },
+        ],
+        { tableName: "github" }
+    );
 }
 
 // Repository operations
@@ -150,36 +169,19 @@ export function getIssue(repoId: number, number: number): IssueRecord | null {
 
 export function upsertIssue(data: Omit<IssueRecord, "id">): IssueRecord {
     const db = getDatabase();
-
-    const existing = getIssue(data.repo_id, data.number);
-    if (existing) {
-        db.query(`
-      UPDATE issues SET
-        type = ?, title = ?, body = ?, state = ?, author = ?,
-        created_at = ?, updated_at = ?, closed_at = ?,
-        last_fetched = ?, last_comment_cursor = ?
-      WHERE id = ?
-    `).run(
-            data.type,
-            data.title,
-            data.body,
-            data.state,
-            data.author,
-            data.created_at,
-            data.updated_at,
-            data.closed_at,
-            data.last_fetched,
-            data.last_comment_cursor,
-            existing.id
-        );
-        return { ...existing, ...data };
-    }
-
-    const stmt = db.query(`
+    const stmt = db.query<IssueRecord, Array<string | number | null>>(`
     INSERT INTO issues (
       repo_id, number, type, title, body, state, author,
-      created_at, updated_at, closed_at, last_fetched, last_comment_cursor
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+      created_at, updated_at, closed_at, last_fetched, last_comment_cursor, reaction_total, comment_total
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(repo_id, number) DO UPDATE SET
+      type = excluded.type, title = excluded.title, body = excluded.body, state = excluded.state,
+      author = excluded.author, created_at = excluded.created_at, updated_at = excluded.updated_at,
+      closed_at = excluded.closed_at, last_fetched = excluded.last_fetched,
+      last_comment_cursor = excluded.last_comment_cursor,
+      reaction_total = CASE WHEN ? THEN excluded.reaction_total ELSE issues.reaction_total END,
+      comment_total = CASE WHEN ? THEN excluded.comment_total ELSE issues.comment_total END
+    RETURNING *
   `);
     const result = stmt.get(
         data.repo_id,
@@ -193,10 +195,16 @@ export function upsertIssue(data: Omit<IssueRecord, "id">): IssueRecord {
         data.updated_at,
         data.closed_at,
         data.last_fetched,
-        data.last_comment_cursor
-    ) as { id: number };
-
-    return { id: result.id, ...data };
+        data.last_comment_cursor,
+        data.reaction_total ?? null,
+        data.comment_total ?? null,
+        Number(data.reaction_total !== undefined),
+        Number(data.comment_total !== undefined)
+    );
+    if (!result) {
+        throw new Error("Issue upsert returned no row");
+    }
+    return result;
 }
 
 // Comment operations

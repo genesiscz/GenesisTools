@@ -33,17 +33,17 @@ package enum WidgetLaunch {
         arguments.first != "--widget" && !arguments.contains(where: scriptedRunFlags.contains)
     }
 
-    /// Starts the widget when this build has it, staging lets it run and "Show the widget" is on. Every window face but
-    /// the widget calls it at its start (HostMain): "Quit All" in the hub quits the widget too, and the next hub or
-    /// settings window brings it back (Martin, 2026-11-04, D44). Silent: no alert when the part or staging says no.
+    /// Window faces bring back the widget when it owns a visible panel, the app menu, or the recorder keeper.
+    /// Staging still controls whether the widget face may start.
     package static func ensureRunningIfShown() {
         guard AppParts.has(face: "--widget"),
               AppParts.stagingRefusal(face: "--widget", facesEnabled: NativeStaging.facesEnabled) == nil,
-              showWidget(stateFile: stateFile()),
+              (MenuBarSettings.showsApp() || (AppParts.isLinked("recorder") && MenuBarSettings.separateRecorder())
+                || showWidget(stateFile: stateFile())),
               !isRunning()
         else { return }
-        PerfLog.mark("widget.boot: \"Show the widget\" is on and the widget is not running, starting it")
-        FaceLifecycle.note("widget-boot", detail: "the widget was not running and Show the widget is on")
+        PerfLog.mark("widget.boot: starting the widget face for its panels or menu bar")
+        FaceLifecycle.note("widget-boot", detail: "the widget face is needed for its panels or menu bar")
         ensureRunning()
     }
 
@@ -94,16 +94,9 @@ package enum WidgetLaunch {
         return GenesisToolsHome.path("hub/widget/state.json", environment: environment)
     }
     package static func start(_ arguments: [String] = ["--widget", "--settings"]) {
-        guard AppParts.canLaunch(face: arguments.first ?? ""), let executable = Bundle.main.executableURL else { return }
-        do {
-            let child = Process()
-            child.executableURL = executable
-            child.arguments = arguments
-            child.standardInput = FileHandle.nullDevice
-            child.standardOutput = FileHandle.nullDevice
-            child.standardError = FileHandle.nullDevice
-            try child.run()
-        } catch {
+        guard AppParts.canLaunch(face: arguments.first ?? "") else { return }
+        // A boot of the widget behind another face must not take the focus from it.
+        FaceLaunch.start(arguments, activates: arguments.contains(ensureRunningFlag) ? false : nil) { error in
             PerfLog.mark("widget.launch \(error.localizedDescription)")
             let alert = NSAlert()
             alert.messageText = "Could not open the widget"

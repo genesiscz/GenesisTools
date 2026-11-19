@@ -372,10 +372,10 @@ export const CALL_SITES: CallSite[] = [
             spawns: 1,
             reason: "root daemons spin too, and another user's CPU time only the setuid ps reads on macOS",
         },
-        file: "src/doctor/analyzers/cpu-spin.ts",
+        file: "src/utils/process/cpu-spin.ts",
         spawn: "ps -axo pid=,cputime=,command= (twice, 1.5 s apart)",
         frequency: "one-off",
-        run: async () => (await import("@app/doctor/analyzers/cpu-spin")).sampleCpuTimes(),
+        run: async () => (await import("@genesiscz/utils/process/cpu-spin")).sampleCpuTimes(),
     },
     {
         id: "dev-dashboard-processes",

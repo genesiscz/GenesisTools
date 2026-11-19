@@ -1,9 +1,12 @@
-import { type DictionaryScope, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
-import type { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { type DictionaryScope, MeetingsConfigStore, resolveDictionary } from "@genesiscz/utils/meetings/config";
+import { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { applyDictionary } from "@genesiscz/utils/transcribe/dictionary";
+import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { applyConfigEdits, type ConfigEdit, configValueAt, parseConfigPath } from "../config-edit";
 import { testPhrase } from "../dictionary-test";
 import { matchPreview } from "../match-preview";
 import { projectLabels } from "../meeting-fields";
+import { OpenedMeeting } from "../opened-meeting";
 import { removeProject, renameProject, restoreProject } from "../project-admin";
 import { pairFromMeetings, projectMeetingPeople } from "../project-people";
 import { projectSuggestions, type SuggestionReads } from "../project-suggestions";
@@ -241,13 +244,57 @@ export async function removeDictionaryEntry(
     return { value: params.value, level: levelOf(params.project), removed };
 }
 
+interface DictionaryPreviewLine {
+    index: number;
+    startSec?: number;
+    endSec?: number;
+    speaker: string;
+    before: string;
+    after: string;
+}
+
 export async function testDictionaryPhrase(
-    params: MeetingsParsedParams<"dictionary.test">,
+    params: MeetingsParsedParams<"dictionary.test"> & { meeting?: string },
     deps: MeetingsHandlerDeps
-): Promise<MeetingsResult<"dictionary.test">> {
-    return testPhrase(await configOf(deps).read(), {
+): Promise<MeetingsResult<"dictionary.test"> & { lines?: DictionaryPreviewLine[] }> {
+    const config = await configOf(deps).read();
+    const tested = testPhrase(config, {
         phrase: params.phrase,
         ...(params.entry ? { entry: params.entry } : {}),
         ...(params.project ? { project: params.project } : {}),
     });
+
+    if (!params.meeting || !params.entry) {
+        return tested;
+    }
+
+    const store = deps.store?.() ?? new MeetingStore();
+    const record = recordOf(store, params.meeting);
+    const opened = OpenedMeeting.of(store, record, deps.linkedSource?.(record));
+    const transcript = (await opened.meeting()).transcript;
+    const spans = new TranscriptLines(transcript);
+    const dictionary = resolveDictionary(config, { project: record.project, meeting: record.dictionary });
+    const draft = {
+        ...dictionary,
+        entries: [...dictionary.entries.filter((entry) => entry.value !== params.entry!.value), params.entry],
+    };
+    const before = applyDictionary(transcript, dictionary).entries;
+    const after = applyDictionary(transcript, draft).entries;
+    const lines = transcript.flatMap((entry, index) => {
+        const oldText = before[index]!.text;
+        const newText = after[index]!.text;
+        return oldText === newText
+            ? []
+            : [
+                  {
+                      index,
+                      startSec: entry.startSec,
+                      endSec: spans.end(index),
+                      speaker: entry.speaker,
+                      before: oldText,
+                      after: newText,
+                  },
+              ];
+    });
+    return { ...tested, lines };
 }

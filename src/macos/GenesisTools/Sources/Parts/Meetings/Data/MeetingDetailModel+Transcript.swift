@@ -28,7 +28,8 @@ extension MeetingDetailModel {
             }
         }
         var marks: [String: Set<TranscriptLineMark>] = [:]
-        let voiced = items.filter { $0.kind == "speaker-range" && $0.status != "rejected" && $0.rules?.contains("voice-embedding") == true }
+        // Only a suggestion is the voice model's: a confirmed name is the person's, a rejected one is gone (ux 12a).
+        let voiced = items.filter { $0.kind == "speaker-range" && $0.status == "suggested" && $0.rules?.contains("voice-embedding") == true }
         guard !unclear.isEmpty || !corrected.isEmpty || !commented.isEmpty || !voiced.isEmpty else { return marks }
         for entry in entries {
             guard let start = entry.startSec else { continue }
@@ -199,7 +200,12 @@ extension MeetingDetailModel {
     func reveal(row id: String, defaults: UserDefaults? = nil) {
         let defaults = defaults ?? self.defaults
         if let row = rows.value?.rows.first(where: { $0.id == id }) {
-            if itemsFilter.rows([row]).isEmpty { itemsFilter = .all }
+            // The Items tab's apply line and its one definition of a suggestion, asked for this row alone.
+            let applyAbove = window?.overview.value?.applyAbove ?? 0.5
+            // Before the record arrives, the row's own confidence decides.
+            let item = record.value?.items.first { $0.id == id }
+            let atLine = Self.atLine([row], items: item.map { [$0] }, applyAbove: applyAbove)
+            if itemsFilter.rows([row], atLine: atLine, applyAbove: applyAbove).isEmpty { itemsFilter = .all }
         } else {
             // The requested meeting's rows may still be loading.
             itemsFilter = .all

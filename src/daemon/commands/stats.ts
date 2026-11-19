@@ -488,7 +488,7 @@ function renderOverview(stats: DaemonStats): void {
     const { totals } = stats;
     renderCliHeader("Daemon stats", windowRange(stats));
 
-    const table = createBoxTable(["TASK", ...COUNT_HEADERS, "P50", "P90", "MAX", "LAST RUN"]);
+    const table = createBoxTable(["TASK", ...COUNT_HEADERS, "P50", "P90", "MAX", "CPU P50", "CPU MAX", "LAST RUN"]);
 
     for (const task of stats.tasks) {
         const name = task.configured && task.enabled !== false ? pc.white(task.task) : pc.dim(task.task);
@@ -498,6 +498,8 @@ function renderOverview(stats: DaemonStats): void {
             formatMs(task.p50Ms),
             formatMs(task.p90Ms),
             formatMs(task.maxMs),
+            formatMs(task.cpuP50Ms),
+            formatMs(task.cpuMaxMs),
             task.lastRun
                 ? formatDotStatus(STATUS_KIND[task.lastRun.status], shortTime(task.lastRun.startedAt))
                 : pc.dim("—"),
@@ -528,9 +530,30 @@ function renderOverview(stats: DaemonStats): void {
     );
 }
 
+/** "12.3 s CPU, 0.4 cores, 210 MB" for a run that logged its usage, empty for an older one. */
+function runCost(run: StatsRun): string {
+    if (run.cpuMs === null) {
+        return "";
+    }
+
+    // The process's own lifetime when logged: `durationMs` also holds the wait for its output pipes.
+    const lifetime = run.wallMs ?? run.durationMs;
+    const cores = lifetime ? ` (${(run.cpuMs / lifetime).toFixed(1)} cores)` : "";
+    const memory = run.maxRssMb === null ? "" : `, ${run.maxRssMb} MB`;
+    return `${formatMs(run.cpuMs)} CPU${cores}${memory}`;
+}
+
+/** Why a run shows no cost: the absence alone does not date it. */
+function missingCost(run: StatsRun): string {
+    return run.status === "unfinished"
+        ? "not logged yet: the run has no exit record"
+        : "not available: its log has no usage record (written before 2026-11-18, or the runtime gave none)";
+}
+
 function renderRunLine(run: StatsRun): void {
+    const cost = runCost(run);
     out.println(
-        `  ${pc.bold(run.task)}  ${shortTime(run.startedAt)}  ${statusDot(run)}  ${pc.dim(`${formatMs(run.durationMs)} · run ${run.runId}`)}`
+        `  ${pc.bold(run.task)}  ${shortTime(run.startedAt)}  ${statusDot(run)}  ${pc.dim(`${formatMs(run.durationMs)}${cost ? ` · ${cost}` : ""} · run ${run.runId}`)}`
     );
 }
 
@@ -603,8 +626,8 @@ function renderTask(task: TaskStats, stats: DaemonStats): void {
 
     out.println("");
 
-    const table = createBoxTable([...COUNT_HEADERS, ...PERCENTILE_HEADERS]);
-    table.push([...countCells(task), ...percentileCells(task)]);
+    const table = createBoxTable([...COUNT_HEADERS, ...PERCENTILE_HEADERS, "CPU P50", "CPU MAX"]);
+    table.push([...countCells(task), ...percentileCells(task), formatMs(task.cpuP50Ms), formatMs(task.cpuMaxMs)]);
     out.println(table.toString());
 
     if (task.runs === 0) {
@@ -697,6 +720,7 @@ function renderRun(output: RunOutput): void {
     renderCliKeyRow("started", run.startedAt ? formatLocalDateTimeStamp(run.startedAt) : "—");
     renderCliKeyRow("try", String(run.attempt));
     renderCliKeyRow("outcome", `${statusDot(run)} ${pc.dim(formatMs(run.durationMs))}`);
+    renderCliKeyRow("cost", runCost(run) || pc.dim(missingCost(run)));
     out.println("");
 
     if (lines.length === 0) {

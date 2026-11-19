@@ -21,13 +21,19 @@ struct LiveRecordingControlsView: View {
                     .accessibilityIdentifier("live-recording.title")
                 controls
             }
-            if let error = recording.lastError {
+            .contextMenu {
+                Toggle("Use the full bar for recordings started elsewhere", isOn: Binding(
+                    get: { UserDefaults.standard.bool(forKey: LiveRecordingBarPresentation.foreignPreference) },
+                    set: { UserDefaults.standard.set($0, forKey: LiveRecordingBarPresentation.foreignPreference) }))
+            }
+            ForEach(Self.messages(for: recording), id: \.self) { message in
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10)).foregroundStyle(.orange)
-                    Text(error).font(.system(size: 11)).foregroundStyle(SessionPalette.secondary)
-                        .lineLimit(3).fixedSize(horizontal: false, vertical: true)
+                    Text(verbatim: message).font(.system(size: 11)).foregroundStyle(SessionPalette.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                         .frame(maxWidth: 420, alignment: .leading)
+                        .frameProbe("live-recording.message.\(message)")
                 }
                 .padding(.leading, 6)
                 .accessibilityElement(children: .combine)
@@ -88,9 +94,13 @@ struct LiveRecordingControlsView: View {
         let frames = recording.frames > 0 ? Plural.count(recording.frames, "frame") : "Recording"
         if recording.isStopping { return "Stopping" }
         if recording.isPaused { return recording.frames > 0 ? "Paused · \(frames)" : "Paused" }
-        if recording.warning != nil { return "\(frames) · warning" }
-
         return frames
+    }
+
+    static func messages(for recording: LiveRecording) -> [String] {
+        var messages = [recording.warning].compactMap { $0 }
+        if let error = recording.lastError, error != recording.warning { messages.append(error) }
+        return messages
     }
 
     private var controls: some View {
@@ -146,20 +156,44 @@ private struct LiveRecordingControlsHost: View {
     }
 }
 
-/// One always-on-top, non-activating panel bound to one live recording, in `RecordingControlsPanel`.
+/// The recorder part supplies its full bar here. Other hosts keep the compact controls.
+@MainActor
+public struct LiveRecordingBarPresentation {
+    public static let foreignPreference = "recorder.bar.forForeignRecordings"
+    public static var resolve: ((LiveRecording, @escaping () -> Void) -> Self?)?
+    let show: (@escaping (Bool) -> Void) -> Void
+    let update: (LiveRecording) -> Void
+    let close: () -> Void
+
+    public init(show: @escaping (@escaping (Bool) -> Void) -> Void, update: @escaping (LiveRecording) -> Void,
+                close: @escaping () -> Void) {
+        self.show = show
+        self.update = update
+        self.close = close
+    }
+}
+
+/// One always-on-top, non-activating panel bound to one live recording.
 @MainActor
 final class LiveRecordingPanel {
     let id: String
     let slot: Int
-    private let panel = RecordingControlsPanel()
+    private lazy var panel = RecordingControlsPanel()
     private let model: LiveRecordingPanelModel
+    private let hide: () -> Void
+    private var bar: LiveRecordingBarPresentation?
+    private var opening = false
+    private var visible = false
+    private var fullBarVisible = false
 
     /// `stack` is the number of controls already open: each next one goes under the one before.
     init(recording: LiveRecording, stack: Int, send: @escaping (LiveRecordingCommand) -> Void,
          hide: @escaping () -> Void) {
         id = recording.id
         slot = stack
+        self.hide = hide
         model = LiveRecordingPanelModel(recording: recording)
+        bar = LiveRecordingBarPresentation.resolve?(recording, hide)
         panel.window.title = "Recording controls: \(recording.title)"
         panel.window.identifier = NSUserInterfaceItemIdentifier("live-recording.controls")
         panel.setContent(LiveRecordingControlsHost(model: model, send: send, hide: hide))
@@ -178,9 +212,31 @@ final class LiveRecordingPanel {
 
     func update(_ recording: LiveRecording) {
         if recording != model.recording { model.recording = recording }
+        if let bar { bar.update(recording); return }
+        if let replacement = LiveRecordingBarPresentation.resolve?(recording, hide) {
+            bar = replacement
+            if visible { show() }
+        }
     }
 
-    func show() { panel.show() }
+    func show() {
+        visible = true
+        if !fullBarVisible { panel.show() }
+        guard let bar, !opening else { return }
+        opening = true
+        bar.show { [weak self] opened in
+            guard let self, self.visible else { return }
+            self.opening = false
+            self.fullBarVisible = opened
+            if opened { self.panel.close() } else { self.panel.show() }
+        }
+    }
 
-    func close() { panel.close() }
+    func close() {
+        visible = false
+        opening = false
+        fullBarVisible = false
+        bar?.close()
+        panel.close()
+    }
 }

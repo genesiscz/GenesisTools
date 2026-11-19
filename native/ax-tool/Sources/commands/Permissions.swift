@@ -1,5 +1,6 @@
 import ApplicationServices
 import AppKit
+import AVFoundation
 import CoreText
 import Foundation
 import SnapshotSupport
@@ -15,6 +16,7 @@ func cmdPermissions() {
     jsonOutput(["ok": true, "pid": getpid(),
                 "accessibility": AXIsProcessTrusted(),
                 "screenRecording": CGPreflightScreenCaptureAccess(),
+                "microphone": AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
                 "responsible": responsible.bundleId ?? "unknown",
                 "responsiblePid": responsible.pid,
                 "responsibleBundleId": responsible.bundleId ?? "",

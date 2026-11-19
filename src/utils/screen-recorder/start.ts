@@ -75,6 +75,8 @@ export interface StartRecordingOptions {
     title?: string;
     /** `main` (default), `all`, or display ids. */
     displays?: "all" | "main" | number[];
+    /** CG window IDs left out of every display and piece. */
+    excludeWindowIds?: number[];
     fps?: number;
     idleFps?: number;
     /** Percent of the frame that must change for a new frame. */
@@ -159,6 +161,7 @@ export class LibraryRecording extends FrameRecording<number> {
         const id = options.id ?? liveRecordingId("library", `${stamp(new Date())}-${randomUUID()}`);
         const folder = options.folder ?? recordingsLibraryDir(id);
         const choice = new ChosenDisplays();
+        const excludedWindows = [...(options.excludeWindowIds ?? [])];
         const sources: AudioSource[] = [
             ...(options.audio?.mic ? (["mic"] as const) : []),
             ...(options.audio?.system ? (["system"] as const) : []),
@@ -193,7 +196,10 @@ export class LibraryRecording extends FrameRecording<number> {
                 maxMs: (options.maxDurationSec ?? FRAMES_START_LIMITS.defaultMaxDurationSec) * 1000,
                 // Every capture records the sound, without the muted sources.
                 audioOwnership: "every",
-                request: (now) => ({ heartbeatSec: now.heartbeatSec || undefined }),
+                request: (now) => ({
+                    heartbeatSec: now.heartbeatSec || undefined,
+                    ...(excludedWindows.length ? { excludeWindowIds: [...excludedWindows] } : {}),
+                }),
                 failures: {
                     max: 3,
                     pauseMs: 0,

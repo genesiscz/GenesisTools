@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
-import { SafeJSON } from "@genesiscz/utils/json";
+import { parseJSON, SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { Storage } from "@genesiscz/utils/storage/storage";
@@ -11,11 +11,13 @@ import { calendarEntrySchema, calendarPersonSchema } from "./calendar-entry";
 import { projectNameSchema } from "./config";
 import { CHANNEL_LAYOUTS } from "./energy";
 import { MEETING_PLATFORM_IDS } from "./platform";
-import { meetingSeatsSchema } from "./seats";
+import { storedMeetingSeatsSchema } from "./seats";
 import { voiceEvidenceSchema } from "./voice";
 
 const { log } = logger.scoped("meetings-record");
 
+export const JOURNAL_FILE = "decisions.ndjson";
+const copyParentSchema = z.object({ meeting: z.string(), copiedFrom: z.string().optional() });
 export const MEETING_FILE = "meeting.json";
 /**
  * The folder in a meeting's folder that holds its cut Moment clips (src/meetings/lib/moment.ts): a cache of WAVs cut
@@ -51,6 +53,17 @@ export type MeetingCreator = (typeof MEETING_CREATORS)[number];
 
 const isoTime = z.string().min(1);
 
+const staySourceSchema = z.enum([
+    "attendance",
+    "indicator",
+    "platform-roster",
+    "greeting",
+    "goodbye",
+    "silence",
+    "phone",
+    "hand",
+]);
+
 const participantSchema = z.object({
     name: z.string().min(1),
     self: z.boolean().optional(),
@@ -60,16 +73,8 @@ const participantSchema = z.object({
             z.object({
                 fromSec: z.number().nonnegative(),
                 toSec: z.number().nonnegative().optional(),
-                source: z.enum([
-                    "attendance",
-                    "indicator",
-                    "platform-roster",
-                    "greeting",
-                    "goodbye",
-                    "silence",
-                    "phone",
-                    "hand",
-                ]),
+                source: staySourceSchema,
+                leaveSource: staySourceSchema.optional(),
                 confidence: z.number().min(0).max(1).optional(),
             })
         )
@@ -113,9 +118,16 @@ const contextSchema = z.object({
 
 export const ITEM_STATUSES = ["suggested", "confirmed", "rejected"] as const;
 
-/** What a question asks about: whose voice, which word, or what was said. */
-export const QUESTION_TOPICS = ["speaker", "term", "text"] as const;
+/**
+ * What a question asks about: whose voice, which word, what was said, or whether a corrected word goes into the
+ * project dictionary (a person answers it; the tool never adds an entry on its own).
+ */
+export const QUESTION_TOPICS = ["speaker", "term", "text", "dictionary"] as const;
 export type QuestionTopic = (typeof QUESTION_TOPICS)[number];
+
+/** The groups `listen --group` and the window's picker show. */
+export const QUESTION_GROUPS = ["rules", "spot-check", "long-stretch", "words"] as const;
+export type QuestionGroup = (typeof QUESTION_GROUPS)[number];
 
 const itemIdSchema = z.string().regex(/^i\d+$/);
 
@@ -294,14 +306,15 @@ export const meetingItemSchema = z.discriminatedUnion("kind", [
         fromSec: z.number(),
         toSec: z.number(),
         question: z.string().min(1),
-        group: z.enum(["rules", "spot-check", "long-stretch"]).optional(),
+        /** `words`: a repeated unknown word or its dictionary question, asked after every other group. */
+        group: z.enum(QUESTION_GROUPS).optional(),
         /** The words in question (about a term or text), as the transcript shows them; marked until answered. */
         heard: z.string().min(1).optional(),
         choices: z.array(z.string()).default([]),
         decides: z.array(itemIdSchema).default([]),
         answer: z.string().optional(),
         comment: z.string().optional(),
-        /** What `listen` plays when the range is long: the longest line in it. Absent: the whole range. */
+        /** Representative sample (the longest line for a speaker). Playback resolves the question's decided lines. */
         clip: z.object({ fromSec: z.number(), toSec: z.number() }).optional(),
         /** Value of information, (1 − confidence) × impact × reach: `listen` asks the highest first. */
         priority: z.number().optional(),
@@ -435,6 +448,8 @@ export const meetingRecordSchema = z.object({
     id: z.string().min(1),
     title: z.string(),
     project: projectNameSchema.optional(),
+    /** Root record whose recording this duplicate shares, retained even when journal items are omitted. */
+    voiceRootMeeting: z.string().min(1).optional(),
     /** Labels inside the project ("Checkout 2.0"): a meeting has one project and any labels. */
     labels: z.array(z.string().trim().min(1)).default([]),
     start: isoTime,
@@ -447,7 +462,7 @@ export const meetingRecordSchema = z.object({
     audio: z.object({ sources: z.record(z.string().min(1), preservedSourceAudioSchema) }).optional(),
     calendar: calendarSchema.optional(),
     participants: z.array(participantSchema).default([]),
-    seats: meetingSeatsSchema.optional(),
+    seats: storedMeetingSeatsSchema.optional(),
     review: z
         .object({
             listen: z
@@ -458,6 +473,8 @@ export const meetingRecordSchema = z.object({
                                 at: z.string(),
                                 answered: z.number().int(),
                                 changed: z.number().int(),
+                                known: z.object({ answered: z.number().int(), changed: z.number().int() }).optional(),
+                                asked: z.object({ answered: z.number().int(), changed: z.number().int() }).optional(),
                                 questionIds: z.array(z.string()),
                             })
                         )
@@ -591,6 +608,48 @@ export function parseSourceRef(ref: string): { source: string; id: string } | un
 export interface MeetingChange {
     command: string;
     change: string;
+}
+
+/** Old duplicates carry their immediate parent in the creation event or in copied journal entries. */
+export function voiceRootMeeting(store: MeetingStore, record: MeetingRecord): string {
+    let current = record;
+    const visited = new Set<string>();
+    while (!visited.has(current.id)) {
+        visited.add(current.id);
+        if (current.voiceRootMeeting) {
+            return current.voiceRootMeeting;
+        }
+        const created = current.history.find((event) => event.command === "duplicate");
+        let parent = created && /^duplicated from (.+?)(?: without items)?$/.exec(created.change)?.[1];
+        if (!parent && !current.history.some((event) => event.command === "new")) {
+            const file = join(store.folder(current.id), JOURNAL_FILE);
+            if (existsSync(file)) {
+                const parents = new Set<string>();
+                for (const line of readFileSync(file, "utf8").split("\n").filter(Boolean)) {
+                    const entry = copyParentSchema.safeParse(parseJSON(line));
+                    if (entry.success && entry.data.meeting === current.id && entry.data.copiedFrom) {
+                        parents.add(entry.data.copiedFrom);
+                    }
+                }
+                if (parents.size > 1) {
+                    throw new Error("Ambiguous recording lineage in the copied journal.");
+                }
+                parent = [...parents][0];
+            }
+        }
+        if (!parent) {
+            return current.id;
+        }
+        if (!FOLDER_NAME.test(parent)) {
+            throw new Error("Invalid recording lineage.");
+        }
+        const previous = store.read(parent);
+        if (!previous) {
+            return parent;
+        }
+        current = previous;
+    }
+    throw new Error("Cycle in copied recording lineage.");
 }
 
 /**
@@ -767,7 +826,7 @@ export class MeetingStore {
         const hint = this.layoutHint();
 
         if (hint) {
-            throw new Error(`No meeting "${ref}". ${hint}`);
+            throw new Error(`No meeting "${ref}" in ${this.root}. ${hint}`);
         }
 
         return undefined;

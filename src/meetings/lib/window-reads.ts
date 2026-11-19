@@ -260,9 +260,11 @@ export async function rowsRead(options: {
     minPriority?: number;
     lowPriority?: "hide" | "show";
     applyAbove?: number;
+    /** The caller's opened meeting, so a caller that reads the transcript again loads the source once. */
+    opened?: OpenedMeeting;
 }): Promise<ReviewRows> {
     const { store, record } = options;
-    const opened = OpenedMeeting.of(store, record, options.linked);
+    const opened = options.opened ?? OpenedMeeting.of(store, record, options.linked);
     const transcript = await opened
         .meeting()
         .then((meeting) => meeting.transcript)
@@ -271,22 +273,24 @@ export async function rowsRead(options: {
             return undefined;
         });
     const minPriority = options.minPriority ?? (await opened.config()).global.playback.listen.minPriority;
+    const applyAbove = options.applyAbove ?? (await opened.config()).global.suggest.applyAbove;
     // Loaded here: the row builder reads the decision journal's actor words, which no other window read needs.
     const { reviewRows } = await import("./review-rows");
     const rows = reviewRows(record, {
+        devices: opened.roomDevices,
         ...(transcript ? { transcript } : {}),
         minPriority,
         ...(options.lowPriority ? { lowPriority: options.lowPriority } : {}),
     });
-    if (options.applyAbove !== undefined) {
-        rows.rows = rows.rows.map((row) =>
+    for (const row of rows.rows) {
+        if (
             row.kind === "speaker-range" &&
             row.status === "suggested" &&
             row.confidence !== undefined &&
-            row.confidence < options.applyAbove!
-                ? { ...row, guess: true }
-                : row
-        );
+            row.confidence < applyAbove
+        ) {
+            row.guess = true;
+        }
     }
     return rows;
 }

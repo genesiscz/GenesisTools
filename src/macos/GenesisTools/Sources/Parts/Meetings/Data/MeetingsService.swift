@@ -22,6 +22,38 @@ enum MeetingsAPI {
         struct Params: Codable, Equatable { var meeting: String; var attendance: String? }
         struct Result: Decodable, Equatable { let added: Int; let warnings: [String] }
     }
+    /// `meeting.sources.near`: the source meetings that started near the record's start, nearest first.
+    enum MeetingSourcesNear: MeetingsServiceMethod {
+        static let name = "meeting.sources.near"
+        struct Params: Codable, Equatable { var meeting: String; var hours: Double? }
+        struct Candidate: Decodable, Equatable, Identifiable, Hashable {
+            struct Linked: Decodable, Equatable, Hashable { let id: String; let title: String }
+            /// What `meeting.link` takes: `<source>:<id>`.
+            let ref: String
+            /// The source's name ("Wispr Flow").
+            let source: String
+            let title: String
+            let start: String
+            var end: String?
+            let hasTranscript: Bool
+            /// The record this source meeting is linked to already.
+            var linkedTo: Linked?
+            var id: String { ref }
+        }
+        struct Result: Decodable, Equatable { let meetings: [Candidate]; let unavailable: [String] }
+    }
+    /// `meeting.link`: the source's meeting linked to the record (`tools meetings link`, never asking for a project).
+    enum MeetingLink: MeetingsServiceMethod {
+        static let name = "meeting.link"
+        struct Params: Codable, Equatable { var meeting: String; var source: String }
+        typealias Result = MeetingRecordView
+    }
+    /// `rules.names`: every rule's one plain sentence by its id, the words a review row shows for an item's `rules`.
+    enum RuleNames: MeetingsServiceMethod {
+        static let name = "rules.names"
+        struct Params: Codable, Equatable {}
+        struct Result: Decodable, Equatable { let names: [String: String] }
+    }
     enum MeetingPeopleEdit: MeetingsServiceMethod {
         static let name = "meeting.people.edit"
         struct Params: Codable, Equatable {
@@ -258,6 +290,7 @@ enum MeetingsAPI {
         CommentSent.name: { .commentSent(try MeetingsService.decode(CommentSent.self, $0)) },
         CommentChanged.name: { .commentChanged(try MeetingsService.decode(CommentChanged.self, $0)) },
         PeopleChanged.name: { .peopleChanged(try MeetingsService.decode(PeopleChanged.self, $0)) },
+        VoiceJob.event: { .voiceJob(try MeetingsService.decode(VoiceJob.self, $0)) },
         WordTimingsChanged.name: { .wordTimingsChanged(try MeetingsService.decode(WordTimingsChanged.self, $0)) },
     ]
 
@@ -266,7 +299,7 @@ enum MeetingsAPI {
         static let name = "people.changed"
     }
 
-    static let windowEvents = [MeetingChanged.name, DecisionApplied.name, DecisionReverted.name, CommentSent.name, CommentChanged.name, PeopleChanged.name, WordTimingsChanged.name]
+    static let windowEvents = [MeetingChanged.name, DecisionApplied.name, DecisionReverted.name, CommentSent.name, CommentChanged.name, PeopleChanged.name, WordTimingsChanged.name, VoiceJob.event]
 }
 
 /// One event of the Meetings service, as the window hears it.
@@ -277,6 +310,7 @@ enum MeetingsEvent: Equatable {
     case commentSent(MeetingsAPI.CommentSent)
     case commentChanged(MeetingsAPI.CommentChanged)
     case peopleChanged(MeetingsAPI.PeopleChanged)
+    case voiceJob(VoiceJob)
     case wordTimingsChanged(MeetingsAPI.WordTimingsChanged)
 
     /// The meeting the event is about.
@@ -289,6 +323,7 @@ enum MeetingsEvent: Equatable {
         case .commentSent(let event): return event.meeting
         case .commentChanged(let event): return event.meeting
         case .peopleChanged: return nil
+        case .voiceJob(let job): return job.meeting
         }
     }
 
@@ -297,9 +332,16 @@ enum MeetingsEvent: Equatable {
         switch self {
         case .decisionApplied(let event): return event.entry
         case .decisionReverted(let event): return event.entry
-        case .meetingChanged, .commentSent, .commentChanged, .peopleChanged, .wordTimingsChanged: return nil
+        case .meetingChanged, .commentSent, .commentChanged, .peopleChanged, .wordTimingsChanged, .voiceJob: return nil
         }
     }
+}
+
+/// A step of a long service call, from the service's `$/progress { id, fraction?, label? }`: how far the call is (0 to 1)
+/// and what it does now ("Voices: 120 of 300 lines"). Either part may be missing.
+struct MeetingsCallProgress: Equatable, Sendable {
+    var fraction: Double?
+    var label: String?
 }
 
 /// What a listener of the service hears: an event, the kept subscription sent again on a new connection (events between
@@ -428,6 +470,8 @@ final class MeetingsService {
         /// A kept subscription with no connection looks again after this long, then twice as long each time, up to
         /// `refusedBackoff`.
         var reconnectDelay: TimeInterval = 1
+        /// The clock each call's silence deadline runs on; nil is the real clock (tests advance their own).
+        var callDeadlines: JSONRPCSocketClient.DeadlineScheduler? = nil
     }
 
     enum State: Equatable {
@@ -438,11 +482,14 @@ final class MeetingsService {
     }
 
     /// The service did not answer the call; the caller runs the command instead.
-    struct Unavailable: Error, Equatable, CustomStringConvertible {
+    struct Unavailable: Error, Equatable, CustomStringConvertible, LocalizedError {
         let reason: String
         /// False once a request may have changed data, even if its reply could not be read.
         var safeToRetry = true
         var description: String { reason }
+        /// The words a failure line shows (window audit M10): it read "GenesisToolsMeetings.MeetingsService.Unavailable
+        /// error 1." where this type had none.
+        var errorDescription: String? { "The Meetings service did not answer (\(reason))" }
     }
 
     /// Starts the service; returns once it listens (`tools meetings serve --detach` prints its service.json then).
@@ -467,12 +514,15 @@ final class MeetingsService {
     private var lastStart: Date?
     private var failedStarts = 0
     private var starting: Task<Void, Never>?
+    private var startFailureListeners: [UUID: @MainActor (MeetingsCLI.Failure) -> Void] = [:]
+    private var startFailureReported = false
     private var subscription: MeetingsAPI.Subscribe.Params?
     /// Connects again while a subscription is kept and no connection is open (`resumeSubscription`).
     private var resuming: Task<Void, Never>?
     private var restoreFailures = 0
     private var callsInFlight = 0
     private var idleGeneration = 0
+    let rowsRefresh = MeetingsRowsRefresh()
 
     /// Who hears the subscription's events and its state, on the main actor (`listen`).
     private var listeners: [UUID: @MainActor (MeetingsServiceSignal) -> Void] = [:]
@@ -499,6 +549,11 @@ final class MeetingsService {
         return Listening { [weak self] in self?.listeners[id] = nil }
     }
 
+    func listenForStartFailure(_ handler: @escaping @MainActor (MeetingsCLI.Failure) -> Void) -> Listening {
+        let id = UUID(); startFailureListeners[id] = handler
+        return Listening { [weak self] in self?.startFailureListeners[id] = nil }
+    }
+
     /// A listener's hold: `cancel()` or its release stops the events.
     final class Listening {
         private var stop: (@MainActor () -> Void)?
@@ -520,12 +575,24 @@ final class MeetingsService {
         for handler in listeners.values { handler(signal) }
     }
 
+    /// The one deadline of every call: how long the service may stay silent on it. The service sends a running call's
+    /// newest `$/progress` step again every 15 s (`MEETINGS_CALL_BEAT_MS` in src/meetings/lib/service/service.ts), and
+    /// each step starts this wait again (`JSONRPCSocketClient`), so a long call (a cold voice pass: 116 s on a 172-minute
+    /// meeting, about 400 s in the background) ends by its answer, and a service that hangs still fails the call after
+    /// a minute (w_gu80y4mc: a fixed 120 s cut a suggest off while the service went on working).
+    static let silenceLimit: TimeInterval = 60
+
     /// Calls one method. Throws `Unavailable` when the service does not answer it or answers a shape this app cannot
     /// decode (the caller runs the command), the
     /// `MeetingsCLI.Failure` the command would have thrown when the service refuses it (its `code` is the refusal's
     /// `data.code`, `no-transcript-source` and the like), and `CancellationError` when the task was cancelled (the
-    /// service hears `$/cancel`).
-    func call<M: MeetingsServiceMethod>(_ method: M.Type, _ params: M.Params, timeout: TimeInterval = 60) async throws -> M.Result {
+    /// service hears `$/cancel`). `onProgress` hears each `$/progress` the service sends for the call, on the main actor
+    /// and before the answer.
+    func call<M: MeetingsServiceMethod>(_ method: M.Type, _ params: M.Params, timeout: TimeInterval = silenceLimit,
+                                        onProgress: (@MainActor (MeetingsCallProgress) -> Void)? = nil) async throws -> M.Result {
+        let decision = M.Result.self == DecisionResult.self
+        if decision { rowsRefresh.beginWrite() }
+        defer { if decision { rowsRefresh.endWrite() } }
         guard let client = await connection() else {
             throw Unavailable(reason: "no Meetings service answers")
         }
@@ -536,7 +603,10 @@ final class MeetingsService {
         }
         let span = HubPerf.begin("meetings.service", M.name)
         do {
-            let result = try await Self.send(method, params, on: client, timeout: timeout)
+            let result = try await Self.send(method, params, on: client, timeout: timeout, onProgress: onProgress)
+            if let decision = result as? DecisionResult, let patch = decision.rows, let entry = decision.entry {
+                rowsRefresh.apply(patch, token: entry.token)
+            }
             span.end()
             return result
         } catch {
@@ -585,13 +655,29 @@ final class MeetingsService {
             resumeSubscription()
             throw Unavailable(reason: "no Meetings service answers; the next connection subscribes")
         }
-        let heard = try await call(MeetingsAPI.Subscribe.self, params, timeout: timing.helloTimeout).events
+        let heard = try await call(MeetingsAPI.Subscribe.self, supportedEvents(params), timeout: timing.helloTimeout).events
         // An `unsubscribe()`, a newer subscribe or a closed connection while the reply was on its way: this reply is
         // not an active subscription. A reconnect sends the kept one again and marks it (`attach`).
         guard generation == subscriptionGeneration, client === connected else { return heard }
         restoreFailures = 0
         isSubscribed = true
         return heard
+    }
+
+    private func supportedEvents(_ params: MeetingsAPI.Subscribe.Params) -> MeetingsAPI.Subscribe.Params {
+        guard params.events == MeetingsAPI.windowEvents, case .connected(_, let advertised) = state else { return params }
+        var current = params
+        current.events = MeetingsAPI.windowEvents.filter(advertised.contains)
+        return current
+    }
+
+    /// Older services list project rows and expose only the original numbered playback selector.
+    func listVoiceLibrary(_ destination: VoiceDestination) async throws -> MeetingsAPI.VoicesList.Result {
+        _ = await connection()
+        if case .connected(let methods, _) = state, !methods.contains(MeetingsAPI.VoicesMove.name) {
+            return try await call(MeetingsAPI.VoicesList.self, .init(project: destination.project))
+        }
+        return try await call(MeetingsAPI.VoicesList.self, .init(scope: destination.scope, person: destination.owner?.name))
     }
 
     /// Forgets the subscription and closes the connection, so the service can go idle.
@@ -747,7 +833,7 @@ final class MeetingsService {
         case .socket(let found):
             socket = found
         }
-        let candidate = JSONRPCSocketClient(path: socket, callbackQueue: callbackQueue)
+        let candidate = JSONRPCSocketClient(path: socket, callbackQueue: callbackQueue, scheduleDeadline: timing.callDeadlines)
         // The handlers are set before the connection opens, so no notification or close reaches a client whose
         // handlers are being set on another thread (Wave A review, Unproven list).
         install(on: candidate)
@@ -826,7 +912,7 @@ final class MeetingsService {
         if let subscription {
             Task {
                 do {
-                    _ = try await Self.send(MeetingsAPI.Subscribe.self, subscription, on: connected, timeout: timing.helloTimeout)
+                    _ = try await Self.send(MeetingsAPI.Subscribe.self, supportedEvents(subscription), on: connected, timeout: timing.helloTimeout)
                     guard self.subscription != nil, self.client === connected else { return }
                     restoreFailures = 0
                     isSubscribed = true
@@ -905,10 +991,17 @@ final class MeetingsService {
             do {
                 try await start()
                 self?.failedStarts = 0
+                self?.startFailureReported = false
                 HubPerf.log("meetings.service: tools meetings serve --detach returned; the next read connects")
             } catch {
                 self?.failedStarts += 1
                 HubPerf.log("meetings.service: tools meetings serve --detach failed (\(self?.failedStarts ?? 0) in a row): \(error)")
+                if let self, !self.startFailureReported, !self.startFailureListeners.isEmpty {
+                    self.startFailureReported = true
+                    let failure = asFailure(error)
+                    let notice = MeetingsCLI.Failure(sentence: "The Meetings service could not start; this window uses its command instead. \(failure.sentence)", detail: failure.detail)
+                    for report in self.startFailureListeners.values { report(notice) }
+                }
             }
             self?.starting = nil
         }
@@ -931,14 +1024,25 @@ final class MeetingsService {
     // MARK: Wire
 
     /// One request on `client`: the params encoded, the answer decoded off the main thread, a cancelled task's
-    /// request cancelled on the wire. Errors come back as the transport made them (`RemoteError` with its data).
+    /// request cancelled on the wire. Errors come back as the transport made them (`RemoteError` with its data). The
+    /// transport hands each `$/progress` and the answer to one serial queue in the order they came, and both reach the
+    /// main actor through it, so no step lands after the answer.
     private static func send<M: MeetingsServiceMethod>(_ method: M.Type, _ params: M.Params, on client: JSONRPCSocketClient,
-                                                      timeout: TimeInterval) async throws -> M.Result {
+                                                      timeout: TimeInterval,
+                                                      onProgress: (@MainActor (MeetingsCallProgress) -> Void)? = nil) async throws -> M.Result {
         let object = try paramsObject(params)
         let pending = PendingRequest()
+        let progress: ((JSONRPCSocketClient.CallProgress) -> Void)? = onProgress.map { handler in
+            { step in
+                // A beat before the first step carries nothing: it keeps the call alive and leaves the shown words.
+                guard step.fraction != nil || step.label != nil else { return }
+                let value = MeetingsCallProgress(fraction: step.fraction, label: step.label)
+                DispatchQueue.main.async { MainActor.assumeIsolated { handler(value) } }
+            }
+        }
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                let id = client.request(M.name, params: object, timeout: timeout, errorData: true) { result in
+                let id = client.request(M.name, params: object, timeout: timeout, errorData: true, onProgress: progress) { result in
                     switch result {
                     case let .success(value):
                         do {
@@ -1038,6 +1142,16 @@ struct MeetingsRead<Value: Decodable> {
         }
     }
 
+    /// All evidence readers of one answer burst share the read after its last write has settled.
+    static func service(_ method: MeetingsAPI.MeetingRows.Type, _ params: MeetingsAPI.MeetingRows.Params, orRun args: [String],
+                        timeoutSeconds: Int = 60) -> MeetingsRead where Value == ReviewRows {
+        MeetingsRead(args: args, timeoutSeconds: timeoutSeconds, method: method.name) { service in
+            try await service.rowsRefresh.read(params) {
+                try await service.call(method, params, timeout: TimeInterval(timeoutSeconds))
+            }
+        }
+    }
+
     /// Runs the read through the window's service (`MeetingsService.shared`) when it answers, else as the command.
     @MainActor
     func run() async throws -> Value {
@@ -1068,5 +1182,91 @@ struct MeetingsRead<Value: Decodable> {
     /// (`meeting-not-found`, `no-transcript-source`) is the answer, the same the command would give.
     static func runsCommand(after failure: MeetingsCLI.Failure) -> Bool {
         failure.code == "failed"
+    }
+}
+
+/// Only rows reads are shared. A cancelled pane cannot cancel another pane's evidence request; writes keep their
+/// own replies and patches. The quiet wait uses write completion, so a slow answer does not start a full rows read
+/// in the middle of the next answer. Failed reads are never cached. A read joins a pending one only while that one
+/// still waits or loads after the latest write: rows loaded before an answer would show the answered row open again,
+/// and a load a write overtook loads again for the callers already waiting on it.
+@MainActor
+final class MeetingsRowsRefresh {
+    typealias Key = MeetingsAPI.MeetingRows.Params
+    private final class Pending {
+        var task: Task<ReviewRows, Error>?
+        /// The write generation its load started at; nil while it waits for the writes to settle.
+        var loadedAt: Int?
+    }
+    private var pending: [Key: Pending] = [:]
+    private var writes = 0
+    private var generation = 0
+    private var lastWrite: ContinuousClock.Instant?
+    private var writeWaiters: [CheckedContinuation<Void, Never>] = []
+    private let quietWindow: Duration
+    private var snapshots: [Key: ReviewRows] = [:]
+    private var recent: [Key] = []
+    private(set) var completedReadCount = 0
+
+    init(quietWindow: Duration = .milliseconds(150)) { self.quietWindow = quietWindow }
+
+    func beginWrite() { writes += 1; generation += 1 }
+    func endWrite() {
+        writes -= 1
+        lastWrite = .now
+        if writes == 0 {
+            let waiters = writeWaiters; writeWaiters = []
+            for waiter in waiters { waiter.resume() }
+        }
+    }
+
+    func cached(_ key: Key) -> ReviewRows? { snapshots[key] }
+    /// How many loads are parked until the writes in flight end.
+    var loadsWaitingForWrites: Int { writeWaiters.count }
+
+    func apply(_ patch: ReviewRowsPatch, token: String) {
+        for key in recent where key.meeting == patch.meeting {
+            guard let current = snapshots[key] else { continue }
+            let latest = Dictionary(current.rows.compactMap { row in row.decision.map { (row.id, $0.token) } }, uniquingKeysWith: { first, _ in first })
+            snapshots[key] = patch.applying(to: current, token: token, latest: latest)
+        }
+    }
+
+    func read(_ key: Key, load: @escaping @MainActor () async throws -> ReviewRows) async throws -> ReviewRows {
+        if let joined = pending[key], let task = joined.task, joined.loadedAt.map({ $0 == generation }) ?? true {
+            return try await task.value
+        }
+        let entry = Pending()
+        let task = Task { @MainActor in
+            // A load that a write overtook is read again once the writes settle: its rows predate the answer, and
+            // the callers waiting on it would draw the answered row open again.
+            while true {
+                while true {
+                    if self.writes > 0 { await withCheckedContinuation { self.writeWaiters.append($0) } }
+                    let turn = self.generation
+                    if let last = self.lastWrite {
+                        let remaining = self.quietWindow - last.duration(to: .now)
+                        if remaining > .zero { try await Task.sleep(for: remaining) }
+                    }
+                    if self.writes == 0 && turn == self.generation { break }
+                }
+                let turn = self.generation
+                entry.loadedAt = turn
+                let rows = try await load()
+                self.completedReadCount += 1
+                guard turn == self.generation else {
+                    entry.loadedAt = nil
+                    continue
+                }
+                self.snapshots[key] = rows
+                self.recent.removeAll { $0 == key }; self.recent.append(key)
+                if self.recent.count > 8 { self.snapshots[self.recent.removeFirst()] = nil }
+                return rows
+            }
+        }
+        entry.task = task
+        pending[key] = entry
+        defer { if pending[key] === entry { pending[key] = nil } }
+        return try await task.value
     }
 }

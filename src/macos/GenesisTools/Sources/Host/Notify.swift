@@ -875,7 +875,7 @@ private func list() {
 /// bump it: a client discovers those from `rpc.hello`'s method list instead.
 let rpcProtocolVersion = 1
 
-let rpcMethods = ["rpc.hello", "notify.post", "notify.remove", "notify.list", "notify.status", "notify.authorize", "notify.settings", "notify.reply", "gate.approve", "vault.unlock", "rm.approve"]
+let rpcMethods = ["rpc.hello", "notify.post", "notify.remove", "notify.list", "notify.status", "notify.authorize", "notify.settings", "notify.reply", "gate.approve", "vault.unlock", "rm.approve", "request.present"]
 
 /// `GenesisTools --rpc '<json>'`, or `--rpc -` to read the request from stdin: run one method and
 /// exit with one JSON line on stdout.
@@ -971,6 +971,12 @@ func runRpc(_ arguments: [String]) -> Never {
         }
 
         unlockVault(request.params)
+
+    case "request.present":
+        guard let request = try? decoder.decode(ParamsEnvelope<RequestPresentParams>.self, from: data) else {
+            emitError(code: "params_invalid", message: "request.present needs a notice id, title and reason", exitCode: 64)
+        }
+        presentRequest(request.params)
 
     case "rm.approve":
         guard let request = try? decoder.decode(ParamsEnvelope<RmApproveParams>.self, from: data) else {

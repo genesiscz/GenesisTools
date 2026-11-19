@@ -57,6 +57,7 @@ export type HistoryScopeFacts = Pick<
 /** The catalog scope terms SQL applies exactly, each as the catalog's scope test applies it to a row. */
 export interface HistoryScopeQuery {
     providerId: string;
+    excludeAgents?: boolean;
     /** Rows whose file mtime is at or after this epoch ms. */
     mtimeFrom?: number;
     filePaths?: string[];
@@ -295,6 +296,7 @@ export class HistoryRepository {
         boundedOnly?: boolean;
         filePath?: string;
         sessionId?: string;
+        parentNativeIds?: string[];
         project?: string;
         pathPrefix?: string;
         /** Rows whose file mtime is at or after this epoch ms; served by idx_session_metadata_provider_mtime. */
@@ -346,6 +348,10 @@ export class HistoryRepository {
             clauses.push("m.session_id = ?");
             params.push(options.sessionId);
         }
+        if (options.parentNativeIds) {
+            clauses.push("m.parent_native_id IN (SELECT value FROM json_each(?))");
+            params.push(SafeJSON.stringify(options.parentNativeIds));
+        }
         if (options.project !== undefined) {
             clauses.push("m.project = ?");
             params.push(options.project);
@@ -391,6 +397,9 @@ export class HistoryRepository {
         // The unary `+` for one path: see `listMetadata`.
         const clauses = [query.filePaths?.length === 1 ? "+m.provider = ?" : "m.provider = ?"];
         const params: Array<string | number> = [query.providerId];
+        if (query.excludeAgents) {
+            clauses.push("m.is_subagent IS NOT 1");
+        }
 
         if (query.filePaths?.length === 1) {
             clauses.push("m.file_path = ?");

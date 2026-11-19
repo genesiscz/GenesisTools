@@ -1,11 +1,15 @@
 import SwiftUI
 
-/// The inbox button's view: inbox items from every session in one list, the waiting ones first. A row opens in place
+/// The inbox button's view: inbox items from every session in one list, in the chosen order. A row opens in place
 /// to show its session and the way to that session's whole inbox (with the entry open) and its cmux pane.
 struct WidgetInboxOverview: View {
     @ObservedObject var model: WidgetModel
-    /// The filter picked here; until then the one the `overviewFilter` setting opens with.
-    @State private var filterPick: String?
+    /// The host supplies its fitted scroll view so that the reader and the arrival button surround the viewport.
+    var viewport: (AnyView) -> AnyView = { $0 }
+    @State private var belowTop = false
+    @State private var readingBoundary: WidgetInboxItem?
+    @State private var visibleOpenID: String?
+    @State private var orderAnchor: String?
     @State private var openID: String?
     /// The row Up and Down chose (`WidgetModel.listKey`); Return opens or folds it. The pointer never moves it.
     @State private var focusID: String?
@@ -13,39 +17,75 @@ struct WidgetInboxOverview: View {
     @State private var focusedOption: String?
     @GenReduceMotion private var reduceMotion
 
-    private var filter: String { filterPick ?? model.preferences.overviewFilter }
+    private var filter: String { model.overviewFilterPick ?? model.preferences.overviewFilter }
 
     private var items: [WidgetInboxItem] {
         let all = model.inboxOverviewItems
         switch filter {
         case "needs": return all.filter(\.needsAnswer)
-        case "unread": return all.filter { !$0.needsAnswer }
+        case "unread": return all.filter(\.isUnreadEntry)
         default: return all
         }
     }
 
-    /// Items under their session ("session", the default) or one list (Widgets → Inbox, and the header button).
     private var grouped: Bool { model.preferences.inboxGrouping == "session" }
-
-    /// The rows in the order they are drawn: grouped under their sessions, or the one list.
-    private func drawnOrder(_ items: [WidgetInboxItem]) -> [WidgetInboxItem] {
-        grouped ? Self.groups(items).flatMap(\.items) : items
-    }
+    private var feed: Bool { model.preferences.inboxGrouping == "feed" }
 
     var body: some View {
         let items = items
+        let feedRows = WidgetFeedReadingPlace.split(model.inboxFeeds[filter], at: readingBoundary)
+        let drawn = feed ? feedRows.runs.flatMap(\.items) : grouped ? Self.groups(items).flatMap(\.items) : items
         let _ = RenderProbe.hit("widget.overview")
-        // Inside the pane's scroll view: the proxy scrolls the row the keys chose into view.
+        VStack(alignment: .leading, spacing: 8) {
+            controls
+            scrolledList(items: items, feedRows: feedRows, drawn: drawn)
+        }
+    }
+
+    private func scrolledList(items: [WidgetInboxItem],
+                              feedRows: (runs: [WidgetFeedRun], pending: Int, replacement: WidgetInboxItem?),
+                              drawn: [WidgetInboxItem]) -> some View {
         ScrollViewReader { proxy in
-            list(items)
+            viewport(AnyView(list(items, runs: feedRows.runs)))
+                .overlay(alignment: .top) {
+                    if feed, feedRows.pending > 0 {
+                        Button(Plural.count(feedRows.pending, "new item")) {
+                            readingBoundary = nil
+                            proxy.scrollTo("widget.overview.top", anchor: .top)
+                        }
+                        .font(.system(size: 10, weight: .semibold))
+                        .buttonStyle(.genHoverPlain())
+                        .padding(.horizontal, 6)
+                        .background(SessionPalette.blue.opacity(0.18), in: Capsule())
+                        .padding(.top, 2)
+                    }
+                }
+                .onChange(of: model.preferences.inboxGrouping) { _, _ in
+                    readingBoundary = feed && belowTop ? model.inboxFeeds[filter].first?.items.first : nil
+                    if let id = orderAnchor ?? visibleOpenID, id == openID { proxy.scrollTo(id, anchor: .top) }
+                    orderAnchor = nil
+                }
+                .onChange(of: model.preferences.inboxFeedRuns) { _, _ in
+                    if feed, let id = orderAnchor ?? visibleOpenID, id == openID { proxy.scrollTo(id, anchor: .top) }
+                    orderAnchor = nil
+                }
+                .onChange(of: feedRows.replacement?.id, initial: true) { _, _ in
+                    if feed, belowTop, let replacement = feedRows.replacement {
+                        readingBoundary = replacement
+                    }
+                }
+                .onChange(of: filter) { _, _ in
+                    readingBoundary = nil
+                    proxy.scrollTo("widget.overview.top", anchor: .top)
+                }
                 .onChange(of: model.listKey) { _, key in
                     guard let key else { return }
-                    handle(key.kind, alternate: key.alternate, rows: drawnOrder(items), proxy: proxy)
+                    handle(key.kind, alternate: key.alternate, rows: drawn, proxy: proxy)
                 }
                 .onChange(of: focusID) { _, id in model.inboxOverviewHasFocus = id != nil }
                 // A row that left the list (a filter, the grouping or a snapshot) cannot keep the keys' highlight, or
                 // Return would still answer it.
-                .onChange(of: drawnOrder(items).map(\.id)) { _, ids in
+                .onChange(of: drawn.map(\.id)) { _, ids in
                     if let id = focusID, !ids.contains(id) {
                         focusID = nil
                         focusedOption = nil
@@ -141,8 +181,8 @@ struct WidgetInboxOverview: View {
             return
         }
         guard alternate else {
-            model.postNote(swaps ? "Return does not send an answer. ⌘-Return sends it."
-                                 : "Return does not send an answer. Click the option to send it.")
+            model.postNote(swaps ? "Click the option to send it, or press ⌘-Return to stage it."
+                                 : "Press ⌘-Return to send this option.")
             return
         }
         guard model.clickStagesNow else {
@@ -156,58 +196,108 @@ struct WidgetInboxOverview: View {
         model.sendStaged([item.sourceId], known: [item])
     }
 
-    private func list(_ items: [WidgetInboxItem]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                GenSegmentedTabs(
-                    "Inbox items",
-                    items: [.init("all", "All"), .init("needs", "Waiting"), .init("unread", "Unread")],
-                    selection: Binding(get: { filter }, set: { value in
-                        model.holdAgentFit()
-                        filterPick = value
-                    }), minSegmentWidth: 70, identifier: "widget.overview.filter")
-                Spacer(minLength: 4)
-                IconButton(systemName: grouped ? "list.bullet" : "rectangle.3.group",
-                           tooltip: grouped ? "Show one list" : "Group the items by session") {
+    private var controls: some View {
+        HStack(spacing: 6) {
+            GenSegmentedTabs(
+                "Inbox items",
+                items: [.init("all", "All"), .init("needs", "Waiting"), .init("unread", "Unread")],
+                selection: Binding(get: { filter }, set: { value in
                     model.holdAgentFit()
-                    model.writePreferences { $0.inboxGrouping = grouped ? "list" : "session" }
-                }.accessibilityLabel(grouped ? "Show one list" : "Group by session")
-                if model.inboxCount > 0 {
-                    Button("Mark all read", action: model.markAllRead)
-                        .buttonStyle(.genHover()).font(.system(size: 11, weight: .medium))
-                        .instantTooltip("Answers become read; older questions and decisions stop counting. Nothing is deleted.")
-                }
+                    model.overviewFilterPick = value
+                }), minSegmentWidth: 54, identifier: "widget.overview.filter", fillsWidth: true)
+            Spacer(minLength: 4)
+            orderMenu
+            if model.inboxCount > 0 {
+                WidgetMarkAllReadButton(model: model)
             }
+        }
+    }
+
+    private func list(_ items: [WidgetInboxItem], runs: [WidgetFeedRun]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Color.clear.frame(height: 1)
+                .accessibilityHidden(true)
+                .id("widget.overview.top")
+                .onGeometryChange(for: Bool.self, of: { $0.frame(in: .scrollView).minY < -1 }) { scrolled in
+                    belowTop = scrolled
+                    readingBoundary = feed && scrolled ? model.inboxFeeds[filter].first?.items.first : nil
+                }
             if items.isEmpty {
                 VStack(spacing: 10) {
                     GenesisWidgetMark()
-                    Text(filter == "needs" ? "Nothing waits for your answer." : "Nothing new in the inbox.")
+                    Text(!model.inbox.complete ? "Inbox status unavailable." : filter == "needs"
+                         ? "Nothing waits for your answer." : filter == "unread" ? "No unread items." : "Nothing new in the inbox.")
                         .font(.headline)
-                    Text("Questions, screenshots and finished work from every session land here.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    if !model.inboxOverviewItems.isEmpty, filter != "all" {
+                        Button("Show all items") {
+                            model.holdAgentFit()
+                            model.overviewFilterPick = "all"
+                        }
+                            .buttonStyle(.genHover())
+                    } else if model.inbox.complete {
+                        Text("Questions, screenshots and finished work from every session land here.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }.frame(maxWidth: .infinity).padding(.vertical, 28)
             } else {
-                Text(Self.summary(items)).font(.system(size: 11)).foregroundStyle(.secondary)
+                Text(Self.summary(items) + (feed ? " · newest first" : "")).font(.system(size: 11)).foregroundStyle(.secondary)
+                    .padding(.bottom, 8)
                 // Hundreds of entries: lazy, so only the rows on screen exist (swift skill, dense lists).
                 LazyVStack(alignment: .leading, spacing: 10) {
-                    if grouped {
+                    if feed {
+                        WidgetFeedRows(runs: runs, model: model) { item, context in
+                            row(item, context: context)
+                        }
+                    } else if grouped {
                         ForEach(Self.groups(items), id: \.key) { group in
                             Section {
-                                ForEach(group.items, id: \.id) { item in row(item) }
+                                ForEach(group.items, id: \.id) { item in row(item, context: .sessionHeader) }
                             } header: {
                                 header(group.key, items: group.items)
                             }
                         }
                     } else {
-                        ForEach(items, id: \.id) { item in row(item) }
+                        ForEach(items, id: \.id) { item in row(item, context: .list) }
                     }
                 }
                 if model.inbox.truncated {
                     Text("The newest items are shown. Open a session for its whole inbox.")
-                        .font(.caption2).foregroundStyle(.tertiary)
+                        .font(.system(size: 11)).foregroundStyle(.secondary).padding(.top, 8)
                 }
             }
         }
+    }
+
+    private var orderMenu: some View {
+        let order = model.preferences.inboxGrouping
+        return MenuButton(items: {
+            var choices: [MenuButtonItem] = [("feed", "Newest first"), ("session", "By session"), ("list", "One list")]
+                .map { value, title in
+                    .action(title, checked: value == order) {
+                        guard order != value else { return }
+                        orderAnchor = visibleOpenID
+                        model.holdAgentFit()
+                        model.writePreferences { $0.inboxGrouping = value }
+                    }
+                }
+            if feed {
+                let perProject = model.preferences.inboxFeedRuns == "project"
+                choices += [.divider, .action("Feed headers per project", checked: perProject) {
+                    orderAnchor = visibleOpenID
+                    model.holdAgentFit()
+                    model.writePreferences { $0.inboxFeedRuns = perProject ? "session" : "project" }
+                }]
+            }
+            return choices
+        }) {
+            Label(feed ? "Newest" : grouped ? "Sessions" : "List", systemImage: "line.3.horizontal.decrease")
+                .font(.system(size: 11)).lineLimit(1)
+        }
+        .instantTooltip("Order of the inbox list")
+        .accessibilityLabel("Order of the inbox list")
+        .accessibilityValue(feed ? "Newest first" : grouped ? "By session" : "One list")
+        .accessibilityHint("Opens the inbox order menu")
+        .accessibilityIdentifier("widget.overview.grouping")
     }
 
     /// The sessions in the order their first entry appears (the waiting ones first), each with its entries.
@@ -215,40 +305,48 @@ struct WidgetInboxOverview: View {
         var order: [String] = []
         var byKey: [String: [WidgetInboxItem]] = [:]
         for item in items {
-            if byKey[item.key] == nil { order.append(item.key) }
-            byKey[item.key, default: []].append(item)
+            let key = item.message?.origin.map { "sender/" + $0 } ?? item.key
+            if byKey[key] == nil { order.append(key) }
+            byKey[key, default: []].append(item)
         }
         return order.map { ($0, byKey[$0] ?? []) }
     }
 
     private func header(_ key: String, items: [WidgetInboxItem]) -> some View {
         let session = model.session(forKey: key)
-        let waiting = items.filter(\.needsAnswer).count
+        let waiting = items.reduce(0) { $0 + ($1.needsAnswer ? $1.representedCount : 0) }
+        let total = items.reduce(0) { $0 + $1.representedCount }
         return HStack(spacing: 7) {
             if let session {
                 AIProviderGlyph(meta: AIProviders.meta(for: session.target.provider), size: 14)
             }
-            Text(session?.title ?? "Unknown session").font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
-            Text([Plural.count(items.count, "item"), waiting > 0 ? WidgetWords.waitingShort(waiting) : nil]
-                .compactMap { $0 }.joined(separator: " · "))
-                .font(.system(size: 10)).foregroundStyle(waiting > 0 ? Color.orange : .secondary)
+            Text(items.first?.message?.origin ?? session?.title ?? "Unknown session")
+                .font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
+            if items.count > 1 {
+                Text([Plural.count(total, "item"), waiting > 0 ? WidgetWords.waitingShort(waiting) : nil]
+                    .compactMap { $0 }.joined(separator: " · "))
+                    .font(.system(size: 11)).foregroundStyle(waiting > 0 ? Color.orange : .secondary)
+            }
             Spacer(minLength: 0)
             if let session {
-                Button("Whole inbox") {
-                    model.select(session.key)
-                    model.section = "Inbox"
-                }.buttonStyle(.genHoverPlain()).font(.system(size: 10.5))
+                IconButton(systemName: "tray", tooltip: "Open the whole inbox of " + session.title, size: 11) {
+                    model.openSessionInbox(session)
+                }
             }
         }
         .padding(.top, 6).padding(.horizontal, 2)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
     }
 
-    private static func summary(_ items: [WidgetInboxItem]) -> String {
-        let waiting = items.filter(\.needsAnswer).count
-        let sessions = Set(items.map(\.key)).count
-        return [Plural.count(items.count, "item"), waiting > 0 ? WidgetWords.waiting(waiting) : nil,
-                "from " + Plural.count(sessions, "session")].compactMap { $0 }.joined(separator: " · ")
+    static func summary(_ items: [WidgetInboxItem]) -> String {
+        let waiting = items.reduce(0) { $0 + ($1.needsAnswer ? $1.representedCount : 0) }
+        let total = items.reduce(0) { $0 + $1.representedCount }
+        let sessions = Set(items.filter { $0.message?.origin == nil }.map(\.key)).count
+        let senders = Set(items.compactMap { $0.message?.origin }).count
+        let sources = [sessions > 0 ? Plural.count(sessions, "session") : nil,
+                       senders > 0 ? Plural.count(senders, "sender") : nil].compactMap { $0 }.joined(separator: " and ")
+        return [Plural.count(total, "item"), waiting > 0 ? WidgetWords.waiting(waiting) : nil,
+                sources.isEmpty ? nil : "from " + sources].compactMap { $0 }.joined(separator: " · ")
     }
 
     private func toggle(_ item: WidgetInboxItem) {
@@ -257,106 +355,19 @@ struct WidgetInboxOverview: View {
         GenMotion.perform(expanding: opening, reduceMotion: reduceMotion) { openID = opening ? item.id : nil }
     }
 
-    private func row(_ item: WidgetInboxItem) -> some View {
+    private func row(_ item: WidgetInboxItem, context: WidgetInboxRowContext) -> some View {
         let open = openID == item.id
         let focused = focusID == item.id
-        let session = model.session(forKey: item.key)
-        return VStack(alignment: .leading, spacing: 0) {
-            WidgetInboxOverviewRow(
-                item: item, open: open, focused: focused, grouped: grouped,
-                sessionTitle: session?.title, stagedLine: stagedLine(item), toggle: { toggle(item) })
-                .equatable()
-            if open {
-                detail(item, session: session).padding(.horizontal, 12).padding(.top, 2).padding(.bottom, 12)
-                    .transition(.genReveal)
+        return WidgetInboxEntry(model: model, item: item, open: open, focused: focused, context: context,
+                                focusedOption: focusedOption, toggle: { toggle(item) })
+            .onGeometryChange(for: Bool.self, of: { geometry in
+                guard open, let viewport = geometry.bounds(of: .scrollView) else { return false }
+                return CGRect(origin: .zero, size: geometry.size).intersects(viewport)
+            }) { visible in
+                if visible { visibleOpenID = item.id }
+                else if visibleOpenID == item.id { visibleOpenID = nil }
             }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 11))
-        .background(Color.white.opacity(open ? 0.055 : 0.03), in: RoundedRectangle(cornerRadius: 11))
-        .overlay(RoundedRectangle(cornerRadius: 11)
-            .strokeBorder(item.needsAnswer ? Color.orange.opacity(0.28) : .clear, lineWidth: 1))
-        // The keyboard's row: a focus ring, the look of the system's own.
-        .overlay(RoundedRectangle(cornerRadius: 11)
-            .strokeBorder(focused ? Color(nsColor: .keyboardFocusIndicatorColor) : .clear, lineWidth: 2))
-        .id(item.id)
-    }
-
-    private func stagedLine(_ item: WidgetInboxItem) -> WidgetStageLine? {
-        let option = model.shownStagedOption(item.sourceId, stored: item.draftOption)
-        let note = model.shownStagedNote(item.sourceId, item.draft)
-        guard item.kind == "decision", item.needsAnswer, option != nil || note != nil else { return nil }
-        return WidgetStageLine(phase: model.stagePhase(item.sourceId, draftedAt: item.draftedAt),
-                               pick: WidgetStagedText.line(item, option: option))
-    }
-
-    /// An open decision's options, each staging (or sending, by the setting) that pick from here; the shared option
-    /// row, so this list, the alert and a session's inbox draw an option one way.
-    @ViewBuilder private func choices(_ item: WidgetInboxItem) -> some View {
-        if ["decision", "dialog"].contains(item.kind), item.needsAnswer, let options = item.options, !options.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(Array(options.enumerated()), id: \.offset) { index, option in
-                    let letter = Self.letter(index)
-                    WidgetItemOptionButton(model: model, item: item, index: index, option: option,
-                                           focused: focusID == item.id && focusedOption == letter)
-                        .id(item.id + "#" + letter)
-                }
-                // A set's clicks only tick, so its Send lives here, beside the options it sends.
-                if item.takesSeveral { setSendBar(item) }
-            }
-        }
-    }
-
-    /// The Send of a decision that takes any set of its options, and its recommended set in one click.
-    private func setSendBar(_ item: WidgetInboxItem) -> some View {
-        WidgetSetSendBar(
-            letters: model.shownStagedOption(item.sourceId, stored: item.draftOption),
-            recommended: DecisionAnswering.recommendedSet(item.recommended, count: item.options?.count ?? 0),
-            sending: model.sendingDecisionIDs.contains(item.sourceId),
-            identifier: "widget.overview.sendSet." + item.sourceId,
-            pick: { model.pickSet(item, option: $0) },
-            send: { model.sendStaged([item.sourceId], known: [item]) })
-            .padding(.top, 2)
-    }
-
-    /// An open decision's question under its title, drawn as the alert popup draws it (`WidgetPeekSummary`), so a pick
-    /// here is not made blind: the entry showed only "a", "b", "c" for a decision whose words were in its prompt
-    /// (Martin, 2026-11-01). Widgets → General, "Show the question in the inbox of every session".
-    @ViewBuilder private func summary(_ item: WidgetInboxItem) -> some View {
-        if model.preferences.overviewSummary, item.needsAnswer,
-           let summary = item.summary, !summary.isEmpty {
-            WidgetPeekSummary(summary: summary, identifier: "widget.overview.summary").equatable()
-        }
-    }
-
-    private func detail(_ item: WidgetInboxItem, session: WidgetSession?) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            summary(item)
-            choices(item)
-            if let session {
-                HStack(spacing: 8) {
-                    AIProviderGlyph(meta: AIProviders.meta(for: session.target.provider), size: 18)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(session.title).font(.system(size: 11.5, weight: .medium)).lineLimit(1)
-                        Text([session.project, session.visualStatus.label, String(session.target.sessionId.prefix(8))]
-                            .filter { !$0.isEmpty }.joined(separator: " · "))
-                            .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
-                    }
-                }
-            }
-            HStack(spacing: 8) {
-                Button(item.needsAnswer ? "Answer in its session" : "Open in its session") { model.openInboxItem(item) }
-                    .buttonStyle(.genHover(accent: item.needsAnswer ? .orange : KitTheme.accent))
-                    .accessibilityIdentifier("widget.overview.open." + item.id)
-                if let session {
-                    Button("Whole inbox") {
-                        model.select(session.key)
-                        model.section = "Inbox"
-                    }.buttonStyle(.genHover())
-                    Spacer(minLength: 0)
-                    WidgetCmuxButton(model: model, session: session, size: 12)
-                }
-            }.font(.caption)
-        }
+            .onDisappear { if visibleOpenID == item.id { visibleOpenID = nil } }
     }
 
     static func title(_ item: WidgetInboxItem) -> String {
@@ -390,23 +401,23 @@ struct WidgetInboxOverviewRow: View, Equatable {
     let open: Bool
     /// The keyboard's row.
     let focused: Bool
-    /// Under its session header: the row does not repeat the session.
-    let grouped: Bool
-    let sessionTitle: String?
+    /// Only the source information that the enclosing group has not already identified.
+    let source: String?
     /// The staged pick or note of a waiting decision with where its send is, read from the model by the parent.
     let stagedLine: WidgetStageLine?
     let toggle: () -> Void
 
     static func == (a: WidgetInboxOverviewRow, b: WidgetInboxOverviewRow) -> Bool {
-        a.item == b.item && a.open == b.open && a.focused == b.focused && a.grouped == b.grouped
-            && a.sessionTitle == b.sessionTitle && a.stagedLine == b.stagedLine
+        a.item == b.item && a.open == b.open && a.focused == b.focused
+            && a.source == b.source && a.stagedLine == b.stagedLine
     }
 
     var body: some View {
         let _ = RenderProbe.hit("widget.overview.row.body")
         labels
             .rowButton(cornerRadius: 11) { toggle() }
-            .accessibilityLabel(WidgetInboxOverview.kindLabel(item) + ": " + WidgetInboxOverview.title(item))
+            .accessibilityLabel([WidgetInboxOverview.kindLabel(item), WidgetInboxOverview.title(item),
+                                 source].compactMap { $0 }.joined(separator: ", "))
             .accessibilityValue(open ? "Expanded" : "Collapsed")
             .accessibilityAddTraits(focused ? .isSelected : [])
             .accessibilityIdentifier("widget.overview.row." + item.id)
@@ -423,7 +434,8 @@ struct WidgetInboxOverviewRow: View, Equatable {
                 .foregroundStyle(.secondary).frame(width: 14).padding(.top, 1)
             VStack(alignment: .leading, spacing: 3) {
                 Text(WidgetInboxOverview.title(item)).font(.system(size: 12.5, weight: open ? .semibold : .medium))
-                    .lineLimit(open ? 6 : 2).fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(open ? (item.reply == nil ? 6 : nil) : 2)
+                    .fixedSize(horizontal: false, vertical: true)
                 if let askedIn = item.askedIn, !askedIn.isEmpty {
                     WidgetAskedInLine(askedIn)
                 }
@@ -431,14 +443,17 @@ struct WidgetInboxOverviewRow: View, Equatable {
                     stagedLine
                 }
                 HStack(spacing: 4) {
-                    Text(waiting || !item.needsAnswer ? WidgetInboxOverview.kindLabel(item) : "Decision")
-                    Text("·")
-                    // Under its session header the row does not repeat the session.
-                    if !grouped {
-                        Text(sessionTitle ?? "Unknown session").lineLimit(1)
+                    if let source {
+                        Text(source).lineLimit(1).truncationMode(.middle).help(source)
                         Text("·")
                     }
-                    LiveAgo(date: Date(timeIntervalSince1970: item.at / 1000), style: .brief)
+                    // A decision on its way no longer says it waits for your answer.
+                    let kind = waiting || !item.needsAnswer ? WidgetInboxOverview.kindLabel(item) : "Decision"
+                    if WidgetInboxOverview.title(item) != kind {
+                        Text(kind).lineLimit(1)
+                        Text("·")
+                    }
+                    LiveAgo(date: Date(timeIntervalSince1970: item.at / 1000), style: .spelled).fixedSize()
                 }.font(.system(size: 11)).foregroundStyle(waiting ? Color.orange : SessionPalette.secondary)
             }
             Spacer(minLength: 4)

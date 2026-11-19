@@ -1,4 +1,5 @@
 import { isAbsolute, win32 } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { logger } from "@genesiscz/utils/logger";
 import { DEFAULT_OCR_TILE_PX, OCR_READS } from "@genesiscz/utils/macos/ocr";
 import { FILLER_WORDS, type FillerLists } from "@genesiscz/utils/recording-editor/transcript-cuts";
@@ -7,14 +8,19 @@ import { FRAME_RECORDER_IDS, type FrameRecorderId } from "@genesiscz/utils/scree
 import { Storage } from "@genesiscz/utils/storage/storage";
 import {
     type AbbrExpansion,
+    DEFAULT_FUZZY,
     type DictionaryEntry,
     type DictionaryLevel,
+    dictionaryEntrySchema,
     dictionaryLevelSchema,
     mergeDictionaries,
     type ResolvedDictionary,
 } from "@genesiscz/utils/transcribe/dictionary";
+import { DEFAULT_MUTED_CARRY_SEC } from "@genesiscz/utils/transcribe/evidence";
+import { DEFAULT_MIN_CONFIDENCE } from "@genesiscz/utils/transcribe/terms";
 import { z } from "zod";
 import { MeetingsConflictError } from "./conflict";
+import { DEFAULT_CHANNEL_MIN_SEPARATION } from "./energy";
 import {
     addPairings,
     type PairedBy,
@@ -41,7 +47,7 @@ export const projectNameSchema = z
 const strings = z.array(z.string().trim().min(1)).default([]);
 
 /** The config shape this code writes. Reads migrate in memory; explicit edits persist the current shape. */
-export const MEETINGS_CONFIG_VERSION = 7;
+export const MEETINGS_CONFIG_VERSION = 8;
 
 /**
  * How a meeting finds its project, by the facts every meeting has: its calendar entry, its title and its people. A
@@ -78,10 +84,18 @@ const nativeRecorderSchema = z.object({
     heartbeatSec: z.number().positive().optional(),
     /** The most megabytes of frames one capture writes. */
     maxMb: z.number().positive().optional(),
-    /** Sound beside the frames, as `.m4a` files in the meeting's `audio/`: off by default (the source records it). */
+    /**
+     * Sound beside the frames, as `.m4a` files in the meeting's `audio/`: the microphone and the system sound by
+     * default, so every meeting keeps its own sound; without a microphone grant the recording keeps the system sound.
+     */
     audio: z
         .object({
-            sources: z.array(z.enum(AUDIO_SOURCES)).default([]),
+            sources: z.array(z.enum(AUDIO_SOURCES)).default(["mic", "system"]),
+            /**
+             * `pieces`: sound inside screen pieces; sound between two pieces can be missing;
+             * `session`: one more native process, with 60-second sound files.
+             */
+            mode: z.enum(["pieces", "session"]).default("session"),
             /** The microphone's device UID (`ax-tool audio-devices`); unset is the system default input. */
             micDevice: z.string().optional(),
         })
@@ -103,6 +117,13 @@ export const CAPTURE_FAILURE_NOTICES = ["failing-and-recovered", "failing", "off
 export type CaptureFailureNotices = (typeof CAPTURE_FAILURE_NOTICES)[number];
 
 const captureSchema = z.object({
+    soundWithoutScreen: z.boolean().default(true),
+    levels: z
+        .object({
+            enabled: z.boolean().default(true),
+            intervalSec: z.number().int().min(1).max(3600).default(30),
+        })
+        .prefault({}),
     /** The frame recorder: GenesisTools' own ScreenCaptureKit recorder (`native`) or `peekaboo`. */
     backend: z.enum(FRAME_RECORDER_IDS).default("native"),
     displays: displayPolicySchema.default("all"),
@@ -131,10 +152,15 @@ const captureSchema = z.object({
     /** The longest side of a frame in pixels. Smaller text than this keeps is lost to OCR on a large display. */
     resolutionCap: z.number().int().min(640).max(8192).default(2880),
     /**
-     * The watcher moves a meeting's frames, OCR and recorded sound (`frames/`, `ocr.jsonl`, `audio/`, `audio.jsonl`) to the
-     * trash this many days after its newest capture file; the meeting record stays.
+     * The watcher moves a meeting's frames and OCR (`frames/`, `frames.jsonl`, `ocr.jsonl`) to the trash this many
+     * days after its newest capture file; the meeting record stays. The recorded sound follows `audioRetentionDays`.
      */
     retentionDays: z.number().int().positive().default(30),
+    /**
+     * The recorded sound (`audio/`, `audio.jsonl`) is kept this many days after the meeting's newest capture file.
+     * Unset: the recorded sound is kept for ever.
+     */
+    audioRetentionDays: z.number().int().positive().optional(),
     /**
      * The notices of a capture that keeps failing while the recording goes on trying (an ax-tool being rebuilt, a
      * timeout): `failing-and-recovered` says when it starts failing and when it records again, `failing` only the first,
@@ -160,6 +186,8 @@ const sourceBaseShape = {
             liveWithinSec: z.number().int().positive().default(30),
             /** Post a notification when a recording starts by itself. */
             notify: z.boolean().default(true),
+            /** Keep a permission warning in the widget while this source records automatically. */
+            permissionCard: z.boolean().default(true),
         })
         .prefault({}),
 };
@@ -180,6 +208,17 @@ export type SourceSettings = z.infer<typeof wisprflowSourceSchema>;
 
 /** The players `tools meetings play` can start at a time, in the order it tries them. */
 export const MEETING_PLAYERS = ["vlc", "ffplay"] as const;
+
+/** Which recorded track a clip plays (`global.playback.tracks`). */
+export const PLAYBACK_TRACKS = ["best", "source"] as const;
+
+/** How the voice pass is scheduled (`speakerLabels.voice.compute.priority`). */
+export const VOICE_COMPUTE_PRIORITIES = ["normal", "background"] as const;
+export type VoiceComputePriority = (typeof VOICE_COMPUTE_PRIORITIES)[number];
+
+/** The most voice worker processes one pass may start. */
+export const MAX_VOICE_WORKERS = 16;
+export type PlaybackTracks = (typeof PLAYBACK_TRACKS)[number];
 
 /** The players `tools meetings listen` can play a cut clip with, in the order it tries them. */
 export const LISTEN_PLAYERS = ["afplay", "vlc", "ffplay"] as const;
@@ -338,8 +377,121 @@ const playbackSchema = z.object({
     player: z.enum(MEETING_PLAYERS).default("vlc"),
     /** Start this many seconds before the asked time, so the sentence is heard from its start. */
     beforeSec: z.number().min(0).max(60).default(5),
+    /**
+     * Which recorded track a clip plays: `best` picks the clearest track of the seat (the recorder's own microphone
+     * track when it was kept), `source` always plays the transcript source's own audio.
+     */
+    tracks: z.enum(PLAYBACK_TRACKS).default("best"),
     listen: listenSchema.prefault({}),
 });
+
+export const DEFAULT_APPLY_ABOVE = 0.7;
+
+/**
+ * The speaker labelers and their keys, one block per labeler (the axis is the labeler: a new labeler is one more
+ * block). `seat` names a line by the seat it was heard on, `voice` by compatible samples in the voice library.
+ */
+const speakerLabelsSchema = z.object({
+    /** Minimum difference in median left-channel share between tagged mic and call audio. */
+    channels: z
+        .object({ minSeparation: z.number().min(0).max(1).default(DEFAULT_CHANNEL_MIN_SEPARATION) })
+        .prefault({}),
+    seat: z
+        .object({
+            enabled: z.boolean().default(true),
+            /** Distinct meetings with a roster join at the same room microphone before asking the owner. */
+            deviceOfferMinMeetings: z.number().int().positive().default(2),
+        })
+        .prefault({}),
+    voice: z
+        .object({
+            enabled: z.boolean().default(true),
+            /** The samples prediction may consult. Browsing and corrections carry their own scope. */
+            sampleScope: z.enum(["all", "project"]).default("all"),
+            /** Seat preview's limit on opposite-side matches as a fraction of the stronger side's count. */
+            seatOppositeShare: z.number().min(0).max(0.5).default(0.1),
+            /** Mean cosine below which a sample is offered for human review. */
+            outlierBelow: z.number().min(-1).max(1).default(0.5),
+            /**
+             * Also score a line that the seat gives to its only person against that person's saved samples, and keep
+             * a match as the voice's support beside the seat's name. The seat's confidence stays its own. Off: the
+             * voice only checks such a line for a stranger.
+             */
+            supportOnSeatLines: z.boolean().default(true),
+            /** When a voice match is good enough to name a line (cosine scores, 0 to 1). */
+            gate: z
+                .object({
+                    /** The lowest score that names a person. */
+                    score: z.number().min(0).max(1).default(0.45),
+                    /** The lead the best person needs over the next one. */
+                    margin: z.number().min(0).max(1).default(0.1),
+                    /** The lowest score when only one person of the meeting has a sample (no rival to compare). */
+                    loneScore: z.number().min(0).max(1).default(0.7),
+                    /** The lowest score while a person with no sample is in the meeting. */
+                    unsampledScore: z.number().min(0).max(1).default(0.55),
+                    /** Under this score a line on a seat of one person does not sound like that person. */
+                    strangerScore: z.number().min(0).max(1).default(0.3),
+                })
+                .prefault({}),
+            /** Offer the only unsampled seat-mate for review when the enrolled voices are clearly different. */
+            exclusion: z
+                .object({
+                    enabled: z.boolean().default(true),
+                    /** Leave 0.15 cosine below the ordinary match threshold so borderline matches stay undecided. */
+                    margin: z.number().min(0).max(2).default(0.15),
+                    /** Below the default 0.70 apply threshold. The pass also respects a lower configured threshold. */
+                    maxConfidence: z.number().min(0).max(1).default(0.69),
+                    /** Require three lines in the same stay so an isolated sound cannot name someone. */
+                    minLines: z.number().int().min(1).default(3),
+                    /** Mean cosine to the group's centroid. Even two equally represented orthogonal voices fail 0.82. */
+                    coherence: z.number().min(0).max(1).default(0.82),
+                })
+                .prefault({}),
+            /** A line shorter than this many seconds is not named by voice: too little sound to compare. */
+            minSeconds: z.number().min(0).max(60).default(1.5),
+            /** How the voice pass (decoding the sound and embedding each line) runs on this Mac. */
+            compute: z
+                .object({
+                    /**
+                     * `normal`: the pass runs at normal priority on the fast cores, done soonest (about 90 CPU s for
+                     * a one-hour meeting, measured 2026-11-18). `background`: it yields to everything else and runs on
+                     * the efficiency cores, so the Mac stays quiet, but it takes many times longer and more CPU
+                     * seconds (251 CPU s and 32 minutes for the same meeting under load).
+                     */
+                    priority: z.enum(VOICE_COMPUTE_PRIORITIES).default("normal"),
+                    /**
+                     * Worker processes that embed lines side by side. `auto` takes what is free when the pass starts:
+                     * the idle cores of a one-second CPU sample, no more than the performance cores, at least one and
+                     * at most four (`voiceWorkerCount`).
+                     */
+                    workers: z
+                        .union([z.literal("auto"), z.number().int().min(1).max(MAX_VOICE_WORKERS)])
+                        .default("auto"),
+                })
+                .prefault({}),
+        })
+        .prefault({}),
+});
+
+/** What a voice pass finds free when it starts: the performance cores, and the cores a CPU sample found idle. */
+export interface VoiceFreeCores {
+    performanceCores: number;
+    idleCores: number;
+}
+
+/**
+ * The worker count `auto` means right now: the idle cores, no more than the performance cores, at least one and at most
+ * four, read once when a pass starts. Idle cores, not the load average: on this Mac the one-minute load sat at 10 to 30
+ * while a CPU sample found 5 to 9 of 16 cores idle (2026-11-18), and a load rule gave one worker where four ran in 25 s
+ * instead of 88 s for the same CPU seconds. A Mac with every core busy still gets one worker.
+ */
+export function voiceWorkerCount(workers: "auto" | number, free: VoiceFreeCores): number {
+    if (workers !== "auto") {
+        return workers;
+    }
+
+    return Math.max(1, Math.min(4, Math.floor(Math.min(free.performanceCores, free.idleCores))));
+}
 
 /** The audio a clip keeps before and after the heard stretch. */
 export interface ListenPads {
@@ -486,6 +638,16 @@ const storedConfigSchema = z
     .object({
         /** A newer version than this code writes still reads: its keys this code knows, the rest stay in the file. */
         version: z.number().int().min(MEETINGS_CONFIG_VERSION).default(MEETINGS_CONFIG_VERSION),
+        meetings: z
+            .object({
+                voices: z
+                    .object({
+                        /** Seconds after the last learned sample before the meeting's speaker suggestions run again. */
+                        reproposeDelaySec: z.number().min(0).max(2_147_483).default(10),
+                    })
+                    .prefault({}),
+            })
+            .prefault({}),
         global: z
             .object({
                 dictionary: dictionaryLevelSchema.prefault({}),
@@ -501,14 +663,42 @@ const storedConfigSchema = z
                         longStretchWords: z.number().int().min(1).default(50),
                         /** Derive a low-confidence leave only after this many observed silent call minutes. */
                         leaveSilenceMinutes: z.number().min(1).max(120).default(10),
+                        /** Seconds a roster mute read remains evidence without another mute read or observed speech. */
+                        mutedCarrySec: z.number().nonnegative().default(DEFAULT_MUTED_CARRY_SEC),
                         /** `--with-suggested` applies a suggested item at this confidence or more; a lower one is marked unclear. */
-                        applyAbove: z.number().min(0).max(1).default(0.5),
-                        /** Questions one `items suggest` run makes at most, speakers and terms together; the rest stay marked. */
+                        applyAbove: z.number().min(0).max(1).default(DEFAULT_APPLY_ABOVE),
+                        /** Budget for ordinary questions in one `items suggest` run. Voice exclusions can exceed it. */
                         questionCap: z.number().int().min(1).max(500).default(12),
                         /** `skip`: no meaning after words a plain code name only restates ("entity data" `EntityData`). */
                         restatedIdentifiers: z.enum(["skip", "mark"]).default("skip"),
+                        terms: z
+                            .object({
+                                /** With suggestions included, apply a proposed term at this confidence. */
+                                applyAbove: z.number().min(0).max(1).default(0.7),
+                                phonetic: z
+                                    .number()
+                                    .min(0)
+                                    .max(1)
+                                    .default(DEFAULT_MIN_CONFIDENCE / 100),
+                                unknownCandidate: z.number().min(0).max(1).default(0.8),
+                                fuzzy: z
+                                    .object({
+                                        suggest: z.number().min(0).max(1).default(DEFAULT_FUZZY.suggest),
+                                        apply: z.number().min(0).max(1).default(DEFAULT_FUZZY.apply),
+                                    })
+                                    .prefault({}),
+                            })
+                            .prefault({}),
+                        /** Unknown words heard again and again become one word question each. */
+                        words: z
+                            .object({
+                                /** A word is asked about once it is heard at least this many times in one meeting. */
+                                minOccurrences: z.number().int().min(2).max(50).default(2),
+                            })
+                            .prefault({}),
                     })
                     .prefault({}),
+                speakerLabels: speakerLabelsSchema.prefault({}),
                 assign: assignSchema.prefault({}),
                 people: z
                     .object({
@@ -712,6 +902,20 @@ function repeatOnDisk(raw: Record<string, unknown>): void {
     }
 }
 
+/** Version 8 splits term application from the general cutoff. An explicitly saved cutoff is grandfathered. */
+function migrateTermCutoff(raw: Record<string, unknown>): void {
+    const global = isObject(raw.global) ? raw.global : undefined;
+    const suggest = global && isObject(global.suggest) ? global.suggest : undefined;
+    if (!suggest || typeof suggest.applyAbove !== "number") {
+        return;
+    }
+    if (suggest.terms === undefined) {
+        suggest.terms = { applyAbove: suggest.applyAbove };
+    } else if (isObject(suggest.terms) && suggest.terms.applyAbove === undefined) {
+        suggest.terms.applyAbove = suggest.applyAbove;
+    }
+}
+
 /**
  * Moves an older config to the current places, in place, one version step at a time. A file without a version is
  * version 1. Returns whether anything changed; a current config is left alone, so a second run changes nothing.
@@ -735,6 +939,7 @@ export function migrateMeetingsConfig(raw: Record<string, unknown>): boolean {
     migrateToV5(raw);
     repeatInMemory(raw);
     repeatOnDisk(raw);
+    migrateTermCutoff(raw);
     raw.version = MEETINGS_CONFIG_VERSION;
     return true;
 }
@@ -839,7 +1044,12 @@ export function resolveDictionary(
     options: { project?: string; meeting?: DictionaryLevel } = {}
 ): ResolvedDictionary {
     const project = options.project ? config.projects[options.project]?.dictionary : undefined;
-    return mergeDictionaries([config.global.dictionary, project, options.meeting]);
+    return mergeDictionaries([
+        { entries: [], fuzzy: config.global.suggest.terms.fuzzy },
+        config.global.dictionary,
+        project,
+        options.meeting,
+    ]);
 }
 
 /** Where a dictionary level lives in the config. */
@@ -870,6 +1080,11 @@ export class MeetingsConfigStore {
      * the file. An explicit update migrates the saved shape under its existing lock.
      */
     async read(): Promise<MeetingsConfig> {
+        return (await this.readWithSource()).config;
+    }
+
+    /** One file read supplies effective values and the keys that were explicitly saved. */
+    async readWithSource(): Promise<{ config: MeetingsConfig; raw: Record<string, unknown> }> {
         const raw = (await this.storage.getConfig<Record<string, unknown>>()) ?? {};
         const parsed = meetingsConfigSchema.safeParse(raw);
 
@@ -877,7 +1092,7 @@ export class MeetingsConfigStore {
             throw new Error(formatIssues(parsed.error, this.path));
         }
 
-        return parsed.data;
+        return { config: parsed.data, raw };
     }
 
     /**
@@ -1011,6 +1226,53 @@ export class MeetingsConfigStore {
         });
 
         return removed;
+    }
+
+    /**
+     * Changes the entry for one value only while it is still `expected`, compared under the config lock: `next`
+     * replaces it in its place, no `next` removes it, no `expected` means the value must be absent (then `next` is
+     * added). `unchanged`: the level holds `next` already (or neither). `conflict`: the entry is something else now,
+     * so a dictionary edit made after the caller read it is left as it is.
+     */
+    async changeDictionaryEntryIfSame(
+        scope: DictionaryScope,
+        change: { expected?: DictionaryEntry; next?: DictionaryEntry }
+    ): Promise<"written" | "unchanged" | "conflict"> {
+        const value = (change.expected ?? change.next)?.value;
+
+        if (value === undefined) {
+            return "unchanged";
+        }
+
+        let outcome: "written" | "unchanged" | "conflict" = "unchanged";
+
+        await this.update((raw) => {
+            const level = dictionaryAt(raw, scope);
+            const entries = Array.isArray(level.entries) ? (level.entries as StoredDictionaryEntry[]) : [];
+            const at = entries.findIndex((existing) => existing.value === value);
+            const current = at === -1 ? undefined : entries[at];
+
+            if (sameStoredEntry(current, change.next)) {
+                outcome = "unchanged";
+                return;
+            }
+
+            if (!sameStoredEntry(current, change.expected)) {
+                outcome = "conflict";
+                return;
+            }
+
+            const kept = entries.filter((existing) => existing.value !== value);
+
+            if (change.next) {
+                kept.splice(at === -1 ? kept.length : at, 0, change.next);
+            }
+
+            level.entries = kept;
+            outcome = "written";
+        });
+
+        return outcome;
     }
 
     /** Adds and removes known labels of a project; the project joins the known ones. Returns its labels. */
@@ -1238,6 +1500,22 @@ function dictionaryAt(raw: Record<string, unknown>, scope: DictionaryScope): Rec
 }
 
 type StoredDictionaryEntry = { value?: unknown };
+
+/** Whether a stored entry is `entry` as the dictionary reads it; an absent entry matches only an absent one. */
+function sameStoredEntry(stored: StoredDictionaryEntry | undefined, entry: DictionaryEntry | undefined): boolean {
+    if (!stored || !entry) {
+        return !stored && !entry;
+    }
+
+    const parsed = dictionaryEntrySchema.safeParse(stored);
+    return (
+        parsed.success && isDeepStrictEqual(definedKeys(parsed.data), definedKeys(dictionaryEntrySchema.parse(entry)))
+    );
+}
+
+function definedKeys(entry: DictionaryEntry): Record<string, unknown> {
+    return Object.fromEntries(Object.entries(entry).filter(([, field]) => field !== undefined));
+}
 
 /** The level's entries with `previous` replaced by `entry` in its place; an older entry with the new value goes. */
 function renamedEntries(

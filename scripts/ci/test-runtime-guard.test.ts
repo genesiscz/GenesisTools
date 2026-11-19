@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { analyze, formatTopRanking, sourceIsConcurrent } from "./test-runtime-guard";
+import { analyze, completedEmptySelection, formatTopRanking, sourceIsConcurrent } from "./test-runtime-guard";
 
 /** A GitHub Actions log line carries a BOM, a job/step prefix, a timestamp and ANSI. */
 function ciLine(text: string): string {
@@ -196,6 +196,52 @@ describe("--top ranking", () => {
         expect(out).toContain("src/foo.test.ts");
         expect(out).toMatch(/1\.5s/);
         expect(out).toContain("src/bar.test.ts");
+    });
+});
+
+describe("an affected run that selected no tests", () => {
+    /** Written by `bun run test --changed=HEAD --pass-with-no-tests` on a clean tree, 2026-11-18. */
+    const EMPTY = [
+        "bun test v1.4.2 (744846f84)",
+        "--changed: no changed files, nothing to run",
+        "",
+        " 0 pass",
+        " 0 fail",
+        "Ran 0 tests across 0 files. [108.00ms]",
+        "\u001b[90m[test] own-process phase 2/2: src/chrome-devtools/lib/headless.test.ts\u001b[0m",
+        "Ran 0 tests across 0 files. [106.00ms]",
+        "[test] phase exits: parallel 0, serial 0",
+        "[test] suite complete (exit 0)",
+    ];
+
+    test("passes only when the runner completed and every summary ran zero tests", () => {
+        expect(completedEmptySelection(EMPTY.join("\n"))).toBe(true);
+        expect(completedEmptySelection(EMPTY.map(ciLine).join("\n"))).toBe(true);
+        expect(completedEmptySelection(EMPTY.slice(0, -1).join("\n"))).toBe(false);
+        expect(
+            completedEmptySelection(
+                EMPTY.join("\n").replace("Ran 0 tests across 0 files. [106", "Ran 3 tests across 1 files. [106")
+            )
+        ).toBe(false);
+        expect(completedEmptySelection(EMPTY.join("\n").replace("(exit 0)", "(exit 1)"))).toBe(false);
+        expect(completedEmptySelection("[test] suite complete (exit 0)\n")).toBe(false);
+    });
+
+    test("the CLI exits 0 on it and still exits 1 on a log cut before the marker", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "runtime-guard-empty-"));
+        const guard = async (log: string) => {
+            const logPath = join(dir, "test.log");
+            writeFileSync(logPath, log);
+            const proc = Bun.spawn(["bun", join(import.meta.dir, "test-runtime-guard.ts"), logPath], {
+                stdout: "pipe",
+                stderr: "pipe",
+                env: process.env,
+            });
+            return await proc.exited;
+        };
+
+        expect(await guard(EMPTY.join("\n"))).toBe(0);
+        expect(await guard(EMPTY.slice(0, -1).join("\n"))).toBe(1);
     });
 });
 

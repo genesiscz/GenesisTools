@@ -1,3 +1,6 @@
+import { join } from "node:path";
+import { readLivePermissions } from "@app/control/lib/permissions";
+import { abortableSleep } from "@genesiscz/utils/async";
 import { execTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
@@ -5,16 +8,19 @@ import { type NotificationAction, sendNotification } from "@genesiscz/utils/maco
 import { type MeetingsConfig, MeetingsConfigStore, type SourceSettings } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord, MeetingStore, RecordingBlock } from "@genesiscz/utils/meetings/record";
 import { type LiveRecording, MEETING_SOURCE_IDS, type MeetingSourceId } from "@genesiscz/utils/meetings/sources";
+import { releaseLock, tryAcquireLock } from "@genesiscz/utils/storage/file-lock";
 import { localTime } from "@genesiscz/utils/transcribe/render";
 import { assignSweep, hasOpenAssignSteps } from "./assign";
 import { linkSource } from "./link";
 import { ensureOcrWorkers } from "./ocr-worker";
 import { interruptedRecording } from "./recorder-adapters";
 import { lastRecordingActivity, readRecorderState } from "./recorder-shared";
+import { checkRecordingGrants, showRecordingGrantCard } from "./recording-preflight";
 import { pruneCapturesDaily } from "./retention";
 import { preservedSourceAudio } from "./source-audio";
 import { discoverSourceAudio } from "./source-audio-discovery";
 import { liveSourceMeetingId, localSourceAudio, meetingSource, sourceRefOf } from "./sources";
+import { deliverStartFailures, hasPendingStartAlerts, startFailureDelivery } from "./start-failures";
 import {
     type AutoRecording,
     clearAuto,
@@ -70,16 +76,33 @@ export interface WatchDeps {
     lastActivityAt: (meetingId: string) => number | undefined;
     /** Ends a recording whose recorder died and that is not started again: status stopped, its span `interrupted`. */
     endInterrupted: (meetingId: string, at: string) => Promise<void>;
-    notify: (note: WatchNote) => Promise<void>;
+    notify: (note: WatchNote) => Promise<boolean>;
+    grantCard: (reason?: string) => Promise<void>;
+    inbox: typeof startFailureDelivery.inbox;
+    grants: typeof readLivePermissions;
+    logStart: (fields: {
+        meeting: string;
+        viaGenesisApp: boolean | null;
+        responsibleName: string | null;
+        screenRecording: boolean | null;
+        microphone: boolean | null;
+        error?: string;
+    }) => void;
+    wantsMicrophone: () => Promise<boolean>;
 }
 
 function defaultDeps(store: MeetingStore): WatchDeps {
-    let watched: Promise<{ id: MeetingSourceId; settings: AutoRecordSettings }> | undefined;
+    let watched: Promise<{ id: MeetingSourceId; settings: AutoRecordSettings; wantsMicrophone: boolean }> | undefined;
     // One config read per look: every part of this look follows the same source.
     const current = () =>
         (watched ??= new MeetingsConfigStore().read().then((config) => {
             const id = watchedSourceId(config);
-            return { id, settings: config.sources[id].autoRecord };
+            const capture = config.global.capture;
+            return {
+                id,
+                settings: config.sources[id].autoRecord,
+                wantsMicrophone: capture.backend === "native" && capture.recorders.native.audio.sources.includes("mic"),
+            };
         }));
 
     return {
@@ -118,13 +141,78 @@ function defaultDeps(store: MeetingStore): WatchDeps {
                 }
             });
         },
+        inbox: startFailureDelivery.inbox,
+        grants: readLivePermissions,
+        grantCard: showRecordingGrantCard,
+        logStart: (fields) => log.info(fields, "live grants at recording start"),
+        wantsMicrophone: async () => (await current()).wantsMicrophone,
         notify: async (note) => {
-            // The group names the source in the notification ledger (`tools notify history --source meetings`).
-            await sendNotification({ ...note, group: "meetings" }).catch((err: unknown) =>
-                log.warn({ err }, "notification failed")
-            );
+            try {
+                return (await sendNotification({ ...note, group: "meetings" })).confirmed;
+            } catch (err) {
+                log.warn({ err }, "notification failed");
+                return false;
+            }
         },
     };
+}
+
+function delivery(deps: WatchDeps) {
+    return {
+        inbox: deps.inbox,
+        banner: async (title: string, subtitle: string, message: string) =>
+            (await deps.notify({ title, subtitle, message })) === true,
+    };
+}
+
+async function startFromWatch(
+    store: MeetingStore,
+    deps: WatchDeps,
+    mode: "--meeting" | "--source",
+    ref: string,
+    title: string,
+    now: number
+) {
+    const { live, error } = deps.grants();
+    deps.logStart({
+        meeting: ref,
+        viaGenesisApp: live?.viaGenesisApp ?? null,
+        responsibleName: live?.responsibleName ?? null,
+        screenRecording: live?.screenRecording ?? null,
+        microphone: live?.microphone ?? null,
+        error,
+    });
+    const result = await deps
+        .run(["meetings", "record", "start", mode, ref, "--yes", "--from-watcher"])
+        .catch((err: unknown) => ({
+            success: false,
+            exitCode: null,
+            stderr: err instanceof Error ? err.message : String(err),
+        }));
+    const state = result.success ? deps.recorder().state : undefined;
+    const micMissing = live?.microphone === false && (await deps.wantsMicrophone());
+    const problem = result.success
+        ? state?.withoutScreen
+            ? (state.warning ?? state.withoutScreen)
+            : micMissing
+              ? "Microphone access is not granted."
+              : undefined
+        : result.stderr.trim().split("\n").filter(Boolean).at(-1) ||
+          `Recording start exited ${result.exitCode ?? "without a status"}.`;
+    if (problem) {
+        const record = mode === "--meeting" ? store.read(ref) : undefined;
+        const source = record && sourceRefOf(record);
+        const key = source ? `${source.sourceId}:${source.sourceMeetingId}` : ref;
+        await deliverStartFailures(
+            store,
+            { key, meeting: record?.title || title, problem, partial: result.success },
+            delivery(deps),
+            now
+        ).catch((err: unknown) =>
+            log.error({ err, meeting: ref, problem }, "could not persist the recording start alert")
+        );
+    }
+    return { ...result, partial: result.success && !!problem };
 }
 
 /** A running recorder needs monitoring; an unclosed orphan needs one recovery or expiry look. */
@@ -192,7 +280,7 @@ async function resumeInterrupted(options: {
     }
 
     resumeTries.set(state.meetingId, now);
-    const result = await deps.run(["meetings", "record", "start", "--meeting", state.meetingId, "--yes"]);
+    const result = await startFromWatch(store, deps, "--meeting", state.meetingId, live?.title || state.meetingId, now);
     log.info({ meeting: state.meetingId, exitCode: result.exitCode }, "interrupted recording started again");
     const restarted = result.success ? deps.recorder().state : undefined;
 
@@ -227,7 +315,7 @@ async function retryFailed(options: {
         return "idle";
     }
 
-    const result = await deps.run(["meetings", "record", "start", "--meeting", auto.meetingId, "--yes"]);
+    const result = await startFromWatch(store, deps, "--meeting", auto.meetingId, auto.meetingId, now);
     log.info({ meeting: auto.meetingId, exitCode: result.exitCode }, "failed recording started again");
     const restarted = result.success ? deps.recorder().state : undefined;
     writeAuto(store, {
@@ -304,6 +392,21 @@ const ARCHIVE_BUDGET_MS = 2_000;
 /** The source-audio pass still running for a store: a look never starts a second one beside it. */
 const archiving = new WeakMap<MeetingStore, Promise<boolean>>();
 
+/** The archive can outlive its watcher, so it holds its own claim across watcher replacements. */
+async function archiveWithClaim(store: MeetingStore, archive: () => Promise<boolean>): Promise<boolean> {
+    const lock = join(store.root, "source-audio.archive.lock");
+
+    if (!(await tryAcquireLock(lock))) {
+        return true;
+    }
+
+    try {
+        return await archive();
+    } finally {
+        await releaseLock(lock);
+    }
+}
+
 /**
  * Runs one source-audio pass (or joins the one still running) and waits for it at most `budgetMs`. A first pass over
  * a provider's whole archive, or a slow volume, copies and hashes for minutes; the recorder's start, stop and
@@ -317,7 +420,7 @@ async function archiveWithinBudget(
     let pass = archiving.get(store);
 
     if (!pass) {
-        const started = archive().finally(() => archiving.delete(store));
+        const started = archiveWithClaim(store, archive).finally(() => archiving.delete(store));
         started.catch((error: unknown) => log.warn({ error }, "source-audio pass failed; the next look retries"));
         archiving.set(store, started);
         pass = started;
@@ -355,6 +458,17 @@ export async function watchOnce(
     const deps: WatchDeps = { ...defaultDeps(store), ...options.deps };
     const now = options.now ?? Date.now();
     const settings = await deps.settings();
+    await checkRecordingGrants(store, {
+        enabled: settings.enabled,
+        cardEnabled: settings.permissionCard,
+        needsMic: settings.enabled && (await deps.wantsMicrophone()),
+        now,
+        read: deps.grants,
+        show: deps.grantCard,
+    }).catch((err: unknown) => log.warn({ err }, "recording preflight failed; the next look retries"));
+    await deliverStartFailures(store, undefined, delivery(deps), now).catch((err: unknown) =>
+        log.error({ err }, "could not retry recording start alerts")
+    );
     const audioPending = await archiveWithinBudget(
         store,
         deps.archiveAudio,
@@ -492,24 +606,11 @@ export async function watchOnce(
             : "idle";
     }
 
-    const result = await deps.run([
-        "meetings",
-        "record",
-        "start",
-        "--source",
-        `${source.id}:${live.sourceMeetingId}`,
-        "--yes",
-    ]);
+    const title = live.title.trim() || `${source.label} meeting since ${localTime(live.startedAt).slice(11)}`;
+    const result = await startFromWatch(store, deps, "--source", `${source.id}:${live.sourceMeetingId}`, title, now);
     log.info({ live, exitCode: result.exitCode, stderr: result.stderr.slice(-400) }, "auto recording start");
 
     if (!result.success) {
-        if (settings.notify) {
-            await deps.notify({
-                title: "Meeting not recorded",
-                message: result.stderr.split("\n").at(-1) || "The screen recording did not start.",
-            });
-        }
-
         // Remember the meeting, so a missing grant does not retry and notify every 15 s.
         writeAuto(store, { sourceMeetingId: live.sourceMeetingId, startedAt: new Date(now).toISOString() });
         return "failed";
@@ -524,9 +625,7 @@ export async function watchOnce(
         startedAt: new Date(now).toISOString(),
     });
 
-    if (settings.notify) {
-        // A source may name a meeting only after it ends (Wispr does), so a live one may have no title yet.
-        const title = live.title.trim() || `${source.label} meeting since ${localTime(live.startedAt).slice(11)}`;
+    if (settings.notify && !result.partial) {
         await deps.notify({
             title: "Recording the screen",
             subtitle: title,
@@ -582,7 +681,12 @@ async function pruneOldCaptures(store: MeetingStore): Promise<void> {
         const config = await new MeetingsConfigStore().read();
         const recorder = readRecorderState(store);
         const skip = recorder.running ? recorder.state?.meetingId : undefined;
-        const result = pruneCapturesDaily(store, { days: config.global.capture.retentionDays, skip });
+        const audioDays = config.global.capture.audioRetentionDays;
+        const result = pruneCapturesDaily(store, {
+            days: config.global.capture.retentionDays,
+            skip,
+            ...(audioDays !== undefined ? { audioDays } : {}),
+        });
 
         if (result && result.plans.length > 0) {
             log.info(
@@ -600,16 +704,10 @@ async function pruneOldCaptures(store: MeetingStore): Promise<void> {
  * meeting without a project, and the answers applied), and the capture retention pass once a day. With autoRecord
  * off it still runs while linked source audio is missing or a project question or a folder step waits.
  */
-export async function watchLoop(store: MeetingStore): Promise<void> {
-    let stopped = false;
-    const stop = () => {
-        stopped = true;
-    };
-    process.on("SIGTERM", stop);
-    process.on("SIGINT", stop);
+export async function watchLoop(store: MeetingStore, signal: AbortSignal): Promise<void> {
     log.info("meetings watcher started");
 
-    while (!stopped) {
+    while (!signal.aborted) {
         await pruneOldCaptures(store);
         await resumeOcr(store);
         const result = await watchOnce(store).catch((err: unknown) => {
@@ -619,11 +717,20 @@ export async function watchLoop(store: MeetingStore): Promise<void> {
         // After the look, so a meeting the look just refreshed from its source is asked about at once.
         await assignSweep(store).catch((err: unknown) => log.warn({ err }, "assign sweep failed"));
 
-        if (result === "disabled" && !hasOpenAssignSteps(store) && !hasRecordingToWatch(store)) {
+        if (
+            result === "disabled" &&
+            !hasOpenAssignSteps(store) &&
+            !hasRecordingToWatch(store) &&
+            !hasPendingStartAlerts(store)
+        ) {
             log.info("no automatic capture, active recording or project question needs the watcher; it ends");
             break;
         }
 
-        await Bun.sleep(WATCH_INTERVAL_MS);
+        await abortableSleep(WATCH_INTERVAL_MS, signal).catch((err: unknown) => {
+            if (!signal.aborted) {
+                throw err;
+            }
+        });
     }
 }

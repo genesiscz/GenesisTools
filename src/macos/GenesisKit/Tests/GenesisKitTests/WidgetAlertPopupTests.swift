@@ -198,6 +198,19 @@ private final class PopupHost: WidgetAlertPopupHost {
 /// WidgetInboxTasksPolishTests.
 @MainActor
 final class WidgetAlertPopupTests: XCTestCase {
+    func testStandaloneMessageHasBodyAndSenderWithoutASessionAction() throws {
+        let data = Data(#"{"id":"answer:a","sourceId":"a","kind":"answer","tag":"message","key":"local:unknown:unknown:","at":1,"needsAnswer":false,"message":{"text":"First\n\nSecond","origin":"Orchard · cli"}}"#.utf8)
+        var item = try JSONDecoder().decode(WidgetInboxItem.self, from: data)
+        XCTAssertEqual(item.message?.text, "First\n\nSecond")
+        XCTAssertEqual(item.openTitle, "Read message")
+        XCTAssertEqual(WidgetAlerts.announcement(item, session: "No session"), "New message, from Orchard · cli")
+        var second = item
+        second.message?.origin = "Harbor · backup"
+        XCTAssertEqual(WidgetInboxOverview.groups([item, second]).count, 2)
+        item.message?.origin = nil
+        XCTAssertEqual(item.openTitle, "Open in its session")
+    }
+
     private let side = WidgetSurfaceID(edge: .right)
 
     private func decision(_ number: Int, pick: String? = nil) -> WidgetInboxItem {

@@ -2390,6 +2390,18 @@ describe("the before-state: clones of the dirty files, and none for a command th
         });
     });
 
+    it("a read walks untracked paths only after the call and still sees a concurrent creation", async () => {
+        const before = await withSpawnCounter(async () => pre("ls"));
+        const created = join(tree, "other-writer.md");
+        writeFileSync(created, "new\n");
+        const after = await withSpawnCounter(async () =>
+            runDiffPost({ payload: before.result.current, config: plain, record: () => {} })
+        );
+        const statuses = [...before.spawns, ...after.spawns].filter(({ cmd }) => cmd.includes("--porcelain=v2"));
+        expect(statuses.map(({ cmd }) => cmd.includes("--untracked-files=no"))).toEqual([true, false]);
+        expect(after.result.others).toContain(created);
+    });
+
     it("holds each dirty file as a 0600 clone in a 0700 tree, made with the clone-only flag", () => {
         mkdirSync(join(tree, "fresh"), { recursive: true });
         writeFileSync(join(tree, "fresh", "deep.ts"), "deep\n");

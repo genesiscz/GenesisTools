@@ -6,16 +6,21 @@ import type { EchoMetric } from "@genesiscz/utils/meetings/echo";
  */
 import type { PairedPerson } from "@genesiscz/utils/meetings/people";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
-import { type MeetingSeats, personForAlias } from "@genesiscz/utils/meetings/seats";
+import {
+    type MeetingSeats,
+    personForAlias,
+    roomSeatNames,
+    wholeMeetingRoomPeople,
+} from "@genesiscz/utils/meetings/seats";
 import type { MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
-import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
+import { lineEvidence, presentAt } from "@genesiscz/utils/transcribe/evidence";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { SummaryPoint } from "@genesiscz/utils/transcribe/summary";
 import type { RawTermEvidence } from "@genesiscz/utils/transcribe/terms";
 import { type IndicatorGap, indicatorFacts, type LabelPrehistory } from "./indicator-facts";
 import { type LocalSpeech, localSpeechLines } from "./local-speech";
-import { rosterPresence } from "./person-stays";
+import { rosterPresence, stayLeaveSource } from "./person-stays";
 import { assessIndicator } from "./speaker-indicator";
 
 export interface RawMeeting {
@@ -44,7 +49,7 @@ export interface RawMeeting {
         aliases?: string[];
         self?: boolean;
         firstSeenSec?: number;
-        stays: Array<{ fromSec: number; toSec: number; source?: string; confidence?: number }>;
+        stays: Array<{ fromSec: number; toSec: number; source?: string; leaveSource?: string; confidence?: number }>;
     }>;
     lines: Array<{
         index: number;
@@ -53,7 +58,7 @@ export interface RawMeeting {
         label: string;
         labelOrigin?: string;
         text: string;
-        /** The microphone's share of the line's channel segments; absent when no segment overlaps it. */
+        /** Calibrated microphone energy, falling back to the capture segments. Null when neither covers the line. */
         channel: { micShare: number | null };
         energyMicShare?: number;
         rawEnergyMicShare?: number;
@@ -78,7 +83,7 @@ export interface RawMeeting {
 }
 
 /** Who is present at a second: the record's sections when it has them, else the attendance stays. */
-function presentAt(record: MeetingRecord, presence: Presence[] | undefined, sec: number): string[] {
+function presentInRecordAt(record: MeetingRecord, presence: Presence[] | undefined, sec: number): string[] {
     const section =
         presence === undefined ? record.sections?.find((part) => sec >= part.fromSec && sec <= part.toSec) : undefined;
 
@@ -86,9 +91,7 @@ function presentAt(record: MeetingRecord, presence: Presence[] | undefined, sec:
         return section.present;
     }
 
-    return [
-        ...new Set((presence ?? []).filter((stay) => sec >= stay.fromSec && sec < stay.toSec).map((stay) => stay.name)),
-    ];
+    return presentAt(presence ?? [], sec);
 }
 
 export function rawMeeting(options: {
@@ -122,7 +125,7 @@ export function rawMeeting(options: {
     const assessment = assessIndicator({
         lines,
         selfName: selfName ?? evidence?.selfName ?? "",
-        roomPeople: record.seats?.room,
+        roomPeople: wholeMeetingRoomPeople(record.seats),
     });
     const local = new Set(
         localSpeechLines({
@@ -135,7 +138,7 @@ export function rawMeeting(options: {
         ...new Set([
             ...(presence?.map((person) => person.name) ?? []),
             ...record.participants.map((person) => person.name),
-            ...(record.seats?.room ?? []),
+            ...roomSeatNames(record.seats),
             ...(record.seats?.remote.map((person) => person.name) ?? []),
             ...meeting.speakers.map((speaker) => speaker.name),
             ...facts.people.filter(
@@ -185,12 +188,15 @@ export function rawMeeting(options: {
                     .filter((stay) => sameName(stay.name, name))
                     .map((stay) => {
                         const stored = person?.stays?.find((one) => one.fromSec === stay.fromSec);
+                        const leaveSource =
+                            stored?.toSec === stay.toSec && stored ? stayLeaveSource(stored) : undefined;
                         return {
                             fromSec: stay.fromSec,
                             toSec: stay.toSec,
                             ...(stored
                                 ? {
                                       source: stored.source,
+                                      ...(leaveSource ? { leaveSource } : {}),
                                       ...(stored.confidence === undefined ? {} : { confidence: stored.confidence }),
                                   }
                                 : {}),
@@ -200,6 +206,7 @@ export function rawMeeting(options: {
         }),
         lines: lines.map((line) => {
             const origin = originOf(line.label);
+            const micShare = line.energyMic ?? line.energyMicRaw ?? line.micShare;
             return {
                 index: line.index,
                 ...(local.has(line.index) ? { localSpeechOutput: true as const } : {}),
@@ -211,7 +218,7 @@ export function rawMeeting(options: {
                 label: line.label,
                 ...(origin ? { labelOrigin: origin } : {}),
                 text: line.text,
-                channel: { micShare: line.micShare === undefined ? null : Math.round(line.micShare * 1000) / 1000 },
+                channel: { micShare: micShare === undefined ? null : Math.round(micShare * 1000) / 1000 },
                 ...(line.energyMic !== undefined ? { energyMicShare: Math.round(line.energyMic * 1000) / 1000 } : {}),
                 ...(line.energyMicRaw !== undefined ? { rawEnergyMicShare: line.energyMicRaw } : {}),
                 ...(line.acoustic ? { acoustic: line.acoustic } : {}),
@@ -224,7 +231,7 @@ export function rawMeeting(options: {
                 muted: line.muted ?? [],
                 ...(assessment.reasons.has(line.index) ? { indicatorIgnored: assessment.reasons.get(line.index) } : {}),
                 ...(assessment.reasons.has(line.index) ? { indicatorReason: assessment.reasons.get(line.index) } : {}),
-                present: presentAt(record, presence, line.startSec),
+                present: presentInRecordAt(record, presence, line.startSec),
             };
         }),
         ...(options.terms === undefined ? {} : { terms: options.terms }),

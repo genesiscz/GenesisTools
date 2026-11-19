@@ -89,6 +89,7 @@ struct DecisionAction: Codable, Equatable, Hashable {
     var labels: [String]?
     var unlabel: [String]?
     var seats: MeetingSeats?
+    var seatsIfAbsent: Bool?
     /// revert: the entry it undoes.
     var token: String?
     /// assign (b-people): the person a stretch or lines are given to, their address, and what is given.
@@ -353,12 +354,14 @@ struct DecisionReach: Decodable, Equatable {
         let fixed: String
         let seenBefore: Int
         let teaches: Bool
+        var adds: Bool? = nil
     }
 
     let items: [Item]
     let lines: Int?
     let dictionary: [Dictionary]
     var spelling: Spelling? = nil
+    /// A spelling's reach: the words as heard and as they become, and each line that says them.
     struct Spelling: Decodable, Equatable {
         struct Occurrence: Decodable, Equatable, Identifiable {
             let line: Int
@@ -367,8 +370,14 @@ struct DecisionReach: Decodable, Equatable {
             let text: String
             let selected: Bool
             let primary: Bool
+            /// Where `text` says the heard words, in UTF-16 units as the service counts them; empty from an older service.
+            var ranges: [NSRange] = []
             var id: Int { line }
         }
+        /// The words as heard; empty from an older service.
+        var heard: String = ""
+        /// What the heard words become; empty from an older service.
+        var proposed: String = ""
         let occurrences: [Occurrence]
         let dictionary: Bool
     }
@@ -378,6 +387,38 @@ struct DecisionReach: Decodable, Equatable {
 
     /// Nothing beyond the named items: no sheet to show. The same question over the same span is not a reach.
     var isEmpty: Bool { judged.isEmpty && (lines ?? 0) <= 1 && dictionary.allSatisfy { !$0.teaches } && spelling == nil }
+}
+
+// The decoders sit in extensions so the memberwise initializers stay, and a reply of an older service (no `heard`,
+// `proposed` or `ranges`) still decodes.
+extension DecisionReach.Spelling {
+    private enum CodingKeys: String, CodingKey { case heard, proposed, occurrences, dictionary }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        heard = try values.decodeIfPresent(String.self, forKey: .heard) ?? ""
+        proposed = try values.decodeIfPresent(String.self, forKey: .proposed) ?? ""
+        occurrences = try values.decode([Occurrence].self, forKey: .occurrences)
+        dictionary = try values.decode(Bool.self, forKey: .dictionary)
+    }
+}
+
+extension DecisionReach.Spelling.Occurrence {
+    /// One range as the service sends it: `{ location, length }` in UTF-16 units.
+    private struct UTF16Range: Decodable { let location: Int; let length: Int }
+    private enum CodingKeys: String, CodingKey { case line, atSec, speaker, text, selected, primary, ranges }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        line = try values.decode(Int.self, forKey: .line)
+        atSec = try values.decode(Double.self, forKey: .atSec)
+        speaker = try values.decode(String.self, forKey: .speaker)
+        text = try values.decode(String.self, forKey: .text)
+        selected = try values.decode(Bool.self, forKey: .selected)
+        primary = try values.decode(Bool.self, forKey: .primary)
+        ranges = (try values.decodeIfPresent([UTF16Range].self, forKey: .ranges) ?? [])
+            .map { NSRange(location: $0.location, length: $0.length) }
+    }
 }
 
 /// A refusal's `data` for `already-decided`: the items and the entry that decided them since the caller saw them.
@@ -453,7 +494,7 @@ extension MeetingsAPI {
     enum MeetingRows: MeetingsServiceMethod {
         static let name = "meeting.rows"
 
-        struct Params: Codable, Equatable {
+        struct Params: Codable, Hashable {
             var meeting: String
             /// `show` keeps the open questions under the priority line; nil or `hide` counts them.
             var lowPriority: String?
@@ -720,13 +761,30 @@ enum RowSource: Decodable, Equatable, Hashable {
     }
 }
 
+/// The voice behind a row (`rowVoiceSchema`, review-row-schema.ts): who the line sounds like, the cosine (drawn
+/// "0.61", never as a percent), the runner-up, and the person's saved samples. `support`: the voice agrees with a seat's
+/// label; the row's confidence is then the seat's, and this score only supports it.
+struct RowVoice: Decodable, Equatable, Hashable {
+    struct Next: Decodable, Equatable, Hashable { let person: String; let score: Double }
+    struct Samples: Decodable, Equatable, Hashable { let count: Int; let meetings: Int }
+
+    let person: String
+    let score: Double
+    let next: Next?
+    let samples: Samples
+    /// `mic` or `call`.
+    let seat: String?
+    let support: Bool
+}
+
 /// One review row (`reviewRowSchema`): what the window shows of one item, computed by the engine.
 struct ReviewRow: Decodable, Equatable, Identifiable {
     /// The last decision on the item (R35).
     struct Decision: Decodable, Equatable, Hashable {
         let token: String
         let actor: DecisionActor
-        /// The actor in words: "you", "an agent (Claude Code, session 3f98b772)", "rule E2".
+        /// The actor in words: "you", "an agent (Claude Code, session 3f98b772)", "a rule (the attendance record shows
+        /// who was there)"; never a rule's id.
         let by: String
         let action: String
         let reason: String?
@@ -742,6 +800,7 @@ struct ReviewRow: Decodable, Equatable, Identifiable {
     let confidence: Double?
     let priority: Double?
     var group: String? = nil
+    var occurrences: Int? = nil
     var reach: Double? = nil
     var comment: String? = nil
     /// The one-line text `items` prints.
@@ -758,9 +817,33 @@ struct ReviewRow: Decodable, Equatable, Identifiable {
     var decision: Decision?
     /// What a decided row was decided as: a question's answer, a word's spelling, a range's speaker.
     var answer: String? = nil
+    /// The ids of the rules that raised the item (`meeting.rows`); older services send none.
+    var rules: [String]? = nil
+    /// The kind in words as the service sends it (`kindWord`); read it through `kindWord`.
+    var sentKindWord: String? = nil
+    /// The voice behind the row: a range the voice model named, or a seat line the voice supports (`support`).
+    var voice: RowVoice? = nil
 
+    private enum CodingKeys: String, CodingKey {
+        case id, label, kind, status, confidence, priority, group, occurrences, reach, comment, what, parts, choices
+        case edit, needs, sources, target, decision, answer, rules, voice
+        case sentKindWord = "kindWord"
+    }
+
+    /// The kind in words ("Speaker range", "Unreliable label") from the engine's one table (reason-words.ts); an older
+    /// service sends none, and then the bare kind shows.
+    var kindWord: String { sentKindWord ?? kind }
     var isOpen: Bool { status == "suggested" }
+    /// A speaker range the voice model named (`MeetingRule.VoiceEmbedding`): its score is a cosine, drawn as its mark.
+    var isVoiceModel: Bool { kind == "speaker-range" && rules?.contains("voice-embedding") == true }
     var isQuestion: Bool { kind == "question" }
+
+    /// Whether a choice's score is a voice cosine ("0.63") rather than a confidence ("63 %", U13): every choice of a
+    /// range the voice model named, and on a speaker question the people a voice-model range it decides names
+    /// (`voicePeople`, from `VoiceScore.people`).
+    func scoresByVoice(_ choice: RowChoice, voicePeople: Set<String> = []) -> Bool {
+        isVoiceModel || voicePeople.contains(PeopleText.personKey(choice.value))
+    }
 
     /// What a decided item was decided as (`decidedAs` in src/meetings/lib/review-rows.ts): a confirmed question's
     /// answer, a confirmed word's spelling, a confirmed range's speaker; nothing for an open or a rejected item.
@@ -789,7 +872,104 @@ struct ReviewRows: Decodable, Equatable {
 
     let meeting: String
     var rows: [ReviewRow]
-    let hidden: Hidden
+    var hidden: Hidden
+    /// A failed attendance lookup in one short sentence, for the people pill's tooltip.
+    var attendanceWarning: String? = nil
+    /// The same failure in full, with the commands that fix it: shown only behind "Details".
+    var attendanceDetail: String? = nil
+    var lineEvidence: [WindowLineEvidence]? = nil
+    let questionDetails: [QuestionDetails]?
+    let questionDetailsByID: [String: QuestionDetails]
+    let questionDetailsTokens: [String: String]
+
+    init(meeting: String, rows: [ReviewRow], hidden: Hidden, attendanceWarning: String? = nil, attendanceDetail: String? = nil,
+         lineEvidence: [WindowLineEvidence]? = nil, questionDetails: [QuestionDetails]? = nil) {
+        self.meeting = meeting; self.rows = rows; self.hidden = hidden
+        self.attendanceWarning = attendanceWarning; self.attendanceDetail = attendanceDetail
+        self.lineEvidence = lineEvidence; self.questionDetails = questionDetails
+        // Decoding refuses repeated ids; a value built in code keeps the first.
+        questionDetailsByID = Dictionary((questionDetails ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        questionDetailsTokens = Dictionary(rows.compactMap { row in row.decision.map { (row.id, $0.token) } }, uniquingKeysWith: { first, _ in first })
+    }
+
+    func needsQuestionDetails(for row: ReviewRow) -> Bool {
+        row.isQuestion && row.decision.map { questionDetailsByID[row.id] == nil || questionDetailsTokens[row.id] != $0.token } == true
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case meeting, rows, hidden, attendanceWarning, attendanceDetail, lineEvidence, questionDetails
+    }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let rows = try values.decode([ReviewRow].self, forKey: .rows)
+        let questionDetails = try values.decodeIfPresent([QuestionDetails].self, forKey: .questionDetails)
+        // A repeated id is a broken reply: it fails as a read instead of trapping where the rows are indexed by id.
+        for (ids, key) in [(rows.map(\.id), CodingKeys.rows), ((questionDetails ?? []).map(\.id), .questionDetails)] {
+            var seen = Set<String>()
+            if let repeated = ids.first(where: { !seen.insert($0).inserted }) {
+                throw DecodingError.dataCorruptedError(forKey: key, in: values, debugDescription: "The id \(repeated) appears twice")
+            }
+        }
+        self.init(meeting: try values.decode(String.self, forKey: .meeting), rows: rows,
+            hidden: try values.decode(Hidden.self, forKey: .hidden), attendanceWarning: try values.decodeIfPresent(String.self, forKey: .attendanceWarning),
+            attendanceDetail: try values.decodeIfPresent(String.self, forKey: .attendanceDetail),
+            lineEvidence: try values.decodeIfPresent([WindowLineEvidence].self, forKey: .lineEvidence),
+            questionDetails: questionDetails)
+    }
+}
+
+struct WindowLineEvidence: Decodable, Equatable, Hashable {
+    let index: Int
+    let startSec, endSec: Double
+    var swapSkippedBy: [String]? = nil
+    var noRemotePresent: Bool? = nil
+    var micShare: Double? = nil
+    var callRms: Double? = nil
+    var echoOfCall: Double? = nil
+    var acousticQuality: String? = nil
+
+    var echoText: String? { echoOfCall.map { "Echo of call: \(Int(($0 * 100).rounded())) % of microphone power" } }
+    var acousticText: [String] {
+        var text: [String] = []
+        if let micShare { text.append("Microphone share: \(Int((micShare * 100).rounded())) %") }
+        if let callRms { text.append(String(format: "Call level (RMS): %.4f", callRms)) }
+        if let acousticQuality {
+            text.append(["linear-estimate": "Linear acoustic estimate", "quiet": "Quiet audio", "insufficient": "Insufficient audio for an estimate"][acousticQuality] ?? acousticQuality)
+        }
+        return text
+    }
+}
+
+struct QuestionDetails: Decodable, Equatable {
+    struct Line: Decodable, Equatable {
+        let index: Int
+        let startSec, endSec: Double?
+        let speaker, text: String
+    }
+    struct Impact: Decodable, Equatable { let lines, words, sameDoubtLines: Int }
+    let id: String
+    let decidedLines: [Line]
+    let impact: Impact
+    let raisedLines: [Line]?
+}
+
+extension MeetingDetailModel {
+    /// A reopened pane draws its last rows while its existing read refreshes them. Failures keep their Details.
+    var rowsForReopen: Loadable<ReviewRows> {
+        guard rows.value == nil,
+              let saved = service?.rowsRefresh.cached(.init(meeting: id, lowPriority: MeetingsPreferences.Rows.lowPriority.value(defaults) == .show ? "show" : nil)) else { return rows }
+        if let failure = rows.failure { return .failed(failure, previous: saved) }
+        return .loading(previous: saved)
+    }
+
+    /// A failed read keeps its failure and Details (its Retry starts the next read); an unread pane starts its read.
+    func restoreRowsForReopen() {
+        let unread = rows == .idle
+        let reopened = rowsForReopen
+        guard rows.value == nil, reopened.value != nil else { return }
+        rows = reopened
+        if unread { readRows(quiet: true) }
+    }
 }
 
 /// A decision's changed rows. Before values protect rows that a later decision changed while this reply travelled.
@@ -832,6 +1012,7 @@ struct ReviewRowsPatch: Decodable, Equatable {
             // `markRows` also sets the answer and this entry's decision, so a row the event marked is still this read.
             var marked = optimistic
             marked?.answer = change.after?.answer
+            marked?.comment = change.after?.comment
             let unmarked = present.map { row -> ReviewRow in
                 var row = row
                 if row.decision?.token == token { row.decision = change.before?.decision }
@@ -848,14 +1029,16 @@ struct ReviewRowsPatch: Decodable, Equatable {
             }
         }
         if !conflicted {
-            let positions = Dictionary(uniqueKeysWithValues: order.enumerated().map { ($0.element, $0.offset) })
+            let positions = Dictionary(order.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: { first, _ in first })
             rows = rows.enumerated().sorted {
                 let a = positions[$0.element.id] ?? Int.max, b = positions[$1.element.id] ?? Int.max
                 return a == b ? $0.offset < $1.offset : a < b
             }.map(\.element)
         }
-        return ReviewRows(meeting: current.meeting, rows: rows,
-                          hidden: !conflicted && current.hidden == hidden.before ? hidden.after : current.hidden)
+        var updated = current
+        updated.rows = rows
+        if !conflicted && current.hidden == hidden.before { updated.hidden = hidden.after }
+        return updated
     }
 }
 

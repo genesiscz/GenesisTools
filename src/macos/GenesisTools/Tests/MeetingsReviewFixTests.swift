@@ -433,7 +433,7 @@ final class MeetingsReviewFixTests: XCTestCase {
         detail.reveal(row: "r1", defaults: defaults)
         XCTAssertEqual(detail.tab, .items)
         XCTAssertEqual(detail.itemsFilter, .all)
-        XCTAssertTrue(detail.itemsFilter.rows(rows.rows).contains { $0.id == "r1" })
+        XCTAssertTrue(detail.itemsFilter.rows(rows.rows, atLine: [], applyAbove: 0.5).contains { $0.id == "r1" })
 
         detail.itemsFilter = .questions
         detail.reveal(row: "r1", defaults: defaults)
@@ -527,6 +527,8 @@ final class MeetingsReviewFixTests: XCTestCase {
         FrameProbe.reset()
         defer { FrameProbe.enabled = false; FrameProbe.reset() }
         defaults.set(MeetingsPreferences.Rows.AutoplayNext.off.rawValue, forKey: MeetingsPreferences.Rows.autoplayNext.key)
+        // The fold in place: with decided rows at the end (the default), the released row moves below the open ones.
+        defaults.set(MeetingsPreferences.Rows.Decided.inPlace.rawValue, forKey: MeetingsPreferences.Rows.decided.key)
         let window = MeetingsWindowModel(defaults: defaults, noticeClock: ManualNoticeClock(), service: nil, loadDetail: { _ in })
         let detail = MeetingDetailModel(id: "m", window: window)
         let rows = try termRows()

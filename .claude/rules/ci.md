@@ -14,7 +14,19 @@ Loaded by Claude Code when you read, write or edit a file under `.github/`, `scr
   - Exit code 0 means matched and 1 means no match. Anything else is a broken scan: abort and name the reason.
   - Use `git grep -P` in anything CI runs, never `rg`. Git is always present and searches tracked files only.
 - **Lint the diff, not the tree, and not with `biome --changed`.** Under CI's depth-1 checkout it finds zero files, and biome exits 1 on "No files were processed". `scripts/ci/lint-changed.sh` passes `git diff --name-only --diff-filter=ACMR <base> HEAD` to biome with an `[ -f ]` test per path. The base is `github.event.pull_request.base.sha`, which already is the merge base, so no history fetch is needed.
+- **`bun run lint:rules` checks the files changed since the merge base with `origin/master`**, edits on disk included
+  (`scripts/commands/lint-rules.ts`, which only picks the flags of `scripts/ci/lint-rules.ts`). `--base <ref>` picks
+  another base, and `--all` (or `CI` set) is the full audit with the roster rules. Agents ran the full scan about 66
+  times a day before a report or a push (72.6 s and 2.79 GB each on 2026-11-18).
+- **A test that reads a file as data needs a selector entry in `scripts/ci/test-changed.sh`.** Bun's `--changed`
+  follows imports only, so a hook, a workflow or a shell script never reaches the suite that reads or runs it. A
+  `scripts/ci/<name>.sh` selects its sibling `<name>.test.ts` by itself; any other reader is listed by hand.
 - **Git runs the `.githooks/` scripts as config hooks** (`hook.genesis-tools-<name>`, through `/bin/sh -c`), set by `scripts/git/install-hooks.ts` from package.json `prepare`, never through `core.hooksPath`. Git executes a hook-folder file directly, macOS checks the first execution of every new file in syspolicyd, and a worktree's hooks are new files: on 2026-10-14 a stuck syspolicyd froze every such first execution at `_dyld_start`, and a rebase hung 41 minutes. A config hook runs only while `core.hooksPath` is unset, so `git -c core.hooksPath=/dev/null …` still turns every hook off. A new hook needs a `#!` line (its interpreter becomes the command) and one `bun install`. Check what runs with `git hook list <event>`.
+- **The pre-push hook profiles every stage** (`scripts/ci/pre-push-profile.ts`): wall time, CPU time with child
+  processes, the peak memory of the stage's process tree and its largest process, the load at its start and the wait
+  before it. The table prints when the hook ends, pass or fail; each push is one line in
+  `~/.genesis-tools/logs/pre-push/<day>.jsonl`. Read that history before you guess why a push was slow.
+  `GT_PRE_PUSH_PROFILE=0` runs the stages bare. A new stage goes through the hook's `stage <name> <command>`.
 - **Dashboard validation is opt-in.** Enable `dashboards` in the manual CI workflow to check the five standalone
   UI TypeScript projects and run `scripts/ci/dashboard-smoke.ts`. The smoke starts the Vite dashboards on a runner
   with an empty home, fetches `/` and reports the server log on failure. The separate `tool_command_guard` input

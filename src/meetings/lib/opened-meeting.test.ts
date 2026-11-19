@@ -16,7 +16,7 @@ import { loadPresence } from "./attendance";
 import { CallTimeline } from "./call-timeline";
 import type { MicEnergy } from "./energy";
 import * as energyModule from "./energy";
-import { OpenedMeeting } from "./opened-meeting";
+import { attendanceWarning, OpenedMeeting } from "./opened-meeting";
 import { faceTimePlatform } from "./platforms/facetime";
 import { preserveSourceAudio } from "./source-audio";
 
@@ -58,6 +58,7 @@ function fakeSource(options: { evidence?: MeetingEvidence | null; clock?: string
         liveRecording: async () => null,
         calendarEntries: async () => ({ ok: true, from: "wisprflow", entries: [] }),
         folders: async () => [],
+        meetingsBetween: async () => null,
         meetingFolders: async () => [],
         folderWrite: { supported: false, reason: "fake", manualStep: "none" },
     };
@@ -144,6 +145,45 @@ describe("OpenedMeeting", () => {
         expect(store.read(record.id)?.history).toHaveLength(1);
     });
 
+    test("opening cached audio applies the channel separation setting and the source's stereo order", async () => {
+        const { store, record } = await newRecord();
+        const audioPath = join(store.folder(record.id), "planning.wav");
+        writeFileSync(audioPath, "fixture");
+        const folder = join(store.folder(record.id), "evidence");
+        mkdirSync(folder, { recursive: true });
+        const left = new Float32Array(1200).fill(550, 0, 600).fill(100, 600);
+        const cache = join(folder, "energy.bin");
+        writeFileSync(cache, Buffer.from(new Float32Array([...left, ...left.map((v) => 1000 - v)]).buffer));
+        const evidence: MeetingEvidence = {
+            audioPath,
+            speaking: [],
+            files: [],
+            segments: Array.from({ length: 60 }, (_, i) => ({
+                startSec: i * 2,
+                endSec: i * 2 + 2,
+                channel: i < 30 ? "mic" : "system",
+            })),
+        };
+        const read = async (minSeparation: number) => {
+            const config = meetingsConfigSchema.parse({ global: { speakerLabels: { channels: { minSeparation } } } });
+            const opened = OpenedMeeting.of(
+                store,
+                record,
+                { source: { ...fakeSource({ evidence }), sourceLayout: "left-mic" }, sourceMeetingId: "abc" },
+                config
+            );
+            return (await opened.energy()).calibration?.layout;
+        };
+        expect(await read(0.3)).toBe("left-mic");
+        expect(await read(0.5)).toBe("unknown");
+
+        evidence.segments = [];
+        const split = new Float32Array(1200).fill(1000, 0, 600);
+        writeFileSync(cache, Buffer.from(new Float32Array([...split, ...split.map((v) => 1000 - v)]).buffer));
+        expect(await read(0.3)).toBe("left-mic");
+        expect(new MeetingStore(store.storage).read(record.id)?.evidence?.channels).toBeUndefined();
+    });
+
     test("reading the source, evidence, presence and energy never writes the record", async () => {
         const { store, record } = await newRecord({
             attendance: {
@@ -160,6 +200,23 @@ describe("OpenedMeeting", () => {
         expect(await opened.silentCallSpans()).toEqual([]);
         expect(await opened.calibrate()).toBeUndefined();
         expect(store.read(record.id)?.history).toHaveLength(1);
+    });
+
+    test("stored call silence is used only if the active calibration still agrees", async () => {
+        const calibration: ChannelCalibration = { layout: "left-mic", segments: { mic: 24, system: 24 } };
+        const callSilent = [{ fromSec: 9, toSec: 14 }];
+        const { store, record } = await newRecord({ evidence: { channels: { ...calibration, callSilent } } });
+        const opened = OpenedMeeting.of(store, record);
+        const current = spyOn(opened, "energy");
+        try {
+            current.mockResolvedValue({ calibration, share: () => 1 });
+            expect(await opened.silentCallSpans()).toEqual(callSilent);
+            current.mockResolvedValue({ calibration: { ...calibration, layout: "unknown" } });
+            expect(await opened.silentCallSpans()).toEqual([]);
+            expect(store.read(record.id)?.evidence?.channels?.callSilent).toEqual(callSilent);
+        } finally {
+            current.mockRestore();
+        }
     });
 
     test("calibrate stores the silent call spans of the energy read after the echo cache was collected", async () => {
@@ -402,7 +459,7 @@ test("CLI suggestions use the shared runner and render its warnings", async () =
     const { ui } = await import("@genesiscz/utils/cli/ui");
     const { out } = await import("@genesiscz/utils/logger");
     const { registerItemCommands } = await import("../commands/items");
-    const { record } = await newRecord();
+    const { record } = await newRecord({ project: "work" });
     const resolve = spyOn(MeetingStore.prototype, "resolve").mockReturnValue(record);
     const run = spyOn(runner, "runSuggest").mockResolvedValue({
         fresh: [],
@@ -450,7 +507,126 @@ test("CLI suggestions use the shared runner and render its warnings", async () =
     }
 });
 
+test("CLI suggestions refuse bad options before the project question can change the meeting", async () => {
+    const { Command } = await import("commander");
+    const runner = await import("./suggest-run");
+    const { ui } = await import("@genesiscz/utils/cli/ui");
+    const { registerItemCommands } = await import("../commands/items");
+    const { record } = await newRecord({});
+    const resolve = spyOn(MeetingStore.prototype, "resolve").mockReturnValue(record);
+    const run = spyOn(runner, "runSuggest");
+    const err = spyOn(ui, "err").mockImplementation(() => {});
+    const raw = spyOn(ui, "raw").mockImplementation(() => {});
+    const exitCode = process.exitCode;
+    try {
+        for (const args of [
+            ["--rules", "nonsense"],
+            ["--attendance-id", "chat-b"],
+        ]) {
+            const program = new Command();
+            registerItemCommands(program);
+            await program.parseAsync(["suggest", record.id, ...args], { from: "user" });
+        }
+
+        expect(run).not.toHaveBeenCalled();
+        expect(err.mock.calls.map(([message]) => String(message))).toEqual([
+            expect.stringContaining("Unknown rule set nonsense"),
+            expect.stringContaining("--attendance-id requires --attendance"),
+        ]);
+    } finally {
+        process.exitCode = exitCode;
+        resolve.mockRestore();
+        run.mockRestore();
+        err.mockRestore();
+        raw.mockRestore();
+    }
+});
+
 describe("suggest attendance resilience", () => {
+    test("a failed automatic attendance lookup stays recorded when suggestions fall back to the roster", async () => {
+        const { store, record } = await newRecord({
+            platform: "teams",
+            participants: [{ name: "Alice Example", self: true, firstSeenSec: 0, from: [] }],
+        });
+        const { MEETING_PLATFORMS } = await import("./platforms");
+        const reader = spyOn(MEETING_PLATFORMS.teams, "attendance").mockRejectedValue(
+            new AttendanceUnavailableError("Fixture attendance missing")
+        );
+        try {
+            const opened = OpenedMeeting.of(store, record, { source: fakeSource(), sourceMeetingId: "abc" });
+            await opened.collect();
+            await opened.suggestionPresence({ warnings: [] });
+            const { attendanceDetail } = await import("./opened-meeting");
+            expect(attendanceDetail(new MeetingStore(store.storage).read(record.id)!)).toBe(
+                "attendance not collected: Fixture attendance missing"
+            );
+        } finally {
+            reader.mockRestore();
+        }
+    });
+    test("attendance failures survive reopening and a later successful lookup clears the warning", async () => {
+        const { store, record } = await newRecord();
+        const { MEETING_PLATFORMS } = await import("./platforms");
+        const reader = spyOn(MEETING_PLATFORMS.teams, "attendance").mockRejectedValue(
+            new AttendanceUnavailableError("Fixture chat missing")
+        );
+        try {
+            const opened = OpenedMeeting.of(store, record, { source: fakeSource(), sourceMeetingId: "abc" });
+            const warnings: string[] = [];
+            await opened.suggestionPresence({ attendance: "teams", warnings });
+            const reopened = new MeetingStore(store.storage).read(record.id)!;
+            expect(attendanceWarning(reopened)).toBe(warnings[0]);
+            expect(reopened.history.at(-1)?.command).toBe("attendance-failed");
+            const history = reopened.history.length;
+            await opened.suggestionPresence({ attendance: "teams", warnings: [] });
+            expect(new MeetingStore(store.storage).read(record.id)?.history).toHaveLength(history);
+            reader.mockResolvedValue({ presence: [], note: "fixture recovered" });
+            await OpenedMeeting.of(store, reopened, {
+                source: fakeSource(),
+                sourceMeetingId: "abc",
+            }).suggestionPresence({ attendance: "teams", warnings: [] });
+            const recovered = new MeetingStore(store.storage).read(record.id)!;
+            expect(attendanceWarning(recovered)).toBeUndefined();
+            expect(recovered.history.at(-1)?.command).toBe("attendance-recovered");
+        } finally {
+            reader.mockRestore();
+        }
+    });
+    test("the rows warn in one short sentence; the full text with its commands is the detail (U3)", async () => {
+        const { attendanceDetail } = await import("./opened-meeting");
+        const { store, record } = await newRecord({ platform: "teams" });
+        const full =
+            'attendance not collected: tools ms-teams meetings attendance "Planning" failed: Could not resolve a single meeting chat. Pass --id.\ntools ms-teams meetings meetings list';
+        const failed = await store.update(record.id, { command: "attendance-failed", change: full }, () => {});
+
+        expect(attendanceWarning(failed)).toBe(
+            "Microsoft Teams did not say who joined, so the people come from the transcript."
+        );
+        expect(attendanceDetail(failed)).toBe(full);
+
+        const { MEETING_PLATFORMS } = await import("./platforms");
+        const reader = spyOn(MEETING_PLATFORMS.teams, "attendance").mockRejectedValue(
+            new AttendanceUnavailableError("Fixture chat missing. Run tools ms-teams meetings meetings list")
+        );
+        try {
+            const warnings: string[] = [];
+            await OpenedMeeting.of(store, failed, { source: fakeSource(), sourceMeetingId: "abc" }).suggestionPresence({
+                attendance: "teams",
+                warnings,
+            });
+            const saved = new MeetingStore(store.storage).read(record.id)!;
+
+            // The suggest run and the rows say the same sentence, so the window shows it once.
+            expect(warnings).toEqual([attendanceWarning(saved)!]);
+            for (const text of warnings) {
+                expect(text).not.toContain("tools ");
+                expect(text).not.toMatch(/\bE\d\b/u);
+            }
+            expect(attendanceDetail(saved)).toContain("tools ms-teams meetings meetings list");
+        } finally {
+            reader.mockRestore();
+        }
+    });
     test("edited copies look up the source title and clock", async () => {
         const { MEETING_PLATFORMS } = await import("./platforms");
         const reader = spyOn(MEETING_PLATFORMS.teams, "attendance").mockResolvedValue({
@@ -473,9 +649,9 @@ describe("suggest attendance resilience", () => {
         }
     });
 
-    test.each(["Missing chat", "Ambiguous chat"])(
-        "explicit Teams %s warns with candidates and persists unrelated suggestions",
-        async (reason) => {
+    test.each(["none", "ambiguous"] as const)(
+        "Teams attendance resolution %s shares its first three candidates with suggest and the stored warning",
+        async (status) => {
             const cli = await import("@genesiscz/utils/cli");
             const { runSuggest } = await import("./suggest-run");
             const { store, record } = await newRecord();
@@ -493,24 +669,22 @@ describe("suggest attendance resilience", () => {
             });
             const of = spyOn(OpenedMeeting, "of").mockReturnValue(opened);
             const collect = spyOn(opened, "collectWhenIncomplete").mockResolvedValue(record);
-            const exec = spyOn(cli, "execTool").mockImplementation(async (args) =>
-                args.includes("list")
-                    ? {
-                          success: true,
-                          exitCode: 0,
-                          stdout: SafeJSON.stringify([
-                              { id: "chat-a", title: "Planning A", lastMessageTime: Date.parse(record.start) },
-                              { id: "chat-b", title: "Planning B", lastMessageTime: Date.parse(record.start) + 1000 },
-                          ]),
-                          stderr: "",
-                      }
-                    : {
-                          success: false,
-                          exitCode: 1,
-                          stdout: `${reason}. Could not resolve a single meeting chat. Pass --id.`,
-                          stderr: "",
-                      }
-            );
+            const candidates =
+                status === "none"
+                    ? []
+                    : ["chat-a", "chat-b", "chat-c", "chat-d"].map((id, i) => ({
+                          id,
+                          title: "Paper Kite Review",
+                          lastCallAt: i === 2 ? null : new Date(Date.parse(record.start) - i * 60_000).toISOString(),
+                          participantCount: i + 2,
+                          command: `tools ms-teams meetings attendance --id ${id}`,
+                      }));
+            const exec = spyOn(cli, "execTool").mockResolvedValue({
+                success: false,
+                exitCode: 1,
+                stdout: SafeJSON.stringify({ status, candidates }),
+                stderr: "reader diagnostic on stderr",
+            });
             try {
                 const result = await runSuggest({
                     store,
@@ -519,9 +693,29 @@ describe("suggest attendance resilience", () => {
                     attendance: "teams",
                     wordCheck: "off",
                 });
-                expect(result.warnings.join("\n")).toContain("attendance unavailable");
-                expect(result.warnings.join("\n")).toContain("chat-a  Planning A");
-                expect(result.warnings.join("\n")).toContain("chat-b  Planning B");
+                const { attendanceDetail } = await import("./opened-meeting");
+                const saved = new MeetingStore(store.storage).read(record.id)!;
+                // The run warns in the rows' one sentence; the stored detail keeps the candidates and their commands.
+                expect(result.warnings).toContain(attendanceWarning(saved)!);
+                expect(attendanceWarning(saved)).not.toContain("tools ");
+                const warning = attendanceDetail(saved);
+                expect(warning).toContain("attendance unavailable");
+                expect(warning).not.toContain("reader diagnostic on stderr");
+                expect(exec.mock.calls.some(([args]) => args.includes("list"))).toBe(false);
+                if (status === "ambiguous") {
+                    for (const candidate of candidates.slice(0, 3)) {
+                        expect(warning).toContain(candidate.title);
+                        expect(warning).toContain(candidate.command);
+                        expect(warning).toContain(`${candidate.participantCount} participants`);
+                    }
+                    expect(warning).toContain("last call unknown");
+                    expect(warning).toContain("--attendance-id");
+                    expect(warning!.indexOf("chat-a")).toBeLessThan(warning!.indexOf("chat-b"));
+                    expect(warning!.indexOf("chat-b")).toBeLessThan(warning!.indexOf("chat-c"));
+                    expect(warning).not.toContain("chat-d");
+                } else {
+                    expect(warning).toContain("No matching meeting chats");
+                }
                 expect(result.fresh.length).toBeGreaterThan(0);
                 expect(new MeetingStore(store.storage).read(record.id)?.items).toEqual(result.fresh);
             } finally {
@@ -844,7 +1038,7 @@ test("collect persists only a canonically identified departure and read-only pre
     await opened.collect();
     const reopened = new MeetingStore(store.storage).read(record.id)!;
     expect(reopened.participants.find((one) => one.name === "Bob Example")?.stays).toEqual([
-        { fromSec: 0, toSec: 40, source: "goodbye", confidence: 0.8 },
+        { fromSec: 0, toSec: 40, source: "platform-roster", leaveSource: "goodbye", confidence: 0.8 },
     ]);
     const before = readFileSync(store.path(record.id), "utf8");
     expect(
@@ -853,4 +1047,67 @@ test("collect persists only a canonically identified departure and read-only pre
         )?.toSec
     ).toBe(40);
     expect(readFileSync(store.path(record.id), "utf8")).toBe(before);
+    await OpenedMeeting.of(store, reopened, { source, sourceMeetingId: "abc" }).collect();
+    expect(new MeetingStore(store.storage).read(record.id)!.participants).toEqual(reopened.participants);
+    expect(readFileSync(store.path(record.id), "utf8")).toBe(before);
+});
+
+test("a final call-channel goodbye uses a matched voice and later speech reopens the stay", async () => {
+    const { store, record } = await newRecord({
+        participants: [
+            { name: "River Example", self: true, firstSeenSec: 0, from: ["platform-roster"] },
+            { name: "Sky Example", firstSeenSec: 10, from: ["platform-roster"] },
+            { name: "Lake Example", firstSeenSec: 0, from: ["platform-roster"] },
+        ],
+    });
+    const source = fakeSource({
+        evidence: {
+            selfName: "River Example",
+            segments: [{ startSec: 0, endSec: 3000, channel: "system" }],
+            speaking: [],
+            files: [],
+        },
+    });
+    const meeting = await source.load("abc");
+    source.load = async () => ({
+        ...meeting,
+        transcript: [
+            { speaker: "Room", startSec: 0, text: "Welcome." },
+            { speaker: "Remote", startSec: 2400, text: "I have to go." },
+            { speaker: "Room", startSec: 2403, text: "Thanks." },
+            { speaker: "Other", startSec: 2500, text: "One more question." },
+        ],
+    });
+    let later = false;
+    const collect = async () => {
+        const reopened = new MeetingStore(store.storage).read(record.id)!;
+        const opened = OpenedMeeting.of(store, reopened, { source, sourceMeetingId: "abc" });
+        const share = Object.assign(() => 0.1, {
+            voice: (sec: number) =>
+                sec === 2400 || (later && sec === 2500)
+                    ? {
+                          person: "Sky Example",
+                          quality: "matched" as const,
+                          candidates: [],
+                          model: "fixture",
+                          reason: "matched",
+                      }
+                    : undefined,
+        });
+        spyOn(opened, "energy").mockResolvedValue({ share });
+        await opened.collect();
+        return new MeetingStore(store.storage).read(record.id)!.participants.map((person) => person.stays?.[0]);
+    };
+    const first = await collect();
+    expect(first[1]).toEqual({
+        fromSec: 10,
+        toSec: 2400,
+        source: "platform-roster",
+        leaveSource: "goodbye",
+        confidence: 0.8,
+    });
+    expect(first[2]?.toSec).toBeUndefined();
+    expect(await collect()).toEqual(first);
+    later = true;
+    expect((await collect())[1]).toEqual({ fromSec: 10, source: "platform-roster", confidence: 1 });
 });

@@ -18,6 +18,7 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { OpenedMeeting } from "./opened-meeting";
 import type { LinkedSource } from "./sources";
+import { voicePassSettings } from "./speaker-labels/voice";
 
 /** The meeting an acoustic call reads, with the source the caller opens it with (the service's; the record's own). */
 export interface AcousticTarget {
@@ -66,8 +67,11 @@ export async function voiceMeeting(
     const file = join(folder, "voices.json");
     let voice: Awaited<ReturnType<typeof embedVoice>>;
     try {
+        const worker = await voicePassSettings();
         voice = await embedVoice({
             audioPath,
+            workerPrefix: worker.prefix,
+            clearBackground: worker.clearBackground,
             channel: options.channel,
             fromSec: options.fromSec,
             toSec: options.toSec,
@@ -200,6 +204,7 @@ export async function collectVoiceEvidence(target: AcousticTarget) {
     const transcript = await opened.meeting();
     const lines: Record<string, VoiceMatch> = {};
     const energy = await opened.energy();
+    const groups = new Map<0 | 1, Array<{ index: number; fromSec: number; toSec: number }>>();
     for (const line of lineEvidence(
         transcript.transcript,
         evidence ?? { segments: [], speaking: [] },
@@ -216,21 +221,35 @@ export async function collectVoiceEvidence(target: AcousticTarget) {
             continue;
         }
         const channel = share <= 0.35 ? (layout === "left-mic" ? 1 : 0) : layout === "left-mic" ? 0 : 1;
-        const [embedded] = await embedVoiceLines({
+        const spans = groups.get(channel) ?? [];
+        spans.push({ index: line.index, fromSec: line.startSec, toSec: line.endSec });
+        groups.set(channel, spans);
+    }
+    const worker = await voicePassSettings();
+    for (const [channel, spans] of groups) {
+        spans.sort((a, b) => a.fromSec - b.fromSec);
+        const embeddings = await embedVoiceLines({
             audioPath,
-            spans: [{ index: line.index, fromSec: line.startSec, toSec: line.endSec }],
-            channels: [{ channel, track: share <= 0.35 ? "isolated-call" : "raw-mic" }],
+            workerPrefix: worker.prefix,
+            clearBackground: worker.clearBackground,
+            workers: worker.workers,
+            spans,
+            channels: [{ channel, track: channel === (layout === "left-mic" ? 0 : 1) ? "raw-mic" : "isolated-call" }],
+            cachePath: join(folder, "voice-lines.json"),
         });
-        const voice = embedded?.channels[0];
-        lines[`${line.startSec}:${line.endSec}`] =
-            voice?.quality === "ready"
-                ? scoreVoice({ model: voice.model, embedding: voice.embedding, samples })
-                : {
-                      model: samples[0]!.model,
-                      quality: "unknown",
-                      candidates: [],
-                      reason: voice?.quality === "unknown" ? voice.reason : "no embedding",
-                  };
+        for (const [index, embedded] of embeddings.entries()) {
+            const voice = embedded.channels[0];
+            const span = spans[index]!;
+            lines[`${span.fromSec}:${span.toSec}`] =
+                voice?.quality === "ready"
+                    ? scoreVoice({ model: voice.model, embedding: voice.embedding, samples })
+                    : {
+                          model: samples[0]!.model,
+                          quality: "unknown",
+                          candidates: [],
+                          reason: voice?.quality === "unknown" ? voice.reason : "no embedding",
+                      };
+        }
     }
     if (Bun.hash(readFileSync(enrolmentFile)).toString() !== enrolment || recordingFingerprint(audioPath) !== source) {
         throw new Error(

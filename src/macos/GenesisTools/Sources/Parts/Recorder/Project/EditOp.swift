@@ -30,6 +30,11 @@ enum EditOp: Equatable {
     case volume(Volume)
     case mute(Mute)
     case audio(Audio)
+    case audioLane(AudioLane)
+    case layerAdd(LayerAdd)
+    case layer(Layer)
+    case layerMove(LayerMove)
+    case layerRemove(LayerRemove)
     case music(Music)
     case exportSettings(ExportSettings)
     case reset(Reset)
@@ -97,6 +102,7 @@ enum EditOp: Equatable {
         Split.self, Cut.self, Keep.self, Speed.self, Zoom.self, Unzoom.self, Redact.self, Spotlight.self, Unredact.self,
         Text.self, Untext.self, Marker.self, Unmarker.self, Retime.self, Shape.self, Unshape.self, FixLine.self,
         UnfixLine.self, AutoZoom.self, AnnotateClicks.self, Volume.self, Mute.self, Audio.self, Music.self,
+        AudioLane.self, LayerAdd.self, Layer.self, LayerMove.self, LayerRemove.self,
         ExportSettings.self, Reset.self, Clicks.self, Keys.self, Captions.self, Motion.self, Cursor.self, Frame.self,
         Camera.self, CameraHide.self, CameraShow.self, RemoveIdle.self, CutWords.self, CutFillers.self, Denoise.self,
         Normalize.self, Lanes.self, AddLane.self, RemoveLane.self, MoveLane.self, MoveToLane.self, RangeAction.self,
@@ -142,6 +148,11 @@ enum EditOp: Equatable {
         case let .volume(op): op
         case let .mute(op): op
         case let .audio(op): op
+        case let .audioLane(op): op
+        case let .layerAdd(op): op
+        case let .layer(op): op
+        case let .layerMove(op): op
+        case let .layerRemove(op): op
         case let .music(op): op
         case let .exportSettings(op): op
         case let .reset(op): op
@@ -243,6 +254,59 @@ extension EditOp: Codable {
 }
 
 extension EditOp {
+    struct AudioLane: EditOpPayload {
+        static let tag = "audioLane"
+        var id: String
+        var muted: Bool?
+        var volume: Double?
+        var name: String?
+        var op: EditOp { .audioLane(self) }
+    }
+
+    struct LayerAdd: EditOpPayload {
+        static let tag = "layerAdd"
+        var kind: EditProject.MediaLayer.Kind
+        var file: String
+        var startUs: Int64?
+        var endUs: Int64?
+        var x: Double?
+        var y: Double?
+        var width: Double?
+        var op: EditOp { .layerAdd(self) }
+    }
+
+    struct Layer: EditOpPayload {
+        static let tag = "layer"
+        var id: String
+        var x: Double?
+        var y: Double?
+        var width: Double?
+        var opacity: Double?
+        /// Omitted leaves the shape alone. JSON null restores the file's own rectangle.
+        var shape: EditProject.CameraShape??
+        var hidden: Bool?
+        var name: String?
+        var startUs: Int64?
+        var endUs: Int64?
+        var videoStartMs: Int?
+        var videoSound: Bool?
+        var loop: Bool?
+        var op: EditOp { .layer(self) }
+    }
+
+    struct LayerMove: EditOpPayload {
+        static let tag = "layerMove"
+        var id: String
+        var to: EditProject.LayerMove
+        var op: EditOp { .layerMove(self) }
+    }
+
+    struct LayerRemove: EditOpPayload {
+        static let tag = "layerRemove"
+        var id: String
+        var op: EditOp { .layerRemove(self) }
+    }
+
     struct Point: Codable, Equatable {
         var x: Double
         var y: Double
@@ -957,6 +1021,25 @@ extension EditOp {
         var inMs: Int?
         var outMs: Int?
         var op: EditOp { .tilt(self) }
+    }
+}
+
+extension EditOp.Layer {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(id: try c.decode(String.self, forKey: .id))
+        x = try c.decodeIfPresent(Double.self, forKey: .x)
+        y = try c.decodeIfPresent(Double.self, forKey: .y)
+        width = try c.decodeIfPresent(Double.self, forKey: .width)
+        opacity = try c.decodeIfPresent(Double.self, forKey: .opacity)
+        if c.contains(.shape) { shape = .some(try c.decodeIfPresent(EditProject.CameraShape.self, forKey: .shape)) }
+        hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden)
+        name = try c.decodeIfPresent(String.self, forKey: .name)
+        startUs = try c.decodeIfPresent(Int64.self, forKey: .startUs)
+        endUs = try c.decodeIfPresent(Int64.self, forKey: .endUs)
+        videoStartMs = try c.decodeIfPresent(Int.self, forKey: .videoStartMs)
+        videoSound = try c.decodeIfPresent(Bool.self, forKey: .videoSound)
+        loop = try c.decodeIfPresent(Bool.self, forKey: .loop)
     }
 }
 

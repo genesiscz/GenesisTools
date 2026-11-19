@@ -31,8 +31,16 @@ struct ReachSheet: View {
         let struck = detail.pendingStruck.intersection(pending.reach.judged.map(\.id))
         VStack(alignment: .leading, spacing: 12) {
             Text("This also affects").font(.system(size: 15, weight: .semibold))
-            Text(verbatim: Self.lead(pending))
-                .font(.system(size: 12.5)).foregroundStyle(.secondary)
+            if let spelling = pending.reach.spelling {
+                // U12: what changes and where, in place of "Besides i897, this decision also changes:".
+                let lead = Self.spellingLead(heard: spelling.heard, proposed: spelling.proposed,
+                                             lines: spellingLines.count, dictionary: teachDictionary)
+                HighlightedText(lead.text, ranges: lead.ranges)
+                    .font(.system(size: 13.5)).fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(verbatim: Self.lead(pending))
+                    .font(.system(size: 12.5)).foregroundStyle(.secondary)
+            }
             // As tall as the list, up to 360 pt: on the card over the column a greedy scroll area stood 360 pt high
             // under a one-item list.
             FittedScroll(maxHeight: 360) {
@@ -71,6 +79,24 @@ struct ReachSheet: View {
         let answer = pending.action.answer.map { " (→ \($0))" } ?? ""
         let verb = pending.action.replaces == nil ? "this decision also changes" : "the changed answer also changes"
         return "Besides \(pending.row.label)\(answer), \(verb):"
+    }
+
+    /// A spelling's lead (U12): "“Hoho” becomes “HoHo” in 4 lines and in the dictionary." `lines` is the number of
+    /// ticked lines and `dictionary` the dictionary box, so the sentence follows the choices below it.
+    static func spellingLead(heard: String, proposed: String, lines: Int, dictionary: Bool) -> (text: String, ranges: [NSRange]) {
+        guard lines > 0 || dictionary else {
+            return ("“\(heard)” stays as it is: tick a line or the dictionary.", [])
+        }
+        let prefix = "“\(heard)” becomes “"
+        let change = "\(prefix)\(proposed)”"
+        let suffix: String
+        switch (lines > 0, dictionary) {
+        case (true, true): suffix = " in \(Plural.count(lines, "line")) and in the dictionary."
+        case (true, false): suffix = " in \(Plural.count(lines, "line"))."
+        case (false, _): suffix = " in the dictionary."
+        }
+        let range = NSRange(location: prefix.utf16.count, length: proposed.utf16.count)
+        return (change + suffix, proposed.isEmpty ? [] : [range])
     }
 }
 
@@ -147,14 +173,19 @@ struct ReachList: View {
             if pending.reach.spelling == nil, let lines = pending.reach.lines, lines > 1 {
                 Label("\(Plural.count(lines, "line")) of the transcript", systemImage: "text.alignleft").font(.system(size: 12.5))
             }
-            ForEach(pending.reach.spelling == nil ? pending.reach.dictionary.filter(\.teaches) : [], id: \.self) { entry in
-                Label("The \(entry.project ?? "meeting") dictionary learns “\(entry.heard)” → “\(entry.fixed)”"
-                      + (entry.seenBefore > 0 ? ", seen \(Plural.count(entry.seenBefore, "time")) before" : ""),
+            ForEach(pending.reach.spelling == nil ? pending.reach.dictionary.filter { $0.teaches || $0.adds == true } : [], id: \.self) { entry in
+                Label(Self.dictionaryWords(entry),
                       systemImage: "character.book.closed")
                     .font(.system(size: 12.5))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    static func dictionaryWords(_ entry: DecisionReach.Dictionary) -> String {
+        if entry.adds == true { return "Adds “\(entry.heard)” → “\(entry.fixed)” to the \(entry.project ?? "meeting") dictionary now" }
+        return "The \(entry.project ?? "meeting") dictionary learns “\(entry.heard)” → “\(entry.fixed)”"
+            + (entry.seenBefore > 0 ? ", seen \(Plural.count(entry.seenBefore, "time")) before" : "")
     }
 
     /// "It also closes Q12, about the same span: …"; a question no row names is counted, never shown by its id.
@@ -180,23 +211,24 @@ private struct SpellingReachChoices: View {
     @Binding var selected: Set<Int>
     @Binding var teachDictionary: Bool
     let detail: MeetingDetailModel
+    var readOnly = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if !spelling.occurrences.isEmpty {
-                HStack {
+                if !readOnly { HStack {
                     Text("Apply spelling to \(selected.count) of \(spelling.occurrences.count) lines").font(.headline)
                     Spacer()
                     Button("All") { selected = Set(spelling.occurrences.map(\.line)) }
                     Button("Only this line") { selected = Set(spelling.occurrences.filter(\.primary).map(\.line)) }
                         .disabled(!spelling.occurrences.contains(where: \.primary))
-                }
+                } }
                 ForEach(spelling.occurrences) { line in
                     HStack(alignment: .top, spacing: 8) {
-                        Toggle("Include line at \(MeetingsFormat.clock(line.atSec))", isOn: Binding(
+                        if !readOnly { Toggle("Include line at \(MeetingsFormat.clock(line.atSec))", isOn: Binding(
                             get: { selected.contains(line.line) },
                             set: { if $0 { selected.insert(line.line) } else if !line.primary { selected.remove(line.line) } }))
-                            .labelsHidden().toggleStyle(.checkbox).disabled(line.primary)
+                            .labelsHidden().toggleStyle(.checkbox).disabled(line.primary) }
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
                                 if let player = detail.window?.player {
@@ -206,15 +238,35 @@ private struct SpellingReachChoices: View {
                                 Text(line.speaker).fontWeight(.medium)
                                 if line.primary { Text("This line").foregroundStyle(.secondary) }
                             }.font(.caption)
-                            Text(line.text).font(.callout).fixedSize(horizontal: false, vertical: true)
+                            // The heard words marked where they sit in the line (U12): what the spelling changes.
+                            HighlightedText(line.text, ranges: line.ranges)
+                                .font(.callout).fixedSize(horizontal: false, vertical: true)
                         }
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            Divider()
+            if !readOnly { Divider()
             Toggle("Use this correction for dictionary suggestions", isOn: $teachDictionary).toggleStyle(.checkbox)
                 .help("Keep this off when the spelling is specific to these lines")
+            }
         }
+    }
+}
+
+struct WordOccurrencesSheet: View {
+    let spelling: DecisionReach.Spelling
+    let detail: MeetingDetailModel
+    let close: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("This also affects").font(.headline)
+            FittedScroll(maxHeight: 360) {
+                SpellingReachChoices(spelling: spelling, selected: .constant([]), teachDictionary: .constant(false),
+                                     detail: detail, readOnly: true)
+            }
+            HStack { Spacer(); Button("Done", action: close).keyboardShortcut(.defaultAction) }
+        }.padding(18).frame(width: 480).closesOnEscape(close)
     }
 }
 
@@ -285,6 +337,7 @@ private struct ReachItemRow: View {
 struct HistorySheetView: View {
     let detail: MeetingDetailModel
     let history: MeetingDetailModel.HistorySheet
+    @State private var projectHistory: [MeetingRecordView.HistoryEntry] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -293,24 +346,22 @@ struct HistorySheetView: View {
                 Spacer()
                 Button("Done") { detail.history = nil }.keyboardShortcut(.defaultAction)
             }
-            if history.item == nil {
-                ForEach(Array((detail.record.value?.history ?? []).filter { $0.command.hasPrefix("assign") }.enumerated()), id: \.offset) { _, entry in
-                    Text(verbatim: "Project · \(entry.change)").font(.caption).foregroundStyle(.secondary)
-                }
-            }
             switch history.entries {
             case .idle, .loading:
+                projectRows
                 ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 120)
             case .failed(let failure, _):
+                projectRows
                 NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
                            fixes: [.button("Retry", symbol: "arrow.clockwise") { detail.openHistory(item: history.item) },
                                    failure.detailsFix { detail.openHistory(item: history.item) }])
             case .loaded(let entries):
-                if entries.isEmpty {
+                if entries.isEmpty && (history.item != nil || projectHistory.isEmpty) {
                     EmptyState(symbol: "clock", text: "Nothing decided yet", detail: "Each confirm, answer and Undo is kept here with who made it.")
                 } else {
-                    List(entries) { entry in
-                        HistoryRow(entry: entry, detail: detail)
+                    List {
+                        projectRows
+                        ForEach(entries) { entry in HistoryRow(entry: entry, detail: detail) }
                     }
                     .listStyle(.inset)
                 }
@@ -318,7 +369,18 @@ struct HistorySheetView: View {
         }
         .padding(18)
         .frame(width: 560, height: 460)
+        .onChange(of: detail.record.value?.history, initial: true) { _, entries in
+            projectHistory = (entries ?? []).filter { $0.command.hasPrefix("assign") }
+        }
         .closesOnEscape { detail.history = nil }
+    }
+
+    @ViewBuilder private var projectRows: some View {
+        if history.item == nil {
+            ForEach(projectHistory.indices, id: \.self) { index in
+                Text(verbatim: "Project · \(projectHistory[index].change)").font(.caption).foregroundStyle(.secondary)
+            }
+        }
     }
 }
 

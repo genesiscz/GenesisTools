@@ -107,6 +107,12 @@ export function registerDaemonCommand(program: Command): void {
             if (status.needsMigration) {
                 p.log.warn(`Daemon ${LAUNCHD_MIGRATION_HINT}: ${pc.cyan(toolCommand("automate daemon install"))}`);
             }
+
+            if (status.staleLauncherConfig) {
+                p.log.warn(
+                    `Daemon plist was written for another GenesisTools.app build (its bun --config= flag): ${pc.cyan(toolCommand("automate daemon install"))}`
+                );
+            }
         });
 
     daemon

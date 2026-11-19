@@ -11,6 +11,7 @@ import { nativeInboxState } from "@genesiscz/utils/macos/native-inbox";
 import { profiler } from "@genesiscz/utils/profile";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
+import { workDbPath } from "@genesiscz/utils/work/store/db";
 import { prepareWidgetAsset } from "../composer/assets";
 import { widgetDispatcher } from "../composer/dispatch";
 import { type OutboxDispatcher, processWidgetOutbox } from "../composer/engine";
@@ -79,7 +80,7 @@ export async function watchWidget({
     root?: string;
     selectedKey?: string;
     signal: AbortSignal;
-    emit: (snapshot: Awaited<ReturnType<typeof widgetSnapshot>>, serialized: string) => void;
+    emit: (snapshot: Awaited<ReturnType<typeof widgetSnapshot>>, serialized: string) => void | Promise<void>;
     /**
      * The widget's picks as they happen (`{"select": key}` lines on stdin): the next snapshot names that session at
      * once, without waiting for the `selection` action to reach `state.json` (a process and a debounce, about 0.5 s).
@@ -89,7 +90,7 @@ export async function watchWidget({
         prepare?: typeof prepareWidgetAsset;
         snapshot?: typeof widgetSnapshot;
         dispatcher?: OutboxDispatcher;
-        inboxPaths?: { answerLog: string; database: string; decisions: string };
+        inboxPaths?: { answerLog: string; database: string; decisions: string; work?: string; config?: string };
         watchInbox?: typeof createWatcher;
         watchSessions?: typeof createWatcher;
         sessionRoots?: Record<WidgetRosterProvider, string[]>;
@@ -120,7 +121,8 @@ export async function watchWidget({
                             sessions: async () => roster?.rows ?? [],
                             agents: async () => roster?.agents ?? { generatedAt: "", parents: [], orphans: [] },
                             rosterStatus: () => ({
-                                loading: !roster?.agents.generatedAt && (roster?.loading ?? true),
+                                loading:
+                                    !!roster?.backfill || (!roster?.agents.generatedAt && (roster?.loading ?? true)),
                                 error: roster?.error,
                             }),
                         },
@@ -165,7 +167,7 @@ export async function watchWidget({
                 lastSnapshot = { ...lastSnapshot, state };
                 prof.record("show-decision fast path", Date.now() - request.at, `id=${request.id}`);
                 last = SafeJSON.stringify(lastSnapshot, { strict: true });
-                emit(lastSnapshot, last);
+                await emit(lastSnapshot, last);
             };
             const refresh = async () => {
                 const state = await readWidgetState(directory);
@@ -283,7 +285,7 @@ export async function watchWidget({
                         );
                     }
                     lastSnapshot = snapshot;
-                    emit(snapshot, fingerprint);
+                    await emit(snapshot, fingerprint);
                 }
             };
             // The running refresh loop. Shutdown awaits it, so a refresh that was mid-flight at abort cannot
@@ -323,11 +325,11 @@ export async function watchWidget({
                         }
                         // One-shot snapshots (the settings page) read this instead of rebuilding the tree cold.
                         if (roster && !roster.error && roster.agents.generatedAt) {
-                            const { rows, agents } = roster;
+                            const { rows, agents, backfill } = roster;
                             // A run that found the same sessions and agents (the safety read of an idle roster)
                             // rebuilds no second snapshot and rewrites no 1.1 MB cache; the cache still gets a
                             // heartbeat write so its readers see a live writer.
-                            const fingerprint = widgetRosterFingerprint({ rows, agents });
+                            const fingerprint = widgetRosterFingerprint({ rows, agents, backfill });
                             const now = Date.now();
                             const unchanged =
                                 rosterShown !== undefined &&
@@ -345,11 +347,12 @@ export async function watchWidget({
                             // Kept so shutdown waits for it inside the worker lock: one landing after a replacement
                             // watch took the lock would put this older roster over that watch's newer one. Writes
                             // run in order (roster-cache.ts), so the latest settles after every earlier one.
-                            rosterCacheWrite = writeRosterCache({ root: directory, roster: { rows, agents } }).catch(
-                                (error) => {
-                                    logger.debug({ error }, "Widget roster cache not written");
-                                }
-                            );
+                            rosterCacheWrite = writeRosterCache({
+                                root: directory,
+                                roster: { rows, agents, backfill },
+                            }).catch((error) => {
+                                logger.debug({ error }, "Widget roster cache not written");
+                            });
                             if (unchanged) {
                                 return;
                             }
@@ -360,6 +363,10 @@ export async function watchWidget({
                         }
 
                         void requestRefresh();
+                        if (roster?.backfill) {
+                            // One outstanding page. Even a slow snapshot writer cannot accumulate a queue of copies.
+                            return Promise.all([refreshing, rosterCacheWrite]).then(() => undefined);
+                        }
                     },
                 });
                 // The first read of a fresh worker takes seconds; until it lands, show what the previous watch of this
@@ -374,7 +381,9 @@ export async function watchWidget({
             const subscription = watchPath(
                 join(directory, "state.json"),
                 () => {
-                    void showDecisionNow();
+                    void showDecisionNow().catch((error) =>
+                        logger.debug({ error }, "Widget decision link was not published")
+                    );
                     return requestRefresh();
                 },
                 { debounceMs: 180 }
@@ -427,13 +436,26 @@ export async function watchWidget({
                     answerLog: logDir(),
                     database: toolDataDir("question", "qa.db"),
                     decisions: decisionFiles().file,
+                    // The session to-do items live in the work store (work-items P9).
+                    work: workDbPath(),
+                    config: toolDataDir("hub", "config.json"),
                 };
                 const paths = {
                     answerLog: resolve(configured.answerLog),
                     database: resolve(configured.database),
                     decisions: resolve(configured.decisions),
+                    config: configured.config ? resolve(configured.config) : null,
+                    work: configured.work !== undefined ? resolve(configured.work) : null,
                 };
-                const directories = [...new Set([paths.answerLog, dirname(paths.database), dirname(paths.decisions)])];
+                const directories = [
+                    ...new Set([
+                        paths.answerLog,
+                        ...(paths.config ? [dirname(paths.config)] : []),
+                        dirname(paths.database),
+                        dirname(paths.decisions),
+                        ...(paths.work !== null ? [dirname(paths.work)] : []),
+                    ]),
+                ];
                 const roots = directories.filter(
                     (directory) =>
                         !directories.some(
@@ -453,9 +475,12 @@ export async function watchWidget({
                             await watchInbox(sourceDirectory, requestRefresh, {
                                 debounceMs: 100,
                                 filter: (event) =>
+                                    event.path === paths.config ||
                                     event.path === paths.database ||
                                     event.path === `${paths.database}-wal` ||
                                     event.path === paths.decisions ||
+                                    (paths.work !== null &&
+                                        (event.path === paths.work || event.path === `${paths.work}-wal`)) ||
                                     (dirname(event.path) === paths.answerLog && event.path.endsWith(".jsonl")),
                             })
                         );
@@ -554,10 +579,16 @@ async function watchSessionRoots({
         // The changed files by scope, so the roster refreshes those transcripts instead of the scope's whole listing.
         const paths = new Map<WidgetRosterScope, Set<string>>();
         let read = false;
-        let listed: Set<string> | undefined;
+        const parentPaths = new Set<string>();
+        let listed: Map<string, string> | undefined;
         const listedParent = (sessionId: string) => {
-            listed ??= new Set(roster.agents.parents.map((parent) => parent.sessionId));
-            return listed.has(sessionId);
+            listed ??= new Map(roster.agents.parents.map((parent) => [parent.sessionId, parent.filePath]));
+            const file = listed.get(sessionId);
+            if (!file) {
+                return false;
+            }
+            parentPaths.add(file);
+            return true;
         };
         for (const event of events) {
             const change = widgetRosterChange({ path: event.path, roots, listedParent });
@@ -569,7 +600,7 @@ async function watchSessionRoots({
             }
         }
         if (read || scopes.size > 0) {
-            roster.request(scopes, { read, paths });
+            roster.request(scopes, { read, paths, parentPaths: parentPaths.size ? parentPaths : undefined });
         }
     };
     const all = [...new Set([...roots.claude, ...roots.codex, ...roots.grok])];

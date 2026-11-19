@@ -293,6 +293,7 @@ extension MeetingsAPI {
             var entry: SavedDictionaryEntry? = nil
             var phrase: String
             var project: String?
+            var meeting: String? = nil
         }
 
         typealias Result = PhraseTest

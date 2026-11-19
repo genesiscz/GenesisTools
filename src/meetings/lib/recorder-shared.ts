@@ -52,6 +52,11 @@ export function failureBackoffMs(failures: number, baseMs: number): number {
 export function captureKeepsTrying(error: unknown): boolean {
     return !(error instanceof CaptureError && error.kind === "no-permission");
 }
+/** A capture refused for the microphone grant alone (ax-tool: "microphone access is not granted …"). */
+export function microphoneRefused(error: unknown): boolean {
+    return error instanceof CaptureError && error.kind === "no-permission" && /microphone/i.test(error.message);
+}
+
 /** The first frame's OCR finds less text than this: probably only the desktop, so the grant is likely missing. */
 export const EMPTY_FRAME_CHARS = 20;
 /** How long the socket stays open after the stop answer, so the answer reaches the caller. */
@@ -82,6 +87,13 @@ const recorderStateSchema = z.object({
     bytes: z.number(),
     lastFrameAt: z.string().optional(),
     warning: z.string().optional(),
+    withoutScreen: z.string().optional(),
+    sound: z
+        .discriminatedUnion("path", [
+            z.object({ path: z.literal("session"), sources: z.array(z.enum(["mic", "system"])) }),
+            z.object({ path: z.literal("pieces"), since: z.string().optional(), reason: z.string().optional() }),
+        ])
+        .optional(),
     stopReason: z.enum(RECORDING_STOP_REASONS).optional(),
 });
 export type RecorderState = z.infer<typeof recorderStateSchema>;
@@ -94,7 +106,10 @@ export function recorderAcknowledged(options: {
 }): boolean {
     const { current, meetingId, startedAfter } = options;
     return (
-        current.running && current.state?.meetingId === meetingId && Date.parse(current.state.startedAt) >= startedAfter
+        current.running &&
+        current.state?.meetingId === meetingId &&
+        Date.parse(current.state.startedAt) >= startedAfter &&
+        (!current.state.withoutScreen || (current.state.sound?.path === "session" && !current.state.stopReason))
     );
 }
 
@@ -180,6 +195,7 @@ export interface RecorderNote {
 
 /** What the recorder uses beside the store, so a test can replace each part. */
 export interface RecorderDeps {
+    scheduleLevels: (sample: (atMs: number) => void, intervalMs: number) => () => void;
     recorder: FrameRecorder;
     toJpeg: JpegConverter;
     /** Starts the meeting's OCR worker (a process of its own); the recorder never waits on it or fails by it. */
@@ -189,6 +205,8 @@ export interface RecorderDeps {
     liveDir?: string;
     pieceSec: number;
     failurePauseMs: number;
+    /** How long the stop waits for the sound left in the piece folders (30 s by default). */
+    salvageDeadlineMs?: number;
 }
 
 export function defaultOcrLanguages(): string[] {
@@ -198,6 +216,10 @@ export function defaultOcrLanguages(): string[] {
 /** The recorder's own parts; `runRecorder` adds the OCR worker start (`ocr-worker.ts` reads the recorder state). */
 export function defaultDeps(capture: MeetingsConfig["global"]["capture"]): Omit<RecorderDeps, "startOcr"> {
     return {
+        scheduleLevels(sample, intervalMs) {
+            const timer = setInterval(() => sample(Date.now()), intervalMs);
+            return () => clearInterval(timer);
+        },
         recorder: FRAME_RECORDERS[capture.backend]({
             axTool: async (options) => [await ensurePinnedBinaryAsync(options)],
         }),
@@ -218,11 +240,14 @@ export function errorText(err: unknown): string {
 
 /** What `record run` passes the recorder. */
 export interface RunRecorderOptions {
+    minSeparation?: number;
     store: MeetingStore;
     meetingId: string;
     capture: MeetingsConfig["global"]["capture"];
     /** The Vision OCR languages of the meeting language (`languages.<code>.ocr`); the default language's when omitted. */
     ocrLanguages?: string[];
+    /** The live grant read that ruled out frames for this run. */
+    withoutScreen?: string;
     /** Overrides `capture.displays`. */
     display?: DisplayPolicy;
     /** Overrides `capture.recorders.<backend>.audio.sources`. */

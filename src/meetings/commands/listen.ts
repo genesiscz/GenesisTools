@@ -12,8 +12,14 @@ import {
     MeetingsConfigStore,
     resolveDictionary,
 } from "@genesiscz/utils/meetings/config";
+import { roomDeviceAccountKeys, rosterAccountKey } from "@genesiscz/utils/meetings/people";
 import { meetingPeopleNames } from "@genesiscz/utils/meetings/people-directory";
-import { type DecisionActor, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import {
+    type DecisionActor,
+    type MeetingRecord,
+    MeetingStore,
+    QUESTION_GROUPS,
+} from "@genesiscz/utils/meetings/record";
 import { type ChoiceRow, choiceChip, choiceSelect, heardMark } from "@genesiscz/utils/prompts/clack/choice-select";
 import { searchSelect } from "@genesiscz/utils/prompts/clack/search-select";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -25,6 +31,7 @@ import { prepareFindings } from "../lib/add-findings";
 import { ANSWER_LOG_FILE, readAnswerEvents, runningRound, subscribeAnswers } from "../lib/answer-log";
 import { clipPlayer, cutClip, playClip } from "../lib/audio";
 import { MeetingComments } from "../lib/comments";
+import type { JournalEntry } from "../lib/decision-actions";
 import { callerActor } from "../lib/decision-journal";
 import type { Finding } from "../lib/findings";
 import { personKey, personPresent } from "../lib/listen-answers";
@@ -47,19 +54,21 @@ import {
 } from "../lib/listen-session";
 import { GivenAnswerAdapter } from "../lib/listen-session-answer";
 import { OpenedMeeting } from "../lib/opened-meeting";
+import { answerVocabulary, DICTIONARY_CHOICES } from "../lib/question-answers";
 import {
-    answerVocabulary,
     type HeardContext,
+    heardTimes,
     NONE_OF_THESE,
     openQuestions,
     type QuestionItem,
     questionIdOf,
     questionLabel,
     questionView,
+    withinListenThreshold,
 } from "../lib/questions";
 import { speakerAnswerScores } from "../lib/review-rows";
 import { openMeetingsClient } from "../lib/service/client";
-import { fail, TOOL } from "../lib/shared";
+import { fail, resolveEnum, TOOL } from "../lib/shared";
 
 const PAD_CHOICES = [5, 10] as const;
 const AGAIN = "\u0000again";
@@ -259,6 +268,10 @@ async function ask(options: {
         : options.said
           ? [pc.italic(`„${options.said}“`)]
           : [];
+    if (options.plan.gapNote) {
+        shown.push(pc.dim(options.plan.gapNote));
+    }
+
     const earlierNote = earlier
         ? `${pc.dim("↺")} ${pc.dim(`you answered these words at ${formatClock(earlier.atSec)}: `)}${pc.cyan(earlier.answer)}`
         : undefined;
@@ -440,9 +453,11 @@ interface ListenOptions {
     enrolVoices?: boolean;
     prepareOnly?: boolean;
     spotCheck?: string;
+    askKnown?: boolean;
     longStretchWords?: string;
     group?: string;
     applyAbove?: string;
+    learn?: string | boolean;
 }
 
 /** `--clip-out <dir>`: the questions' clips as files. No sound, no terminal and no round, so nothing is changed (MC22). */
@@ -474,7 +489,10 @@ async function clipsOut(options: {
 
     for (const clip of written) {
         const tone = clip.toneAtSec === undefined ? "" : `, tone at ${formatClock(clip.toneAtSec)}`;
-        out.println(`${clip.question} ${clip.clip} (${formatClock(clip.fromSec)}–${formatClock(clip.toSec)}${tone})`);
+        const gap = clip.gapNote ? ` · ${clip.gapNote}` : "";
+        out.println(
+            `${clip.question} ${clip.clip} (${formatClock(clip.fromSec)}–${formatClock(clip.toSec)}${tone})${gap}`
+        );
     }
 }
 
@@ -484,55 +502,154 @@ class TerminalAdapter implements ListenAdapter {
         private readonly deps: {
             store: MeetingStore;
             meeting: MeetingRecord;
-            audioPath: string;
-            player: (typeof LISTEN_PLAYERS)[number];
-            vocabulary: string[];
-            transcript: TranscriptLines;
             listen: ListenSettings;
-            clips: ClipSettings;
+            playback: () => Promise<
+                | {
+                      audioPath: string;
+                      player: (typeof LISTEN_PLAYERS)[number];
+                      vocabulary: string[];
+                      transcript: TranscriptLines;
+                      clips: ClipSettings;
+                  }
+                | undefined
+            >;
         }
     ) {}
 
+    private playback?: ReturnType<typeof this.deps.playback>;
+
+    /** Asks yes or no at once (Enter is no) for each dictionary question the answer left; a yes adds the word. */
+    private async offerDictionary(label: string): Promise<void> {
+        const { store, meeting } = this.deps;
+        const record = store.read(meeting.id);
+        const answeredId = record && questionIdOf(record, label);
+        const answered = record?.items.find((item) => item.id === answeredId);
+
+        if (!record || answered?.kind !== "question") {
+            return;
+        }
+
+        const terms = new Set(answered.decides);
+        const asks = record.items.filter(
+            (item) =>
+                item.kind === "question" &&
+                item.about === "dictionary" &&
+                item.status === "suggested" &&
+                terms.has(String(item.evidence?.item))
+        );
+
+        for (const ask of asks) {
+            if (ask.kind !== "question") {
+                continue;
+            }
+
+            const yes = await p.confirm({ message: ask.question, initialValue: false, cancel: "back" });
+
+            if (p.isCancel(yes)) {
+                ui.dim(`  ${questionLabel(record, ask.id)} stays open: ${TOOL} listen ${meeting.id} --group words`);
+                return;
+            }
+
+            const client = await openMeetingsClient({ role: "listen" });
+
+            try {
+                const result = await client.call("decision.apply", {
+                    meeting: meeting.id,
+                    action: { kind: "answer", question: ask.id, answer: yes ? "add" : "do not add" },
+                });
+                const said = result.warnings?.length ? ` (${result.warnings.join("; ")})` : "";
+                ui.dim(
+                    yes
+                        ? `  added to the ${record.project} dictionary${said} · undo: ${TOOL} reopen ${meeting.id} --token ${result.entry?.token ?? "?"}`
+                        : `  not added to the ${record.project} dictionary`
+                );
+            } finally {
+                client.close();
+            }
+        }
+    }
+
     async ask(asked: AskedQuestion): Promise<ListenOutcome> {
-        const { store, meeting, transcript, listen } = this.deps;
+        const { store, meeting, listen } = this.deps;
+        if (!isInteractive()) {
+            fail(`${asked.label} needs an answer. Without a terminal, answer it directly:`);
+            ui.raw(
+                suggestCommand(TOOL, {
+                    replaceCommand: ["listen", meeting.id, "--item", asked.label, "--answer", "<answer>"],
+                })
+            );
+            return "stop";
+        }
+
+        // The dictionary question was answered at once, after its word.
+        if (
+            asked.question.about === "dictionary" &&
+            store.read(meeting.id)?.items.find((item) => item.id === asked.question.id)?.status !== "suggested"
+        ) {
+            return "skip";
+        }
+
+        this.playback ??= this.deps.playback();
+        const playback = await this.playback;
+        if (!playback) {
+            return "stop";
+        }
+        const { transcript, clips, audioPath, player, vocabulary } = playback;
+        const deviceAccounts =
+            asked.question.about === "speaker"
+                ? roomDeviceAccountKeys(OpenedMeeting.of(store, asked.record).roomDevices)
+                : undefined;
+        const human = (name: string) => !deviceAccounts?.has(rosterAccountKey(name));
         const question =
             asked.question.about === "speaker"
                 ? {
                       ...asked.question,
-                      choices: asked.question.choices.filter((name) =>
-                          personPresent(asked.record, name, asked.question.fromSec)
+                      choices: asked.question.choices.filter(
+                          (name) => human(name) && personPresent(asked.record, name, asked.question.fromSec)
                       ),
                   }
                 : asked.question;
         const view = questionView(asked.record, question, transcript, SAID_MAX_CHARS);
         const clip = join(store.folder(meeting.id), "listen", `${question.id}.wav`);
         const plan = await refineSplitClip({
-            plan: questionClip({ record: asked.record, question, transcript, ...this.deps.clips }),
+            plan: questionClip({ record: asked.record, question, transcript, ...clips }),
             question,
-            audioPath: this.deps.audioPath,
+            audioPath,
         });
         await cutClip({
-            audioPath: this.deps.audioPath,
+            audioPath,
             outPath: clip,
             ...plan,
         });
         const part = asked.part ? ` · part ${asked.part.n}/${asked.part.of}` : "";
+        const words = question.group === "words" && question.about === "term";
         const priority =
-            (view.priority === undefined ? "" : ` · priority ${view.priority}`) +
-            (typeof question.evidence?.reach === "number" ? ` · affects ${question.evidence.reach} ranges` : "");
+            (view.priority === undefined || question.group === "words" ? "" : ` · priority ${view.priority}`) +
+            (words
+                ? ` · heard ${heardTimes(question)} times`
+                : typeof question.evidence?.reach === "number"
+                  ? ` · affects ${question.evidence.reach} ranges`
+                  : "");
+
+        if (words) {
+            ui.dim(
+                `An answer fixes all ${heardTimes(question)}. Then you choose whether the ${asked.record.project ?? "project"} dictionary gets the word.`
+            );
+        }
+
         return await ask({
-            question,
+            question: { ...question, question: view.question },
             clip,
             plan,
-            player: this.deps.player,
-            vocabulary: [...new Set([...question.choices, ...this.deps.vocabulary])].filter((name) =>
-                personPresent(asked.record, name, question.fromSec)
+            player,
+            vocabulary: [...new Set([...question.choices, ...vocabulary])].filter(
+                (name) => human(name) && personPresent(asked.record, name, question.fromSec)
             ),
             delayMs: listen.delaySec * 1000,
             ...(listen.repeat.enabled ? { repeatGapMs: listen.repeat.gapSec * 1000 } : {}),
             ...(view.said ? { said: view.said } : {}),
             ...(view.context ? { context: view.context } : {}),
-            ...(asked.earlier ? { earlier: asked.earlier } : {}),
+            ...(asked.earlier && human(asked.earlier.answer) ? { earlier: asked.earlier } : {}),
             scores: speakerAnswerScores(asked.record, question),
             header: `${choiceChip(view.label)} ${pc.dim(`${asked.position}/${asked.total}${part} · ${view.range}${priority}`)}`,
         });
@@ -550,20 +667,39 @@ class TerminalAdapter implements ListenAdapter {
         return p.isCancel(leave) || leave === "leave";
     }
 
-    note(note: SessionNote): void {
+    note(note: SessionNote): void | Promise<void> {
         const { meeting } = this.deps;
 
         if (note.kind === "decided") {
+            const record = this.deps.store.read(meeting.id);
+            const decidedId = record && questionIdOf(record, note.label);
+            const decided = record?.items.find((item) => item.id === decidedId);
+            const fixed =
+                note.outcome !== "skip" &&
+                note.outcome.answer &&
+                decided?.kind === "question" &&
+                decided.group === "words" &&
+                decided.about === "term"
+                    ? ` · ${heardTimes(decided)} places fixed`
+                    : "";
             ui.ok(
                 note.outcome === "skip"
                     ? `${note.label} skipped`
-                    : `${note.label} → ${note.outcome.answer || "comment saved; still open"}\n`
+                    : `${note.label} → ${note.outcome.answer || "comment saved; still open"}${note.knownDate ? ` (your answer from ${note.knownDate})` : fixed}\n`
             );
 
             if (note.settled.length > 0) {
                 ui.dim(`  the same answer settled ${note.settled.length} more: ${note.settled.join(" ")}`);
             }
 
+            if (
+                decided?.kind === "question" &&
+                decided.about === "term" &&
+                note.outcome !== "skip" &&
+                note.outcome.answer
+            ) {
+                return this.offerDictionary(note.label);
+            }
             return;
         }
 
@@ -604,7 +740,6 @@ interface AdapterContext {
     meeting: MeetingRecord;
     opened: OpenedMeeting;
     opts: ListenOptions;
-    first: QuestionItem;
     settings: MeetingsConfig;
 }
 
@@ -632,52 +767,37 @@ const ADAPTERS: Record<"terminal" | "answer", (context: AdapterContext) => Promi
         );
         return { adapter, budget: 1, joinRunningRound: true, actor: callerActor() };
     },
-    terminal: async ({ store, meeting, opened, first, settings }) => {
-        if (!isInteractive()) {
-            fail(`listen plays audio and asks in a terminal. Without one, answer a question directly:`);
-            ui.raw(
-                suggestCommand(TOOL, {
-                    replaceCommand: [
-                        "listen",
-                        meeting.id,
-                        "--item",
-                        questionLabel(meeting, first.id),
-                        "--answer",
-                        "<answer>",
-                    ],
-                })
-            );
-            return undefined;
-        }
-
-        const pads = await askedPads(new MeetingsConfigStore());
-
-        if (pads === undefined) {
-            return undefined;
-        }
-
+    terminal: async ({ store, meeting, opened, settings }) => {
         const listen = settings.global.playback.listen;
-        const player = clipPlayer(listen.player, LISTEN_PLAYERS);
-
-        if (!player) {
-            fail(`No player found (${LISTEN_PLAYERS.join(", ")}).`);
-            return undefined;
-        }
-
-        const dictionary = resolveDictionary(settings, { project: meeting.project, meeting: meeting.dictionary });
         const adapter = new TerminalAdapter({
             store,
             meeting,
-            audioPath: await opened.audioPath(),
-            player,
-            vocabulary: answerVocabulary(
-                meeting,
-                dictionary.entries.map((entry) => entry.value),
-                await meetingPeopleNames({ store, config: settings, meeting: meeting.id })
-            ),
-            transcript: new TranscriptLines((await opened.meeting()).transcript),
             listen,
-            clips: await clipSettings(listen, pads),
+            playback: async () => {
+                const pads = await askedPads(new MeetingsConfigStore());
+                if (!pads) {
+                    return undefined;
+                }
+                const player = clipPlayer(listen.player, LISTEN_PLAYERS);
+                if (!player) {
+                    throw new Error(`No player found (${LISTEN_PLAYERS.join(", ")}).`);
+                }
+                const dictionary = resolveDictionary(settings, {
+                    project: meeting.project,
+                    meeting: meeting.dictionary,
+                });
+                return {
+                    audioPath: await opened.audioPath(),
+                    player,
+                    vocabulary: answerVocabulary(
+                        meeting,
+                        dictionary.entries.map((entry) => entry.value),
+                        await meetingPeopleNames({ store, config: settings, meeting: meeting.id })
+                    ),
+                    transcript: new TranscriptLines((await opened.meeting()).transcript),
+                    clips: await clipSettings(listen, pads),
+                };
+            },
         });
         return { adapter, budget: listen.roundCap, actor: { kind: "listen" } };
     },
@@ -722,10 +842,11 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
         return;
     }
     const group = opts.group ?? (opts.spotCheck ? "spot-check" : opts.longStretchWords ? "long-stretch" : "all");
-    if (!["all", "rules", "spot-check", "long-stretch"].includes(group)) {
-        fail("--group must be rules, spot-check, long-stretch or all");
+    if (![...QUESTION_GROUPS, "all"].includes(group)) {
+        fail(`--group must be ${QUESTION_GROUPS.join(", ")} or all`);
         return;
     }
+    let sampled: string[] | undefined;
     if (opts.spotCheck || opts.longStretchWords) {
         const spotCheck = opts.spotCheck === undefined ? undefined : Number(opts.spotCheck);
         const longStretchWords = opts.longStretchWords === undefined ? undefined : Number(opts.longStretchWords);
@@ -741,11 +862,12 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
         const client = await openMeetingsClient({ role: "cli" });
         try {
             if (spotCheck !== undefined) {
-                await client.call("meeting.listen.prepare", {
+                const prepared = await client.call("meeting.listen.prepare", {
                     meeting: meeting.id,
                     group: "spot-check",
                     count: spotCheck,
                 });
+                sampled = prepared.questions;
             }
 
             if (longStretchWords !== undefined) {
@@ -765,25 +887,26 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
 
         meeting = store.read(meeting.id) ?? meeting;
     }
+    const settings = await new MeetingsConfigStore().read();
+    const threshold = applyAbove ?? settings.global.suggest.applyAbove;
+    const eligible = openQuestions(meeting).filter((question) => withinListenThreshold(question, threshold));
+    let selected: string[] | undefined =
+        group === "spot-check" && sampled !== undefined
+            ? sampled
+            : group === "all"
+              ? undefined
+              : eligible.filter((question) => (question.group ?? "rules") === group).map((question) => question.id);
     if (opts.prepareOnly) {
         out.result(
             SafeJSON.stringify({
                 meeting: meeting.id,
-                questions: openQuestions(meeting)
-                    .filter((question) => group === "all" || (question.group ?? "rules") === group)
-                    .map((question) => question.id),
+                questions: selected ?? eligible.map((question) => question.id),
             })
         );
         return;
     }
-    let selected: string[] | undefined =
-        group === "all"
-            ? undefined
-            : openQuestions(meeting)
-                  .filter((question) => (question.group ?? "rules") === group)
-                  .map((question) => question.id);
-    for (const name of ["rules", "spot-check", "long-stretch"]) {
-        ui.dim(name + ": " + openQuestions(meeting).filter((question) => (question.group ?? "rules") === name).length);
+    for (const name of QUESTION_GROUPS) {
+        ui.dim(`${name}: ${eligible.filter((question) => (question.group ?? "rules") === name).length}`);
     }
     if (opts.subscribeAnswers) {
         await subscribe(meeting, store, opts);
@@ -793,6 +916,20 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
     if (opts.answer !== undefined && !opts.clipOut) {
         if (!opts.item) {
             fail("--answer needs --item <Q12>: it answers one question.");
+            return;
+        }
+
+        const learn =
+            opts.learn === undefined
+                ? undefined
+                : await resolveEnum({
+                      value: opts.learn,
+                      values: LEARN_MODES,
+                      flag: "--learn",
+                      subcommand: ["listen"],
+                  });
+
+        if (opts.learn !== undefined && !learn) {
             return;
         }
 
@@ -807,6 +944,7 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
                     ...(opts.comment ? { comment: opts.comment } : {}),
                     ...(opts.except ? { except: opts.except } : {}),
                     ...(opts.replaces ? { replaces: opts.replaces } : {}),
+                    ...(learn ? { learn } : {}),
                 },
                 ...(opts.reason ? { reason: opts.reason } : {}),
             });
@@ -815,10 +953,22 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             } else if (opts.json) {
                 out.result(SafeJSON.stringify(result.entry, null, 2));
             } else {
-                const answered = result.entry.changes.find((change) => change.after?.kind === "question")?.after;
+                const entry = result.entry;
+                const answered = (
+                    entry.changes.find((change) => change.id === entry.question) ??
+                    entry.changes.find((change) => change.after?.kind === "question")
+                )?.after;
+                const now = store.read(meeting.id) ?? meeting;
+                // A comment that leaves the question open fixed no place, so it reports none.
+                const confirmed =
+                    answered?.kind === "question" && answered.status === "confirmed" ? answered : undefined;
                 ui.ok(
-                    `${opts.item} → ${answered?.kind === "question" && answered.status === "confirmed" ? answered.answer : "comment saved; still open"}\n`
+                    `${opts.item} → ${confirmed ? `${confirmed.answer}${wordOutcome(now, confirmed, entry)}` : "comment saved; still open"}\n`
                 );
+                ui.dim(`  undo: ${TOOL} reopen ${meeting.id} --token ${result.entry.token}`);
+            }
+            for (const warning of result.warnings ?? []) {
+                ui.warn(warning);
             }
         } catch (error) {
             fail(error);
@@ -870,9 +1020,13 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
     }
 
     const itemId = opts.item ? questionIdOf(meeting, opts.item) : undefined;
-    const first = openQuestions(meeting).find(
-        (item) => (!itemId || item.id === itemId) && (!selected || selected.includes(item.id))
+    const chosen = selected ? new Set(selected) : undefined;
+    const inRound = openQuestions(meeting).filter(
+        (item) =>
+            (!itemId || item.id === itemId) &&
+            (chosen ? chosen.has(item.id) : itemId !== undefined || withinListenThreshold(item, threshold))
     );
+    const first = inRound[0];
 
     if (!first) {
         // A named question that is not open was not answered, so that exits 1; an empty round is no failure.
@@ -891,10 +1045,7 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
         }
 
         try {
-            const questions = openQuestions(meeting).filter(
-                (item) => (!itemId || item.id === itemId) && (!selected || selected.includes(item.id))
-            );
-            await clipsOut({ store, meeting, questions, dir: opts.clipOut, json: opts.json });
+            await clipsOut({ store, meeting, questions: inRound, dir: opts.clipOut, json: opts.json });
         } catch (err) {
             fail(err);
         }
@@ -903,14 +1054,12 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
     }
 
     try {
-        const settings = await new MeetingsConfigStore().read();
         const opened = OpenedMeeting.of(store, meeting);
         const chosen = await ADAPTERS[opts.answer === undefined ? "terminal" : "answer"]({
             store,
             meeting,
             opened,
             opts,
-            first,
             settings,
         });
 
@@ -945,15 +1094,19 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
             ...(selected ? { selected } : {}),
             minPriority: settings.global.playback.listen.minPriority,
             listenBelow: settings.global.suggest.listenBelow,
+            applyAbove: threshold,
             ...(chosen.joinRunningRound ? { joinRunningRound: true } : {}),
             actor: chosen.actor,
+            askKnown: opts.askKnown,
             ...(opts.reason ? { reason: opts.reason } : {}),
             decisions: {
                 apply: (request) => client.call("decision.apply", request),
                 revert: (request) => client.call("decision.revert", request),
             },
             split: {
-                transcript: async () => (await opened.meeting()).transcript,
+                transcript: async (record) =>
+                    (await (record.id === opened.record.id ? opened : OpenedMeeting.of(store, record)).meeting())
+                        .transcript,
                 micShare: async () => (await opened.energy()).share,
             },
         });
@@ -965,40 +1118,21 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
 
         try {
             await session.run();
+
             if (opts.spotCheck) {
-                const roundIds = new Set(selected ?? session.applied().flatMap((entry) => entry.decided));
-                const sample =
-                    store
-                        .read(meeting.id)
-                        ?.items.filter(
-                            (item) =>
-                                roundIds.has(item.id) &&
-                                item.kind === "question" &&
-                                item.group === "spot-check" &&
-                                item.status === "confirmed"
-                        ) ?? [];
-                const changed = sample.filter(
-                    (item) => item.kind === "question" && item.answer !== item.evidence?.originalSpeaker
-                ).length;
+                const result = session.spotCheckResult();
                 await store.update(meeting.id, { command: "listen", change: "spot-check result" }, (record) => {
                     record.review ??= {};
                     record.review.listen ??= {};
                     record.review.listen.spotChecks ??= [];
                     record.review.listen.spotChecks.push({
                         at: new Date().toISOString(),
-                        answered: sample.length,
-                        changed,
-                        questionIds: sample.map((item) => item.id),
+                        ...result,
                     });
                 });
-                ui.info(
-                    "Spot check: " +
-                        changed +
-                        "/" +
-                        sample.length +
-                        " changed" +
-                        (sample.length ? " (" + Math.round((100 * changed) / sample.length) + " %)" : "")
-                );
+                const share = ({ changed, answered }: typeof result.known) =>
+                    `${changed}/${answered} changed (${answered ? `${Math.round((100 * changed) / answered)} %` : "no answers"})`;
+                ui.info(`Spot check: known ${share(result.known)} · asked ${share(result.asked)}`);
             }
         } finally {
             process.off("exit", onExit);
@@ -1025,6 +1159,35 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
     }
 }
 
+const LEARN_MODES = ["add", "none"] as const;
+
+/**
+ * What an answer to a word did, after its answer: the places it fixed and what the dictionary got, or the dictionary
+ * question it left for a person.
+ */
+function wordOutcome(meeting: MeetingRecord, answered: QuestionItem, entry: JournalEntry): string {
+    if (answered.group !== "words" || answered.about === "dictionary") {
+        return answered.about === "dictionary" && entry.dictionary?.some((change) => change.after)
+            ? ` · added to the ${meeting.project} dictionary`
+            : "";
+    }
+
+    const added = entry.dictionary?.find((change) => change.after)?.after;
+    const asked = entry.changes.find(
+        (change) =>
+            change.before === undefined && change.after?.kind === "question" && change.after.about === "dictionary"
+    )?.after;
+    const kept = answered.answer?.toLowerCase() === answered.heard?.toLowerCase();
+    return (
+        ` · ${heardTimes(answered)} places ${kept ? "kept as heard" : "fixed"}` +
+        (added
+            ? ` · added to the ${meeting.project} dictionary`
+            : asked
+              ? ` · the ${meeting.project} dictionary question waits: ${questionLabel(meeting, asked.id)} (${DICTIONARY_CHOICES.join(" | ")})`
+              : "")
+    );
+}
+
 export function registerListenCommand(program: Command): void {
     program
         .command("listen")
@@ -1039,6 +1202,7 @@ export function registerListenCommand(program: Command): void {
         )
         .option("--apply-above <percent>", "confidence threshold for quality questions")
         .option("--spot-check <n>", "ask a random sample of 50 to 69 percent lines and report the share changed")
+        .option("--ask-known", "ask again even when your earlier speaker decisions cover every line")
         .option(
             "--enrol-voices",
             "enrol remote seats from isolated call audio with an already installed model; score and store line evidence"
@@ -1048,8 +1212,15 @@ export function registerListenCommand(program: Command): void {
             "prepare selected quality questions without playing audio or starting a listening round"
         )
         .option("--long-stretch-words <n>", "ask every guess stretch of this many words or more")
-        .option("--group <group>", "rules, spot-check, long-stretch or all")
+        .option(
+            "--group <group>",
+            `${QUESTION_GROUPS.join(", ")} or all (words: repeated unknown words, most heard first)`
+        )
         .option("--answer <text>", `answer --item without listening ("${NONE_OF_THESE}" rejects what it decides)`)
+        .option(
+            "--learn [mode]",
+            `with --answer on a word: add puts the answer into the project dictionary now (a person's choice), none keeps it out; absent, a dictionary question waits (${LEARN_MODES.join(" | ")})`
+        )
         .option("--comment <text>", "with --answer: a note kept on the question")
         .option("--except <items...>", "with --answer: leave these item ids or question numbers out")
         .option("--replaces <token>", "with --answer: replace this earlier answer in one decision")
@@ -1077,7 +1248,7 @@ export function registerListenCommand(program: Command): void {
         )
         .option(
             "--json",
-            "with --clip-out: print [{ question, id, clip, fromSec, toSec, padSec, padAfterSec?, toneAtSec }]; with --answer: print the decision journal entry"
+            "with --clip-out: print [{ question, id, clip, fromSec, toSec, padSec, padAfterSec?, toneAtSec?, gapNote? }]; with --answer: print the decision journal entry"
         )
         .action(listen);
 }

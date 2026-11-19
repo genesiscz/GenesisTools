@@ -16,11 +16,12 @@ import {
     MOMENTS_FOLDER,
 } from "@genesiscz/utils/meetings/record";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
-import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
+import { type HeardOccurrence, heardIn, SPOT_CLIP_SEC, TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { type ClipPlan, type CutControl, cutClip, probeAudio } from "./audio";
 import { hasFrameIndex } from "./frame-index";
+import { decidedLines } from "./listen-answers";
 import type { LinePoint, MomentErrorCode, MomentTarget } from "./moment-schema";
 import { OpenedMeeting } from "./opened-meeting";
 import { PAST_END_GRACE_SEC } from "./players";
@@ -33,6 +34,8 @@ import {
     questionOccurrence,
 } from "./questions";
 import { resolveToneSound, sineToneSound, type ToneSound } from "./tone-sound";
+import { correctedTranscriptRead, timedTranscriptView } from "./window-reads";
+import { meetingWordTimingCache } from "./word-timings";
 
 const { log } = logger.scoped("meetings-moment");
 
@@ -95,6 +98,8 @@ export interface Moment {
     target: MomentTarget;
     /** How a person names it: `Q12`, `i42`, `1:49:48`, `1:49:48–1:50:02`, `Speaker 2 05:09–05:31`. */
     label: string;
+    /** The intervening audio included between a question's separate passages, on the meeting clock. */
+    gapNote?: string;
     /** The heard stretch on the transcript clock, before the pad. */
     fromSec: number;
     toSec: number;
@@ -224,35 +229,85 @@ interface Span {
     spotSec: number;
     pad: "voice" | "around";
     label: string;
+    gaps?: Array<{ fromSec: number; toSec: number }>;
 }
 
 const range = (fromSec: number, toSec: number): string => `${formatClock(fromSec)}–${formatClock(toSec)}`;
 
+/** A speaker question plays its own passage and the lines its card says the answer decides, on one clock. */
+function speakerQuestionBounds({
+    record,
+    question,
+    lines,
+}: {
+    record: MeetingRecord;
+    question: QuestionItem;
+    lines: TranscriptLines;
+}): Pick<Span, "fromSec" | "toSec" | "gaps"> {
+    const passages = question.decides.length
+        ? decidedLines({ record, question, transcript: lines }).flatMap(({ index }) => lines.span(index) ?? [])
+        : [];
+    passages.sort((a, b) => a.fromSec - b.fromSec);
+    const local = passages.filter(({ fromSec }) => fromSec >= question.fromSec && fromSec <= question.toSec);
+    // Generated questions can already store the end of the final decided line. A new voice starting at that
+    // instant belongs to the next passage. Older questions can instead store the start of the final line.
+    const endsAtLineEnd = record.items.some(
+        (item) =>
+            item.kind === "speaker-range" &&
+            item.toSec < question.toSec &&
+            item.evidence?.endSec === question.toSec &&
+            question.decides.includes(item.id)
+    );
+    let lastLineEnd: number | undefined;
+    lines.entries.forEach(({ startSec }, index) => {
+        if (
+            startSec !== undefined &&
+            startSec >= question.fromSec &&
+            (startSec < question.toSec || (startSec === question.toSec && !endsAtLineEnd))
+        ) {
+            const end = lines.end(index);
+            if (end !== undefined) {
+                lastLineEnd = Math.max(lastLineEnd ?? end, end);
+            }
+        }
+    });
+    const asked =
+        lastLineEnd === undefined && question.clip
+            ? question.clip
+            : { fromSec: question.fromSec, toSec: Math.max(question.toSec, lastLineEnd ?? question.toSec) };
+
+    const first = local[0];
+    const last = local.at(-1);
+    if (first && last) {
+        // Keep the primary passage's edges without swallowing gaps between decided lines inside it.
+        first.fromSec = Math.min(first.fromSec, asked.fromSec);
+        last.toSec = Math.max(last.toSec, asked.toSec);
+    } else {
+        passages.push(asked);
+        passages.sort((a, b) => a.fromSec - b.fromSec);
+    }
+
+    const fromSec = passages[0]!.fromSec;
+    let toSec = fromSec;
+    const gaps = [];
+    for (const passage of passages) {
+        if (passage.fromSec > toSec) {
+            gaps.push({ fromSec: toSec, toSec: passage.fromSec });
+        }
+        toSec = Math.max(toSec, passage.toSec);
+    }
+    return { fromSec, toSec, gaps };
+}
+
 function questionSpan(record: MeetingRecord, question: QuestionItem, lines: TranscriptLines): Span {
-    // A word question plays the spot of its own occurrence, so a word late in a long line is in the clip; a speaker
-    // question plays only the asked voice, from the tone on.
     const occurrence = questionOccurrence(record, question);
-    const asked = (question.about === "speaker" ? undefined : heardClip(question, lines, occurrence)) ??
-        question.clip ?? { fromSec: question.fromSec, toSec: question.toSec };
+    const sample = question.clip ?? { fromSec: question.fromSec, toSec: question.toSec };
     const heard =
-        question.about === "speaker"
-            ? {
-                  ...asked,
-                  toSec:
-                      question.clip || question.question.startsWith('Who says "')
-                          ? asked.toSec
-                          : Math.max(
-                                asked.toSec,
-                                ...lines.entries.flatMap((entry, index) =>
-                                    entry.startSec !== undefined &&
-                                    entry.startSec >= asked.fromSec &&
-                                    entry.startSec <= asked.toSec
-                                        ? [lines.end(index) ?? asked.toSec]
-                                        : []
-                                )
-                            ),
-              }
-            : asked;
+        question.about !== "speaker"
+            ? (heardClip(question, lines, occurrence) ?? sample)
+            : question.question.startsWith('Who says "')
+              ? sample
+              : speakerQuestionBounds({ record, question, lines });
     return {
         ...heard,
         spotSec: askedSpotSec(question, lines, occurrence),
@@ -328,7 +383,76 @@ function voiceEnd(lines: TranscriptLines, fromSec: number, toSec: number): numbe
     return toSec - fromSec < INSTANT_SEC ? Math.max(toSec, voiceReachSec(lines, fromSec)) : toSec;
 }
 
-function itemSpan(record: MeetingRecord, item: MeetingItem, lines: TranscriptLines): Span {
+/** A corrected line with its cached word times (`meetingWordTimingCache`), as a term's spot reads it. */
+export interface WordTimedLine {
+    startSec?: number;
+    text: string;
+    words?: ReadonlyArray<{ range: { location: number; length: number }; startSec: number }>;
+}
+
+/**
+ * Where a term's occurrence is said by the meeting's word timings: the start of the first timed word inside it (U11).
+ * The timed lines are the corrected ones the cache was made from, so the occurrence is found again there: the line
+ * that starts with the occurrence's line, the same occurrence in it under the heard spelling, or under the proposed
+ * one once the spelling was applied. Undefined when the word timings do not cover that line.
+ */
+function wordTimedSpot({
+    lines,
+    said,
+    item,
+    timed,
+}: {
+    lines: TranscriptLines;
+    said: HeardOccurrence;
+    item: Extract<MeetingItem, { kind: "term" }>;
+    timed: readonly WordTimedLine[] | undefined;
+}): number | undefined {
+    const line = lines.entries[said.index];
+
+    if (!timed || line?.startSec === undefined) {
+        return undefined;
+    }
+
+    // Correction can remove or rewrite lines. A start time identifies a line only if it is unique in both views.
+    if (lines.entries.some((entry, index) => index !== said.index && entry.startSec === line.startSec)) {
+        return undefined;
+    }
+    const atStart = timed.filter((entry) => entry.startSec === line.startSec);
+    const entry = atStart[0];
+    if (atStart.length !== 1 || !entry?.words?.length) {
+        return undefined;
+    }
+
+    const nth = heardIn(line.text, item.heard).findIndex((one) => one.at === said.at);
+
+    if (nth < 0) {
+        return undefined;
+    }
+
+    for (const spelling of item.proposed ? [item.heard, item.proposed] : [item.heard]) {
+        const found = heardIn(entry.text, spelling)[nth];
+        const word =
+            found &&
+            entry.words.find(
+                (one) =>
+                    one.range.location < found.at + found.text.length &&
+                    one.range.location + one.range.length > found.at
+            );
+
+        if (word) {
+            return word.startSec;
+        }
+    }
+
+    return undefined;
+}
+
+function itemSpan(
+    record: MeetingRecord,
+    item: MeetingItem,
+    lines: TranscriptLines,
+    timed?: readonly WordTimedLine[]
+): Span {
     switch (item.kind) {
         case "removal":
             return {
@@ -364,11 +488,44 @@ function itemSpan(record: MeetingRecord, item: MeetingItem, lines: TranscriptLin
             const said = lines
                 .occurrences({ heard: item.heard, fromSec: atSec, toSec: atSec })
                 .find((one) => typeof transcriptLine !== "number" || one.index === transcriptLine);
+            const wordSec = said ? wordTimedSpot({ lines, said, item, timed }) : undefined;
+
+            if (wordSec !== undefined) {
+                return {
+                    fromSec: Math.max(0, wordSec - SPOT_CLIP_SEC.before),
+                    toSec: wordSec + SPOT_CLIP_SEC.after,
+                    spotSec: wordSec,
+                    pad: "around",
+                    label: item.id,
+                };
+            }
+
             const heard = (said ? lines.clip(said) : undefined) ?? { fromSec: atSec, toSec: atSec + TERM_SPAN_SEC };
             const spotSec = (said ? lines.spotSec(said) : undefined) ?? atSec;
             return { ...heard, spotSec, pad: "around", label: item.id };
         }
     }
+}
+
+/** The spot playback marks, independent of its padding, tone settings and the length of the clip. */
+export function itemMomentSpot({
+    record,
+    item,
+    lines,
+}: {
+    record: MeetingRecord;
+    item: MeetingItem;
+    lines: TranscriptLines;
+}): number | undefined {
+    if (item.kind === "question") {
+        return askedSpotSec(item, lines, questionOccurrence(record, item));
+    }
+
+    if (item.kind === "term") {
+        return item.atSec === undefined ? undefined : itemSpan(record, item, lines).spotSec;
+    }
+
+    return item.kind === "join" ? item.atSec : item.fromSec;
 }
 
 /** A point in a line to seconds: the line found by its address, its time spread over its text. */
@@ -393,7 +550,12 @@ function pointSec(lines: TranscriptLines, point: LinePoint, edge: "from" | "to")
     return { sec: span.fromSec + fraction * (span.toSec - span.fromSec), index: found.index };
 }
 
-function targetSpan(record: MeetingRecord, target: MomentTarget, lines: TranscriptLines): Span {
+function targetSpan(
+    record: MeetingRecord,
+    target: MomentTarget,
+    lines: TranscriptLines,
+    timed?: readonly WordTimedLine[]
+): Span {
     switch (target.kind) {
         case "item": {
             const id = questionIdOf(record, target.id);
@@ -403,7 +565,7 @@ function targetSpan(record: MeetingRecord, target: MomentTarget, lines: Transcri
                 throw new MomentError("unknown-item", `No item ${target.id} in ${record.id}.`);
             }
 
-            return itemSpan(record, item, lines);
+            return itemSpan(record, item, lines, timed);
         }
         case "time":
             return timeSpan(lines, target.atSec, formatClock(target.atSec));
@@ -482,6 +644,11 @@ export interface MomentInput {
      * length is read from the file); a sine is made from the settings when absent.
      */
     toneSound?: ToneSound;
+    /**
+     * The meeting's corrected lines with their cached word times (`meetingWordTimingCache`): a term's spot is its word's
+     * start where they cover its line, else the estimate from its place in the line's text.
+     */
+    wordTimedLines?: readonly WordTimedLine[];
 }
 
 /** The audio an `around` span keeps on each side: the caller's, else the saved pads, else `DEFAULT_PAD_SEC`. */
@@ -506,23 +673,25 @@ function toneSoundOf(input: MomentInput): ToneSound {
 
 function momentOf(input: MomentInput, target: MomentTarget, span: Span): Moment {
     const { listen } = input;
+    const targetId = target.kind === "item" ? questionIdOf(input.record, target.id) : undefined;
     const splitPart =
-        target.kind === "item" &&
+        targetId !== undefined &&
         input.record.items.some(
-            (item) =>
-                item.id === questionIdOf(input.record, target.id) &&
-                item.kind === "question" &&
-                item.question.startsWith('Who says "')
+            (item) => item.id === targetId && item.kind === "question" && item.question.startsWith('Who says "')
         );
     const voicePad = Math.max(splitPart ? 1.5 : 0, listen.tone.leadSec + SPEAKER_PAD_SEC);
     const pads = span.pad === "voice" ? { beforeSec: voicePad, afterSec: voicePad } : aroundPads(input);
     // The tone marks the spot when the clip holds it, else the start of what is heard.
     const inClip = span.spotSec >= span.fromSec - pads.beforeSec && span.spotSec <= span.toSec + pads.afterSec;
     const startSec = Math.max(0, span.fromSec - pads.beforeSec);
+    const gaps = span.gaps
+        ?.filter((gap) => gap.fromSec < span.toSec)
+        .map((gap) => range(gap.fromSec, Math.min(gap.toSec, span.toSec)));
     return {
         meeting: input.record.id,
         target,
         label: span.label,
+        ...(gaps?.length ? { gapNote: `Also plays intervening audio ${gaps.join(", ")}` } : {}),
         fromSec: span.fromSec,
         toSec: span.toSec,
         padSec: pads.beforeSec,
@@ -545,7 +714,7 @@ function momentOf(input: MomentInput, target: MomentTarget, span: Span): Moment 
 
 /** The Moment of one target. Throws a `MomentError` for a target the meeting does not have. Reads nothing. */
 export function planMoment(input: MomentInput & { target: MomentTarget }): Moment {
-    const whole = targetSpan(input.record, input.target, linesOf(input.transcript));
+    const whole = targetSpan(input.record, input.target, linesOf(input.transcript), input.wordTimedLines);
     const span =
         input.lengthSec === undefined
             ? whole
@@ -561,10 +730,10 @@ export function planMoment(input: MomentInput & { target: MomentTarget }): Momen
  * A question plays its own clip, and a range or a selection is bounded by the caller.
  */
 function clampTooLong(record: MeetingRecord, target: MomentTarget, span: Span, longestSec: number): Span {
+    const targetId = target.kind === "item" ? questionIdOf(record, target.id) : undefined;
     const capped =
         target.kind === "stretch" ||
-        (target.kind === "item" &&
-            record.items.find((item) => item.id === questionIdOf(record, target.id))?.kind !== "question");
+        (targetId !== undefined && record.items.find((item) => item.id === targetId)?.kind !== "question");
 
     if (!capped || span.toSec - span.fromSec <= longestSec) {
         return span;
@@ -584,7 +753,7 @@ function clampTooLong(record: MeetingRecord, target: MomentTarget, span: Span, l
  */
 export function itemMoment(input: MomentInput & { item: MeetingItem }): Moment {
     const target: MomentTarget = { kind: "item", id: input.item.id };
-    return momentOf(input, target, itemSpan(input.record, input.item, linesOf(input.transcript)));
+    return momentOf(input, target, itemSpan(input.record, input.item, linesOf(input.transcript), input.wordTimedLines));
 }
 
 /** What `cutClip` cuts for a Moment: the same numbers `listen --clip-out --json` prints, plus the tone's sound. */
@@ -593,6 +762,7 @@ export function clipPlan(moment: Moment): ClipPlan {
         fromSec: moment.fromSec,
         toSec: moment.toSec,
         padSec: moment.padSec,
+        ...(moment.gapNote ? { gapNote: moment.gapNote } : {}),
         ...(moment.padAfterSec === undefined ? {} : { padAfterSec: moment.padAfterSec }),
         ...(moment.tone ? { toneAtSec: moment.tone.atSec, toneSound: moment.tone.sound } : {}),
     };
@@ -752,7 +922,8 @@ function hitWords(record: MeetingRecord, target: MomentTarget): string[] {
         return [];
     }
 
-    const item = record.items.find((one) => one.id === questionIdOf(record, target.id));
+    const itemId = questionIdOf(record, target.id);
+    const item = record.items.find((one) => one.id === itemId);
 
     if (item?.kind === "term") {
         return [item.proposed, item.heard].filter((word): word is string => Boolean(word));
@@ -865,6 +1036,38 @@ export interface OpenMomentOptions {
     opened?: OpenedMeeting;
 }
 
+/**
+ * The meeting's corrected lines with their cached word times, read for a term only (U11) and only when the meeting has
+ * a word timing cache. The read corrects the whole transcript as `meeting.wordTimings.generate` does, because the cache
+ * keys its windows to those exact lines.
+ */
+async function termWordTimes(opened: OpenedMeeting, options: OpenMomentOptions): Promise<WordTimedLine[] | undefined> {
+    const { store, record, target } = options;
+
+    if (target.kind !== "item") {
+        return undefined;
+    }
+
+    const id = questionIdOf(record, target.id);
+    const item = record.items.find((one) => one.id === id);
+    const cache = meetingWordTimingCache(record.id);
+
+    if (item?.kind !== "term" || !existsSync(cache.folder)) {
+        return undefined;
+    }
+
+    const { applied } = await correctedTranscriptRead({
+        store,
+        record,
+        format: "json",
+        flags: { dictionary: true },
+        opened,
+    });
+    const read = cache.read(timedTranscriptView(record, applied).entries);
+    log.debug({ meeting: record.id, item: item.id, state: read.wordTimings.state }, "word timings for a term's spot");
+    return read.wordTimings.state === "ready" ? read.entries : undefined;
+}
+
 async function momentIn(opened: OpenedMeeting, options: OpenMomentOptions): Promise<Moment> {
     const { store, record } = options;
     const [meeting, config] = await Promise.all([opened.meeting(), opened.config()]);
@@ -878,11 +1081,13 @@ async function momentIn(opened: OpenedMeeting, options: OpenMomentOptions): Prom
               onMissing: listen.tone.onMissing,
           })
         : undefined;
+    const wordTimedLines = await termWordTimes(opened, options);
     const moment = planMoment({
         record,
         transcript: meeting.transcript,
         listen,
         target: options.target,
+        ...(wordTimedLines ? { wordTimedLines } : {}),
         ...(toneSound ? { toneSound } : {}),
         ...(options.padSec === undefined ? {} : { padSec: options.padSec }),
         ...(options.padAfterSec === undefined ? {} : { padAfterSec: options.padAfterSec }),

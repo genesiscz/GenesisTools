@@ -1,11 +1,134 @@
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
 import { formatMissingEnumHelp, isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { redactCurrentRunText } from "@genesiscz/utils/cli/failures/watch";
 import { ui } from "@genesiscz/utils/cli/ui";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { MEETING_FILE, type MeetingRecord } from "@genesiscz/utils/meetings/record";
 import * as p from "@genesiscz/utils/prompts/p";
+import { sharedTempRoot } from "@genesiscz/utils/rm/paths";
+import { scratchRootNames } from "@genesiscz/utils/rm/scratch-dirs";
 import { rpcErrorBody } from "@genesiscz/utils/rpc/errors";
+import { genesisToolsDirIn, toolDataDir } from "@genesiscz/utils/storage/root";
+import { globIterateSync } from "glob";
+
+const { log } = logger.scoped("meetings-shared");
 
 export const TOOL = "tools meetings";
+
+export function hintIfSeatsUnset(record: Pick<MeetingRecord, "id" | "seats">): void {
+    if (!record.seats) {
+        ui.warn(`Seats are not set, so voice naming is off. Run: ${TOOL} seats ${record.id} --apply`);
+    }
+}
+
+const skipScratchChildren = new Set([
+    ".genesis-tools",
+    ".git",
+    ".build",
+    "node_modules",
+    "worktrees",
+    "Pods",
+    "removals",
+    "dist",
+    "build",
+    "target",
+    "vendor",
+]);
+
+/**
+ * The scratch scan runs on a miss, also inside the service's request, so it is bounded: a session home sits a few
+ * folders deep, and the walk stops after this many folders or milliseconds and reports no store.
+ */
+const SCRATCH_SCAN = { maxDepth: 8, maxFolders: 5000, maxMs: 100 } as const;
+
+function scratchStoreWith(ref: string, roots: string[]): string | undefined {
+    const deadline = performance.now() + SCRATCH_SCAN.maxMs;
+    let folders = 0;
+    const spent = () => ++folders > SCRATCH_SCAN.maxFolders || performance.now() > deadline;
+
+    for (const cwd of roots) {
+        if (!existsSync(cwd)) {
+            continue;
+        }
+        // A session home may be nested, e.g. project/session/round/home. Skip checkouts, generated
+        // trees and the contents of each store. Read only the requested record's path.
+        for (const folder of globIterateSync("*/*/**/.genesis-tools", {
+            cwd,
+            absolute: true,
+            follow: false,
+            maxDepth: SCRATCH_SCAN.maxDepth,
+            ignore: { childrenIgnored: (entry) => skipScratchChildren.has(entry.name) || spent() },
+        })) {
+            const meetings = join(folder, "meetings");
+            if (existsSync(join(meetings, ref, MEETING_FILE))) {
+                return meetings;
+            }
+        }
+    }
+
+    if (folders > SCRATCH_SCAN.maxFolders || performance.now() > deadline) {
+        log.debug({ ref, folders }, "the scratch store scan stopped at its bound");
+    }
+}
+
+/** An exact meeting id: never `last` and never a prefix, so a lookup reads one record path and nothing else. */
+function isExactId(ref: string): boolean {
+    return ref !== "last" && /^[A-Za-z0-9][\w.-]*$/.test(ref);
+}
+
+/**
+ * A missing meeting names only the store that was searched. Another store is a boundary: the automatic error never
+ * probes it, so it never says whether a meeting exists there or where that store lives. `meetings locate` does that
+ * search when someone asks for it.
+ */
+export function missingMeetingMessage(options: { ref: string; root: string }): string {
+    const { ref, root } = options;
+    const locate = isExactId(ref) ? ` Look in the other stores: ${TOOL} locate ${ref}` : "";
+    return `No meeting "${ref}" in ${root}. List them: ${TOOL} list.${locate}`;
+}
+
+/**
+ * The explicit diagnostic behind `meetings locate` and the REPL's `meetings.locate`: the store that holds this exact
+ * id. The active store answers without a `setting`; otherwise a sandboxed store looks in the ordinary home and the
+ * ordinary store looks in the agent scratch homes. Reads only the record's path, never the record.
+ */
+export function locateMeeting(options: {
+    ref: string;
+    root: string;
+    ordinary?: string;
+    scratchRoots?: string[];
+}): { store: string; setting?: string } | undefined {
+    const { ref, root } = options;
+    if (!isExactId(ref)) {
+        return undefined;
+    }
+
+    if (existsSync(join(root, ref, MEETING_FILE))) {
+        return { store: root };
+    }
+
+    if (basename(root) !== "meetings") {
+        return undefined;
+    }
+
+    const ordinary = options.ordinary ?? genesisToolsDirIn(homedir(), "meetings");
+    if (resolve(root) !== resolve(ordinary)) {
+        return existsSync(join(ordinary, ref, MEETING_FILE))
+            ? { store: ordinary, setting: "GENESIS_TOOLS_HOME unset" }
+            : undefined;
+    }
+
+    const configured = env.doctor.getAgentScratchRoot();
+    const roots =
+        options.scratchRoots ??
+        (configured ? [configured] : [...scratchRootNames()].map((dir) => join(sharedTempRoot(), dir)));
+    const found = scratchStoreWith(ref, roots);
+    return found ? { store: found, setting: `GENESIS_TOOLS_HOME=${dirname(dirname(found))}` } : undefined;
+}
 
 /**
  * `--json` is the short form of `--format json`, as on every other meetings command (MC19). The `--format` value for
@@ -92,7 +215,7 @@ export function localStamp(at: Date): string {
 }
 
 /** An additive stderr record for native callers; stdout remains the command's result. */
-export function errorJSON(error: unknown): string {
+export function errorJSON(error: unknown, message = errorText(error)): string {
     const body = rpcErrorBody(error, "meetings");
     const cause =
         error instanceof Error && error.cause instanceof Error ? rpcErrorBody(error.cause, "meetings") : undefined;
@@ -102,7 +225,7 @@ export function errorJSON(error: unknown): string {
         error: {
             code: body.code,
             ...(errorCode(error) ? { data: { code: errorCode(error) } } : {}),
-            message: redactCurrentRunText(errorText(error)),
+            message: redactCurrentRunText(message),
             ...(stack ? { stack: redactCurrentRunText(stack) } : {}),
             issue: {
                 tool: body.issue.tool,
@@ -113,9 +236,10 @@ export function errorJSON(error: unknown): string {
 }
 
 export function fail(error: unknown): void {
-    const failure = error instanceof Error ? error : new Error(errorText(error));
-    ui.raw(errorJSON(failure));
-    ui.err(errorText(error));
+    const message = errorText(error);
+    const failure = error instanceof Error ? error : new Error(message);
+    ui.raw(errorJSON(failure, message));
+    ui.err(message);
     process.exitCode = 1;
 }
 
@@ -125,7 +249,11 @@ export function fail(error: unknown): void {
  */
 export function errorText(err: unknown): string {
     const code = errorCode(err);
-    const message = err instanceof Error ? err.message : String(err);
+    const raw = err instanceof Error ? err.message : String(err);
+    const missing = /^No meeting "([^"\r\n]+)"(?:\.|\. List them: tools meetings list| \(tools meetings list\))?$/.exec(
+        raw
+    );
+    const message = missing ? missingMeetingMessage({ ref: missing[1]!, root: toolDataDir("meetings") }) : raw;
     return code ? `[${code}] ${message}` : message;
 }
 

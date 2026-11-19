@@ -6,9 +6,12 @@ import { env } from "@genesiscz/utils/env";
 import { interactiveShellLookup } from "./executable";
 import {
     _setFindClaudeCommandTestHooks,
+    type ClaudeCandidateVerdict,
     claudeInstallLocations,
     findClaudeCommand,
     findClaudeExecutable,
+    pickClaudeCommand,
+    probeScript,
 } from "./index";
 
 describe("findClaudeCommand timeout cleanup", () => {
@@ -35,6 +38,118 @@ describe("findClaudeCommand timeout cleanup", () => {
 
         const after = Bun.spawnSync(["pgrep", "-f", marker], { env: process.env }).stdout.toString().trim();
         expect(after).toBe("");
+    });
+});
+
+describe("pickClaudeCommand", () => {
+    /** Each candidate answers with its verdicts in order; the last one repeats. */
+    const answers = (script: Record<string, ClaudeCandidateVerdict[]>) => {
+        const asked: string[] = [];
+        const probe = async (candidate: string): Promise<ClaudeCandidateVerdict> => {
+            const seen = asked.filter((name) => name === candidate).length;
+            asked.push(candidate);
+            const verdicts = script[candidate];
+            return verdicts[Math.min(seen, verdicts.length - 1)];
+        };
+
+        return { asked, probe };
+    };
+    const candidates = ["wrapper", "compiler", "binary"];
+
+    test("the first candidate that is Claude wins and is settled", async () => {
+        const { asked, probe } = answers({ wrapper: ["is-claude"] });
+
+        expect(await pickClaudeCommand({ candidates, probe })).toEqual({ command: "wrapper", settled: true });
+        expect(asked).toEqual(["wrapper"]);
+    });
+
+    test("names that are not Claude leave a later pick settled", async () => {
+        const { probe } = answers({ wrapper: ["not-claude"], compiler: ["not-claude"], binary: ["is-claude"] });
+
+        expect(await pickClaudeCommand({ candidates, probe })).toEqual({ command: "binary", settled: true });
+    });
+
+    test("a wrapper that gave no answer wins on its second try", async () => {
+        const { asked, probe } = answers({
+            wrapper: ["no-answer", "is-claude"],
+            compiler: ["not-claude"],
+            binary: ["is-claude"],
+        });
+
+        expect(await pickClaudeCommand({ candidates, probe })).toEqual({ command: "wrapper", settled: true });
+        expect(asked).toEqual(["wrapper", "compiler", "binary", "wrapper"]);
+    });
+
+    test("a pick behind a wrapper that stays silent is not settled", async () => {
+        const { probe } = answers({ wrapper: ["no-answer"], compiler: ["not-claude"], binary: ["is-claude"] });
+
+        expect(await pickClaudeCommand({ candidates, probe })).toEqual({ command: "binary", settled: false });
+    });
+
+    test("no candidate is Claude", async () => {
+        const { probe } = answers({ wrapper: ["no-answer"], compiler: ["not-claude"], binary: ["no-answer"] });
+
+        expect(await pickClaudeCommand({ candidates, probe })).toBeNull();
+    });
+});
+
+describe("findClaudeCommand probe verdicts", () => {
+    afterEach(() => {
+        _setFindClaudeCommandTestHooks(undefined);
+    });
+
+    test("a failed probe is no answer, and the candidate gets a second try", async () => {
+        const calls: string[] = [];
+        const outputs: Record<string, string[]> = {
+            // A defined wrapper whose binary is away for a moment, then back.
+            wrapper: ["echo 'no such file'; exit 127", "echo '9.9.9 (Claude Code)'"],
+            compiler: ["echo 'Some compiler 1.0'"],
+            binary: ["echo '9.9.9 (Claude Code)'"],
+        };
+
+        _setFindClaudeCommandTestHooks({
+            candidates: ["wrapper", "compiler", "binary"],
+            timeoutMs: 5000,
+            spawnProbe: (candidate) => {
+                const seen = calls.filter((name) => name === candidate).length;
+                calls.push(candidate);
+                const scripts = outputs[candidate];
+                return Bun.spawn({
+                    env: process.env,
+                    cmd: ["bash", "-c", scripts[Math.min(seen, scripts.length - 1)]],
+                    stdio: ["ignore", "pipe", "pipe"],
+                });
+            },
+        });
+
+        expect(await findClaudeCommand()).toBe("wrapper");
+        expect(calls).toEqual(["wrapper", "compiler", "binary", "wrapper"]);
+    });
+});
+
+describe("probeScript in a real shell", () => {
+    async function run(prelude: string, candidate: string): Promise<{ exitCode: number; stdout: string }> {
+        const proc = Bun.spawn({
+            env: process.env,
+            cmd: ["bash", "-c", `shopt -s expand_aliases\n${prelude}\n${probeScript(candidate)}`],
+            stdio: ["ignore", "pipe", "pipe"],
+        });
+        const stdout = await new Response(proc.stdout).text();
+        return { exitCode: await proc.exited, stdout };
+    }
+
+    test("an alias counts as not defined, because exec does not expand it", async () => {
+        expect((await run("alias fakeclaude='echo Claude Code'", "fakeclaude")).exitCode).toBe(97);
+    });
+
+    test("an undefined name exits 97", async () => {
+        expect((await run(":", "gt-no-such-claude-wrapper")).exitCode).toBe(97);
+    });
+
+    test("a function that prints Claude Code answers", async () => {
+        const result = await run("fakeclaude() { echo '9.9.9 (Claude Code)'; }", "fakeclaude");
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toContain("Claude Code");
     });
 });
 

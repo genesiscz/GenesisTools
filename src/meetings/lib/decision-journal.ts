@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, statSync, truncateSync } from "node:fs";
+import { existsSync, statSync, truncateSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
@@ -9,7 +9,13 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { mergeLabels } from "@genesiscz/utils/meetings/config";
+import {
+    type DictionaryScope,
+    type MeetingsConfig,
+    MeetingsConfigStore,
+    mergeLabels,
+    resolveDictionary,
+} from "@genesiscz/utils/meetings/config";
 import { MeetingsConflictError } from "@genesiscz/utils/meetings/conflict";
 import { appendCorrections, type Correction, teachesDictionary } from "@genesiscz/utils/meetings/corrections";
 import {
@@ -20,13 +26,26 @@ import {
     type MeetingRecord,
     type MeetingStore,
     meetingItemSchema,
+    nextId,
     type SpellingReach,
 } from "@genesiscz/utils/meetings/record";
-import { MeetingRule } from "@genesiscz/utils/meetings/rules";
+import { MeetingRule, meetingRuleNames } from "@genesiscz/utils/meetings/rules";
 import { seatsFingerprint } from "@genesiscz/utils/meetings/seats";
+import {
+    idSchema,
+    ownerKey,
+    readVoiceLibrary,
+    type SampleId,
+    sameLine,
+    sourceForVoicePrint,
+    voicePrintSchema,
+} from "@genesiscz/utils/meetings/voice-library";
+import { atomicWriteFileSync, readFileIfExistsSync } from "@genesiscz/utils/storage/atomic-file";
 import { heardLineAt } from "@genesiscz/utils/transcribe/apply";
+import type { DictionaryEntry } from "@genesiscz/utils/transcribe/dictionary";
 import { heardIn, TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import { z } from "zod";
 import { prepareFindings } from "./add-findings";
 import { ANSWER_LOG_FILE, type AnswerEvent, appendAnswerEvent, appendAnswerEvents, roundRunning } from "./answer-log";
 import {
@@ -34,6 +53,7 @@ import {
     type Decided,
     type DecisionAction,
     type DecisionSkip,
+    type DictionaryChange,
     type FieldChange,
     type ItemChange,
     JOURNAL_FILE,
@@ -44,18 +64,26 @@ import {
     type LabelChange,
     MEETING_FIELDS,
 } from "./decision-actions";
-import { appendLines } from "./ndjson-lines";
+import { appendLines, parseJsonLine } from "./ndjson-lines";
+import { projectRequired } from "./project";
 import {
     answerQuestion,
+    dictionaryQuestion,
+    learnedEntry,
+    settleLookAlikes,
+    siblingChoices,
+    skipQuestion,
+    splitQuestion,
+} from "./question-answers";
+import {
     DEFAULT_LISTEN_BELOW,
+    heardTimes,
     inputNeeded,
+    NONE_OF_THESE,
     openQuestions,
     type QuestionItem,
     questionIdOf,
     questionLabel,
-    settleLookAlikes,
-    skipQuestion,
-    splitQuestion,
 } from "./questions";
 import { type RejectFilter, rejectFilterIds } from "./reject-filter";
 import type { ReviewRow } from "./review-row-schema";
@@ -70,9 +98,18 @@ import {
     renameJoinsWarning,
     revertAssignments,
 } from "./speaker-assign";
+import { needsSpeakerReview } from "./speaker-scores";
 import { decisionLedger, ledgerEntryFor, lineOf } from "./transcript-corrections";
+import { publishVoiceChanges, transitionAnsweredVoiceSamples, type VoicePrintChange } from "./voice-samples";
 
 const { log } = logger.scoped("meetings-journal");
+const backfilledEntry = journalEntrySchema.pick({ meeting: true, token: true, voices: true });
+const namingReceipt = z.object({
+    meeting: z.string(),
+    project: z.string(),
+    nameSamples: z.array(idSchema).optional(),
+    namedSamples: z.array(idSchema).optional(),
+});
 
 export {
     type Decided,
@@ -137,6 +174,11 @@ export interface DecisionJournalOptions {
      * for a round's end hears it. The Meetings service sets it; a listen round writes its own round lines.
      */
     ownRound?: boolean;
+    /**
+     * Where a word a person adds to the dictionary goes, and what the dictionary question reads (the settings, the
+     * dictionaries). The meetings config beside the store by default.
+     */
+    config?: MeetingsConfigStore;
 }
 
 /** What one action did to the record, besides the item and label changes the journal measures itself. */
@@ -408,6 +450,16 @@ function decideItems(
                 skipped.push({
                     id: item.id,
                     reason: `${label} is a question; answer it by ear: ${TOOL} listen ${record.id} --item ${label}`,
+                    needs: "listen",
+                });
+            } else if (
+                item.kind === "speaker-range" &&
+                needsSpeakerReview(item) &&
+                (minConfidence !== undefined || action.items.length !== 1)
+            ) {
+                skipped.push({
+                    id: item.id,
+                    reason: "An exclusion needs an individual speaker decision.",
                     needs: "listen",
                 });
             } else if (item.kind === "speaker-range" && inputNeeded(item) === "speaker" && !speaker) {
@@ -850,6 +902,7 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
             const propagationSource = structuredClone(question);
             const corrections = answerQuestion(record, question.id, {
                 answer: action.answer,
+                knownSpeaker: action.knownAnswer !== undefined,
                 transcript: context.prepared.transcript,
                 people: context.prepared.people,
                 segments: action.segments,
@@ -857,6 +910,10 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
                 now,
                 except,
             });
+            if (question.group === "words" && question.about === "term" && question.status === "confirmed") {
+                siblingChoices(record, question, question.answer ?? action.answer);
+            }
+
             // The look-alikes take the answer as it was stored (a matched person's own name), and only one person:
             // an ordered "Alice, then Bob" fits this range, not another range of the same voice.
             const decided = new Set(question.decides);
@@ -864,7 +921,7 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
                 (item) => item.kind === "speaker-range" && decided.has(item.id) && (item.voices?.length ?? 0) > 1
             );
             const alike =
-                action.lookAlikes === "leave" || question.status !== "confirmed" || severalVoices
+                action.knownAnswer || action.lookAlikes === "leave" || question.status !== "confirmed" || severalVoices
                     ? { settled: [], corrections: [] }
                     : settleLookAlikes(record, propagationSource, {
                           answer: question.answer ?? action.answer,
@@ -1050,6 +1107,11 @@ const ACTIONS: { [K in JournalActionKind]: ActionHandler<K> } = {
     },
     set: {
         mutate: (record, action) => {
+            if (action.seats && action.seatsIfAbsent && record.seats) {
+                throw new Error(
+                    `Seats are already set. To replace them: ${toolCommand("meetings seats", record.id, "--replace")}`
+                );
+            }
             const labels = action.labels ?? [];
             const unlabel = action.unlabel ?? [];
             const removed = new Set(unlabel.map((label) => label.toLowerCase()));
@@ -1296,10 +1358,6 @@ export function actorOf(item: MeetingItem): DecisionActor {
 }
 
 /**
- * What a planned decision reaches beyond the items it names, for the window's "This also affects" sheet (R22, G9,
- * G26, G27): the other items it changes, the transcript lines a spelling changes, and the dictionary it teaches.
- */
-/**
  * How a reached item stands to the decision. `sets`: a target of the decided question outside the span it asks
  * about, which the answer also sets ("This answer also sets"); `look-alike`: another question or item the engine
  * settles the same way; `same`: the same question again (a target inside the asked span, a look-alike over the same
@@ -1331,7 +1389,14 @@ export interface DecisionReach {
      * over the same span (closed with it). A look-alike question's own targets go with it and are not listed apart.
      */
     items: ReachItem[];
+    /**
+     * A spelling's reach (U12): the words as heard and as they become, and each line that says them, with where it
+     * says them (`ranges`, UTF-16 offsets into `text`, as the window's NSRange counts).
+     */
     spelling?: {
+        heard: string;
+        /** What the heard words become; the heard words themselves when the term only marks them (a quote, a meaning). */
+        proposed: string;
         occurrences: Array<{
             line: number;
             atSec: number;
@@ -1339,6 +1404,7 @@ export interface DecisionReach {
             text: string;
             selected: boolean;
             primary: boolean;
+            ranges: Array<{ location: number; length: number }>;
         }>;
         dictionary: boolean;
     };
@@ -1347,9 +1413,16 @@ export interface DecisionReach {
     /**
      * Spellings fixed everywhere also teach the dictionary: `dictionary suggest` proposes a fix confirmed in
      * `CORRECTION_REPEATS` meetings. `seenBefore`: other confirmed sightings in the ledger (this project's); `teaches`:
-     * this decision makes it a suggestion.
+     * this decision makes it a suggestion; `adds`: this decision writes the entry itself (an answer with `learn: "add"`).
      */
-    dictionary: Array<{ project?: string; heard: string; fixed: string; seenBefore: number; teaches: boolean }>;
+    dictionary: Array<{
+        project?: string;
+        heard: string;
+        fixed: string;
+        seenBefore: number;
+        teaches: boolean;
+        adds?: true;
+    }>;
     /**
      * An assignment's other stretches (`assign`): the same label inside the hint range that holds the assigned
      * stretch, or in the sections with the same people present; absent for other actions.
@@ -1483,6 +1556,11 @@ export function decisionReach(options: {
             fixed: correction.fixed,
             seenBefore,
             teaches: seenBefore + 1 >= options.repeats,
+            ...(entry.action.kind === "answer" &&
+            entry.action.learn === "add" &&
+            entry.dictionary?.some((change) => change.after?.value === correction.heard)
+                ? { adds: true as const }
+                : {}),
         };
     });
     const changedTerms = entry.changes.flatMap((change) => (change.after?.kind === "term" ? [change.after] : []));
@@ -1507,7 +1585,8 @@ export function decisionReach(options: {
               )
             : undefined;
         const occurrences = transcript.flatMap((line, index) => {
-            if (line.startSec === undefined || heardIn(line.text, term.heard).length === 0) {
+            const heard = heardIn(line.text, term.heard);
+            if (line.startSec === undefined || heard.length === 0) {
                 return [];
             }
             const selected = selectedLines
@@ -1523,10 +1602,13 @@ export function decisionReach(options: {
                     text: line.text,
                     selected,
                     primary: index === primary,
+                    ranges: heard.map((match) => ({ location: match.at, length: match.text.length })),
                 },
             ];
         });
         spelling = {
+            heard: term.heard,
+            proposed: term.proposed ?? term.heard,
             occurrences,
             dictionary: term.reach?.dictionary ?? (term.reach?.lines === undefined && term.scope !== "line"),
         };
@@ -1545,10 +1627,23 @@ function harnessText(agent: string): string {
     return harness ? harnessLabel(harness) : agent;
 }
 
+/** A rule after "by": its sentence from the rule table, else only "a rule" for an id this build has no words for. */
+function ruleText(rule: string): string {
+    const [sentence] = meetingRuleNames([rule]);
+
+    if (!sentence) {
+        return "a rule";
+    }
+
+    return `a rule (${sentence.charAt(0).toLowerCase()}${sentence.slice(1).replace(/\.$/u, "")})`;
+}
+
 /**
  * An actor in words, after "by" on a row or a journal line (GLOSSARY.md, "Decision journal"): "by you" (the window),
  * "by you in the terminal" (listen), "by you at the command line", "by an agent (Claude Code, session 3f98b772)",
- * "by rule E2", and "by someone, before the history existed" for a decision older than the journal (never "unknown").
+ * "by a rule (the attendance record shows who was there)", and "by someone, before the history existed" for a
+ * decision older than the journal (never "unknown"). A rule reads as what it looked at, never as its id ("RA", "E2"):
+ * the window shows these words, and the saved actor keeps the id.
  */
 export function actorText(actor: DecisionActor): string {
     switch (actor.kind) {
@@ -1563,9 +1658,263 @@ export function actorText(actor: DecisionActor): string {
             return `an agent (${harnessText(actor.harness)}${session})`;
         }
         case "rule":
-            return `rule ${actor.rule}`;
+            return ruleText(actor.rule);
         case "unknown":
             return "someone, before the history existed";
+    }
+}
+
+/**
+ * What a decision does to the dictionary, read before the record's lock: the entry an answer writes, the entries an
+ * Undo takes back, and what a corrected word needs before it gets a dictionary question (the owner's answer to M5:
+ * the tool asks, it never adds an entry on its own).
+ */
+interface DictionaryPlan {
+    write?: { scope: DictionaryScope; entry: DictionaryEntry };
+    /** Each as the change this decision makes: `before` alone takes an entry back, `after` alone puts it back. */
+    undo: DictionaryChange[];
+    warnings: string[];
+    ask?: { minOccurrences: number; known: Set<string>; project: string };
+}
+
+const NO_DICTIONARY_PLAN: DictionaryPlan = { undo: [], warnings: [] };
+
+/** The actions that read the dictionary: the ones that correct a word, and an Undo. */
+const DICTIONARY_ACTIONS = new Set<JournalActionKind>(["answer", "confirm", "respell", "revert"]);
+
+const AGENT_ADDS =
+    "Only a person adds a word to the dictionary; an agent leaves the dictionary question open for them (the owner's rule).";
+
+function scopeName(scope: DictionaryScope): string {
+    return scope.kind === "global" ? "global" : scope.project;
+}
+
+function levelEntries(config: MeetingsConfig, scope: DictionaryScope): DictionaryEntry[] {
+    return scope.kind === "global"
+        ? config.global.dictionary.entries
+        : (config.projects[scope.project]?.dictionary?.entries ?? []);
+}
+
+function dictionaryPlan(options: {
+    record: MeetingRecord;
+    action: RecordAction;
+    actor: DecisionActor;
+    config: MeetingsConfig | undefined;
+    entryOf: (token: string | undefined) => JournalEntry | undefined;
+}): DictionaryPlan {
+    const { record, action, actor, config } = options;
+    const plan: DictionaryPlan = { undo: [], warnings: [] };
+
+    if (action.kind === "answer") {
+        const id = itemIdOf(record, action.question);
+        const question = record.items.find((item): item is QuestionItem => item.kind === "question" && item.id === id);
+
+        if (action.learn !== undefined && question && question.about !== "term") {
+            throw new Error("learn needs a question about a word");
+        }
+
+        const fixed = question?.about === "dictionary" ? question.evidence?.fixed : action.answer.trim();
+        const yes =
+            question?.about === "dictionary" ? action.answer.trim().toLowerCase() === "add" : action.learn === "add";
+
+        if (yes && question?.heard && typeof fixed === "string" && fixed && fixed.toLowerCase() !== NONE_OF_THESE) {
+            if (actor.kind === "agent") {
+                throw new Error(AGENT_ADDS);
+            }
+
+            if (!config) {
+                throw new Error("The meetings config cannot be read, so no word can go into a dictionary now.");
+            }
+
+            const refusal = projectRequired(record, config);
+
+            if (refusal || !record.project) {
+                throw new Error(refusal);
+            }
+
+            plan.write = {
+                scope: { kind: "project", project: record.project },
+                entry: learnedEntry(question.heard, fixed),
+            };
+        }
+    }
+
+    const reversed =
+        action.kind === "revert"
+            ? options.entryOf(action.token)
+            : action.kind === "answer" && action.replaces
+              ? options.entryOf(action.replaces)
+              : undefined;
+    const whole =
+        action.kind !== "revert" ||
+        !action.items ||
+        action.items.some((ref) => reversed?.question !== undefined && itemIdOf(record, ref) === reversed.question);
+
+    for (const change of whole ? (reversed?.dictionary ?? []) : []) {
+        const value = (change.after ?? change.before)?.value;
+        const current = config ? levelEntries(config, change.scope).find((entry) => entry.value === value) : undefined;
+
+        if (!config) {
+            plan.warnings.push(`The meetings config cannot be read; the dictionary entry "${value}" stays.`);
+        } else if (change.after && !change.before) {
+            if (current && same(current, change.after)) {
+                plan.undo.push({ scope: change.scope, before: change.after });
+            } else if (current) {
+                plan.warnings.push(
+                    `The ${scopeName(change.scope)} dictionary entry "${value}" changed since this answer; it stays.`
+                );
+            }
+        } else if (change.before && !change.after && !current) {
+            plan.undo.push({ scope: change.scope, after: change.before });
+        } else if (change.before && change.after && current) {
+            // A changed answer replaced the earlier answer's entry: its Undo puts that entry back.
+            if (same(current, change.after)) {
+                plan.undo.push({ scope: change.scope, before: change.after, after: change.before });
+            } else {
+                plan.warnings.push(
+                    `The ${scopeName(change.scope)} dictionary entry "${value}" changed since this answer; it stays.`
+                );
+            }
+        }
+    }
+
+    if (
+        config &&
+        record.project &&
+        !plan.write &&
+        (action.kind === "confirm" || action.kind === "respell" || (action.kind === "answer" && !action.learn))
+    ) {
+        plan.ask = {
+            minOccurrences: config.global.suggest.words.minOccurrences,
+            known: new Set(
+                resolveDictionary(config, { project: record.project, meeting: record.dictionary }).entries.map(
+                    (entry) => entry.value.toLowerCase()
+                )
+            ),
+            project: record.project,
+        };
+    }
+
+    return plan;
+}
+
+/**
+ * One dictionary question for each word this decision corrected (a term newly confirmed with a spelling for every
+ * place) that is heard `minOccurrences` times or more and that no dictionary or open dictionary question holds yet.
+ * Mutates `record`.
+ */
+function askDictionary(
+    record: MeetingRecord,
+    before: MeetingItem[],
+    ask: NonNullable<DictionaryPlan["ask"]>,
+    now: string
+): void {
+    const was = new Map(before.map((item) => [item.id, item]));
+    const asked = new Set(
+        record.items.flatMap((item) =>
+            item.kind === "question" && item.about === "dictionary" && item.status === "suggested" && item.heard
+                ? [item.heard.toLowerCase()]
+                : []
+        )
+    );
+
+    for (const item of [...record.items]) {
+        if (item.kind !== "term" || item.status !== "confirmed" || !item.proposed || item.scope === "line") {
+            continue;
+        }
+
+        const prior = was.get(item.id);
+        const heard = item.heard.toLowerCase();
+
+        if (
+            (prior?.kind === "term" && prior.status === "confirmed" && prior.proposed === item.proposed) ||
+            item.reach?.dictionary === false ||
+            heardTimes(item) < ask.minOccurrences ||
+            ask.known.has(heard) ||
+            asked.has(heard)
+        ) {
+            continue;
+        }
+
+        asked.add(heard);
+        record.items.push(
+            meetingItemSchema.parse({
+                ...dictionaryQuestion({ term: item, fixed: item.proposed, project: ask.project }),
+                id: nextId("i", record.items),
+                suggestedAt: now,
+            })
+        );
+    }
+}
+
+/**
+ * The dictionary changes a decision makes, in order. The answer's own entry comes first; when the answer it replaces
+ * added an entry for the same word, the two become one replacement, so the revised entry is not refused as present
+ * and then removed by the earlier answer's Undo.
+ */
+function plannedDictionaryChanges(plan: DictionaryPlan): DictionaryChange[] {
+    if (!plan.write) {
+        return plan.undo;
+    }
+
+    const { scope, entry } = plan.write;
+    const earlier = plan.undo.find((change) => change.before?.value === entry.value && same(change.scope, scope));
+    const rest = plan.undo.filter((change) => change !== earlier);
+    return [{ scope, ...(earlier?.before ? { before: earlier.before } : {}), after: entry }, ...rest];
+}
+
+/**
+ * Writes one dictionary change while the level still holds what it starts from (`before`, or no entry), compared
+ * under the config lock: `after` alone adds the entry, `before` alone removes it, both replace it. A change that
+ * found something else leaves the entry as it is and returns a note.
+ */
+async function applyDictionaryChange(
+    config: MeetingsConfigStore,
+    change: DictionaryChange
+): Promise<{ applied: boolean; note?: string }> {
+    const outcome = await config.changeDictionaryEntryIfSame(change.scope, {
+        expected: change.before,
+        next: change.after,
+    });
+
+    if (outcome === "written") {
+        return { applied: true };
+    }
+
+    const value = (change.before ?? change.after)?.value;
+
+    if (change.after && !change.before) {
+        return { applied: false, note: `The ${scopeName(change.scope)} dictionary already has "${value}".` };
+    }
+
+    if (outcome === "conflict") {
+        return {
+            applied: false,
+            note: `The ${scopeName(change.scope)} dictionary entry "${value}" changed since this answer; it stays.`,
+        };
+    }
+
+    return { applied: false };
+}
+
+/** Takes back changes `applyDictionaryChange` made, newest first; one that cannot go back is logged, not thrown. */
+async function revertDictionaryChanges(
+    config: MeetingsConfigStore,
+    changes: DictionaryChange[],
+    meeting: string
+): Promise<void> {
+    for (const change of [...changes].reverse()) {
+        const back = { scope: change.scope, before: change.after, after: change.before };
+
+        try {
+            const { applied, note } = await applyDictionaryChange(config, back);
+
+            if (!applied && note) {
+                log.warn({ meeting, change }, `dictionary change not taken back: ${note}`);
+            }
+        } catch (error) {
+            log.warn({ error, meeting, change }, "dictionary change not taken back");
+        }
     }
 }
 
@@ -1692,6 +2041,179 @@ export class DecisionJournal {
         return join(this.options.store.folder(meeting), JOURNAL_FILE);
     }
 
+    /** Called under the record lock. Keep late embeddings with their original decision for Undo and replay. */
+    publishBackfilledVoices(meeting: string, changes: VoicePrintChange[], dryRun: boolean) {
+        if (dryRun || !changes.length) {
+            return publishVoiceChanges(changes, dryRun).results;
+        }
+
+        this.repairVoiceReceipts(meeting);
+        if (changes.every((change) => change.id)) {
+            const preview = publishVoiceChanges(changes, true).results;
+            if (preview.every((row) => row.status !== "added")) {
+                return preview;
+            }
+        }
+        const pending = this.pendingPath(meeting);
+        // The meeting lock serializes this intent with Undo. The library atomically records
+        // the sample AND its learn receipt. Only that receipt grants ownership to the journal.
+        atomicWriteFileSync(pending, SafeJSON.stringify(changes), { mode: 0o600 });
+        const batch = publishVoiceChanges(changes);
+        try {
+            this.appendVoiceReceipts(
+                meeting,
+                changes.flatMap((change, i) => {
+                    const result = batch.results[i];
+                    return result?.status === "added" ? [{ ...change, id: result.id }] : [];
+                })
+            );
+        } catch (error) {
+            batch.rollback();
+            throw error;
+        }
+        unlinkSync(pending);
+        return batch.results;
+    }
+
+    private pendingPath(meeting: string): string {
+        return join(this.options.store.folder(meeting), "voice-learning-pending.json");
+    }
+
+    /** Visible for Undo even if the service stopped after the library write and before its journal append. */
+    private committedPending(meeting: string): VoicePrintChange[] {
+        const bytes = readFileIfExistsSync(this.pendingPath(meeting));
+        if (!bytes) {
+            return [];
+        }
+        const candidates = journalEntrySchema.shape.voices
+            .unwrap()
+            .parse(SafeJSON.parse(Buffer.from(bytes).toString("utf8")));
+        const { library } = readVoiceLibrary();
+        // A correction between the two file writes may already have moved or removed the sample.
+        const versions = [
+            ...library.samples,
+            ...library.receipts.flatMap((r) => (r.kind === "correct" ? r.before : [])),
+        ];
+        return candidates.flatMap((change) => {
+            const source = change.source ?? sourceForVoicePrint(change.after);
+            const receipt = library.receipts.find(
+                (r) =>
+                    r.kind === "learn" &&
+                    r.token === change.token &&
+                    r.item === (change.item ?? change.after.question) &&
+                    r.project === change.project &&
+                    ownerKey(r.owner) === ownerKey(change.owner ?? { name: change.person }) &&
+                    sameLine(r.source, source)
+            );
+            if (receipt?.kind !== "learn" || receipt.active === false || change.after.meeting !== meeting) {
+                return [];
+            }
+            const ownsVersion = versions.some(
+                (sample) =>
+                    sample.id === receipt.id &&
+                    ownerKey(sample.owner) === ownerKey(receipt.owner) &&
+                    isDeepStrictEqual(voicePrintSchema.parse(sample), change.after)
+            );
+            return ownsVersion ? [{ ...change, id: receipt.id }] : [];
+        });
+    }
+
+    /** Caller holds the meeting lock. An uncommitted intent gives no Undo rights. */
+    repairVoiceReceipts(meeting: string): void {
+        const path = this.pendingPath(meeting);
+        if (existsSync(path)) {
+            const owned = this.committedPending(meeting);
+            const saved = this.backfilledVoices(meeting);
+            this.appendVoiceReceipts(
+                meeting,
+                owned.filter((change) => !saved.get(change.token!)?.some((row) => row.id === change.id))
+            );
+            unlinkSync(path);
+        }
+    }
+
+    protected appendVoiceReceipts(meeting: string, changes: VoicePrintChange[]): void {
+        if (!changes.length) {
+            return;
+        }
+        const groups = Map.groupBy(
+            changes.filter((change) => change.token),
+            (change) => change.token!
+        );
+        const path = this.backfillPath(meeting);
+        undoableAppend(path, () =>
+            appendLines(
+                path,
+                Array.from(groups, ([token, voices]) =>
+                    SafeJSON.stringify(
+                        { meeting, token, voices, project: voices[0]!.project, nameSamples: voices.map((v) => v.id) },
+                        { jsonl: true }
+                    )
+                ),
+                { mode: 0o600 }
+            )
+        );
+    }
+
+    /** P6 receipt lines carry the naming intent beside the committed print. Older rows have no outstanding pass. */
+    pendingNaming(meeting: string, project: string): SampleId[] {
+        const path = this.backfillPath(meeting);
+        if (!existsSync(path)) {
+            return [];
+        }
+        const ids = new Set<SampleId>();
+        for (const line of readLinesSync(path, { containing: ['"nameSamples"', '"namedSamples"'] })) {
+            const parsed = namingReceipt.safeParse(parseJsonLine(line, path));
+            if (parsed.success && parsed.data.meeting === meeting && parsed.data.project === project) {
+                for (const id of parsed.data.nameSamples ?? []) {
+                    ids.add(id);
+                }
+                for (const id of parsed.data.namedSamples ?? []) {
+                    ids.delete(id);
+                }
+            }
+        }
+        return ids.size
+            ? readVoiceLibrary()
+                  .library.samples.filter(
+                      (sample) => sample.meeting === meeting && sample.project === project && ids.has(sample.id)
+                  )
+                  .map((sample) => sample.id)
+            : [];
+    }
+
+    async finishNaming(meeting: string, project: string, ids: SampleId[]): Promise<void> {
+        const path = this.backfillPath(meeting);
+        await this.options.store.withRecords({
+            ids: [meeting],
+            fn: async () => {
+                appendLines(path, [SafeJSON.stringify({ meeting, project, namedSamples: ids }, { jsonl: true })], {
+                    mode: 0o600,
+                });
+            },
+        });
+    }
+
+    private backfillPath(meeting: string): string {
+        return join(this.options.store.folder(meeting), "voice-backfill.ndjson");
+    }
+
+    private backfilledVoices(meeting: string) {
+        const recovered = new Map<string, VoicePrintChange[]>();
+        const backfill = this.backfillPath(meeting);
+        if (existsSync(backfill)) {
+            for (const line of readLinesSync(backfill)) {
+                const extra = backfilledEntry.safeParse(parseJsonLine(line, backfill));
+                if (extra.success && extra.data.meeting === meeting && extra.data.voices) {
+                    const known = recovered.get(extra.data.token) ?? [];
+                    known.push(...extra.data.voices);
+                    recovered.set(extra.data.token, known);
+                }
+            }
+        }
+        return recovered;
+    }
+
     private entries(meeting: string): JournalEntry[] {
         const path = this.path(meeting);
 
@@ -1699,6 +2221,12 @@ export class DecisionJournal {
             return [];
         }
 
+        const recovered = this.backfilledVoices(meeting);
+        for (const change of this.committedPending(meeting)) {
+            const group = recovered.get(change.token!) ?? [];
+            group.push(change);
+            recovered.set(change.token!, group);
+        }
         return Array.from(readLinesSync(path))
             .filter((line) => line.trim())
             .flatMap((line) => {
@@ -1720,7 +2248,34 @@ export class DecisionJournal {
                     return [];
                 }
 
-                return [parsed.data];
+                const entry = parsed.data;
+                // A copied journal may carry the source meeting's embeddings. Its Undo owns only its own prints.
+                if (entry.copiedFrom && entry.voices) {
+                    entry.voices = entry.voices.filter((change) => change.after.meeting === meeting);
+                }
+                const extra = recovered.get(entry.token);
+                if (extra) {
+                    const changes = [...(entry.voices ?? [])];
+                    for (const change of extra) {
+                        const previous = changes.findIndex(
+                            (c) =>
+                                c.project === change.project &&
+                                c.person === change.person &&
+                                c.after.question === change.after.question &&
+                                c.after.track === change.after.track &&
+                                c.after.sourceSha === change.after.sourceSha &&
+                                c.after.fromSec === change.after.fromSec &&
+                                c.after.toSec === change.after.toSec
+                        );
+                        if (previous < 0) {
+                            changes.push(change);
+                        } else {
+                            changes[previous] = change;
+                        }
+                    }
+                    entry.voices = changes;
+                }
+                return [entry];
             });
     }
 
@@ -1739,6 +2294,10 @@ export class DecisionJournal {
         }
 
         const prepared = handler.prepare ? await handler.prepare(saved, action, this.options.split) : {};
+        const replay = action.kind === "answer" ? action.knownAnswer : undefined;
+        if (replay && request.actor.kind !== "listen") {
+            throw new Error("Only a Listen round can replay a known speaker answer.");
+        }
         const at = (this.options.now?.() ?? new Date()).toISOString();
         const token = randomUUID();
         // One lazy snapshot per decision, read under the record lock. Reopening many independently confirmed
@@ -1768,6 +2327,48 @@ export class DecisionJournal {
                 return entry;
             },
         };
+        const plan = DICTIONARY_ACTIONS.has(action.kind)
+            ? dictionaryPlan({
+                  record: saved,
+                  action,
+                  actor: request.actor,
+                  config: await this.dictionaryConfig()
+                      .read()
+                      .catch((error: unknown) => {
+                          log.warn(
+                              { error, meeting },
+                              "meetings config unreadable; the decision leaves the dictionary alone"
+                          );
+                          return undefined;
+                      }),
+                  entryOf: context.entryOf,
+              })
+            : NO_DICTIONARY_PLAN;
+        const notes = [...plan.warnings];
+        const planned = plannedDictionaryChanges(plan);
+        /**
+         * The dictionary changes are written before the record, each only while its entry is as planned, and taken
+         * back when the record does not take the decision; the entry lists the ones that were written.
+         */
+        const dictionary: DictionaryChange[] = save ? [] : planned;
+
+        if (save) {
+            try {
+                for (const change of planned) {
+                    const { applied, note } = await applyDictionaryChange(this.dictionaryConfig(), change);
+
+                    if (applied) {
+                        dictionary.push(change);
+                    }
+
+                    notes.push(...(note ? [note] : []));
+                }
+            } catch (error) {
+                await revertDictionaryChanges(this.dictionaryConfig(), dictionary, meeting);
+                throw error;
+            }
+        }
+
         let result: Decided = { skipped: [] };
         /** Open questions once the decision is made: the round-end of a round it writes itself says it. */
         let openAfter = 0;
@@ -1775,6 +2376,13 @@ export class DecisionJournal {
         const history: MeetingChange = { command: action.kind, change: "" };
         let before: MeetingRecord | undefined;
         const decide = (record: MeetingRecord): typeof MEETING_UNCHANGED | undefined => {
+            if (
+                replay &&
+                (record.history.length !== replay.revision ||
+                    (replay.source && store.read(replay.source.id)?.history.length !== replay.source.revision))
+            ) {
+                return MEETING_UNCHANGED;
+            }
             if (this.options.onApplied) {
                 before = structuredClone(record);
             }
@@ -1784,11 +2392,17 @@ export class DecisionJournal {
             const assignmentsBefore = structuredClone(record.speakers.assignments ?? []);
             const outcome = handler.mutate(record, action, context);
             Object.assign(history, outcome.history);
+
+            if (plan.ask) {
+                askDictionary(record, items, plan.ask, at);
+            }
+
             let changes = itemChanges(items, record.items);
             const labelled = labelChanges(labels, record.speakers.labels);
             const fielded = fieldChanges(fieldsBefore, fieldValues(record));
             const assigned = assignmentChanges(assignmentsBefore, record.speakers.assignments ?? []);
-            const warnings = outcome.warnings?.length ? { warnings: outcome.warnings } : {};
+            const said = [...(outcome.warnings ?? []), ...notes];
+            const warnings = said.length > 0 ? { warnings: said } : {};
 
             if (changes.length === 0 && labelled.length === 0 && fielded.length === 0 && assigned.length === 0) {
                 result = { skipped: outcome.skipped ?? [], ...warnings };
@@ -1836,6 +2450,7 @@ export class DecisionJournal {
                     ...(fielded.length > 0 ? { fields: fielded } : {}),
                     ...(assigned.length > 0 ? { assignments: assigned } : {}),
                     corrections: outcome.corrections ?? [],
+                    ...(dictionary.length > 0 ? { dictionary } : {}),
                 },
                 skipped: outcome.skipped ?? [],
                 ...warnings,
@@ -1849,26 +2464,70 @@ export class DecisionJournal {
         }
 
         let takeBack = (): void => {};
-        await store.update(meeting, history, decide, {
-            write: () => {
-                if (result.entry) {
-                    takeBack = this.writeLines(result.entry, {
-                        reverted: action.kind === "revert" ? context.entryOf(action.token) : undefined,
-                        openAfter,
-                    });
+        const unwrite = () => revertDictionaryChanges(this.dictionaryConfig(), dictionary, meeting);
+
+        try {
+            await store.update(
+                meeting,
+                history,
+                (record) => {
+                    // A worker may have committed while the dictionary and action inputs were loading.
+                    this.repairVoiceReceipts(meeting);
+                    known = undefined;
+                    return decide(record);
+                },
+                {
+                    write: (current) => {
+                        if (result.entry) {
+                            const undoVoices = transitionAnsweredVoiceSamples({
+                                entry: result.entry,
+                                entryOf: context.entryOf,
+                                project: current.project ?? "",
+                            });
+                            try {
+                                const undoLines = this.writeLines(result.entry, {
+                                    reverted: action.kind === "revert" ? context.entryOf(action.token) : undefined,
+                                    openAfter,
+                                });
+                                takeBack = () => {
+                                    undoLines();
+                                    undoVoices();
+                                };
+                            } catch (error) {
+                                undoVoices();
+                                throw error;
+                            }
+                        }
+                    },
+                    undo: () => takeBack(),
+                    saved: (record) => {
+                        if (result.entry) {
+                            this.writeLedger(result.entry);
+                            if (before) {
+                                this.options.onApplied?.({ before, after: structuredClone(record) });
+                            }
+                        }
+                    },
                 }
-            },
-            undo: () => takeBack(),
-            saved: (record) => {
-                if (result.entry) {
-                    this.writeLedger(result.entry);
-                    if (before) {
-                        this.options.onApplied?.({ before, after: structuredClone(record) });
-                    }
-                }
-            },
-        });
+            );
+        } catch (error) {
+            await unwrite();
+            throw error;
+        }
+
+        if (!result.entry) {
+            await unwrite();
+        }
+
         return result;
+    }
+
+    private configStore?: MeetingsConfigStore;
+
+    /** The config the dictionary changes go to: the option, else the one beside the record store. */
+    private dictionaryConfig(): MeetingsConfigStore {
+        this.configStore ??= this.options.config ?? new MeetingsConfigStore(this.options.store.storage);
+        return this.configStore;
     }
 
     /** Puts who decided, how and why on each item a decision decided, with the fields it changed as they were. */

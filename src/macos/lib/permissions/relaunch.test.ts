@@ -5,13 +5,17 @@ function processRows(text: string): Array<{ pid: number; command: string }> {
     });
 }
 
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { parseRunningApplications } from "@genesiscz/utils/macos/launch-services";
+import * as processes from "@genesiscz/utils/process/processes";
+import { describeLinkRoute, holderArgs, linkHolderKind, linkRoute, linkRouteProblem } from "./links";
 import {
     argvFromPs,
+    captureRelaunch,
     faceHome,
     linkRelayOpenArgs,
     openEnvironment,
@@ -68,6 +72,15 @@ describe("windowFaceKind", () => {
         expect(plan.map((step) => step.argv)).toEqual([["--recorder", "--no-activate"]]);
     });
 
+    it("starts a missing recorder after install only when its part is linked, without focusing it", () => {
+        const args = (faces: WindowFace[], parts: string[]) =>
+            relaunchPlan(faces, null, parts).map((step) => step.argv);
+        expect(args([], ["recorder"])).toEqual([["--recorder", "--no-activate"]]);
+        expect(args([], ["widget"])).toEqual([]);
+        const running: WindowFace = { pid: 7, kind: "recorder", argv: ["--recorder"], lossless: true };
+        expect(args([running], ["recorder"])).toEqual([["--recorder", "--no-activate"]]);
+    });
+
     it("skips short-lived faces, link routers and scripted runs", () => {
         expect(windowFaceKind(["--rpc", "{}"])).toBeNull();
         expect(windowFaceKind(["--notify"])).toBeNull();
@@ -79,6 +92,60 @@ describe("windowFaceKind", () => {
         expect(windowFaceKind(["--review", "--repo", "/x", "--snapshot", "/tmp/a.png"])).toBeNull();
         expect(windowFaceKind(["--hub", "--bench", "/tmp/b.json"])).toBeNull();
         expect(windowFaceKind(["--clicky", "--page", "general", "--headless"])).toBeNull();
+    });
+});
+
+describe("captureRelaunch", () => {
+    it("starts a missing recorder only after a successful capture", () => {
+        const capture = captureRelaunch({
+            processes: [{ pid: 10, command: "/sbin/launchd", name: "launchd", zombie: false }],
+            launcherPath: LAUNCHER,
+            stalePids: [],
+            parts: ["recorder"],
+        });
+
+        expect(capture.steps.map(({ kind, pid }) => ({ kind, pid }))).toEqual([{ kind: "recorder", pid: null }]);
+        expect(capture.relay).toBe(true);
+    });
+
+    it("keeps Recorder closed if a live GenesisTools process has unreadable arguments", () => {
+        const capture = captureRelaunch({
+            processes: [
+                { pid: 10, command: "/sbin/launchd", name: "launchd", zombie: false },
+                { pid: 11, command: null, name: "GenesisTools", zombie: false },
+            ],
+            launcherPath: LAUNCHER,
+            stalePids: [],
+            parts: ["recorder"],
+        });
+
+        expect(capture.steps).toEqual([]);
+        expect(capture.relay).toBe(false);
+    });
+
+    it("restores only a known relay after a failed capture, including when Recorder is installed", () => {
+        const recorder = { pid: 41, command: `${LAUNCHER} --recorder`, name: "GenesisTools", zombie: false };
+        const relay = { pid: 42, command: `${LAUNCHER} --link-relay`, name: "GenesisTools", zombie: false };
+        const readEnvironment = spyOn(processes, "readProcessEnvironment").mockImplementation(() => {
+            throw new Error("fixture capture failed");
+        });
+
+        try {
+            for (const withRelay of [false, true]) {
+                const listing = withRelay ? [recorder, relay] : [recorder];
+                const capture = captureRelaunch({
+                    processes: listing,
+                    launcherPath: LAUNCHER,
+                    stalePids: listing.map(({ pid }) => String(pid)),
+                    parts: ["recorder"],
+                });
+
+                expect(capture.steps).toEqual([]);
+                expect(capture.relay).toBe(withRelay);
+            }
+        } finally {
+            readEnvironment.mockRestore();
+        }
     });
 });
 
@@ -373,6 +440,15 @@ describe("a rebuild reopens exactly the faces it stopped", () => {
         ]);
     });
 
+    it("drops the page and its context in the one-argument form the app writes", () => {
+        const listing = ps(`  312 ${LAUNCHER} --features --page=meetings.window --page-context=--draft`);
+
+        expect(plan({ psStdout: listing, stalePids: ["312"] })).toEqual([
+            ["open", "-n", "-g", BUNDLE, "--args", "--link-relay"],
+            ["open", "-n", "-g", "--env", "HOME=/Users/alice", BUNDLE, "--args", "--features", "--no-activate"],
+        ]);
+    });
+
     it("never starts a face that was not running, nor a relay for short-lived faces alone", () => {
         const hubOnly = ps(`  321 ${LAUNCHER} --hub --mode sessions`);
         const commands = plan({ psStdout: hubOnly, stalePids: ["321"] });
@@ -545,5 +621,95 @@ describe("a rebuild reopens each face on the environment it started with", () =>
             [13, ["--widget"]],
         ]);
         expect(read.recordDirs).toEqual([sandboxFaces, homeFaces, build]);
+    });
+});
+
+describe("link route", () => {
+    const APP = "/Users/example/Applications/GenesisTools.app/Contents/MacOS/GenesisTools";
+    const listing = [
+        ' 1) "loginwindow" ASN:0x0-0x1001: ',
+        '    bundleID="com.apple.loginwindow"',
+        '    pid = 618 token=[sess=1 pid=618] type="UIElement" flavor=3',
+        '239) "GenesisTools" ASN:0x0-0x1c34a32e: (in front) ',
+        '    bundleID="com.genesiscz.genesistools"',
+        '    pid = 4101  !signalled type="UIElement" flavor=2 Version="1"',
+        '240) "GenesisTools" ASN:0x0-0x1c373357: ',
+        '    bundleID="com.genesiscz.genesistools"',
+        '    pid = 4102  !signalled type="BackgroundOnly" flavor=2 Version="1"',
+        '266) "GenesisTools" ASN:0x0-0x22062040: ',
+        '    bundleID="com.genesiscz.genesistools"',
+        '    pid = 4103  type="UIElement" flavor=2 Version="2"',
+        '267) "GenesisTools" ASN:0x0-0x22063041: ',
+        '    bundleID="com.genesiscz.genesistools"',
+        '    pid = 4104  type="Foreground" flavor=2 Version="2"',
+    ].join("\n");
+    const commands = new Map([
+        [4101, { command: `${APP} /Users/example/.genesis-tools/bin/gt-cc --resume abc`, startMs: 1 }],
+        [4102, { command: `${APP} /Users/example/.bun/bin/bun run daemon.ts`, startMs: 2 }],
+        [4103, { command: `${APP} --link-relay`, startMs: 3 }],
+        [4104, { command: `${APP} --hub --resume --no-activate`, startMs: 4 }],
+    ]);
+
+    it("reads every application of lsappinfo list with its check-in order", () => {
+        const apps = parseRunningApplications(listing);
+        expect(apps.map((app) => [app.pid, app.bundleId, app.type])).toEqual([
+            [618, "com.apple.loginwindow", "UIElement"],
+            [4101, "com.genesiscz.genesistools", "UIElement"],
+            [4102, "com.genesiscz.genesistools", "BackgroundOnly"],
+            [4103, "com.genesiscz.genesistools", "UIElement"],
+            [4104, "com.genesiscz.genesistools", "Foreground"],
+        ]);
+        expect(apps[1].order).toBeLessThan(apps[3].order);
+    });
+
+    it("names the launchers older than the relay as the ones that drop links", () => {
+        const apps = parseRunningApplications(listing).filter((app) => app.bundleId === "com.genesiscz.genesistools");
+        const route = linkRoute(apps.reverse(), commands);
+        expect(route.target?.pid).toBe(4101);
+        expect(route.relay?.pid).toBe(4103);
+        expect(route.olderThanRelay.map((holder) => [holder.pid, holder.kind])).toEqual([
+            [4101, "launcher"],
+            [4102, "launcher"],
+        ]);
+        const problem = linkRouteProblem(route) ?? "";
+        expect(problem).toContain("pid 4101");
+        expect(problem).toContain("these 2 launcher(s)");
+    });
+
+    it("has no problem when the relay is the oldest instance", () => {
+        const route = linkRoute(
+            [
+                { pid: 4103, order: 1 },
+                { pid: 4104, order: 2 },
+            ],
+            commands
+        );
+        expect(route.target?.kind).toBe("relay");
+        expect(linkRouteProblem(route)).toBeNull();
+        expect(describeLinkRoute(route)).toBe("the link relay takes them (pid 4103)");
+    });
+
+    it("names a launcher run by its program and arguments, without Bun's preloads and script", () => {
+        expect(
+            holderArgs(
+                `${APP} /Users/example/.genesis-tools/bin/gt-cc --preload /repo/a.ts --preload /repo/b.ts /repo/src/cc/index.ts run work --resume abc`
+            )
+        ).toBe("gt-cc run work --resume abc");
+        expect(holderArgs(`${APP} --hub --resume`)).toBe("--hub --resume");
+        expect(holderArgs(`${APP} https://example.test/reset?token=fixture-secret#x`)).toBe(
+            "https://example.test/reset?…"
+        );
+        expect(holderArgs(null)).toBeNull();
+    });
+
+    it("tells a launcher from a face, a router and the relay", () => {
+        expect(linkHolderKind(`${APP} /bin/sleep 3`)).toBe("launcher");
+        expect(linkHolderKind(`${APP} bun --version`)).toBe("launcher");
+        expect(linkHolderKind(`${APP} --rpc {}`)).toBe("face");
+        expect(linkHolderKind(APP)).toBe("face");
+        expect(linkHolderKind(`${APP} https://example.test/a`)).toBe("router");
+        expect(linkHolderKind(`${APP} genesis-tools://hub?session=abc`)).toBe("face");
+        expect(linkHolderKind(`${APP} --link-relay`)).toBe("relay");
+        expect(linkHolderKind(null)).toBe("unknown");
     });
 });

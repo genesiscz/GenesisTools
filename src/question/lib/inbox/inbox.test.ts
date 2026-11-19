@@ -7,7 +7,9 @@ import { QaDialogItem } from "@app/dev-dashboard/ui/src/components/QaDialogItem"
 import { closeQuestion, upsertQuestion } from "@genesiscz/utils/agents/dialogs/store";
 import type { OpenQuestion } from "@genesiscz/utils/agents/dialogs/types";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { answerGitWithoutSpawning } from "@genesiscz/utils/test/no-git";
 import { Command } from "commander";
 import { createElement } from "react";
@@ -29,11 +31,13 @@ import {
 } from "../decisions/store";
 import { type AskDeps, getAskForm, postAskForm } from "../pending/ask";
 import type { AskForm } from "../pending/types";
+import { openReadModel } from "../read-model";
 import { answerInboxDecision, answerInboxDecisions, answerInboxForm } from "./answer";
 import { buildInbox, fromRecord, type InboxSessionInfo, inboxDelivery, scanTurns, sessionDecisions } from "./build";
 import { answerDialogItem, parseDialogKey } from "./dialog-answer";
 import { DIALOG_WATCH_WINDOW_MS, notifiedAfterDelivery, unnotified, watchedSessions } from "./dialogs";
 import { cachingReadDeps, fillExcerpts, locateRef, readExcerpt } from "./excerpts";
+import { DEFAULT_INBOX_KINDS, readInboxKinds, setInboxKind } from "./kinds";
 import {
     type InboxDeps,
     loadInbox,
@@ -46,6 +50,7 @@ import {
     waitingBlock,
 } from "./load";
 import { cursorStillHolds, InboxTrace, recordAnswer } from "./session-cursor";
+import { readInboxData, readInboxGroupEntries } from "./unread";
 
 // A decision post reads its checkout with eight `git` starts; see no-git.ts for the CI hang they caused.
 answerGitWithoutSpawning();
@@ -998,6 +1003,10 @@ describe("loadInbox", () => {
         expect(queue.total).toBe(3);
         expect(queue.sessions.flatMap((entry) => entry.items.map((item) => item.id))).toEqual(["ask_listed"]);
 
+        const hub = await loadInbox({ deps });
+        expect(hub.pendingFormIDs).toEqual(["ask_listed", "ask_old_1", "ask_old_2"]);
+        expect(hub.sessions.flatMap((session) => session.items.map((item) => item.id))).toEqual(["ask_listed"]);
+
         const withoutHeads = await loadWaitingQueue({ deps: { ...deps, formHeads: undefined }, now });
         expect(withoutHeads.total).toBe(1);
     });
@@ -1028,7 +1037,8 @@ describe("loadInbox", () => {
         expect(readDecisions(files.file).map((stored) => [stored.number, stored.state, stored.harvested])).toEqual([
             [3, "open", true],
         ]);
-        const listed = (result: typeof first) => result.sessions[0]?.items.map((item) => [item.kind, item.source]);
+        const listed = (result: typeof first) =>
+            result.sessions[0]?.items.map((item) => [item.kind, "source" in item ? item.source : null]);
         expect(listed(first)).toEqual([["decision", "store"]]);
         expect(listed(second)).toEqual([["decision", "store"]]);
 
@@ -1982,5 +1992,125 @@ describe("answering a dialog item by its option key", () => {
             error: expect.stringContaining("--dialog needs --option"),
         });
         expect(tool.calls).toHaveLength(1);
+    });
+});
+
+test("changing one inbox preference preserves the other kinds and unrelated hub settings", async () => {
+    const { Storage } = await import("@genesiscz/utils/storage");
+    const name = `test-inbox-${crypto.randomUUID()}`;
+    const storage = new Storage(name);
+    await storage.setConfigValue("prLookupCacheSeconds", 77);
+    await setInboxKind("todo.forAgent", "show", true, storage);
+    const reopened = new Storage(name);
+    expect(await readInboxKinds(reopened)).toEqual({
+        ...DEFAULT_INBOX_KINDS,
+        todo: {
+            forHuman: DEFAULT_INBOX_KINDS.todo.forHuman,
+            forAgent: { show: true, countInBadge: false },
+        },
+    });
+    expect(await reopened.getConfigValue<number>("prLookupCacheSeconds")).toBe(77);
+});
+
+test("task visibility and badge counts follow the recipient within its session", async () => {
+    const { file, events } = scratch();
+    const rows = await postDecisions(file, events, {
+        sessionId: SESSION.sessionId,
+        decisions: [
+            { type: "todo", prompt: "Sign off", for: "human" },
+            { type: "todo", prompt: "Review notes" },
+        ],
+    });
+    const input = { sessions: [SESSION], scans: new Map(), forms: [], rows };
+    const [group] = buildInbox(input);
+    expect(group.items.map((item) => item.id)).toEqual([rows[0].id]);
+    expect(group.waiting).toBe(0);
+    const [both] = buildInbox({
+        ...input,
+        kinds: {
+            ...DEFAULT_INBOX_KINDS,
+            todo: {
+                forHuman: { show: true, countInBadge: true },
+                forAgent: { show: true, countInBadge: false },
+            },
+        },
+    });
+    expect(both.items.map((item) => item.id)).toEqual(rows.map((row) => row.id));
+    expect(both.waiting).toBe(1);
+});
+
+test("the head and its earlier answers use the same unread partition and clear watermark", async () => {
+    const root = mkdtempSync(join(tmpdir(), "inbox-answers-"));
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: root, QUESTION_LOG_BASE: join(root, "log") }, () => {
+        const db = openReadModel(toolDataDir("question", "qa.db"));
+        try {
+            const insert = db.query(
+                "INSERT INTO entries (id, ts, session_id, agent, question, answer_md, tag, read_at) VALUES (?, ?, 'alpha', ?, ?, ?, ?, ?)"
+            );
+
+            for (const at of [1, 2, 3, 4]) {
+                insert.run(`a${at}`, at, "codex", `Question ${at}`, `Answer ${at}`, "question", null);
+            }
+
+            insert.run("read", 4, "codex", "Read?", "Read", "question", 5);
+            insert.run("other", 6, "grok", "Other?", "Other", "question", null);
+            insert.run("note", 7, "codex", "Note", "Message", "message", null);
+            insert.run("older-note", 6, "codex", "Older note", "Earlier message", "message", null);
+        } finally {
+            db.close();
+        }
+
+        const window = { clearedAt: 1, staleBefore: 0 };
+        const heads = readInboxData(window).answers.filter(
+            (row) => row.provider === "codex" && row.itemTag !== "message"
+        );
+        expect(heads).toHaveLength(1);
+        expect(heads[0]).toMatchObject({
+            id: "a4",
+            afterClear: 3,
+            reply: { text: "Answer 4", question: "Question 4" },
+        });
+        expect(readInboxGroupEntries({ id: "a4", limit: 5, window })).toEqual([
+            { id: "a3", at: 3, question: "Question 3", text: "Answer 3" },
+            { id: "a2", at: 2, question: "Question 2", text: "Answer 2" },
+        ]);
+        expect(readInboxGroupEntries({ id: "a3", limit: 5, window })).toEqual([
+            { id: "a2", at: 2, question: "Question 2", text: "Answer 2" },
+        ]);
+        expect(readInboxGroupEntries({ id: "note", limit: 5, window })).toEqual([]);
+        expect(readInboxGroupEntries({ id: "a4", limit: 5, window: { ...window, staleBefore: 3 } })).toHaveLength(1);
+        expect(
+            readInboxGroupEntries({
+                id: "a4",
+                limit: 5,
+                window: { ...window, staleBefore: 3 },
+                sessionIsFresh: () => true,
+            })
+        ).toHaveLength(2);
+    });
+});
+test("overview previews skip long media context and end on complete code points", async () => {
+    const root = mkdtempSync(join(tmpdir(), "inbox-preview-"));
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: root, QUESTION_LOG_BASE: join(root, "log") }, () => {
+        const db = openReadModel(toolDataDir("question", "qa.db"));
+        const hidden = "hidden ".repeat(10_000);
+        const question = "q".repeat(1199);
+        const text = "a".repeat(799);
+        try {
+            db.query(
+                "INSERT INTO entries (id, ts,session_id,agent,question,answer_md,tag) VALUES ('fixture',2,'alpha','codex',?,?,'question')"
+            ).run(
+                `\u00a0<fromImage>${hidden}</fromImage>${question}🍐tail`,
+                `<fromVideo>${hidden}</fromVideo>${text}🍐tail`
+            );
+        } finally {
+            db.close();
+        }
+
+        expect(readInboxData({ clearedAt: 0, staleBefore: 0 }).answers[0]?.reply).toEqual({
+            question,
+            text,
+            more: true,
+        });
     });
 });

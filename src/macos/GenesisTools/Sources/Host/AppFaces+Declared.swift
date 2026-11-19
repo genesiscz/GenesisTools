@@ -13,5 +13,6 @@ extension AppFaces {
         AppFace(flag: "--recorder", aliases: [], part: "recorder", window: false, quit: nil),
         AppFace(flag: "--meetings", aliases: [], part: "meetings", window: true, quit: .init(name: "Meetings", order: 60)),
         AppFace(flag: "--window", aliases: [], part: nil, window: true, quit: .init(name: "Permissions", order: 100)),
+        AppFace(flag: "--requests", aliases: [], part: nil, window: true, quit: .init(name: "Requests", order: 101)),
     ]
 }

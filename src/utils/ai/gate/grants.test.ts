@@ -24,11 +24,14 @@ import {
     grantsPath,
     listGrants,
     listVaultGrants,
+    listVaultSessionGrants,
     readAuditTail,
     rememberGrant,
     revokeGrants,
     revokeVaultGrants,
+    revokeVaultSessionGrants,
     vaultGrantsPath,
+    vaultSessionGrantsPath,
 } from "./grants";
 import type { ClientIdentity, GateGrant } from "./types";
 
@@ -115,6 +118,36 @@ describe("grants", () => {
         ]);
         expect(await revokeVaultGrants(base.key)).toBe(1);
         expect(listVaultGrants(NOW).map((item) => item.key)).toEqual(["explicit", "timed"]);
+    });
+
+    // The app writes this file when a window approves a whole agent session (VaultSessionGrant.swift).
+    test("session approvals list until their time and revoke by session id, agent pid or all", async () => {
+        const grant = (pid: number, sessionId: string, until: number) => ({
+            anchor: { harness: "claude", pid, startedAt: 1_000_000 },
+            sessionId,
+            title: "language model pass",
+            grantedAt: NOW,
+            until,
+            method: "touch-id",
+        });
+        mkdirSync(dirname(vaultSessionGrantsPath()), { recursive: true });
+        writeFileSync(
+            vaultSessionGrantsPath(),
+            SafeJSON.stringify({
+                version: 1,
+                grants: [grant(640, "s-one", T(60)), grant(641, "s-two", T(60)), grant(642, "s-old", NOW - 1)],
+            })
+        );
+
+        expect(listVaultSessionGrants(NOW).map((item) => item.sessionId)).toEqual(["s-one", "s-two"]);
+        expect(await revokeVaultSessionGrants("s-one")).toBe(1);
+        expect(await revokeVaultSessionGrants("641")).toBe(1);
+        expect(listVaultSessionGrants(NOW)).toEqual([]);
+        expect(await revokeVaultSessionGrants("*")).toBe(1);
+        expect(SafeJSON.parse(readFileSync(vaultSessionGrantsPath(), "utf8"), { strict: true })).toEqual({
+            version: 1,
+            grants: [],
+        });
     });
 
     test("vault revocation preserves malformed input before recovering, while listing stays read-only", async () => {

@@ -1,11 +1,11 @@
 import { accessSync, constants, lstatSync, realpathSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { formatCount } from "@genesiscz/utils/format";
+import { dialogEnvironment } from "@genesiscz/utils/genesis-tools/areas/person/system-dialog";
 import { logger } from "@genesiscz/utils/logger";
 import { appleScriptString } from "@genesiscz/utils/macos/jxa";
 import { shellCommandLine } from "@genesiscz/utils/shell/quote";
 import { testProcessReason } from "@genesiscz/utils/test-process";
-import { dialogEnvironment } from "./approval";
 import type { RmTarget } from "./rules";
 
 /** S_ISVTX: in a sticky folder only an entry's owner, the folder's owner or root may rename or remove the entry. */

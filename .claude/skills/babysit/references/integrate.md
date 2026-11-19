@@ -44,7 +44,7 @@ Then in the main checkout (unified branch):
 commit already there, resolves a version-only conflict in `.claude-plugin/marketplace.json` or
 `plugins/genesis-tools/.claude-plugin/plugin.json` to the higher version, and aborts and lists any other conflict.
 Give the listed ones to a free worker in a scratch worktree detached at the unified head (resolve keeping both sides,
-`cherry-pick -x` each), check its tests and Biome, then fast-forward unified to it if unified has not moved.
+plain `cherry-pick` each, never `-x`), check its tests and Biome, then fast-forward unified to it if unified has not moved.
 
 This pick is the master's step in every variant, also when a brief lets the worker push its PR branch itself. Check
 it with `bun .claude/skills/babysit/scripts/unified-behind.ts --branch <unified> origin/<pr-branch>` (exit 0: a merge of

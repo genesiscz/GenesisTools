@@ -1900,20 +1900,13 @@ final class ReviewModel: ObservableObject {
     /// and exits (Hub/HubSingleInstance.swift). Not a `genesis-tools://` link: Launch Services may hand
     /// that to this very process, which has no hub.
     func showInHub() {
-        guard let info = pr?.payload?.pr, let executable = Bundle.main.executableURL else { return }
+        guard let info = pr?.payload?.pr else { return }
         var args = ["--hub", "--pr", info.webUrl ?? info.url]
         if let id = selectedID, let file = files.first(where: { $0.id == id }), !file.path.isEmpty {
             args += ["--reveal", file.path]
         }
-        let process = Process()
-        process.executableURL = executable
-        process.arguments = args
-        do {
-            try process.run()
-            HubPerf.log("review.showInHub \(args.joined(separator: " "))")
-        } catch {
-            notice = "Could not open the hub: \(error.localizedDescription)"
-        }
+        HubPerf.log("review.showInHub \(args.joined(separator: " "))")
+        FaceLaunch.start(args) { [weak self] in self?.notice = "Could not open the hub: \($0.localizedDescription)" }
     }
 
     /// Compare against another base (nil: automatic). The Branch scope and the Committed list follow it.

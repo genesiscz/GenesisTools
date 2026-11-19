@@ -19,6 +19,17 @@ enum PersonPickerAddRule: String, CaseIterable {
 
 /// Text helpers the picker and the Contacts view share.
 enum PeopleText {
+    static func questionPeople(_ people: [KnownPerson], choices: [String], query: String, hideAbsent: Bool) -> [KnownPerson] {
+        let words = fold(query).split(whereSeparator: \.isWhitespace)
+        var preferred = choices.compactMap { name -> KnownPerson? in
+            guard words.allSatisfy({ fold(name).contains($0) }) else { return nil }
+            return people.first { isExactMatch($0, name) }
+                ?? KnownPerson(id: "choice:\(personKey(name))", name: name, sources: [.meetings], rank: .present)
+        }
+        preferred += people.filter { person in !preferred.contains { isExactMatch($0, person.name) } }
+        return hideAbsent ? preferred.filter { $0.rank == .present } : preferred
+    }
+
     /// Case and accents folded, spaces trimmed: how the directory compares names (`nameKey`).
     static func fold(_ text: String) -> String {
         text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -26,8 +37,8 @@ enum PeopleText {
     }
 
     static func personKey(_ text: String) -> String {
-        fold(text.replacingOccurrences(of: "\\([^)]*\\)", with: "", options: .regularExpression))
-            .split(whereSeparator: \.isWhitespace).sorted().joined(separator: " ")
+        fold(text.replacingOccurrences(of: "\\([^)]*\\)", with: " ", options: .regularExpression))
+            .split { $0.isWhitespace || "._,-".contains($0) }.sorted().joined(separator: " ")
     }
 
     /// True when a person's name or one of their aliases is the typed text.
@@ -99,26 +110,31 @@ struct PersonPicker: View {
     var addRule: PersonPickerAddRule = .noExactMatch
     /// The most rows drawn before the list scrolls.
     var visibleRows: Int = 6
+    var preferredNames: [String] = []
+    var restrictToPresent = false
     /// A person the user clicked or picked with Return.
     let pick: (KnownPerson) -> Void
     /// "Add 'X' as new speaker": omitted when this picker can only select existing people.
     var addNew: ((String) -> Void)?
+    /// A question can take the typed answer even when it matches an existing person's name or alias.
+    var answerAsTyped: ((String) -> Void)?
     /// Esc.
     var cancel: () -> Void = {}
     /// The Contacts grant button when Contacts refused access; nil hides it.
     var grantContacts: (() -> Void)?
 
     @State private var highlighted: Int?
+    @State private var showEverybody = false
+    @State private var shownPeople: [KnownPerson] = []
     @FocusState private var searchFocused: Bool
 
     static let rowHeight: CGFloat = 40
 
-    var newName: String? {
-        guard addNew != nil else { return nil }
-        return PeopleText.newName(query, people: people, rule: addRule)
-    }
+    @State private var offeredName: String?
+    var newName: String? { addNew == nil ? nil : PeopleText.newName(query, people: people, rule: addRule) }
     /// The rows Up and Down move through: the people, then the add row.
-    private var rowCount: Int { people.count + (newName == nil ? 0 : 1) }
+    private var offersEverybody: Bool { restrictToPresent && !showEverybody }
+    private var rowCount: Int { shownPeople.count + (offeredName == nil ? 0 : 1) + (offersEverybody ? 1 : 0) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -151,6 +167,22 @@ struct PersonPicker: View {
         .frame(width: 300)
         .onChange(of: query) { _, _ in highlighted = nil }
         .onAppear { searchFocused = true }
+        .onChange(of: people, initial: true) { _, _ in updatePeople() }
+        .onChange(of: preferredNames) { _, _ in updatePeople() }
+        .onChange(of: query) { _, _ in updatePeople() }
+        .onChange(of: showEverybody) { _, _ in updatePeople() }
+        .onChange(of: restrictToPresent) { _, _ in updatePeople() }
+        .onChange(of: addRule) { _, _ in updatePeople() }
+        .onChange(of: answerAsTyped != nil) { _, _ in updatePeople() }
+    }
+
+    private func updatePeople() {
+        shownPeople = PeopleText.questionPeople(people, choices: preferredNames, query: query, hideAbsent: restrictToPresent && !showEverybody)
+        if answerAsTyped != nil {
+            offeredName = query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : query
+        } else {
+            offeredName = newName
+        }
     }
 
     private var searchField: some View {
@@ -184,12 +216,25 @@ struct PersonPicker: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        ForEach(Array(people.enumerated()), id: \.element.id) { index, person in
-                            PersonPickerRow(person: person, highlighted: highlighted == index) { pick(person) }
+                        ForEach(Array(shownPeople.enumerated()), id: \.element.id) { index, person in
+                            PersonPickerRow(person: person, highlighted: highlighted == index, use: !query.isEmpty) { pick(person) }
                                 .id(index)
                         }
-                        if let newName {
-                            addRow(newName).id(people.count)
+                        if let offeredName {
+                            typedRow(offeredName).id(shownPeople.count)
+                        }
+                        if offersEverybody {
+                            Text("Show everybody")
+                                .font(.system(size: 13))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 8)
+                                .frame(height: Self.rowHeight)
+                                .contentShape(Rectangle())
+                                .background(Self.highlight(highlighted == rowCount - 1))
+                                .rowButton(cornerRadius: Self.rowCorner) { showEverybody = true; highlighted = nil }
+                                .instantTooltip("Include people who were outside the call at this time")
+                                .accessibilityIdentifier("meetings.personPicker.everybody")
+                                .id(rowCount - 1)
                         }
                     }
                     .padding(4)
@@ -201,26 +246,34 @@ struct PersonPicker: View {
     }
 
     private func addRow(_ name: String) -> some View {
-        Button { addNew?(name) } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "person.badge.plus")
-                    .font(.system(size: 13))
-                    .foregroundStyle(KitTheme.accent)
-                    .frame(width: 22)
-                Text("Add ‘\(name)’ as new speaker")
-                    .font(.system(size: 13))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 8)
-            .frame(height: Self.rowHeight)
-            .contentShape(Rectangle())
-            .background(RoundedRectangle(cornerRadius: 6).fill(highlighted == people.count ? KitTheme.accent.opacity(0.18) : .clear))
+        HStack(spacing: 8) {
+            Image(systemName: "person.badge.plus")
+                .font(.system(size: 13))
+                .foregroundStyle(KitTheme.accent)
+                .frame(width: 22)
+            Text("Add ‘\(name)’ as new speaker")
+                .font(.system(size: 13))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 0)
         }
-        .buttonStyle(.genHoverRow())
+        .padding(.horizontal, 8)
+        .frame(height: Self.rowHeight)
+        .contentShape(Rectangle())
+        .background(Self.highlight(highlighted == shownPeople.count))
+        .rowButton(cornerRadius: Self.rowCorner) { addNew?(name) }
         .accessibilityLabel("Add \(name) as new speaker")
         .accessibilityIdentifier("meetings.personPicker.add")
+    }
+
+    /// Every row of the picker is the kit's row button (`rowButton`): a real button, so the pointer, Return, VoiceOver
+    /// and an agent's AXPress all reach it. A known person's row was a button wrapped in
+    /// `.accessibilityElement(children: .ignore)`, which hid its press: it offered only AXScrollToVisible (w_uoa9ame8).
+    static let rowCorner: CGFloat = 6
+
+    /// The row Up and Down moved to.
+    static func highlight(_ on: Bool) -> some View {
+        RoundedRectangle(cornerRadius: rowCorner).fill(on ? KitTheme.accent.opacity(0.18) : .clear)
     }
 
     private func move(_ step: Int) {
@@ -232,13 +285,32 @@ struct PersonPicker: View {
         }
     }
 
-    /// Return picks the highlighted row. With nothing highlighted, it adds the typed name only when that is the one
+    @ViewBuilder
+    private func typedRow(_ text: String) -> some View {
+        if let answerAsTyped {
+            Text("Use ‘\(text)’ as typed")
+                .font(.system(size: 13))
+                .lineLimit(1).truncationMode(.middle)
+                .padding(.horizontal, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: Self.rowHeight)
+                .background(RoundedRectangle(cornerRadius: 6).fill(highlighted == shownPeople.count ? KitTheme.accent.opacity(0.18) : .clear))
+                .rowButton(cornerRadius: 6) { answerAsTyped(text) }
+                .accessibilityIdentifier("meetings.personPicker.asTyped")
+        } else {
+            addRow(text)
+        }
+    }
+
+    /// Return picks the highlighted row. With nothing highlighted, it takes the typed name only when that is the one
     /// row offered; it never picks the first person by itself (nothing is preselected).
     private func submit() {
         if let row = highlighted {
-            if row < people.count { pick(people[row]) } else if let newName { addNew?(newName) }
-        } else if people.isEmpty, let newName {
-            addNew?(newName)
+            if row < shownPeople.count { pick(shownPeople[row]) }
+            else if offersEverybody && row == rowCount - 1 { showEverybody = true; highlighted = nil }
+            else if let offeredName { (answerAsTyped ?? addNew)?(offeredName) }
+        } else if shownPeople.isEmpty, let offeredName {
+            (answerAsTyped ?? addNew)?(offeredName)
         }
     }
 }
@@ -247,41 +319,73 @@ struct PersonPicker: View {
 struct PersonPickerRow: View {
     let person: KnownPerson
     var highlighted = false
+    var use = false
     let action: () -> Void
 
     var body: some View {
-        // lint-rules-ignore: short list (at most 20 people a search returns, in a lazy stack)
-        Button(action: action) {
-            HStack(spacing: 8) {
-                PersonAvatarView(person: person)
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 4) {
-                        Text(person.name)
-                            .font(.system(size: 13, weight: .medium))
-                            .lineLimit(1)
-                        if person.isSelf {
-                            Text("you").font(.system(size: 11)).foregroundStyle(.secondary)
-                        }
-                    }
-                    Text(PeopleText.address(person))
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+        HStack(spacing: 8) {
+            PersonAvatarView(person: person)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 4) {
+                    Text(use ? "Use \(person.name)" : person.name)
+                        .font(.system(size: 13, weight: .medium))
                         .lineLimit(1)
-                        .truncationMode(.middle)
+                    if person.isSelf {
+                        Text("you").font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
                 }
-                Spacer(minLength: 0)
+                Text(PeopleText.address(person))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
-            .padding(.horizontal, 8)
-            .frame(height: PersonPicker.rowHeight)
-            .contentShape(Rectangle())
-            .background(RoundedRectangle(cornerRadius: 6).fill(highlighted ? KitTheme.accent.opacity(0.18) : .clear))
+            Spacer(minLength: 0)
         }
-        .buttonStyle(.genHoverRow())
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel([person.name, person.isSelf ? "you" : nil, PeopleText.address(person), person.rank.title]
-            .compactMap { $0 }.joined(separator: ", "))
-        .accessibilityAddTraits(highlighted ? [.isButton, .isSelected] : .isButton)
+        .padding(.horizontal, 8)
+        .frame(height: PersonPicker.rowHeight)
+        .contentShape(Rectangle())
+        .background(PersonPicker.highlight(highlighted))
+        // The kit's row button, as the add row: the press stays on the element (PersonPicker.rowCorner).
+        .rowButton(cornerRadius: PersonPicker.rowCorner, action)
+        .accessibilityLabel(Self.spoken(person, use: use))
+        .accessibilityAddTraits(highlighted ? .isSelected : [])
         .accessibilityIdentifier("meetings.personPicker.row.\(person.id)")
+        // Live under the pointer or while highlighted: at rest the row is a resting button, as in every kit list.
+        .liveRow(selected: highlighted)
+    }
+
+    /// What VoiceOver and an agent read for the row: the name, "you", the address and the rank.
+    static func spoken(_ person: KnownPerson, use: Bool) -> String {
+        [use ? "Use \(person.name)" : person.name, person.isSelf ? "you" : nil, PeopleText.address(person), person.rank.title]
+            .compactMap { $0 }.joined(separator: ", ")
+    }
+}
+
+/// The row's person choices precede the directory's meeting and earlier people.
+struct QuestionPersonPicker: View {
+    let row: ReviewRow
+    let detail: MeetingDetailModel
+    @Binding var name: String
+    var cancel: () -> Void = {}
+    let confirm: (String) -> Void
+    @State private var search: PeopleSearch?
+    @State private var preferredNames: [String] = []
+
+    var body: some View {
+        PersonPicker(people: search?.people ?? [], query: $name, sources: search?.sources ?? [],
+            title: "Whose voice is this", addRule: MeetingsPreferences.People.offerNew.value(),
+            preferredNames: preferredNames,
+            restrictToPresent: row.startSec != nil,
+            pick: { confirm($0.name) }, addNew: row.isQuestion ? nil : confirm,
+            answerAsTyped: row.isQuestion ? confirm : nil, cancel: cancel,
+            grantContacts: detail.window.map { window in { window.people.grantContacts() } })
+            .onAppear { let next = detail.peopleSearch(atSec: row.startSec); search = next; next.ask(name, after: .zero) }
+            .onChange(of: name) { _, now in search?.ask(now) }
+            .onDisappear { search?.cancel() }
+            .onChange(of: row.choices, initial: true) { _, choices in
+                preferredNames = choices.filter { $0.action.kind == "answer" && ["earlier", "suggested", "presumed", "candidate"].contains($0.role) }.map(\.value)
+            }
     }
 }
 

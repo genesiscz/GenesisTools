@@ -1,12 +1,25 @@
 import AVFoundation
 import AppKit
 
+@MainActor private let appSubmenu = RecorderMenu(routesToRecorder: true)
+
+/// The widget calls this in its own process. Windows and capture commands go to the single recorder face.
+@MainActor package func makeRecorderAppSubmenu() -> NSMenu { appSubmenu.makeMenu() }
+
 /// The recorder's menu bar item, always there while the face runs: record the screen, open a recording or a movie
 /// in the editor, the latest recordings with a thumbnail each, the recordings folder, and quit. The list is read
 /// when the menu opens, on a background queue; the menu shows the previous read until the new one lands.
 @MainActor
 final class RecorderMenu: NSObject, NSMenuDelegate {
-    static let shared = RecorderMenu()
+    static let shared: RecorderMenu = {
+        LiveRecordingBarPresentation.resolve = CapturePicker.presentation
+        return RecorderMenu()
+    }()
+
+    init(routesToRecorder: Bool = false) {
+        self.routesToRecorder = routesToRecorder
+        super.init()
+    }
 
     struct Recent: Equatable {
         let folder: URL
@@ -38,6 +51,8 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
     }
 
     private var item: NSStatusItem?
+    private weak var displayedMenu: NSMenu?
+    private let routesToRecorder: Bool
     private var recents: [Recent] = []
     private var thumbnails: [URL: NSImage] = [:]
     private var reading = false
@@ -67,7 +82,7 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
             return
         }
         if recent.hasMovie {
-            EditorWindows.shared.open(path: recent.folder.path, atSourceSeconds: atSourceSeconds)
+            EditorWindows.shared.open(path: recent.folder.path, atSourceUs: atSourceSeconds.flatMap(RecorderRequest.microseconds))
             return
         }
         HubPerf.log("recorder: open frames-only \(recent.folder.path) through tools recorder edit")
@@ -83,6 +98,16 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
     }
 
     func install() {
+        listenForSampleFailures()
+        applyVisibility()
+    }
+
+    func applyVisibility() {
+        guard MenuBarSettings.separateRecorder() else {
+            if let item { NSStatusBar.system.removeStatusItem(item) }
+            item = nil
+            return
+        }
         guard item == nil else { return }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         // Its own visibility key (see LiveRecordingsStatusItem.installItem); the user can still hide it in System
@@ -90,12 +115,8 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         item.autosaveName = "genesistools.recorder"
         item.button?.image = NSImage(systemSymbolName: "record.circle", accessibilityDescription: "GenesisTools recorder")
         item.button?.setAccessibilityIdentifier("recorder-status-item")
-        let menu = NSMenu()
-        menu.delegate = self
-        menu.autoenablesItems = false
-        item.menu = menu
+        item.menu = makeMenu()
         self.item = item
-        build(menu)
         refresh()
         // A new item of this bundle can start hidden (macOS carries the bundle's earlier choice over); only a
         // choice saved under this item's own name is the user's, and that one stays.
@@ -106,7 +127,15 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         HubPerf.log("recorder: menu bar item installed (saved choice \(saved), visible \(item.isVisible))")
         // The bar lays the item out after this turn; look once it had time to.
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.checkOnScreen() }
-        listenForSampleFailures()
+    }
+
+    func makeMenu() -> NSMenu {
+        let menu = NSMenu(title: "Recorder")
+        menu.autoenablesItems = false
+        menu.delegate = self
+        displayedMenu = menu
+        build(menu)
+        return menu
     }
 
     /// A test door to the failure window without recording anything: while the defaults key `recorder.debug.notices`
@@ -146,8 +175,7 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         return .shown
     }
 
-    /// The menu, its toggles and Recent live only in this item. When macOS keeps it off the bar, say so once on this
-    /// Mac and name the other ways in, instead of a menu that silently cannot be reached (review 2026-11-06).
+    /// When macOS keeps this item off the bar, say so once and name the other ways into the capture picker.
     private func checkOnScreen(defaults: UserDefaults = .standard) {
         guard let item else { return }
         let window = item.button?.window
@@ -193,11 +221,17 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         let settings = row("Recorder Settings…", symbol: "gearshape", action: #selector(openSettings), key: ",")
         settings.toolTip = "Every recorder option in one place: recording, camera, shortcuts, the menu bar and the editor"
         menu.addItem(settings)
-        if !recents.isEmpty {
-            menu.addItem(.separator())
-            let header = NSMenuItem(title: "Recent", action: nil, keyEquivalent: "")
-            header.isEnabled = false
-            menu.addItem(header)
+        menu.addItem(.separator())
+        let recentMenu = NSMenu(title: "Recent")
+        recentMenu.autoenablesItems = false
+        let recentRow = NSMenuItem(title: "Recent", action: nil, keyEquivalent: "")
+        recentRow.submenu = recentMenu
+        menu.addItem(recentRow)
+        if recents.isEmpty {
+            let empty = NSMenuItem(title: "No recent recordings", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            recentMenu.addItem(empty)
+        } else {
             for recent in recents.prefix(6) {
                 let row = NSMenuItem(title: recent.title, action: #selector(openRecent(_:)), keyEquivalent: "")
                 row.target = self
@@ -210,22 +244,28 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
                     row.title = "\(recent.title) (recording)"
                     row.toolTip = "Still recording; stop it from the red menu bar item or with tools recorder stop"
                     row.isEnabled = false
-                    menu.addItem(row)
+                    recentMenu.addItem(row)
                     continue
                 }
                 if Self.recentActions {
                     // A row with a submenu opens it on hover; Open in Editor is its first entry.
-                    row.submenu = MenuButtonPresenter.menu(RecordingActions.menuItems(for: recent) { [weak self] in self?.report($0) })
+                    row.submenu = MenuButtonPresenter.menu(RecordingActions.menuItems(for: recent) { [weak self] action in
+                        self?.performRecent(action, recent)
+                    })
                 }
-                menu.addItem(row)
+                recentMenu.addItem(row)
             }
-            let actions = row("Quick Actions in Recent", symbol: nil, action: #selector(toggleRecentActions), key: "")
-            actions.state = Self.recentActions ? .on : .off
-            actions.toolTip = "Each recent recording opens a menu: open, copy the movie or a GIF, show in Finder, rename, its meeting, Trash. Off, a click opens the editor."
-            menu.addItem(actions)
         }
+        let actions = row("Quick Actions in Recent", symbol: nil, action: #selector(toggleRecentActions), key: "")
+        actions.state = Self.recentActions ? .on : .off
+        actions.toolTip = "Each recent recording opens a menu: open, copy the movie or a GIF, show in Finder, rename, its meeting, Trash. Off, a click opens the editor."
+        menu.addItem(actions)
         menu.addItem(.separator())
-        menu.addItem(row("Quit Recorder", symbol: nil, action: #selector(quit), key: "q"))
+        let quit = row("Quit Recorder", symbol: nil, action: #selector(quit), key: "q")
+        if AppParts.isLinked("widget"), MenuBarSettings.separateRecorder() {
+            quit.toolTip = "While the separate Recorder item is on, the running widget restarts Recorder after it quits."
+        }
+        menu.addItem(quit)
     }
 
     private func row(_ title: String, symbol: String?, action: Selector, key: String) -> NSMenuItem {
@@ -253,7 +293,7 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
                     self.thumbnails.merge(images) { $1 }
                     guard list != self.recents else { return }
                     self.recents = list
-                    if let menu = self.item?.menu { self.build(menu) }
+                    if let menu = self.displayedMenu { self.build(menu) }
                 }
             }
         }
@@ -392,14 +432,35 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         }
     }
 
-    @objc private func recordScreen() { startRecording(audio: false) }
-    @objc private func recordScreenWithAudio() { startRecording(audio: true) }
-    @objc private func openPicker() { CapturePicker.shared.show() }
+    @objc private func recordScreen() { run(.recordScreen) }
+    @objc private func recordScreenWithAudio() { run(.recordScreenWithAudio) }
+    @objc private func openPicker() { run(.picker) }
 
-    /// The display in use, through the picker's one start path (the Screen Recording grant, the countdown, the camera
-    /// preview left out) with the saved options, as the Start shortcut does.
+    enum Command: UInt8, Sendable {
+        case recordScreen = 1, recordScreenWithAudio, picker, openRecording, library, quit
+    }
+
+    func run(_ command: Command) {
+        if routesToRecorder {
+            RecorderMenuIPC.send(command)
+            return
+        }
+        switch command {
+        case .recordScreen: startRecording(audio: false)
+        case .recordScreenWithAudio: startRecording(audio: true)
+        case .picker: CapturePicker.shared.show()
+        case .openRecording: chooseRecording()
+        case .library: LibraryWindow.shared.show(focus: true)
+        case .quit:
+            RecorderMenuIPC.unlinkOwnSocket()
+            FaceLifecycle.recorderExiting(code: 0)
+            exit(0)
+        }
+    }
+
+    /// Open the setup bar with the menu's sources. Record confirms the draft.
     func startRecording(audio: Bool) {
-        CapturePicker.shared.choose(.followPointer, options: Self.menuOptions(audio: audio, saved: .load()))
+        CapturePicker.shared.show(preset: Self.menuOptions(audio: audio, saved: .load()))
     }
 
     /// The saved options; "Record Screen with Audio" turns both audio sources on, "Record Screen" keeps the saved ones.
@@ -412,24 +473,37 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         return options
     }
 
-    /// The one start path: `tools recorder start` in its own process (it owns the recording and its socket); the live
-    /// recordings' item and the floating controls (on by default) appear when its live entry does. `onFailure` runs
-    /// when it does not start or stops at once (the capture picker's countdown, held until the first frame, ends then).
-    func startRecording(arguments args: [String], onFailure: (() -> Void)? = nil) {
+    /// Retain this start's stdout: its started line identifies the socket, and its result confirms finalization.
+    func startRecording(arguments args: [String], onLines: @escaping @MainActor ([String]) -> Void,
+                        onExit: @escaping @MainActor (Int32, String) -> Void) throws -> DetachedToolsJob {
         HubPerf.log("recorder: start \(args.joined(separator: " "))")
+        // Files keep the recorder alive if the face exits; a pipe would break on its next elapsed event.
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("recorder-start-" + UUID().uuidString)
+        let (record, process) = try DetachedToolsJob.start(bridge: ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath()),
+                                                          subcommand: "recorder", args: Array(args.dropFirst()),
+                                                          outputPath: folder.appendingPathComponent("events.jsonl").path,
+                                                          errorPath: folder.appendingPathComponent("stderr.log").path)
         do {
-            try ToolsRunner.detachedRun(args) { failure in
-                onFailure?()
-                // Try again runs the same start; the picker's countdown is over by then, so it has no `onFailure`.
-                RecorderNotice.startFailed(failure) { [weak self] in self?.startRecording(arguments: args) }
+            return try DetachedToolsJob(record: record, process: process, onLines: onLines) { exit in
+                let status = exit.status ?? -1
+                onExit(status, exit.stderr)
+                if status != 0, !exit.stopped {
+                    let failure = ToolsRunner.EarlyFailure(argv: args, status: status, output: exit.stderr,
+                                                           logFile: record.errorPath, logLine: 1)
+                    RecorderNotice.startFailed(failure, retry: nil)
+                } else {
+                    try? FileManager.default.removeItem(at: folder)
+                }
             }
         } catch {
-            onFailure?()
-            RecorderNotice.failure("The recording did not start.", more: error.localizedDescription)
+            if process.isRunning { process.terminate() }
+            throw error
         }
     }
 
-    @objc private func openRecording() {
+    @objc private func openRecording() { run(.openRecording) }
+
+    private func chooseRecording() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = true
@@ -442,12 +516,24 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
 
     @objc private func openRecent(_ sender: NSMenuItem) {
         guard let path = sender.representedObject as? String, let recent = recents.first(where: { $0.folder.path == path }) else { return }
-        Self.open(recent)
+        performRecent(.open, recent)
     }
 
-    @objc private func openLibrary() {
-        LibraryWindow.shared.show(focus: true)
+    private func performRecent(_ action: RecordingAction, _ recent: Recent) {
+        if routesToRecorder, action == .open || action == .firstComment, recent.hasMovie, !recent.recording {
+            var argv = ["--recorder", "--edit", recent.folder.path]
+            if action == .firstComment, let at = recent.firstOpenCommentUs {
+                argv += ["--at-source-seconds", String(Double(at) / 1_000_000)]
+            }
+            FaceLaunch.start(argv, activates: false) { error in
+                RecorderNotice.failure("The recording did not open.", more: error.localizedDescription)
+            }
+            return
+        }
+        RecordingActions.run(action, recent) { [weak self] in self?.report($0) }
     }
+
+    @objc private func openLibrary() { run(.library) }
 
     @objc private func openSettings() {
         FeatureSettingsLaunch.open(pageID: RecorderSettingsPlugin.recordingPageID)
@@ -464,9 +550,7 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         PathOpener.finder(Self.libraryFolder.path)
     }
 
-    @objc private func quit() {
-        exit(0)
-    }
+    @objc private func quit() { run(.quit) }
 }
 
 extension ISO8601DateFormatter {

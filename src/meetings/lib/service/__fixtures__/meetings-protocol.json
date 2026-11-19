@@ -1,6 +1,6 @@
 {
   "protocol": 1,
-  "about": "One real request and reply per Meetings service method and event (src/meetings/lib/service/api.ts), captured over raw sockets from the TypeScript service on a scratch store with invented meetings. The Swift client tests decode these; src/meetings/lib/service/service.test.ts checks every one against the method's schemas and against a live service. Regenerate: set examples to [] and run bun run test src/meetings/lib/service/service.test.ts",
+  "about": "One real request and reply per Meetings service method and event (src/meetings/lib/service/api.ts), captured over raw sockets from the TypeScript service on a scratch store with invented meetings. The Swift client tests decode these, and service.test.ts checks the schemas and the live service. Regenerate with GENESIS_TOOLS_WRITE_GOLDEN=1 bun run test src/meetings/lib/service/service.test.ts --test-name-pattern 'a live service on the scratch store'.",
   "examples": [
     {
       "method": "hello",
@@ -28,8 +28,12 @@
             "meeting.listen.prepare",
             "meeting.voice.enrol",
             "meeting.people.edit",
+            "meeting.sources.near",
+            "meeting.link",
             "meeting.voice",
             "meeting.suggest",
+            "meeting.seats.suggest",
+            "meeting.thresholds.preview",
             "meeting.transcript",
             "meeting.wordTimings.generate",
             "meeting.revisions",
@@ -42,6 +46,7 @@
             "moment.save",
             "tone.preview",
             "tone.presets",
+            "rules.names",
             "meeting.audio",
             "acoustic.inspect",
             "acoustic.clip",
@@ -71,6 +76,8 @@
             "people.known",
             "people.meetings",
             "people.add",
+            "people.devices.list",
+            "people.devices.decide",
             "people.hide",
             "people.planMerge",
             "people.merge",
@@ -89,6 +96,19 @@
             "dictionary.add",
             "dictionary.remove",
             "dictionary.test",
+            "voices.list",
+            "voices.preview",
+            "voices.apply",
+            "voices.remove",
+            "voices.sample",
+            "voices.workers",
+            "voices.move",
+            "voices.reject",
+            "voices.undo",
+            "voices.quality",
+            "voice.backfill",
+            "voices.jobs",
+            "voices.jobs.cancel",
             "subscribe",
             "unsubscribe"
           ],
@@ -99,9 +119,10 @@
             "decision.reverted",
             "comment.sent",
             "comment.changed",
-            "people.changed"
+            "people.changed",
+            "voices.job"
           ],
-          "version": "db2fcb7aece3"
+          "version": "05eb8a38d4f3"
         }
       }
     },
@@ -230,7 +251,7 @@
             ],
             "history": [
               {
-                "at": "2026-11-03T09:46:00.000Z",
+                "at": "2026-11-03T10:00:00.000Z",
                 "command": "link",
                 "change": "linked wisprflow:wf-2041"
               }
@@ -313,7 +334,7 @@
           ],
           "history": [
             {
-              "at": "2026-11-03T09:46:00.000Z",
+              "at": "2026-11-03T10:00:00.000Z",
               "command": "link",
               "change": "linked wisprflow:wf-2041"
             }
@@ -339,7 +360,7 @@
         "id": 5,
         "error": {
           "code": 1100,
-          "message": "No meeting \"nope\". List them: tools meetings list",
+          "message": "No meeting \"nope\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate nope",
           "data": {
             "code": "meeting-not-found"
           },
@@ -366,7 +387,7 @@
         "id": 6,
         "error": {
           "code": 1100,
-          "message": "No meeting \"nope\". List them: tools meetings list",
+          "message": "No meeting \"nope\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate nope",
           "data": {
             "code": "meeting-not-found"
           },
@@ -393,7 +414,7 @@
         "id": 7,
         "error": {
           "code": 1100,
-          "message": "No meeting \"nope\". List them: tools meetings list",
+          "message": "No meeting \"nope\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate nope",
           "data": {
             "code": "meeting-not-found"
           },
@@ -421,7 +442,7 @@
         "id": 8,
         "error": {
           "code": 1100,
-          "message": "No meeting \"nope\". List them: tools meetings list",
+          "message": "No meeting \"nope\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate nope",
           "data": {
             "code": "meeting-not-found"
           },
@@ -448,7 +469,7 @@
         "id": 9,
         "error": {
           "code": 1100,
-          "message": "No meeting \"nope\". List them: tools meetings list",
+          "message": "No meeting \"nope\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate nope",
           "data": {
             "code": "meeting-not-found"
           },
@@ -460,12 +481,188 @@
       }
     },
     {
+      "method": "voices.list",
+      "direction": "client→service",
+      "note": "A project with no voice samples still lists its attended people, each with an empty samples array.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 10,
+        "method": "voices.list",
+        "params": {
+          "project": "Atlas"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 10,
+        "result": {
+          "people": [
+            {
+              "person": "Alex Example",
+              "owner": {
+                "name": "Alex Example"
+              },
+              "project": "Atlas",
+              "projects": [
+                "Atlas"
+              ],
+              "meetings": [
+                "2026-11-03-1000-design-review"
+              ],
+              "samples": []
+            },
+            {
+              "person": "Dana Example",
+              "owner": {
+                "name": "Dana Example"
+              },
+              "project": "Atlas",
+              "projects": [
+                "Atlas"
+              ],
+              "meetings": [
+                "2026-11-03-1000-design-review"
+              ],
+              "samples": []
+            }
+          ],
+          "learnt": [],
+          "conflicts": []
+        }
+      }
+    },
+    {
+      "method": "voices.preview",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 11,
+        "method": "voices.preview",
+        "params": {
+          "meeting": "nope"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 11,
+        "error": {
+          "code": 1100,
+          "message": "No meeting \"nope\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate nope",
+          "data": {
+            "code": "meeting-not-found"
+          },
+          "stack": "<stack>",
+          "issue": {
+            "tool": "meetings"
+          }
+        }
+      }
+    },
+    {
+      "method": "voices.apply",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 12,
+        "method": "voices.apply",
+        "params": {
+          "meeting": "nope"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 12,
+        "error": {
+          "code": 1100,
+          "message": "No meeting \"nope\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate nope",
+          "data": {
+            "code": "meeting-not-found"
+          },
+          "stack": "<stack>",
+          "issue": {
+            "tool": "meetings"
+          }
+        }
+      }
+    },
+    {
+      "method": "voices.sample",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 13,
+        "method": "voices.sample",
+        "params": {
+          "project": "Atlas",
+          "person": "Alice Example",
+          "sample": 0
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 13,
+        "error": {
+          "code": -32602,
+          "message": "voices.sample: sample: Too small: expected number to be >0",
+          "stack": "<stack>",
+          "issue": {
+            "tool": "meetings"
+          }
+        }
+      }
+    },
+    {
+      "method": "voices.workers",
+      "direction": "client→service",
+      "note": "What auto voice workers means now, from a fixed CPU sample.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 14,
+        "method": "voices.workers",
+        "params": {}
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 14,
+        "result": {
+          "auto": 2,
+          "performanceCores": 12,
+          "idleCores": 2.6
+        }
+      }
+    },
+    {
+      "method": "voices.remove",
+      "direction": "client→service",
+      "note": "preview: read only.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 15,
+        "method": "voices.remove",
+        "params": {
+          "project": "Atlas",
+          "person": "Alice Example",
+          "preview": true
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 15,
+        "result": {
+          "project": "Atlas",
+          "person": "Alice Example",
+          "removed": 0,
+          "affected": []
+        }
+      }
+    },
+    {
       "method": "meeting.show",
       "direction": "client→service",
       "note": "No meeting: meeting-not-found.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 10,
+        "id": 16,
         "method": "meeting.show",
         "params": {
           "ref": "nope"
@@ -473,10 +670,10 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 10,
+        "id": 16,
         "error": {
           "code": 1100,
-          "message": "No meeting \"nope\". List them: tools meetings list",
+          "message": "No meeting \"nope\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate nope",
           "data": {
             "code": "meeting-not-found"
           },
@@ -493,7 +690,7 @@
       "note": "A prefix of two meetings: meeting-ref.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 11,
+        "id": 17,
         "method": "meeting.show",
         "params": {
           "ref": "2026-11-03"
@@ -501,7 +698,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 11,
+        "id": 17,
         "error": {
           "code": 1100,
           "message": "\"2026-11-03\" fits 2 meetings: 2026-11-03-1400-retro, 2026-11-03-1000-design-review",
@@ -520,7 +717,7 @@
       "direction": "client→service",
       "request": {
         "jsonrpc": "2.0",
-        "id": 12,
+        "id": 18,
         "method": "meeting.transcript",
         "params": {
           "ref": "2026-11-03-1000-design-review"
@@ -528,7 +725,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 12,
+        "id": 18,
         "result": {
           "meeting": "2026-11-03-1000-design-review",
           "entries": [
@@ -557,7 +754,7 @@
           ],
           "wordTimings": {
             "state": "missing",
-            "revision": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "revision": "0000000000000000000000000000000000000000000000000000000000000015",
             "windows": [],
             "sources": []
           }
@@ -569,7 +766,7 @@
       "direction": "client→service",
       "request": {
         "jsonrpc": "2.0",
-        "id": 13,
+        "id": 19,
         "method": "meeting.transcript",
         "params": {
           "ref": "2026-11-03-1000-design-review",
@@ -586,7 +783,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 13,
+        "id": 19,
         "result": {
           "meeting": "2026-11-03-1000-design-review",
           "entries": [
@@ -615,7 +812,7 @@
           ],
           "wordTimings": {
             "state": "missing",
-            "revision": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "revision": "0000000000000000000000000000000000000000000000000000000000000015",
             "windows": [],
             "sources": []
           },
@@ -792,7 +989,7 @@
       "note": "The native transcript keeps confidence and guess metadata for its local threshold.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 14,
+        "id": 20,
         "method": "meeting.transcript",
         "params": {
           "ref": "2026-11-03-1000-design-review",
@@ -801,7 +998,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 14,
+        "id": 20,
         "result": {
           "meeting": "2026-11-03-1000-design-review",
           "entries": [
@@ -830,7 +1027,7 @@
           ],
           "wordTimings": {
             "state": "missing",
-            "revision": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "revision": "0000000000000000000000000000000000000000000000000000000000000015",
             "windows": [],
             "sources": []
           }
@@ -842,7 +1039,7 @@
       "direction": "client→service",
       "request": {
         "jsonrpc": "2.0",
-        "id": 15,
+        "id": 21,
         "method": "meeting.wordTimings.generate",
         "params": {
           "ref": "2026-11-03-1000-design-review",
@@ -853,10 +1050,10 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 15,
+        "id": 21,
         "result": {
           "meeting": "2026-11-03-1000-design-review",
-          "cacheRevision": "17e6458bac390154e1216bcbfc56fb696a5bcae940b1eeaa3edda00fc6f7b7bf",
+          "cacheRevision": "0000000000000000000000000000000000000000000000000000000000000016",
           "reused": false,
           "window": {
             "fromSec": 0,
@@ -872,7 +1069,7 @@
             "boundaryLinesSkipped": 1
           },
           "provenance": {
-            "id": "baf5556e9adf9f47a3b3d8f845ba9db9cc2c34702ad0977819ee5ec1d0bc6b91",
+            "id": "0000000000000000000000000000000000000000000000000000000000000017",
             "kind": "asr",
             "modelId": "fixture/words",
             "language": "auto",
@@ -880,9 +1077,9 @@
               "id": "transformers-js",
               "version": "4.2.0"
             },
-            "modelFingerprint": "ec3bc81190d82218a8c655d3713a0476f013b16a01f6cff88ee74bb91d272554",
-            "audioFingerprint": "7447235bb53ff3e25aa9f32ab93509c813acb4c297f303db5c0e499bdc07234d",
-            "generatedAt": "2026-11-13T10:00:44.865Z",
+            "modelFingerprint": "0000000000000000000000000000000000000000000000000000000000000018",
+            "audioFingerprint": "0000000000000000000000000000000000000000000000000000000000000019",
+            "generatedAt": "2026-11-03T10:00:00.000Z",
             "policy": "exact-word-v1",
             "pcmSha256": "fixture-pcm"
           }
@@ -895,7 +1092,7 @@
       "note": "No transcript source: a meeting state.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 16,
+        "id": 22,
         "method": "meeting.transcript",
         "params": {
           "ref": "2026-11-03-1400-retro"
@@ -903,7 +1100,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 16,
+        "id": 22,
         "error": {
           "code": 1100,
           "message": "2026-11-03-1400-retro has no source with a transcript. Link one: tools meetings link 2026-11-03-1400-retro 'wisprflow:<id>'",
@@ -923,7 +1120,7 @@
       "note": "No transcript source with the combined native threshold preview flags.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 17,
+        "id": 23,
         "method": "meeting.transcript",
         "params": {
           "ref": "2026-11-03-1400-retro",
@@ -940,7 +1137,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 17,
+        "id": 23,
         "error": {
           "code": 1100,
           "message": "2026-11-03-1400-retro has no source with a transcript. Link one: tools meetings link 2026-11-03-1400-retro 'wisprflow:<id>'",
@@ -960,7 +1157,7 @@
       "note": "No transcript source with the native preview flags.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 18,
+        "id": 24,
         "method": "meeting.transcript",
         "params": {
           "ref": "2026-11-03-1400-retro",
@@ -969,7 +1166,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 18,
+        "id": 24,
         "error": {
           "code": 1100,
           "message": "2026-11-03-1400-retro has no source with a transcript. Link one: tools meetings link 2026-11-03-1400-retro 'wisprflow:<id>'",
@@ -988,7 +1185,7 @@
       "direction": "client→service",
       "request": {
         "jsonrpc": "2.0",
-        "id": 19,
+        "id": 25,
         "method": "meeting.revisions",
         "params": {
           "ref": "2026-11-03-1000-design-review"
@@ -996,13 +1193,13 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 19,
+        "id": 25,
         "result": {
           "meeting": "2026-11-03-1000-design-review",
-          "show": "3splxlu1olo76",
-          "transcript": "37vnvkcyeuo3e",
-          "speakers": "3knl1lu29e97v",
-          "timeline": "24rij5852rmzs"
+          "show": "fixture1",
+          "transcript": "fixture2",
+          "speakers": "fixture3",
+          "timeline": "fixture4"
         }
       }
     },
@@ -1012,7 +1209,7 @@
       "note": "A bad param: -32602 before any handler.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 20,
+        "id": 26,
         "method": "meetings.list",
         "params": {
           "limit": 0
@@ -1020,7 +1217,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 20,
+        "id": 26,
         "error": {
           "code": -32602,
           "message": "meetings.list: limit: Too small: expected number to be >0",
@@ -1036,7 +1233,7 @@
       "direction": "client→service",
       "request": {
         "jsonrpc": "2.0",
-        "id": 21,
+        "id": 27,
         "method": "subscribe",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -1047,7 +1244,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 21,
+        "id": 27,
         "result": {
           "events": [
             "meeting.changed"
@@ -1060,7 +1257,7 @@
       "direction": "client→service",
       "request": {
         "jsonrpc": "2.0",
-        "id": 22,
+        "id": 28,
         "method": "subscribe",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -1073,7 +1270,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 22,
+        "id": 28,
         "result": {
           "events": [
             "meeting.changed",
@@ -1089,7 +1286,7 @@
       "note": "Sent after the event, so the event is in before its reply.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 23,
+        "id": 29,
         "method": "meetings.list",
         "params": {
           "limit": 1
@@ -1097,7 +1294,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 23,
+        "id": 29,
         "result": [
           {
             "id": "2026-11-03-1400-retro",
@@ -1157,7 +1354,7 @@
       "note": "A meeting filter that does not read: -32602, and the subscription before stays.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 24,
+        "id": 30,
         "method": "subscribe",
         "params": {
           "meeting": ""
@@ -1165,7 +1362,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 24,
+        "id": 30,
         "error": {
           "code": -32602,
           "message": "subscribe: meeting: Too small: expected string to have >=1 characters",
@@ -1182,13 +1379,13 @@
       "note": "The end of the subscription: no event reaches it until it subscribes again.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 25,
+        "id": 31,
         "method": "unsubscribe",
         "params": {}
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 25,
+        "id": 31,
         "result": {
           "events": []
         }
@@ -1205,7 +1402,7 @@
         "params": {
           "role": "agent",
           "harness": "claude-code",
-          "session": "11111111-2222-4333-8444-555555555555",
+          "session": "00000000-0000-4000-8000-000000000006",
           "protocol": 1,
           "code": "0123456789ab"
         }
@@ -1223,8 +1420,12 @@
             "meeting.listen.prepare",
             "meeting.voice.enrol",
             "meeting.people.edit",
+            "meeting.sources.near",
+            "meeting.link",
             "meeting.voice",
             "meeting.suggest",
+            "meeting.seats.suggest",
+            "meeting.thresholds.preview",
             "meeting.transcript",
             "meeting.wordTimings.generate",
             "meeting.revisions",
@@ -1237,6 +1438,7 @@
             "moment.save",
             "tone.preview",
             "tone.presets",
+            "rules.names",
             "meeting.audio",
             "acoustic.inspect",
             "acoustic.clip",
@@ -1266,6 +1468,8 @@
             "people.known",
             "people.meetings",
             "people.add",
+            "people.devices.list",
+            "people.devices.decide",
             "people.hide",
             "people.planMerge",
             "people.merge",
@@ -1284,6 +1488,19 @@
             "dictionary.add",
             "dictionary.remove",
             "dictionary.test",
+            "voices.list",
+            "voices.preview",
+            "voices.apply",
+            "voices.remove",
+            "voices.sample",
+            "voices.workers",
+            "voices.move",
+            "voices.reject",
+            "voices.undo",
+            "voices.quality",
+            "voice.backfill",
+            "voices.jobs",
+            "voices.jobs.cancel",
             "subscribe",
             "unsubscribe"
           ],
@@ -1294,9 +1511,10 @@
             "decision.reverted",
             "comment.sent",
             "comment.changed",
-            "people.changed"
+            "people.changed",
+            "voices.job"
           ],
-          "version": "db2fcb7aece3"
+          "version": "05eb8a38d4f3"
         }
       }
     },
@@ -1306,7 +1524,7 @@
       "note": "The window hears every decision on the open meeting, with its journal entry, and each send of its comments.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 26,
+        "id": 32,
         "method": "subscribe",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -1319,7 +1537,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 26,
+        "id": 32,
         "result": {
           "events": [
             "decision.applied",
@@ -1352,13 +1570,13 @@
         "id": 2,
         "result": {
           "entry": {
-            "token": "e1a25a5b-dae0-4e6b-bfda-5634f82888e1",
+            "token": "00000000-0000-4000-8000-000000000007",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
               "kind": "agent",
               "harness": "claude-code",
-              "session": "11111111-2222-4333-8444-555555555555"
+              "session": "00000000-0000-4000-8000-000000000006"
             },
             "action": {
               "kind": "confirm",
@@ -1411,7 +1629,7 @@
                   "suggestedAt": "2026-11-03T09:47:00.000Z",
                   "decidedAt": "2026-11-03T10:00:00.000Z",
                   "decision": {
-                    "token": "e1a25a5b-dae0-4e6b-bfda-5634f82888e1",
+                    "token": "00000000-0000-4000-8000-000000000007",
                     "previous": {
                       "status": "suggested",
                       "speaker": "Alex Example"
@@ -1419,7 +1637,7 @@
                     "actor": {
                       "kind": "agent",
                       "harness": "claude-code",
-                      "session": "11111111-2222-4333-8444-555555555555"
+                      "session": "00000000-0000-4000-8000-000000000006"
                     },
                     "entry": {
                       "action": "confirm"
@@ -1463,13 +1681,13 @@
         "id": 3,
         "result": {
           "entry": {
-            "token": "e26e55f9-3cc2-4661-9385-15b2c7f6d7fd",
+            "token": "00000000-0000-4000-8000-000000000008",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
               "kind": "agent",
               "harness": "claude-code",
-              "session": "11111111-2222-4333-8444-555555555555"
+              "session": "00000000-0000-4000-8000-000000000006"
             },
             "reason": "the calendar says so",
             "action": {
@@ -1523,7 +1741,7 @@
                   "suggestedAt": "2026-11-03T09:47:00.000Z",
                   "decidedAt": "2026-11-03T10:00:00.000Z",
                   "decision": {
-                    "token": "e26e55f9-3cc2-4661-9385-15b2c7f6d7fd",
+                    "token": "00000000-0000-4000-8000-000000000008",
                     "previous": {
                       "status": "suggested",
                       "speaker": "Alex Example"
@@ -1531,7 +1749,7 @@
                     "actor": {
                       "kind": "agent",
                       "harness": "claude-code",
-                      "session": "11111111-2222-4333-8444-555555555555"
+                      "session": "00000000-0000-4000-8000-000000000006"
                     },
                     "entry": {
                       "action": "confirm",
@@ -1554,7 +1772,11 @@
                   "id": "i1",
                   "label": "i1",
                   "kind": "speaker-range",
+                  "kindWord": "Speaker range",
                   "status": "suggested",
+                  "rules": [
+                    "presence"
+                  ],
                   "confidence": 0.82,
                   "what": "Speaker 3 00:12–00:30 → Alex Example",
                   "parts": [
@@ -1576,14 +1798,6 @@
                         "kind": "item",
                         "id": "i1"
                       }
-                    },
-                    {
-                      "kind": "reason",
-                      "pieces": [
-                        {
-                          "text": "Rules: presence"
-                        }
-                      ]
                     }
                   ],
                   "choices": [
@@ -1634,7 +1848,11 @@
                   "id": "i1",
                   "label": "i1",
                   "kind": "speaker-range",
+                  "kindWord": "Speaker range",
                   "status": "confirmed",
+                  "rules": [
+                    "presence"
+                  ],
                   "confidence": 0.82,
                   "what": "Speaker 3 00:12–00:30 → Alex Example",
                   "parts": [
@@ -1656,14 +1874,6 @@
                         "kind": "item",
                         "id": "i1"
                       }
-                    },
-                    {
-                      "kind": "reason",
-                      "pieces": [
-                        {
-                          "text": "Rules: presence"
-                        }
-                      ]
                     }
                   ],
                   "choices": [
@@ -1710,11 +1920,11 @@
                     "id": "i1"
                   },
                   "decision": {
-                    "token": "e26e55f9-3cc2-4661-9385-15b2c7f6d7fd",
+                    "token": "00000000-0000-4000-8000-000000000008",
                     "actor": {
                       "kind": "agent",
                       "harness": "claude-code",
-                      "session": "11111111-2222-4333-8444-555555555555"
+                      "session": "00000000-0000-4000-8000-000000000006"
                     },
                     "by": "an agent (Claude Code, session 11111111)",
                     "action": "confirm",
@@ -1774,7 +1984,7 @@
         "method": "decision.revert",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
-          "token": "e26e55f9-3cc2-4661-9385-15b2c7f6d7fd"
+          "token": "00000000-0000-4000-8000-000000000008"
         }
       },
       "reply": {
@@ -1782,17 +1992,17 @@
         "id": 4,
         "result": {
           "entry": {
-            "token": "b02fabef-e7d5-4a4b-b507-20973be7b1ea",
+            "token": "00000000-0000-4000-8000-000000000009",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
               "kind": "agent",
               "harness": "claude-code",
-              "session": "11111111-2222-4333-8444-555555555555"
+              "session": "00000000-0000-4000-8000-000000000006"
             },
             "action": {
               "kind": "revert",
-              "token": "e26e55f9-3cc2-4661-9385-15b2c7f6d7fd"
+              "token": "00000000-0000-4000-8000-000000000008"
             },
             "decided": [],
             "settled": [],
@@ -1819,7 +2029,7 @@
                   "suggestedAt": "2026-11-03T09:47:00.000Z",
                   "decidedAt": "2026-11-03T10:00:00.000Z",
                   "decision": {
-                    "token": "e26e55f9-3cc2-4661-9385-15b2c7f6d7fd",
+                    "token": "00000000-0000-4000-8000-000000000008",
                     "previous": {
                       "status": "suggested",
                       "speaker": "Alex Example"
@@ -1827,7 +2037,7 @@
                     "actor": {
                       "kind": "agent",
                       "harness": "claude-code",
-                      "session": "11111111-2222-4333-8444-555555555555"
+                      "session": "00000000-0000-4000-8000-000000000006"
                     },
                     "entry": {
                       "action": "confirm",
@@ -1884,13 +2094,13 @@
         "id": 5,
         "result": {
           "entry": {
-            "token": "6c372f4c-08a5-4206-a646-32894d5d1b7f",
+            "token": "00000000-0000-4000-8000-000000000010",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
               "kind": "agent",
               "harness": "claude-code",
-              "session": "11111111-2222-4333-8444-555555555555"
+              "session": "00000000-0000-4000-8000-000000000006"
             },
             "action": {
               "kind": "confirm",
@@ -1943,7 +2153,7 @@
                   "suggestedAt": "2026-11-03T09:47:00.000Z",
                   "decidedAt": "2026-11-03T10:00:00.000Z",
                   "decision": {
-                    "token": "6c372f4c-08a5-4206-a646-32894d5d1b7f",
+                    "token": "00000000-0000-4000-8000-000000000010",
                     "previous": {
                       "status": "suggested",
                       "speaker": "Alex Example"
@@ -1951,7 +2161,7 @@
                     "actor": {
                       "kind": "agent",
                       "harness": "claude-code",
-                      "session": "11111111-2222-4333-8444-555555555555"
+                      "session": "00000000-0000-4000-8000-000000000006"
                     },
                     "entry": {
                       "action": "confirm"
@@ -1973,7 +2183,11 @@
                   "id": "i1",
                   "label": "i1",
                   "kind": "speaker-range",
+                  "kindWord": "Speaker range",
                   "status": "suggested",
+                  "rules": [
+                    "presence"
+                  ],
                   "confidence": 0.82,
                   "what": "Speaker 3 00:12–00:30 → Alex Example",
                   "parts": [
@@ -1995,14 +2209,6 @@
                         "kind": "item",
                         "id": "i1"
                       }
-                    },
-                    {
-                      "kind": "reason",
-                      "pieces": [
-                        {
-                          "text": "Rules: presence"
-                        }
-                      ]
                     }
                   ],
                   "choices": [
@@ -2053,7 +2259,11 @@
                   "id": "i1",
                   "label": "i1",
                   "kind": "speaker-range",
+                  "kindWord": "Speaker range",
                   "status": "confirmed",
+                  "rules": [
+                    "presence"
+                  ],
                   "confidence": 0.82,
                   "what": "Speaker 3 00:12–00:30 → Alex Example",
                   "parts": [
@@ -2075,14 +2285,6 @@
                         "kind": "item",
                         "id": "i1"
                       }
-                    },
-                    {
-                      "kind": "reason",
-                      "pieces": [
-                        {
-                          "text": "Rules: presence"
-                        }
-                      ]
                     }
                   ],
                   "choices": [
@@ -2129,11 +2331,11 @@
                     "id": "i1"
                   },
                   "decision": {
-                    "token": "6c372f4c-08a5-4206-a646-32894d5d1b7f",
+                    "token": "00000000-0000-4000-8000-000000000010",
                     "actor": {
                       "kind": "agent",
                       "harness": "claude-code",
-                      "session": "11111111-2222-4333-8444-555555555555"
+                      "session": "00000000-0000-4000-8000-000000000006"
                     },
                     "by": "an agent (Claude Code, session 11111111)",
                     "action": "confirm",
@@ -2188,7 +2390,7 @@
       "note": "The window's click on an item decided since: already-decided, with the entry that decided it.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 27,
+        "id": 33,
         "method": "decision.apply",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -2203,7 +2405,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 27,
+        "id": 33,
         "error": {
           "code": 1100,
           "message": "i1 is confirmed already by an agent (Claude Code, session 11111111); nothing was decided",
@@ -2212,13 +2414,13 @@
               "i1"
             ],
             "entry": {
-              "token": "6c372f4c-08a5-4206-a646-32894d5d1b7f",
+              "token": "00000000-0000-4000-8000-000000000010",
               "at": "2026-11-03T10:00:00.000Z",
               "meeting": "2026-11-03-1000-design-review",
               "actor": {
                 "kind": "agent",
                 "harness": "claude-code",
-                "session": "11111111-2222-4333-8444-555555555555"
+                "session": "00000000-0000-4000-8000-000000000006"
               },
               "action": {
                 "kind": "confirm",
@@ -2271,7 +2473,7 @@
                     "suggestedAt": "2026-11-03T09:47:00.000Z",
                     "decidedAt": "2026-11-03T10:00:00.000Z",
                     "decision": {
-                      "token": "6c372f4c-08a5-4206-a646-32894d5d1b7f",
+                      "token": "00000000-0000-4000-8000-000000000010",
                       "previous": {
                         "status": "suggested",
                         "speaker": "Alex Example"
@@ -2279,7 +2481,7 @@
                       "actor": {
                         "kind": "agent",
                         "harness": "claude-code",
-                        "session": "11111111-2222-4333-8444-555555555555"
+                        "session": "00000000-0000-4000-8000-000000000006"
                       },
                       "entry": {
                         "action": "confirm"
@@ -2306,7 +2508,7 @@
       "note": "Newest first; revertedBy names the Undo.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 28,
+        "id": 34,
         "method": "journal.read",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -2315,18 +2517,18 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 28,
+        "id": 34,
         "result": {
           "meeting": "2026-11-03-1000-design-review",
           "entries": [
             {
-              "token": "6c372f4c-08a5-4206-a646-32894d5d1b7f",
+              "token": "00000000-0000-4000-8000-000000000010",
               "at": "2026-11-03T10:00:00.000Z",
               "meeting": "2026-11-03-1000-design-review",
               "actor": {
                 "kind": "agent",
                 "harness": "claude-code",
-                "session": "11111111-2222-4333-8444-555555555555"
+                "session": "00000000-0000-4000-8000-000000000006"
               },
               "action": {
                 "kind": "confirm",
@@ -2379,7 +2581,7 @@
                     "suggestedAt": "2026-11-03T09:47:00.000Z",
                     "decidedAt": "2026-11-03T10:00:00.000Z",
                     "decision": {
-                      "token": "6c372f4c-08a5-4206-a646-32894d5d1b7f",
+                      "token": "00000000-0000-4000-8000-000000000010",
                       "previous": {
                         "status": "suggested",
                         "speaker": "Alex Example"
@@ -2387,7 +2589,7 @@
                       "actor": {
                         "kind": "agent",
                         "harness": "claude-code",
-                        "session": "11111111-2222-4333-8444-555555555555"
+                        "session": "00000000-0000-4000-8000-000000000006"
                       },
                       "entry": {
                         "action": "confirm"
@@ -2400,17 +2602,17 @@
               "corrections": []
             },
             {
-              "token": "b02fabef-e7d5-4a4b-b507-20973be7b1ea",
+              "token": "00000000-0000-4000-8000-000000000009",
               "at": "2026-11-03T10:00:00.000Z",
               "meeting": "2026-11-03-1000-design-review",
               "actor": {
                 "kind": "agent",
                 "harness": "claude-code",
-                "session": "11111111-2222-4333-8444-555555555555"
+                "session": "00000000-0000-4000-8000-000000000006"
               },
               "action": {
                 "kind": "revert",
-                "token": "e26e55f9-3cc2-4661-9385-15b2c7f6d7fd"
+                "token": "00000000-0000-4000-8000-000000000008"
               },
               "decided": [],
               "settled": [],
@@ -2437,7 +2639,7 @@
                     "suggestedAt": "2026-11-03T09:47:00.000Z",
                     "decidedAt": "2026-11-03T10:00:00.000Z",
                     "decision": {
-                      "token": "e26e55f9-3cc2-4661-9385-15b2c7f6d7fd",
+                      "token": "00000000-0000-4000-8000-000000000008",
                       "previous": {
                         "status": "suggested",
                         "speaker": "Alex Example"
@@ -2445,7 +2647,7 @@
                       "actor": {
                         "kind": "agent",
                         "harness": "claude-code",
-                        "session": "11111111-2222-4333-8444-555555555555"
+                        "session": "00000000-0000-4000-8000-000000000006"
                       },
                       "entry": {
                         "action": "confirm",
@@ -2486,7 +2688,7 @@
       "note": "The Moment of a row: its span, pad, asked spot (spotSec) and tone (tone.atSec).",
       "request": {
         "jsonrpc": "2.0",
-        "id": 29,
+        "id": 35,
         "method": "moment.plan",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -2498,7 +2700,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 29,
+        "id": 35,
         "result": {
           "moment": {
             "meeting": "2026-11-03-1000-design-review",
@@ -2533,7 +2735,7 @@
       "note": "A target the meeting does not have: cannot, and no Moment.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 30,
+        "id": 36,
         "method": "moment.plan",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -2545,7 +2747,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 30,
+        "id": 36,
         "result": {
           "cannot": {
             "code": "unknown-item",
@@ -2560,7 +2762,7 @@
       "note": "Cut into the clip cache.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 31,
+        "id": 37,
         "method": "moment.clip",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -2572,7 +2774,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 31,
+        "id": 37,
         "result": {
           "meeting": "2026-11-03-1000-design-review",
           "target": {
@@ -2596,7 +2798,7 @@
           },
           "delaySec": 2,
           "repeatGapSec": 1,
-          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-sjtzhg/gt-test-home-jwTtqK/.genesis-tools/meetings-cache/moments/2026-11-03-1000-design-review/00-09-24yxp15xewt0h.wav"
+          "path": "<home>/meetings-cache/moments/2026-11-03-1000-design-review/00-09-fixture16.wav"
         }
       }
     },
@@ -2606,7 +2808,7 @@
       "note": "One track: the window plays the file itself.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 32,
+        "id": 38,
         "method": "meeting.audio",
         "params": {
           "meeting": "2026-11-03-1000-design-review"
@@ -2614,9 +2816,9 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 32,
+        "id": 38,
         "result": {
-          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-sjtzhg/mtg-audio-l7P7Wq/upload.ogg",
+          "path": "<recording>/upload.ogg",
           "tracks": 1,
           "channels": 2,
           "durationSec": 45
@@ -2629,7 +2831,7 @@
       "note": "Missing meeting never manufactures acoustic evidence.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 33,
+        "id": 39,
         "method": "acoustic.inspect",
         "params": {
           "meeting": "missing",
@@ -2639,12 +2841,12 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 33,
+        "id": 39,
         "error": {
           "code": 1100,
-          "message": "Unknown meeting missing",
+          "message": "No meeting \"missing\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate missing",
           "data": {
-            "code": "failed"
+            "code": "meeting-not-found"
           },
           "stack": "<stack>",
           "issue": {
@@ -2659,7 +2861,7 @@
       "note": "Missing recording never creates tracks.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 34,
+        "id": 40,
         "method": "acoustic.clip",
         "params": {
           "meeting": "missing",
@@ -2669,12 +2871,12 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 34,
+        "id": 40,
         "error": {
           "code": 1100,
-          "message": "Unknown meeting missing",
+          "message": "No meeting \"missing\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate missing",
           "data": {
-            "code": "failed"
+            "code": "meeting-not-found"
           },
           "stack": "<stack>",
           "issue": {
@@ -2689,7 +2891,7 @@
       "note": "Missing recording never names a voice.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 35,
+        "id": 41,
         "method": "voice.score",
         "params": {
           "meeting": "missing",
@@ -2700,12 +2902,12 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 35,
+        "id": 41,
         "error": {
           "code": 1100,
-          "message": "Unknown meeting missing",
+          "message": "No meeting \"missing\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate missing",
           "data": {
-            "code": "failed"
+            "code": "meeting-not-found"
           },
           "stack": "<stack>",
           "issue": {
@@ -2719,7 +2921,7 @@
       "direction": "client→service",
       "request": {
         "jsonrpc": "2.0",
-        "id": 36,
+        "id": 42,
         "method": "voice.enroll",
         "params": {
           "meeting": "missing",
@@ -2732,12 +2934,12 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 36,
+        "id": 42,
         "error": {
           "code": 1100,
-          "message": "Unknown meeting missing",
+          "message": "No meeting \"missing\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate missing",
           "data": {
-            "code": "failed"
+            "code": "meeting-not-found"
           },
           "stack": "<stack>",
           "issue": {
@@ -2752,7 +2954,7 @@
       "note": "Model provisioning requires an explicit download action, no model is fetched by this fixture.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 37,
+        "id": 43,
         "method": "voice.prepare",
         "params": {
           "download": false
@@ -2760,7 +2962,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 37,
+        "id": 43,
         "error": {
           "code": -32602,
           "message": "voice.prepare: download: Invalid input: expected true",
@@ -2776,7 +2978,7 @@
       "direction": "client→service",
       "request": {
         "jsonrpc": "2.0",
-        "id": 38,
+        "id": 44,
         "method": "voice.collect",
         "params": {
           "meeting": "missing"
@@ -2784,12 +2986,12 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 38,
+        "id": 44,
         "error": {
           "code": 1100,
-          "message": "Unknown meeting missing",
+          "message": "No meeting \"missing\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate missing",
           "data": {
-            "code": "failed"
+            "code": "meeting-not-found"
           },
           "stack": "<stack>",
           "issue": {
@@ -2803,7 +3005,7 @@
       "direction": "client→service",
       "request": {
         "jsonrpc": "2.0",
-        "id": 39,
+        "id": 45,
         "method": "acoustic.collect",
         "params": {
           "meeting": "missing"
@@ -2811,12 +3013,12 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 39,
+        "id": 45,
         "error": {
           "code": 1100,
-          "message": "Unknown meeting missing",
+          "message": "No meeting \"missing\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate missing",
           "data": {
-            "code": "failed"
+            "code": "meeting-not-found"
           },
           "stack": "<stack>",
           "issue": {
@@ -2831,7 +3033,7 @@
       "note": "No source keeps the recording: unplayable with reason no-audio.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 40,
+        "id": 46,
         "method": "meeting.audio",
         "params": {
           "meeting": "2026-11-03-1400-retro"
@@ -2839,7 +3041,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 40,
+        "id": 46,
         "error": {
           "code": 1100,
           "message": "2026-11-03-1400-retro has no source with a transcript. Link one: tools meetings link 2026-11-03-1400-retro 'wisprflow:<id>'",
@@ -2861,7 +3063,7 @@
       "note": "The tone alone, for a Play button.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 41,
+        "id": 47,
         "method": "tone.preview",
         "params": {
           "sound": {
@@ -2873,9 +3075,9 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 41,
+        "id": 47,
         "result": {
-          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-sjtzhg/gt-test-home-jwTtqK/.genesis-tools/meetings-cache/tones/tone-2a4at58jz1rph.wav",
+          "path": "<home>/meetings-cache/tones/tone-fixture17.wav",
           "sound": {
             "hz": 880,
             "sec": 0.15,
@@ -2890,7 +3092,7 @@
       "note": "A named tone without a volume: its own volume; the answer is its sine and names the preset.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 42,
+        "id": 48,
         "method": "tone.preview",
         "params": {
           "sound": {
@@ -2900,9 +3102,9 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 42,
+        "id": 48,
         "result": {
-          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-sjtzhg/gt-test-home-jwTtqK/.genesis-tools/meetings-cache/tones/tone-a2ihri6ep544.wav",
+          "path": "<home>/meetings-cache/tones/tone-fixture18.wav",
           "sound": {
             "hz": 2000,
             "sec": 0.03,
@@ -2918,7 +3120,7 @@
       "note": "Two pads and a tone for this call: padAfterSec shows where it differs from padSec; the tone names its preset.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 43,
+        "id": 49,
         "method": "moment.plan",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -2936,7 +3138,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 43,
+        "id": 49,
         "result": {
           "moment": {
             "meeting": "2026-11-03-1000-design-review",
@@ -2974,13 +3176,13 @@
       "note": "The sound picker's named tones: three sines and the Mac's alert sounds; available is false where this Mac lacks the file.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 44,
+        "id": 50,
         "method": "tone.presets",
         "params": {}
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 44,
+        "id": 50,
         "result": {
           "presets": [
             {
@@ -3132,7 +3334,7 @@
       "note": "Talk time per label, its spans, and the hints.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 45,
+        "id": 51,
         "method": "meeting.speakers",
         "params": {
           "meeting": "2026-11-03-1000-design-review"
@@ -3140,7 +3342,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 45,
+        "id": 51,
         "result": {
           "meeting": "2026-11-03-1000-design-review",
           "gapSec": 120,
@@ -3228,7 +3430,7 @@
       "note": "No screen recording: no frames, no pane.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 46,
+        "id": 52,
         "method": "meeting.screen",
         "params": {
           "meeting": "2026-11-03-1000-design-review"
@@ -3236,7 +3438,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 46,
+        "id": 52,
         "result": {
           "meeting": "2026-11-03-1000-design-review",
           "recorded": false,
@@ -3251,7 +3453,7 @@
       "note": "No screen recording: a useful read failure.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 47,
+        "id": 53,
         "method": "meeting.timeline",
         "params": {
           "meeting": "2026-11-03-1000-design-review"
@@ -3259,7 +3461,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 47,
+        "id": 53,
         "error": {
           "code": 1100,
           "message": "2026-11-03-1000-design-review has no screen recording (no frames.jsonl or ocr.jsonl)",
@@ -3279,7 +3481,7 @@
       "note": "A frame with all OCR boxes.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 48,
+        "id": 54,
         "method": "meeting.timeline",
         "params": {
           "meeting": "2026-11-03-1400-retro",
@@ -3288,7 +3490,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 48,
+        "id": 54,
         "result": {
           "meeting": "2026-11-03-1400-retro",
           "folder": "<meetings>/2026-11-03-1400-retro",
@@ -3340,7 +3542,7 @@
       "note": "Peaks for the strip, 0 to 1 of the loudest 100 ms.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 49,
+        "id": 55,
         "method": "meeting.waveform",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -3351,7 +3553,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 49,
+        "id": 55,
         "result": {
           "meeting": "2026-11-03-1000-design-review",
           "fromSec": 0,
@@ -3372,7 +3574,7 @@
       "note": "The meetings with what each waits for.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 50,
+        "id": 56,
         "method": "meetings.overview",
         "params": {
           "days": 3650
@@ -3380,11 +3582,11 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 50,
+        "id": 56,
         "result": {
-          "generatedAt": "2026-11-13T10:00:44.915Z",
+          "generatedAt": "2026-11-03T10:00:00.000Z",
           "days": 3650,
-          "applyAbove": 0.5,
+          "applyAbove": 0.7,
           "meetings": [
             {
               "id": "2026-11-03-1400-retro",
@@ -3452,7 +3654,7 @@
       "direction": "client→service",
       "request": {
         "jsonrpc": "2.0",
-        "id": 51,
+        "id": 57,
         "method": "config.read",
         "params": {
           "path": "global.playback.listen.longestClipSec"
@@ -3460,9 +3662,9 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 51,
+        "id": 57,
         "result": {
-          "path": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-sjtzhg/gt-test-home-jwTtqK/.genesis-tools/meetings/config.json",
+          "path": "<meetings>/config.json",
           "value": 30
         }
       }
@@ -3473,13 +3675,13 @@
       "note": "Read-only reconciliation with isolated empty local catalogs.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 52,
+        "id": 58,
         "method": "sourceAudio.plan",
         "params": {}
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 52,
+        "id": 58,
         "result": {
           "version": 1,
           "meetingsRoot": "<meetings>",
@@ -3493,7 +3695,7 @@
       "note": "Explicit apply of an empty plan.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 53,
+        "id": 59,
         "method": "sourceAudio.apply",
         "params": {
           "plan": {
@@ -3505,7 +3707,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 53,
+        "id": 59,
         "result": []
       }
     },
@@ -3514,7 +3716,7 @@
       "direction": "client→service",
       "request": {
         "jsonrpc": "2.0",
-        "id": 54,
+        "id": 60,
         "method": "config.set",
         "params": {
           "path": "global.playback.listen.longestClipSec",
@@ -3523,7 +3725,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 54,
+        "id": 60,
         "result": {
           "path": [
             "global",
@@ -3541,7 +3743,7 @@
       "note": "Back to its default.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 55,
+        "id": 61,
         "method": "config.unset",
         "params": {
           "path": "global.playback.listen.longestClipSec"
@@ -3549,7 +3751,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 55,
+        "id": 61,
         "result": {
           "path": [
             "global",
@@ -3567,7 +3769,7 @@
       "note": "The review rows, in the order listen asks.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 56,
+        "id": 62,
         "method": "meeting.rows",
         "params": {
           "meeting": "2026-11-03-1000-design-review"
@@ -3575,7 +3777,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 56,
+        "id": 62,
         "result": {
           "meeting": "2026-11-03-1000-design-review",
           "rows": [
@@ -3583,7 +3785,11 @@
               "id": "i1",
               "label": "i1",
               "kind": "speaker-range",
+              "kindWord": "Speaker range",
               "status": "confirmed",
+              "rules": [
+                "presence"
+              ],
               "confidence": 0.82,
               "what": "Speaker 3 00:12–00:30 → Alex Example",
               "parts": [
@@ -3605,14 +3811,6 @@
                     "kind": "item",
                     "id": "i1"
                   }
-                },
-                {
-                  "kind": "reason",
-                  "pieces": [
-                    {
-                      "text": "Rules: presence"
-                    }
-                  ]
                 }
               ],
               "choices": [
@@ -3659,11 +3857,11 @@
                 "id": "i1"
               },
               "decision": {
-                "token": "6c372f4c-08a5-4206-a646-32894d5d1b7f",
+                "token": "00000000-0000-4000-8000-000000000010",
                 "actor": {
                   "kind": "agent",
                   "harness": "claude-code",
-                  "session": "11111111-2222-4333-8444-555555555555"
+                  "session": "00000000-0000-4000-8000-000000000006"
                 },
                 "by": "an agent (Claude Code, session 11111111)",
                 "action": "confirm",
@@ -3685,7 +3883,7 @@
       "note": "Clip 5s: the selection's Moment, 5 s from its start.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 57,
+        "id": 63,
         "method": "moment.plan",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -3705,7 +3903,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 57,
+        "id": 63,
         "result": {
           "moment": {
             "meeting": "2026-11-03-1000-design-review",
@@ -3747,7 +3945,7 @@
       "note": "A comment on the selected words, for the listening agent.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 58,
+        "id": 64,
         "method": "comment.stage",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -3768,7 +3966,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 58,
+        "id": 64,
         "result": {
           "id": "c1",
           "at": "2026-11-03T10:00:00.000Z",
@@ -3797,7 +3995,7 @@
       "direction": "client→service",
       "request": {
         "jsonrpc": "2.0",
-        "id": 59,
+        "id": 65,
         "method": "comment.stage",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -3810,7 +4008,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 59,
+        "id": 65,
         "result": {
           "id": "c2",
           "at": "2026-11-03T10:00:00.000Z",
@@ -3832,7 +4030,7 @@
       "note": "Taken back before it was sent.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 60,
+        "id": 66,
         "method": "comment.unstage",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -3841,7 +4039,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 60,
+        "id": 66,
         "result": {
           "id": "c2",
           "at": "2026-11-03T10:00:00.000Z",
@@ -3863,7 +4061,7 @@
       "note": "Who listens now: a send names them, or keeps them.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 61,
+        "id": 67,
         "method": "comment.list",
         "params": {
           "meeting": "2026-11-03-1000-design-review"
@@ -3871,7 +4069,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 61,
+        "id": 67,
         "result": {
           "meeting": "2026-11-03-1000-design-review",
           "comments": [
@@ -3915,7 +4113,7 @@
       "note": "Every staged comment; the journal keeps the entry.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 62,
+        "id": 68,
         "method": "comment.send",
         "params": {
           "meeting": "2026-11-03-1000-design-review"
@@ -3923,7 +4121,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 62,
+        "id": 68,
         "result": {
           "sent": [
             {
@@ -3947,7 +4145,7 @@
               },
               "state": "sent",
               "sentAt": "2026-11-03T10:00:00.000Z",
-              "token": "f55a3903-13cc-4cc2-afd8-bcd9faa37d5b"
+              "token": "00000000-0000-4000-8000-000000000011"
             }
           ],
           "listeners": [
@@ -3960,7 +4158,7 @@
             }
           ],
           "entry": {
-            "token": "f55a3903-13cc-4cc2-afd8-bcd9faa37d5b",
+            "token": "00000000-0000-4000-8000-000000000011",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
@@ -4003,7 +4201,7 @@
       "note": "A sent comment: already-sent.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 63,
+        "id": 69,
         "method": "comment.unstage",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -4012,7 +4210,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 63,
+        "id": 69,
         "error": {
           "code": 1100,
           "message": "Comment c1 was sent at 2026-11-03T10:00:00.000Z; it cannot change.",
@@ -4032,7 +4230,7 @@
       "note": "No such comment: unknown-comment.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 64,
+        "id": 70,
         "method": "comment.send",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -4043,7 +4241,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 64,
+        "id": 70,
         "error": {
           "code": 1100,
           "message": "No staged comment c7.",
@@ -4062,7 +4260,7 @@
       "direction": "client→service",
       "request": {
         "jsonrpc": "2.0",
-        "id": 65,
+        "id": 71,
         "method": "subscribe",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -4073,7 +4271,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 65,
+        "id": 71,
         "result": {
           "events": [
             "comment.changed"
@@ -4087,7 +4285,7 @@
       "note": "The author cannot acknowledge its own comment: wrong-actor.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 66,
+        "id": 72,
         "method": "comment.read",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -4096,7 +4294,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 66,
+        "id": 72,
         "error": {
           "code": 1100,
           "message": "A comment's author cannot acknowledge its own comment.",
@@ -4147,12 +4345,12 @@
           },
           "state": "sent",
           "sentAt": "2026-11-03T10:00:00.000Z",
-          "token": "f55a3903-13cc-4cc2-afd8-bcd9faa37d5b",
+          "token": "00000000-0000-4000-8000-000000000011",
           "readAt": "2026-11-03T10:00:00.000Z",
           "readBy": {
             "kind": "agent",
             "harness": "claude-code",
-            "session": "11111111-2222-4333-8444-555555555555"
+            "session": "00000000-0000-4000-8000-000000000006"
           }
         }
       }
@@ -4163,7 +4361,7 @@
       "note": "An acknowledged comment: already-read.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 67,
+        "id": 73,
         "method": "comment.withdraw",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -4172,7 +4370,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 67,
+        "id": 73,
         "error": {
           "code": 1100,
           "message": "Comment c1 was read at 2026-11-03T10:00:00.000Z; it cannot be withdrawn.",
@@ -4191,7 +4389,7 @@
       "direction": "client→service",
       "request": {
         "jsonrpc": "2.0",
-        "id": 68,
+        "id": 74,
         "method": "comment.stage",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -4211,7 +4409,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 68,
+        "id": 74,
         "result": {
           "id": "c3",
           "at": "2026-11-03T10:00:00.000Z",
@@ -4239,7 +4437,7 @@
       "direction": "client→service",
       "request": {
         "jsonrpc": "2.0",
-        "id": 69,
+        "id": 75,
         "method": "comment.send",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -4250,7 +4448,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 69,
+        "id": 75,
         "result": {
           "sent": [
             {
@@ -4273,7 +4471,7 @@
               },
               "state": "sent",
               "sentAt": "2026-11-03T10:00:00.000Z",
-              "token": "ce484525-d97f-4a90-bd5b-3216959ab5e1"
+              "token": "00000000-0000-4000-8000-000000000012"
             }
           ],
           "listeners": [
@@ -4286,7 +4484,7 @@
             }
           ],
           "entry": {
-            "token": "ce484525-d97f-4a90-bd5b-3216959ab5e1",
+            "token": "00000000-0000-4000-8000-000000000012",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
@@ -4327,7 +4525,7 @@
       "direction": "client→service",
       "request": {
         "jsonrpc": "2.0",
-        "id": 70,
+        "id": 76,
         "method": "comment.withdraw",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -4336,7 +4534,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 70,
+        "id": 76,
         "result": {
           "id": "c3",
           "at": "2026-11-03T10:00:00.000Z",
@@ -4357,7 +4555,7 @@
           },
           "state": "sent",
           "sentAt": "2026-11-03T10:00:00.000Z",
-          "token": "ce484525-d97f-4a90-bd5b-3216959ab5e1",
+          "token": "00000000-0000-4000-8000-000000000012",
           "withdrawnAt": "2026-11-03T10:00:00.000Z"
         }
       }
@@ -4368,7 +4566,7 @@
       "note": "The withdrawal won: withdrawn-comment.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 71,
+        "id": 77,
         "method": "comment.read",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -4377,7 +4575,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 71,
+        "id": 77,
         "error": {
           "code": 1100,
           "message": "Comment c3 was withdrawn before it was read.",
@@ -4397,7 +4595,7 @@
       "note": "Read receipts and withdrawals survive reopening.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 72,
+        "id": 78,
         "method": "comment.list",
         "params": {
           "meeting": "2026-11-03-1000-design-review"
@@ -4405,7 +4603,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 72,
+        "id": 78,
         "result": {
           "meeting": "2026-11-03-1000-design-review",
           "comments": [
@@ -4430,12 +4628,12 @@
               },
               "state": "sent",
               "sentAt": "2026-11-03T10:00:00.000Z",
-              "token": "f55a3903-13cc-4cc2-afd8-bcd9faa37d5b",
+              "token": "00000000-0000-4000-8000-000000000011",
               "readAt": "2026-11-03T10:00:00.000Z",
               "readBy": {
                 "kind": "agent",
                 "harness": "claude-code",
-                "session": "11111111-2222-4333-8444-555555555555"
+                "session": "00000000-0000-4000-8000-000000000006"
               }
             },
             {
@@ -4458,7 +4656,7 @@
               },
               "state": "sent",
               "sentAt": "2026-11-03T10:00:00.000Z",
-              "token": "ce484525-d97f-4a90-bd5b-3216959ab5e1",
+              "token": "00000000-0000-4000-8000-000000000012",
               "withdrawnAt": "2026-11-03T10:00:00.000Z"
             }
           ],
@@ -4503,12 +4701,12 @@
             },
             "state": "sent",
             "sentAt": "2026-11-03T10:00:00.000Z",
-            "token": "f55a3903-13cc-4cc2-afd8-bcd9faa37d5b",
+            "token": "00000000-0000-4000-8000-000000000011",
             "readAt": "2026-11-03T10:00:00.000Z",
             "readBy": {
               "kind": "agent",
               "harness": "claude-code",
-              "session": "11111111-2222-4333-8444-555555555555"
+              "session": "00000000-0000-4000-8000-000000000006"
             }
           }
         }
@@ -4520,7 +4718,7 @@
       "note": "The person picker's list: ranked for the meeting and the moment, with each source's state; nothing preselected.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 73,
+        "id": 79,
         "method": "people.known",
         "params": {
           "query": "ex",
@@ -4530,7 +4728,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 73,
+        "id": 79,
         "result": {
           "query": "ex",
           "people": [
@@ -4588,7 +4786,7 @@
       "note": "All meetings where this person appears.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 74,
+        "id": 80,
         "method": "people.meetings",
         "params": {
           "person": "Alex Example"
@@ -4596,7 +4794,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 74,
+        "id": 80,
         "result": {
           "person": {
             "id": "name:alex example",
@@ -4634,7 +4832,7 @@
       "note": "The picker's Add 'Robin Example' as new speaker: a person in the people book.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 75,
+        "id": 81,
         "method": "people.add",
         "params": {
           "name": "Robin Example",
@@ -4644,7 +4842,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 75,
+        "id": 81,
         "result": {
           "entry": {
             "name": "Robin Example",
@@ -4676,7 +4874,7 @@
       "note": "Left out of every list; hidden: false shows them.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 76,
+        "id": 82,
         "method": "people.hide",
         "params": {
           "person": "robin@example.com"
@@ -4684,7 +4882,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 76,
+        "id": 82,
         "result": {
           "person": {
             "id": "email:robin@example.com",
@@ -4710,7 +4908,7 @@
       "note": "Nobody known by that name: unknown-person.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 77,
+        "id": 83,
         "method": "people.hide",
         "params": {
           "person": "Nobody Example"
@@ -4718,7 +4916,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 77,
+        "id": 83,
         "error": {
           "code": 1100,
           "message": "Nobody known is \"Nobody Example\". Search: tools meetings people <text>",
@@ -4738,7 +4936,7 @@
       "note": "What a merge links (meetings, renamed labels); nothing is written and no meeting record changes on a merge.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 78,
+        "id": 84,
         "method": "people.planMerge",
         "params": {
           "a": "Alex Example",
@@ -4747,7 +4945,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 78,
+        "id": 84,
         "result": {
           "people": [
             {
@@ -4808,7 +5006,7 @@
       "note": "An alias in the people book; its token splits it again.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 79,
+        "id": 85,
         "method": "people.merge",
         "params": {
           "a": "Alex Example",
@@ -4817,10 +5015,10 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 79,
+        "id": 85,
         "result": {
           "merge": {
-            "token": "a2927dfb-d09f-4e71-8d2c-991f3b41684d",
+            "token": "00000000-0000-4000-8000-000000000013",
             "people": [
               {
                 "name": "Alex Example"
@@ -4894,18 +5092,18 @@
       "note": "The merge split again.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 80,
+        "id": 86,
         "method": "people.unmerge",
         "params": {
-          "token": "a2927dfb-d09f-4e71-8d2c-991f3b41684d"
+          "token": "00000000-0000-4000-8000-000000000013"
         }
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 80,
+        "id": 86,
         "result": {
           "merge": {
-            "token": "a2927dfb-d09f-4e71-8d2c-991f3b41684d",
+            "token": "00000000-0000-4000-8000-000000000013",
             "people": [
               {
                 "name": "Alex Example"
@@ -4927,7 +5125,7 @@
       "note": "No merge has that token: unknown-merge.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 81,
+        "id": 87,
         "method": "people.unmerge",
         "params": {
           "token": "nope"
@@ -4935,7 +5133,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 81,
+        "id": 87,
         "error": {
           "code": 1100,
           "message": "No merge has the token nope. See them: tools meetings people --json",
@@ -4955,7 +5153,7 @@
       "note": "A second Robin.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 82,
+        "id": 88,
         "method": "people.add",
         "params": {
           "name": "Robin Example",
@@ -4964,7 +5162,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 82,
+        "id": 88,
         "result": {
           "entry": {
             "name": "Robin Example",
@@ -4994,7 +5192,7 @@
       "note": "A name two people share: ambiguous-person, with the candidates to pick from.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 83,
+        "id": 89,
         "method": "people.hide",
         "params": {
           "person": "Robin Example"
@@ -5002,7 +5200,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 83,
+        "id": 89,
         "error": {
           "code": 1100,
           "message": "\"Robin Example\" names 2 people: Robin Example <robin@example.com>, Robin Example <robin.two@example.com>. Name one by email or id.",
@@ -5050,7 +5248,7 @@
       "note": "One line given to a person: the assignment, and the stretches of the same label it may also reach.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 84,
+        "id": 90,
         "method": "decision.plan",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -5068,10 +5266,10 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 84,
+        "id": 90,
         "result": {
           "entry": {
-            "token": "6eb396bc-5505-49bc-b396-14acfc37231c",
+            "token": "00000000-0000-4000-8000-000000000014",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
@@ -5122,7 +5320,7 @@
       "note": "The settings page's Add project; added: false when it was known.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 85,
+        "id": 91,
         "method": "projects.add",
         "params": {
           "name": "Atlas"
@@ -5130,7 +5328,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 85,
+        "id": 91,
         "result": {
           "name": "Atlas",
           "added": true
@@ -5143,7 +5341,7 @@
       "note": "remove takes labels away the same way.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 86,
+        "id": 92,
         "method": "projects.labels",
         "params": {
           "project": "Atlas",
@@ -5154,7 +5352,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 86,
+        "id": 92,
         "result": {
           "project": "Atlas",
           "labels": [
@@ -5169,7 +5367,7 @@
       "note": "The page's Save rules: a project's source folders and title words in one write; expect names the value read.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 87,
+        "id": 93,
         "method": "config.edit",
         "params": {
           "edits": [
@@ -5191,7 +5389,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 87,
+        "id": 93,
         "result": [
           {
             "path": [
@@ -5226,7 +5424,7 @@
       "note": "Each recent meeting against the saved rules (now) and the draft being edited.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 88,
+        "id": 94,
         "method": "projects.preview",
         "params": {
           "draft": {
@@ -5241,7 +5439,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 88,
+        "id": 94,
         "result": [
           {
             "id": "2026-11-03-1400-retro",
@@ -5273,7 +5471,7 @@
       "note": "An entry in the project's dictionary.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 89,
+        "id": 95,
         "method": "dictionary.add",
         "params": {
           "entry": {
@@ -5286,7 +5484,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 89,
+        "id": 95,
         "result": {
           "entry": {
             "type": "fix",
@@ -5304,7 +5502,7 @@
       "note": "An Undo's add of an entry made again since: dictionary-exists, and it is left as it is.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 90,
+        "id": 96,
         "method": "dictionary.add",
         "params": {
           "entry": {
@@ -5318,7 +5516,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 90,
+        "id": 96,
         "error": {
           "code": 1100,
           "message": "Atlass is in the project Atlas dictionary already; it was left as it is",
@@ -5338,7 +5536,7 @@
       "note": "The global entries, then the project's, each with its level.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 91,
+        "id": 97,
         "method": "dictionary.show",
         "params": {
           "project": "Atlas"
@@ -5346,7 +5544,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 91,
+        "id": 97,
         "result": {
           "project": "Atlas",
           "abbrExpansion": "every",
@@ -5366,7 +5564,7 @@
       "direction": "client→service",
       "request": {
         "jsonrpc": "2.0",
-        "id": 92,
+        "id": 98,
         "method": "dictionary.test",
         "params": {
           "phrase": "The Atlass page",
@@ -5375,7 +5573,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 92,
+        "id": 98,
         "result": {
           "phrase": "The Atlass page",
           "text": "The Atlas page",
@@ -5403,7 +5601,7 @@
       "note": "removed: false when it was not there.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 93,
+        "id": 99,
         "method": "dictionary.remove",
         "params": {
           "value": "Atlass",
@@ -5412,7 +5610,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 93,
+        "id": 99,
         "result": {
           "value": "Atlass",
           "level": "project Atlas",
@@ -5426,7 +5624,7 @@
       "note": "The pairings one calendar entry made; left: the person is no longer paired with the project.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 94,
+        "id": 100,
         "method": "projects.unpair",
         "params": {
           "entry": "cal-2041"
@@ -5434,7 +5632,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 94,
+        "id": 100,
         "result": {
           "removed": [
             {
@@ -5453,7 +5651,7 @@
       "note": "One person from one project: nothing when they were not paired.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 95,
+        "id": 101,
         "method": "projects.unpair",
         "params": {
           "project": "Atlas",
@@ -5465,7 +5663,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 95,
+        "id": 101,
         "result": {
           "removed": []
         }
@@ -5477,13 +5675,13 @@
       "note": "The values the rule fields offer: each source's folders, the Calendar app's calendars, words and labels in use.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 96,
+        "id": 102,
         "method": "projects.suggestions",
         "params": {}
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 96,
+        "id": 102,
         "result": {
           "folders": {
             "wisprflow": {
@@ -5517,7 +5715,7 @@
       "note": "The people of the project's meetings not paired with it yet.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 97,
+        "id": 103,
         "method": "projects.meetingPeople",
         "params": {
           "project": "Atlas"
@@ -5525,7 +5723,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 97,
+        "id": 103,
         "result": [
           {
             "name": "Alex Example",
@@ -5545,7 +5743,7 @@
       "note": "Pair one of them; a person not on a calendar entry is paired by hand, with the meeting in the note.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 98,
+        "id": 104,
         "method": "projects.pairFromMeetings",
         "params": {
           "project": "Atlas",
@@ -5558,7 +5756,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 98,
+        "id": 104,
         "result": {
           "project": "Atlas",
           "paired": [
@@ -5580,7 +5778,7 @@
       "note": "Its settings, pairings and meetings.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 99,
+        "id": 105,
         "method": "projects.rename",
         "params": {
           "from": "Atlas",
@@ -5589,7 +5787,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 99,
+        "id": 105,
         "result": {
           "from": "Atlas",
           "to": "Harbor",
@@ -5605,7 +5803,7 @@
       "note": "Refused while a meeting has it; unassign leaves the meeting without a project.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 100,
+        "id": 106,
         "method": "projects.remove",
         "params": {
           "name": "Harbor"
@@ -5613,7 +5811,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 100,
+        "id": 106,
         "error": {
           "code": 1100,
           "message": "1 meeting has the project Harbor: 2026-11-03-1000-design-review. Rename it instead, or remove it with --unassign to leave them without a project.",
@@ -5633,7 +5831,7 @@
       "note": "The backup keeps the removed settings.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 101,
+        "id": 107,
         "method": "projects.remove",
         "params": {
           "name": "Harbor",
@@ -5642,13 +5840,13 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 101,
+        "id": 107,
         "result": {
           "name": "Harbor",
           "unassigned": [
             "2026-11-03-1000-design-review"
           ],
-          "backup": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-sjtzhg/gt-test-home-jwTtqK/.genesis-tools/backups/meetings/2026-11-03-1000-project-Harbor.json"
+          "backup": "<home>/backups/meetings/2026-11-03-1000-project-Harbor-20.json"
         }
       }
     },
@@ -5661,13 +5859,13 @@
         "params": {
           "meeting": "2026-11-03-1000-design-review",
           "entry": {
-            "token": "e26e55f9-3cc2-4661-9385-15b2c7f6d7fd",
+            "token": "00000000-0000-4000-8000-000000000008",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
               "kind": "agent",
               "harness": "claude-code",
-              "session": "11111111-2222-4333-8444-555555555555"
+              "session": "00000000-0000-4000-8000-000000000006"
             },
             "reason": "the calendar says so",
             "action": {
@@ -5721,7 +5919,7 @@
                   "suggestedAt": "2026-11-03T09:47:00.000Z",
                   "decidedAt": "2026-11-03T10:00:00.000Z",
                   "decision": {
-                    "token": "e26e55f9-3cc2-4661-9385-15b2c7f6d7fd",
+                    "token": "00000000-0000-4000-8000-000000000008",
                     "previous": {
                       "status": "suggested",
                       "speaker": "Alex Example"
@@ -5729,7 +5927,7 @@
                     "actor": {
                       "kind": "agent",
                       "harness": "claude-code",
-                      "session": "11111111-2222-4333-8444-555555555555"
+                      "session": "00000000-0000-4000-8000-000000000006"
                     },
                     "entry": {
                       "action": "confirm",
@@ -5753,19 +5951,19 @@
         "method": "decision.reverted",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
-          "token": "e26e55f9-3cc2-4661-9385-15b2c7f6d7fd",
+          "token": "00000000-0000-4000-8000-000000000008",
           "entry": {
-            "token": "b02fabef-e7d5-4a4b-b507-20973be7b1ea",
+            "token": "00000000-0000-4000-8000-000000000009",
             "at": "2026-11-03T10:00:00.000Z",
             "meeting": "2026-11-03-1000-design-review",
             "actor": {
               "kind": "agent",
               "harness": "claude-code",
-              "session": "11111111-2222-4333-8444-555555555555"
+              "session": "00000000-0000-4000-8000-000000000006"
             },
             "action": {
               "kind": "revert",
-              "token": "e26e55f9-3cc2-4661-9385-15b2c7f6d7fd"
+              "token": "00000000-0000-4000-8000-000000000008"
             },
             "decided": [],
             "settled": [],
@@ -5792,7 +5990,7 @@
                   "suggestedAt": "2026-11-03T09:47:00.000Z",
                   "decidedAt": "2026-11-03T10:00:00.000Z",
                   "decision": {
-                    "token": "e26e55f9-3cc2-4661-9385-15b2c7f6d7fd",
+                    "token": "00000000-0000-4000-8000-000000000008",
                     "previous": {
                       "status": "suggested",
                       "speaker": "Alex Example"
@@ -5800,7 +5998,7 @@
                     "actor": {
                       "kind": "agent",
                       "harness": "claude-code",
-                      "session": "11111111-2222-4333-8444-555555555555"
+                      "session": "00000000-0000-4000-8000-000000000006"
                     },
                     "entry": {
                       "action": "confirm",
@@ -5842,7 +6040,7 @@
         "method": "comment.sent",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
-          "token": "f55a3903-13cc-4cc2-afd8-bcd9faa37d5b",
+          "token": "00000000-0000-4000-8000-000000000011",
           "comments": [
             {
               "id": "c1",
@@ -5865,7 +6063,7 @@
               },
               "state": "sent",
               "sentAt": "2026-11-03T10:00:00.000Z",
-              "token": "f55a3903-13cc-4cc2-afd8-bcd9faa37d5b"
+              "token": "00000000-0000-4000-8000-000000000011"
             }
           ],
           "listeners": [
@@ -5891,7 +6089,7 @@
         "params": {
           "role": "cli",
           "harness": "claude-code",
-          "session": "11111111-2222-4333-8444-555555555555",
+          "session": "00000000-0000-4000-8000-000000000006",
           "protocol": 1,
           "code": "0123456789ab"
         }
@@ -5909,8 +6107,12 @@
             "meeting.listen.prepare",
             "meeting.voice.enrol",
             "meeting.people.edit",
+            "meeting.sources.near",
+            "meeting.link",
             "meeting.voice",
             "meeting.suggest",
+            "meeting.seats.suggest",
+            "meeting.thresholds.preview",
             "meeting.transcript",
             "meeting.wordTimings.generate",
             "meeting.revisions",
@@ -5923,6 +6125,7 @@
             "moment.save",
             "tone.preview",
             "tone.presets",
+            "rules.names",
             "meeting.audio",
             "acoustic.inspect",
             "acoustic.clip",
@@ -5952,6 +6155,8 @@
             "people.known",
             "people.meetings",
             "people.add",
+            "people.devices.list",
+            "people.devices.decide",
             "people.hide",
             "people.planMerge",
             "people.merge",
@@ -5970,6 +6175,19 @@
             "dictionary.add",
             "dictionary.remove",
             "dictionary.test",
+            "voices.list",
+            "voices.preview",
+            "voices.apply",
+            "voices.remove",
+            "voices.sample",
+            "voices.workers",
+            "voices.move",
+            "voices.reject",
+            "voices.undo",
+            "voices.quality",
+            "voice.backfill",
+            "voices.jobs",
+            "voices.jobs.cancel",
             "subscribe",
             "unsubscribe"
           ],
@@ -5980,9 +6198,10 @@
             "decision.reverted",
             "comment.sent",
             "comment.changed",
-            "people.changed"
+            "people.changed",
+            "voices.job"
           ],
-          "version": "db2fcb7aece3"
+          "version": "05eb8a38d4f3"
         }
       }
     },
@@ -6080,7 +6299,7 @@
       "note": "Keep audio outside the temporary clip cache and publish its Context entry.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 102,
+        "id": 108,
         "method": "moment.save",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -6094,12 +6313,12 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 102,
+        "id": 108,
         "result": {
           "entry": {
             "id": "c1",
             "kind": "file",
-            "ref": "<meetings>/2026-11-03-1000-design-review/clips/00-02-00-04-<key>.wav",
+            "ref": "<meetings>/2026-11-03-1000-design-review/clips/00-02-00-04-fixture19.wav",
             "title": "Clip 00:02–00:04",
             "note": "Saved words",
             "addedAt": "2026-11-03T10:00:00.000Z",
@@ -6121,7 +6340,7 @@
             "spotSec": 2,
             "delaySec": 2,
             "repeatGapSec": 1,
-            "path": "<meetings>/2026-11-03-1000-design-review/clips/00-02-00-04-<key>.wav"
+            "path": "<meetings>/2026-11-03-1000-design-review/clips/00-02-00-04-fixture19.wav"
           },
           "created": true
         }
@@ -6133,7 +6352,7 @@
       "note": "Each line's features per channel; a silent channel has no pitch.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 103,
+        "id": 109,
         "method": "meeting.voice",
         "params": {
           "meeting": "2026-11-03-1000-design-review"
@@ -6141,7 +6360,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 103,
+        "id": 109,
         "result": [
           {
             "index": 0,
@@ -6190,7 +6409,7 @@
       "note": "Voices asked: each line also carries its cluster, with a speaker only when a confirmed line anchors it.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 104,
+        "id": 110,
         "method": "meeting.voice",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -6199,7 +6418,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 104,
+        "id": 110,
         "result": [
           {
             "index": 0,
@@ -6256,7 +6475,7 @@
       "note": "No calibrated channels: unknown, with the reason and no metric.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 105,
+        "id": 111,
         "method": "acoustic.inspect",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -6266,7 +6485,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 105,
+        "id": 111,
         "result": {
           "quality": "unknown",
           "reason": "channel layout is unknown"
@@ -6279,7 +6498,7 @@
       "note": "A sample under 1.5 seconds is an unknown voice, not a refusal.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 106,
+        "id": 112,
         "method": "voice.score",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -6290,7 +6509,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 106,
+        "id": 112,
         "result": {
           "model": "unavailable",
           "quality": "unknown",
@@ -6305,7 +6524,7 @@
       "note": "The record with the person and the stay.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 107,
+        "id": 113,
         "method": "meeting.people.edit",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -6317,7 +6536,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 107,
+        "id": 113,
         "result": {
           "version": 1,
           "id": "2026-11-03-1000-design-review",
@@ -6356,6 +6575,7 @@
                   "fromSec": 0,
                   "toSec": 30,
                   "source": "hand",
+                  "leaveSource": "hand",
                   "confidence": 1
                 }
               ],
@@ -6379,7 +6599,7 @@
             {
               "id": "c1",
               "kind": "file",
-              "ref": "<meetings>/2026-11-03-1000-design-review/clips/00-02-00-04-<key>.wav",
+              "ref": "<meetings>/2026-11-03-1000-design-review/clips/00-02-00-04-fixture19.wav",
               "title": "Clip 00:02–00:04",
               "note": "Saved words",
               "addedAt": "2026-11-03T10:00:00.000Z",
@@ -6411,7 +6631,7 @@
               "suggestedAt": "2026-11-03T09:47:00.000Z",
               "decidedAt": "2026-11-03T10:00:00.000Z",
               "decision": {
-                "token": "7c530479-c018-4bcf-b2d8-b01ea0fd2f29",
+                "token": "00000000-0000-4000-8000-000000000010",
                 "previous": {
                   "status": "suggested",
                   "speaker": "Alex Example"
@@ -6419,7 +6639,7 @@
                 "actor": {
                   "kind": "agent",
                   "harness": "claude-code",
-                  "session": "11111111-2222-4333-8444-555555555555"
+                  "session": "00000000-0000-4000-8000-000000000006"
                 },
                 "entry": {
                   "action": "confirm"
@@ -6450,42 +6670,42 @@
           ],
           "history": [
             {
-              "at": "2026-11-03T09:46:00.000Z",
+              "at": "2026-11-03T10:00:00.000Z",
               "command": "link",
               "change": "linked wisprflow:wf-2041"
             },
             {
-              "at": "2026-11-13T22:32:59.950Z",
+              "at": "2026-11-03T10:00:00.000Z",
               "command": "confirm",
               "change": "i1"
             },
             {
-              "at": "2026-11-13T22:32:59.957Z",
+              "at": "2026-11-03T10:00:00.000Z",
               "command": "reopen",
               "change": "i1"
             },
             {
-              "at": "2026-11-13T22:32:59.958Z",
+              "at": "2026-11-03T10:00:00.000Z",
               "command": "confirm",
               "change": "i1"
             },
             {
-              "at": "2026-11-13T22:33:00.035Z",
+              "at": "2026-11-03T10:00:00.000Z",
               "command": "projects rename",
               "change": "project Atlas → Harbor"
             },
             {
-              "at": "2026-11-13T22:33:00.038Z",
+              "at": "2026-11-03T10:00:00.000Z",
               "command": "projects remove",
               "change": "project Harbor removed"
             },
             {
-              "at": "2026-11-13T22:33:00.041Z",
+              "at": "2026-11-03T10:00:00.000Z",
               "command": "clip save",
-              "change": "00-02-00-04-1ebd9gpfjjfhq.wav"
+              "change": "00-02-00-04-fixture19.wav"
             },
             {
-              "at": "2026-11-13T22:33:00.045Z",
+              "at": "2026-11-03T10:00:00.000Z",
               "command": "attendance",
               "change": "add meeting person Robin Example"
             }
@@ -6499,7 +6719,7 @@
       "note": "The record without the person.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 108,
+        "id": 114,
         "method": "meeting.people.edit",
         "params": {
           "meeting": "2026-11-03-1000-design-review",
@@ -6509,7 +6729,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 108,
+        "id": 114,
         "result": {
           "version": 1,
           "id": "2026-11-03-1000-design-review",
@@ -6550,7 +6770,7 @@
             {
               "id": "c1",
               "kind": "file",
-              "ref": "<meetings>/2026-11-03-1000-design-review/clips/00-02-00-04-<key>.wav",
+              "ref": "<meetings>/2026-11-03-1000-design-review/clips/00-02-00-04-fixture19.wav",
               "title": "Clip 00:02–00:04",
               "note": "Saved words",
               "addedAt": "2026-11-03T10:00:00.000Z",
@@ -6582,7 +6802,7 @@
               "suggestedAt": "2026-11-03T09:47:00.000Z",
               "decidedAt": "2026-11-03T10:00:00.000Z",
               "decision": {
-                "token": "7c530479-c018-4bcf-b2d8-b01ea0fd2f29",
+                "token": "00000000-0000-4000-8000-000000000010",
                 "previous": {
                   "status": "suggested",
                   "speaker": "Alex Example"
@@ -6590,7 +6810,7 @@
                 "actor": {
                   "kind": "agent",
                   "harness": "claude-code",
-                  "session": "11111111-2222-4333-8444-555555555555"
+                  "session": "00000000-0000-4000-8000-000000000006"
                 },
                 "entry": {
                   "action": "confirm"
@@ -6605,47 +6825,47 @@
           "sections": [],
           "history": [
             {
-              "at": "2026-11-03T09:46:00.000Z",
+              "at": "2026-11-03T10:00:00.000Z",
               "command": "link",
               "change": "linked wisprflow:wf-2041"
             },
             {
-              "at": "2026-11-13T22:32:59.950Z",
+              "at": "2026-11-03T10:00:00.000Z",
               "command": "confirm",
               "change": "i1"
             },
             {
-              "at": "2026-11-13T22:32:59.957Z",
+              "at": "2026-11-03T10:00:00.000Z",
               "command": "reopen",
               "change": "i1"
             },
             {
-              "at": "2026-11-13T22:32:59.958Z",
+              "at": "2026-11-03T10:00:00.000Z",
               "command": "confirm",
               "change": "i1"
             },
             {
-              "at": "2026-11-13T22:33:00.035Z",
+              "at": "2026-11-03T10:00:00.000Z",
               "command": "projects rename",
               "change": "project Atlas → Harbor"
             },
             {
-              "at": "2026-11-13T22:33:00.038Z",
+              "at": "2026-11-03T10:00:00.000Z",
               "command": "projects remove",
               "change": "project Harbor removed"
             },
             {
-              "at": "2026-11-13T22:33:00.041Z",
+              "at": "2026-11-03T10:00:00.000Z",
               "command": "clip save",
-              "change": "00-02-00-04-1ebd9gpfjjfhq.wav"
+              "change": "00-02-00-04-fixture19.wav"
             },
             {
-              "at": "2026-11-13T22:33:00.045Z",
+              "at": "2026-11-03T10:00:00.000Z",
               "command": "attendance",
               "change": "add meeting person Robin Example"
             },
             {
-              "at": "2026-11-13T22:33:00.047Z",
+              "at": "2026-11-03T10:00:00.000Z",
               "command": "attendance",
               "change": "remove meeting person Robin Example"
             }
@@ -6659,15 +6879,15 @@
       "note": "The Undo of the removal: the block, its pairings and the meeting it left without a project come back.",
       "request": {
         "jsonrpc": "2.0",
-        "id": 109,
+        "id": 115,
         "method": "projects.restore",
         "params": {
-          "backup": "/var/folders/6w/6sns7fjx75z98ntzj1m13kzr0000gp/T/gt-test-tmp-pyxtjP/gt-test-home-3SrahT/.genesis-tools/backups/meetings/2026-11-03-1000-project-Harbor.json"
+          "backup": "<home>/backups/meetings/2026-11-03-1000-project-Harbor-20.json"
         }
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 109,
+        "id": 115,
         "result": {
           "name": "Harbor",
           "meetings": [
@@ -6676,6 +6896,441 @@
           "sources": [
             "wisprflow"
           ]
+        }
+      }
+    },
+    {
+      "method": "rules.names",
+      "direction": "client→service",
+      "note": "Every rule's sentence by its id, as a review row words an item's rules.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 116,
+        "method": "rules.names",
+        "params": {}
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 116,
+        "result": {
+          "names": {
+            "platform-prehistory": "The name appears before the call first shows that person.",
+            "local-speech": "The computer read these words aloud.",
+            "voice": "The voice matches a confirmed voice sample.",
+            "RA": "The attendance record shows who was there.",
+            "R1": "Someone says goodbye.",
+            "R5": "More lines appear under the same name after the goodbye.",
+            "R13": "Another speaker answers the goodbye.",
+            "R14": "This speaker echoes someone else's goodbye.",
+            "R15": "A participant is present but has no lines under their name for a long stretch.",
+            "R16": "This line comes just after someone joins the call.",
+            "R17": "The person speaks under their own name on a nearby line.",
+            "R18": "More than one person may be using the same microphone.",
+            "R19": "This name usually appears on the microphone track.",
+            "R20": "The transcript appears to have swapped two speakers' names.",
+            "RM": "The call shows someone was muted during this line.",
+            "E1": "The recording separates microphone audio from call audio.",
+            "E3": "The call shows who is speaking.",
+            "voice-embedding": "The call audio was compared with saved voice samples.",
+            "E4": "The recorder attached a name to the voice during the call.",
+            "energy": "The recording shows how loud each audio track was.",
+            "phonetic": "The word sounds like a known term.",
+            "dictionary-fuzzy": "The spelling is close to a dictionary term.",
+            "summary-name": "The meeting summary mentions this name.",
+            "unknown-word": "The word is missing from the known vocabulary.",
+            "read-aloud": "These words match a passage in a document.",
+            "spoken-identifier": "The spoken words match a name or path in a document.",
+            "agent": "An agent suggested this after reviewing the meeting.",
+            "user": "Someone added this by hand."
+          }
+        }
+      }
+    },
+    {
+      "method": "meeting.sources.near",
+      "direction": "client→service",
+      "note": "The source meetings near the record's start, nearest first; this one is linked to the record already.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 117,
+        "method": "meeting.sources.near",
+        "params": {
+          "meeting": "2026-11-03-1000-design-review"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 117,
+        "result": {
+          "meetings": [
+            {
+              "ref": "wisprflow:wf-2041",
+              "source": "Fake",
+              "title": "Design review",
+              "start": "2026-11-03T09:00:00.000Z",
+              "hasTranscript": true,
+              "linkedTo": {
+                "id": "2026-11-03-1000-design-review",
+                "title": "Design review"
+              }
+            }
+          ],
+          "unavailable": []
+        }
+      }
+    },
+    {
+      "method": "meeting.link",
+      "direction": "client→service",
+      "note": "A source meeting another record holds: refused, so two records never share one source meeting.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 118,
+        "method": "meeting.link",
+        "params": {
+          "meeting": "2026-11-03-1400-retro",
+          "source": "wisprflow:wf-2041"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 118,
+        "error": {
+          "code": 1100,
+          "message": "wisprflow:wf-2041 is linked to 2026-11-03-1000-design-review already. Merge the two records instead: tools meetings merge 2026-11-03-1400-retro --into 2026-11-03-1000-design-review",
+          "data": {
+            "code": "source-linked"
+          },
+          "stack": "<stack>",
+          "issue": {
+            "tool": "meetings"
+          }
+        }
+      }
+    },
+    {
+      "method": "voice.backfill",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 119,
+        "method": "voice.backfill",
+        "params": {
+          "project": "Unassigned-fixture",
+          "dryRun": true
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 119,
+        "result": {
+          "dryRun": true,
+          "rows": [],
+          "added": 0,
+          "present": 0
+        }
+      }
+    },
+    {
+      "method": "meeting.seats.suggest",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 120,
+        "method": "meeting.seats.suggest",
+        "params": {
+          "meeting": "2026-11-03-1400-retro"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 120,
+        "result": {
+          "meeting": "2026-11-03-1400-retro",
+          "current": {
+            "room": [
+              "Reed Example",
+              {
+                "name": "Fern Example",
+                "fromSec": 60,
+                "toSec": 120
+              }
+            ],
+            "remote": [
+              {
+                "name": "Fern Example",
+                "label": "Guest",
+                "toSec": 60
+              }
+            ],
+            "microphones": [
+              {
+                "id": "self",
+                "people": [
+                  "Reed Example",
+                  "Fern Example"
+                ]
+              }
+            ]
+          },
+          "suggestion": {
+            "seats": {
+              "room": [
+                "Reed Example",
+                {
+                  "name": "Fern Example",
+                  "fromSec": 60,
+                  "toSec": 120
+                }
+              ],
+              "remote": [
+                {
+                  "name": "Fern Example",
+                  "label": "Guest",
+                  "toSec": 60
+                }
+              ],
+              "microphones": [
+                {
+                  "id": "self",
+                  "people": [
+                    "Reed Example",
+                    "Fern Example"
+                  ]
+                }
+              ]
+            },
+            "people": [
+              {
+                "name": "Reed Example",
+                "seat": "room",
+                "reason": "Saved seat.",
+                "confidence": 1
+              },
+              {
+                "name": "Fern Example",
+                "seat": "unsure",
+                "reason": "Saved room and remote intervals.",
+                "confidence": 1
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "method": "meeting.thresholds.preview",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 121,
+        "method": "meeting.thresholds.preview",
+        "params": {
+          "meeting": "nope",
+          "values": {}
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 121,
+        "error": {
+          "code": 1100,
+          "message": "No meeting \"nope\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate nope",
+          "data": {
+            "code": "meeting-not-found"
+          },
+          "stack": "<stack>",
+          "issue": {
+            "tool": "meetings"
+          }
+        }
+      }
+    },
+    {
+      "method": "voices.move",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 122,
+        "method": "voices.move",
+        "params": {
+          "id": "vs_missing",
+          "to": {
+            "name": "Reed Example"
+          }
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 122,
+        "result": {
+          "status": "stale",
+          "reason": "Stale voice sample selection."
+        }
+      }
+    },
+    {
+      "method": "voices.reject",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 123,
+        "method": "voices.reject",
+        "params": {
+          "id": "vs_missing",
+          "reason": "bad-audio"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 123,
+        "result": {
+          "status": "stale",
+          "reason": "Stale voice sample selection."
+        }
+      }
+    },
+    {
+      "method": "voices.undo",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 124,
+        "method": "voices.undo",
+        "params": {
+          "token": "missing"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 124,
+        "result": {
+          "status": "refused",
+          "reason": "Unknown voice correction token."
+        }
+      }
+    },
+    {
+      "method": "voices.quality",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 125,
+        "method": "voices.quality",
+        "params": {
+          "project": "Atlas"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 125,
+        "result": {
+          "learnt": []
+        }
+      }
+    },
+    {
+      "method": "voices.jobs",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 127,
+        "method": "voices.jobs",
+        "params": {
+          "project": "Empty-fixture"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 127,
+        "result": []
+      }
+    },
+    {
+      "method": "voices.jobs.cancel",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 128,
+        "method": "voices.jobs.cancel",
+        "params": {
+          "id": "missing"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 128,
+        "result": null
+      }
+    },
+    {
+      "method": "voices.job",
+      "direction": "service→client",
+      "notification": {
+        "jsonrpc": "2.0",
+        "method": "voices.job",
+        "params": {
+          "id": "fixture-job",
+          "kind": "answer-samples",
+          "project": "Rehearsal",
+          "meeting": "2026-11-03-1000-design-review",
+          "state": "running",
+          "progress": {
+            "done": 1,
+            "total": 2,
+            "step": "added"
+          },
+          "added": 1,
+          "skipped": 0
+        }
+      }
+    },
+    {
+      "method": "people.devices.decide",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 129,
+        "method": "people.devices.decide",
+        "params": {
+          "action": "map",
+          "account": "Boardroom PC",
+          "group": "table"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 129,
+        "result": {
+          "changed": true,
+          "device": {
+            "account": "Boardroom PC",
+            "group": "table"
+          },
+          "token": "00000000-0000-4000-8000-000000000015"
+        }
+      }
+    },
+    {
+      "method": "people.devices.list",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 130,
+        "method": "people.devices.list",
+        "params": {}
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 130,
+        "result": {
+          "devices": [
+            {
+              "account": "Boardroom PC",
+              "group": "table"
+            }
+          ],
+          "offers": []
         }
       }
     }

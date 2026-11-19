@@ -1,9 +1,11 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import type { AppFaceFlag } from "@genesiscz/utils/genesis-tools/capability/generated/app-surface";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 /**
  * The GenesisTools commands the other modules under `src/utils` name: the agent bus, Claude sessions and terminals,
  * the browser router, macOS grants and the app build, git, search, source maps and speech. This file imports
- * `toolCommand()` and nothing else, so a util that imports it loads no logger, commander or process helper.
+ * no logger, commander or process helper.
  *
  * Every parameter goes into the line as given. A caller that quoted a value with `shellWord()` before passes the
  * quoted value, so each message stays what it was.
@@ -116,8 +118,8 @@ export function macosPermissionsOpenCommand(pane: string): string {
 }
 
 /** Builds and installs GenesisTools.app. */
-export function macosPermissionsBuildCommand(): string {
-    return toolCommand("macos permissions build");
+export function macosPermissionsBuildCommand(part?: string | null): string {
+    return `${toolCommand("macos permissions build")}${part ? ` --add-part ${part}` : ""}`;
 }
 
 /** Asks macOS for the notification grant of GenesisTools.app. */
@@ -179,3 +181,32 @@ export function mobileRoutesCommand(): string {
 export function musicSoundfontInstallCommand(): string {
     return toolCommand("music soundfont install");
 }
+
+export function macosPermissionsCommand(): string {
+    return toolCommand("macos permissions");
+}
+
+/**
+ * A notification click checks the requested window when the person clicks it. It never builds a missing part: the
+ * service that runs it may have a terminal, but the click has none and is killed after 30 s.
+ */
+export function windowsOpenCommand({ window, args }: { window: AppFaceFlag; args: readonly string[] }): string {
+    const json = SafeJSON.stringify({ window, args, fix: "skip" }, { strict: true });
+    return toolCommand("genesis-tools action windows.open", "--json", json);
+}
+
+/** Opens a posted request; `--` ends the options, so an id such as `--help` stays the id. */
+export function genesisToolsRequestOpenCommand(id: string): string {
+    if (!/^[a-zA-Z0-9:._-]{1,500}$/.test(id)) {
+        throw new Error("Invalid request id");
+    }
+    return toolCommand("genesis-tools request open", "--", id);
+}
+
+/** CLI equivalents for the recorder REPL methods. These literal paths are checked against the command tree. */
+export const recorderCommands = {
+    status: toolCommand("recorder status"),
+    listLive: toolCommand("recorder list", "--live", "--json"),
+    serve: toolCommand("recorder serve"),
+    startFrames: toolCommand("recorder start", "--frames", "--exclude-window-ids"),
+};

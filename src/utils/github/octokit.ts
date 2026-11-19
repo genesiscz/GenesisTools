@@ -165,6 +165,18 @@ export function getOctokit(): Octokit {
     return _octokit;
 }
 
+/** For requests with a strict quota: use normal read credentials, without retries or a second-token fallback. */
+export function getSingleRequestOctokit(): Octokit {
+    return profiled(
+        new Octokit({
+            auth: getGitHubToken(),
+            retry: { enabled: false },
+            throttle: { enabled: false },
+            request: { redirect: "error" },
+        })
+    );
+}
+
 let _octokitWrite: Octokit | null = null;
 
 /**

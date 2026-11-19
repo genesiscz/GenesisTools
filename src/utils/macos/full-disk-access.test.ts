@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { env } from "@genesiscz/utils/env";
 import { buildFullDiskAccessMessage, FULL_DISK_ACCESS_FEATURES, fullDiskAccessInstructions } from "./full-disk-access";
 import { GENESIS_APP_BUNDLE_ID } from "./genesis-app";
+import { appNeedFixture } from "./testing/app-need";
 
 const underApp = { GENESIS_TOOLS_APP_BUNDLE_ID: GENESIS_APP_BUNDLE_ID };
 const underTerminal = { GENESIS_TOOLS_APP_BUNDLE_ID: undefined, __CFBundleIdentifier: "com.example.terminal" };
@@ -74,11 +75,18 @@ describe("fullDiskAccessInstructions", () => {
         });
     });
 
-    it("tells a terminal-owned process to build the app first", async () => {
+    it("gives a terminal the install need's reason and command only when the bundle is missing", async () => {
         await env.testing.withOverrides(underTerminal, () => {
-            expect(fullDiskAccessInstructions({ reason: "search your mail" })).toContain(
-                "tools macos permissions build"
+            const context = { reason: "search your mail" };
+            const missing = fullDiskAccessInstructions(context, appNeedFixture({ installed: false }));
+            expect(missing).toContain(
+                "GenesisTools.app is not installed at /fixture/GenesisTools.app. Run `fixture-build`."
             );
+            expect(missing).toContain("That build makes GenesisTools hold the grant");
+            const ready = fullDiskAccessInstructions(context, appNeedFixture());
+            expect(ready.split("\n")).toHaveLength(2);
+            const refused = fullDiskAccessInstructions(context, appNeedFixture({ isTest: true }));
+            expect(refused.split("\n").at(-1)).toBe("a test process never reaches GenesisTools.app");
         });
     });
 });

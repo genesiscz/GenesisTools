@@ -132,8 +132,11 @@ struct SpeakerTalkTimeLanes: View {
     @Environment(\.kitLook) private var look
     /// A click on a joined block: zoom the timeline to it (G-SPK-8).
     let zoom: (Double, Double) -> Void
-    /// A click on a banner: the question ids under it.
+    /// A click on a banner: the question ids under it. Used when `questionMenu` is nil.
     var openQuestion: ([String]) -> Void = { _ in }
+    /// The menu of the question with this id, built at the click: its answers and "Show in Items" (U2). A merged banner
+    /// shows one submenu per question. nil: a banner only opens its question (`openQuestion`).
+    var questionMenu: ((String) -> [MenuButtonItem])? = nil
     /// A stretch dropped on another speaker's lane; the owner applies it through the assignment journal.
     var assign: ((DecisionAction.Stretch, String) -> Void)? = nil
 
@@ -147,8 +150,10 @@ struct SpeakerTalkTimeLanes: View {
     static let compactWidth: CGFloat = 620
     static let compactNameWidth: CGFloat = 112
     static let compactShareWidth: CGFloat = 40
-    /// The room an end label of the ruler takes ("2:26:10" in 10 pt monospaced digits, with a gap).
-    static let rulerEndRoom: CGFloat = 80
+    /// One character of a ruler label: 10 pt monospaced digits advance 0.6 em, plus a little for rounding.
+    static let rulerCharWidth: CGFloat = 6.1
+    /// The clear gap between a mark's label and an end label.
+    static let rulerGap: CGFloat = 6
 
     @State private var compact = false
     @State private var dragOwner = UUID()
@@ -334,11 +339,14 @@ struct SpeakerTalkTimeLanes: View {
         .frame(width: width, height: 26, alignment: .topLeading)
     }
 
-    /// One question opens on a click; a merged banner lists its questions, so each one keeps its way to the row (the
-    /// click opened only the first, and the others under it had none).
+    /// With `questionMenu`, a banner opens its question's answers, so it is answered where it stands (U2: "the ? should
+    /// be clickable so i can pick no?"). Without it, one question opens on a click; a merged banner lists its questions,
+    /// so each one keeps its way to the row (the click opened only the first, and the others under it had none).
     @ViewBuilder
     private func bannerControl(_ banner: TalkTimeBanner) -> some View {
-        if banner.ids.count == 1 {
+        if let questionMenu {
+            MenuButton(items: { Self.bannerItems(banner, questions: questions, menu: questionMenu) }) { bannerLabel(banner) }
+        } else if banner.ids.count == 1 {
             Button { openQuestion(banner.ids) } label: { bannerLabel(banner) }
                 .buttonStyle(.genHoverPlain())
         } else {
@@ -372,19 +380,26 @@ struct SpeakerTalkTimeLanes: View {
         }
     }
 
+    /// The menu of a banner with answers: one question's own menu, or one submenu per question of a merged banner, each
+    /// titled by its name and time (`bannerChoices`).
+    static func bannerItems(_ banner: TalkTimeBanner, questions: [TalkTimeQuestion],
+                            menu: (String) -> [MenuButtonItem]) -> [MenuButtonItem] {
+        if banner.ids.count == 1, let id = banner.ids.first { return menu(id) }
+        return bannerChoices(banner, questions: questions).map { choice in .submenu(choice.title, menu(choice.id)) }
+    }
+
     private func bannerText(_ banner: TalkTimeBanner) -> String {
-        banner.ids.count == 1 ? "Open question at \(MeetingsFormat.clock(banner.atSec))"
-            : "\(banner.ids.count) open questions from \(MeetingsFormat.clock(banner.atSec)): pick one to open"
+        let at = MeetingsFormat.clock(banner.atSec)
+        if questionMenu != nil {
+            return banner.ids.count == 1 ? "Open question at \(at). Pick an answer, or show it in Items."
+                : "\(banner.ids.count) open questions from \(at). Pick one to answer it."
+        }
+        return banner.ids.count == 1 ? "Open question at \(at)" : "\(banner.ids.count) open questions from \(at): pick one to open"
     }
 
     private var ruler: some View {
         GeometryReader { proxy in
-            let marks = Self.rulerMarks(durationSec: durationSec)
-            // A mark too close to an end label leaves out: at the narrowest lanes "2:00:00" overlapped "2:26:10".
-            let inner = marks.dropFirst().dropLast().filter { sec in
-                let x = CGFloat(sec / durationSec) * proxy.size.width
-                return x > Self.rulerEndRoom && x < proxy.size.width - Self.rulerEndRoom
-            }
+            let inner = Self.innerRulerMarks(durationSec: durationSec, width: proxy.size.width)
             ZStack(alignment: .topLeading) {
                 ForEach(inner, id: \.self) { sec in
                     rulerText(sec).position(x: CGFloat(sec / durationSec) * proxy.size.width, y: 7)
@@ -406,6 +421,30 @@ struct SpeakerTalkTimeLanes: View {
             .font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary)
             .fixedSize()
     }
+
+    /// The marks between the two end labels that keep clear of both. A mark too close to an end label leaves out (at
+    /// the narrowest lanes "2:00:00" overlapped "2:26:10"); each end's room is its own label's width, so the short
+    /// "00:00" at the start no longer takes the room of a long end label (w_ehvp4b0b: one 80 pt room for both ends
+    /// dropped 0:30:00 beside "00:00" at 900 x 600). A mark also keeps clear of the inner mark kept before it, so two
+    /// long labels on a narrow ruler never overlap each other.
+    static func innerRulerMarks(durationSec: Double, width: CGFloat) -> [Double] {
+        guard durationSec > 0 else { return [] }
+        let startRoom = rulerLabelWidth(MeetingsFormat.clock(0))
+        let endRoom = rulerLabelWidth(MeetingsFormat.clock(durationSec))
+        var kept: [Double] = []
+        var keptEnd = startRoom
+        for sec in rulerMarks(durationSec: durationSec).dropFirst().dropLast() {
+            let x = CGFloat(sec / durationSec) * width
+            let half = rulerLabelWidth(MeetingsFormat.clock(sec)) / 2 + rulerGap
+            guard x - half > keptEnd, x + half < width - endRoom else { continue }
+            kept.append(sec)
+            keptEnd = x + half
+        }
+        return kept
+    }
+
+    /// The width of a ruler label (10 pt monospaced).
+    static func rulerLabelWidth(_ text: String) -> CGFloat { CGFloat(text.count) * rulerCharWidth }
 
     /// Ruler marks at a round step that gives four to seven marks, plus the end.
     static func rulerMarks(durationSec: Double) -> [Double] {

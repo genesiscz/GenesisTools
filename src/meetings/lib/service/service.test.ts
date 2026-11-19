@@ -11,23 +11,40 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { toRpcTable } from "@genesiscz/utils/api-descriptor";
+import { env } from "@genesiscz/utils/env";
 import type { WatcherOptions } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { MeetingsConflictError, MeetingsStateError } from "@genesiscz/utils/meetings/conflict";
+import { PeopleBook } from "@genesiscz/utils/meetings/people-book";
 import { ContactsPeopleSource } from "@genesiscz/utils/meetings/people-contacts";
 import { MEETING_FILE, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
+import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
+import { readVoiceLibrary, type VoicePrint } from "@genesiscz/utils/meetings/voice-library";
+import { addVoicePrint, readVoiceStore } from "@genesiscz/utils/meetings/voice-store";
 import { WordTimingCache, wordTimingFile } from "@genesiscz/utils/meetings/word-timing-cache";
 import * as serviceHost from "@genesiscz/utils/rpc/service-host";
 import { serviceEntryPath } from "@genesiscz/utils/rpc/service-host";
 import { RpcSocketClient } from "@genesiscz/utils/rpc/socket-client";
+import * as atomicFile from "@genesiscz/utils/storage/atomic-file";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { Command } from "commander";
 import { z } from "zod";
+import { renderLook } from "../../commands/look";
 import { registerServeCommand } from "../../commands/serve";
+
+import { CallTimeline } from "../call-timeline";
 import { MeetingComments } from "../comments";
+import { DecisionJournal } from "../decision-journal";
+import { ocrPath } from "../frame-index";
+import { lookMeeting } from "../look";
+import { screenTextChanges } from "../look-screen";
+import { OpenedMeeting } from "../opened-meeting";
+import { projectRequired } from "../project";
 import { persistClip } from "../saved-clip";
 import { errorText } from "../shared";
 import type { LinkedSource } from "../sources";
@@ -46,6 +63,7 @@ import {
     subscribeParamsSchema,
     subscribeResultSchema,
     UNSUBSCRIBE,
+    VOICES_METHODS,
 } from "./api";
 import {
     InProcessMeetingsClient,
@@ -57,11 +75,387 @@ import {
 } from "./client";
 import { MeetingsFolderWatch } from "./folder-watch";
 import { type MeetingsHandlerDeps, MeetingsServiceError } from "./handlers";
+import { testDictionaryPhrase } from "./library-handlers";
 import { previewTone } from "./moment-handlers";
-import { type MeetingsServiceOptions, startMeetingsService } from "./service";
+import { voicesHandlers } from "./people-handlers";
+import { readRows } from "./reads-handlers";
+import { MEETINGS_CALL_BEAT_MS, type MeetingsServiceOptions, progressBeat, startMeetingsService } from "./service";
 
 /** The code stamp of the tests' service and callers, so the fixture's hello does not name a checkout's path. */
 const CODE = "0123456789ab";
+
+test("a draft dictionary entry previews only the changed meeting lines without saving", async () => {
+    const { store, source, config, linkedSource } = scratchStore();
+    const original = await source.load("wf-2041");
+    source.load = async () => ({
+        ...original,
+        transcript: [
+            { startSec: 0, speaker: "Dana Example", text: "A glimmer here." },
+            { startSec: 5, speaker: "Alex Example", text: "Nothing changes." },
+            { startSec: 10, speaker: "Alex Example", text: "Another glimmer." },
+        ],
+    });
+    const before = readFileSync(store.path(REVIEW.id), "utf8");
+    const result = await testDictionaryPhrase(
+        { phrase: "glimmer", meeting: REVIEW.id, entry: { type: "term", value: "Glimmer", spoken: ["glimmer"] } },
+        { store: () => store, configStore: () => config, linkedSource }
+    );
+    expect(result.lines).toEqual([
+        {
+            index: 0,
+            startSec: 0,
+            endSec: 5,
+            speaker: "Dana Example",
+            before: "A glimmer here.",
+            after: "A Glimmer here.",
+        },
+        {
+            index: 2,
+            startSec: 10,
+            endSec: 15,
+            speaker: "Alex Example",
+            before: "Another glimmer.",
+            after: "Another Glimmer.",
+        },
+    ]);
+    expect(readFileSync(store.path(REVIEW.id), "utf8")).toBe(before);
+    expect((await config.read()).global.dictionary.entries).toEqual([]);
+});
+
+test("threshold preview changes a 79% term at its two times and keeps decisions and the config byte-for-byte", async () => {
+    const { store, source, linkedSource, config } = scratchStore();
+    const original = await source.load("wf-2041");
+    source.load = async () => ({
+        ...original,
+        transcript: [9, 22].map((startSec) => ({ startSec, speaker: "Speaker 1", text: "Read the blenwick now." })),
+    });
+    source.evidence = async () => null;
+    await config.update((raw) => {
+        raw.projects = { Atlas: {} };
+        raw.languages = { cs: { wordCheck: "off" }, sk: { wordCheck: "off" } };
+    });
+    await store.update(REVIEW.id, { command: "fixture", change: "suggested spelling" }, (record) => {
+        record.items = [
+            {
+                id: "i9",
+                kind: "term",
+                heard: "blenwick",
+                proposed: "Blenwik",
+                status: "suggested",
+                confidence: 0.79,
+                atSec: 9,
+                rules: [MeetingRule.PhoneticTerm],
+                suggestedAt: record.createdAt,
+            },
+            {
+                id: "i10",
+                kind: "term",
+                heard: "blenwick",
+                proposed: "Blenwik",
+                status: "suggested",
+                confidence: 0.65,
+                atSec: 22,
+                rules: [MeetingRule.PhoneticTerm],
+                suggestedAt: record.createdAt,
+            },
+        ];
+    });
+    const recordBytes = readFileSync(store.path(REVIEW.id));
+    const configBytes = readFileSync(config.path);
+    const client = new InProcessMeetingsClient({
+        deps: { store: () => store, configStore: () => config, linkedSource },
+    });
+    const preview = await client.call("meeting.thresholds.preview", {
+        meeting: REVIEW.id,
+        values: { "term.applyAbove": 0.8 },
+    });
+    expect(preview.changes).toContainEqual(
+        expect.objectContaining({
+            key: "saved:i9",
+            kind: "term proposal",
+            change: "changed",
+            atSec: 9,
+            text: "Read the blenwick now.",
+            before: expect.objectContaining({ status: "applied", confidence: 0.79 }),
+            after: expect.objectContaining({ status: "suggested", confidence: 0.79 }),
+            reason: expect.stringContaining("0.7 → 0.8"),
+        })
+    );
+    expect(preview.changes.filter((row) => row.kind === "transcript line").map((row) => row.atSec)).toEqual([9, 22]);
+    expect(readFileSync(store.path(REVIEW.id))).toEqual(recordBytes);
+    expect(readFileSync(config.path)).toEqual(configBytes);
+});
+
+test("R3 sampled call reviews split at an unmute and persist separate answer targets", async () => {
+    const { store, source, linkedSource, config } = scratchStore();
+    const original = await source.load("wf-2041");
+    const remote = "Finch Example";
+    const other = "Wren Example";
+    source.load = async () => ({
+        ...original,
+        speakers: [],
+        transcript: [0, 5].map((startSec) => ({
+            startSec,
+            speaker: "Voice",
+            text: "Please review this proposal.",
+        })),
+    });
+    source.evidence = async () => ({
+        files: [],
+        segments: [{ startSec: 0, endSec: 30, channel: "system" }],
+        speaking: [
+            { tSec: 0, speaking: [], muted: [other] },
+            { tSec: 5, speaking: [], muted: [] },
+        ],
+    });
+    await store.update(REVIEW.id, { command: "fixture", change: "two remote lines" }, (record) => {
+        record.participants = [remote, other].map((name) => ({ name, from: ["fixture"] }));
+        record.seats = { room: [], remote: [{ name: remote }, { name: other }] };
+        record.items = [
+            {
+                kind: "speaker-range",
+                id: "i1",
+                status: "suggested",
+                suggestedAt: record.createdAt,
+                rules: ["RA"],
+                speaker: remote,
+                label: "Voice",
+                fromSec: 0,
+                toSec: 5,
+                confidence: 0.55,
+            },
+        ];
+    });
+    const features = spyOn(await import("../listen-quality"), "qualityVoiceFeatures").mockResolvedValue([]);
+    const client = new InProcessMeetingsClient({
+        deps: { store: () => store, configStore: () => config, linkedSource },
+    });
+    try {
+        const result = await client.call("meeting.listen.prepare", {
+            meeting: REVIEW.id,
+            group: "long-stretch",
+            words: 1,
+            below: 0.7,
+        });
+        expect(result.questions).toHaveLength(2);
+        const saved = new MeetingStore(store.storage).read(REVIEW.id)!;
+        const questions = saved.items.filter((item) => item.kind === "question");
+        expect(questions[0]?.choices).not.toContain(other);
+        expect(questions[1]?.choices).toContain(other);
+        expect(questions[0]?.decides).toHaveLength(1);
+        expect(questions[1]?.decides).toHaveLength(1);
+        expect(questions[0]?.decides[0]).not.toBe(questions[1]?.decides[0]);
+    } finally {
+        features.mockRestore();
+        client.close();
+    }
+});
+
+test("lowering and raising the dictionary cutoff adds and removes the same timed proposal", async () => {
+    const { store, source, linkedSource, config } = scratchStore();
+    const original = await source.load("wf-2041");
+    source.load = async () => ({ ...original, transcript: [{ startSec: 13, speaker: "Narrator", text: "klyxpart" }] });
+    source.evidence = async () => null;
+    await config.update((raw) => {
+        raw.global = {
+            dictionary: { entries: [{ type: "term", value: "klymport" }] },
+            // The 0.75 proposal stays a suggestion, so a raised apply line is what moves it into the transcript.
+            suggest: { terms: { phonetic: 1, applyAbove: 0.8 } },
+        };
+        raw.languages = { cs: { wordCheck: "off" }, sk: { wordCheck: "off" } };
+    });
+    const client = new InProcessMeetingsClient({
+        deps: { store: () => store, configStore: () => config, linkedSource },
+    });
+    const preview = (values: Record<string, number>) =>
+        client.call("meeting.thresholds.preview", { meeting: REVIEW.id, values });
+    await expect(preview({ longStretchWords: Number.MAX_SAFE_INTEGER + 1 })).rejects.toThrow("longStretchWords");
+    const added = await preview({ "fuzzy.suggest": 0.7 });
+    const term = added.changes.find((row) => row.kind === "regenerated term proposal");
+    expect(term).toMatchObject({ change: "added", atSec: 13, text: "klyxpart", after: { confidence: 0.75 } });
+    await client.call("config.edit", { edits: [{ path: "global.suggest.terms.fuzzy.suggest", value: 0.7 }] });
+    const removed = await preview({ "fuzzy.suggest": 0.8 });
+    expect(removed.changes.find((row) => row.key === term!.key)).toMatchObject({
+        change: "removed",
+        before: term!.after,
+    });
+    const replaced = await preview({ "fuzzy.apply": 0.74, "fuzzy.suggest": 0.9 });
+    expect(replaced.changes.find((row) => row.kind === "transcript line")?.after?.description).toContain("klymport");
+    client.close();
+});
+
+test("look suppresses a global name where a confirmed label is meaningless", async () => {
+    const { store, source, linkedSource } = scratchStore();
+    const original = await source.load("wf-2041");
+    source.load = async () => ({
+        ...original,
+        transcript: [5, 10, 15, 20].map((startSec) => ({ startSec, speaker: "Speaker 1", text: "Fixture line" })),
+    });
+    source.evidence = async () => null;
+    const record = await store.update(
+        REVIEW.id,
+        { command: "fixture", change: "confirmed label decisions" },
+        (current) => {
+            current.speakers.labels["Speaker 1"] = "Alice Example";
+            current.speakers.assignments = [
+                { id: "a1", label: "Speaker 1", fromSec: 15, toSec: 15, person: "Dana Example", at: current.createdAt },
+            ];
+            current.items = [
+                {
+                    id: "i1",
+                    kind: "label",
+                    label: "Speaker 1",
+                    fromSec: 10,
+                    toSec: 25,
+                    meaningless: true,
+                    status: "confirmed",
+                    rules: [],
+                    suggestedAt: current.createdAt,
+                },
+                {
+                    id: "i2",
+                    kind: "speaker-range",
+                    label: "Speaker 1",
+                    fromSec: 20,
+                    toSec: 20,
+                    speaker: "Sam Example",
+                    status: "confirmed",
+                    rules: [],
+                    suggestedAt: current.createdAt,
+                },
+            ];
+        }
+    );
+    const opened = OpenedMeeting.of(store, record, linkedSource(record));
+    const open = spyOn(OpenedMeeting, "of").mockReturnValue(opened);
+    try {
+        const result = await lookMeeting(store, { meeting: record.id, from: 0, to: 25 });
+        expect(result.lines.map((line) => line.confirmedName)).toEqual([
+            "Alice Example",
+            null,
+            "Dana Example",
+            "Sam Example",
+        ]);
+    } finally {
+        open.mockRestore();
+    }
+});
+
+test("screen look parses only the requested window and viable display baselines in capture order", async () => {
+    const { store } = scratchStore();
+    const record = store.read(REVIEW.id)!;
+    const timeline = CallTimeline.stored(record);
+    const folder = store.folder(record.id);
+    const file = ocrPath(folder);
+    const row = (sec: number, text: string, displayId: number, failed?: string) =>
+        SafeJSON.stringify({
+            file: `frame-${sec}.jpg`,
+            at: new Date(timeline.msAt(sec)).toISOString(),
+            displayId,
+            text,
+            failed,
+        });
+    const distant = Array.from({ length: 64 }, (_, i) => row(30 + i, `Later ${i}`, 1));
+    const initial = [
+        row(9, "Wrong failed text", 1, "offline"),
+        row(11, "Red fox", 1),
+        ...distant,
+        row(3, "Older baseline", 1),
+        row(8, "First screen", 1),
+        row(7, "Seen before", 2),
+        row(10, "Second screen", 2),
+    ];
+    writeFileSync(file, `${initial.join("\n")}\n`);
+    const parser = spyOn(SafeJSON, "parse");
+    const read = () => screenTextChanges({ folder, timeline, fromSec: 10, toSec: 11 });
+    try {
+        expect(await read()).toEqual([
+            { atSec: 10, displayId: 2, added: ["Second screen"], removed: ["Seen before"] },
+            { atSec: 11, displayId: 1, added: ["Red fox"], removed: ["First screen"] },
+        ]);
+        expect(parser.mock.calls).toHaveLength(5);
+        parser.mockClear();
+        expect(await read()).toHaveLength(2);
+        expect(parser.mock.calls).toHaveLength(5);
+        writeFileSync(file, `${initial.join("\n")}\n${row(10, "Newly read", 1)}\n`);
+        expect((await read())?.find((change) => change.displayId === 1 && change.atSec === 10)?.added).toEqual([
+            "Newly read",
+        ]);
+    } finally {
+        parser.mockRestore();
+    }
+});
+
+test("the text look escapes source controls and can render a large section", () => {
+    const answer: Parameters<typeof renderLook>[0] = {
+        meeting: "meeting-fixture",
+        fromSec: 0,
+        toSec: 10,
+        lines: [
+            {
+                index: 0,
+                fromSec: 1,
+                toSec: 2,
+                label: "Speaker\u009b2K",
+                text: "Note\r\nFake\u001b[2J",
+                micShare: null,
+                confirmedName: "A\u0007",
+                suggestedName: null,
+                voice: null,
+                echoPair: null,
+            },
+        ],
+        attendance: [{ name: "Person\u2028Name", fromSec: 0, toSec: 4 }],
+        questions: [],
+        items: [],
+        screen: [
+            { atSec: 3, displayId: 1, added: Array.from({ length: 150_000 }, () => "OCR\u001b[2J"), removed: ["old"] },
+        ],
+    };
+    const text = renderLook(answer);
+    expect(text).toContain(String.raw`Speaker\u009b2K`);
+    expect(text).toContain(String.raw`Note\u000d\u000aFake\u001b[2J`);
+    expect(text).toContain(String.raw`Person\u2028Name`);
+    expect(text).toContain(String.raw`+ OCR\u001b[2J`);
+    expect(text).not.toContain("\u001b");
+    expect(answer.lines[0]!.text).toContain("\u001b");
+});
+
+test("threshold CLI lists sources, previews without saving and commits multiple global settings together", async () => {
+    const { registerThresholdsCommand } = await import("../../commands/thresholds");
+    const { store, linkedSource, config } = scratchStore();
+    await config.update((raw) => {
+        raw.projects = { Atlas: { dictionary: { fuzzy: { suggest: 0.82 } } } };
+    });
+    const client = new InProcessMeetingsClient({
+        deps: { store: () => store, configStore: () => config, linkedSource },
+    });
+    const result = spyOn(out, "result").mockImplementation(() => undefined);
+    const run = (args: string[]) => {
+        const program = new Command().exitOverride();
+        registerThresholdsCommand(program, (work) => work(client));
+        return program.parseAsync(["thresholds", REVIEW.id, "--json", ...args], { from: "user" });
+    };
+    const bytes = readFileSync(config.path);
+    try {
+        await run([]);
+        expect(String(result.mock.lastCall?.[0])).toContain("project Atlas dictionary.fuzzy.suggest");
+        await run(["--set", "fuzzy.suggest=0.7", "--preview"]);
+        expect(readFileSync(config.path)).toEqual(bytes);
+        await expect(run(["--set", "term.applyAbove=0.8", "words.minOccurrences=1"])).rejects.toThrow(
+            "words.minOccurrences"
+        );
+        expect(readFileSync(config.path)).toEqual(bytes);
+        await run(["--set", "term.applyAbove=0.8", "--set", "words.minOccurrences=4"]);
+        expect((await new MeetingsConfigStore(config.storage).read()).global.suggest).toMatchObject({
+            terms: { applyAbove: 0.8 },
+            words: { minOccurrences: 4 },
+        });
+    } finally {
+        result.mockRestore();
+        client.close();
+    }
+});
 
 const closing: Array<() => void> = [];
 
@@ -152,6 +546,14 @@ function fakeSource(): TranscriptSource {
         liveRecording: async () => null,
         calendarEntries: async () => ({ ok: true, from: "wisprflow", entries: [] }),
         folders: async () => [],
+        meetingsBetween: async () => [
+            {
+                sourceMeetingId: "wf-2041",
+                title: "Design review",
+                start: "2026-11-03T09:00:00.000Z",
+                hasTranscript: true,
+            },
+        ],
         meetingFolders: async () => [],
         folderWrite: { supported: false, reason: "fake", manualStep: "none" },
     };
@@ -193,6 +595,623 @@ function scratchStore(): {
         linkedSource: (record) => (record.id === REVIEW.id ? { source, sourceMeetingId: "wf-2041" } : undefined),
     };
 }
+
+test("J7 offers a room device only for distinct roster joins and persists the owner's answer", async () => {
+    const { store, config } = scratchStore();
+    const settings = await config.read();
+    const deps = { store: () => store, config: async () => settings, configStore: () => config };
+    const client = new InProcessMeetingsClient({ deps, hello: { role: "window", protocol: 1 } });
+    const account = "Boardroom PC";
+    const guest = "Pip Example";
+    const group = "table";
+    async function addMeeting(id: string, copyOf?: string) {
+        const record = meetingRecordSchema.parse({
+            id,
+            title: `Room fixture ${id}`,
+            start: NOW.toISOString(),
+            createdAt: NOW.toISOString(),
+            createdBy: "new",
+            voiceRootMeeting: copyOf,
+            items: [
+                {
+                    id: "i1",
+                    kind: "speaker-range",
+                    label: "Voice 1",
+                    status: "suggested",
+                    fromSec: 1,
+                    toSec: 4,
+                    candidates: [account, guest],
+                    rules: [],
+                    suggestedAt: NOW.toISOString(),
+                },
+            ],
+            participants: [account, guest].map((name) => ({
+                name,
+                self: id === "second-room" && name === account,
+                from: ["platform-roster"],
+                stays: [
+                    { fromSec: 0, toSec: 10, source: "platform-roster" },
+                    { fromSec: 20, source: "platform-roster" },
+                ],
+            })),
+            seats: {
+                room: ["Quill Example"],
+                remote: [],
+                microphones: [{ id: group, deviceId: account, people: ["Quill Example"] }],
+            },
+        });
+        mkdirSync(store.folder(id), { recursive: true });
+        writeFileSync(store.path(id), SafeJSON.stringify(record));
+    }
+    const view = () => client.call("meeting.seats.suggest", { meeting: "first-room" });
+    await addMeeting("first-room");
+    await addMeeting("copy-room", "first-room");
+    expect((await view()).suggestion.deviceOffers ?? []).toEqual([]);
+    await addMeeting("second-room");
+    const offer = {
+        account,
+        group,
+        meetings: ["first-room", "second-room"],
+        titles: { "first-room": "Room fixture first-room", "second-room": "Room fixture second-room" },
+        question: "Is Boardroom PC the room's device?",
+    };
+    expect((await view()).suggestion.deviceOffers).toEqual([offer]);
+    settings.global.speakerLabels.seat.deviceOfferMinMeetings = 3;
+    expect((await view()).suggestion.deviceOffers ?? []).toEqual([]);
+    settings.global.speakerLabels.seat.deviceOfferMinMeetings = 2;
+    expect((await view()).suggestion.people.map((row) => row.name)).toContain(account);
+    const answer = {
+        action: "answer",
+        account,
+        meeting: "first-room",
+        yes: true,
+        group,
+        meetings: offer.meetings,
+    } as const;
+    const agent = new InProcessMeetingsClient({ deps, hello: agentHello });
+    await expect(agent.call("people.devices.decide", answer)).rejects.toThrow("owner");
+    await expect(client.call("people.devices.decide", { ...answer, meetings: ["not-the-offer"] })).rejects.toThrow(
+        "offer"
+    );
+    expect(await client.call("people.devices.decide", answer)).toMatchObject({
+        changed: true,
+        device: { account, group },
+    });
+    const mapped = await view();
+    const rows = await client.call("meeting.rows", { meeting: "first-room" });
+    const choices = rows.rows.find((row) => row.id === "i1")?.choices.map((choice) => choice.value);
+    expect(choices).toContain(guest);
+    expect(choices).not.toContain(account);
+    expect(await client.call("people.devices.decide", answer)).toMatchObject({ changed: false });
+    expect(mapped.suggestion.deviceOffers ?? []).toEqual([]);
+    expect(mapped.suggestion.people.map((row) => row.name)).not.toContain(account);
+    expect(mapped.suggestion.people.map((row) => row.name)).toContain(guest);
+    await expect(client.call("meeting.seats.suggest", { meeting: "first-room", room: [account] })).rejects.toThrow(
+        "device"
+    );
+    await client.call("people.devices.decide", { action: "unmap", account });
+    expect((await view()).suggestion.people.map((row) => row.name)).toContain(account);
+    expect((await view()).suggestion.deviceOffers).toEqual([offer]);
+    await client.call("people.devices.decide", { ...answer, yes: false });
+    const history = new PeopleBook({ storage: store.storage }).read().devices;
+    expect(history.map((entry) => entry.action)).toEqual(["map", "unmap", "refuse"]);
+    for (const entry of [history[0], history[2]]) {
+        expect(entry).toMatchObject({
+            actor: "window",
+            account,
+            group,
+            meeting: "first-room",
+            meetings: offer.meetings,
+        });
+    }
+    expect((await view()).suggestion.deviceOffers ?? []).toEqual([]);
+    expect((await view()).suggestion.people.map((row) => row.name)).toContain(account);
+    await expect(client.call("people.devices.decide", answer)).rejects.toThrow("offer");
+
+    const map = await client.call("people.devices.decide", { action: "map", account, group: "other table" });
+    const remap = await client.call("people.devices.decide", { action: "map", account, group });
+    expect(map.token).toBeDefined();
+    await expect(
+        client.call("people.devices.decide", { action: "undo", account, reverses: map.token! })
+    ).rejects.toThrow("has changed");
+    expect((await view()).suggestion.people.map((row) => row.name)).not.toContain(account);
+    expect(
+        await client.call("people.devices.decide", { action: "undo", account, reverses: remap.token! })
+    ).toMatchObject({ device: { account, group: "other table" } });
+    await client.call("people.devices.decide", { action: "unmap", account });
+    await store.update("first-room", { command: "fixture", change: "moved seats to the copy" }, (record) => {
+        delete record.seats;
+    });
+    const { meeting: _, ...contactsAnswer } = answer;
+    expect(await client.call("people.devices.decide", contactsAnswer)).toMatchObject({
+        changed: true,
+        device: { account, group },
+    });
+});
+
+test("P2 scoped voice selection pins legacy numbers, rolls back failed corrections and refuses an occupied destination", async () => {
+    const home = env.tools.getHome();
+    env.testing.set("GENESIS_TOOLS_HOME", mkdtempSync(join(tmpdir(), "voices-service-")));
+    const { store } = scratchStore();
+    const client = new InProcessMeetingsClient({ deps: { store: () => new MeetingStore(store.storage) } });
+    const name = "Lark Example";
+    const other = "Wren Example";
+    const person = { name };
+    const seed: VoicePrint = {
+        meeting: "elsewhere",
+        fromSec: 0,
+        toSec: 4,
+        seat: "mic",
+        track: "source-mic",
+        sourceSha: "clip",
+        embedding: [1, 0],
+        confirmedAt: "2026-11-01T12:00:00Z",
+    };
+    const get = (project: string) => readVoiceLibrary().library.samples.filter((s) => s.project === project);
+    try {
+        const x = await store.create(
+            { createdBy: "new", title: "Review", start: seed.confirmedAt, project: "spring" },
+            { command: "new", change: "fixture" }
+        );
+        const y = await store.create(
+            { createdBy: "new", title: "Workshop", start: seed.confirmedAt, project: "winter" },
+            { command: "new", change: "fixture" }
+        );
+        for (const { id } of [x, y]) {
+            await store.update(id, { command: "test", change: "seed proposals" }, (record) => {
+                const proposed = {
+                    id: "i1",
+                    kind: "speaker-range" as const,
+                    speaker: name,
+                    label: "S1",
+                    fromSec: 0,
+                    toSec: 4,
+                    status: "suggested" as const,
+                    rules: [MeetingRule.VoiceEmbedding],
+                    suggestedAt: seed.confirmedAt,
+                };
+                record.items = [
+                    proposed,
+                    { ...proposed, id: "i2", status: "confirmed" },
+                    { ...proposed, id: "i3", speaker: other },
+                ];
+            });
+        }
+        addVoicePrint("spring", name, { ...seed, meeting: x.id }, "fixture-model");
+        addVoicePrint("winter", name, { ...seed, meeting: y.id }, "fixture-model");
+        addVoicePrint("winter", name, { ...seed, meeting: y.id, fromSec: 10, toSec: 14 }, "fixture-model");
+        const global = await client.call("voices.list", { scope: { kind: "all" }, person: name });
+        expect(global.people).toHaveLength(1);
+        expect(global.people[0]!.samples).toHaveLength(3);
+        expect(global.people[0]!.samples.every((s) => !("embedding" in s))).toBe(true);
+        expect(
+            (await client.call("voices.list", { scope: { kind: "meeting", meeting: x.id }, person: name })).people[0]
+                ?.samples
+        ).toHaveLength(1);
+        const selection = { project: "spring", person: name, sample: 1 };
+        const first = await client.call("voices.remove", { ...selection, preview: true });
+        const xId = get("spring")[0]!.id;
+        const yIds = get("winter").map((s) => s.id);
+        expect(first.ids).toEqual([xId]);
+        expect(first.affected.map((row) => row.meeting).sort()).toEqual([x.id, y.id].sort());
+        addVoicePrint("spring", other, { ...seed, meeting: x.id, fromSec: 20, toSec: 25 }, "fixture-model");
+        await expect(client.call("voices.remove", { ...selection, planToken: first.planToken })).rejects.toThrow(
+            "Stale"
+        );
+        const plan = await client.call("voices.remove", { ...selection, preview: true });
+        const file = toolDataDir("meetings", "voice-library", "library.json");
+        const before = readFileSync(file);
+        const saved = [x, y].map((r) => readFileSync(store.path(r.id)));
+        const write = atomicFile.atomicWriteFileSync;
+        const fail = spyOn(atomicFile, "atomicWriteFileSync").mockImplementation((path, bytes, opt) => {
+            if (path === file) {
+                throw new Error("fixture publication failure");
+            }
+            return write(path, bytes, opt);
+        });
+        try {
+            await expect(client.call("voices.remove", { ...selection, planToken: plan.planToken })).rejects.toThrow(
+                "fixture publication failure"
+            );
+        } finally {
+            fail.mockRestore();
+        }
+        expect(readFileSync(file)).toEqual(before);
+        expect([x, y].map((r) => readFileSync(store.path(r.id)))).toEqual(saved);
+        const removed = await client.call("voices.remove", { ...selection, planToken: plan.planToken });
+        expect(removed.ids).toEqual([xId]);
+        expect(get("winter").map((s) => s.id)).toEqual(yIds);
+        expect(get("spring").some((s) => s.id === xId)).toBe(false);
+        for (const r of [x, y]) {
+            expect(store.read(r.id)!.items.map((i) => i.id)).toEqual(["i2", "i3"]);
+        }
+        expect(await client.call("voices.undo", { token: removed.token! })).toMatchObject({
+            status: "applied",
+            ids: [xId],
+        });
+        expect(get("spring")[0]).toMatchObject({ id: xId, owner: person });
+        const dir = toolDataDir("meetings", "voices");
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(
+            join(dir, "occupied.json"),
+            SafeJSON.stringify({
+                version: 1,
+                model: "fixture-model",
+                people: { [other]: { samples: [{ ...seed, meeting: x.id }] } },
+            })
+        );
+        const occupied = readVoiceLibrary().library.samples;
+        expect(await client.call("voices.move", { id: xId, to: { name: other } })).toMatchObject({ status: "refused" });
+        expect(readVoiceLibrary().library.samples).toEqual(occupied);
+    } finally {
+        client.close();
+        env.testing.set("GENESIS_TOOLS_HOME", home);
+    }
+});
+
+test("voice descriptors validate the shared handlers: lists and removal previews write nothing; removal retires suggested names", async () => {
+    const { store, linkedSource } = scratchStore();
+    const record = await store.create(
+        { title: "Voices", start: "2026-11-01T10:00:00Z", createdBy: "new", project: "service-voice-fixture" },
+        { command: "new", change: "fixture" }
+    );
+    await store.update(record.id, { command: "new", change: "fixture" }, (current) => {
+        current.items = [
+            {
+                id: "i1",
+                kind: "speaker-range",
+                fromSec: 1,
+                toSec: 4,
+                label: "Speaker 1",
+                speaker: "Alice Example",
+                status: "suggested",
+                rules: [MeetingRule.VoiceEmbedding],
+                suggestedAt: "2026-11-01T10:00:00Z",
+            },
+        ];
+    });
+    addVoicePrint(
+        record.project!,
+        "Alice Example",
+        {
+            meeting: record.id,
+            sourceSha: "fixture",
+            seat: "mic",
+            track: "source-mic",
+            fromSec: 1,
+            toSec: 4,
+            embedding: [1, 0],
+            confirmedAt: "2026-11-01T10:00:00Z",
+        },
+        "fixture-model"
+    );
+    const table = toRpcTable({ methods: VOICES_METHODS }, voicesHandlers(store, { linkedSource }));
+    const context = {
+        hello: () => ({
+            protocol: MEETINGS_PROTOCOL,
+            code: "fixture",
+            methods: [],
+            events: [],
+            version: "fixture",
+        }),
+    };
+    const before = readFileSync(store.path(record.id));
+    const listed = await table.call("voices.list", { project: record.project }, context);
+    expect(VOICES_METHODS[0].result.parse(listed).people[0]).toMatchObject({
+        person: "Alice Example",
+        samples: [{ sample: 1, track: "source-mic" }],
+    });
+    const plan = await table.call(
+        "voices.remove",
+        { project: record.project, person: "Alice Example", preview: true },
+        context
+    );
+    expect(plan).toMatchObject({ removed: 1, affected: [{ meeting: record.id, item: "i1" }] });
+    expect(readVoiceStore(record.project!).people["Alice Example"]?.samples).toHaveLength(1);
+    expect(readFileSync(store.path(record.id))).toEqual(before);
+    await expect(
+        table.call("voices.sample", { project: record.project, person: "Alice Example", sample: 0 }, context)
+    ).rejects.toThrow();
+    await table.call("voices.remove", { project: record.project, person: "Alice Example" }, context);
+    expect(new MeetingStore(store.storage).read(record.id)?.items).toEqual([]);
+    expect(readVoiceStore(record.project!).people["Alice Example"]).toBeUndefined();
+    for (const name of ["voices.list", "voices.preview", "voices.sample"]) {
+        expect(VOICES_METHODS.find((method) => method.name === name)?.effect).toBe("read");
+    }
+});
+
+test("voices.workers answers what auto means from the CPU sample; voices.preview and voices.apply send the voice pass's progress", async () => {
+    const { store, linkedSource } = scratchStore();
+    const table = toRpcTable(
+        { methods: VOICES_METHODS },
+        voicesHandlers(store, { linkedSource, freeCores: async () => ({ performanceCores: 12, idleCores: 2.6 }) })
+    );
+    const updates: Array<{ fraction?: number; label?: string }> = [];
+    const context = {
+        hello: () => ({ protocol: MEETINGS_PROTOCOL, code: "fixture", methods: [], events: [], version: "fixture" }),
+        progress: (update: { fraction?: number; label?: string }) => updates.push(update),
+    };
+    expect(await table.call("voices.workers", {}, context)).toEqual({ auto: 2, performanceCores: 12, idleCores: 2.6 });
+    expect(VOICES_METHODS.find((method) => method.name === "voices.workers")?.effect).toBe("read");
+
+    const labels = await import("../speaker-labels");
+    const { voiceProgressForMeeting } = await import("../speaker-labels/voice");
+    const propose = spyOn(labels, "proposeSpeakerLabels").mockImplementation(async (opened) => {
+        voiceProgressForMeeting.get(opened)?.(3, 3);
+        return [];
+    });
+    closing.push(() => propose.mockRestore());
+    const suggest = await import("../suggest-run");
+    const run = spyOn(suggest, "runSuggest").mockImplementation(async ({ onProgress }) => {
+        onProgress?.(4, 4);
+        return { fresh: [], retired: [], warnings: [] };
+    });
+    closing.push(() => run.mockRestore());
+    await table.call("voices.preview", { meeting: REVIEW.id }, context);
+    await table.call("voices.apply", { meeting: REVIEW.id }, context);
+    expect(updates).toEqual([
+        { fraction: 1, label: "Voices: 3 of 3 lines" },
+        { fraction: 1, label: "Voices: 4 of 4 lines" },
+    ]);
+});
+
+test("a running call repeats its newest step every beat, so a client's deadline measures silence, never length", async () => {
+    const sent: Array<{ fraction?: number; label?: string }> = [];
+    let wake = () => {};
+    // Wait for the beats themselves, with a generous deadline, so a slow runner that delays a timer cannot fail it.
+    const sentUntil = (enough: () => boolean) =>
+        new Promise<void>((resolve, reject) => {
+            const deadline = setTimeout(() => reject(new Error(`only ${sent.length} beats arrived`)), 5_000);
+            wake = () => {
+                if (enough()) {
+                    clearTimeout(deadline);
+                    wake = () => {};
+                    resolve();
+                }
+            };
+            wake();
+        });
+    const beat = progressBeat((update) => {
+        sent.push(update);
+        wake();
+    }, 30);
+    await sentUntil(() => sent.length >= 1);
+    expect(sent[0]).toEqual({});
+    const step = { fraction: 0.5, label: "Voices: 1 of 2 lines" };
+    beat.progress(step);
+    // The step goes out at once, then the beat repeats it at least twice.
+    await sentUntil(() => sent.filter((update) => update.label).length >= 3);
+    beat.stop();
+    const stopped = sent.length;
+    await Bun.sleep(100);
+    expect(sent.slice(1).every((update) => update.label === step.label)).toBe(true);
+    expect(sent.length).toBe(stopped);
+    expect(MEETINGS_CALL_BEAT_MS).toBeLessThan(60_000 / 2);
+
+    // Over a socket: a call that works longer than the client's deadline still answers while the beat runs.
+    const { service } = await startService({
+        beatMs: 30,
+        deps: {
+            freeCores: async () => {
+                await Bun.sleep(400);
+                return { performanceCores: 12, idleCores: 9 };
+            },
+        },
+    });
+    const client = await SocketMeetingsClient.connect(service.entry, hello);
+    closing.push(() => client.close());
+    const beats: Array<{ fraction?: number; label?: string }> = [];
+    // The work takes twice the deadline; beats every 30 ms leave a delayed timer a wide margin under it.
+    const answer = await client.call(
+        "voices.workers",
+        {},
+        { timeoutMs: 200, onProgress: (update) => beats.push(update) }
+    );
+    expect(answer.auto).toBe(4);
+    expect(beats.length).toBeGreaterThanOrEqual(2);
+});
+
+async function questionRowsFixture() {
+    const fixture = scratchStore();
+    const original = await fixture.source.load("wf-2041");
+    fixture.source.load = async () => ({
+        ...original,
+        transcript: [
+            { startSec: 0, speaker: "Speaker 2", text: "word ".repeat(70).trim() },
+            { startSec: 10, speaker: "Speaker 3", text: "A different label." },
+            { startSec: 20, speaker: "Speaker 2", text: "Same doubt here." },
+            { startSec: 30, speaker: "Speaker 2", text: "Outside range." },
+            { startSec: 40, speaker: "Speaker 3", text: "Other label again." },
+            { startSec: 50, speaker: "Speaker 2", text: "Not asked yet." },
+        ],
+    });
+    const base = { status: "suggested", rules: [], confidence: 0.4, suggestedAt: REVIEW.createdAt };
+    await fixture.store.update(REVIEW.id, { command: "fixture", change: "question rows" }, (record) => {
+        record.items = meetingRecordSchema.parse({
+            ...record,
+            items: [
+                ...[
+                    ["i1", 0, 10],
+                    ["i2", 30, 30],
+                    ["i3", 20, 20],
+                    ["i4", 50, 50],
+                ].map(([id, fromSec, toSec]) => ({
+                    ...base,
+                    id,
+                    kind: "speaker-range",
+                    label: "Speaker 2",
+                    fromSec,
+                    toSec,
+                    speaker: "Alex Example",
+                    evidence: { signature: "shape", choices: ["Alex Example", "Dana Example"] },
+                })),
+                {
+                    ...base,
+                    id: "i5",
+                    kind: "question",
+                    about: "speaker",
+                    fromSec: 0,
+                    toSec: 5,
+                    question: "Who speaks?",
+                    choices: ["Alex Example", "Dana Example"],
+                    decides: ["i1", "i2"],
+                    signature: "shape",
+                    priority: 1,
+                    evidence: { labels: ["Speaker 2"] },
+                },
+                {
+                    ...base,
+                    id: "i6",
+                    kind: "question",
+                    about: "speaker",
+                    fromSec: 20,
+                    toSec: 25,
+                    question: "Who speaks?",
+                    choices: ["Alex Example", "Dana Example"],
+                    decides: ["i3"],
+                    signature: "shape",
+                    priority: 1,
+                    evidence: { labels: ["Speaker 2"] },
+                },
+            ],
+        }).items;
+    });
+    const deps = {
+        store: () => fixture.store,
+        config: () => fixture.config.read(),
+        linkedSource: fixture.linkedSource,
+    };
+    return { ...fixture, deps };
+}
+
+test("question rows keep each decided line, including targets outside the question and all its text", async () => {
+    const { store, deps } = await questionRowsFixture();
+    const result = await readRows({ meeting: REVIEW.id }, store, deps);
+    const lines = result.questionDetails?.find((row) => row.id === "i5")?.decidedLines;
+    expect(lines?.map((line) => line.index)).toEqual([0, 3]);
+    expect(lines?.[0]?.text).toBe("word ".repeat(70).trim());
+    expect(lines?.[1]).toEqual({ index: 3, startSec: 30, endSec: 40, speaker: "Speaker 2", text: "Outside range." });
+});
+
+test("question impact counts distinct lines and words and includes unasked ranges with the same doubt", async () => {
+    const { store, deps } = await questionRowsFixture();
+    const result = await readRows({ meeting: REVIEW.id }, store, deps);
+    expect(result.questionDetails?.find((row) => row.id === "i5")?.impact).toEqual({
+        lines: 2,
+        words: 72,
+        sameDoubtLines: 4,
+    });
+});
+
+test("answered rows name the lines actually raised by that answer after reopening the journal", async () => {
+    const { store, deps } = await questionRowsFixture();
+    await new DecisionJournal({ store, listenBelow: 0.9, ledger: () => undefined }).apply({
+        meeting: REVIEW.id,
+        actor: { kind: "window" },
+        action: { kind: "answer", question: "i5", answer: "Alex Example" },
+    });
+    const reopened = new MeetingStore(store.storage);
+    const result = await readRows({ meeting: REVIEW.id }, reopened, deps);
+    expect(result.questionDetails?.find((row) => row.id === "i5")?.raisedLines?.map((line) => line.index)).toEqual([
+        2, 5,
+    ]);
+    expect(result.questionDetails?.find((row) => row.id === "i6")?.raisedLines).toBeUndefined();
+});
+
+test("meeting rows expose a stored attendance failure even without a readable transcript", async () => {
+    const { store, config, source, linkedSource } = scratchStore();
+    source.load = async () => {
+        throw new Error("Fixture transcript unavailable");
+    };
+    await store.update(
+        REVIEW.id,
+        { command: "attendance-failed", change: "Fixture attendance not found" },
+        () => undefined
+    );
+    const result = await readRows({ meeting: REVIEW.id }, new MeetingStore(store.storage), {
+        config: () => config.read(),
+        linkedSource,
+    });
+    // One short sentence for the window; the stored text is the detail behind it (U3).
+    expect(result.attendanceWarning).toBe("The call did not say who joined, so the people come from the transcript.");
+    expect(result.attendanceDetail).toBe("Fixture attendance not found");
+});
+
+test("line evidence names the active swaps that skipped each source line", async () => {
+    const { store, deps } = await questionRowsFixture();
+    await store.update(REVIEW.id, { command: "fixture", change: "swap skips" }, (record) => {
+        record.items[0]!.evidence = { swap: { skipped: [10, 40] } };
+        record.items[1]!.evidence = { swap: { skipped: [40] } };
+        record.items[2]!.evidence = { swap: { skipped: [10] } };
+        record.items[2]!.status = "rejected";
+        // A swap that names its labels skips only lines under one of them.
+        record.items[3]!.evidence = { swap: { skipped: [10, 20, 40], selfLabel: "Speaker 2", otherLabel: "Nobody" } };
+    });
+    const result = await readRows({ meeting: REVIEW.id }, store, deps);
+    expect(result.lineEvidence?.map((line) => line.swapSkippedBy)).toEqual([
+        undefined,
+        ["i1"],
+        ["i4"],
+        undefined,
+        ["i1", "i2"],
+        undefined,
+    ]);
+});
+
+test("line evidence warns only outside known remote windows and omits a warning when presence is unknown", async () => {
+    const { store, deps, source } = await questionRowsFixture();
+    const meeting = await source.load("wf-2041");
+    meeting.transcript[1]!.speaker = "Dana Example";
+    source.load = async () => meeting;
+    const unknown = await readRows({ meeting: REVIEW.id }, store, deps);
+    expect(unknown.lineEvidence).toBeUndefined();
+    await store.update(REVIEW.id, { command: "fixture", change: "remote windows" }, (record) => {
+        record.seats = { room: ["Dana Example"], remote: [{ name: "Alex Example", fromSec: 20, toSec: 40 }] };
+    });
+    const result = await readRows({ meeting: REVIEW.id }, store, deps);
+    expect(result.lineEvidence?.map((line) => line.noRemotePresent)).toEqual([
+        true,
+        undefined,
+        undefined,
+        undefined,
+        true,
+        true,
+    ]);
+});
+
+test("line evidence returns measured call level, echo and microphone share per line, leaving missing measurements absent", async () => {
+    const { store, deps } = await questionRowsFixture();
+    const share = Object.assign((fromSec: number) => (fromSec === 20 ? undefined : 0.25), {
+        acoustic: (fromSec: number) =>
+            fromSec === 20
+                ? undefined
+                : {
+                      callRms: 0.1 + fromSec / 1000,
+                      echoOfCall: 0.8,
+                      correlation: 0.9,
+                      lagMs: 10,
+                      gain: 0.4,
+                      rawMicRms: 0.2,
+                      cleanMicRms: 0.05,
+                      quality: "linear-estimate" as const,
+                  },
+    });
+    const energy = spyOn(OpenedMeeting.prototype, "energy").mockResolvedValue({ share });
+    try {
+        const result = await readRows({ meeting: REVIEW.id }, store, deps);
+        expect(result.lineEvidence?.[0]).toMatchObject({
+            index: 0,
+            micShare: 0.25,
+            callRms: 0.1,
+            echoOfCall: 0.8,
+            acousticQuality: "linear-estimate",
+        });
+        expect(result.lineEvidence?.[1]?.callRms).toBe(0.11);
+        expect(result.lineEvidence?.[2]).toEqual({ index: 2, startSec: 20, endSec: 30 });
+    } finally {
+        energy.mockRestore();
+    }
+});
 
 /** A stand-in for @parcel/watcher: `raise` hands the folder watch the events a write of these paths would raise. */
 function fakeFolderEvents(): {
@@ -302,7 +1321,12 @@ const quietDeps: MeetingsHandlerDeps = {
 };
 
 async function startService(
-    options: { dir?: string; watch?: MeetingsServiceOptions["watch"]; deps?: Partial<MeetingsHandlerDeps> } = {}
+    options: {
+        dir?: string;
+        watch?: MeetingsServiceOptions["watch"];
+        deps?: Partial<MeetingsHandlerDeps>;
+        beatMs?: number;
+    } = {}
 ) {
     const { store, config, linkedSource, source } = scratchStore();
     const dir = options.dir ?? serviceDir();
@@ -311,9 +1335,12 @@ async function startService(
         store: () => store,
         configStore: () => config,
         linkedSource,
+        // A source list or a link reads the fake, never this Mac's Wispr Flow.
+        sources: async () => source,
         idleMs: 0,
         code: CODE,
         watch: options.watch ?? false,
+        ...(options.beatMs === undefined ? {} : { beatMs: options.beatMs }),
         ...quietDeps,
         ...options.deps,
     });
@@ -377,6 +1404,134 @@ async function failure(call: Promise<unknown>): Promise<Error> {
 }
 
 describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetings service, %s adapter", (kind) => {
+    test("seat suggestions read raw channel energy on confirmed lines without changing the record", async () => {
+        const { client, store, source } = await ADAPTERS[kind]();
+        const meeting = await source.load("wf-2041");
+        source.load = async () => ({
+            ...meeting,
+            transcript: Array.from({ length: 5 }, (_, startSec) => ({ startSec, speaker: "S1", text: "A line." })),
+        });
+        await store.update(REVIEW.id, { command: "test", change: "confirmed lines" }, (record) => {
+            record.items = [
+                {
+                    kind: "speaker-range",
+                    id: "i1",
+                    status: "confirmed",
+                    label: "S1",
+                    fromSec: 0,
+                    toSec: 4,
+                    speaker: "Moss Example",
+                    suggestedAt: record.start,
+                    rules: [],
+                },
+            ];
+        });
+        const energy = spyOn(OpenedMeeting.prototype, "energy").mockResolvedValue({
+            share: Object.assign(() => 0.1, { raw: () => 0.9 }),
+        });
+        closing.push(() => energy.mockRestore());
+        const before = readFileSync(store.path(REVIEW.id));
+        const view = await client.call("meeting.seats.suggest", { meeting: REVIEW.id });
+        expect(view.suggestion.seats.room).toEqual(["Dana Example", "Moss Example"]);
+        expect(view.suggestion.people).toContainEqual({
+            name: "Moss Example",
+            seat: "room",
+            reason: "5 of 5 decided lines on the microphone.",
+            confidence: 1,
+        });
+        expect(view.suggestion.people).toContainEqual({
+            name: "Alex Example",
+            seat: "unsure",
+            reason: "No call roster entry or decided lines.",
+            confidence: 0,
+        });
+        expect(readFileSync(store.path(REVIEW.id))).toEqual(before);
+    });
+    test("suggest refuses without a project before running and runs once a project is set", async () => {
+        const { client, store, config } = await ADAPTERS[kind]();
+        const suggest = await import("../suggest-run");
+        const run = spyOn(suggest, "runSuggest").mockResolvedValue({
+            fresh: [],
+            retired: [],
+            warnings: ["Fixture warning"],
+        });
+        closing.push(() => run.mockRestore());
+        const record = meetingRecordSchema.parse({ ...REVIEW, project: undefined });
+        writeFileSync(store.path(record.id), SafeJSON.stringify(record, null, 2));
+        const before = readFileSync(store.path(record.id));
+        const text = projectRequired(record, await config.read());
+        expect(text).toContain("This meeting has no project. Suggestions use the project's dictionary.");
+
+        const error = await failure(client.call("meeting.suggest", { meeting: record.id }));
+        expect(error).toBeInstanceOf(MeetingsServiceError);
+        expect(error).toMatchObject({ code: "project-required", message: text });
+        expect(run).not.toHaveBeenCalled();
+        expect(readFileSync(store.path(record.id))).toEqual(before);
+
+        writeFileSync(store.path(record.id), SafeJSON.stringify(REVIEW, null, 2));
+        expect(await client.call("meeting.suggest", { meeting: record.id })).toEqual({
+            added: 0,
+            warnings: ["Fixture warning"],
+        });
+        expect(run).toHaveBeenCalledTimes(1);
+        expect(run.mock.calls[0]?.[0].record.project).toBe(REVIEW.project);
+    });
+
+    test("meeting.suggest forwards voice progress including the last line, without a notification per clip", async () => {
+        const { client } = await ADAPTERS[kind]();
+        const suggest = await import("../suggest-run");
+        const run = spyOn(suggest, "runSuggest").mockImplementation(async ({ onProgress }) => {
+            const clock = spyOn(performance, "now").mockReturnValue(0);
+            try {
+                for (const done of [0, 1, 2, 25]) {
+                    onProgress?.(done, 2000);
+                }
+                clock.mockReturnValue(250);
+                onProgress?.(26, 2000);
+                onProgress?.(2000, 2000);
+            } finally {
+                clock.mockRestore();
+            }
+            return { fresh: [], retired: [], warnings: [] };
+        });
+        closing.push(() => run.mockRestore());
+        const updates: Array<{ fraction?: number; label?: string }> = [];
+        await client.call("meeting.suggest", { meeting: REVIEW.id }, { onProgress: (update) => updates.push(update) });
+        expect(updates.map(({ fraction, label }) => [fraction, label])).toEqual([
+            [0, "Voices: 0 of 2000 lines"],
+            [25 / 2000, "Voices: 25 of 2000 lines"],
+            [26 / 2000, "Voices: 26 of 2000 lines"],
+            [1, "Voices: 2000 of 2000 lines"],
+        ]);
+    });
+
+    test("meeting.suggest stops when its caller cancels: the run's signal aborts and the call rejects", async () => {
+        const { client } = await ADAPTERS[kind]();
+        const suggest = await import("../suggest-run");
+        let seen: AbortSignal | undefined;
+        const run = spyOn(suggest, "runSuggest").mockImplementation(async ({ signal }) => {
+            seen = signal;
+            await new Promise((_resolve, reject) => {
+                signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+            });
+            return { fresh: [], retired: [], warnings: [] };
+        });
+        closing.push(() => run.mockRestore());
+        const controller = new AbortController();
+        const call = client.call("meeting.suggest", { meeting: REVIEW.id }, { signal: controller.signal });
+        for (let waited = 0; waited < 3000 && !seen; waited += 10) {
+            await Bun.sleep(10);
+        }
+        expect(seen?.aborted).toBe(false);
+        controller.abort();
+        await expect(call).rejects.toThrow();
+        // Over a socket the service hears `$/cancel` a moment after the caller gave up.
+        for (let waited = 0; waited < 3000 && !seen?.aborted; waited += 10) {
+            await Bun.sleep(10);
+        }
+        expect(seen?.aborted).toBe(true);
+    });
+
     test("threshold previews apply only what each threshold allows, from one source load, persisting nothing", async () => {
         const { client, store, source } = await ADAPTERS[kind]();
         // The 0.5 and 0.7 previews apply the suggested speaker at 0.82; the 1 preview only shows it.
@@ -397,8 +1552,30 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect(SafeJSON.stringify(await new MeetingsConfigStore().read())).toBe(configBefore);
     });
 
+    test("rows use the saved threshold across three confidence bands and a one-off override", async () => {
+        const { client, store, config } = await ADAPTERS[kind]();
+        await config.update((raw) => {
+            raw.global = { suggest: { applyAbove: 0.85 } };
+        });
+        const items = [0.5, 0.7, 0.9].map((confidence, index) => ({
+            ...REVIEW.items[0],
+            id: `i${index + 1}`,
+            confidence,
+            speaker: "River Example",
+        }));
+        writeFileSync(store.path(REVIEW.id), SafeJSON.stringify({ ...REVIEW, items }));
+        const guesses = async (applyAbove?: number) =>
+            (await client.call("meeting.rows", { meeting: REVIEW.id, applyAbove })).rows
+                .filter((row) => row.guess)
+                .map((row) => row.id);
+        expect(await guesses()).toEqual(["i1", "i2"]);
+        expect(await guesses(0.7)).toEqual(["i1"]);
+        expect(await guesses(0.5)).toEqual([]);
+        expect((await config.read()).global.suggest.applyAbove).toBe(0.85);
+    });
+
     test("a long-stretch preparation asks about lines below the threshold the caller gives", async () => {
-        const { client, store } = await ADAPTERS[kind]();
+        const { client, store, config } = await ADAPTERS[kind]();
         // The fixture's upload is no real audio: the voice features are not what this test is about.
         const quality = await import("../listen-quality");
         const features = spyOn(quality, "qualityVoiceFeatures").mockResolvedValue([]);
@@ -408,7 +1585,15 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         const prepare = (below: number) =>
             client.call("meeting.listen.prepare", { meeting: REVIEW.id, group: "long-stretch", words: 1, below });
         expect((await prepare(0.8)).questions).toEqual([]);
-        expect((await prepare(0.9)).questions.length).toBeGreaterThan(0);
+        expect((await prepare(0.9)).questions).toHaveLength(1);
+        seedSuggestedSpeaker(store);
+        await config.update((raw) => {
+            raw.global = { suggest: { applyAbove: 0.9 } };
+        });
+        expect(
+            (await client.call("meeting.listen.prepare", { meeting: REVIEW.id, group: "long-stretch", words: 1 }))
+                .questions
+        ).toHaveLength(1);
     });
 
     test("meeting-local people persist device and half-open stays and remove through either adapter", async () => {
@@ -430,7 +1615,7 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
             joinedAtExact: true,
             leftAtExact: true,
         });
-        expect(reopened.seats?.room).toContain("River Example");
+        expect(reopened.seats?.room).toContainEqual({ name: "River Example", fromSec: 3, toSec: 8 });
         expect(reopened.seats?.microphones?.find((group) => group.id === "self")?.people).toContain("River Example");
         await client.call("meeting.people.edit", { meeting: REVIEW.id, action: "remove", name: "River Example" });
         expect(
@@ -488,7 +1673,7 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         ]);
         const reopened = new MeetingStore(store.storage).resolve(REVIEW.id)!;
         expect(reopened.participants.find((person) => person.name === "Eli Example")?.stays).toEqual([
-            { fromSec: 60, toSec: 120, source: "hand", confidence: 1 },
+            { fromSec: 60, toSec: 120, source: "hand", leaveSource: "hand", confidence: 1 },
         ]);
         expect(reopened.attendance?.people).toContainEqual({
             name: "Eli Example",
@@ -506,14 +1691,16 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
     });
 
     test("meeting.show answers the record by id or prefix; a missing or ambiguous ref is refused with its code", async () => {
-        const { client } = await ADAPTERS[kind]();
+        const { client, store } = await ADAPTERS[kind]();
         const record = await client.call("meeting.show", { ref: "2026-11-03-10" });
 
         expect(record).toEqual(meetingRecordSchema.parse(REVIEW));
         const missing = await failure(client.call("meeting.show", { ref: "nope" }));
         expect(missing).toBeInstanceOf(MeetingsServiceError);
         expect(missing).toMatchObject({ code: "meeting-not-found" });
-        expect(errorText(missing)).toBe('[meeting-not-found] No meeting "nope". List them: tools meetings list');
+        expect(errorText(missing)).toBe(
+            `[meeting-not-found] No meeting "nope" in ${store.root}. List them: tools meetings list. Look in the other stores: tools meetings locate nope`
+        );
         const ambiguous = await failure(client.call("meeting.show", { ref: "2026-11-03" }));
         expect(ambiguous).toMatchObject({ code: "meeting-ref" });
         expect(errorText(ambiguous)).toBe(`[meeting-ref] "2026-11-03" fits 2 meetings: ${RETRO.id}, ${REVIEW.id}`);
@@ -614,6 +1801,72 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         expect(store.read(REVIEW.id)).toMatchObject({ seats: moved, title: "Seated review" });
         const rows = await client.call("journal.read", { meeting: REVIEW.id });
         expect(rows.entries).toHaveLength(2);
+    });
+
+    test("timed seats survive RPC and reopen without changing a legacy room row or its group", async () => {
+        const { client, store } = await ADAPTERS[kind]();
+        const name = "Fern Example";
+        const group = { id: "self", people: ["Reed Example", name] };
+        const legacy = {
+            room: ["Reed Example", name],
+            remote: ["Ash Example", { name: "Empty Example", toSec: 0 }],
+            microphones: [group],
+        };
+        const file = store.path(REVIEW.id);
+        writeFileSync(file, SafeJSON.stringify({ ...store.read(REVIEW.id), seats: legacy }));
+        const before = readFileSync(file);
+        const shown = await client.call("meeting.show", { ref: REVIEW.id });
+        expect(shown.seats?.room).toEqual(legacy.room);
+        expect(shown.seats?.remote).toContainEqual({ name: "Empty Example", toSec: 0 });
+        expect(readFileSync(file)).toEqual(before);
+        const seats = {
+            ...shown.seats!,
+            room: ["Reed Example", { name, fromSec: 60, toSec: 120 }],
+            remote: [{ name: "Ash Example" }, { name, toSec: 60 }, { name, fromSec: 150, label: "Guest" }],
+        };
+        await client.call("decision.apply", { meeting: REVIEW.id, action: { kind: "set", seats } });
+        await client.call("decision.apply", {
+            meeting: REVIEW.id,
+            action: { kind: "set", title: "Review with seats" },
+        });
+        await client.call("meeting.people.edit", { meeting: REVIEW.id, action: "add", name, fromSec: 0, toSec: 80 });
+        const reopened = new MeetingStore(store.storage).read(REVIEW.id);
+        expect(reopened?.seats).toEqual(seats);
+        expect(reopened?.attendance?.people).toContainEqual({
+            name,
+            fromSec: 0,
+            toSec: 80,
+            joinedAtExact: true,
+            leftAtExact: true,
+        });
+        expect(SafeJSON.parse(readFileSync(file, "utf8"))).toMatchObject({ seats });
+        const saved = readFileSync(file);
+        for (const invalid of [
+            { ...seats, remote: [{ name, toSec: 61 }] },
+            { ...seats, remote: [{ name, fromSec: 5, toSec: 5 }] },
+            { ...seats, remote: [{ name, fromSec: -1 }] },
+        ]) {
+            await expect(
+                client.call("decision.apply", { meeting: REVIEW.id, action: { kind: "set", seats: invalid } })
+            ).rejects.toThrow();
+            expect(readFileSync(file)).toEqual(saved);
+        }
+        const visitor = "Ash Example";
+        await client.call("meeting.people.edit", {
+            meeting: REVIEW.id,
+            action: "add",
+            name: visitor,
+            atMic: true,
+            fromSec: 40,
+            toSec: 50,
+        });
+        const moved = new MeetingStore(store.storage).read(REVIEW.id)?.seats;
+        expect(moved?.room).toEqual([...seats.room, { name: visitor, fromSec: 40, toSec: 50 }]);
+        expect(moved?.remote.filter((row) => row.name === visitor)).toEqual([
+            { name: visitor, toSec: 40 },
+            { name: visitor, fromSec: 50 },
+        ]);
+        expect(moved?.microphones).toEqual([{ ...group, people: [...group.people, visitor] }]);
     });
 
     test("service journal reads retain the copied meeting's provenance", async () => {
@@ -1205,8 +2458,8 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
                 to: { sec: 30, text: "00:30" },
                 target: { kind: "item", id: "i1" },
             },
-            { kind: "reason", pieces: [{ text: "Rules: presence" }] },
         ]);
+        expect(rows.rows[0]?.rules).toEqual(["presence"]);
 
         expect(rows.rows[0]?.choices.map((choice) => [choice.role, choice.value, choice.confidence])).toEqual([
             ["suggested", "Alex Example", 0.82],
@@ -1995,6 +3248,7 @@ async function captureExamples(): Promise<Example[]> {
     const modelFiles = [wordTimingFile(model)];
     const { service, store, config } = await startService({
         deps: {
+            freeCores: async () => ({ performanceCores: 12, idleCores: 2.6 }),
             voiceFrames: async () => FIXTURE_VOICE_FRAMES,
             wordTimings: {
                 cache: new WordTimingCache(join(timingRoot, "cache")),
@@ -2034,6 +3288,22 @@ async function captureExamples(): Promise<Example[]> {
     await ask(window, "meeting.suggest", { meeting: "nope" });
     await ask(window, "meeting.listen.prepare", { meeting: "nope", group: "spot-check" });
     await ask(window, "meeting.voice.enrol", { meeting: "nope" });
+    await ask(
+        window,
+        "voices.list",
+        { project: "Atlas" },
+        "A project with no voice samples still lists its attended people, each with an empty samples array."
+    );
+    await ask(window, "voices.preview", { meeting: "nope" });
+    await ask(window, "voices.apply", { meeting: "nope" });
+    await ask(window, "voices.sample", { project: "Atlas", person: "Alice Example", sample: 0 });
+    await ask(window, "voices.workers", {}, "What auto voice workers means now, from a fixed CPU sample.");
+    await ask(
+        window,
+        "voices.remove",
+        { project: "Atlas", person: "Alice Example", preview: true },
+        "preview: read only."
+    );
     await ask(window, "meeting.show", { ref: "nope" }, "No meeting: meeting-not-found.");
     await ask(window, "meeting.show", { ref: "2026-11-03" }, "A prefix of two meetings: meeting-ref.");
     await ask(window, "meeting.transcript", { ref: REVIEW.id });
@@ -2557,6 +3827,53 @@ async function captureExamples(): Promise<Example[]> {
         { backup: (removal?.reply?.result as { backup?: string } | undefined)?.backup },
         "The Undo of the removal: the block, its pairings and the meeting it left without a project come back."
     );
+    await ask(window, "rules.names", {}, "Every rule's sentence by its id, as a review row words an item's rules.");
+    await ask(
+        window,
+        "meeting.sources.near",
+        { meeting: REVIEW.id },
+        "The source meetings near the record's start, nearest first; this one is linked to the record already."
+    );
+    await ask(
+        window,
+        "meeting.link",
+        { meeting: RETRO.id, source: "wisprflow:wf-2041" },
+        "A source meeting another record holds: refused, so two records never share one source meeting."
+    );
+    await ask(window, "voice.backfill", { project: "Unassigned-fixture", dryRun: true });
+    await store.update(RETRO.id, { command: "fixture", change: "seat transition" }, (record) => {
+        record.seats = {
+            room: ["Reed Example", { name: "Fern Example", fromSec: 60, toSec: 120 }],
+            remote: [{ name: "Fern Example", toSec: 60, label: "Guest" }],
+            microphones: [{ id: "self", people: ["Reed Example", "Fern Example"] }],
+        };
+    });
+    await ask(window, "meeting.seats.suggest", { meeting: RETRO.id });
+    await ask(window, "meeting.thresholds.preview", { meeting: "nope", values: {} });
+    await ask(window, "voices.move", { id: "vs_missing", to: { name: "Reed Example" } });
+    await ask(window, "voices.reject", { id: "vs_missing", reason: "bad-audio" });
+    await ask(window, "voices.undo", { token: "missing" });
+    await ask(window, "voices.quality", { project: "Atlas" });
+    await window.request(SUBSCRIBE, { events: ["voices.job"], project: "Rehearsal" });
+    service.emit("voices.job", {
+        id: "fixture-job",
+        kind: "answer-samples",
+        project: "Rehearsal",
+        meeting: REVIEW.id,
+        state: "running",
+        progress: { done: 1, total: 2, step: "added" },
+        added: 1,
+        skipped: 0,
+    });
+    await ask(window, "voices.jobs", { project: "Empty-fixture" });
+    await ask(window, "voices.jobs.cancel", { id: "missing" });
+    examples.push({
+        method: "voices.job",
+        direction: "service→client",
+        notification: window.lines.find((line) => line.method === "voices.job"),
+    });
+    await ask(window, "people.devices.decide", { action: "map", account: "Boardroom PC", group: "table" });
+    await ask(window, "people.devices.list", {});
     return examples;
 }
 
@@ -2568,42 +3885,66 @@ const FIXTURE_VOICE_FRAMES = Array.from({ length: 900 }, (_, index) => {
     return { channels: index * 0.05 < 20 ? [voiced(120), quiet] : [quiet, voiced(210)] };
 });
 
-/**
- * Revision tokens hash file identities (inode, times), and a decision's token is a fresh UUID, so they differ each run;
- * everything else is fixed (the decisions' clock is `NOW`).
- */
+/** Give volatile values portable stand-ins. References to the same generated ID keep the same stand-in. */
 function normalized(examples: Example[]): unknown {
+    const aliases = new Map<string, number>();
+    const ordinal = (value: string) => {
+        const existing = aliases.get(value);
+        if (existing !== undefined) {
+            return existing;
+        }
+
+        const next = aliases.size + 1;
+        aliases.set(value, next);
+        return next;
+    };
+    const recordingKey = (key: string) => `fixture${ordinal(`audio:${key}`)}`;
+    const now = NOW.toISOString();
+
     return SafeJSON.parse(
         SafeJSON.stringify(examples, { strict: true })
             .replace(/"meetingsRoot":"[^"]*"/g, '"meetingsRoot":"<meetings>"')
-            .replace(/"(show|transcript|speakers|timeline)":"[0-9a-z]+"/g, '"$1":"<token>"')
-            .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, "<uuid>")
-            // Paths under the run's sandbox home and temp folders, and a clip's key (it hashes the recording's path).
-            .replace(/"(path)":"[^"]*?(\/meetings-cache\/[^"]*?)-[0-9a-z]+\.wav"/g, '"$1":"<home>$2-<key>.wav"')
-            .replace(/"path":"[^"]*\/upload\.ogg"/g, '"path":"<recording>"')
-            .replace(/"path":"[^"]*\/meetings\/config\.json"/g, '"path":"<config>"')
+            .replace(/ in \/[^ "]*?\. List them/g, " in <meetings>. List them")
             .replace(
-                /"(path|ref)":"[^"]*\/(2026-11-03-1000-design-review\/clips\/[^"/]+?)-[0-9a-z]+\.wav"/g,
-                '"$1":"<meetings>/$2-<key>.wav"'
+                /"(show|transcript|speakers|timeline)":"([0-9a-z]+)"/g,
+                (_, field, key: string) => `"${field}":"fixture${ordinal(`revision:${key}`)}"`
             )
-            // A removed project's backup: under the sandbox home, named by the local time of the removal.
-            .replace(/"backup":"[^"]*"/g, '"backup":"<backup>"')
-            // A record's history line carries the wall clock of its write, and a saved clip's line names its key.
-            .replace(/"at":"[^"]*","command":/g, '"at":"<now>","command":')
-            .replace(/"change":"([^"]*?)-[0-9a-z]+\.wav"/g, '"change":"$1-<key>.wav"')
-            .replace(/"generatedAt":"[^"]*"/g, '"generatedAt":"<now>"')
             .replace(
-                /"(cacheRevision|revision|audioFingerprint|modelFingerprint|id)":"[a-f0-9]{64}"/g,
-                '"$1":"<timing-hash>"'
+                /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g,
+                (id) => `00000000-0000-4000-8000-${String(ordinal(`uuid:${id}`)).padStart(12, "0")}`
             )
-            // An error's stack names this checkout's paths and line numbers.
+            .replace(
+                /"path":"[^"]*?(\/meetings-cache\/[^"]*?)-([0-9a-z]+)\.wav"/g,
+                (_, clip, key: string) => `"path":"<home>${clip}-${recordingKey(key)}.wav"`
+            )
+            .replace(/"path":"[^"]*\/upload\.ogg"/g, '"path":"<recording>/upload.ogg"')
+            .replace(/"path":"[^"]*\/meetings\/config\.json"/g, '"path":"<meetings>/config.json"')
+            .replace(
+                /"(path|ref)":"[^"]*\/(2026-11-03-1000-design-review\/clips\/[^"/]+?)-([0-9a-z]+)\.wav"/g,
+                (_, field, clip, key: string) => `"${field}":"<meetings>/${clip}-${recordingKey(key)}.wav"`
+            )
+            .replace(
+                /"backup":"([^"]*\/\d{4}-\d{2}-\d{2}-\d{4}(-project-[^"/]+?)(?:-\d+)?\.json)"/g,
+                (_, path: string, project: string) =>
+                    `"backup":"<home>/backups/meetings/2026-11-03-1000${project}-${ordinal(`backup:${path}`)}.json"`
+            )
+            .replace(/"at":"[^"]*","command":/g, `"at":"${now}","command":`)
+            .replace(
+                /"change":"([^"]*?)-([0-9a-z]+)\.wav"/g,
+                (_, change, key: string) => `"change":"${change}-${recordingKey(key)}.wav"`
+            )
+            .replace(/"generatedAt":"[^"]*"/g, `"generatedAt":"${now}"`)
+            .replace(
+                /"(cacheRevision|revision|audioFingerprint|modelFingerprint|id)":"([a-f0-9]{64})"/g,
+                (_, field, hash: string) => `"${field}":"${ordinal(`hash:${hash}`).toString(16).padStart(64, "0")}"`
+            )
             .replace(
                 /"(path|folder)":"[^"\n]*\/(2026-11-03-1400-retro(?:\/frames\/screen\.png)?)"/g,
                 '"$1":"<meetings>/$2"'
             )
             .replace(/"stack":"(?:[^"\\]|\\.)*"/g, '"stack":"<stack>"')
-            // A file preset's availability is the host's (/System/Library/Sounds is on a Mac only).
-            .replace(/"available":(true|false)/g, '"available":"<host>"'),
+            // The built-in sounds are host-dependent; keep the fixture's wire type a boolean.
+            .replace(/("file":"\/System\/Library\/Sounds\/[^"]+","available":)(?:true|false)/g, "$1true"),
         { strict: true }
     );
 }
@@ -2646,37 +3987,36 @@ describe("tools meetings serve --detach", () => {
 });
 
 describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
-    test("a live service on the scratch store answers every example as the fixture holds it", async () => {
-        const captured = await captureExamples();
+    test("regeneration preserves which generated tokens belong to each request and reply", () => {
+        const examples = (token: string, other: string): Example[] => [
+            {
+                method: "decision.revert",
+                direction: "client→service",
+                request: { params: { token } },
+                reply: { result: { token: other, action: { token } } },
+            },
+        ];
+        const first = "c5cceaca-9f3c-4dda-afc2-a44408ee72f8";
+        const second = "f2c4d1e2-1162-47be-9964-793308a2e1f3";
+        const expected = examples("00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002");
+        expect(normalized(examples(first, second))).toEqual(expected);
+        expect(normalized(examples(second, first))).toEqual(expected);
+    });
 
-        // An emptied fixture is written again from the live service; review the diff before committing it.
-        if (fixture.examples.length === 0) {
+    test("a live service on the scratch store answers every example as the fixture holds it", async () => {
+        const captured = normalized(await captureExamples());
+
+        if (env.test.shouldWriteGolden()) {
             const path = join(import.meta.dir, "__fixtures__/meetings-protocol.json");
             const document = {
                 protocol: MEETINGS_PROTOCOL,
-                about: "One real request and reply per Meetings service method and event (src/meetings/lib/service/api.ts), captured over raw sockets from the TypeScript service on a scratch store with invented meetings. The Swift client tests decode these; src/meetings/lib/service/service.test.ts checks every one against the method's schemas and against a live service. Regenerate: set examples to [] and run bun run test src/meetings/lib/service/service.test.ts",
-                examples: SafeJSON.parse(
-                    SafeJSON.stringify(captured, { strict: true })
-                        .replace(/"meetingsRoot":"[^"]*"/g, '"meetingsRoot":"<meetings>"')
-                        .replace(/"stack":"(?:[^"\\]|\\.)*"/g, '"stack":"<stack>"')
-                        .replace(
-                            /"(path|ref)":"[^"]*\/(2026-11-03-1000-design-review\/clips\/[^"/]+?)-[0-9a-z]+\.wav"/g,
-                            '"$1":"<meetings>/$2-<key>.wav"'
-                        )
-                        .replace(
-                            /"(path|folder)":"[^"\n]*\/(2026-11-03-1400-retro(?:\/frames\/screen\.png)?)"/g,
-                            '"$1":"<meetings>/$2"'
-                        ),
-                    { strict: true }
-                ),
+                about: "One real request and reply per Meetings service method and event (src/meetings/lib/service/api.ts), captured over raw sockets from the TypeScript service on a scratch store with invented meetings. The Swift client tests decode these, and service.test.ts checks the schemas and the live service. Regenerate with GENESIS_TOOLS_WRITE_GOLDEN=1 bun run test src/meetings/lib/service/service.test.ts --test-name-pattern 'a live service on the scratch store'.",
+                examples: captured,
             };
-            mkdirSync(join(import.meta.dir, "__fixtures__"), { recursive: true });
             writeFileSync(path, `${SafeJSON.stringify(document, { strict: true }, 2)}\n`);
+        } else {
+            expect(captured).toEqual(fixture.examples);
         }
-
-        expect(normalized(captured)).toEqual(
-            normalized(fixture.examples.length === 0 ? captured : (fixture.examples as Example[]))
-        );
     });
 
     test("every example fits its method's schemas, and every method, event and refusal code has one", () => {
@@ -2744,6 +4084,7 @@ describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
                 "no-hello",
                 "no-transcript-source",
                 "protocol-mismatch",
+                "source-linked",
             ].sort()
         );
     });
@@ -2753,6 +4094,48 @@ describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
         const entry = SafeJSON.parse(await Bun.file(serviceEntryPath(dir)).text(), { strict: true });
 
         expect(entry).toMatchObject({ version: 1, protocol: MEETINGS_PROTOCOL, code: CODE });
+    });
+});
+
+describe("linking a source meeting from the window", () => {
+    test("meeting.sources.near lists the source meetings near a record, and meeting.link links one", async () => {
+        const base = fakeSource();
+        const meeting = {
+            ...(await base.load("wf-2041")),
+            sourceMeetingId: "wf-3000",
+            title: "Retro call",
+            start: "2026-11-03T13:02:00.000Z",
+        };
+        const source: TranscriptSource = {
+            ...base,
+            load: async () => meeting,
+            describe: () => ({ meetingId: "wf-3000" }),
+            evidence: async () => null,
+            meetingsBetween: async () => [
+                { sourceMeetingId: "wf-3000", title: "Retro call", start: meeting.start, hasTranscript: true },
+            ],
+        };
+        const { service, store } = await startService({ deps: { sources: async () => source } });
+        const client = await SocketMeetingsClient.connect(service.entry, hello);
+        closing.push(() => client.close());
+
+        expect(await client.call("meeting.sources.near", { meeting: RETRO.id })).toEqual({
+            meetings: [
+                {
+                    ref: "wisprflow:wf-3000",
+                    source: "Fake",
+                    title: "Retro call",
+                    start: "2026-11-03T13:02:00.000Z",
+                    hasTranscript: true,
+                },
+            ],
+            unavailable: [],
+        });
+        const linked = await client.call("meeting.link", { meeting: RETRO.id, source: "wisprflow:wf-3000" });
+        expect(linked.id).toBe(RETRO.id);
+        expect(store.resolve(RETRO.id)?.sources).toEqual({ wisprflow: { meetingId: "wf-3000" } });
+        const refused = await failure(client.call("meeting.link", { meeting: RETRO.id, source: "elsewhere:1" }));
+        expect(refused).toMatchObject({ code: "meeting-ref" });
     });
 });
 

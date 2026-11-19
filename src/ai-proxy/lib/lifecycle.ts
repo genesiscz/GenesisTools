@@ -2,6 +2,7 @@ import { getAiProxyConfigStore } from "@app/ai-proxy/lib/config-store";
 import { ensurePublicExposure, verifyPublicExposure } from "@app/ai-proxy/lib/exposure";
 import {
     AI_PROXY_LAUNCHD_LABEL,
+    aiProxyLaunchdIsStale,
     aiProxyPlistPath,
     installAiProxyLaunchd,
     isAiProxyLaunchdInstalled,
@@ -130,8 +131,15 @@ export async function runAiProxyUp(): Promise<UpResult> {
     if (launchdManaged) {
         // The agent owns the process. Spawning our own would put a second proxy
         // on the port, and launchd would keep restarting the one we then killed.
-        out.log.step(`Starting launchd agent ${AI_PROXY_LAUNCHD_LABEL}…`);
-        await startAiProxyLaunchd();
+        if (aiProxyLaunchdIsStale()) {
+            out.log.step(
+                `Installing launchd agent ${AI_PROXY_LAUNCHD_LABEL} again for the installed GenesisTools.app…`
+            );
+            await installAiProxyLaunchd(config.listen.port);
+        } else {
+            out.log.step(`Starting launchd agent ${AI_PROXY_LAUNCHD_LABEL}…`);
+            await startAiProxyLaunchd();
+        }
     } else {
         pid = await spawnProxy(config);
     }

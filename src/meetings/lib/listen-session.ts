@@ -5,7 +5,9 @@ import type { DecisionActor, MeetingRecord, MeetingStore } from "@genesiscz/util
 import { type AnswerEvent, appendAnswerEvent, type RoundEndReason, roundRunning } from "./answer-log";
 import type { Decided, DecisionAction, DecisionSkip } from "./decision-actions";
 import { DecisionJournal, type JournalEntry, type MicShare, type SplitInputs } from "./decision-journal";
-import { openQuestions, type QuestionItem, questionLabel } from "./questions";
+import { personKey } from "./listen-answers";
+import { type KnownAnswer, KnownSpeakerAnswers } from "./listen-known";
+import { openQuestions, type QuestionItem, questionLabel, withinListenThreshold } from "./questions";
 
 export type { MicShare, SplitInputs } from "./decision-journal";
 
@@ -38,7 +40,7 @@ export interface AskedQuestion {
 
 /** What the session tells the person; each adapter words it its own way. Labels are `Q12`. */
 export type SessionNote =
-    | { kind: "decided"; label: string; outcome: ListenAnswer | "skip"; settled: string[] }
+    | { kind: "decided"; label: string; outcome: ListenAnswer | "skip"; settled: string[]; knownDate?: string }
     | { kind: "split"; label: string; parts: number }
     | { kind: "not-split"; label: string }
     | { kind: "undone"; label: string }
@@ -51,7 +53,7 @@ export interface ListenAdapter {
     ask(asked: AskedQuestion): Promise<ListenOutcome>;
     /** Esc on the round's first question: true leaves the round. */
     confirmLeave(): Promise<boolean>;
-    note(note: SessionNote): void;
+    note(note: SessionNote): void | Promise<void>;
 }
 
 /**
@@ -76,6 +78,7 @@ export interface ListenSessionOptions {
     budget: number;
     minPriority: number;
     listenBelow: number;
+    applyAbove?: number;
     split: SplitInputs;
     /** A round already running in the log is joined, not opened again: an answer given while a person listens. */
     joinRunningRound?: boolean;
@@ -85,6 +88,8 @@ export interface ListenSessionOptions {
     actor?: DecisionActor;
     /** Why, kept with each decision of the round. */
     reason?: string;
+    /** Ask even when a human decision already covers every target line. */
+    askKnown?: boolean;
     /** Where the decisions go; the decision journal in this process, with `actor`, when absent. */
     decisions?: RoundDecisions;
 }
@@ -94,6 +99,9 @@ interface Step {
     question: QuestionItem;
     token: string;
     answer?: string;
+    /** Present only for a sampled speaker the listener actually confirmed or corrected. */
+    spotCheckChanged?: boolean;
+    known?: boolean;
     /** The look-alikes the answer settled. */
     settled: string[];
     /** A split: the parts it made. It uses no budget; its parts share its unit. */
@@ -111,6 +119,7 @@ export class ListenSession {
     /** A part made by a split in this round, and the question it was cut from. */
     private readonly parentOf = new Map<string, string>();
     private readonly decisions: RoundDecisions;
+    private readonly known: KnownSpeakerAnswers;
     private readonly entries: JournalEntry[] = [];
     /** What the last decision left without deciding it, with why (a question decided elsewhere meanwhile). */
     private lastSkipped: DecisionSkip[] = [];
@@ -121,6 +130,10 @@ export class ListenSession {
 
     constructor(private readonly options: ListenSessionOptions) {
         this.decisions = options.decisions ?? this.journalDecisions();
+        this.known = new KnownSpeakerAnswers({
+            store: options.store,
+            transcript: (record) => options.split.transcript(record),
+        });
     }
 
     /** The decision journal in this process, deciding as `actor`. */
@@ -156,6 +169,20 @@ export class ListenSession {
         return [...this.entries];
     }
 
+    spotCheckResult() {
+        const sampled = this.steps.filter((step) => step.spotCheckChanged !== undefined);
+        const counts = (steps: Step[]) => ({
+            answered: steps.length,
+            changed: steps.filter((step) => step.spotCheckChanged).length,
+        });
+        return {
+            ...counts(sampled),
+            known: counts(sampled.filter((step) => step.known)),
+            asked: counts(sampled.filter((step) => !step.known)),
+            questionIds: sampled.map((step) => step.question.id),
+        };
+    }
+
     /** Asks question after question until none is left, the budget is used, or the person stops. */
     async run(): Promise<RoundEndReason> {
         this.start();
@@ -165,6 +192,7 @@ export class ListenSession {
         try {
             while (true) {
                 const record = this.current();
+                const again = reask !== undefined;
                 const question = this.next(record, reask);
                 reask = undefined;
 
@@ -179,7 +207,17 @@ export class ListenSession {
                     break;
                 }
 
-                const outcome = await this.options.adapter.ask(this.asked(record, question, used));
+                const known =
+                    question.about === "speaker" &&
+                    !again &&
+                    !this.options.askKnown &&
+                    this.actor().kind === "listen" &&
+                    !this.options.joinRunningRound
+                        ? await this.known.find(record, question)
+                        : undefined;
+                const outcome = known
+                    ? { answer: known.name }
+                    : await this.options.adapter.ask(this.asked(record, question, used));
 
                 if (outcome === "stop") {
                     reason = "stopped";
@@ -211,7 +249,7 @@ export class ListenSession {
                     continue;
                 }
 
-                await this.decide(question, outcome);
+                await this.decide(question, outcome, known?.origin);
             }
         } catch (error) {
             try {
@@ -277,6 +315,9 @@ export class ListenSession {
         return at;
     }
 
+    /** The selected questions as a set, so each scope check is one lookup. */
+    private selectedIds?: ReadonlySet<string>;
+
     private inScope(question: QuestionItem): boolean {
         const { only, minPriority, selected } = this.options;
 
@@ -288,10 +329,14 @@ export class ListenSession {
             return question.id === only;
         }
         if (selected) {
-            return selected.includes(question.id);
+            this.selectedIds ??= new Set(selected);
+            return this.selectedIds.has(question.id);
         }
 
-        return (question.priority ?? minPriority) >= minPriority;
+        return (
+            withinListenThreshold(question, this.options.applyAbove) &&
+            (question.priority ?? minPriority) >= minPriority
+        );
     }
 
     /**
@@ -361,7 +406,7 @@ export class ListenSession {
         return this.options.reason ? { reason: this.options.reason } : {};
     }
 
-    private async decide(question: QuestionItem, outcome: ListenAnswer | "skip"): Promise<void> {
+    private async decide(question: QuestionItem, outcome: ListenAnswer | "skip", known?: KnownAnswer): Promise<void> {
         const { entry, skipped } = await this.decisions.apply({
             meeting: this.options.meeting.id,
             action:
@@ -371,9 +416,11 @@ export class ListenSession {
                           kind: "answer",
                           question: question.id,
                           answer: outcome.answer,
+                          ...(known ? { knownAnswer: known } : {}),
+                          ...(known || question.group === "spot-check" ? { lookAlikes: "leave" as const } : {}),
                           ...(outcome.comment ? { comment: outcome.comment } : {}),
                       },
-            ...this.reason(),
+            ...(known ? { reason: `known answer from ${known.meeting} ${known.date}` } : this.reason()),
         });
         this.lastSkipped = skipped;
 
@@ -383,21 +430,34 @@ export class ListenSession {
         }
 
         this.entries.push(entry);
+        const saved =
+            question.group === "spot-check" && outcome !== "skip"
+                ? entry.changes.find((change) => change.id === question.id)?.after
+                : undefined;
+        const original = question.evidence?.originalSpeaker;
         this.steps.push({
             question,
             token: entry.token,
             settled: entry.settled,
+            ...(known ? { known: true } : {}),
             ...(outcome === "skip" ? {} : { answer: outcome.answer }),
+            ...(saved?.kind === "question" &&
+            saved.status === "confirmed" &&
+            saved.answer &&
+            typeof original === "string"
+                ? { spotCheckChanged: personKey(saved.answer) !== personKey(original) }
+                : {}),
         });
         log.debug(
             { meeting: this.options.meeting.id, question: question.id, outcome, settled: entry.settled },
             "question decided"
         );
         const record = this.current();
-        this.options.adapter.note({
+        await this.options.adapter.note({
             kind: "decided",
             label: questionLabel(record, question.id),
             outcome,
+            ...(known ? { knownDate: known.date } : {}),
             settled: entry.settled.map((id) => questionLabel(record, id)),
         });
     }

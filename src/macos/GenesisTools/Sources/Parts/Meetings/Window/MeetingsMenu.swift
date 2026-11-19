@@ -218,7 +218,9 @@ final class MeetingsMenuTarget: NSObject, NSMenuItemValidation {
         model?.load()
         model?.detail?.refreshLoaded(force: true)
     }
-    @objc func openSettings(_ sender: Any?) { FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.windowPage) }
+    @objc func openSettings(_ sender: Any?) {
+        FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.windowPage, context: model?.selectedMeetingID)
+    }
     @objc func zoomIn(_ sender: Any?) { model?.player.timeline.stepZoom(out: false) }
     @objc func zoomOut(_ sender: Any?) { model?.player.timeline.stepZoom(out: true) }
     @objc func fitClip(_ sender: Any?) { model?.player.timeline.setZoom(.clip) }

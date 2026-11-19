@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { moveItem, wrapArray } from "./array";
+import { IntervalIndex, moveItem, wrapArray } from "./array";
 
 describe("wrapArray", () => {
     it("wraps a single value in an array", () => {
@@ -45,5 +45,35 @@ describe("moveItem", () => {
             expect(moved).not.toBe(input);
         }
         expect(moveItem([], 0, 0)).toEqual([]);
+    });
+});
+
+describe("IntervalIndex", () => {
+    it("finds the same overlaps as a full scan, with strict ends, in any insertion order", () => {
+        const spans: Array<[number, number]> = [];
+        let seed = 7;
+        const next = () => {
+            seed = (seed * 48271) % 2147483647;
+            return seed / 2147483647;
+        };
+        const index = new IntervalIndex<number>();
+        for (let i = 0; i < 300; i++) {
+            const from = Math.floor(next() * 1000);
+            const span: [number, number] = [from, from + 1 + Math.floor(next() * 40)];
+            spans.push(span);
+            index.add(span[0], span[1], i);
+        }
+        expect(index.size).toBe(300);
+        for (let q = 0; q < 200; q++) {
+            const from = Math.floor(next() * 1000);
+            const to = from + Math.floor(next() * 30);
+            const scan = spans.flatMap(([a, b], i) => (a < to && b > from ? [i] : [])).sort((a, b) => a - b);
+            expect(index.overlapping(from, to).sort((a, b) => a - b)).toEqual(scan);
+        }
+        const edges = new IntervalIndex<string>();
+        edges.add(10, 20, "middle");
+        expect(edges.overlapping(20, 30)).toEqual([]);
+        expect(edges.overlapping(0, 10)).toEqual([]);
+        expect(edges.overlapping(19.5, 30)).toEqual(["middle"]);
     });
 });

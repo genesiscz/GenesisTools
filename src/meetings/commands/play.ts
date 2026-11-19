@@ -14,17 +14,20 @@ import {
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { formatClock, parseClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
-import { meetingAudio } from "../lib/audio";
 import { MOMENT_ERROR_CODES, type Moment, MomentError, type MomentTarget, momentTargetSchema } from "../lib/moment";
-import { choosePlayer, PLAYERS, pastTheEnd, pickPlayer, playbackPlan } from "../lib/players";
+import { OpenedMeeting } from "../lib/opened-meeting";
+import { PLAYERS, pickPlayer } from "../lib/players";
 import { withMeetingsClient } from "../lib/service/client";
 import { MeetingsServiceError } from "../lib/service/handlers";
 import { errorText, fail, TOOL } from "../lib/shared";
+import { TRACK_KINDS, type TrackKind } from "../lib/sound";
+import { playbackSlice, playSoundSlice } from "../lib/sound-playback";
 import { playInOpenWindow } from "../lib/window";
 
 const { log } = logger.scoped("meetings-play");
 
 interface PlayOptions {
+    track?: string | boolean;
     at?: string;
     to?: string;
     item?: string;
@@ -312,6 +315,34 @@ async function play(ref: string, opts: PlayOptions): Promise<void> {
         return;
     }
 
+    let track: TrackKind | undefined;
+    if (opts.track !== undefined) {
+        track = TRACK_KINDS.find((kind) => kind === opts.track);
+        if (!track) {
+            fail(`--track needs ${TRACK_KINDS.join(", ")}. Try: ${TOOL} play ${ref} --at 10 --track source-mic`);
+            return;
+        }
+        if ("target" in what && what.target.kind !== "range") {
+            fail("--track takes a time or --at/--to range; omit --item, --target and --moment.");
+            return;
+        }
+        if (
+            opts.save ||
+            opts.clip ||
+            opts.tone !== undefined ||
+            opts.window ||
+            opts.padBefore !== undefined ||
+            opts.padAfter !== undefined ||
+            opts.length !== undefined ||
+            opts.screen === false
+        ) {
+            fail(
+                "--track plays the original track; omit Moment-only flags (--save, --clip, --tone, --window, --pad-before, --pad-after, --length, --no-screen)."
+            );
+            return;
+        }
+    }
+
     if (opts.tone !== undefined && !("target" in what)) {
         fail("--tone sets a Moment's tone; --at alone plays on from there without one (add --moment, --to or --clip).");
         return;
@@ -344,52 +375,41 @@ async function play(ref: string, opts: PlayOptions): Promise<void> {
             return;
         }
 
-        if ("target" in what) {
+        if ("target" in what && !track) {
             await playMoment(record, what.target, opts);
             return;
         }
 
-        const { atSec } = what;
+        const atSec = "atSec" in what ? what.atSec : what.target.kind === "range" ? what.target.fromSec : 0;
         const playback = (await new MeetingsConfigStore().read()).global.playback;
-        const chosen = choosePlayer({ requested: opts.player, configured: playback.player, all: MEETING_PLAYERS });
-
-        if ("error" in chosen) {
-            fail(chosen.error);
-            return;
-        }
-
-        const audio = await meetingAudio(record);
-        const late = pastTheEnd(atSec, audio.lastSpeechSec);
-
-        if (late) {
-            fail(late);
-            return;
-        }
-
-        const plan = playbackPlan({
-            audioPath: audio.audioPath,
+        const slice = await playbackSlice({
+            opened: OpenedMeeting.of(store, record),
             atSec,
-            beforeSec: beforeSec ?? playback.beforeSec,
-            player: chosen.player,
+            fromSec: Math.max(0, atSec - (beforeSec ?? (track && "target" in what ? 0 : playback.beforeSec))),
+            ...("target" in what && what.target.kind === "range" ? { toSec: what.target.toSec } : {}),
+            ...(track ? { track } : {}),
         });
-        const shown = { audioPath: plan.audioPath, startSec: plan.startSec, player: plan.player };
-
-        if (opts.start === false) {
-            log.debug({ argv: plan.argv }, "player not started (--no-start)");
-            opts.json
-                ? out.result(SafeJSON.stringify(shown, null, 2))
-                : ui.ok(
-                      `Would play ${record.id} from ${formatClock(plan.startSec)} in ${plan.player}: ${plan.argv.join(" ")}`
-                  );
-            return;
+        const selectedPlayer = opts.player ?? pickPlayer(playback.player, MEETING_PLAYERS)?.id;
+        let started: Awaited<ReturnType<typeof playSoundSlice>> | undefined;
+        if (opts.start !== false) {
+            started = await playSoundSlice({
+                slice,
+                player: selectedPlayer,
+                detached: true,
+            });
         }
-
-        const child = Bun.spawn(plan.argv, { stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true });
-        child.unref();
-        log.debug({ argv: plan.argv, pid: child.pid }, "player started");
+        const shown = {
+            ...slice,
+            audioPath: slice.path,
+            startSec: slice.fileFromSec,
+            player: selectedPlayer,
+            ...started,
+        };
         opts.json
-            ? out.result(SafeJSON.stringify({ ...shown, pid: child.pid }, null, 2))
-            : ui.ok(`Playing ${record.id} from ${formatClock(plan.startSec)} in ${plan.player}.`);
+            ? out.result(SafeJSON.stringify(shown, null, 2))
+            : ui.ok(
+                  `${opts.start === false ? "Would play" : "Played"} ${record.id} on ${slice.track} from file second ${slice.fileFromSec} at source rate.`
+              );
     } catch (err) {
         fail(new Error(momentFailure(err), { cause: err }));
     }
@@ -413,10 +433,15 @@ export function registerPlayCommand(program: Command): void {
     program
         .command("play")
         .argument("<meeting>", "meeting id, a unique prefix, last, or wisprflow:<id>")
+        .argument("[time]", "transcript time, equivalent to --at")
         .description(
             "Play the meeting's audio from a transcript time, or the Moment of an item, a time or a range: a bounded clip with the tone before the asked spot"
         )
         .option("--at <time>", "transcript time: 1:23:50, 23:50 or seconds; alone it plays on from there")
+        .option(
+            "--track [kind]",
+            `audio track: ${TRACK_KINDS.join(", ")}; absent uses the best track of the line's seat`
+        )
         .option("--to <time>", "with --at: the Moment of the range from --at to this time")
         .option("--item <id>", "the Moment of an item: its id (i42) or a question's number (Q12, 12)")
         .option(
@@ -451,8 +476,14 @@ export function registerPlayCommand(program: Command): void {
         )
         .option(
             "--json",
-            "print { audioPath, startSec, player, pid } for --at alone; for a Moment the Moment, with path, player and pid when made"
+            "print the track, path, channel and file seconds, plus audioPath/startSec/player and pid when started; for a Moment the Moment with path, player and pid when made"
         )
         .option("--no-start", "resolve and start nothing (no sound); plan without cutting, including with --clip")
-        .action(play);
+        .action((meeting: string, time: string | undefined, opts: PlayOptions) => {
+            if (time !== undefined && opts.at !== undefined) {
+                fail("Give the positional time or --at, not both.");
+                return;
+            }
+            return play(meeting, { ...opts, ...(time === undefined ? {} : { at: time }) });
+        });
 }

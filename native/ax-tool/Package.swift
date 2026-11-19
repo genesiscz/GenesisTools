@@ -11,6 +11,6 @@ let package = Package(
     targets: [
         .executableTarget(name: "ax-tool", dependencies: ["SnapshotSupport"], path: "Sources"),
         .target(name: "SnapshotSupport", path: "SnapshotSupport", resources: [.copy("Resources")]),
-        .testTarget(name: "SnapshotSupportTests", dependencies: ["SnapshotSupport"], path: "Tests"),
+        .testTarget(name: "SnapshotSupportTests", dependencies: ["SnapshotSupport", "ax-tool"], path: "Tests"),
     ]
 )

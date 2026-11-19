@@ -526,6 +526,20 @@ describe("RecordingSession", () => {
         expect(joined[0].map((segment) => segment.index)).toEqual([3, 4]);
     });
 
+    it("restarts on the selected target with a fresh budget after reaching the limit", async () => {
+        const { recorder, runs } = fakeRecorder();
+        const recording = session(recorder, { maxSeconds: 5 });
+        await recording.start();
+        clock += 5_000;
+        await recording.command({ cmd: "pause" });
+        const target = { kind: "display", screenIndex: 0 } as const;
+        await recording.command({ cmd: "restart", target });
+        expect(runs).toHaveLength(2);
+        expect(runs[1].target).toEqual(target);
+        expect(runs[1].maxSeconds).toBe(5);
+        await recording.command({ cmd: "discard" });
+    });
+
     it("a save that fails pauses the session, so a stop tries again and a discard still works", async () => {
         const { recorder, runs } = fakeRecorder();
         let attempts = 0;
@@ -1159,6 +1173,66 @@ describe("nativeSegmentRecorder", () => {
         await mkdir(sessionDir, { recursive: true });
         await record((start) => starts.push(start));
         expect(starts).toEqual([{ firstFrameAt: 1_700_000_000_123.4 }, undefined]);
+    });
+
+    it("reads the first captured display and follows atomic replacements from the native movie writer", async () => {
+        const sessionDir = join(root, "following");
+        await mkdir(sessionDir);
+        const status = join(sessionDir, "movie-start.json");
+        const first = { id: 9, name: "Side" };
+        const second = { id: 7, name: "Built-in" };
+        const metadata = (display: typeof first) => SafeJSON.stringify({ firstFrameEpochMs: 1234, display });
+        await writeFile(status, metadata(first));
+        const changed = Promise.withResolvers<typeof first>();
+        const armed: unknown[] = [];
+        spyOn(captureRunner, "runCapturePlanWithSignal").mockImplementation(async ({ onRecording }) => {
+            onRecording?.({ sessionDir });
+            await writeFile(`${status}.new`, metadata(second));
+            await fs.rename(`${status}.new`, status);
+            await withTimeout(changed.promise, 2_000, new Error("no display switch"));
+            return { sessionDir, warnings: [] } as unknown as Awaited<
+                ReturnType<typeof captureRunner.runCapturePlanWithSignal>
+            >;
+        });
+        const result = await nativeSegmentRecorder().record({
+            target: { kind: "display", screenIndex: 0, follow: true },
+            output: join(root, "movie.mp4"),
+            maxSeconds: 10,
+            signal: new AbortController().signal,
+            onRecording: (start) => armed.push(start),
+            onDisplayChanged: (display) => changed.resolve(display),
+        });
+        expect(armed).toEqual([{ firstFrameAt: 1234, display: first }]);
+        expect(result.error).toBeUndefined();
+        expect(await changed.promise).toEqual(second);
+    });
+
+    it("polls for followed-display metadata when a watch cannot be installed", async () => {
+        const sessionDir = join(root, "late-following");
+        const changed = Promise.withResolvers<{ id: number; name: string }>();
+        const display = { id: 7, name: "Built-in" };
+        spyOn(captureRunner, "runCapturePlanWithSignal").mockImplementation(async ({ onRecording }) => {
+            onRecording?.({ sessionDir });
+            await mkdir(sessionDir);
+            await writeFile(
+                join(sessionDir, "movie-start.json"),
+                SafeJSON.stringify({ firstFrameEpochMs: 1234, display })
+            );
+            await withTimeout(changed.promise, 3_000, new Error("no display switch without a directory watch"));
+            return { sessionDir, warnings: [] } as unknown as Awaited<
+                ReturnType<typeof captureRunner.runCapturePlanWithSignal>
+            >;
+        });
+        const result = await nativeSegmentRecorder().record({
+            target: { kind: "display", screenIndex: 0, follow: true },
+            output: join(root, "movie.mp4"),
+            maxSeconds: 10,
+            signal: new AbortController().signal,
+            onRecording: () => {},
+            onDisplayChanged: changed.resolve,
+        });
+        expect(result.error).toBeUndefined();
+        expect(await changed.promise).toEqual(display);
     });
 
     it("publishes the measured segment length for the next marker and camera span", async () => {
@@ -2008,8 +2082,30 @@ describe("a movie recording's live settings", () => {
             server.close();
             await recording.command({ cmd: "discard" });
         };
-        return { client, runs, close };
+        return { client, control, runs, close };
     }
+
+    it("applies widget stdin rates through settings.set and acknowledges the next segment while paused", async () => {
+        const { client, control, runs, close } = await movie();
+        try {
+            await client.pause();
+            const command = parseRecordingCommand('{"cmd":"rates","activeFps":24,"idleFps":0,"threshold":2}');
+            if ("error" in command) {
+                throw new Error(command.error);
+            }
+
+            const replies: MovieRates[] = [];
+            await applyRecordingCommand(control, command, (rates) => replies.push(rates));
+            expect(replies).toEqual([{ activeFps: 24, idleFps: 24, threshold: 2 }]);
+            expect(runs).toHaveLength(1);
+            await client.resume();
+            expect(runs[1].rates).toEqual(replies[0]);
+            await applyRecordingCommand(control, { cmd: "rates", activeFps: 30, idleFps: 1 });
+            expect(runs[2].rates).toEqual({ activeFps: 30, idleFps: 1, threshold: 2 });
+        } finally {
+            await close();
+        }
+    });
 
     it("reads the movie's rates and threshold, and names the keys a movie keeps as they are", async () => {
         const { client, close } = await movie();
@@ -2051,6 +2147,21 @@ describe("a movie recording's live settings", () => {
             expect(runs[0].signal.aborted).toBe(true);
             expect(runs[0].rates).toEqual({ activeFps: 60, idleFps: 1, threshold: 0.5 });
             expect(runs[1].rates).toEqual({ activeFps: 30, idleFps: 1, threshold: 2 });
+        } finally {
+            await close();
+        }
+    });
+
+    it("merges overlapping rate patches in the session queue", async () => {
+        const { client, runs, close } = await movie();
+
+        try {
+            await Promise.all([
+                client.setSettings({ activeFps: 24, idleFps: 2 }),
+                client.setSettings({ threshold: 2 }),
+            ]);
+            expect((await client.getSettings()).settings).toMatchObject({ activeFps: 24, idleFps: 2, threshold: 2 });
+            expect(runs.at(-1)?.rates).toEqual({ activeFps: 24, idleFps: 2, threshold: 2 });
         } finally {
             await close();
         }
@@ -2158,6 +2269,24 @@ describe("displays.list on a movie recording", () => {
         const recorded = (await control.listDisplays()).filter((display) => display.recorded).map((one) => one.id);
 
         expect(recorded).toEqual([]);
+    });
+
+    it("reports the engine's captured display on first frame and switch, and clears it while rearming", async () => {
+        const target: RecordingTarget = { kind: "display", screenIndex: 0, follow: true };
+        const control = followTestControl(target);
+        const state = { event: "state", reason: "user", target, elapsedMs: 10, limitMs: 900, segments: 1 } as const;
+        for (const display of [
+            { id: 9, name: "Side" },
+            { id: 7, name: "Built-in" },
+        ]) {
+            control.observe({ ...state, state: "recording", display });
+            expect((await control.status()).displays).toEqual([display]);
+            expect((await control.listDisplays()).filter((one) => one.recorded).map((one) => one.id)).toEqual([
+                display.id,
+            ]);
+        }
+        control.observe({ ...state, state: "starting" });
+        expect((await control.status()).displays).toEqual([]);
     });
 
     it("marks the chosen display for a recording that stays on one display", async () => {

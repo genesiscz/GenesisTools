@@ -1,26 +1,30 @@
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { ui } from "@genesiscz/utils/cli/ui";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type MeetingsConfig, MeetingsConfigStore, resolveDictionary } from "@genesiscz/utils/meetings/config";
 import { collectEcho } from "@genesiscz/utils/meetings/echo";
 import { type ChannelCalibration, channelEnergy, type SilentCallSpan } from "@genesiscz/utils/meetings/energy";
+import { type DeviceDecision, mappedRoomDevices, type RoomDevice } from "@genesiscz/utils/meetings/people";
+import { PeopleBook } from "@genesiscz/utils/meetings/people-book";
 import { AttendanceUnavailableError } from "@genesiscz/utils/meetings/platform";
-import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import { MEETING_UNCHANGED, type MeetingRecord, type MeetingStore } from "@genesiscz/utils/meetings/record";
+import { wholeMeetingRoomPeople } from "@genesiscz/utils/meetings/seats";
 import type { DictionaryCandidate, MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import type { ResolvedDictionary } from "@genesiscz/utils/transcribe/dictionary";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import type { Presence } from "@genesiscz/utils/transcribe/speakers";
-import { speakerStats } from "@genesiscz/utils/transcribe/speakers";
+import { isLeavePhrase, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import { type SummaryPoint, summaryPoints } from "@genesiscz/utils/transcribe/summary";
 import { loadPresence } from "./attendance";
 import { CallTimeline } from "./call-timeline";
-import { identifiedDepartures } from "./departure";
+import { identifiedDepartures, matchedCallVoices } from "./departure";
 import { callSilentSpans, energyMicShareFor, type MicEnergy, storeCalibration } from "./energy";
-import { personStays, presenceOf, rosterPresence } from "./person-stays";
+import { personStays, presenceOf, rosterPresence, speechAfter } from "./person-stays";
 import { MEETING_PLATFORMS, platformOfSourceName, speakingEvidence } from "./platforms";
 import { missingProjectWarning } from "./project";
+import { loadMeetingSound, type MeetingSound, readSoundInputs, type SoundInputs } from "./sound";
 import { preservedSourceAudio, withPreservedSourceAudio } from "./source-audio";
 import { type LinkedSource, linkedSource, type SourceRef, sourceRefOf } from "./sources";
 import { assessIndicator } from "./speaker-indicator";
@@ -30,8 +34,47 @@ const { log } = logger.scoped("meetings-opened");
 
 export interface CollectOutcome {
     record: MeetingRecord;
-    /** One line per step that did something or could not, for the user. */
-    notes: Array<{ ok: boolean; text: string }>;
+    /**
+     * One line per step that did something or could not, for the user. `detail`: a failure's full text with the
+     * commands that fix it, which the terminal prints under the line and the window keeps behind "Details".
+     */
+    notes: Array<{ ok: boolean; text: string; detail?: string }>;
+}
+
+/**
+ * The last attendance attempt's failure in full, as the record's event history keeps it: the error with the commands
+ * that fix it. The window shows it only behind "Details"; a warning a person reads is `attendanceWarning`.
+ */
+export function attendanceDetail(record: MeetingRecord): string | undefined {
+    const event = record.history.findLast(
+        (one) =>
+            one.command === "attendance" ||
+            one.command === "attendance-failed" ||
+            one.command === "attendance-recovered"
+    );
+    return event?.command === "attendance-failed" ? event.change : undefined;
+}
+
+/** A failed attendance lookup in one short sentence (U3): never a command, an error text or a rule id. */
+export function attendanceSentence(platform: MeetingRecord["platform"]): string {
+    const call = platform ? MEETING_PLATFORMS[platform].label : "The call";
+    return `${call} did not say who joined, so the people come from the transcript.`;
+}
+
+/** The last attendance attempt's failure as a person reads it; its full text is `attendanceDetail`. */
+export function attendanceWarning(record: MeetingRecord): string | undefined {
+    return attendanceDetail(record) === undefined ? undefined : attendanceSentence(record.platform);
+}
+
+/** Why an `--attendance-id` cannot be used with this `--attendance`, before anything loads; undefined when it can. */
+export function attendanceIdRefusal(spec: string | undefined, attendanceId: string | undefined): string | undefined {
+    const selectedId = attendanceId?.trim();
+
+    if (selectedId !== undefined && (!spec || selectedId.length === 0)) {
+        return "--attendance-id requires --attendance <platform> and a nonempty id.";
+    }
+
+    return undefined;
 }
 
 /**
@@ -42,12 +85,16 @@ export interface CollectOutcome {
  */
 export class OpenedMeeting {
     private current: MeetingRecord;
+    private deviceHistoryOnce?: DeviceDecision[];
+    private devicesOnce?: RoomDevice[];
     private linkedOnce?: Promise<LinkedSource>;
     private meetingOnce?: Promise<SourceMeeting>;
     private evidenceOnce?: Promise<MeetingEvidence | null>;
     private energyOnce?: Promise<MicEnergy>;
     private timelineOnce?: Promise<CallTimeline>;
     private configOnce?: Promise<MeetingsConfig>;
+    private soundOnce?: Promise<MeetingSound>;
+    private soundInputsOnce?: Promise<SoundInputs>;
     /** A platform's attendance per choice (spec and id): one read serves the statistics and the evidence alike. */
     private readonly attendanceOnce = new Map<string, ReturnType<typeof loadPresence>>();
 
@@ -64,13 +111,32 @@ export class OpenedMeeting {
     }
 
     /** Opens a record. `linked` replaces the source the record names (a fake source in tests). */
-    static of(store: MeetingStore, record: MeetingRecord, linked?: LinkedSource): OpenedMeeting {
-        return new OpenedMeeting(store, record, linked);
+    static of(
+        store: MeetingStore,
+        record: MeetingRecord,
+        linked?: LinkedSource,
+        config?: MeetingsConfig
+    ): OpenedMeeting {
+        const opened = new OpenedMeeting(store, record, linked);
+        if (config) {
+            opened.configOnce = Promise.resolve(config);
+        }
+        return opened;
     }
 
     /** The record as the last explicit step left it. */
     get record(): MeetingRecord {
         return this.current;
+    }
+
+    get deviceHistory(): DeviceDecision[] {
+        this.deviceHistoryOnce ??= new PeopleBook({ storage: this.store.storage }).read().devices;
+        return this.deviceHistoryOnce;
+    }
+
+    get roomDevices(): RoomDevice[] {
+        this.devicesOnce ??= mappedRoomDevices(this.deviceHistory);
+        return this.devicesOnce;
     }
 
     /** The linked source meeting, without loading the source; undefined when no source names one. */
@@ -112,7 +178,10 @@ export class OpenedMeeting {
 
     /** The evidence the rules may read: no speaking readings when the record's platform has no speaking indicator. */
     async evidence(): Promise<MeetingEvidence | null> {
-        return speakingEvidence(this.current, await this.sourceEvidence());
+        const evidence = speakingEvidence(this.current, await this.sourceEvidence());
+        return evidence?.speaking.length
+            ? { ...evidence, mutedCarrySec: (await this.config()).global.suggest.mutedCarrySec }
+            : evidence;
     }
 
     /** The call on the transcript clock, with the source's second 0. */
@@ -129,9 +198,10 @@ export class OpenedMeeting {
      */
     async presence(spec?: string, attendanceId?: string): Promise<Presence[] | undefined> {
         const selectedId = attendanceId?.trim();
+        const refusal = attendanceIdRefusal(spec, attendanceId);
 
-        if (selectedId !== undefined && (!spec || selectedId.length === 0)) {
-            throw new Error("--attendance-id requires --attendance <platform> and a nonempty id.");
+        if (refusal) {
+            throw new Error(refusal);
         }
 
         if (spec) {
@@ -156,33 +226,57 @@ export class OpenedMeeting {
         if (roster.length === 0) {
             return undefined;
         }
-        const meeting = await this.meeting();
         const evidence = await this.evidence();
-        const selfName = this.current.participants.find((person) => person.self)?.name;
+        const selfName = evidence?.selfName ?? this.current.participants.find((person) => person.self)?.name;
         if (!evidence || !selfName) {
             return roster;
         }
+        const derive = await this.stayDerivation({ evidence, selfName, durationSec: duration });
+        return derive(this.current).flatMap((person) => person.stays.map((stay) => presenceOf(person, stay, duration)));
+    }
+
+    /** Load the source before the record lock; derive against the participants and decisions held under it. */
+    private async stayDerivation({
+        evidence,
+        selfName,
+        durationSec,
+    }: {
+        evidence: MeetingEvidence;
+        selfName: string;
+        durationSec: number;
+    }) {
+        const meeting = await this.meeting();
         const energy = await this.energy();
-        const lines = lineEvidence(meeting.transcript, evidence, roster).map((line) => ({
-            ...line,
-            energyMic: energy.share?.(line.startSec, line.endSec),
-        }));
-        const hints = speakerStats(meeting.transcript, { participants: meeting.speakers, presence: roster }).hints;
-        const departures = identifiedDepartures({
-            hints,
-            lines: lines.map((line) => (line.speakingUnknown ? { ...line, speaking: {} } : line)),
-            selfName,
-            presence: roster,
-            ignoredIndicator: assessIndicator({ lines, selfName }).ignored,
-        });
-        return personStays({
-            record: this.current,
-            durationSec: duration,
-            lines,
-            departures,
-            silenceMinutes: (await this.config()).global.suggest.leaveSilenceMinutes,
-            callSilent: this.current.evidence?.channels?.callSilent,
-        }).flatMap((person) => person.stays.map((stay) => presenceOf(person, stay, duration)));
+        const silenceMinutes = (await this.config()).global.suggest.leaveSilenceMinutes;
+        return (record: MeetingRecord) => {
+            const roster = rosterPresence(record, durationSec, { rederiveLeaves: true });
+            const lines = lineEvidence(meeting.transcript, evidence, roster, energy.share);
+            const matchedVoices = matchedCallVoices(record, lines);
+            const hints = speakerStats(meeting.transcript, { participants: meeting.speakers, presence: roster }).hints;
+            const departures = identifiedDepartures({
+                devices: this.roomDevices,
+                record,
+                hints,
+                lines: lines.map((line) => (line.speakingUnknown ? { ...line, speaking: {} } : line)),
+                selfName,
+                presence: roster,
+                speaking: evidence.speaking,
+                matchedVoices,
+                roomPeople: wholeMeetingRoomPeople(record.seats),
+                ignoredIndicator: assessIndicator({ lines, selfName, roomPeople: wholeMeetingRoomPeople(record.seats) })
+                    .ignored,
+            });
+            return personStays({
+                record,
+                durationSec,
+                lines,
+                speaking: evidence.speaking,
+                matchedVoices,
+                departures,
+                silenceMinutes,
+                callSilent: record.evidence?.channels?.callSilent,
+            });
+        };
     }
 
     /** Every reader sees the same independently identified goodbye boundary, without changing stored evidence. */
@@ -192,7 +286,10 @@ export class OpenedMeeting {
         }
         const meeting = await this.meeting();
         const hints = speakerStats(meeting.transcript, { participants: meeting.speakers, presence }).hints;
-        if (!hints.some((hint) => hint.kind === "leave-then-continues")) {
+        if (
+            !hints.some((hint) => hint.kind === "leave-then-continues") &&
+            !meeting.transcript.some((line) => isLeavePhrase(line.text))
+        ) {
             return presence;
         }
         const evidence = await this.evidence();
@@ -201,12 +298,22 @@ export class OpenedMeeting {
             return presence;
         }
         const lines = lineEvidence(meeting.transcript, evidence, presence, (await this.energy()).share);
+        const matchedVoices = matchedCallVoices(this.current, lines);
         const departures = identifiedDepartures({
+            devices: this.roomDevices,
+            record: this.current,
             hints,
-            lines,
+            lines: lines.map((line) => (line.speakingUnknown ? { ...line, speaking: {} } : line)),
             selfName,
             presence,
-            ignoredIndicator: assessIndicator({ lines, selfName }).ignored,
+            speaking: evidence.speaking,
+            matchedVoices,
+            roomPeople: wholeMeetingRoomPeople(this.current.seats),
+            ignoredIndicator: assessIndicator({
+                lines,
+                selfName,
+                roomPeople: wholeMeetingRoomPeople(this.current.seats),
+            }).ignored,
         });
         return presence.map((stay) => {
             // A missing flag is legacy exact attendance (`Presence`): only a bound the platform did not record moves.
@@ -214,7 +321,18 @@ export class OpenedMeeting {
                 return stay;
             }
             const departure = departures.find(
-                (event) => event.name === stay.name && event.atSec >= stay.fromSec && event.atSec < stay.toSec
+                (event) =>
+                    event.name === stay.name &&
+                    event.atSec >= stay.fromSec &&
+                    event.atSec < stay.toSec &&
+                    !speechAfter({
+                        record: this.current,
+                        name: stay.name,
+                        after: event.atSec + 5,
+                        lines,
+                        speaking: evidence.speaking,
+                        matchedVoices,
+                    })
             );
             return departure ? { ...stay, toSec: departure.atSec } : stay;
         });
@@ -251,35 +369,66 @@ export class OpenedMeeting {
         warnings: string[];
     }): Promise<Presence[] | undefined> {
         try {
-            return await this.presence(options.attendance, options.attendanceId);
+            const presence = await this.presence(options.attendance, options.attendanceId);
+            if (presence !== undefined && (options.attendance || this.current.attendance)) {
+                await this.rememberAttendanceAttempt();
+            }
+            return presence;
         } catch (error) {
             if (!(error instanceof AttendanceUnavailableError)) {
                 throw error;
             }
 
             log.warn({ error, meeting: this.current.id }, "attendance unavailable for suggestions");
-            options.warnings.push(`attendance unavailable; E2 skipped: ${error.message}`);
+            await this.rememberAttendanceAttempt(
+                `attendance unavailable, so the suggestions skip the attendance rule: ${error.message}`
+            );
+            // The rows warn in the same sentence, so the window shows one; the full text stays the record's detail.
+            options.warnings.push(attendanceSentence(this.current.platform));
             return undefined;
+        }
+    }
+
+    /** `detail`: the failure's full text for the record's history; nothing when the lookup succeeded. */
+    private async rememberAttendanceAttempt(detail?: string): Promise<void> {
+        const updated = await this.store.updateIf(
+            this.current.id,
+            {
+                command: detail ? "attendance-failed" : "attendance-recovered",
+                change: detail ?? "attendance lookup succeeded",
+            },
+            (record) => (detail ? attendanceDetail(record) !== detail : attendanceDetail(record) !== undefined)
+        );
+        if (updated) {
+            this.current = updated;
         }
     }
 
     /** The microphone's energy share per time range, with the calibration it was read with. Writes nothing. */
     energy(): Promise<MicEnergy> {
-        this.energyOnce ??= this.sourceEvidence().then((evidence) =>
-            energyMicShareFor(this.store, this.current, evidence)
-        );
+        this.energyOnce ??= this.sourceEvidence().then(async (evidence) => {
+            if (!evidence?.audioPath) {
+                return {};
+            }
+            const { global } = await this.config();
+            const { source } = await this.linked();
+            return energyMicShareFor(this.store, this.current, evidence, {
+                minSeparation: global.speakerLabels.channels.minSeparation,
+                sourceLayout: source.sourceLayout,
+            });
+        });
         return this.energyOnce;
     }
 
     /** The stretches where the call's channel stayed silent (the call played through the room); E1 says nothing there. */
     async silentCallSpans(): Promise<SilentCallSpan[]> {
-        const stored = this.current.evidence?.channels?.callSilent;
-
-        if (stored) {
-            return stored;
+        const stored = this.current.evidence?.channels;
+        const energy = await this.energy();
+        if (energy.share && stored?.callSilent && stored.layout === energy.calibration?.layout) {
+            return stored.callSilent;
         }
 
-        return callSilentSpans(await this.energy(), await this.transcriptEndSec());
+        return callSilentSpans(energy, energy.share ? await this.transcriptEndSec() : 0);
     }
 
     /** The meetings config, read once. */
@@ -335,6 +484,18 @@ export class OpenedMeeting {
         }
 
         return evidence.audioPath;
+    }
+
+    /** The source probe and recorder rows used to construct this meeting's sound. */
+    soundInputs(): Promise<SoundInputs> {
+        this.soundInputsOnce ??= readSoundInputs(this);
+        return this.soundInputsOnce;
+    }
+
+    /** The meeting's sound: the source's channels and the recorder's tracks, each on the transcript clock. */
+    sound(): Promise<MeetingSound> {
+        this.soundOnce ??= loadMeetingSound(this);
+        return this.soundOnce;
     }
 
     private async transcriptEndSec(): Promise<number> {
@@ -430,10 +591,9 @@ export class OpenedMeeting {
                 } catch (err) {
                     // The note below tells the user; the day log keeps the stack.
                     log.debug({ err, meeting: this.current.id, platform: platform.id }, "attendance not collected");
-                    notes.push({
-                        ok: false,
-                        text: `attendance not collected: ${err instanceof Error ? err.message : String(err)}`,
-                    });
+                    const detail = `attendance not collected: ${err instanceof Error ? err.message : String(err)}`;
+                    await this.rememberAttendanceAttempt(detail);
+                    notes.push({ ok: false, text: attendanceSentence(this.current.platform), detail });
                 }
             }
         }
@@ -446,45 +606,30 @@ export class OpenedMeeting {
         }
 
         try {
-            const meeting = await this.meeting();
             const evidence = await this.evidence();
-            const selfName = this.current.participants.find((person) => person.self)?.name;
+            const selfName = evidence?.selfName ?? this.current.participants.find((person) => person.self)?.name;
             if (evidence && selfName && this.current.participants.length) {
                 const durationSec = await this.transcriptEndSec();
-                const presence = rosterPresence(this.current, durationSec);
-                const energy = await this.energy();
-                const lines = lineEvidence(meeting.transcript, evidence, presence).map((line) => ({
-                    ...line,
-                    energyMic: energy.share?.(line.startSec, line.endSec),
-                }));
-                const hints = speakerStats(meeting.transcript, { participants: meeting.speakers, presence }).hints;
-                const departures = identifiedDepartures({
-                    hints,
-                    lines: lines.map((line) => (line.speakingUnknown ? { ...line, speaking: {} } : line)),
-                    selfName,
-                    presence,
-                    ignoredIndicator: assessIndicator({ lines, selfName }).ignored,
-                });
-                const derived = personStays({
-                    record: this.current,
-                    durationSec,
-                    lines,
-                    departures,
-                    silenceMinutes: (await this.config()).global.suggest.leaveSilenceMinutes,
-                    callSilent: this.current.evidence?.channels?.callSilent,
-                });
-                const participants = this.current.participants.map((person) => {
-                    const stays = derived.find((one) => one.name === person.name)?.stays;
-                    return stays?.length ? { ...person, stays } : person;
-                });
-                if (SafeJSON.stringify(participants) !== SafeJSON.stringify(this.current.participants)) {
-                    this.current = await this.store.update(
-                        this.current.id,
-                        { command: "collect", change: "derive person stays from identified events" },
-                        (next) => {
-                            next.participants = participants;
+                const derive = await this.stayDerivation({ evidence, selfName, durationSec });
+                let updated = false;
+                this.current = await this.store.update(
+                    this.current.id,
+                    { command: "collect", change: "derive person stays from identified events" },
+                    (next) => {
+                        const derived = derive(next);
+                        for (const [index, person] of next.participants.entries()) {
+                            const stays = derived[index]?.stays;
+                            if (stays?.length && !isDeepStrictEqual(stays, person.stays)) {
+                                person.stays = stays;
+                                updated = true;
+                            }
                         }
-                    );
+                        if (!updated) {
+                            return MEETING_UNCHANGED;
+                        }
+                    }
+                );
+                if (updated) {
                     notes.push({
                         ok: true,
                         text: "person stays: identified departures and observed silent call windows",
@@ -510,6 +655,10 @@ export class OpenedMeeting {
 
             for (const note of outcome.notes) {
                 note.ok ? ui.dim(`  ${note.text}`) : ui.warn(`  ${note.text}`);
+
+                if (note.detail) {
+                    ui.dim(`    ${note.detail}`);
+                }
             }
         } catch (err) {
             log.warn({ err, meeting: this.current.id }, "collect failed");

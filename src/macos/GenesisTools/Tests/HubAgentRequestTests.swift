@@ -6,6 +6,14 @@ import XCTest
 /// node by its `toolUseId`; a node whose id merely starts with it, or whose name equals it, never wins.
 @MainActor
 final class HubAgentRequestTests: XCTestCase {
+    func testRecentRosterFromExitedWriterCanBeReadDuringBackfill() {
+        let json = #"{"version":1,"pid":2147483646,"writtenAt":1000,"backfill":{"revision":"r","cursor":32},"agents":{"parents":[],"orphans":[]}}"#
+        let data = Data(json.utf8)
+        XCTAssertNotNil(AgentsSource.published(data, now: Date(timeIntervalSince1970: 91)))
+        XCTAssertNil(AgentsSource.published(data, now: Date(timeIntervalSince1970: 92)))
+        XCTAssertNil(AgentsSource.published(data, now: Date(timeIntervalSince1970: 0)))
+    }
+
     func testAnExactToolUseIdBeatsEveryLooseMatch() {
         let call = "toolu_abc"
         func node(_ id: String, name: String? = nil, toolUseId: String? = nil) -> AgentNode {

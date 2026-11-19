@@ -1536,6 +1536,12 @@ test("an already linked source warns with the duplicate command instead of claim
         await program.parseAsync(["new", "--source", "wisprflow:held-source-fixture", "--yes"], { from: "user" });
         expect(warning).toHaveBeenCalledWith(expect.stringContaining(`duplicate ${record.id}`));
         expect(warning).toHaveBeenCalledWith(expect.stringContaining("--without-items"));
+        const hint = `Seats are not set, so voice naming is off. Run: tools meetings seats ${record.id} --apply`;
+        expect(warning.mock.calls.filter(([message]) => message === hint)).toHaveLength(1);
+        collect.mockResolvedValue({ ...record, seats: { room: ["Wren"], remote: [] } });
+        warning.mockClear();
+        await program.parseAsync(["new", "--source", "wisprflow:held-source-fixture", "--yes"], { from: "user" });
+        expect(warning).not.toHaveBeenCalledWith(hint);
         expect(ok).not.toHaveBeenCalled();
         expect(readFileSync(store.path(record.id))).toEqual(before);
     } finally {

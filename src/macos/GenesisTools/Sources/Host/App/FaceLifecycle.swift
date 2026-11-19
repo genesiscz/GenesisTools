@@ -59,6 +59,8 @@ package enum FaceLifecycle {
 
     nonisolated(unsafe) private static var descriptor: Int32 = -1
     nonisolated(unsafe) private static var logPath: UnsafeMutablePointer<CChar>?
+    nonisolated(unsafe) private static var recorderPerfPath: UnsafeMutablePointer<CChar>?
+    nonisolated(unsafe) private static var wroteRecorderExit = false
     nonisolated(unsafe) private static var face = ""
     nonisolated(unsafe) private static var aliveMarkerPath: UnsafeMutablePointer<CChar>?
     /// Per signal number: the line up to `"t":`, prepared at install, and its length.
@@ -169,6 +171,21 @@ package enum FaceLifecycle {
         if let aliveMarkerPath { unlink(aliveMarkerPath) }
     }
 
+    /// Only the resident recorder calls this, after claiming its lock. Forwarders and exports have their own exits.
+    package static func logRecorderExits() {
+        guard descriptor >= 0, face == "--recorder", PerfLog.enabled else { return }
+        recorderPerfPath = strdup(PerfLog.fileURL.path)
+    }
+
+    /// Write synchronously at the point where the exit code is known. The perf writer's queue can outlive app.run().
+    package static func recorderExiting(code: Int32) {
+        guard recorderPerfPath != nil, !wroteRecorderExit else { return }
+        wroteRecorderExit = true
+        let text = line(time: Int(Date().timeIntervalSince1970), pid: getpid(), face: face,
+                        event: "exit", detail: "code \(code)")
+        appendLine(text, to: PerfLog.fileURL)
+    }
+
     // MARK: Signals
 
     private static func installSignalHandlers() {
@@ -238,6 +255,14 @@ package enum FaceLifecycle {
                 _ = write(target, buffer, cursor + 2)
                 close(target)
             }
+            // The bytes already contain the recorder pid, delivery time and signal. Only signal-safe calls here.
+            if let recorderPerfPath {
+                let perf = open(recorderPerfPath, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0o644)
+                if perf >= 0 {
+                    _ = write(perf, buffer, cursor + 2)
+                    close(perf)
+                }
+            }
         }
         if let aliveMarkerPath { unlink(aliveMarkerPath) }
         Darwin.signal(signal, SIG_DFL)
@@ -258,6 +283,7 @@ package enum FaceLifecycle {
         observers.append(center.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated {
                 FaceLifecycle.note("terminate", detail: terminateDetail())
+                FaceLifecycle.recorderExiting(code: 0)
             }
         })
     }

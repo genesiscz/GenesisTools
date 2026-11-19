@@ -18,7 +18,10 @@ import {
     STOP_ANSWER_MS,
 } from "@app/meetings/lib/recorder-shared";
 import { writeMeetingRecordingManifest } from "@app/meetings/lib/recording-manifest";
+import { withTimeout } from "@genesiscz/utils/async";
+import { MeetingLevels } from "@genesiscz/utils/meetings/levels";
 import type { MeetingStore } from "@genesiscz/utils/meetings/record";
+import type { AudioLevelBlock } from "@genesiscz/utils/screen-recorder/audio-levels";
 import { RPC_ERRORS } from "@genesiscz/utils/screen-recorder/control";
 import { FrameOutput } from "@genesiscz/utils/screen-recorder/frame-output";
 import {
@@ -30,15 +33,19 @@ import {
 import { settingsChange } from "@genesiscz/utils/screen-recorder/session";
 import { CaptureError } from "@genesiscz/utils/screen-recorder/types";
 import { collectRecord } from "./collect";
+import { appendMeetingLevels } from "./levels";
 import { startOcrWorker } from "./ocr-worker";
 import { claimRecorderPid, RecorderStateFile } from "./recorder-adapters";
 
+/** How long the stop waits for the sound left in the piece folders by default; each probed file has its own 2 s limit. */
+const SALVAGE_DEADLINE_MS = 30_000;
+
 /**
- * The meetings recorder's configuration of the shared capture core. Its rules: one capture records the sound, the
+ * The meetings recorder's configuration of the shared capture core. Its rules: the engine records the sound, the
  * controls are refused while it stops, each capture takes a settings change on its own, and the socket stays open a
  * moment for the stop answer. The meeting's own steps are the run's.
  */
-function meetingRecorderConfig(run: MeetingRun) {
+function meetingRecorderConfig(run: MeetingRun, minSeparation?: number) {
     const { store, meetingId, deps, state } = run;
     return defineRecorderConfig<string[]>((recording) => {
         // No OCR here: each kept frame goes into the frame index, and the meeting's OCR worker reads it (ocr-worker.ts).
@@ -48,10 +55,18 @@ function meetingRecorderConfig(run: MeetingRun) {
             format: { kind: "jpeg", quality: run.capture.jpegQuality },
             convert: deps.toJpeg,
         });
+        const salvages = new Set<Promise<void>>();
+        const salvageAbort = new AbortController();
+        let began = false;
+        const levels = run.capture.levels.enabled ? new MeetingLevels(minSeparation) : undefined;
+        let previousLevels: AudioLevelBlock | undefined;
+        let stopLevels: (() => void) | undefined;
 
         return {
             kind: "meeting",
-            methods: FRAME_RECORDING_METHODS,
+            methods: state.withoutScreen
+                ? FRAME_RECORDING_METHODS.filter((method) => !method.startsWith("displays."))
+                : FRAME_RECORDING_METHODS,
             recorder: deps.recorder,
             live: {
                 id: meetingLiveId(meetingId),
@@ -65,13 +80,15 @@ function meetingRecorderConfig(run: MeetingRun) {
             },
             settings: run.settings,
             audio: run.audio,
+            audioMode: run.audioMode,
+            soundOnly: Boolean(state.withoutScreen),
             stopOnSignals: true,
             displays: run.displays,
             keptFrames: () => state.frames,
             pieces: {
                 dir: run.pieceDir,
                 sec: deps.pieceSec,
-                // One capture records the sound: two would write the same microphone twice.
+                // Older native tools use one piece for sound; a continuous session records it beside every piece.
                 audioOwnership: "single",
                 request: (now) => ({ ...run.nativeKeys, heartbeatSec: now.heartbeatSec }),
                 failures: {
@@ -80,7 +97,12 @@ function meetingRecorderConfig(run: MeetingRun) {
                     backoffMs: (failures) => failureBackoffMs(failures, deps.failurePauseMs),
                     keepTrying: captureKeepsTrying,
                     struggling: (count, err) => run.captureStruggling(count, err),
-                    verdict: captureErrorVerdict,
+                    // No microphone grant: the piece neither failed nor recorded, and the next one records without it.
+                    verdict: (piece, now) => {
+                        const dropped = run.dropRefusedMicrophone(recording, piece.error ?? piece.outcome?.lastError);
+                        const verdict = captureErrorVerdict(piece, now);
+                        return dropped && verdict === "failed" ? "neither" : verdict;
+                    },
                     gaveUp: (count, err) => {
                         run.note(`capture failed ${count} times in a row: ${errorText(err)}`);
                         state.stopReason = "failed";
@@ -100,8 +122,95 @@ function meetingRecorderConfig(run: MeetingRun) {
                 save: (marker) => run.recordingRecord.addMarker(marker),
             },
             hooks: {
-                beforeLoop: () => run.begin(recording),
-                afterLoop: () => {
+                onAudioChange: (change) => run.noteSoundChange(change),
+                onAudioLevels: levels
+                    ? (block) => {
+                          if (previousLevels) {
+                              for (const [source, device] of [
+                                  ["mic", "input"],
+                                  ["system", "output"],
+                              ] as const) {
+                                  if (
+                                      previousLevels[device] &&
+                                      block[device] &&
+                                      previousLevels[device] !== block[device]
+                                  ) {
+                                      run.noteSoundChange({
+                                          kind: "device",
+                                          source,
+                                          atMs: previousLevels.atMs,
+                                          untilMs: block.atMs,
+                                      });
+                                  }
+                              }
+                          }
+                          previousLevels = block;
+                          levels.observe(block);
+                      }
+                    : undefined,
+                onAudioSegment: (segment) => run.keptSound(segment),
+                onAudioWarning: (warning) => {
+                    run.note(warning);
+                    state.warning = run.notes.join("; ");
+                    run.saveState();
+                },
+                onSoundPath: (sound) => {
+                    state.sound = sound;
+                    run.saveState();
+                },
+                beforeLoop: async () => {
+                    await run.begin(recording);
+                    began = true;
+                    if (levels) {
+                        stopLevels = deps.scheduleLevels((atMs) => {
+                            try {
+                                appendMeetingLevels(
+                                    run.folder,
+                                    levels.snapshot(atMs, {
+                                        muted: recording.audio.muted,
+                                        paused: recording.paused,
+                                    })
+                                );
+                            } catch (error) {
+                                run.note(`Could not write recording levels: ${errorText(error)}`);
+                                log.warn({ meetingId, error }, "could not write recording levels");
+                            }
+                        }, run.capture.levels.intervalSec * 1000);
+                    }
+                },
+                afterLoop: async () => {
+                    stopLevels?.();
+                    if (!began) {
+                        return; // Startup could not account for the earlier run. Its journal still belongs to it.
+                    }
+
+                    const deadlineMs = deps.salvageDeadlineMs ?? SALVAGE_DEADLINE_MS;
+                    const expired = new Error(`sound recovery did not finish within ${deadlineMs / 1000}s`);
+                    try {
+                        await withTimeout(
+                            (async () => {
+                                await Promise.all(salvages);
+                                await run.salvageTracks(run.pieceDir, salvageAbort.signal);
+                            })(),
+                            deadlineMs,
+                            expired
+                        );
+                    } catch (err) {
+                        // An expired probe can finish later, but it may no longer move files or clear recovery data.
+                        salvageAbort.abort(err);
+                        if (err !== expired) {
+                            throw err;
+                        }
+
+                        // The files stay in .piece/: the next start of this meeting recovers them (MeetingRun.begin).
+                        log.warn({ meetingId, dir: run.pieceDir }, "sound recovery did not finish before the stop");
+                        run.note(`${expired.message}; the unrecovered sound stays in .piece/ for the next start`);
+                        state.warning = run.notes.join("; ");
+                        run.saveState();
+                        return;
+                    }
+
+                    run.finishSound(recording);
                     rmSync(run.pieceDir, { recursive: true, force: true });
                 },
                 onError: (err) => {
@@ -162,7 +271,23 @@ function meetingRecorderConfig(run: MeetingRun) {
                             run.note(`${entry.target.label}: ${errorText(err)}`);
                         }
                     },
-                    onSettled: (entry) => rmSync(entry.outDir, { recursive: true, force: true }),
+                    onSettled: (entry) => {
+                        const salvage = run
+                            .salvageTracks(entry.outDir, salvageAbort.signal)
+                            .then(() => {
+                                if (!salvageAbort.signal.aborted) {
+                                    rmSync(entry.outDir, { recursive: true, force: true });
+                                }
+                            })
+                            .catch((err: unknown) => {
+                                if (!salvageAbort.signal.aborted) {
+                                    log.error({ err, dir: entry.outDir }, "could not recover a capture's sound");
+                                    run.note(`could not recover a capture's sound: ${errorText(err)}`);
+                                }
+                            });
+                        salvages.add(salvage);
+                        void salvage.finally(() => salvages.delete(salvage));
+                    },
                 },
             },
             finish: {
@@ -264,9 +389,9 @@ async function saveFailedRun(store: MeetingStore, meetingId: string, err: unknow
  */
 export async function runRecorder(options: RunRecorderOptions): Promise<RecorderState> {
     const { store, meetingId } = options;
-    const deps: RecorderDeps = { ...defaultDeps(options.capture), startOcr: startOcrWorker, ...options.deps };
+    const capture = options.withoutScreen ? { ...options.capture, backend: "native" as const } : options.capture;
+    const deps: RecorderDeps = { ...defaultDeps(capture), startOcr: startOcrWorker, ...options.deps };
     const files = recorderFiles(store);
-    const initial = store.read(meetingId);
     const claim = await claimRecorderPid(files.pid);
     let final: RecorderState;
     const stateFile = new RecorderStateFile<RecorderState>({
@@ -275,8 +400,9 @@ export async function runRecorder(options: RunRecorderOptions): Promise<Recorder
     });
 
     try {
+        const initial = store.read(meetingId);
         const run = new MeetingRun({ ...options, deps, initial, stateFile });
-        const recording = new FrameRecording(meetingRecorderConfig(run));
+        const recording = new FrameRecording(meetingRecorderConfig(run, options.minSeparation));
         run.state.displaySpans = recording.displayBook.intervals;
         recording.open();
         await recording.finished;
@@ -305,6 +431,9 @@ export async function runRecorder(options: RunRecorderOptions): Promise<Recorder
 
 /** The live displays of a recorder state, for `record status`. */
 export function stateDisplays(state: RecorderState): string {
+    if (state.withoutScreen) {
+        return "sound only";
+    }
     return state.displays?.length
         ? state.displays.map((display) => `${display.name} (${display.id})`).join(", ")
         : String(state.display);

@@ -377,7 +377,7 @@ describe("dictionary", () => {
             entries: [{ type: "term" as const, value: "Quorix" }],
         };
         const source = [line("Alice Example", 0, "Quoriz-tail head-Quoriz Quoriz.")];
-        expect(fuzzyMatches(source, dictionary).map((match) => match.heard)).toEqual(["Quoriz"]);
+        expect(fuzzyMatches({ entries: source, dictionary }).map((match) => match.heard)).toEqual(["Quoriz"]);
         const applied = applyDictionary(source, dictionary);
         expect(applied.entries[0]!.text).toBe("Quoriz-tail head-Quoriz Quorix.");
         expect(applied.fuzzy).toBe(1);
@@ -781,7 +781,7 @@ describe("spoken forms and fuzzy matches (R2.5)", () => {
 
     test("a spoken form is replaced; a close word at or above apply too; a weaker one is only a match", () => {
         const entries = [line("Alice Example", 0, "Ta Jenezetkou se pošle, jenezetkama taky, a kubernetu ne.")];
-        const matches = fuzzyMatches(entries, dictionary);
+        const matches = fuzzyMatches({ entries, dictionary });
         const applied = applyDictionary(entries, dictionary);
 
         expect(matches).toContainEqual(expect.objectContaining({ heard: "jenezetkama", value: "JDZ", score: 1 }));
@@ -873,7 +873,7 @@ describe("summary points and importance", () => {
 });
 
 describe("mute state", () => {
-    test("a reading that did not read the mute state does not clear it; a read one 10 s back still holds", () => {
+    test("a reading without a mute list leaves the last mute in force for up to ten minutes", () => {
         const [line] = lineEvidence([{ speaker: "Bob Example", startSec: 20, text: "Čus." }], {
             segments: [{ startSec: 20, endSec: 22, channel: "system" }],
             speaking: [
@@ -883,10 +883,45 @@ describe("mute state", () => {
         });
         expect(line?.muted).toEqual(["Alice Example"]);
 
-        const [stale] = lineEvidence([{ speaker: "Bob Example", startSec: 40, text: "Čus." }], {
-            segments: [{ startSec: 40, endSec: 42, channel: "system" }],
+        // Shortly before the default ten-minute window ends (17.8 s + 600 s), the mute still holds.
+        const [late] = lineEvidence([{ speaker: "Bob Example", startSec: 610, text: "Čus." }], {
+            segments: [{ startSec: 610, endSec: 612, channel: "system" }],
+            speaking: [{ tSec: 17.8, speaking: [], muted: ["Alice Example"] }],
+        });
+        expect(late?.muted).toEqual(["Alice Example"]);
+
+        const [stale] = lineEvidence([{ speaker: "Bob Example", startSec: 620, text: "Čus." }], {
+            segments: [],
             speaking: [{ tSec: 17.8, speaking: [], muted: ["Alice Example"] }],
         });
         expect(stale?.muted).toBeUndefined();
+    });
+
+    test("a call line needs uninterrupted mute coverage from its start to its end", () => {
+        const name = "Reed Example";
+        const entries = [98, 100, 104, 108, 112, 114, 116, 120, 125].map((sec) => line("Voice", sec, "Hello."));
+        const lines = lineEvidence(entries, {
+            segments: [],
+            mutedCarrySec: 10,
+            speaking: [
+                { tSec: 100, speaking: [], muted: [name], validUntilSec: 101 },
+                { tSec: 101, speaking: [], speakingUnknown: true },
+                { tSec: 108, speaking: [], muted: [name] },
+                { tSec: 113, speaking: [name] },
+                { tSec: 115, speaking: [], muted: [name] },
+            ],
+        });
+        expect(lines.map((entry) => entry.muted ?? [])).toEqual([
+            [],
+            [name],
+            [name],
+            [name],
+            [],
+            [],
+            [name],
+            [name],
+            [],
+        ]);
+        expect(lines[2]?.speakingUnknown).toBe(true);
     });
 });

@@ -32,7 +32,7 @@ export function todayHandoffLogFile(base?: string): string {
  * within this process's write — though interleaving with OTHER processes'
  * appends between calls is legal and handled by the fold, spec §6.1).
  */
-export function appendHandoffEvents(events: HandoffEvent[], base?: string): string[] {
+export function appendHandoffEvents(events: HandoffEvent[], base?: string, appendTs?: string): string[] {
     if (events.length === 0) {
         return [];
     }
@@ -41,7 +41,7 @@ export function appendHandoffEvents(events: HandoffEvent[], base?: string): stri
     const byFile = new Map<string, HandoffEvent[]>();
 
     for (const event of events) {
-        const file = logFilePathForTs(event.ts, base);
+        const file = logFilePathForTs(appendTs ?? event.ts, base);
         const bucket = byFile.get(file) ?? [];
         bucket.push(event);
         byFile.set(file, bucket);

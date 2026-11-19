@@ -18,6 +18,7 @@ import { formatClock, type TranscriptFormat } from "@genesiscz/utils/transcribe/
 import { termFixPattern } from "@genesiscz/utils/transcribe/terms";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { openQuestions } from "./questions";
+import { needsSpeakerReview } from "./speaker-scores";
 import { diagnoseTermAddress } from "./term-address";
 
 /**
@@ -27,13 +28,23 @@ import { diagnoseTermAddress } from "./term-address";
  */
 function unclearPassages(
     record: MeetingRecord,
-    opts: { below: number; applied?: (item: MeetingItem) => boolean; guesses?: boolean; unclearLabel: string }
+    opts: {
+        below: number;
+        termBelow?: number;
+        applied?: (item: MeetingItem) => boolean;
+        guesses?: boolean;
+        unclearLabel: string;
+    }
 ): UnclearPassage[] {
     const applied = opts.applied ?? (() => false);
     const open = openQuestions(record);
     const asked = new Set(open.flatMap((question) => question.decides));
     const unaskedLow = (item: MeetingItem) =>
-        item.status === "suggested" && !applied(item) && !asked.has(item.id) && (item.confidence ?? 1) < opts.below;
+        item.status === "suggested" &&
+        !applied(item) &&
+        !asked.has(item.id) &&
+        (needsSpeakerReview(item) ||
+            (item.confidence ?? 1) < (item.kind === "term" ? (opts.termBelow ?? opts.below) : opts.below));
     // A low term the rules have a guess for is marked wherever it was heard, even unasked. An unknown word with no
     // guess is often plain spoken Czech no dictionary has ("byznysák"): it stays text unless it is asked.
     const unaskedTerms = record.items.flatMap((item): UnclearPassage[] =>
@@ -88,6 +99,11 @@ function unclearPassages(
     // Questions first: a word is marked once, and a question's choices say more than a low term's own guess.
     return [
         ...open.flatMap((question): UnclearPassage[] => {
+            // A repeated word is often right as heard: a mark on each of them made the transcript unreadable (R2-MC1).
+            if (question.group === "words") {
+                return [];
+            }
+
             const decided = record.items.filter((item) => question.decides.includes(item.id));
 
             if (question.heard) {
@@ -112,7 +128,15 @@ function unclearPassages(
                               speaker: item.label,
                               readings: question.choices,
                               ...(opts.guesses && item.speaker
-                                  ? { guess: { name: item.speaker, confidence: item.confidence } }
+                                  ? {
+                                        guess: {
+                                            name: item.speaker,
+                                            confidence:
+                                                item.confidence !== undefined && item.confidence < opts.below
+                                                    ? item.confidence
+                                                    : undefined,
+                                        },
+                                    }
                                   : {}),
                           },
                       ]
@@ -166,17 +190,17 @@ export function correctionsOf(
     if (!Number.isFinite(applyAbove) || applyAbove < 0 || applyAbove > 1) {
         throw new RangeError("applyAbove must be between 0 and 1");
     }
-    const markBelow = opts.applyAbove ?? Math.max(0.7, applyAbove);
+    const termApplyAbove = opts.applyAbove ?? config.global.suggest.terms.applyAbove;
     const questionOwned = questionOwnedItems(record);
     const unclearLabel = languageSettings(config).render.unclearLabel;
     const applies = (item: MeetingItem) =>
         item.status === "confirmed" ||
-        (opts.include?.includes(item.id) === true && item.status !== "rejected") ||
+        (opts.include?.includes(item.id) === true && item.status !== "rejected" && !needsSpeakerReview(item)) ||
         (opts.withSuggested === true &&
             item.status === "suggested" &&
+            !needsSpeakerReview(item) &&
             !(item.kind === "speaker-range" && questionOwned.has(item.id)) &&
-            (item.confidence === undefined ||
-                item.confidence >= (item.kind === "speaker-range" ? markBelow : applyAbove)));
+            (item.confidence === undefined || item.confidence >= (item.kind === "term" ? termApplyAbove : applyAbove)));
     const used = record.items
         .filter(applies)
         .sort((a, b) => Number(a.status === "confirmed") - Number(b.status === "confirmed"));
@@ -186,7 +210,13 @@ export function correctionsOf(
     );
     const passages = [
         ...(opts.withSuggested
-            ? unclearPassages(record, { below: markBelow, applied: applies, guesses: true, unclearLabel })
+            ? unclearPassages(record, {
+                  below: applyAbove,
+                  termBelow: termApplyAbove,
+                  applied: applies,
+                  guesses: true,
+                  unclearLabel,
+              })
             : unclearPassages(record, { below: config.global.suggest.listenBelow, unclearLabel })),
         ...unlabeled,
     ];
@@ -323,18 +353,23 @@ export function correctTranscript(options: {
     const speakerRanges = record.items.filter(
         (item): item is Extract<MeetingItem, { kind: "speaker-range" }> => item.kind === "speaker-range"
     );
-    const covers = (item: { fromSec: number; toSec: number; label: string }, atSec: number | undefined) =>
+    const covers = (
+        item: { fromSec: number; toSec: number; label: string },
+        { atSec, sourceIndex }: { atSec: number | undefined; sourceIndex: number | undefined }
+    ) =>
         atSec !== undefined &&
         atSec >= item.fromSec &&
         atSec <= item.toSec &&
-        sources.labelsAt.get(atSec)?.has(item.label) === true;
+        (sourceIndex !== undefined
+            ? transcript[sourceIndex].speaker === item.label
+            : sources.labelsAt.get(atSec)?.has(item.label) === true);
     // Only a question still open about a voice leaves a line's speaker uncertain; an answered one or a term question
     // does not.
     const speakerQuestions = openQuestions(record).filter((question) => question.about === "speaker");
     const unclearLabel = languageSettings(config).render.unclearLabel;
     const applied = {
         ...corrected,
-        entries: corrected.entries.flatMap((rawEntry) => {
+        entries: corrected.entries.flatMap((rawEntry): TranscriptEntry[] => {
             const sourceIndex =
                 (rawEntry.id ? sources.byId.get(rawEntry.id) : undefined) ?? sources.byStart.get(rawEntry.startSec);
             const entry =
@@ -343,19 +378,51 @@ export function correctTranscript(options: {
                     : rawEntry;
             const atSec = entry.startSec;
             const finding = speakerRanges.findLast(
-                (item) => item.status === "confirmed" && item.voices && covers(item, atSec)
+                (item) => item.status === "confirmed" && item.voices && covers(item, { atSec, sourceIndex })
             );
             if (finding?.voices) {
                 // The segments count the words of the one line the answer split, the line the range starts on.
                 if (finding.segments?.length && atSec === finding.fromSec) {
                     return splitEntry(entry, finding.segments);
                 }
-                return [{ ...entry, speaker: `[${unclearLabel}: ${finding.voices.join(" + ")}]` }];
+
+                const speaker = `[${unclearLabel}: ${finding.voices.join(" + ")}]`;
+                const { unclear: _open, ...decided } = entry;
+                return [{ ...decided, speaker, band: "open", guess: false, voices: finding.voices }];
             }
-            const proposals = speakerRanges.filter((item) => item.status !== "rejected" && covers(item, atSec));
+            const proposals = speakerRanges.filter(
+                (item) => item.status !== "rejected" && covers(item, { atSec, sourceIndex })
+            );
             const proposal = proposals.findLast((item) => item.status === "confirmed") ?? proposals.at(-1);
             const confidence = proposal?.confidence;
-            const guess = entry.speaker.includes(" %]");
+            const assigned = record.speakers.assignments?.some((assignment) =>
+                covers(
+                    {
+                        ...assignment,
+                        fromSec: assignment.fromSec - LINE_AT_TOLERANCE_SEC,
+                        toSec: assignment.toSec + LINE_AT_TOLERANCE_SEC,
+                    },
+                    { atSec, sourceIndex }
+                )
+            );
+            const voiceName =
+                (options.withSuggested || options.include?.includes(proposal?.id ?? "")) &&
+                !assigned &&
+                proposal?.status === "suggested" &&
+                !needsSpeakerReview(proposal) &&
+                proposal.speaker &&
+                proposal.rules.includes(MeetingRule.VoiceEmbedding);
+            const score = typeof proposal?.evidence?.score === "number" ? proposal.evidence.score : confidence;
+            let band: TranscriptEntry["band"];
+
+            if (isUnclearMarker(entry.speaker, unclearLabel)) {
+                band = "open";
+            } else if (proposal?.status === "confirmed") {
+                band = "confirmed";
+            } else if (proposal) {
+                band = entry.guess ? "guess" : "applied";
+            }
+
             return [
                 {
                     ...entry,
@@ -368,15 +435,15 @@ export function correctTranscript(options: {
                         ? {
                               ...(confidence === undefined ? {} : { confidence }),
                               ...(proposal.speaker ? { suggestedSpeaker: proposal.speaker } : {}),
-                              guess,
-                              band:
-                                  proposal.status === "confirmed"
-                                      ? ("confirmed" as const)
-                                      : guess
-                                        ? ("guess" as const)
-                                        : ("applied" as const),
+                              ...(voiceName
+                                  ? {
+                                        nameSource: "voice" as const,
+                                        ...(score === undefined ? {} : { nameScore: score }),
+                                    }
+                                  : {}),
                           }
                         : {}),
+                    ...(band ? { band, guess: band === "guess" } : {}),
                 },
             ];
         }),

@@ -45,7 +45,7 @@ export function testPhrase(
         phrase: options.phrase,
         text: applied.entries[0]?.text ?? options.phrase,
         fired,
-        suggestions: fuzzyMatches(line, dictionary)
+        suggestions: fuzzyMatches({ entries: line, dictionary })
             .filter((match) => match.score >= suggestAt)
             .map((match) => ({ heard: match.heard, value: match.value, score: Math.round(match.score * 100) / 100 })),
         counts: {

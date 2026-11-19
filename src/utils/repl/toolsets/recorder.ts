@@ -1,6 +1,7 @@
 import { basename, join } from "node:path";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { withTimeout } from "@genesiscz/utils/async";
+import { recorderCommands } from "@genesiscz/utils/genesis-tools/tools/system";
 import type { JobInfo } from "@genesiscz/utils/jobs";
 import { logger } from "@genesiscz/utils/logger";
 import {
@@ -35,6 +36,7 @@ export const recorderStartSchema = z
     .object({
         title: z.string().optional(),
         displays: z.union([z.enum(["all", "main"]), z.array(z.number().int())]).default("main"),
+        excludeWindowIds: z.array(z.number().int().positive().max(0xffffffff)).optional(),
         audio: z
             .object({ mic: z.boolean().optional(), system: z.boolean().optional(), micDeviceId: z.string().optional() })
             .optional(),
@@ -98,6 +100,26 @@ export function settingsPatchOf(input: z.input<typeof recorderSetSchema>): Recor
 }
 const EVENTS = ["state", "frame", "displays", "warning", "progress", "ended"] as const;
 const statusSchema = z.custom<RecorderStatus>();
+const switchTargetSchema = z.union([
+    z.strictObject({ window: z.number().int().positive().max(0xffffffff) }),
+    z.strictObject({ app: z.string().trim().min(1) }),
+    z.strictObject({ display: z.number().int().nonnegative() }),
+    // The RPC leaves tagged targets to the engine. Keep its fields, including window lists and region bounds.
+    z.looseObject({ kind: z.string().min(1) }),
+]);
+const targetKind = z.enum(["window", "app", "display", "displays", "area"]);
+const capabilitiesSchema = z.object({
+    targets: z.array(targetKind).nullable(),
+    liveTargetSwitch: z.boolean(),
+    liveMicrophoneMute: z.boolean(),
+    liveMicrophoneDevice: z.boolean(),
+    liveSystemAudioMute: z.boolean(),
+    liveFrameRate: z.boolean(),
+    liveCamera: z.boolean(),
+    liveDisplaysAddRemove: z.boolean(),
+    maxDurationMs: z.number().nullish(),
+    reasonUnavailable: z.record(z.string(), z.string()),
+});
 
 const recordingMethods = [
     defineMethod({
@@ -107,6 +129,29 @@ const recordingMethods = [
         resultName: "RecorderStatus",
         doc: "The state, displays, frame count and folder.",
         effect: "read",
+    }),
+    defineMethod({
+        name: "capabilities",
+        params: z.object({}),
+        result: capabilitiesSchema,
+        resultName: "RecordingCapabilities",
+        doc: `Returns target kinds (null when the engine does not report which kinds it can switch to), live controls, the known duration limit and reasons for unavailable controls. ${recorderCommands.status} reads the take. ${recorderCommands.listLive} lists its advertised controls.`,
+        effect: "read",
+    }),
+    defineMethod({
+        name: "switchTarget",
+        params: z.object({ target: switchTargetSchema }),
+        positional: ["target"],
+        result: z.object({ state: z.string() }),
+        doc: `Switches by window id, app name or bundle id, display id, or a tagged target. Returns the engine's state. ${recorderCommands.serve} exposes target.switch through recording.call.`,
+        effect: "reversible",
+    }),
+    defineMethod({
+        name: "restart",
+        params: z.object({}),
+        result: z.object({ state: z.string() }),
+        doc: `Discards the take so far and starts again. Returns the engine's state. ${recorderCommands.serve} exposes restart through recording.call.`,
+        effect: "destructive",
     }),
     defineMethod({
         name: "pause",
@@ -285,7 +330,7 @@ export const recorderApi = defineApi({
             params: recorderStartSchema,
             result: z.unknown(),
             resultName: "Recording",
-            doc: 'Starts a library recording (frames of the chosen displays, sound when asked) and returns its handle. Frames default to the recorder\'s files moved at the stop; frames: { format: "jpeg", naming: "wall-clock", flush: "piece" } with ocr: { enabled: true } and ocrSink: "jsonl" records the way a meeting does (each piece\'s JPEGs and ocr.jsonl rows exist while it records). It records what the user\'s screen shows, and a first microphone use can raise the system\'s permission prompt.',
+            doc: `Starts a library recording (frames of the chosen displays, sound when asked) and returns its handle. excludeWindowIds leaves those CG windows out of every display, as ${recorderCommands.startFrames} does. Frames default to the recorder's files moved at the stop; frames: { format: "jpeg", naming: "wall-clock", flush: "piece" } with ocr: { enabled: true } and ocrSink: "jsonl" records the way a meeting does (each piece's JPEGs and ocr.jsonl rows exist while it records). It records what the user's screen shows, and a first microphone use can raise the system's permission prompt.`,
             effect: "reversible",
             reaches: ["user"],
         }),
@@ -432,6 +477,97 @@ export class RecordingHandle {
 
     status(): Promise<RecorderStatus> {
         return this.check("status", () => this.client.status());
+    }
+
+    async capabilities(): Promise<z.infer<typeof capabilitiesSchema>> {
+        const status = await this.status();
+        if ("capabilities" in status && status.capabilities != null) {
+            return capabilitiesSchema.parse(status.capabilities);
+        }
+
+        // Current engines put the controls in the live entry, the time limit in status and the sound sources in settings.
+        const methods = this.client.methods;
+        const settings = methods.includes("settings.get") ? await this.settings() : undefined;
+        const reasonUnavailable: Record<string, string> = {};
+        const available = (key: string, required: RecorderMethod[], reason?: string) => {
+            const missing = required.find((method) => !methods.includes(method));
+            if (status.state === "stopping" || status.state === "stopped") {
+                reasonUnavailable[key] = `The recording is ${status.state}.`;
+            } else if (missing) {
+                reasonUnavailable[key] = `The recorder does not offer ${missing}.`;
+            } else if (reason) {
+                reasonUnavailable[key] = reason;
+            }
+
+            return reasonUnavailable[key] === undefined;
+        };
+
+        const soundReason = (source: AudioSource) => {
+            if (!settings) {
+                return "The recorder does not report its sound sources.";
+            }
+
+            return settings.audio.sources.includes(source) ? undefined : `This take records no ${source} audio.`;
+        };
+
+        const targets: z.infer<typeof targetKind>[] = [];
+        const controlSession = this.kind === "control-session";
+        const liveTargetSwitch = available("liveTargetSwitch", ["target.switch"]);
+        if (controlSession && liveTargetSwitch) {
+            if (settings?.audio.sources.length === 0) {
+                targets.push("window", "app");
+            }
+
+            targets.push("display", "area");
+        } else if (methods.includes("displays.switch")) {
+            targets.push("display");
+        }
+
+        const liveDisplaysAddRemove = available("liveDisplaysAddRemove", ["displays.add", "displays.remove"]);
+        if (liveDisplaysAddRemove) {
+            targets.push("displays");
+        }
+
+        return {
+            targets: liveTargetSwitch && !controlSession ? null : targets,
+            liveTargetSwitch,
+            liveMicrophoneMute: available("liveMicrophoneMute", ["audio.mute"], soundReason("mic")),
+            liveMicrophoneDevice: available("liveMicrophoneDevice", ["audio.setInput"], soundReason("mic")),
+            liveSystemAudioMute: available("liveSystemAudioMute", ["audio.mute"], soundReason("system")),
+            liveFrameRate: available("liveFrameRate", ["settings.set"], settings?.fixed?.activeFps),
+            liveCamera: available("liveCamera", [], "The camera starts with the recording."),
+            liveDisplaysAddRemove,
+            ...(status.limitMs === undefined ? {} : { maxDurationMs: status.limitMs }),
+            reasonUnavailable,
+        };
+    }
+
+    async switchTarget(target: z.infer<typeof switchTargetSchema>) {
+        return this.check("target.switch", async () => {
+            // target.switch accepts each engine's own target. The capture session takes tagged targets.
+            if (this.kind !== "control-session" || "kind" in target) {
+                return this.client.switchTarget(target);
+            }
+
+            if ("window" in target) {
+                return this.client.switchTarget({ kind: "window", windowIds: [target.window] });
+            }
+
+            if ("app" in target) {
+                return this.client.switchTarget({ kind: "app", app: target.app });
+            }
+
+            const display = (await this.displays.list()).find((entry) => entry.id === target.display);
+            if (!display) {
+                throw new RpcError(RPC_ERRORS.unknownDisplay, `display ${target.display} is not connected`);
+            }
+
+            return this.client.switchTarget({ kind: "display", screenIndex: display.index });
+        });
+    }
+
+    restart() {
+        return this.check("restart", () => this.client.restart());
     }
 
     pause() {

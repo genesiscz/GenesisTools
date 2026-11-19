@@ -6,6 +6,7 @@ import {
     mkdtempSync,
     readdirSync,
     readFileSync,
+    rmSync,
     statSync,
     utimesSync,
     writeFileSync,
@@ -18,6 +19,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { meetingsConfigSchema, TONE_MAX_SEC } from "@genesiscz/utils/meetings/config";
 import { type MeetingRecord, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import type { MeetingEvidence, SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
+import { makeWordTimingArtifact, wordTimingFile } from "@genesiscz/utils/meetings/word-timing-cache";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { Command } from "commander";
@@ -44,6 +46,8 @@ import { OpenedMeeting } from "./opened-meeting";
 import { askedSpotSec, heardClip, type QuestionItem } from "./questions";
 import * as screenBoxes from "./screen-boxes";
 import { resolveToneSound } from "./tone-sound";
+import { correctedTranscriptRead, timedTranscriptView } from "./window-reads";
+import { meetingWordTimingCache } from "./word-timings";
 
 const now = "2026-11-09T10:00:00.000Z";
 
@@ -219,6 +223,140 @@ describe("a Moment of an item", () => {
             spotSec: 20,
             padSec: listen.tone.leadSec + SPEAKER_PAD_SEC,
         });
+    });
+});
+
+describe("a term's spot from the meeting's word timings (U11)", () => {
+    /** "Ada" stands at character 10 of the 43 in the line spoken from 20 s to 30 s: its text estimates 22.33 s. */
+    const estimatedAda = 20 + (10 / 43) * 10;
+    /** The same lines as the word timings read them: "Ada" is said at 26.2 s. */
+    const timedLines = transcript.map((entry) =>
+        entry.startSec === 20
+            ? { ...entry, words: [{ range: { location: 10, length: 3 }, startSec: 26.2, endSec: 26.6 }] }
+            : entry
+    );
+
+    test("a term's spot is the start of its word in the word timings, and its clip and tone follow it", () => {
+        const target: MomentTarget = { kind: "item", id: "i3" };
+        const timed = planMoment({ record: meeting, transcript, listen, target, wordTimedLines: timedLines });
+
+        expect(plan(target).spotSec).toBeCloseTo(estimatedAda, 5);
+        expect(timed.spotSec).toBe(26.2);
+        expect(timed.fromSec).toBeCloseTo(26.2 - 1.5, 5);
+        expect(timed.toSec).toBeCloseTo(26.2 + 2.5, 5);
+        expect(timed.tone?.atSec).toBeCloseTo(26.2 - listen.tone.leadSec, 5);
+    });
+
+    test("an applied spelling finds its word too: the timed line reads the proposed spelling", () => {
+        const renamed = record([{ id: "i9", kind: "term", atSec: 20, heard: "Ada", proposed: "Adaline" }]);
+        const applied = transcript.map((entry) =>
+            entry.startSec === 20
+                ? {
+                      ...entry,
+                      text: entry.text.replace("Ada", "Adaline"),
+                      words: [
+                          { range: { location: 0, length: 3 }, startSec: 20.1, endSec: 20.4 },
+                          { range: { location: 10, length: 7 }, startSec: 26.2, endSec: 26.9 },
+                      ],
+                  }
+                : entry
+        );
+
+        expect(
+            planMoment({
+                record: renamed,
+                transcript,
+                listen,
+                target: { kind: "item", id: "i9" },
+                wordTimedLines: applied,
+            }).spotSec
+        ).toBe(26.2);
+    });
+
+    test("word timings that do not cover the term's line leave the estimate from its text", () => {
+        const elsewhere = transcript.map((entry) =>
+            entry.startSec === 30
+                ? { ...entry, words: [{ range: { location: 0, length: 2 }, startSec: 30.2, endSec: 30.4 }] }
+                : entry
+        );
+
+        expect(
+            planMoment({
+                record: meeting,
+                transcript,
+                listen,
+                target: { kind: "item", id: "i3" },
+                wordTimedLines: elsewhere,
+            }).spotSec
+        ).toBeCloseTo(estimatedAda, 5);
+    });
+
+    test("simultaneous lines do not borrow another line's word timing", () => {
+        const turns = [transcript[1]!, ...transcript];
+        const target: MomentTarget = { kind: "item", id: "i9" };
+        const selected = record([{ id: "i9", kind: "term", atSec: 20, heard: "Ada", evidence: { transcriptLine: 2 } }]);
+        const options = { record: selected, transcript: turns, listen, target };
+        expect(planMoment({ ...options, wordTimedLines: timedLines }).spotSec).toBe(planMoment(options).spotSec);
+    });
+
+    test("a saved meeting's term takes its spot from the meeting's cached word timings", async () => {
+        const audioPath = recording("word-timed-term");
+        const store = new MeetingStore(new Storage("meetings-moment-word-timed"));
+        const saved = await store.create(
+            {
+                title: "Word timed planning",
+                start: now,
+                createdBy: "new",
+                sources: { wisprflow: { meetingId: "abc" } },
+                items: meeting.items,
+            },
+            { command: "new", change: "test" }
+        );
+        const opened = OpenedMeeting.of(store, saved, { source: fakeSource(audioPath), sourceMeetingId: "abc" });
+        const target: MomentTarget = { kind: "item", id: "i3" };
+        const estimated = await openMoment({ store, record: saved, target, opened, screen: false });
+        const cache = meetingWordTimingCache(saved.id);
+        const model = join(dirname(audioPath), "weights.onnx");
+        writeFileSync(model, "model weights");
+        const { applied } = await correctedTranscriptRead({
+            store,
+            record: saved,
+            format: "json",
+            flags: { dictionary: true },
+            opened,
+        });
+        await cache.publish(
+            makeWordTimingArtifact({
+                window: { fromSec: 20, toSec: 30 },
+                audio: wordTimingFile(audioPath),
+                modelFiles: [wordTimingFile(model)],
+                modelId: "test/word-model",
+                pcmSha256: "test-pcm",
+                // Times from the window's start: "Ada" is said 6.2 s into the line.
+                words: [
+                    { text: "Dej", startSec: 0.1, endSec: 0.4 },
+                    { text: "to", startSec: 0.5, endSec: 0.7 },
+                    { text: "do", startSec: 0.8, endSec: 1 },
+                    { text: "Ada", startSec: 6.2, endSec: 6.6 },
+                    { text: "a", startSec: 6.8, endSec: 6.9 },
+                    { text: "pak", startSec: 7, endSec: 7.3 },
+                    { text: "taky", startSec: 7.4, endSec: 7.7 },
+                    { text: "do", startSec: 7.8, endSec: 7.9 },
+                    { text: "zadání", startSec: 8, endSec: 8.6 },
+                    { text: "prosím", startSec: 8.8, endSec: 9.3 },
+                ],
+                lines: timedTranscriptView(saved, applied).entries,
+            })
+        );
+
+        try {
+            const timed = await openMoment({ store, record: saved, target, opened, screen: false });
+
+            expect(estimated.spotSec).toBeCloseTo(estimatedAda, 5);
+            expect(timed.spotSec).toBeCloseTo(26.2, 5);
+        } finally {
+            rmSync(cache.folder, { recursive: true, force: true });
+        }
     });
 });
 
@@ -706,14 +844,14 @@ describe("the screen at a Moment (R41)", () => {
 });
 
 /** A source that answers this file's transcript and keeps the recording at `audioPath`. */
-function fakeSource(audioPath: string): TranscriptSource {
+function fakeSource(audioPath: string, entries = transcript): TranscriptSource {
     const sourceMeeting: SourceMeeting = {
         sourceMeetingId: "abc",
         title: "Planning",
         start: now,
         participants: [],
         speakers: [],
-        transcript,
+        transcript: entries,
         folders: [],
     };
     const evidence: MeetingEvidence = { audioPath, segments: [], speaking: [], files: [] };
@@ -729,6 +867,7 @@ function fakeSource(audioPath: string): TranscriptSource {
         liveRecording: async () => null,
         calendarEntries: async () => ({ ok: true, from: "wisprflow", entries: [] }),
         folders: async () => [],
+        meetingsBetween: async () => null,
         meetingFolders: async () => [],
         folderWrite: { supported: false, reason: "fake", manualStep: "none" },
     };
@@ -742,7 +881,7 @@ function recording(name: string): string {
     return path;
 }
 
-async function savedMeeting(storage: string, audioPath: string) {
+async function savedMeeting(storage: string, audioPath: string, fixture = { items: meeting.items, transcript }) {
     const store = new MeetingStore(new Storage(storage));
     const saved = await store.create(
         {
@@ -750,17 +889,132 @@ async function savedMeeting(storage: string, audioPath: string) {
             start: now,
             createdBy: "new",
             sources: { wisprflow: { meetingId: "abc" } },
-            items: meeting.items,
+            items: fixture.items,
         },
         { command: "new", change: "test" }
     );
-    const opened = OpenedMeeting.of(store, saved, { source: fakeSource(audioPath), sourceMeetingId: "abc" });
+    const opened = OpenedMeeting.of(store, saved, {
+        source: fakeSource(audioPath, fixture.transcript),
+        sourceMeetingId: "abc",
+    });
     return { store, saved, opened };
 }
 
 const oneTrack = async () => ({ tracks: 1 });
 
 describe("a Moment of a saved meeting", () => {
+    test("the terminal and window cut every decided speaker line and name the intervening audio", async () => {
+        const turns = [
+            { speaker: "Voice A", startSec: 10, text: "First sentence." },
+            { speaker: "Voice A", startSec: 20, text: "Second sentence." },
+            { speaker: "Voice B", startSec: 24, text: "Another discussion." },
+            { speaker: "Voice A", startSec: 60, text: "Last sentence." },
+        ];
+        const items = record([
+            { id: "i1", kind: "speaker-range", label: "Voice A", fromSec: 10, toSec: 20 },
+            { id: "i2", kind: "speaker-range", label: "Voice A", fromSec: 60, toSec: 60 },
+            {
+                id: "i3",
+                kind: "question",
+                about: "speaker",
+                question: "Who speaks?",
+                fromSec: 10,
+                toSec: 20,
+                clip: { fromSec: 10, toSec: 20 },
+                decides: ["i2", "i1"],
+            },
+        ]).items;
+        const audioPath = recording("decided-lines");
+        const { store, saved, opened } = await savedMeeting("meetings-moment-decided", audioPath, {
+            items,
+            transcript: turns,
+        });
+        const question = saved.items.find((item): item is QuestionItem => item.kind === "question")!;
+        const cuts: Array<Parameters<typeof cutClip>[0]> = [];
+        const cut: typeof cutClip = async (options) => {
+            cuts.push(options);
+            writeFileSync(options.outPath, "RIFF");
+        };
+        const expected = { fromSec: 10, toSec: 65, gapNote: "Also plays intervening audio 00:24–01:00" };
+        const terminal = await writeQuestionClips({
+            record: saved,
+            questions: [question],
+            transcript: turns,
+            listen,
+            pads: { beforeSec: 0, afterSec: 0 },
+            audioPath,
+            dir: dirname(audioPath),
+            cut,
+        });
+        const native = await clipMoment({
+            store,
+            record: saved,
+            opened,
+            target: { kind: "item", id: "Q1" },
+            cut,
+            probe: oneTrack,
+        });
+        expect(terminal[0]).toMatchObject(expected);
+        expect(native).toMatchObject(expected);
+        expect(cuts.map(({ fromSec, toSec }) => [fromSec, toSec])).toEqual([
+            [10, 65],
+            [10, 65],
+        ]);
+        expect(question.clip).toEqual({ fromSec: 10, toSec: 20 });
+
+        const adjacent = questionClip({
+            record: saved,
+            question: { ...question, decides: ["i1"] },
+            transcript: turns,
+            listen,
+            pads: { beforeSec: 0, afterSec: 0 },
+        });
+        expect(adjacent).toMatchObject({ fromSec: 10, toSec: 24 });
+        expect(adjacent).not.toHaveProperty("gapNote");
+    });
+
+    test("a speaker question keeps its own last line when its only decided target is elsewhere", () => {
+        const saved = record([
+            { id: "i1", kind: "speaker-range", label: "Speaker 1", fromSec: 60, toSec: 60 },
+            {
+                id: "i2",
+                kind: "question",
+                about: "speaker",
+                question: "Who speaks?",
+                fromSec: 10,
+                toSec: 20,
+                decides: ["i1"],
+            },
+        ]);
+        const input = { record: saved, transcript, listen, target: { kind: "item" as const, id: "i2" } };
+        expect(planMoment(input)).toMatchObject({
+            fromSec: 10,
+            toSec: 65,
+            gapNote: "Also plays intervening audio 00:30–01:00",
+        });
+        expect(planMoment({ ...input, lengthSec: 5 })).not.toHaveProperty("gapNote");
+    });
+
+    test("a question ending at its decided line's known end leaves the next voice out", () => {
+        const saved = record([
+            { id: "i1", kind: "speaker-range", label: "Speaker 1", fromSec: 10, toSec: 20, evidence: { endSec: 30 } },
+            {
+                id: "i2",
+                kind: "question",
+                about: "speaker",
+                question: "Who speaks?",
+                fromSec: 10,
+                toSec: 30,
+                clip: { fromSec: 10, toSec: 20 },
+                decides: ["i1"],
+            },
+        ]);
+        expect(planMoment({ record: saved, transcript, listen, target: { kind: "item", id: "i2" } })).toMatchObject({
+            fromSec: 10,
+            toSec: 30,
+        });
+    });
+
     test("its source transcript and the saved settings make the Moment, its clip goes to the cache once", async () => {
         const audioPath = recording("saved");
         const { store, saved, opened } = await savedMeeting("meetings-moment-saved", audioPath);
@@ -1136,6 +1390,22 @@ test("split clips keep accepted acoustic word boundaries and at least one and a 
     expect(plan).toMatchObject({ fromSec: 12.3, toSec: 13.1, padSec: 1.5, wordTimed: true });
     // No audio access is needed for an accepted boundary.
     expect(await refineSplitClip({ plan, question, audioPath: "/unreadable.wav" })).toEqual(plan);
+    const audioPath = recording("word-timed-part");
+    const fixture = await savedMeeting("meetings-moment-word-part", audioPath, {
+        items: saved.items,
+        transcript: timed,
+    });
+    const native = await clipMoment({
+        store: fixture.store,
+        record: fixture.saved,
+        opened: fixture.opened,
+        target: { kind: "item", id: "Q1" },
+        probe: oneTrack,
+        cut: async ({ outPath }) => {
+            writeFileSync(outPath, "RIFF");
+        },
+    });
+    expect(native).toMatchObject({ fromSec: 12.3, toSec: 13.1, padSec: 1.5, startSec: 12.3 - 1.5 });
 });
 
 test("manual clip pause holds its position and resumes the same process without replaying", () => {

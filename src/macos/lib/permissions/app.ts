@@ -20,10 +20,16 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { PRESETS } from "@genesiscz/utils/compress/presets";
 import { applyFolderRetention, planFolderRetention } from "@genesiscz/utils/compress/retention";
 import { env } from "@genesiscz/utils/env";
+import { appBuilder, defaultBuildCommand } from "@genesiscz/utils/genesis-tools/app-builder";
+import {
+    parseSwiftRpcMethods,
+    RPC_METHODS_SWIFT_FILE,
+} from "@genesiscz/utils/genesis-tools/capability/app-surface-source";
 import { createGit } from "@genesiscz/utils/git";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import {
+    type AppCapability,
     GENESIS_APP_BUNDLE_ID,
     GENESIS_APP_NAME,
     genesisAppBundlePath,
@@ -65,7 +71,7 @@ import {
     partsForBuild,
     scratchName,
 } from "./parts";
-import { captureRelaunch, linkRelayAmong, type RelaunchCapture, runRelaunch } from "./relaunch";
+import { captureRelaunch, runRelaunch } from "./relaunch";
 import { createSwiftProgressReporter } from "./swift-progress";
 
 export const APP_SOURCE_DIR = resolve(import.meta.dirname, "../../GenesisTools");
@@ -166,7 +172,20 @@ export interface AppManifest extends AppSourceInfo {
     teamId?: string;
     /** The optional parts this build links (parts.ts). Absent in builds from before parts existed: every part. */
     parts?: string[];
+    /** What this build's Swift accepts from the processes it starts (`APP_ACCEPTS`). Absent before 2026-11-18. */
+    accepts?: AppCapability[];
+    /** The `--rpc` methods this build answers (Swift `let rpcMethods`). Absent in builds before 2026-11-17. */
+    rpcMethods?: string[];
 }
+
+/**
+ * Every caller-visible rule the Swift of THIS checkout has, by name. Callers read the installed build's list
+ * (`installedAppAccepts`) and send nothing an older build would refuse: a build from any worktree replaces the
+ * install, while `tools` always runs the main checkout. Add a name in the commit that teaches the Swift the rule.
+ * - `launcher-config`: a bun caller's `--config=<checkout>/src/utils/bun/launcher.bunfig.toml` is the checkout's own
+ *   (VaultUnlock.swift `ownConfig`), and a bun caller without any `--config=` can only be allowed once.
+ */
+export const APP_ACCEPTS: readonly AppCapability[] = ["launcher-config"];
 
 export interface SignatureInfo {
     /** "adhoc" or the certificate authority line */
@@ -627,6 +646,16 @@ export async function buildApp(options?: BuildAppOptions): Promise<BuildResult> 
     );
 }
 
+/** The manual retry for an already installed app whose sources changed or whose rebuild failed. */
+export function appRebuildCommand(builder = appBuilder()): string {
+    return builder?.buildCommand(null) ?? defaultBuildCommand(null);
+}
+
+/** The builder and the updater show the same Xcode instructions for an unsupported SDK. */
+export function appBuildSdkProblem(sdk: AppBuildSdk): string | null {
+    return sdk.kind === "unsupported" ? genesisAppBuildHint(sdk.toolchain) : null;
+}
+
 /**
  * The SDK the build compiles against, or a refusal before `swift build` ever runs. Full Xcode builds as before. With
  * the Command Line Tools, the build uses the newest SDK whose SwiftUI `@State` needs no macro plugin (the 26.5 SDK
@@ -634,8 +663,9 @@ export async function buildApp(options?: BuildAppOptions): Promise<BuildResult> 
  * instead of 100+ cascading "plugin for module 'SwiftUIMacros' not found" errors (#445).
  */
 export function requireAppBuildSdk(sdk: AppBuildSdk): { sdkRoot?: string } {
-    if (sdk.kind === "unsupported") {
-        throw new Error(genesisAppBuildHint(sdk.toolchain));
+    const problem = appBuildSdkProblem(sdk);
+    if (problem) {
+        throw new Error(problem);
     }
 
     return sdk.kind === "command-line-tools" ? { sdkRoot: sdk.sdkRoot } : {};
@@ -1544,6 +1574,8 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
         signedWithHash,
         teamId: signature.teamId,
         parts: [...parts],
+        accepts: [...APP_ACCEPTS],
+        rpcMethods: parseSwiftRpcMethods(readFileSync(join(APP_SOURCE_DIR, RPC_METHODS_SWIFT_FILE), "utf8")),
     };
     await Bun.write(join(staging, "manifest.json"), `${SafeJSON.stringify(manifest, null, 2)}\n`);
 
@@ -2107,8 +2139,14 @@ const STALE_FACE_TERM_GRACE_MS = 500;
  * Read-only process snapshot shared by the reap and its pre-kill recheck, oldest first: the faces start again in this
  * order, and the kernel table lists the newest first.
  */
-export function readAppFaceProcesses(): ProcessEntry[] {
-    return listProcesses().sort(
+export function readAppFaceProcesses(): ProcessEntry[] | null {
+    const processes = listProcesses();
+
+    if (!processes.some((entry) => entry.command !== null)) {
+        return null;
+    }
+
+    return processes.sort(
         (a, b) => (a.startMs ?? Number.POSITIVE_INFINITY) - (b.startMs ?? Number.POSITIVE_INFINITY) || a.pid - b.pid
     );
 }
@@ -2186,35 +2224,25 @@ async function reapStaleAppFaces({
 }): Promise<void> {
     const launcher = genesisAppLauncherPath();
     const listing = readAppFaceProcesses();
-    if (listing.length === 0) {
-        logger.debug("could not list processes; skipping the stale-face reap");
+    if (listing === null) {
+        logger.warn("could not list process commands; skipping the stale-face reap and relaunch");
         return;
     }
 
     const stale = staleAppFacePids(listing, launcher);
+    const reopen = relaunch
+        ? captureRelaunch({ processes: listing, launcherPath: launcher, stalePids: stale, parts })
+        : null;
 
     if (stale.length === 0) {
+        if (reopen?.steps.length) {
+            runRelaunch(reopen, step);
+        }
+
         return;
     }
 
-    // The long-lived faces among them, with their exact argv, recorded before anything is killed.
-    let reopen: RelaunchCapture = { steps: [], relay: false, unrestorable: [], recordDirs: [] };
-
-    if (relaunch) {
-        // A failed capture only costs the reopen; the reap below must still run.
-        try {
-            reopen = captureRelaunch({ processes: listing, launcherPath: launcher, stalePids: stale });
-        } catch (err) {
-            // The relay decision needs only the listing, so a relay that was running still comes back.
-            const relay = linkRelayAmong({
-                processes: listing,
-                launcherPath: launcher,
-                stalePids: new Set(stale),
-            });
-            reopen = { steps: [], relay, unrestorable: [], recordDirs: [] };
-            logger.warn({ err, relay }, "relaunch: faces could not be recorded; they stay closed after the reap");
-        }
-    } else {
+    if (!relaunch) {
         logger.info("relaunch: off (--no-relaunch); reaped faces stay closed");
     }
 
@@ -2224,7 +2252,7 @@ async function reapStaleAppFaces({
     try {
         await killStaleFaces(stale, launcher, step);
     } finally {
-        if (relaunch) {
+        if (reopen) {
             const linked = (face: { argv: string[] }) => {
                 const part = partForFace(face.argv[0] ?? "");
                 return part === undefined || parts.includes(part);
@@ -2306,7 +2334,7 @@ async function killStaleFaces(stale: string[], launcher: string, step: (message:
 
     // A pid freed during the grace period can be reused, so classify the pids again instead of
     // trusting liveness alone.
-    const stillStale = new Set(staleAppFacePids(readAppFaceProcesses(), launcher));
+    const stillStale = new Set(staleAppFacePids(readAppFaceProcesses() ?? [], launcher));
     const survivors = stale.filter((pid) => stillStale.has(pid) && isProcessAlive(Number(pid)));
 
     for (const pid of survivors) {

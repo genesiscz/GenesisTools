@@ -25,9 +25,11 @@ wisprflow:<id>` (or `link`): the record, with the transcript, the people, the ca
 
 - **Three-pass (default):** `tools meetings evidence <meeting> --raw` gives the facts per line with no weights. Apply
   the tiers below and the content rules yourself, and store each finding with `tools meetings items add --kind
-  speaker-range ... --confidence <0..1> --reason "<the tiers and rules it rests on>"`. Store every line you can
-  attribute, interjections too ("Hm." under the label of a person who has left): they render with the right name.
-  Only the questions skip them.
+  speaker-range ... --confidence <0..1> --reason "<what the tiers and rules showed, in plain words>"`. The person
+  who reviews the meeting reads the reason on the row: write it in the meeting's language, and name no field
+  (`meeting.indicatorGaps`), rule id (`RA`) or labeler code (`seat-of-one`); `items add` refuses a reason that does.
+  Store every line you can attribute, interjections too ("Hm." under the label of a person who has left): they render
+  with the right name. Only the questions skip them.
 - **Automatic:** `tools meetings suggest <meeting> --rules evidence --attendance <platform>` applies the tiers and
   writes scored suggestion items. `tools meetings evidence <meeting>` shows why an item scored as it did.
 
@@ -119,6 +121,31 @@ model, compare all three tracks, score remote voices and enrol a confirmed call 
 labelled unverified. The REPL Meeting handle offers `acousticInspect`, `acousticClip`, `acousticCollect`, `voiceScore`,
 `voiceEnroll` and `voiceCollect`, using the same service methods as CLI and native clients.
 
+For project voice naming, follow the seats and voices step in pass 1 of the skill. Check each occupied seat in the
+`voice` field of raw evidence. When exactly one person on the seat has no sample, the voice pass can propose them
+by exclusion. The person must be present throughout the line. The voice must sound different from every enrolled
+seat-mate there, and the proposed lines must form one voice. Listen to confirm the name.
+
+### When a library sample sounds wrong
+
+Use the [voice sample commands](../SKILL.md#review-a-learned-voice-sample) to trace a name back to its recording.
+The global view shows a person's samples across projects. A project view limits the samples to that project, and a
+meeting view limits them to that recording's meeting ID. The row includes the words, seat, track, start and end
+seconds, how the sample was confirmed and how it entered the library. A temporary sample used to score a line in
+this pass has no editable library ID.
+
+Quality compares independent clips from the same seat, track, model and embedding dimension. Each clip needs at
+least two other independent clips for its similarity score. Overlapping copies of the same source cannot supply
+an independent comparison. The JSON result can also name the most similar compatible clip from another owner.
+Play both IDs if that helps the listener distinguish the speakers. A missing score supplies no basis for rejection.
+
+For example, suppose a sample under Mica Vale sounds unlike the other clips. If the owner hears Lark Fen speaking
+alone, move the sample to Lark. If the owner can rule out Mica but cannot name the speaker, reject it as
+`wrong-person`. If both voices overlap, choose `several-voices`. For an unusable recording choose `bad-audio`.
+If the owner just wants to forget this example, removal leaves the source eligible for later backfill.
+Keep the applied receipt to undo that decision. A library correction can retire affected voice suggestions while
+preserving human-confirmed transcript decisions.
+
 ## Inputs the agent still gathers
 
 1. **The roles. Ask the user before scoring**: who is the analyst, the architect, the backend and frontend developers,
@@ -139,8 +166,8 @@ sum(weights that apply)` when `net > 0`. A candidate with `net <= 0` is excluded
 Example: E1 is mixed and gives nothing; E3 shows Petr speaking (+5); R6 says Petr spoke three turns ago (+3); R8
 markers lean to Pavel (-2 for Petr). For Petr, `net = 5 + 3 - 2 = 6` over weights `5 + 3 + 2 = 10`, so 80 %.
 
-`tools meetings transcript --with-suggested` applies a stored range at 50 % or more (`global.suggest.applyAbove`) and
-shows a lower one as `[nejasné: "<label>"; 1) <name> NN %]`. Under 60 % (`listenBelow`) a range that matters is a
+`tools meetings transcript --with-suggested` applies a stored range at 70 % or more by default (`global.suggest.applyAbove`) and
+shows a lower named guess as `[<name>: NN %]`. Under 60 % (`listenBelow`) a range that matters is a
 question candidate (below).
 
 | Rule | Weight | Statement | Status |
@@ -231,6 +258,6 @@ Use `attendance <meeting> --add "Dana Example" --at-mic --from 0 --to 01:14:13` 
 
 A microphone or speaking indicator identifies a device group. When several active people share it, offer all group members as candidates. Never equate high mic share with the recording user, or the indicator's owner with the voice. Presence bounds are from inclusive, to exclusive.
 
-Use `evidence <meeting> --json --voices 3` instead of writing an audio feature script. JSON includes per-line `voice.channels` for physical left/right channels with RMS, low-band share below 300 Hz, differential-energy tilt, pitchHz or null, and voicedShare. `--channel 0|1` chooses the cluster channel; otherwise it uses the calibrated microphone side and falls back to physical left. `--voice-features --json` measures without clustering. Confirmed speaker assignments and confirmed speaker ranges anchor names. Cluster confidence measures feature separation, not the probability of a correct person. An unnamed cluster stays unnamed. Echo-clean audio and speaker embeddings belong to the separate echo/voice backend; raw channel features are preserved.
+Use `evidence <meeting> --json --voices 3` instead of writing an audio feature script. JSON includes per-line `voiceFeatures.channels` for physical left/right channels with RMS, low-band share below 300 Hz, differential-energy tilt, pitchHz or null, and voicedShare. `--channel 0|1` chooses the cluster channel; otherwise it uses the calibrated microphone side and falls back to physical left. `--voice-features --json` measures without clustering. Confirmed speaker assignments and confirmed speaker ranges anchor names. Cluster confidence measures feature separation, not the probability of a correct person. An unnamed cluster stays unnamed. Echo-clean audio and speaker embeddings belong to the separate echo/voice backend; raw channel features are preserved.
 
 The shared streaming utility decodes once into 50 ms features, retains no whole-file PCM, limits a read to eight hours and writes no durable cache. No model is downloaded by evidence. The REPL meeting handle exposes `voice({voices:3,channel:0})` and `editPerson({name:"Dana Example",action:"add",atMic:true,fromSec:0,toSec:4453})`; the Meetings window's people strip offers the same editor and raw feature inspection.

@@ -11,6 +11,7 @@ enum TranscriptLineMark: String, Hashable, CaseIterable {
     /// The engine is not sure who said this line (a speaker hint range covers it).
     case unclearSpeaker
     case byVoice
+    case swapSkipped, noRemotePresent, callEcho
     /// A confirmed item or a dictionary entry changed words of this line.
     case corrected
     /// A staged comment for the listening agent covers this line.
@@ -31,6 +32,9 @@ struct TranscriptBlockLine: Equatable, Hashable, Identifiable {
     var marks: Set<TranscriptLineMark> = []
     var words: [TranscriptWord] = []
     var indicator: TranscriptLine.Indicator? = nil
+    var evidenceMarks: [TranscriptEvidenceMark] = []
+    /// The voice model's score for the line's suggested name (`nameScore`), drawn with its mark.
+    var voiceScore: Double? = nil
 
     /// True while `position` is inside the line. A line without an end is heard from its start on.
     func isHeard(at position: Double) -> Bool {
@@ -43,17 +47,32 @@ struct TranscriptBlockLine: Equatable, Hashable, Identifiable {
 /// Consecutive lines of one speaker, drawn as one Riverside block: the speaker chip, the block's time, the lines.
 struct TranscriptBlock: Equatable, Identifiable {
     let id: String
+    /// The speaker the engine sent for the block's first line: the label a rename or an assignment acts on. It may be an
+    /// export mark (`[unclear: …]`), so it is never drawn; `who` is.
     let speaker: String
+    /// Who said the block, as the chip draws it: a name, a guess or an open question (window audit H2a).
+    let who: TranscriptSpeaker
     var lines: [TranscriptBlockLine]
+
+    init(id: String, speaker: String, who: TranscriptSpeaker? = nil, lines: [TranscriptBlockLine]) {
+        self.id = id
+        self.speaker = speaker
+        self.who = who ?? .name(speaker)
+        self.lines = lines
+    }
 
     var startSec: Double? { lines.first(where: { $0.startSec != nil })?.startSec }
     var endSec: Double? { lines.last?.endSec }
+    /// The block's name is a guess with its percent (I11): its chip takes the guess style.
+    var isGuess: Bool { who.isGuess }
 
     /// Groups the transcript's lines into blocks. A new block starts when the speaker changes, and also after a
     /// silence longer than `breakAfterGapSec` (nil: never; the plan's pick, one block per turn as Riverside draws it).
     /// `durationSec` ends the last line; `marks` adds marks by line id.
     static func build(from entries: [TranscriptLine], durationSec: Double? = nil,
-                      marks: [String: Set<TranscriptLineMark>] = [:], breakAfterGapSec: Double? = nil) -> [TranscriptBlock] {
+                      marks: [String: Set<TranscriptLineMark>] = [:], evidence: [WindowLineEvidence] = [],
+                      items: [MeetingItem] = [], echoAbove: Int = MeetingsPreferences.Transcript.defaultEchoAbove,
+                      breakAfterGapSec: Double? = nil) -> [TranscriptBlock] {
         // The end of a line is the one `meeting.transcript` sends (G-TR-1), else the next timed line's start.
         var ends = [Double?](repeating: durationSec, count: entries.count)
         var nextStart = durationSec
@@ -62,14 +81,30 @@ struct TranscriptBlock: Equatable, Identifiable {
             if let start = entries[index].startSec { nextStart = start }
         }
         var blocks: [TranscriptBlock] = []
+        let byIndex = Dictionary(evidence.map { ($0.index, $0) }, uniquingKeysWith: { _, last in last })
+        // The voice model's score of a marked line whose shown name is not its own (an open question covers it): the
+        // suggested range's cosine at the line's start. One pass over the items, not one per line.
+        var voiceScores: [Double: Double] = [:]
+        for item in items where item.kind == "speaker-range" && item.status == "suggested" && item.rules?.contains("voice-embedding") == true {
+            guard let from = item.fromSec, case .number(let score)? = item.evidence?["score"] else { continue }
+            voiceScores[from] = score
+        }
         for (index, entry) in entries.enumerated() {
+            let cues = byIndex[entry.sourceIndex ?? index].map { TranscriptEvidenceMark.build($0, items: items, echoAbove: echoAbove) } ?? []
+            let voiced = entry.who.isVoice
+            var lineMarks = (marks[entry.rowID] ?? []).union(cues.map(\.kind))
+            if voiced { lineMarks.insert(.byVoice) }
             let line = TranscriptBlockLine(id: entry.rowID, index: index, startSec: entry.startSec, endSec: ends[index],
-                                           text: entry.text, marks: marks[entry.rowID] ?? [], words: entry.words ?? [], indicator: entry.indicator)
-            if var last = blocks.last, last.speaker == entry.speaker, !breaks(after: last.lines.last, before: line, gap: breakAfterGapSec) {
+                                           text: entry.text, marks: lineMarks, words: entry.words ?? [],
+                                           indicator: entry.indicator, evidenceMarks: cues,
+                                           voiceScore: voiced ? entry.nameScore
+                                               : lineMarks.contains(.byVoice) ? entry.startSec.flatMap { voiceScores[$0] } : nil)
+            let who = entry.who
+            if var last = blocks.last, last.who == who, !breaks(after: last.lines.last, before: line, gap: breakAfterGapSec) {
                 last.lines.append(line)
                 blocks[blocks.count - 1] = last
             } else {
-                blocks.append(TranscriptBlock(id: "b-\(entry.rowID)", speaker: entry.speaker, lines: [line]))
+                blocks.append(TranscriptBlock(id: "b-\(entry.rowID)", speaker: entry.speaker, who: who, lines: [line]))
             }
         }
         return blocks
@@ -87,7 +122,7 @@ struct TranscriptBlock: Equatable, Identifiable {
         let query = query.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return blocks }
         return blocks.compactMap { block in
-            let speakerHit = block.speaker.localizedStandardContains(query)
+            let speakerHit = block.who.title.localizedStandardContains(query)
             var hit = speakerHit
             var copy = block
             for index in copy.lines.indices where copy.lines[index].text.localizedStandardContains(query) {
@@ -109,6 +144,12 @@ struct TranscriptBlock: Equatable, Identifiable {
         return TranscriptHeard(blockID: block.id, lineID: line.id, wordRange: wordRange)
     }
 
+    /// The shown names of the blocks, sorted: the person colours pick among them. Computed with the blocks (the pane's
+    /// projection), never in a list's body.
+    static func names(_ blocks: [TranscriptBlock]) -> [String] {
+        Set(blocks.map(\.who.personName).filter { !$0.isEmpty }).sorted()
+    }
+
     /// The end of the last block the playback has passed: the latest block end at or before `position`. A block is
     /// past at this value exactly when it is past at `position`, but the value changes only when the playback crosses
     /// a block's end, so a view that takes it in place of the 10 Hz position renders again every few seconds.
@@ -126,6 +167,29 @@ struct TranscriptHeard: Equatable, Hashable {
     let blockID: String
     let lineID: String
     var wordRange: NSRange? = nil
+}
+
+/// New line cues keep their own glyph, hue and words in both the tooltip and the accessibility label.
+struct TranscriptEvidenceMark: Equatable, Hashable {
+    let kind: TranscriptLineMark
+    let text: String
+    var symbol: String { kind == .swapSkipped ? "arrow.triangle.swap" : kind == .noRemotePresent ? "person.crop.circle.badge.exclamationmark" : "speaker.wave.2" }
+    var color: Color { kind == .swapSkipped ? .cyan : kind == .noRemotePresent ? .yellow : .pink }
+
+    static func build(_ evidence: WindowLineEvidence, items: [MeetingItem], echoAbove: Int) -> [Self] {
+        var marks: [Self] = []
+        let swaps = (evidence.swapSkippedBy ?? []).compactMap { id -> String? in
+            guard let swap = items.first(where: { $0.id == id && $0.status != "rejected" }) else { return nil }
+            let span = "\(MeetingsFormat.clock(swap.fromSec ?? evidence.startSec)) to \(MeetingsFormat.clock(swap.toSec ?? evidence.endSec))"
+            return "swap to \(swap.speaker ?? "another speaker") at \(span)"
+        }
+        if !swaps.isEmpty { marks.append(.init(kind: .swapSkipped, text: "Skipped by " + Set(swaps).sorted().joined(separator: "; "))) }
+        if evidence.noRemotePresent == true { marks.append(.init(kind: .noRemotePresent, text: "No remote person was in the call at this time")) }
+        if echoAbove > 0, let echo = evidence.echoOfCall, echo * 100 >= Double(echoAbove) {
+            marks.append(.init(kind: .callEcho, text: "High echo of call: \(Int((echo * 100).rounded())) % of microphone power"))
+        }
+        return marks
+    }
 }
 
 /// What a click on a line asks for. A plain click plays from the line (R42); ⇧ extends the selection to it and ⌘ adds
@@ -172,9 +236,10 @@ struct TranscriptBlocksList: View {
     /// A ⇧ or ⌘ click on a line (R43).
     var select: (TranscriptBlockLine, TranscriptLineClick) -> Void = { _, _ in }
     var selectWords: (TranscriptBlockLine, NSRange) -> Void = { _, _ in }
+    /// The shown names, sorted (`TranscriptBlock.names`), for the person colours: computed with the blocks, not here.
+    var speakerNames: [String] = []
 
     var body: some View {
-        let speakerNames = Set(blocks.map(\.speaker)).sorted()
         LazyVStack(alignment: .leading, spacing: 0) {
             ForEach(blocks) { block in
                 TranscriptBlockView(
@@ -235,14 +300,13 @@ struct TranscriptBlockView: View, Equatable {
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
             if showsAvatar {
-                TranscriptAvatar(speaker: block.speaker)
+                TranscriptAvatar(speaker: block.who.personName)
             }
             VStack(alignment: .leading, spacing: 2) {
-                SpeakerChip(speaker: block.speaker, startSec: block.startSec, play: play)
-                    .opacity(block.speaker.contains(" %]") ? 0.65 : 1)
+                SpeakerChip(speaker: block.speaker, who: block.who, startSec: block.startSec, play: play)
                 ForEach(block.lines) { line in
                     TranscriptBlockLineView(
-                        line: line, speaker: SpeakerChip(speaker: block.speaker).name, heard: line.id == heardLineID,
+                        line: line, speaker: block.who.title, heard: line.id == heardLineID,
                         wordRange: line.id == heardLineID ? heardWordRange : nil,
                         selected: selected.contains(line.id), past: past, play: play, select: select, selectWords: selectWords
                     )
@@ -304,8 +368,7 @@ struct TranscriptAvatar: View {
             .accessibilityHidden(true)
     }
 
-    /// "Mira Holt" is "MH", "Speaker 4" is "S4", an empty label is "?". Only letters and digits count, so a label that
-    /// is a note in brackets ("[unclear: …]") is "UN", not "[\"".
+    /// "Mira Holt" is "MH", "Speaker 4" is "S4", an empty name (an open question) is "?". Only letters and digits count.
     static func initials(_ speaker: String) -> String {
         let words = speaker.split(whereSeparator: { $0.isWhitespace || $0 == "-" })
             .map { String($0.filter { $0.isLetter || $0.isNumber }) }
@@ -320,7 +383,7 @@ struct TranscriptAvatar: View {
 
 /// One line inside a block: a click plays from it (⇧ or ⌘ selects), its marks show at its end, and it is its own
 /// accessibility element with "Play from …" (G58).
-private struct TranscriptBlockLineView: View {
+struct TranscriptBlockLineView: View {
     let line: TranscriptBlockLine
     let speaker: String
     let heard: Bool
@@ -331,10 +394,27 @@ private struct TranscriptBlockLineView: View {
     let select: (TranscriptBlockLine, TranscriptLineClick) -> Void
     let selectWords: (TranscriptBlockLine, NSRange) -> Void
     @Environment(\.rowLive) private var live
-    @State private var hovering = false
+    @State private var hovering: Bool
     @AppStorage(MeetingsPreferences.Playback.animateActivity.key) private var animateActivity =
         MeetingsPreferences.Playback.animateActivity.defaultValue
     @GenReduceMotion private var reduceMotion
+
+    /// `hovering` is where the pointer starts: a test measures the line with it on and off, because a hidden test window
+    /// gets no pointer.
+    init(line: TranscriptBlockLine, speaker: String, heard: Bool, wordRange: NSRange?, selected: Bool, past: Bool,
+         play: @escaping (Double) -> Void, select: @escaping (TranscriptBlockLine, TranscriptLineClick) -> Void,
+         selectWords: @escaping (TranscriptBlockLine, NSRange) -> Void, hovering: Bool = false) {
+        self.line = line
+        self.speaker = speaker
+        self.heard = heard
+        self.wordRange = wordRange
+        self.selected = selected
+        self.past = past
+        self.play = play
+        self.select = select
+        self.selectWords = selectWords
+        _hovering = State(initialValue: hovering)
+    }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -349,11 +429,17 @@ private struct TranscriptBlockLineView: View {
                     RoundedRectangle(cornerRadius: 4).fill(fill)
                         .animation(animateActivity && !reduceMotion ? .easeOut(duration: 0.16) : nil, value: heard)
                 }
-            if let indicator = line.indicator {
+            // Only an indicator that says something the block does not (window audit M12): stuck and ignored, or naming
+            // someone other than the block's speaker. Drawn on every line, it was a glyph down the whole pane.
+            if let indicator = line.indicator, indicator.addsTo(speaker: speaker) {
                 Image(systemName: indicator.ignored == nil ? "person.wave.2" : "exclamationmark.triangle")
                     .font(.system(size: 11)).foregroundStyle(indicator.ignored == nil ? Color.secondary : .orange)
-                    .instantTooltip(indicator.text)
-                    .accessibilityLabel(indicator.text)
+                    .instantTooltip(indicator.shownText)
+                    .accessibilityLabel(indicator.shownText)
+            }
+            ForEach(line.evidenceMarks, id: \.self) { mark in
+                Image(systemName: mark.symbol).font(.system(size: 11)).foregroundStyle(mark.color)
+                    .instantTooltip(mark.text).accessibilityLabel(mark.text)
             }
             if line.marks.contains(.unclearSpeaker) {
                 Image(systemName: "questionmark.circle")
@@ -361,7 +447,7 @@ private struct TranscriptBlockLineView: View {
                     .instantTooltip("The engine is not sure who said this line")
             }
             if line.marks.contains(.byVoice) {
-                Label("by voice", systemImage: "waveform").font(.caption2).foregroundStyle(.secondary)
+                VoiceModelMark(score: line.voiceScore)
             }
             if line.marks.contains(.commented) {
                 Image(systemName: "text.bubble")
@@ -369,10 +455,18 @@ private struct TranscriptBlockLineView: View {
                     .instantTooltip("A staged comment covers this line")
             }
             Spacer(minLength: 0)
+        }
+        // Over the line's last words, taking no width (U8): beside the text it took about 90 pt, so the text wrapped
+        // again and every line below jumped on each hover.
+        .overlay(alignment: .bottomTrailing) {
             if hovering, let start = line.startSec {
                 Text(verbatim: "Play from \(MeetingsFormat.clock(start))")
                     .font(.system(size: 11)).foregroundStyle(Color.accentColor)
-                    .transition(.opacity)
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(RoundedRectangle(cornerRadius: 4).fill(Color(nsColor: .windowBackgroundColor)))
+                    .fixedSize()
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
             }
         }
         .contentShape(Rectangle())
@@ -409,7 +503,7 @@ private struct TranscriptBlockLineView: View {
         if heard { parts.append("playing now") }
         if line.marks.contains(.unclearSpeaker) { parts.append("speaker unsure") }
         if line.marks.contains(.corrected) { parts.append("corrected") }
-        if line.marks.contains(.byVoice) { parts.append("by voice") }
+        if line.marks.contains(.byVoice) { parts.append(VoiceModelMark.words(line.voiceScore)) }
         if line.marks.contains(.commented) { parts.append("has a staged comment") }
         return parts.joined(separator: ", ")
     }
@@ -425,5 +519,28 @@ private struct TranscriptBlockLineView: View {
         if line.marks.contains(.filterHit) { return Color.yellow.opacity(0.22) }
         if hovering { return Color.primary.opacity(0.06) }
         return .clear
+    }
+}
+
+extension TranscriptLine.Indicator {
+    /// True when the indicator says something the block's speaker does not: it is stuck and ignored, or it names
+    /// someone else (window audit M12), also beside the speaker ("Alex, Sam" on Alex's block names Sam).
+    func addsTo(speaker: String) -> Bool {
+        ignored != nil || names.contains { $0 != speaker }
+    }
+
+    /// The indicator's names, and when the engine ignores it, why in words (C2): the engine sends a code.
+    var shownText: String {
+        let names = names.isEmpty ? "No named indicator" : names.joined(separator: ", ")
+        return ignored.map { "\(names) · \(Self.ignoredWords($0))" } ?? names
+    }
+
+    /// Why the engine ignores the indicator, for its code.
+    static func ignoredWords(_ code: String) -> String {
+        switch code {
+        case "meeting-dominance": "stuck: one name lit it through most of the meeting, so it is ignored"
+        case "stretch-stuck": "stuck: it stayed on one name through this stretch of the call, so it is ignored"
+        default: "stuck, so it is ignored"
+        }
     }
 }

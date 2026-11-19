@@ -20,6 +20,11 @@ struct ContextTab: View {
                                     identifier: "meetings.context.addFiles") { chooseFiles() }
                         ContextComposerButton(kind: .link, detail: detail)
                         ContextComposerButton(kind: .note, detail: detail)
+                        GhostButton("Thresholds…", symbol: "slider.horizontal.3",
+                                    tooltip: "See current suggestion thresholds and preview changes on this meeting",
+                                    identifier: "meetings.context.thresholds") {
+                            FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.thresholdsPage, context: detail.id)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)

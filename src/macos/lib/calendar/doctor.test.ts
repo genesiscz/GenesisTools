@@ -1,7 +1,38 @@
-import { describe, expect, it, test } from "bun:test";
+import { describe, expect, it, spyOn, test } from "bun:test";
 import { env } from "@genesiscz/utils/env";
+import { appNeedFixture } from "@genesiscz/utils/macos/testing/app-need";
+import { printCalendarDoctorReport } from "../../commands/calendar/doctor";
 import type { CalendarDoctorReport } from "./doctor";
 import { buildVerdict, readTccCalendarRows, tccDecisionRecorded, tccRowLine, thisProcessTccClient } from "./doctor";
+
+test("Calendar doctor prints the install reason and fix only for an unavailable launcher", () => {
+    const report: CalendarDoctorReport = {
+        status: "fullAccess",
+        promptSkipped: false,
+        authorized: true,
+        calendarCount: 0,
+        sources: [],
+        placeholderOnly: false,
+        binary: { path: "/fixture/reader", inAppBundle: false, hasCalendarUsageString: null },
+        hostApp: { responsible: { kind: "host-app", bundleId: "example.terminal" }, executablePath: "/fixture/bun" },
+        tcc: { readable: true, rows: [] },
+        verdict: "full access",
+    };
+    const printed = spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+        printCalendarDoctorReport(report, appNeedFixture({ installed: false }));
+        expect(printed.mock.calls.flat().join("")).toContain(
+            "GenesisTools.app is not installed at /fixture/GenesisTools.app. Run `fixture-build`."
+        );
+        printed.mockClear();
+        printCalendarDoctorReport(report, appNeedFixture());
+        const text = printed.mock.calls.flat().join("");
+        expect(text).toContain("example.terminal (launching app)");
+        expect(text).not.toContain("build");
+    } finally {
+        printed.mockRestore();
+    }
+});
 
 // tccAuthLabel moved to ../permissions/tcc, where it takes the service so Calendar's
 // "Add Only" can be told apart from a plain allow. Its tests moved with it.

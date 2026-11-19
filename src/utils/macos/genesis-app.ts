@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { inspectPidFile } from "@genesiscz/utils/process/pidfile";
 
@@ -26,9 +27,47 @@ export function genesisAppDir(): string {
     return genesisToolsDir("app");
 }
 
+/** A rule of the app's Swift that callers must know about before they rely on it (app.ts `APP_ACCEPTS` says each). */
+export type AppCapability = "launcher-config";
+
+/**
+ * Whether the installed GenesisTools.app accepts `capability`, from the manifest its build wrote beside the bundle
+ * (`genesisAppInstallDir()`, which a GENESIS_TOOLS_HOME sandbox does not move, as `appStatus` reads it): `undefined`
+ * when no manifest exists (no build is installed), `false` when the build predates the capability or its manifest
+ * cannot be read. Any worktree can replace the install with its own build, while `tools` runs the main checkout, so a
+ * caller asks before it sends something an older build refuses (2026-11-18 00:24: a worktree build without the
+ * `--config=` rule replaced the install, and every `tools` start could only be allowed once).
+ */
+export function installedAppAccepts(capability: AppCapability): boolean | undefined {
+    const path = join(genesisAppInstallDir(), "manifest.json");
+
+    if (!existsSync(path)) {
+        return undefined;
+    }
+
+    try {
+        const manifest: unknown = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true });
+        const accepts =
+            typeof manifest === "object" && manifest !== null && "accepts" in manifest ? manifest.accepts : undefined;
+        return Array.isArray(accepts) && accepts.includes(capability);
+    } catch (error) {
+        // An installed build whose manifest cannot be read is treated as one that predates the capability.
+        logger.warn({ error, path, capability }, "genesis-app: the installed app's manifest could not be read");
+        return false;
+    }
+}
+
 /** The installed bundle, in the app home (`env.tools.getAppHome()`), never in a GENESIS_TOOLS_HOME sandbox. */
 export function genesisAppBundlePath(): string {
     return join(env.tools.getAppHome(), "Applications", `${GENESIS_APP_NAME}.app`);
+}
+
+/**
+ * Whether the GenesisTools.app bundle is on disk. It says nothing about routing (`installedGenesisAppLauncher` also
+ * honours the off switch) or about which parts the build links (the install manifest).
+ */
+export function isGenesisAppBundleInstalled(bundle: string = genesisAppBundlePath()): boolean {
+    return existsSync(bundle);
 }
 
 /**
@@ -39,13 +78,11 @@ export function genesisAppInstallDir(): string {
     return genesisToolsDirIn(env.tools.getAppHome(), "app");
 }
 
-/**
- * The command that shows the permissions window (Permissions, Services and Settings tabs). A bare `open -a` follows
- * the app's "main window" setting and can open the hub instead; `--window` always names this window, and a running
- * copy of it takes the request over through its instance lock. `-n` is what hands the argument to a new process.
- */
-export function genesisAppWindowCommand(): string[] {
-    return ["/usr/bin/open", "-n", genesisAppBundlePath(), "--args", "--window"];
+/** Open the permissions window even when the app's preferred main window is the hub. */
+export async function openGenesisAppWindow() {
+    // The engine itself uses this module for bundle paths and launcher identity.
+    const { gt } = await import("@genesiscz/utils/genesis-tools");
+    return gt.windows.open({ window: "--window", args: [], activate: true });
 }
 
 export function genesisAppLauncherPath(): string {
@@ -59,6 +96,11 @@ export function genesisAppDisabledMarkerPath(): string {
 
 export function isGenesisAppDisabledByMarker(): boolean {
     return existsSync(genesisAppDisabledMarkerPath());
+}
+
+/** Whether routing through the app is switched off, by `GENESIS_TOOLS_NO_APP=1` or the disabled marker. */
+export function isGenesisAppRoutingOff(): boolean {
+    return env.tools.isAppLauncherDisabled() || isGenesisAppDisabledByMarker();
 }
 
 export function isRunningUnderGenesisApp(): boolean {
@@ -75,7 +117,7 @@ export function isRunningUnderGenesisApp(): boolean {
  * command happened to be launched through the app or not.
  */
 export function installedGenesisAppLauncher(): string | null {
-    if (process.platform !== "darwin" || env.tools.isAppLauncherDisabled() || isGenesisAppDisabledByMarker()) {
+    if (process.platform !== "darwin" || isGenesisAppRoutingOff()) {
         return null;
     }
 
@@ -113,7 +155,7 @@ export class GenesisAppUpdatingError extends Error {
  * native command until the next build.
  */
 export function assertGenesisAppNotUpdating(): void {
-    if (process.platform !== "darwin" || env.tools.isAppLauncherDisabled() || isGenesisAppDisabledByMarker()) {
+    if (process.platform !== "darwin" || isGenesisAppRoutingOff()) {
         return;
     }
 

@@ -46,7 +46,7 @@
         "test:coverage": "bun scripts/tests/coverage/index.ts",
         "postinstall": "bun scripts/apply-patches.ts",
         "lint:biome": "biome check .",
-        "lint:rules": "bun scripts/ci/lint-rules.ts"
+        "lint:rules": "bun scripts/commands/lint-rules.ts"
     },
     "devDependencies": {
         "@biomejs/biome": "2.5.11",

@@ -37,6 +37,7 @@ import { withTimeout } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
 import { encodeRgbaToPng } from "@genesiscz/utils/image/raster";
 import { SafeJSON } from "@genesiscz/utils/json";
+import * as nativeInbox from "@genesiscz/utils/macos/native-inbox";
 import * as commands from "@genesiscz/utils/process/bounded-command";
 import * as fileLock from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
@@ -53,10 +54,11 @@ import {
     imageReadsSettled,
     liftCardImages,
 } from "../widget/card-images";
-import { readWidgetReceiptContext } from "../widget/context";
+import { readWidgetMessageBody, readWidgetReceiptContext } from "../widget/context";
 import { createWidgetHandoff } from "../widget/handoff";
-import { readWidgetRosterCache, writeWidgetRosterCache } from "../widget/roster-cache";
+import { oneShotWidgetSources, readWidgetRosterCache, writeWidgetRosterCache } from "../widget/roster-cache";
 import { unplacedScopes, WidgetRosterReads, widgetRosterChange } from "../widget/roster-index";
+import { newestPaths, rosterRowPages, updateRosterPaths } from "../widget/roster-pages";
 import { WidgetRosterReader, type WidgetRosterReply, type WidgetRosterRequest } from "../widget/roster-reader";
 import {
     classifyScreenshot,
@@ -2392,6 +2394,56 @@ test("a session lists its waiting entries first, then the newest, at most eight"
     expect(listed).toHaveLength(INBOX_ITEMS_PER_SESSION);
     expect(listed.map((entry) => entry.id).slice(0, 3)).toEqual(["ask", "n8", "n7"]);
     expect(listed.map((entry) => entry.id)).not.toContain("old");
+});
+
+test("a session with more waiting entries than the cap still lists its newest unread answers", () => {
+    const item = (id: string, at: number, needsAnswer = false) => ({
+        id,
+        sourceId: id,
+        kind: needsAnswer ? ("decision" as const) : ("answer" as const),
+        key: "k",
+        at,
+        needsAnswer,
+    });
+    const asks = Array.from({ length: 10 }, (_, i) => item(`ask${i}`, 10 + i, true));
+    const answers = [item("a1", 100), item("a2", 101), item("a3", 102), item("a4", 103)];
+    const listed = listedInboxItems([...asks, ...answers]).map((entry) => entry.id);
+    expect(listed).toHaveLength(INBOX_ITEMS_PER_SESSION);
+    expect(listed.slice(0, 5)).toEqual(["ask9", "ask8", "ask7", "ask6", "ask5"]);
+    expect(listed.slice(5)).toEqual(["a4", "a3", "a2"]);
+    expect(listedInboxItems(asks)).toHaveLength(INBOX_ITEMS_PER_SESSION);
+});
+
+test("visible todos cannot take a counted unread item's reserved slot", () => {
+    const waiting = Array.from({ length: 8 }, (_, i) => ({
+        id: `ask${i}`,
+        sourceId: `ask${i}`,
+        kind: "decision" as const,
+        key: "k",
+        at: i,
+        needsAnswer: true,
+    }));
+    const other = [
+        { id: "answer", sourceId: "answer", kind: "answer" as const, key: "k", at: 10, needsAnswer: false },
+        ...Array.from({ length: 3 }, (_, i) => ({
+            id: `todo${i}`,
+            sourceId: `todo${i}`,
+            kind: "todo" as const,
+            key: "k",
+            at: 20 + i,
+            needsAnswer: false,
+        })),
+    ];
+    expect(listedInboxItems([...waiting, ...other]).map((entry) => entry.id)).toEqual([
+        "ask7",
+        "ask6",
+        "ask5",
+        "ask4",
+        "ask3",
+        "ask2",
+        "ask1",
+        "answer",
+    ]);
 });
 
 test("alert preferences default on with the Glass sound, load from an older state, and refuse a bad sound", async () => {
@@ -5375,10 +5427,11 @@ describe("background Widget roster", () => {
             ours.run("INSERT INTO rows VALUES (1)");
             expect(reads.needed(false)).toBe(false);
             expect(reads.needed(true)).toBe(true);
+            expect(reads.reading()).toBe(true);
             // Another listing indexes a transcript after the last read; this worker's refresh then writes nothing.
             theirs.run("INSERT INTO rows VALUES (2)");
             expect(reads.needed(false)).toBe(true);
-            reads.reading();
+            expect(reads.reading()).toBe(false);
             expect(reads.needed(false)).toBe(false);
         } finally {
             ours.close();
@@ -5419,6 +5472,109 @@ describe("background Widget roster", () => {
         } finally {
             f.reader.stop();
         }
+    });
+
+    function rosterRow(filePath: string, mtime: number) {
+        return {
+            provider: "claude" as const,
+            sessionId: filePath,
+            filePath,
+            mtime,
+            title: filePath,
+            cwd: "/fixture",
+            cwdShort: "/fixture",
+            project: "fixture",
+            model: null,
+            account: null,
+        };
+    }
+
+    test("newest paths page in stable order and resume past a missing row", async () => {
+        const entries = Array.from({ length: 40 }, (_, n) => rosterRow(String(n).padStart(2, "0"), Math.floor(n / 2)));
+        const paths = newestPaths([...entries, entries[39]]);
+        expect(paths.slice(0, 4)).toEqual(["38", "39", "36", "37"]);
+        const read = async (files: string[]) =>
+            files.filter((file) => file !== "38").map((file) => entries[Number(file)]);
+        const pages = rosterRowPages(paths, read);
+        const first = (await pages.next()).value;
+        if (!first) {
+            throw new Error("Expected the first roster page");
+        }
+        expect(first.rows).toHaveLength(31);
+        expect(first.next).toBe(32);
+        const resumed = [];
+        for await (const page of rosterRowPages(paths, read, first.next)) {
+            resumed.push(...page.rows.map((row) => row.filePath));
+        }
+        expect(resumed).toEqual(paths.slice(32));
+    });
+
+    test("a one-shot reader joining between pages sees one contiguous revision", async () => {
+        const directory = await root();
+        const f = fixture();
+        const first = rosterRow("new", 20);
+        const next = rosterRow("old", 10);
+        try {
+            f.reader.refresh();
+            f.reply({ id: 1, ok: true, revision: "r", page: { offset: 0, next: 1, rows: [first] } });
+            expect(f.reader.rows).toEqual([first]);
+            const { rows, agents, backfill } = f.reader;
+            await writeWidgetRosterCache({ root: directory, roster: { rows, agents, backfill } });
+            const joined = await oneShotWidgetSources(directory);
+            // A pin must resolve the session unambiguously across the complete roster, including later pages.
+            const forPin = await oneShotWidgetSources(directory, { requireComplete: true });
+            expect(forPin.rosterStatus).toBeUndefined();
+            f.reply({ id: 1, ok: true, revision: "r", page: { offset: 1, next: 2, rows: [next] } });
+            expect(await joined.sessions(false)).toEqual([first]);
+            expect(joined.rosterStatus?.().loading).toBe(true);
+            expect(f.reader.rows).toEqual([first, next]);
+            expect(f.reader.backfill).toEqual({ revision: "r", cursor: 2 });
+        } finally {
+            f.reader.stop();
+        }
+    });
+
+    test("settings joining a new watch before page one can display the loading state immediately", async () => {
+        const directory = await root();
+        await writeFile(join(directory, "worker.lock"), "fixture");
+        const live = spyOn(nativeInbox, "runningWidgetRoot").mockReturnValue(directory);
+        try {
+            const sources = await oneShotWidgetSources(directory);
+            expect(live).toHaveBeenCalledWith({ root: directory });
+            expect(sources.rosterStatus?.().loading).toBe(true);
+            expect(await sources.sessions(false)).toEqual([]);
+        } finally {
+            live.mockRestore();
+        }
+    });
+
+    test("one changed listed session hydrates only that row and parent", async () => {
+        const rows = [rosterRow("first", 20), rosterRow("second", 10)];
+        const parents = rows.map((row) => ({
+            ...row,
+            children: [],
+            startedAt: null,
+            lastAt: new Date(row.mtime).toISOString(),
+            live: false,
+        }));
+        const agents = { generatedAt: "before", parents, orphans: [] };
+        const changed = { ...rows[1], title: "changed", mtime: 30 };
+        const update = await updateRosterPaths(
+            { rows, agents },
+            ["second"],
+            30,
+            async (paths) => {
+                expect(paths).toEqual(["second"]);
+                return [changed];
+            },
+            async (input, _now, exact) => {
+                expect(input).toEqual([changed]);
+                expect(exact).toBe(true);
+                return { ...agents, parents: [{ ...parents[1], title: "changed" }] };
+            }
+        );
+        expect(update?.rows).toEqual([changed, rows[0]]);
+        expect(update?.agents.parents.map((parent) => parent.title)).toEqual(["first", "changed"]);
     });
 
     test("a failed refresh retains the last tree and restarts only after the refresh interval", () => {
@@ -6059,11 +6215,13 @@ describe("background Widget roster", () => {
                 filePath: "/fixture/project/fixture-session.jsonl",
             };
             const agents = { generatedAt: "previous watch", parents: [], orphans: [] };
-            // Written by a watch that has exited: its pid is dead, which a one-shot reader refuses and a new watch accepts.
+            // Both readers can use the publication after the writer exits.
             await writeWidgetRosterCache({ root: directory, roster: { rows: [row], agents } });
             const cache = join(directory, "roster-cache.json");
             const file = SafeJSON.parse(await readFile(cache, "utf8"), { strict: true });
             await writeFile(cache, SafeJSON.stringify({ ...file, pid: 2_147_483_646 }, { strict: true }));
+            expect((await oneShotWidgetSources(directory)).rosterStatus?.().loading).toBe(false);
+            expect(await readWidgetRosterCache({ root: directory })).toEqual({ rows: [row], agents });
             const warm = await firstWatchSnapshot(directory);
             expect(warm.rosterLoading).toBe(false);
             expect(warm.sessions.map((session) => session.target.sessionId)).toContain("fixture-session");
@@ -6088,7 +6246,7 @@ describe("background Widget roster", () => {
             writeWidgetRosterCache({ root: directory, roster: { rows: [], agents: agents(name) }, now: 1000 + index })
         );
         await Promise.all(writes);
-        expect(await readWidgetRosterCache({ root: directory, now: 2000, alive: () => true })).toEqual({
+        expect(await readWidgetRosterCache({ root: directory, now: 2000 })).toEqual({
             rows: [],
             agents: agents("third"),
         });
@@ -6120,14 +6278,13 @@ describe("background Widget roster", () => {
             },
         ];
         await writeWidgetRosterCache({ root: directory, roster: { rows, agents }, now: 1000 });
-        expect(await readWidgetRosterCache({ root: directory, now: 1000 + 90_000, alive: () => true })).toEqual({
+        expect(await readWidgetRosterCache({ root: directory, now: 1000 + 90_000 })).toEqual({
             rows,
             agents,
         });
-        expect(await readWidgetRosterCache({ root: directory, now: 1000 + 90_001, alive: () => true })).toBeUndefined();
-        expect(await readWidgetRosterCache({ root: directory, now: 2000, alive: () => false })).toBeUndefined();
+        expect(await readWidgetRosterCache({ root: directory, now: 1000 + 90_001 })).toBeUndefined();
         await writeFile(join(directory, "roster-cache.json"), '{"version":2}');
-        expect(await readWidgetRosterCache({ root: directory, now: 2000, alive: () => true })).toBeUndefined();
+        expect(await readWidgetRosterCache({ root: directory, now: 2000 })).toBeUndefined();
 
         // Parity: the cached roster renders exactly what the same roster read from its source renders.
         const base = {
@@ -6535,9 +6692,89 @@ describe("inbox card images and agent messages", () => {
                         .find((group) => group.key === session?.key)
                         ?.items?.find((item) => item.kind === "answer");
                     expect(entry?.tag).toBe("message");
+                    expect(entry?.message).toEqual({ text: "All 40 tests pass." });
                 }
 
                 expect(snapshot.sessions.some((entry) => entry.target.provider === "unknown")).toBe(false);
+            }
+        );
+    });
+
+    test("standalone messages retain their own sender, preview and full stored markdown", async () => {
+        const directory = await root();
+        await env.testing.withOverrides(
+            { GENESIS_TOOLS_HOME: directory, QUESTION_LOG_BASE: join(directory, "log") },
+            async () => {
+                const db = openReadModel(toolDataDir("question", "qa.db"));
+                const markdown = `Inspect **backups**.\n\n${"more text ".repeat(120)}\nEnd.`;
+                const now = Date.now();
+                try {
+                    const insert = db.query(
+                        "INSERT INTO entries (id,ts,session_id,agent,project,cwd,agent_label,tag,source,question,answer_md,refs_json) VALUES (?,?,'unknown','unknown',?,'/fixture',?,'message','cli',?,?,'[]')"
+                    );
+                    insert.run("notice-a", now, "Orchard", null, "Monitor", "Monitor\nSecond line\n\nThird line");
+                    insert.run("notice-b", now + 1, "Harbor", "backup", "Backup delayed", markdown);
+                } finally {
+                    db.close();
+                }
+                const snapshot = await widgetSnapshot({
+                    root: directory,
+                    now: now + 1,
+                    sources: {
+                        ...realWidgetSources,
+                        sessions: async () => [],
+                        agents: noAgents,
+                        forms: () => [],
+                        decisions: () => [],
+                    },
+                });
+                const items = snapshot.notifications?.sessions.flatMap((session) => session.items ?? []) ?? [];
+                expect(items.find((item) => item.sourceId === "notice-a")?.message).toEqual({
+                    text: "Second line\n\nThird line",
+                    origin: "Orchard · cli",
+                });
+                const preview = items.find((item) => item.sourceId === "notice-b")?.message;
+                expect(preview).toMatchObject({ origin: "Harbor · backup", more: true });
+                expect(preview?.text).toStartWith("Inspect **backups**.");
+                expect(preview?.text).not.toContain("End.");
+                expect(await readWidgetMessageBody("notice-b")).toEqual({
+                    body: markdown,
+                    question: "Backup delayed",
+                    attachments: [],
+                });
+                expect(snapshot.cards.find((card) => card.sourceId === "notice-a")?.messageOrigin).toBe(
+                    "Orchard · cli"
+                );
+            }
+        );
+    });
+
+    test("an opened answer reads its whole text with its image lifted out as an attachment", async () => {
+        const directory = await root();
+        const shots = Array.from({ length: 9 }, (_, index) => png(join(directory, `receipt-${index}.png`)));
+        await env.testing.withOverrides(
+            { GENESIS_TOOLS_HOME: directory, QUESTION_LOG_BASE: join(directory, "log") },
+            async () => {
+                const db = openReadModel(toolDataDir("question", "qa.db"));
+                try {
+                    db.query(
+                        "INSERT INTO entries (id,ts,session_id,agent,project,cwd,tag,source,question,answer_md,refs_json) VALUES (?,?,'s1','claude','Orchard','/fixture',NULL,'agent',?,?,'[]')"
+                    ).run(
+                        "answer-img",
+                        Date.now(),
+                        "How does the panel look?",
+                        ["It looks right.", ...shots.map((shot) => `![After](${shot})`)].join("\n\n")
+                    );
+                } finally {
+                    db.close();
+                }
+
+                const read = await readWidgetMessageBody("answer-img");
+                expect(read.question).toBe("How does the panel look?");
+                expect(read.body).toContain("It looks right.");
+                expect(read.body).not.toContain(shots[0]);
+                expect(read.attachments.map((image) => image.path)).toEqual(shots);
+                expect(read.attachments[0]?.label).toBe("After");
             }
         );
     });

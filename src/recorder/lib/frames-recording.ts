@@ -1,4 +1,5 @@
 import { COUNTDOWN_HOLD_MS } from "@app/control/lib/peekaboo";
+import { parseWindowIdList } from "@app/control/lib/recording-targets";
 import { ensureBinaryAsync, ensurePinnedBinaryAsync } from "@app/control/lib/runner";
 import { parseFlags } from "@genesiscz/utils/cli/flag-issues";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
@@ -48,7 +49,6 @@ const MOVIE_ONLY: ReadonlyArray<readonly [string, (flags: StartFlags) => boolean
     ["--window", (flags) => flags.window !== undefined],
     ["--app", (flags) => flags.app !== undefined],
     ["--region", (flags) => flags.region !== undefined],
-    ["--exclude-window-ids", (flags) => flags.excludeWindowIds !== undefined],
     ["--camera", (flags) => flags.camera === true],
     ["--system-cursor", (flags) => flags.systemCursor === true],
     ["--no-shortcuts", (flags) => flags.shortcuts === false],
@@ -77,6 +77,7 @@ const FRAMES_ONLY: ReadonlyArray<readonly [string, (flags: StartFlags) => boolea
 const FRAMES_FLAGS = {
     title: "--title",
     displays: "--displays",
+    excludeWindowIds: "--exclude-window-ids",
     audio: "--audio",
     "audio.micDeviceId": "--mic-device",
     fps: "--fps",
@@ -151,6 +152,9 @@ export function framesStartOf(flags: StartFlags): FramesStart {
         {
             title: flags.title,
             displays: displaysOf(flags.displays),
+            ...(flags.excludeWindowIds === undefined
+                ? {}
+                : { excludeWindowIds: parseWindowIdList(flags.excludeWindowIds, "--exclude-window-ids") }),
             audio: audio
                 ? {
                       mic: audio.includes("mic"),
@@ -229,7 +233,7 @@ export async function recordFrames(
     if (countdownSeconds > 0) {
         await ensureBinaryAsync();
         // As a movie's countdown does (`recordVideo`): the recording starts as the last second begins and zero waits
-        // for its first frame. A frames recording cannot name windows to leave out; the overlay's sharing type does.
+        // for its first frame.
         const firstFrame = Promise.withResolvers<void>();
         await (options.countdown ?? showRecorderCountdown)(countdownSeconds, {
             lastSecond: () => {

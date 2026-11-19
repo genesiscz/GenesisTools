@@ -11,15 +11,24 @@ struct MeetingDetailView: View {
     /// the split view drew the column wider than the window and cut Export, the last tab and the ends of lines.
     static let narrowWidth: CGFloat = 600
     @State private var narrow = false
+    /// The Items tab's count: the open rows, the same count as the list's "All" filter; before the rows are read, the
+    /// record's open items. Counted once per change of either, not in the header's body.
+    @State private var openRows: Int?
+    @State private var openItems: Int?
     /// The column's width, for the trailing pane's rule (`trailingPane`).
     @State private var width: CGFloat = 0
+    /// The sheets of the "…" menu: the seats and microphones, and the voice tools that stood under the header.
+    @State private var seatsOpen = false
+    @State private var voiceToolsOpen = false
+    /// The title of the meeting this one was copied from, looked up when the record or the list changes, not per redraw.
+    @State private var copyTitle: String?
     @Environment(\.meetingsDockInset) private var dockInset
     @AppStorage(MeetingsPreferences.Panes.transcriptPane.key) private var transcriptPaneSetting =
         MeetingsPreferences.Panes.transcriptPane.defaultValue.rawValue
 
     /// What the trailing pane shows beside the tab: the transcript beside the review rows (decision 2 of WaveB-Plan.md),
-    /// or the settings side panel, which replaces it while open, as an inspector.
-    enum TrailingPane: Equatable { case transcript, settings }
+    /// the settings side panel, or the Voices pane (VoicesPane.swift); either inspector replaces the transcript while open.
+    enum TrailingPane: Equatable { case transcript, settings, voices }
 
     /// The pane width, and the column width from which `auto` shows the transcript beside the rows: the rows keep about
     /// 500 pt. At the window's smallest size (900 pt) the column is about 438 pt, so the Transcript tab answers there.
@@ -27,8 +36,9 @@ struct MeetingDetailView: View {
     static let transcriptPaneMinWidth: CGFloat = 820
 
     static func trailingPane(tab: MeetingDetailModel.Tab, width: CGFloat, setting: MeetingsPreferences.Panes.TranscriptPane,
-                             sidePanelOpen: Bool, hasTranscript: Bool = true) -> TrailingPane? {
+                             sidePanelOpen: Bool, hasTranscript: Bool = true, voicesOpen: Bool = false) -> TrailingPane? {
         if sidePanelOpen { return .settings }
+        if voicesOpen { return .voices }
         // A meeting without a transcript has nothing for the pane: beside "No items yet" it was a second empty state
         // that said the same thing at another height.
         guard tab == .items, hasTranscript else { return nil }
@@ -41,9 +51,16 @@ struct MeetingDetailView: View {
 
     var body: some View {
         HStack(spacing: 0) {
+            if voicesAlone {
+                // Too narrow for the meeting beside it (900 x 600 left the header 280 pt and cut it): the pane takes the
+                // column until it closes, with the notices of its Confirm and Undo.
+                VoicesPane(detail: detail) { detail.voices.open = false }
+                    .noticeStack(detail.notices, alignment: window.noticePlace.alignment)
+                    .safeAreaPadding(.bottom, dockInset)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
             VStack(spacing: 0) {
                 header
-                MeetingRoomPeopleView(detail: detail)
                 Divider()
                 // The notices float inside the dock's inset too: put on the padded view, a bottom stack sat under the
                 // playing dock, and an answer's Undo was never seen while the next row played.
@@ -54,7 +71,8 @@ struct MeetingDetailView: View {
                     .frameProbe("meetings.detail.content")
             }
             .onGeometryChange(for: Bool.self, of: { $0.size.width < Self.narrowWidth }) { narrow = $0 }
-            if let pane = trailingPane {
+            }
+            if !voicesAlone, let pane = trailingPane {
                 Divider()
                 trailing(pane)
                     .safeAreaPadding(.bottom, dockInset)
@@ -69,22 +87,34 @@ struct MeetingDetailView: View {
         // 2026-11-11, NSSheetMoveHelper).
         .overlay { ReachOverlay(detail: detail) }
         .sheet(item: $detail.history) { history in HistorySheetView(detail: detail, history: history) }
+        .modifier(MenuSheets(detail: detail, seatsOpen: $seatsOpen, voiceToolsOpen: $voiceToolsOpen))
         .onChange(of: window.meeting(detail.id)?.id) { _, _ in detail.listLanded(window.meeting(detail.id)) }
+        .onChange(of: detail.rows.value?.rows, initial: true) { _, rows in openRows = rows.map { $0.lazy.filter(\.isOpen).count } }
+        .onChange(of: CopySourceKey(source: detail.record.value?.copySource, meetings: window.overview.value?.meetings.count ?? 0),
+                  initial: true) { _, key in
+            copyTitle = key.source.map { window.meeting($0)?.displayTitle ?? $0 }
+        }
+        .onChange(of: detail.record.value?.items, initial: true) { _, items in
+            openItems = items.map { $0.lazy.filter { $0.status == "suggested" }.count }
+        }
         .navigationTitle(detail.record.value?.displayTitle ?? window.meeting(detail.id)?.displayTitle ?? "Meeting")
     }
 
-    private var projectDictionaryExists: Bool {
-        guard case .object(let projects) = window.settingsRaw?.at(["projects"]) else { return false }
-        return projects.values.contains { project in
-            if case .array(let entries) = project.at(["dictionary", "entries"]) { return !entries.isEmpty }
-            return false
-        }
+    /// Below this column width the Voices pane takes the whole column instead of standing beside the meeting.
+    static let voicesBesideMinWidth: CGFloat = 760
+
+    /// The Voices pane open in a column too narrow to show it beside the meeting (the settings panel goes first).
+    private var voicesAlone: Bool { Self.voicesAlone(open: detail.voices.open, width: width, sidePanelOpen: window.sidePanelOpen) }
+
+    static func voicesAlone(open: Bool, width: CGFloat, sidePanelOpen: Bool) -> Bool {
+        open && !sidePanelOpen && width > 0 && width < voicesBesideMinWidth
     }
 
     private var trailingPane: TrailingPane? {
         Self.trailingPane(tab: detail.tab, width: width,
                           setting: MeetingsPreferences.Panes.TranscriptPane(rawValue: transcriptPaneSetting) ?? .auto,
-                          sidePanelOpen: window.sidePanelOpen, hasTranscript: window.meeting(detail.id)?.hasTranscript ?? true)
+                          sidePanelOpen: window.sidePanelOpen, hasTranscript: window.meeting(detail.id)?.hasTranscript ?? true,
+                          voicesOpen: detail.voices.open)
     }
 
     @ViewBuilder
@@ -92,6 +122,7 @@ struct MeetingDetailView: View {
         switch pane {
         case .transcript: TranscriptPane(detail: detail)
         case .settings: MeetingsSidePanel(window: window, detail: detail)
+        case .voices: VoicesPane(detail: detail) { detail.voices.open = false }
         }
     }
 
@@ -113,12 +144,16 @@ struct MeetingDetailView: View {
                     [.action("Open in New Window") { MeetingsWindow.openExtra(meeting: detail.id) },
                      .action("Duplicate", enabled: !window.duplicating.contains(detail.id)) { window.duplicate(detail.id) },
                      .action("Duplicate clean copy", enabled: !window.duplicating.contains(detail.id)) { window.duplicate(detail.id, withoutItems: true) },
-                     .action("Rename…") { window.renamingMeetingID = detail.id }]
+                     .action("Rename…") { window.renamingMeetingID = detail.id },
+                     .divider,
+                     .action("Seats and microphones…", enabled: record != nil) { seatsOpen = true },
+                     .action("Voice tools…", enabled: record != nil) { voiceToolsOpen = true },
+                     .action("Voices…", enabled: record != nil) { detail.voices.open = true }]
                 }) {
                     Image(systemName: "ellipsis.circle").font(.system(size: 14)).foregroundStyle(.secondary)
                         .frame(width: 24, height: 22).contentShape(Rectangle())
                 }
-                .instantTooltip("More: open in a new window, duplicate, rename")
+                .instantTooltip("More: open in a new window, duplicate, rename, seats and microphones, voice tools, voices")
                 .accessibilityLabel("More meeting actions")
                 .accessibilityIdentifier("meetings.detail.more")
                 if overview?.hasRecording == true, AppParts.isLinked("recorder") {
@@ -148,8 +183,9 @@ struct MeetingDetailView: View {
                         .accessibilityIdentifier("meetings.detail.reload")
                 }
             }
-            // The time, the badges, the project and the labels share one wrapping line. The project and the labels had a
-            // line of their own, so a 900 x 600 window spent about 240 of its 600 pt on the header.
+            // The time, the badges, the project, the labels and the people share one wrapping line: the header is the
+            // title line and this line (window audit, change 1). The people strip under it, a seats button and a constant
+            // "Suggested agent findings: not applied" took three more rows and were cut at the right edge.
             WrapLayout(spacing: 8, lineSpacing: 8) {
                 Text(verbatim: whenLine(overview)).font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary)
                 if let overview { MeetingBadgesView(meeting: overview, open: { detail.show($0) }) }
@@ -157,18 +193,21 @@ struct MeetingDetailView: View {
                     Badge("Recording failed", color: KitPalette.removed, symbol: "exclamationmark.triangle")
                         .instantTooltip("The screen recording stopped by itself (\(reason)); the frames until then are kept.")
                 }
-                projectPicker(record)
+                if let source = record?.copySource { copyChip(source, title: copyTitle ?? source) }
+                if Self.headerShowsProjectPicker(project: record?.project, tab: detail.tab) { projectPicker(record) }
                 labelsPicker(record)
-                MeetingSeatsButton(detail: detail)
-                Text("Suggested agent findings: not applied").font(.caption).foregroundStyle(.secondary)
-                    .accessibilityIdentifier("meetings.detail.suggestedApplication")
+                MeetingPeopleChip(detail: detail)
+                if let record, record.seats == nil {
+                    Button { seatsOpen = true } label: {
+                        Label("Seats not set: voice naming is off", systemImage: "chair")
+                            .font(.system(size: 12))
+                    }
+                    .buttonStyle(.genHoverPlain())
+                    .instantTooltip("Review suggested seats")
+                    .accessibilityIdentifier("meetings.seats.review")
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            if record?.project == nil && projectDictionaryExists {
-                Label("Choose a project before polishing: project dictionaries are available.", systemImage: "exclamationmark.triangle")
-                    .font(.caption).foregroundStyle(KitPalette.modified)
-                    .accessibilityIdentifier("meetings.project.dictionaryWarning")
-            }
             if let failure = detail.record.failure {
                 NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
                            fixes: [.button("Retry", symbol: "arrow.clockwise") { detail.reloadRecord() },
@@ -229,7 +268,7 @@ struct MeetingDetailView: View {
         if let record {
             switch tab {
             case .items:
-                count = detail.rows.value?.rows.filter(\.isOpen).count ?? record.items.filter { $0.status == "suggested" }.count
+                count = openRows ?? openItems
                 hue = .ask
             case .context: count = record.context.count
             default: break
@@ -239,39 +278,14 @@ struct MeetingDetailView: View {
     }
 
     private func projectPicker(_ record: MeetingRecordView?) -> some View {
-        let current = record?.project
-        let proposed = detail.proposals.value?.proposals.projects ?? []
-        let known = window.settings.value?.projectNames ?? []
-        return MenuButton(items: {
-            var items: [MenuButtonItem] = []
-            // A meeting with a project reads its proposals only now (or on the hover before): say so in the menu.
-            detail.ensureProposals()
-            if proposed.isEmpty, detail.proposals.isLoading {
-                items.append(.note("Reading the proposed projects…"))
-                items.append(.divider)
-            }
-            if !proposed.isEmpty {
-                items.append(.note("Proposed"))
-                items += proposed.map { proposal in
-                    .action("\(proposal.project)  (\(Int(proposal.score.rounded())) points)", checked: proposal.project == current) {
-                        detail.setProject(proposal.project)
-                    }
-                }
-                items.append(.divider)
-            }
-            items += known.filter { name in !proposed.contains { $0.project == name } }.map { name in
-                .action(name, checked: name == current) { detail.setProject(name) }
-            }
-            items.append(.divider)
-            items.append(.action("No project", checked: current == nil) { detail.setProject(nil) })
-            return items
-        }) {
-            pickerLabel(symbol: "folder", text: current ?? "No project", warn: current == nil)
-        }
-        .disabled(record == nil || detail.isBusy("project"))
-        .onHover { if $0 { detail.ensureProposals() } }
-        .instantTooltip("The meeting's project: its dictionary, labels and export folder apply")
-        .accessibilityLabel("Project: \(current ?? "none")")
+        MeetingProjectPicker(detail: detail, record: record, known: window.settings.value?.projectNames ?? [],
+                             select: { [detail] in detail.setProject($0) })
+    }
+
+    /// The header holds the project menu, except on the Items tab of a meeting without one: that tab's empty state
+    /// holds it instead, so the menu shows once.
+    static func headerShowsProjectPicker(project: String?, tab: MeetingDetailModel.Tab) -> Bool {
+        project != nil || tab != .items
     }
 
     private func labelsPicker(_ record: MeetingRecordView?) -> some View {
@@ -298,7 +312,20 @@ struct MeetingDetailView: View {
         }
     }
 
-    private func pickerLabel(symbol: String, text: String, warn: Bool) -> some View {
+    /// "Copy of <title>": the meeting this one was duplicated from, one click away. It stood as the source's record id
+    /// in a line of its own.
+    private func copyChip(_ source: String, title: String) -> some View {
+        let short = title.count > 34 ? String(title.prefix(32)) + "…" : title
+        return Button { window.select(source) } label: {
+            Badge("Copy of \(short)", color: KitPalette.dim, symbol: "doc.on.doc")
+        }
+        .buttonStyle(.genHoverPlain())
+        .instantTooltip("This meeting is a copy of \(title). Open that meeting")
+        .accessibilityLabel("Copy of \(title), open it")
+        .accessibilityIdentifier("meetings.detail.copySource")
+    }
+
+    static func pickerLabel(symbol: String, text: String, warn: Bool) -> some View {
         HStack(spacing: 5) {
             Image(systemName: symbol).font(.system(size: 11))
             Text(verbatim: text).font(.system(size: 12, weight: .medium))
@@ -316,10 +343,81 @@ struct MeetingDetailView: View {
         switch detail.tab {
         case .transcript: TranscriptTab(detail: detail)
         case .screen: ScreenTab(detail: detail)
-        case .items: ItemsTab(detail: detail)
+        case .items: ItemsTab(detail: detail, projectPicker: AnyView(projectPicker(detail.record.value)))
         case .speakers: SpeakersTab(detail: detail)
         case .context: ContextTab(detail: detail)
         }
+    }
+}
+
+/// The meeting's project menu, in the header and in the Items tab's no-project state. `select` writes the pick.
+struct MeetingProjectPicker: View {
+    let detail: MeetingDetailModel
+    let record: MeetingRecordView?
+    let known: [String]
+    let select: (String?) -> Void
+
+    var body: some View {
+        let current = record?.project
+        MenuButton(items: {
+            // A meeting with a project reads its proposals only now (or on the hover before): say so in the menu.
+            detail.ensureProposals()
+            return Self.items(current: current, proposed: detail.proposals.value?.proposals.projects ?? [],
+                              reading: detail.proposals.isLoading, known: known, select: select)
+        }) {
+            MeetingDetailView.pickerLabel(symbol: "folder", text: current ?? "No project", warn: current == nil)
+        }
+        .disabled(record == nil || detail.isBusy("project"))
+        .onHover { if $0 { detail.ensureProposals() } }
+        .instantTooltip("The meeting's project: its dictionary, labels and export folder apply")
+        .accessibilityLabel("Project: \(current ?? "none")")
+    }
+
+    /// The menu at the click: the proposed projects with their points, the other known projects, then "No project".
+    static func items(current: String?, proposed: [AssignProposals.Project], reading: Bool, known: [String],
+                      select: @escaping (String?) -> Void) -> [MenuButtonItem] {
+        var items: [MenuButtonItem] = []
+        if proposed.isEmpty, reading {
+            items.append(.note("Reading the proposed projects…"))
+            items.append(.divider)
+        }
+        if !proposed.isEmpty {
+            items.append(.note("Proposed"))
+            items += proposed.map { proposal in
+                .action("\(proposal.project)  (\(Int(proposal.score.rounded())) points)", checked: proposal.project == current) {
+                    select(proposal.project)
+                }
+            }
+            items.append(.divider)
+        }
+        items += known.filter { name in !proposed.contains { $0.project == name } }.map { name in
+            .action(name, checked: name == current) { select(name) }
+        }
+        items.append(.divider)
+        items.append(.action("No project", checked: current == nil) { select(nil) })
+        return items
+    }
+}
+
+/// What the copy chip's title depends on: the source id and the list it is looked up in.
+private struct CopySourceKey: Equatable {
+    let source: String?
+    let meetings: Int
+}
+
+/// The sheets of the header's "…" menu: the seats and microphones, and the voice tools.
+private struct MenuSheets: ViewModifier {
+    @Bindable var detail: MeetingDetailModel
+    @Binding var seatsOpen: Bool
+    @Binding var voiceToolsOpen: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .sheet(isPresented: $seatsOpen) {
+                MeetingSeatsEditor(seats: detail.record.value?.seats, load: { try await detail.suggestedSeats() },
+                                   save: { try await detail.saveSeats($0, ifAbsent: $1) }, saved: { seatsOpen = false })
+            }
+            .sheet(isPresented: $voiceToolsOpen) { MeetingVoiceToolsSheet(detail: detail) { voiceToolsOpen = false } }
     }
 }
 
@@ -387,6 +485,8 @@ struct NoTranscriptSource {
     let what: String
     /// Opens the Screen tab; nil when the meeting has no screen recording either.
     let showScreen: (() -> Void)?
+    /// The meeting a source can be linked to ("Link a meeting…"); nil where nothing can link one.
+    var linkTo: MeetingDetailModel? = nil
 
     static let code = "no-transcript-source"
 }
@@ -398,13 +498,20 @@ struct LoadablePane<Value: Equatable, Content: View>: View {
     let retry: () -> Void
     var noSource: NoTranscriptSource? = nil
     @ViewBuilder let content: (Value) -> Content
+    @State private var linking = false
 
     var body: some View {
         if let noSource, state.failure?.code == NoTranscriptSource.code {
+            // Linking is the next step; the screen recording is the other way on, when there is one (audit M9).
+            let link: (() -> Void)? = noSource.linkTo == nil ? nil : { linking = true }
             EmptyState(symbol: "waveform.slash", text: "This meeting has no \(noSource.what)",
-                       // The window has no link action, so the text names the command: it said only that linking helps.
-                       detail: "It has no linked source with a transcript or audio, so there is nothing to list yet. Its Wispr Flow meeting brings both. Link it in a terminal:\ntools meetings link <meeting> wisprflow:<id>",
-                       actionTitle: noSource.showScreen == nil ? nil : "Show the screen recording", action: noSource.showScreen)
+                       detail: "It has no linked source with a transcript or audio, so there is nothing to list yet. Its Wispr Flow meeting brings both.",
+                       actionTitle: link == nil ? (noSource.showScreen == nil ? nil : "Show the screen recording") : "Link a meeting…",
+                       action: link ?? noSource.showScreen,
+                       secondary: link == nil ? nil : noSource.showScreen.map { EmptyState.Secondary("Show the screen recording", symbol: "display", perform: $0) })
+                .sheet(isPresented: $linking) {
+                    if let meeting = noSource.linkTo { LinkSourceSheet(detail: meeting) { linking = false } }
+                }
         } else {
             pane
         }

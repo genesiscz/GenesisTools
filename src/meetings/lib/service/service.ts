@@ -2,6 +2,7 @@ import type { WatcherOptions } from "@genesiscz/utils/fs/watcher";
 import { logger } from "@genesiscz/utils/logger";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { JSON_RPC_ERRORS, RpcError } from "@genesiscz/utils/rpc/errors";
+import type { RpcProgress } from "@genesiscz/utils/rpc/peer";
 import { type ServiceEntry, type ServiceHost, startServiceHost } from "@genesiscz/utils/rpc/service-host";
 import type { RpcConnection } from "@genesiscz/utils/rpc/socket-server";
 import {
@@ -13,14 +14,46 @@ import {
     meetingsCodeStamp,
     subscribeParamsSchema,
 } from "./api";
-import { helloAnswer, meetingsServiceDir } from "./client";
+import { helloAnswer, meetingsServiceDir, subscriptionHears } from "./client";
 import { MeetingsFolderWatch } from "./folder-watch";
 import { asRefusal, type MeetingsHandlerDeps, meetingsTable, refusal } from "./handlers";
+
+import { MeetingVoiceJobs } from "./voice-jobs";
 
 const { log } = logger.scoped("meetings-service");
 
 /** The service exits after this long with no connection, as the recorder service does. */
 export const MEETINGS_SERVICE_IDLE_MS = 10 * 60_000;
+
+/**
+ * How often a running call says again that it works (`progressBeat`). Far under every client's deadline (the window
+ * waits 60 s of silence), so a long call ends by its answer and a deadline still catches a service that hangs.
+ */
+export const MEETINGS_CALL_BEAT_MS = 15_000;
+
+/**
+ * A running call's progress with a beat: each step goes out at once, and the newest one again every `everyMs` until
+ * `stop` (an empty step before the first one). A client's deadline restarts on each `$/progress`, so it measures how
+ * long the service was silent, never how long the work takes. Why (w_gu80y4mc): a suggest with a cold voice pass ran
+ * 116 s on a 172-minute meeting, about 400 s at background priority, and its reading phases before the voice pass send
+ * no step of their own; the window's fixed deadline failed the call while the service went on working.
+ */
+export function progressBeat(send: (update: RpcProgress) => void, everyMs: number) {
+    let last: RpcProgress = {};
+    const timer = everyMs > 0 ? setInterval(() => send(last), everyMs) : undefined;
+    timer?.unref?.();
+    return {
+        progress(update: RpcProgress): void {
+            last = update;
+            send(update);
+        },
+        stop(): void {
+            if (timer) {
+                clearInterval(timer);
+            }
+        },
+    };
+}
 
 interface ConnectionState {
     id: number;
@@ -28,6 +61,7 @@ interface ConnectionState {
     hello?: MeetingsHello;
     /** The meeting its subscription names; undefined: every meeting. */
     meeting?: string;
+    project?: string;
 }
 
 export interface MeetingsServiceOptions extends MeetingsHandlerDeps {
@@ -42,6 +76,8 @@ export interface MeetingsServiceOptions extends MeetingsHandlerDeps {
     code?: string;
     rivalWaitMs?: number;
     onStopped?: (reason: string) => void;
+    /** How often a running call repeats its newest step (`MEETINGS_CALL_BEAT_MS`); 0 for no beat. */
+    beatMs?: number;
     /**
      * The watch on the meetings folder that tells `meeting.changed` for writes outside the service; on by default,
      * `false` for none (a test that writes its own files), or a fake event source and coalescing time.
@@ -77,7 +113,7 @@ export type MeetingsServiceStart =
  */
 export async function startMeetingsService(options: MeetingsServiceOptions = {}): Promise<MeetingsServiceStart> {
     const code = options.code ?? meetingsCodeStamp();
-    const table = meetingsTable(options);
+    const store = options.store?.() ?? new MeetingStore();
     let lastId = 0;
     // `host` is set once it listens; no call reaches `hello` before.
     let host: ServiceHost<ConnectionState> | undefined;
@@ -94,12 +130,28 @@ export async function startMeetingsService(options: MeetingsServiceOptions = {})
             watch?.ownWrite(meeting);
         }
 
-        host?.emit(
-            event,
-            { ...params },
-            (connection) =>
-                event === "people.changed" || !connection.state.meeting || connection.state.meeting === meeting
-        );
+        host?.emit(event, { ...params }, (connection) => subscriptionHears(connection.state, event, params));
+    };
+
+    const jobs = new MeetingVoiceJobs({
+        store,
+        config: options.config,
+        linkedSource: options.linkedSource,
+        notify: (job) => {
+            emit("voices.job", job);
+            if (job.state === "done" && job.added) {
+                emit("people.changed", {});
+            }
+        },
+        named: (meeting) => emit("meeting.changed", { meeting, parts: ["show", "speakers", "transcript"] }),
+    });
+    const table = meetingsTable({ ...options, voiceJobs: jobs });
+    const discover = (record: ReturnType<typeof store.read>) => {
+        if (record) {
+            void Promise.resolve()
+                .then(() => jobs.discover(record))
+                .catch((error: unknown) => log.warn({ error, meeting: record.id }, "voice recovery failed"));
+        }
     };
 
     const greet = (connection: RpcConnection<ConnectionState>, hello: MeetingsHello) => {
@@ -132,6 +184,7 @@ export async function startMeetingsService(options: MeetingsServiceOptions = {})
         code,
         state: () => ({ id: ++lastId }),
         call: async ({ method, params, connection, context }) => {
+            const beat = progressBeat((update) => context.progress(update), options.beatMs ?? MEETINGS_CALL_BEAT_MS);
             try {
                 if (method !== "hello" && !connection.state.hello) {
                     throw refusal("no-hello", `say hello before ${method}`);
@@ -142,10 +195,12 @@ export async function startMeetingsService(options: MeetingsServiceOptions = {})
                     signal: context.signal,
                     hello: (hello) => greet(connection, hello),
                     emit: (event, notification) => emit(event, notification),
-                    progress: (update) => context.progress(update),
+                    progress: beat.progress,
                 });
             } catch (error) {
                 throw asRefusal(error);
+            } finally {
+                beat.stop();
             }
         },
         onSubscribe: (connection, params) => {
@@ -165,11 +220,14 @@ export async function startMeetingsService(options: MeetingsServiceOptions = {})
             }
 
             connection.state.meeting = parsed.data.meeting;
+            connection.state.project = parsed.data.project;
         },
         idleMs: options.idleMs ?? MEETINGS_SERVICE_IDLE_MS,
         checkEveryMs: options.checkEveryMs,
         sourceRoot: options.sourceRoot,
         rivalWaitMs: options.rivalWaitMs,
+        keepAlive: { idle: () => jobs.busy },
+        onStopping: () => jobs.stop(),
         onStopped: options.onStopped,
         // The next row's click cuts its Moment; the older cut it replaces stops at once (G-PLAY-10).
         supersedes: (method) => (method === "moment.clip" ? method : undefined),
@@ -184,8 +242,13 @@ export async function startMeetingsService(options: MeetingsServiceOptions = {})
 
     if (options.watch !== false) {
         const folderWatch = new MeetingsFolderWatch({
-            root: (options.store?.() ?? new MeetingStore()).root,
-            emit: (meeting, parts) => emit("meeting.changed", { meeting, parts }),
+            root: store.root,
+            emit: (meeting, parts) => {
+                emit("meeting.changed", { meeting, parts });
+                if (parts.includes("show")) {
+                    discover(store.read(meeting));
+                }
+            },
             peopleChanged: () => emit("people.changed", {}),
             commentsChanged: (meeting) => emit("comment.changed", { meeting }),
             ...(options.watch?.subscribe ? { subscribe: options.watch.subscribe } : {}),
@@ -200,6 +263,10 @@ export async function startMeetingsService(options: MeetingsServiceOptions = {})
         } catch (error) {
             log.warn({ error }, "the meetings folder is not watched; outside writes tell no meeting.changed");
         }
+    }
+
+    for (const record of store.listBounded({ where: (record) => !!record.project }).records) {
+        discover(record);
     }
 
     return {

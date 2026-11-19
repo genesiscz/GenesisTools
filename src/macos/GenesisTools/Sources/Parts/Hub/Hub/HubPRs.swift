@@ -1549,7 +1549,7 @@ final class PRsModel: ObservableObject {
     /// The review on screen in its own window (`GenesisTools --review`): the same folder, commit range,
     /// live threads and proposal. The hub keeps its own copy.
     func openInReviewWindow(_ pr: HubPR) {
-        guard let review, let executable = Bundle.main.executableURL else { return }
+        guard let review else { return }
         var ref: String?
         if case .ref(let threads) = Self.threadsTarget(pr, path: review.repo.path) {
             ref = threads
@@ -1568,15 +1568,8 @@ final class PRsModel: ObservableObject {
         if let remote = review.remoteHead {
             args += ReviewRemoteHead.launchArguments(branch: remote.branch, sha: remote.sha, base: remote.base, forge: pr.commitForge)
         }
-        let process = Process()
-        process.executableURL = executable
-        process.arguments = args
-        do {
-            try process.run()
-            HubPerf.log("prs.openReviewWindow \(pr.label) \(args.joined(separator: " "))")
-        } catch {
-            HubPerf.log("prs.openReviewWindow failed: \(error)")
-        }
+        HubPerf.log("prs.openReviewWindow \(pr.label) \(args.joined(separator: " "))")
+        FaceLaunch.start(args)
     }
 
     /// Back or Forward to a PR that left the list (merged, closed, another state picked): nothing is

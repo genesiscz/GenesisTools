@@ -1,16 +1,21 @@
 import AppKit
 import Darwin
 import Foundation
+import SwiftUI
+import Vision
 import XCTest
 @testable import GenesisToolsMeetings
 
 /// The fixture TypeScript writes for this side: src/meetings/lib/service/__fixtures__/meetings-protocol.json, one real
 /// request and reply per Meetings service method and event.
 private enum MeetingsFixture {
-    static var url: URL {
+    static var checkout: URL {
         URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("meetings/lib/service/__fixtures__/meetings-protocol.json")
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    }
+
+    static var url: URL {
+        checkout.appendingPathComponent("src/meetings/lib/service/__fixtures__/meetings-protocol.json")
     }
 
     static func examples() throws -> [[String: Any]] {
@@ -42,12 +47,17 @@ private enum MeetingsFixture {
 /// A Meetings service in the test: a Unix socket server that answers `hello` (with `helloAnswer`), answers every other
 /// call with the fixture's reply for the same method and params, answers `$/cancel` with 1013, leaves the methods in
 /// `silent` unanswered, and keeps every line the window wrote. It accepts again after a hang-up.
-private final class FakeMeetingsService: @unchecked Sendable {
+final class FakeMeetingsService: @unchecked Sendable {
     let path = "/tmp/ms-\(UUID().uuidString.prefix(8)).sock"
     var helloAnswer: [String: Any]
     var silent: Set<String> = []
     /// A method's reply (without its id) in place of the fixture's.
     var answers: [String: [String: Any]] = [:]
+    /// Some interaction tests need successive replies from the journal they actually changed.
+    var fixtureReply: ((String, [String: Any]) throws -> Any)?
+    var fixtureMethods: Set<String> = ["decision.apply", "meeting.show", "meeting.rows"]
+    /// The `$/progress` params (without the id) a method sends for each call before its reply, also when it is silent.
+    var progress: [String: [[String: Any]]] = [:]
     private var listener: Int32 = -1
     private var connection: Int32 = -1
     private let condition = NSCondition()
@@ -133,6 +143,10 @@ private final class FakeMeetingsService: @unchecked Sendable {
                 return
             }
             connection = next
+            // A reply written after the window hung up (a test ended while a read was in flight) fails with EPIPE
+            // instead of killing the whole test process with SIGPIPE, as the window's own client does.
+            var noSigpipe: Int32 = 1
+            setsockopt(next, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe, socklen_t(MemoryLayout<Int32>.size))
             accepted += 1
             condition.unlock()
             read(next)
@@ -169,9 +183,20 @@ private final class FakeMeetingsService: @unchecked Sendable {
             send(["jsonrpc": "2.0", "id": id, "error": ["code": 1013, "message": "cancelled"]])
             return
         }
-        guard let id = request["id"], !silent.contains(method) else { return }
+        guard let id = request["id"] else { return }
+        for step in progress[method] ?? [] {
+            send(["jsonrpc": "2.0", "method": "$/progress", "params": step.merging(["id": id]) { $1 }])
+        }
+        guard !silent.contains(method) else { return }
         if method == "hello" {
             send(["jsonrpc": "2.0", "id": id].merging(helloAnswer) { $1 })
+        } else if let fixtureReply, fixtureMethods.contains(method) {
+            do {
+                send(["jsonrpc": "2.0", "id": id, "result": try fixtureReply(method, params)])
+            } catch {
+                send(["jsonrpc": "2.0", "id": id, "error": ["code": MeetingsAPI.refusedCode, "data": ["code": "fixture-error"],
+                                                             "message": String(describing: error)]])
+            }
         } else if let reply = answers[method] {
             send(["jsonrpc": "2.0", "id": id].merging(reply) { $1 })
         } else if let reply = MeetingsFixture.reply(method, params: params) {
@@ -189,6 +214,117 @@ private final class CommandLog {
     var starts = 0
     /// What the start throws; nil: it works.
     var startFailure: Error?
+}
+
+/// The socket and the terminal both reach Bun's real journal. The test reads the files independently of either reply.
+private struct WindowWriteStore {
+    let home: URL
+    var root: URL { GenesisToolsHome.url("meetings", in: home.path) }
+
+    func seed(_ items: [[String: Any]]) throws -> String {
+        let id = "window-writes-\(UUID().uuidString.lowercased())"
+        let date = "2026-02-03T10:00:00.000Z"
+        let record: [String: Any] = [
+            "id": id, "version": 1, "title": id, "createdBy": "new", "createdAt": date, "start": date,
+            "labels": [], "sources": [:], "speakers": ["labels": [:]], "context": [], "history": [],
+            "participants": ["Ari Example", "Robin Example"].map { ["name": $0, "from": ["user"]] as [String: Any] },
+            "items": items.map { $0.merging(["status": "suggested", "rules": [], "suggestedAt": date]) { old, _ in old } },
+        ]
+        let directory = root.appendingPathComponent(id)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: record).write(to: directory.appendingPathComponent("meeting.json"))
+        return id
+    }
+
+    func record(_ id: String) throws -> MeetingRecordView {
+        try JSONDecoder().decode(MeetingRecordView.self, from: Data(contentsOf: root.appendingPathComponent("\(id)/meeting.json")))
+    }
+
+    func journal(_ id: String) throws -> [JournalEntry] {
+        let url = root.appendingPathComponent("\(id)/decisions.ndjson")
+        return try Data(contentsOf: url).split(separator: 10).map { try JSONDecoder().decode(JournalEntry.self, from: Data($0)) }
+    }
+
+    func call(_ method: String, _ params: [String: Any], hello: [String: Any]? = nil) throws -> Any {
+        let script = MeetingsFixture.url.deletingLastPathComponent().appendingPathComponent("window-write.ts")
+        var envelope: [String: Any] = ["method": method, "params": params]
+        envelope["hello"] = hello
+        let request = try JSONSerialization.data(withJSONObject: envelope)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["bun", script.path, home.path, String(decoding: request, as: UTF8.self)]
+        process.currentDirectoryURL = MeetingsFixture.checkout
+        process.environment = ProcessInfo.processInfo.environment.merging([GenesisToolsHome.variable: home.path]) { _, new in new }
+        let result = try process.runCapturing(timeout: 20)
+        guard result.status == 0 else {
+            throw NSError(domain: "Window write fixture \(method)", code: Int(result.status),
+                          userInfo: [NSLocalizedDescriptionKey: String(decoding: result.stderr, as: UTF8.self)])
+        }
+        return try JSONSerialization.jsonObject(with: result.stdout, options: .fragmentsAllowed)
+    }
+}
+
+/// Sends events to this test's window. Text positions come from the same pixels that go into the picture.
+@MainActor
+private enum WindowWriteControls {
+    static func host<V: View>(_ view: V, width: CGFloat = 600, height: CGFloat = 350) -> NSWindow {
+        _ = NSApplication.shared
+        let size = NSSize(width: width, height: height)
+        let panel = NSPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel],
+                            backing: .buffered, defer: false)
+        panel.isReleasedWhenClosed = false
+        panel.contentView = NSHostingView(rootView: view.frame(width: width, height: height)
+            .background(Color.white).environment(\.colorScheme, .light))
+        panel.orderInForSnapshot()
+        return panel
+    }
+
+    static func controls<T: NSView>(_ type: T.Type, in view: NSView) -> [T] {
+        (view as? T).map { [$0] } ?? view.subviews.flatMap { controls(type, in: $0) }
+    }
+
+    static func until<T>(_ description: String, _ value: () throws -> T?) async throws -> T {
+        let deadline = ContinuousClock.now + .seconds(30)
+        repeat {
+            if let result = try value() { return result }
+            try await Task.sleep(for: .milliseconds(100))
+        } while ContinuousClock.now < deadline
+        throw NSError(domain: "Timed out waiting for \(description)", code: 1)
+    }
+
+    /// The centre of the first OCR line with `words`; `whole` takes only a line that is exactly `words` (a button title
+    /// beside a sentence that contains it).
+    static func picture(_ window: NSWindow, containing words: String, named name: String? = nil, whole: Bool = false) throws -> NSPoint? {
+        let view = try XCTUnwrap(window.contentView)
+        view.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        let ocr = VNRecognizeTextRequest()
+        ocr.recognitionLevel = .accurate
+        ocr.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: XCTUnwrap(bitmap.cgImage)).perform([ocr])
+        for line in ocr.results ?? [] {
+            guard let text = line.topCandidates(1).first,
+                  !whole || text.string.trimmingCharacters(in: .whitespaces) == words,
+                  let range = text.string.range(of: words, options: .caseInsensitive),
+                  let box = try text.boundingBox(for: range)?.boundingBox else { continue }
+            if let name, let folder = ProcessInfo.processInfo.environment["MEETINGS_P10_SHOTS"] {
+                let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                try png.write(to: URL(fileURLWithPath: folder).appendingPathComponent("\(name).png"))
+            }
+            let y = view.isFlipped ? 1 - box.midY : box.midY
+            return view.convert(NSPoint(x: box.midX * view.bounds.width, y: y * view.bounds.height), to: nil)
+        }
+        return nil
+    }
+
+    static func click(_ point: NSPoint, in window: NSWindow) throws {
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            window.sendEvent(try XCTUnwrap(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)))
+        }
+    }
 }
 
 /// The two halves agree: every example the TypeScript service wrote decodes with this side's types (and its params
@@ -334,6 +470,12 @@ final class MeetingsServiceTests: XCTestCase {
             case MeetingsAPI.MeetingPeopleEdit.name:
                 try roundTrip(MeetingsAPI.MeetingPeopleEdit.Params.self, params, label)
                 if let result { try Self.checkPeopleEdit(result, params: params, label) }
+            case MeetingsAPI.SeatsSuggest.name:
+                try roundTrip(MeetingsAPI.SeatsSuggest.Params.self, params, label)
+                if let result {
+                    let seats = try MeetingsService.decode(MeetingsAPI.SeatsSuggest.Result.self, result)
+                    XCTAssertEqual(seats.meeting, params["meeting"] as? String, label)
+                }
             case MeetingsAPI.Voice.name:
                 try roundTrip(MeetingsAPI.Voice.Params.self, params, label)
                 if let result { try Self.checkVoice(result, params: params, label) }
@@ -518,6 +660,22 @@ final class MeetingsServiceTests: XCTestCase {
             case MeetingsAPI.CommentSend.name:
                 try roundTrip(MeetingsAPI.CommentSend.Params.self, params, label)
                 if let result { XCTAssertEqual(try MeetingsService.decode(MeetingsAPI.CommentSend.Result.self, result).entry?.action.kind, "comment") }
+            case MeetingsAPI.MeetingSourcesNear.name:
+                try roundTrip(MeetingsAPI.MeetingSourcesNear.Params.self, params, label)
+                if let result {
+                    let near = try MeetingsService.decode(MeetingsAPI.MeetingSourcesNear.Result.self, result)
+                    XCTAssertEqual(near.meetings.first?.ref, "wisprflow:wf-2041", label)
+                    XCTAssertNotNil(near.meetings.first?.linkedTo, "\(label): the record that holds it")
+                }
+            case MeetingsAPI.MeetingLink.name:
+                try roundTrip(MeetingsAPI.MeetingLink.Params.self, params, label)
+                if let result { _ = try MeetingsService.decode(MeetingsAPI.MeetingLink.Result.self, result) }
+            case MeetingsAPI.RuleNames.name:
+                try roundTrip(MeetingsAPI.RuleNames.Params.self, params, label)
+                if let result {
+                    let names = try MeetingsService.decode(MeetingsAPI.RuleNames.Result.self, result).names
+                    XCTAssertEqual(names["E3"], "The call shows who is speaking.", label)
+                }
             default:
                 // A method the window does not mirror (b-people's people.*): nothing to decode.
                 continue
@@ -532,7 +690,7 @@ final class MeetingsServiceTests: XCTestCase {
         // A success of each, so a drift of what the native people and voice controls read fails here: people.edit
         // adds and removes, meeting.voice answers with and without clusters.
         let successes = [MeetingsAPI.MeetingPeopleEdit.name: 2, MeetingsAPI.Voice.name: 2,
-                         MeetingsAPI.AcousticInspect.name: 1, MeetingsAPI.VoiceScore.name: 1]
+                         MeetingsAPI.AcousticInspect.name: 1, MeetingsAPI.VoiceScore.name: 1, MeetingsAPI.SeatsSuggest.name: 1]
         for (method, count) in successes {
             XCTAssertGreaterThanOrEqual(succeeded[method] ?? 0, count, "the fixture has \(count) successful \(method)")
         }
@@ -589,7 +747,8 @@ final class MeetingsServiceTests: XCTestCase {
         MeetingsAPI.DecisionPlan.name, MeetingsAPI.DecisionApply.name, MeetingsAPI.DecisionRevert.name, MeetingsAPI.JournalRead.name,
         MeetingsAPI.MomentPlan.name, MeetingsAPI.MomentClipCut.name, MeetingsAPI.MomentSave.name, MeetingsAPI.TonePreview.name, MeetingsAPI.MeetingAudio.name,
         MeetingsAPI.MeetingSpeakers.name, MeetingsAPI.MeetingScreen.name, MeetingsAPI.MeetingTimeline.name,
-        MeetingsAPI.MeetingWaveform.name, MeetingsAPI.Overview.name,
+        MeetingsAPI.MeetingWaveform.name, MeetingsAPI.Overview.name, MeetingsAPI.RuleNames.name,
+        MeetingsAPI.MeetingSourcesNear.name, MeetingsAPI.MeetingLink.name,
         MeetingsAPI.ConfigRead.name, MeetingsAPI.ConfigSet.name, MeetingsAPI.ConfigUnset.name, MeetingsAPI.MeetingRows.name,
         MeetingsAPI.CommentStage.name, MeetingsAPI.CommentList.name, MeetingsAPI.CommentUnstage.name, MeetingsAPI.CommentSend.name,
     ]
@@ -635,14 +794,215 @@ final class MeetingsServiceTests: XCTestCase {
         try JSONSerialization.data(withJSONObject: entry).write(to: folder.appendingPathComponent("service.json"))
     }
 
-    private func makeService(checkout: MeetingsService.Checkout? = nil) -> MeetingsService {
+    private func makeService(checkout: MeetingsService.Checkout? = nil,
+                             callDeadlines: JSONRPCSocketClient.DeadlineScheduler? = nil) -> MeetingsService {
         let log = commands!
         return MeetingsService(folder: folder, timing: .init(helloTimeout: 2, startThrottle: 30, refusedBackoff: 60, idleClose: 60,
-                                                             reconnectDelay: 0.05),
+                                                             reconnectDelay: 0.05, callDeadlines: callDeadlines),
                                pid: 4242, checkout: checkout, startService: {
                                    log.starts += 1
                                    if let failure = log.startFailure { throw failure }
                                })
+    }
+
+    // MARK: Window controls that write the record
+
+    private func writeWindow(store: WindowWriteStore) throws -> MeetingsWindowModel {
+        try writeServiceEntry()
+        fake.fixtureReply = { [weak server = fake] method, params in
+            let hello = server?.received.last { $0["method"] as? String == "hello" }?["params"] as? [String: Any]
+            return try store.call(method, params, hello: hello)
+        }
+        fake.answers["meetings.overview"] = try XCTUnwrap(MeetingsFixture.reply("meetings.overview", params: ["days": 3650]))
+        let suite = "meetings.window-writes.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(MeetingsPreferences.Rows.AskReach.never.rawValue, forKey: MeetingsPreferences.Rows.askReach.key)
+        defaults.set(MeetingsPreferences.Rows.AutoplayNext.off.rawValue, forKey: MeetingsPreferences.Rows.autoplayNext.key)
+        return MeetingsWindowModel(defaults: defaults, noticeClock: ManualNoticeClock(), service: makeService(), loadDetail: { _ in })
+    }
+
+    func testWindowWriteCleanDuplicateCreatesOneEmptyCopyOfTheMenuTarget() async throws {
+        guard #available(macOS 14.4, *) else { throw XCTSkip("NSHostingMenu needs macOS 14.4") }
+        // Duplicate alone starts a tools process. Use the runner's scratch home if supplied, otherwise this case's.
+        let environment = ProcessInfo.processInfo.environment
+        let scratchHome = environment[GenesisToolsHome.variable].flatMap { ScratchHome.isDisposable($0) ? $0 : nil } ?? folder.path
+        let tools = MeetingsFixture.checkout.appendingPathComponent("tools")
+        let overrides = [GenesisToolsHome.variable: scratchHome, "GENESIS_TOOLS_BIN": tools.path]
+        defer {
+            for key in overrides.keys {
+                if let original = environment[key] { setenv(key, original, 1) } else { unsetenv(key) }
+            }
+        }
+        for (key, value) in overrides {
+            guard setenv(key, value, 1) == 0 else { throw POSIXError(.EINVAL) }
+        }
+        guard canonicalHome(GenesisToolsHome.home()) == canonicalHome(scratchHome),
+              canonicalHome(ToolsBridge.defaultBinaryPath()) == canonicalHome(tools.path) else {
+            return XCTFail("Clean Duplicate must resolve this checkout and the isolated store before it writes")
+        }
+        let store = WindowWriteStore(home: URL(fileURLWithPath: scratchHome))
+        let original = try store.seed([["id": "i1", "kind": "term", "atSec": 0, "heard": "glimmer", "proposed": "Glimmer"]])
+        let originalFolder = store.root.appendingPathComponent(original)
+        defer { try? FileManager.default.removeItem(at: originalFolder) }
+        let initial = try Data(contentsOf: originalFolder.appendingPathComponent("meeting.json"))
+        let existing = Set(try FileManager.default.contentsOfDirectory(atPath: store.root.path))
+        let model = try writeWindow(store: store)
+        defer { model.stopLiveUpdates() }
+        model.select("other-selected-row")
+        _ = NSApplication.shared
+        let menu = NSHostingMenu(rootView: MeetingRowMenu(id: original, model: model))
+        menu.update()
+        let index = try XCTUnwrap(menu.items.firstIndex { $0.title == "Duplicate clean copy" })
+        XCTAssertTrue(menu.items[index].isEnabled)
+        menu.performActionForItem(at: index)
+        XCTAssertTrue(model.duplicating.contains(original))
+        let busyMenu = NSHostingMenu(rootView: MeetingRowMenu(id: original, model: model))
+        busyMenu.update()
+        XCTAssertFalse(try XCTUnwrap(busyMenu.item(withTitle: "Duplicate clean copy")).isEnabled)
+        _ = try await WindowWriteControls.until("the duplicate command to return") { model.duplicating.isEmpty ? true : nil }
+        let copyID = try XCTUnwrap(model.renamingMeetingID, model.notices.notices.map(\.text).joined(separator: "\n"))
+        let copies = try FileManager.default.contentsOfDirectory(atPath: store.root.path).filter { id in
+            !existing.contains(id) && (try? store.record(id).copySource) == original
+        }
+        defer { for id in copies { try? FileManager.default.removeItem(at: store.root.appendingPathComponent(id)) } }
+        XCTAssertEqual(copies, [copyID])
+        XCTAssertEqual(model.selectedMeetingID, copyID)
+        let copy = try store.record(copyID)
+        XCTAssertEqual(copy.title, "\(original) (copy)")
+        XCTAssertEqual(copy.items, [])
+        XCTAssertEqual(try Data(contentsOf: originalFolder.appendingPathComponent("meeting.json")), initial)
+        let notice = try MeetingQuestionPicture.text(NoticeStackView(model.notices), name: "clean-duplicate-notice", native: true)
+        XCTAssertTrue(notice.contains("Duplicated as"), notice)
+    }
+
+    func testWindowWriteFindingTwiceShowsAlreadyOpenAndKeepsOneTerm() async throws {
+        let store = WindowWriteStore(home: folder)
+        let id = try store.seed([])
+        let model = try writeWindow(store: store)
+        model.select(id, tab: .items)
+        let detail = try XCTUnwrap(model.detail)
+        defer { detail.cancelReads(); model.stopLiveUpdates() }
+
+        /// A form with the term filled in, as a person leaves it before pressing Add.
+        func hostForm(onClose: @escaping () -> Void) -> NSWindow {
+            let draft = FindingComposerForm.Draft()
+            draft.kind = "term"
+            draft.from = 0
+            draft.heard = "glimmer"
+            draft.proposed = "Glimmer"
+            let form = FindingComposerForm(detail: detail, draft: draft, onClose: onClose)
+            XCTAssertFalse(draft.addDisabled)
+            return WindowWriteControls.host(form, width: 430, height: 500)
+        }
+        /// Presses the form's visible Add button, so the test covers the button's wiring as well as its action.
+        func pressAdd(in panel: NSWindow, picture: String) async throws {
+            let point = try await WindowWriteControls.until("the Add button") {
+                try WindowWriteControls.picture(panel, containing: "Add", named: picture, whole: true)
+            }
+            try WindowWriteControls.click(point, in: panel)
+        }
+
+        var firstCloses = 0
+        do {
+            let first = hostForm { firstCloses += 1 }
+            defer { first.close() }
+            try await pressAdd(in: first, picture: "finding-add")
+            _ = try await WindowWriteControls.until("the first finding to close the form") { firstCloses > 0 ? true : nil }
+        }
+        XCTAssertEqual(firstCloses, 1)
+        let items = try store.record(id).items
+        let term = try XCTUnwrap(items.first)
+        XCTAssertEqual(items.count, 1)
+        XCTAssertEqual(term.kind, "term")
+        XCTAssertEqual(term.heard, "glimmer")
+        XCTAssertEqual(term.proposed, "Glimmer")
+        XCTAssertEqual(term.atSec, 0)
+        XCTAssertEqual(term.evidence?["transcriptLine"], .number(0))
+
+        var duplicateCloses = 0
+        let second = hostForm { duplicateCloses += 1 }
+        defer { second.close() }
+        try await pressAdd(in: second, picture: "finding-add-again")
+        let warning = "Already open: \(term.id)"
+        _ = try await WindowWriteControls.until(warning) {
+            guard duplicateCloses == 0 else { throw NSError(domain: "The duplicate dismissed the finding form", code: 1) }
+            return try WindowWriteControls.picture(second, containing: warning, named: "already-open-finding")
+        }
+        XCTAssertEqual(duplicateCloses, 0)
+        XCTAssertEqual(try store.record(id).items, [term])
+        XCTAssertEqual(fake.count("decision.apply"), 2)
+    }
+
+    private func pressChoice(_ label: String, rowID: String, detail: MeetingDetailModel, picture: String) async throws {
+        let rows = try await MeetingDetailModel.rowsRead(detail.id, lowPriority: .show).run(service: detail.service)
+        detail.settleDecisionRecord(try await MeetingDetailModel.recordRead(detail.id).run(service: detail.service))
+        detail.rows = .loaded(rows)
+        let row = try XCTUnwrap(rows.rows.first { $0.id == rowID })
+        let panel = WindowWriteControls.host(ReviewRowView(row: row, detail: detail, player: nil, selected: true,
+            asksSpeaker: row.isQuestion))
+        defer { panel.close() }
+        let point = try await WindowWriteControls.until("the \(label) choice") {
+            try WindowWriteControls.picture(panel, containing: label, named: picture)
+        }
+        try WindowWriteControls.click(point, in: panel)
+        _ = try await WindowWriteControls.until("the \(label) decision and record refresh to finish") {
+            guard !detail.busyItems.contains(rowID), let item = detail.record.value?.items.first(where: { $0.id == rowID }),
+                  item.status != "suggested" else { return nil as MeetingItem? }
+            return item
+        }
+    }
+
+    func testWindowWriteRealWordRejectsOnlyTheDisplayedTermOnce() async throws {
+        let store = WindowWriteStore(home: folder)
+        let id = try store.seed([
+            ["id": "i1", "kind": "term", "heard": "glimmer", "proposed": "Glimmer", "atSec": 0],
+            ["id": "i2", "kind": "term", "heard": "garden", "proposed": "Garden", "atSec": 5],
+        ])
+        let model = try writeWindow(store: store)
+        model.select(id, tab: .items)
+        let detail = try XCTUnwrap(model.detail)
+        defer { detail.cancelReads() }
+        try await pressChoice("keep as heard", rowID: "i1", detail: detail, picture: "real-word-before-dismissal")
+        let items = try store.record(id).items
+        XCTAssertEqual(items.map(\.status), ["rejected", "suggested"])
+        let entries = try store.journal(id)
+        XCTAssertEqual(entries.map(\.action), [.reject(["i1"])])
+        XCTAssertEqual(entries.map(\.decided), [["i1"]])
+        XCTAssertEqual(fake.count("decision.apply"), 1)
+    }
+
+    func testWindowWriteSpeakerAnswerMatchesTheReopenedTerminalRecord() async throws {
+        let store = WindowWriteStore(home: folder)
+        let items: [[String: Any]] = [
+            ["id": "i1", "kind": "speaker-range", "fromSec": 0, "toSec": 5, "label": "Speaker 1", "speaker": "Ari Example"],
+            ["id": "i2", "kind": "question", "about": "speaker", "fromSec": 0, "toSec": 5, "question": "Who spoke?",
+             "choices": ["Ari Example", "Robin Example"], "decides": ["i1"]],
+        ]
+        let windowID = try store.seed(items), terminalID = try store.seed(items)
+        let model = try writeWindow(store: store)
+        model.select(windowID, tab: .items)
+        let detail = try XCTUnwrap(model.detail)
+        defer { detail.cancelReads() }
+        try await pressChoice("Robin Example", rowID: "i2", detail: detail, picture: "speaker-before-answer")
+        try await Task.detached {
+            _ = try store.call("listen", ["meeting": terminalID, "question": "i2", "answer": "Robin Example"])
+        }.value
+        let window = try store.record(windowID), terminal = try store.record(terminalID)
+        XCTAssertEqual(window.items.map(\.status), ["confirmed", "confirmed"])
+        XCTAssertEqual(window.items.first?.speaker, "Robin Example")
+        XCTAssertEqual(window.items.last?.answer, "Robin Example")
+        XCTAssertEqual(window.items.last?.decides, ["i1"])
+        XCTAssertEqual(window.items, terminal.items)
+        XCTAssertEqual(window.speakers, terminal.speakers)
+        let click = try store.journal(windowID), answer = try store.journal(terminalID)
+        XCTAssertEqual(click.map(\.actor.kind), ["window"])
+        XCTAssertEqual(answer.map(\.actor.kind), ["listen"])
+        let hello = try XCTUnwrap(fake.received.first { $0["method"] as? String == "hello" }?["params"] as? [String: Any])
+        XCTAssertEqual(hello["role"] as? String, "window")
+        XCTAssertEqual(click.map(\.decided), answer.map(\.decided))
+        XCTAssertEqual(click.map(\.settled), answer.map(\.settled))
+        XCTAssertEqual(fake.count("decision.apply"), 1)
     }
 
     /// What a read's command fallback does here: it records the argv and fails, so a test sees whether it ran.
@@ -665,6 +1025,35 @@ final class MeetingsServiceTests: XCTestCase {
         model.refreshAfterReturn()
         for _ in 0..<100 where fake.count("config.read") == previous { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertGreaterThan(fake.count("config.read"), previous, "live meeting events do not carry external config changes")
+    }
+
+    func testPersonUndoWritesToTheOriginalMeetingAfterItsPaneCloses() async throws {
+        try writeServiceEntry()
+        let method = MeetingsAPI.MeetingPeopleEdit.name
+        let stay = PersonStay(name: "Robin Example", fromSec: 0, toSec: 30, atMic: false, via: nil, stays: 1)
+        fake.answers[method] = try XCTUnwrap(MeetingsFixture.reply(method, params: [
+            "meeting": Self.design, "action": "remove", "name": stay.name
+        ]))
+        let service = makeService()
+        defer { service.disconnect() }
+        let notices = NoticeStackModel(clock: ManualNoticeClock(), announces: false)
+        var detail: MeetingDetailModel? = MeetingDetailModel(id: Self.design, window: nil, notices: notices, service: service)
+        weak var closedPane = detail
+        try await detail?.removePersonStay(stay)
+        detail?.cancelReads()
+        detail = nil
+        try await until("the originating pane is released") { closedPane == nil }
+
+        let notice = try XCTUnwrap(notices.notices.first)
+        notices.press(try XCTUnwrap(notice.actions.first), of: notice.id)
+        try await until("the Undo replaces the removal notice") {
+            notices.notice(notice.id)?.text.hasPrefix("Undone:") == true
+        }
+        let writes = try fake.received.filter { $0["method"] as? String == method }.map { request in
+            try MeetingsService.decode(MeetingsAPI.MeetingPeopleEdit.Params.self, XCTUnwrap(request["params"]))
+        }
+        XCTAssertEqual(writes, [stay.params(meeting: Self.design, remove: true), stay.params(meeting: Self.design)])
+        XCTAssertNil(notices.waiting[notice.id])
     }
 
     func testAReconnectedWindowRefreshesExternalSettings() async throws {
@@ -721,7 +1110,7 @@ final class MeetingsServiceTests: XCTestCase {
             XCTFail("an unknown meeting read")
         } catch let failure as MeetingsCLI.Failure {
             XCTAssertEqual(failure.code, "meeting-not-found")
-            XCTAssertEqual(failure.sentence, "No meeting \"nope\". List them: tools meetings list.")
+            XCTAssertEqual(failure.sentence, "No meeting \"nope\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate nope.", "the refusal names the store it searched")
         }
         XCTAssertEqual(commands.runs, [], "a refusal is the answer: the command does not run it again")
     }
@@ -982,6 +1371,250 @@ final class MeetingsServiceTests: XCTestCase {
             XCTAssertTrue(error is CancellationError, "\(error)")
         }
         XCTAssertEqual(commands.runs, [], "a cancelled read does not fall back to the command")
+    }
+
+    // MARK: Progress of a long call (`$/progress`)
+
+    private static let suggestSteps: [[String: Any]] = [
+        ["fraction": 0.25, "label": "Voices: 30 of 120 lines"],
+        ["fraction": 0.75, "label": "Voices: 90 of 120 lines"],
+        ["label": "Terms"],
+    ]
+
+    func testACallHearsEachProgressStepOfTheServiceBeforeItsAnswer() async throws {
+        try writeServiceEntry()
+        fake.answers["meeting.suggest"] = ["result": ["added": 3, "warnings": [String]()]]
+        fake.progress["meeting.suggest"] = Self.suggestSteps
+        let service = makeService()
+        final class Steps { var seen: [MeetingsCallProgress] = [] }
+        let steps = Steps()
+        let result = try await service.call(MeetingsAPI.MeetingSuggest.self, .init(meeting: Self.design, attendance: nil)) {
+            steps.seen.append($0)
+        }
+        XCTAssertEqual(result, .init(added: 3, warnings: []))
+        XCTAssertEqual(steps.seen, [MeetingsCallProgress(fraction: 0.25, label: "Voices: 30 of 120 lines"),
+                                    MeetingsCallProgress(fraction: 0.75, label: "Voices: 90 of 120 lines"),
+                                    MeetingsCallProgress(fraction: nil, label: "Terms")],
+                       "every step arrives, in order, before the answer")
+    }
+
+    func testTheItemsTabShowsTheRunningSuggestsNewestStepAndClearsItAtTheEnd() async throws {
+        try writeServiceEntry()
+        fake.silent = ["meeting.suggest"]
+        fake.progress["meeting.suggest"] = Array(Self.suggestSteps.prefix(2))
+        let service = makeService()
+        let detail = MeetingDetailModel(id: Self.design, window: nil, service: service)
+        detail.suggest()
+        XCTAssertTrue(detail.isBusy("suggest"))
+        XCTAssertEqual(SuggestRunView.label(detail.suggestProgress), "Starting the rules…", "before the first step")
+        let reached = await waitUntil(3) { detail.suggestProgress?.fraction == 0.75 }
+        XCTAssertTrue(reached, "the newest step reaches the model: \(String(describing: detail.suggestProgress))")
+        XCTAssertEqual(SuggestRunView.label(detail.suggestProgress), "Voices: 90 of 120 lines (75 %)")
+        // The service answers: the run ends and its bar goes.
+        let fake = self.fake!
+        let sent = try await Task.detached { try fake.line { $0["method"] as? String == "meeting.suggest" } }.value
+        fake.send(["jsonrpc": "2.0", "id": sent["id"] ?? NSNull(), "result": ["added": 2, "warnings": ["One warning"]]])
+        let ended = await waitUntil(3) { !detail.isBusy("suggest") }
+        XCTAssertTrue(ended, "the run ends with the answer")
+        XCTAssertNil(detail.suggestProgress, "no step stays after the answer")
+        XCTAssertEqual(detail.suggestionWarnings, ["One warning"])
+    }
+
+    /// w_gu80y4mc: one deadline for every call, and it measures silence. The service repeats a running call's newest
+    /// step every 15 s; each `$/progress` starts the wait again, so a call longer than its deadline still ends by its answer.
+    func testALongCallOutlivesItsDeadlineWhileTheServiceKeepsSendingSteps() async throws {
+        try writeServiceEntry()
+        fake.silent = ["meeting.suggest"]
+        // The deadlines run on a clock the test moves, so a loaded runner cannot expire a call between two beats.
+        let clock = ManualDeadlineClock()
+        let service = makeService(callDeadlines: clock.schedule)
+        final class Steps { var seen: [MeetingsCallProgress] = [] }
+        let steps = Steps()
+        let call = Task { @MainActor in
+            try await service.call(MeetingsAPI.MeetingSuggest.self, .init(meeting: Self.design, attendance: nil), timeout: 0.6) {
+                steps.seen.append($0)
+            }
+        }
+        let fake = self.fake!
+        let sent = try await Task.detached { try fake.line { $0["method"] as? String == "meeting.suggest" } }.value
+        let id = sent["id"] ?? NSNull()
+        // 1.8 s of work, three times the deadline: an empty beat first (before any step), then the newest step again.
+        for beat: [String: Any] in [[:], ["fraction": 0.5, "label": "Voices: 60 of 120 lines"], ["fraction": 0.5, "label": "Voices: 60 of 120 lines"],
+                                    ["fraction": 0.5, "label": "Voices: 60 of 120 lines"]] {
+            clock.advance(by: 0.45)
+            let armed = clock.armed
+            fake.send(["jsonrpc": "2.0", "method": "$/progress", "params": beat.merging(["id": id]) { $1 }])
+            let rearmed = await waitUntil(5) { clock.armed > armed }
+            XCTAssertTrue(rearmed, "each beat starts the call's deadline again")
+        }
+        clock.advance(by: 0.3)
+        fake.send(["jsonrpc": "2.0", "id": id, "result": ["added": 1, "warnings": [String]()]])
+        let result = try await call.value
+        XCTAssertEqual(result, .init(added: 1, warnings: []), "the call answered after 2.1 s of its clock with a 0.6 s deadline")
+        XCTAssertGreaterThan(clock.now, 0.6 * 3, "the call outlived its deadline three times over")
+        // Control: the same clock ends a call that hears nothing past its deadline, so the beats above kept it alive.
+        let before = clock.armed
+        let silent = Task { @MainActor in
+            try await service.call(MeetingsAPI.MeetingSuggest.self, .init(meeting: Self.design, attendance: nil), timeout: 0.6) { _ in }
+        }
+        let armedSilent = await waitUntil(5) { clock.armed > before }
+        XCTAssertTrue(armedSilent, "the silent call armed its deadline")
+        clock.advance(by: 0.7)
+        do {
+            _ = try await silent.value
+            XCTFail("a call with no beat ends at its deadline")
+        } catch {
+            XCTAssertTrue("\(error)".contains("meeting.suggest"), "the deadline named the call: \(error)")
+        }
+        XCTAssertEqual(steps.seen.first, MeetingsCallProgress(fraction: 0.5, label: "Voices: 60 of 120 lines"),
+                       "an empty beat keeps the call alive and shows nothing")
+        XCTAssertEqual(steps.seen.count, 3)
+        XCTAssertEqual(MeetingsService.silenceLimit, 60, "the one deadline of every call")
+    }
+
+    func testALongCallWithNoWordFromTheServiceStillFailsAtItsDeadline() async throws {
+        try writeServiceEntry()
+        fake.silent = ["voices.preview"]
+        let service = makeService()
+        let started = Date()
+        do {
+            _ = try await service.call(MeetingsAPI.VoicesPreview.self, .init(meeting: Self.design), timeout: 0.5)
+            XCTFail("a silent service ends the call")
+        } catch {
+            XCTAssertLessThan(Date().timeIntervalSince(started), 5, "it fails at the deadline, not later: \(error)")
+            // A connection that failed before the request is not silence: the request reached the service and the
+            // call ended on its own deadline, which may have changed data, so the command does not run it again.
+            XCTAssertEqual(fake.count("voices.preview"), 1, "the request reached the silent service")
+            let silence = JSONRPCSocketClient.Failure.timeout(method: "voices.preview").localizedDescription
+            XCTAssertEqual(error as? MeetingsService.Unavailable,
+                           .init(reason: "voices.preview: \(silence)", safeToRetry: false), "the silence deadline ended it: \(error)")
+        }
+    }
+
+    func testTheVoicesPaneShowsAPreviewsStepsThenItsLines() async throws {
+        try writeServiceEntry()
+        fake.silent = ["voices.preview"]
+        fake.progress["voices.preview"] = [["fraction": 0.4, "label": "Voices: 120 of 300 lines"]]
+        let service = makeService()
+        let detail = MeetingDetailModel(id: Self.design, window: nil, service: service)
+        let voices = detail.voices
+        voices.runPreview()
+        XCTAssertEqual(voices.running, .preview)
+        XCTAssertEqual(VoicesRunView.label(.preview, voices.progress), "Reading the voices…", "before the first step")
+        let reached = await waitUntil(3) { voices.progress?.fraction == 0.4 }
+        XCTAssertTrue(reached, "the step reaches the pane: \(String(describing: voices.progress))")
+        XCTAssertEqual(VoicesRunView.label(.preview, voices.progress), "Voices: 120 of 300 lines (40 %)")
+        let fake = self.fake!
+        let sent = try await Task.detached { try fake.line { $0["method"] as? String == "voices.preview" } }.value
+        fake.send(["jsonrpc": "2.0", "id": sent["id"] ?? NSNull(), "result": [
+            "meeting": Self.design, "project": "Atlas",
+            "lines": [
+                ["labeler": "voice", "index": 3, "seat": "call", "fromSec": 12, "toSec": 15, "text": "Hello there.", "current": "Speaker 2",
+                 "person": "Bob Example", "score": 0.71, "reason": "named"],
+                ["labeler": "voice", "index": 4, "seat": "call", "fromSec": 16, "toSec": 19, "text": "And more.", "current": "Speaker 2",
+                 "score": 0.4, "next": ["person": "Dana Example", "score": 0], "reason": "unsampled-present"],
+            ],
+        ]])
+        let ended = await waitUntil(3) { voices.running == nil }
+        XCTAssertTrue(ended)
+        XCTAssertNil(voices.progress, "no step stays after the answer")
+        XCTAssertEqual(voices.preview.value?.headline, "2 lines: 1 named, 1 left open")
+        XCTAssertEqual(voices.preview.value?.waiting, ["Dana Example": 1])
+        XCTAssertEqual(VoicesPane.waitingText("Dana Example", preview: voices.preview.value),
+                       "1 line waits for one. Confirm one line of this person to add a sample.")
+    }
+
+    /// w_s12ed97x: Cancel on the progress bar stops the call on the wire (`$/cancel`; the service kills its voice workers
+    /// and saves nothing), the bar goes, and the notice says nothing was saved instead of a failure.
+    func testCancelStopsARunningSuggestOnTheWireAndSaysNothingWasSaved() async throws {
+        try writeServiceEntry()
+        fake.silent = ["meeting.suggest"]
+        fake.progress["meeting.suggest"] = Array(Self.suggestSteps.prefix(1))
+        let service = makeService()
+        let detail = MeetingDetailModel(id: Self.design, window: nil, service: service)
+        detail.suggest()
+        let reached = await waitUntil(3) { detail.suggestProgress != nil }
+        XCTAssertTrue(reached, "the run reports its first step")
+        detail.cancelSuggest()
+        let fake = self.fake!
+        let sent = try await Task.detached { try fake.line { $0["method"] as? String == "meeting.suggest" } }.value
+        let cancel = try await Task.detached { try fake.line { $0["method"] as? String == "$/cancel" } }.value
+        XCTAssertEqual((cancel["params"] as? [String: Any])?["id"] as? Int, sent["id"] as? Int, "the cancel names the call")
+        let ended = await waitUntil(3) { !detail.isBusy("suggest") }
+        XCTAssertTrue(ended, "the run ends at once")
+        XCTAssertNil(detail.suggestProgress)
+        XCTAssertEqual(detail.notices.notices.map(\.text), ["Stopped the rules; nothing was saved"])
+    }
+
+    func testCancelStopsAVoicesPreviewAndKeepsTheEarlierList() async throws {
+        try writeServiceEntry()
+        fake.silent = ["voices.preview"]
+        let service = makeService()
+        let detail = MeetingDetailModel(id: Self.design, window: nil, service: service)
+        let voices = detail.voices
+        let fake = self.fake!
+        voices.runPreview()
+        let firstSent = try await Task.detached { try fake.line { $0["method"] as? String == "voices.preview" } }.value
+        let firstID = try XCTUnwrap(firstSent["id"] as? Int)
+        fake.send(["jsonrpc": "2.0", "id": firstID, "result": [
+            "meeting": Self.design, "project": "Atlas",
+            "lines": [["labeler": "voice", "index": 3, "seat": "call", "fromSec": 12, "toSec": 15, "text": "Hello there.",
+                       "current": "Speaker 2", "person": "Bob Example", "score": 0.71, "reason": "named"]],
+        ]])
+        let loaded = await waitUntil(3) { voices.running == nil }
+        XCTAssertTrue(loaded, "the first preview lands")
+        let earlier = try XCTUnwrap(voices.preview.value, "the first preview is the earlier list")
+
+        voices.runPreview()
+        let secondSent = try await Task.detached {
+            try fake.line { $0["method"] as? String == "voices.preview" && $0["id"] as? Int != firstID }
+        }.value
+        voices.cancelRun()
+        let cancel = try await Task.detached { try fake.line { $0["method"] as? String == "$/cancel" } }.value
+        XCTAssertEqual((cancel["params"] as? [String: Any])?["id"] as? Int, secondSent["id"] as? Int, "the cancel names the second call")
+        let ended = await waitUntil(3) { voices.running == nil }
+        XCTAssertTrue(ended)
+        XCTAssertEqual(voices.preview, .loaded(earlier), "a cancelled refresh keeps the earlier list")
+        XCTAssertTrue(detail.notices.notices.isEmpty, "a cancel is not a failure")
+    }
+
+    func testTheWindowReadsTheRuleSentencesOnceFromTheService() async throws {
+        try writeServiceEntry()
+        let service = makeService()
+        let model = MeetingsWindowModel(service: service, loadDetail: { _ in })
+        XCTAssertNil(model.ruleNames)
+        model.ensureRuleNames()
+        model.ensureRuleNames()
+        let read = await waitUntil(3) { model.ruleNames != nil }
+        XCTAssertTrue(read, "the sentences arrive")
+        XCTAssertEqual(model.ruleNames?["E3"], "The call shows who is speaking.")
+        model.ensureRuleNames()
+        XCTAssertEqual(fake.count("rules.names"), 1, "one read for the window")
+    }
+
+    func testALinkCandidateSaysItsSourceTimeAndWhoHoldsIt() {
+        let free = MeetingsAPI.MeetingSourcesNear.Candidate(ref: "wisprflow:a", source: "Wispr Flow", title: "Planning",
+                                                            start: "2026-11-12T13:15:00.000Z", end: "2026-11-12T14:15:00.000Z",
+                                                            hasTranscript: true, linkedTo: nil)
+        let facts = LinkSourceSheet.facts(free, start: "2026-11-12T13:17:00.000Z")
+        XCTAssertTrue(facts.hasPrefix("Wispr Flow · "), facts)
+        XCTAssertTrue(facts.contains("2 min before") && facts.contains("1 h"), facts)
+        XCTAssertEqual(LinkSourceSheet.offsetWords("2026-11-12T13:17:20.000Z", from: "2026-11-12T13:17:00.000Z"), "at the same minute")
+        let held = MeetingsAPI.MeetingSourcesNear.Candidate(ref: "wisprflow:b", source: "Wispr Flow", title: "Retro",
+                                                            start: "2026-11-12T15:00:00.000Z", end: nil, hasTranscript: false,
+                                                            linkedTo: .init(id: "m2", title: "Retro notes"))
+        let heldFacts = LinkSourceSheet.facts(held, start: "2026-11-12T13:17:00.000Z")
+        XCTAssertTrue(heldFacts.contains("no transcript") && heldFacts.contains("linked to “Retro notes”"), heldFacts)
+    }
+
+    func testTheSuggestStepReadsAsWords() {
+        XCTAssertEqual(SuggestRunView.label(nil), "Starting the rules…")
+        XCTAssertEqual(SuggestRunView.label(.init(fraction: 0.404, label: "Voices: 121 of 300 lines")), "Voices: 121 of 300 lines (40 %)")
+        XCTAssertEqual(SuggestRunView.label(.init(fraction: nil, label: "Terms")), "Terms")
+        XCTAssertEqual(SuggestRunView.label(.init(fraction: 1.2, label: nil)), "100 % done", "a fraction past the end reads as done")
+        XCTAssertEqual(SuggestRunView.label(.init(fraction: nil, label: nil)), "Running the rules…")
+        XCTAssertEqual(MeetingsRequest.progress("0.4,Voices: 120 of 300 lines"), .init(fraction: 0.4, label: "Voices: 120 of 300 lines"))
+        XCTAssertEqual(MeetingsRequest.progress("-,Terms"), .init(fraction: nil, label: "Terms"))
     }
 
     // MARK: Which service (finding 5 of the Wave A review)
@@ -1296,6 +1929,35 @@ extension MeetingsServiceTests {
 }
 
 extension MeetingsServiceTests {
+    func testOnlyAQuestionOffersTheMatchedPersonAndTheLiteralAnswer() throws {
+        try writeServiceEntry()
+        let person = KnownPerson(id: "alice", name: "Alice Example", sources: [.meetings], rank: .present)
+        let typed = "Example Alice"
+        fake.answers[MeetingsAPI.PeopleKnown.name] = ["result": [
+            "query": typed, "people": [try MeetingsService.paramsObject(person)], "sources": [], "total": 1,
+        ] as [String: Any]]
+        let service = makeService()
+        defer { service.disconnect() }
+        let detail = MeetingDetailModel(id: "practice", window: nil, service: service)
+        let question = try JSONDecoder().decode(ReviewRow.self, from: Data(#"""
+        {"id":"q1","label":"Q1","kind":"question","status":"suggested","what":"Who speaks?","parts":[],
+         "choices":[{"value":"Alice Example","label":"Alice Example","role":"suggested","action":{"kind":"answer","answer":"Alice Example"}}],
+         "edit":"answer","needs":"listen","sources":[],"target":{"kind":"item","id":"q1"}}
+        """#.utf8))
+        let answer = QuestionPersonPicker(row: question, detail: detail, name: .constant(typed), confirm: { _ in })
+        let shown = try MeetingQuestionPicture.text(answer, name: "I2-question-typed", native: true)
+        let words = shown.split { !$0.isLetter }.joined(separator: " ")
+        XCTAssertTrue(words.contains("Use Alice Example"), shown)
+        XCTAssertTrue(words.contains("Use Example Alice as typed"), shown)
+        XCTAssertFalse(words.contains("as new speaker"), shown)
+
+        let contacts = PersonPicker(people: [person], query: .constant(typed), pick: { _ in }, addNew: { _ in })
+        let contactText = try MeetingQuestionPicture.text(contacts, name: "I2-contacts-match", native: true)
+        XCTAssertTrue(contactText.contains("Use Alice Example"), contactText)
+        XCTAssertFalse(contactText.contains("as typed"), contactText)
+        XCTAssertFalse(contactText.contains("as new speaker"), contactText)
+    }
+
     /// F10, G-PPL-5: the Contacts view is a place of the window; the open meeting stays open for the way back.
     func testContactsIsAPlaceThatKeepsTheOpenMeeting() async throws {
         try writeServiceEntry()
@@ -1370,10 +2032,31 @@ extension MeetingsServiceTests {
 }
 
 extension MeetingsServiceTests {
+    func testTwoVoicesShowsTheOriginalWordsWithTheTranscriptPaneClosed() throws {
+        try writeServiceEntry()
+        fake.answers["people.known"] = ["result": ["query": "", "people": [], "total": 0, "sources": []] as [String: Any]]
+        let detail = MeetingDetailModel(id: Self.design, window: nil, service: makeService())
+        let row = ReviewRow(id: "q1", label: "Q1", kind: "question", status: "suggested", confidence: nil,
+                            priority: nil, what: "Who speaks?", parts: [], choices: [], edit: "answer",
+                            needs: nil, sources: [], target: .item("q1"))
+        let evidence = QuestionDetails(id: row.id, decidedLines: [.init(index: 0, startSec: 5, endSec: 8,
+            speaker: "Speaker 1", text: "First original words")], impact: .init(lines: 1, words: 3, sameDoubtLines: 0),
+            raisedLines: nil)
+        detail.rows = .loaded(.init(meeting: detail.id, rows: [row], hidden: .init(lowPriority: 0, minPriority: 0),
+                                    questionDetails: [evidence]))
+        let words = try MeetingQuestionPicture.text(ListenVoicesEditor(row: row, detail: detail, close: {}),
+                                                    name: "L10-source-words", native: true)
+        XCTAssertTrue(words.contains("original words"), words)
+        XCTAssertFalse(words.contains("No word boundary"), words)
+        XCTAssertEqual(fake.count("meeting.transcript"), 0)
+    }
+
     func testCanonicalVoiceScoresDecodeAndMarkOnlyTheirNamedTranscriptLine() throws {
         let voice = try MeetingsService.decode(MeetingRecordView.Evidence.Voice.Match.self,
             ["model": "fixture", "quality": "matched", "person": "Bob Example", "reason": "gate passed", "candidates": [["person": "Bob Example", "score": 0.8]]])
         XCTAssertEqual(voice.candidates.first?.score, 0.8)
+        let scores = try MeetingQuestionPicture.text(ListenVoiceScores(match: voice), name: "L19-voice-scores", native: true)
+        XCTAssertTrue(scores.contains("Bob Example"), scores)
         let item = try MeetingsService.decode(MeetingItem.self, ["id": "i1", "kind": "speaker-range", "status": "suggested", "speaker": "Bob Example", "fromSec": 0, "toSec": 0, "rules": ["voice-embedding"]])
         let entry = TranscriptLine(id: "voice-line", startSec: 0, speaker: "Bob Example", text: "A call sentence.")
         XCTAssertTrue(MeetingDetailModel.lineMarks(entries: [entry], hints: [], items: [item], comments: [])[entry.rowID]?.contains(.byVoice) == true)
@@ -1405,5 +2088,31 @@ extension MeetingsServiceTests {
         XCTAssertEqual(segments.count, 2)
         XCTAssertEqual(segments[1]["fromWord"] as? Int, 3)
         XCTAssertEqual(segments[1]["speaker"] as? String, "Bob Example")
+    }
+}
+
+/// A clock for call deadlines that moves only when a test advances it; due deadlines fire in order of their time.
+final class ManualDeadlineClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var current: TimeInterval = 0
+    private var timers: [(at: TimeInterval, fire: @Sendable () -> Void)] = []
+    private var count = 0
+
+    var now: TimeInterval { lock.withLock { current } }
+    /// How many deadlines were armed so far.
+    var armed: Int { lock.withLock { count } }
+
+    var schedule: JSONRPCSocketClient.DeadlineScheduler {
+        { [self] seconds, fire in lock.withLock { timers.append((current + seconds, fire)); count += 1 } }
+    }
+
+    func advance(by seconds: TimeInterval) {
+        let due: [@Sendable () -> Void] = lock.withLock {
+            current += seconds
+            let ready = timers.filter { $0.at <= current }.sorted { $0.at < $1.at }
+            timers.removeAll { $0.at <= current }
+            return ready.map(\.fire)
+        }
+        for fire in due { fire() }
     }
 }

@@ -1,4 +1,5 @@
 import type { MeetingItem } from "@genesiscz/utils/meetings/record";
+import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { CorrectionsApplied } from "@genesiscz/utils/transcribe/apply";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 
@@ -20,7 +21,14 @@ export function itemWhat(item: MeetingItem, options: { width?: number } = {}): s
     }
     if (item.kind === "speaker-range") {
         const who = item.speaker ?? `? (${item.candidates?.join(", ") || "unknown"})`;
-        return `${item.label} ${span(item.fromSec, item.toSec)} → ${who}`;
+        const score = item.evidence?.score;
+        if (item.evidence?.reason === "exclusion" && typeof item.evidence.margin === "number") {
+            return `${item.label} ${span(item.fromSec, item.toSec)} → ${who} by exclusion (margin ${item.evidence.margin.toFixed(2)})`;
+        }
+        const voice = item.rules.includes(MeetingRule.VoiceEmbedding)
+            ? ` by voice${typeof score === "number" ? ` ${score.toFixed(2)}` : ""}`
+            : "";
+        return `${item.label} ${span(item.fromSec, item.toSec)} → ${who}${voice}`;
     }
 
     if (item.kind === "join") {
@@ -34,7 +42,9 @@ export function itemWhat(item: MeetingItem, options: { width?: number } = {}): s
     }
 
     if (item.kind === "label") {
-        return `${item.label} ${span(item.fromSec, item.toSec)} tracks no one person`;
+        const from = formatClock(item.fromSec);
+        const to = formatClock(item.toSec);
+        return `The label "${item.label}" does not belong to one person (${from === to ? from : `${from} to ${to}`})`;
     }
 
     const occurrences = typeof item.evidence?.occurrences === "number" ? ` ×${item.evidence.occurrences}` : "";

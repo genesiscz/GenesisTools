@@ -33,6 +33,17 @@ export interface GenesisAppRpcFailure {
 
 export type GenesisAppRpcOutcome<T> = { ok: true; result: T } | { ok: false; error: GenesisAppRpcFailure };
 
+/**
+ * The codes that mean "nobody in the app could answer": no bundle (or routing off), a build without the method, or
+ * something other than the app replied. A caller falls back on these only. A deny, a timeout and every other code the
+ * app returned are answers.
+ */
+export const APP_CANNOT_ANSWER_CODES: ReadonlySet<string> = new Set(["unavailable", "method_unknown", "handshake"]);
+
+export function appCannotAnswer(failure: GenesisAppRpcFailure): boolean {
+    return APP_CANNOT_ANSWER_CODES.has(failure.code);
+}
+
 export interface GenesisAppHello {
     protocol: number;
     bundleId: string;

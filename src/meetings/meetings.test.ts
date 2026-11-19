@@ -16,7 +16,9 @@ import { join } from "node:path";
 import { wisprflowSource } from "@app/wisprflow/lib/meeting-source";
 import { wisprLocalAudio } from "@app/wisprflow/lib/source-audio";
 import { withTimeout } from "@genesiscz/utils/async";
+import { ui } from "@genesiscz/utils/cli/ui";
 import { env } from "@genesiscz/utils/env";
+import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { checkImageDimensions } from "@genesiscz/utils/image/dimensions";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -48,6 +50,7 @@ import {
     RPC_ERRORS,
     type RpcError,
 } from "@genesiscz/utils/screen-recorder/live";
+import { NativeFrameRecorder } from "@genesiscz/utils/screen-recorder/native";
 import { pieceTargets } from "@genesiscz/utils/screen-recorder/targets";
 import {
     CaptureError,
@@ -56,6 +59,7 @@ import {
     type DisplayInfo,
     FrameRecorder,
 } from "@genesiscz/utils/screen-recorder/types";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { applyCorrections } from "@genesiscz/utils/transcribe/apply";
@@ -66,7 +70,10 @@ import { sameName, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import * as transcribeTerms from "@genesiscz/utils/transcribe/terms";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { createCanvas } from "@napi-rs/canvas";
+import { Command } from "commander";
 import { z } from "zod";
+import { registerItemCommands } from "./commands/items";
+import { registerRecordCommands } from "./commands/record";
 import { claimWatcher } from "./commands/watch";
 import { buildQuestion } from "./lib/assign";
 import { CallTimeline } from "./lib/call-timeline";
@@ -75,20 +82,12 @@ import { captionSegments } from "./lib/editor-project";
 import { findingItems, findingProblems, findingsFileSchema } from "./lib/findings";
 import { appliedLine, itemWhat } from "./lib/item-text";
 import { localSpeechDuring, localSpeechLines } from "./lib/local-speech";
+import { askProjectAtEnd } from "./lib/meeting-end";
 import { MEETING_PLATFORMS, platformOfSourceName, speakingEvidence } from "./lib/platforms";
 import { teamsAttendanceFromJson } from "./lib/platforms/teams";
+import { answerQuestion, propagateAnswer, skipQuestion, splitQuestion } from "./lib/question-answers";
 import { selectQuestions } from "./lib/question-select";
-import {
-    answerQuestion,
-    heardContext,
-    openQuestions,
-    propagateAnswer,
-    type QuestionContext,
-    questionFor,
-    questionRank,
-    skipQuestion,
-    splitQuestion,
-} from "./lib/questions";
+import { heardContext, openQuestions, type QuestionContext, questionFor, questionRank } from "./lib/questions";
 import { compactEvidence, rawMeeting } from "./lib/raw";
 import { runRecorder } from "./lib/recorder";
 import { RecordingRecord } from "./lib/recorder-adapters";
@@ -105,6 +104,7 @@ import { framesMatching, ocrRowSchema, readOcrRows, renderScreenBoxes } from "./
 import { InProcessMeetingsClient } from "./lib/service/client";
 import { readScreen } from "./lib/service/reads-handlers";
 import { showText } from "./lib/show-text";
+import { audioRowZeroMs, readAudioRows } from "./lib/sound";
 import { preservedSourceAudio, preserveSourceAudio } from "./lib/source-audio";
 import {
     addPolish,
@@ -118,7 +118,8 @@ import {
     speakerScoresOf,
 } from "./lib/speaker-scores";
 import { printSpeakerStats } from "./lib/speakers-view";
-import { settledTermItems, spokenOnPurpose, suggestItems, wordFamily } from "./lib/suggest";
+import { suggestItems } from "./lib/suggest";
+import { settledTermItems, spokenOnPurpose, wordFamily } from "./lib/suggest-terms";
 import { correctionsOf } from "./lib/transcript-corrections";
 import { transcriptDocument } from "./lib/transcript-document";
 import {
@@ -127,10 +128,11 @@ import {
     WATCH_INTERVAL_MS,
     type WatchDeps,
     type WatchNote,
+    watchLoop,
     watchOnce,
 } from "./lib/watch";
 import { readAuto, writeAuto } from "./lib/watch-auto";
-import { ensureWatcher, watcherPidPath } from "./lib/watcher";
+import { ensureWatcher, recordingAutostart, runWatcher, watcherPidPath } from "./lib/watcher";
 
 function line(speaker: string, startSec: number, text: string, speakerId?: number): TranscriptEntry {
     return { speaker, startSec, text, speakerId };
@@ -482,14 +484,16 @@ describe("--with-suggested (R4.2)", () => {
             ...record,
             items: [
                 range("i1", 0, "Alice Example", 0.5),
-                range("i2", 10, "Bob Example", 0.44),
+                range("i2", 10, "Bob Example", 0.69),
                 range("i3", 20, "Dave Example"),
+                range("i4", 30, "Alice Example", 0.7),
             ],
         });
         const entries = [
             line("Carol Example", 0, "Já to udělám."),
             line("Carol Example", 10, "Možná já."),
             line("Carol Example", 20, "Já taky."),
+            line("Carol Example", 30, "Ještě něco."),
         ];
         const config = meetingsConfigSchema.parse({});
         const shown = (withSuggested: boolean) =>
@@ -498,8 +502,8 @@ describe("--with-suggested (R4.2)", () => {
                 correctionsOf(withItems, config, { withSuggested, dictionary: false, format: "txt" })
             ).entries.map((entry) => entry.speaker);
 
-        expect(shown(true)).toEqual(["[Alice Example: 50 %]", "[Bob Example: 44 %]", "Dave Example"]);
-        expect(shown(false)).toEqual(["Carol Example", "Carol Example", "Carol Example"]);
+        expect(shown(true)).toEqual(["[Alice Example: 50 %]", "[Bob Example: 69 %]", "Dave Example", "Alice Example"]);
+        expect(shown(false)).toEqual(entries.map((entry) => entry.speaker));
     });
 });
 
@@ -1073,6 +1077,326 @@ test("in a column, a long quote is shortened inside its quotes and keeps its sou
     expect(itemWhat(long)).toContain("null");
 });
 
+describe("the words a review row shows (U9, U13, U15 to U18)", () => {
+    /** A code a person cannot read: a labeler code such as `seat-of-one`, or a whole rule id such as `RA`. */
+    const CODE_TOKEN = /[a-z]+-[a-z]+-[a-z]+|^[A-Z]{1,2}\d*$/;
+    const item = (fields: Record<string, unknown>) =>
+        meetingItemSchema.parse({ status: "suggested", suggestedAt: meeting.start, rules: [], ...fields });
+    const reasons = (row: { parts: Array<{ kind: string; pieces?: Array<{ text: string }> }> }) =>
+        row.parts.flatMap((part) => (part.kind === "reason" ? [(part.pieces ?? []).map((p) => p.text).join("")] : []));
+    const seatLine = (fields: Record<string, unknown> = {}) =>
+        item({
+            id: "i1",
+            kind: "speaker-range",
+            label: "Speaker 5",
+            fromSec: 120,
+            toSec: 120,
+            speaker: "Alice Example",
+            confidence: 0.95,
+            rules: [MeetingRule.Attendance],
+            evidence: { labeler: "seat", reason: "seat-of-one", seat: "mic", transcriptLine: 4 },
+            ...fields,
+        });
+    const voiceLine = item({
+        id: "i2",
+        kind: "speaker-range",
+        label: "Speaker 7",
+        fromSec: 80,
+        toSec: 80,
+        speaker: "Carol Example",
+        confidence: 0.6083,
+        rules: [MeetingRule.VoiceEmbedding],
+        evidence: {
+            labeler: "voice",
+            reason: "named",
+            seat: "call",
+            score: 0.6083,
+            next: { person: "Bob Example", score: 0.4021 },
+            transcriptLine: 3,
+        },
+    });
+    const strangerLine = item({
+        id: "i3",
+        kind: "speaker-range",
+        label: "Speaker 5",
+        fromSec: 0,
+        toSec: 0,
+        confidence: 0.2,
+        rules: [MeetingRule.VoiceEmbedding],
+        evidence: { reason: "not-the-seat-person", seat: "mic", score: 0.2, seatPerson: "Alice Example" },
+    });
+    const agentLine = item({
+        id: "i4",
+        kind: "speaker-range",
+        label: "Speaker 5",
+        fromSec: 10,
+        toSec: 10,
+        speaker: "Carol Example",
+        confidence: 0.7,
+        rules: [MeetingRule.Agent],
+        evidence: { reason: "Štítek nesleduje jednoho člověka, mluví pod ním dva lidé." },
+    });
+
+    test("every labeler code the types allow reads as a sentence, never as the code", async () => {
+        const { LABELER_REASON_CODES, labelerReasonSentence } = await import("./lib/reason-words");
+        const codes: string[] = [...LABELER_REASON_CODES].sort();
+
+        expect(codes).toEqual(
+            [
+                "named",
+                "exclusion",
+                "exclusion-not-one-voice",
+                "exclusion-too-few-lines",
+                "below-gate",
+                "no-rival-sample",
+                "unsampled-present",
+                "not-the-seat-person",
+                "no-voice",
+                "seat-of-one",
+                "seat-shared",
+                "seat-unknown",
+            ].sort()
+        );
+
+        for (const reason of LABELER_REASON_CODES) {
+            const full = {
+                reason,
+                labeler: "voice",
+                seat: "call",
+                person: "Alice Example",
+                score: 0.6083,
+                next: { person: "Bob Example", score: 0.4021 },
+            };
+
+            for (const evidence of [{ reason }, full]) {
+                const sentence = labelerReasonSentence(evidence);
+                expect(sentence).toBeString();
+                expect(sentence).not.toMatch(CODE_TOKEN);
+                expect(sentence!.split(/[\s,.:;()]+/u)).not.toContain(reason);
+            }
+        }
+
+        expect(
+            labelerReasonSentence({ labeler: "seat", reason: "seat-of-one", seat: "mic", person: "Alice Example" })
+        ).toBe("Only Alice Example sat at this seat, so the line is theirs");
+        expect(
+            labelerReasonSentence({
+                labeler: "voice",
+                reason: "named",
+                seat: "call",
+                person: "Alice Example",
+                score: 0.6083,
+                next: { person: "Bob Example", score: 0.4021 },
+            })
+        ).toBe("Sounds like Alice Example: 0.61 match, next closest Bob Example 0.40");
+        expect(labelerReasonSentence({ reason: "not-the-seat-person", person: "Alice Example" })).toBe(
+            "Does not sound like Alice Example"
+        );
+        // An agent's own words are not a code: the row prints them as they are.
+        expect(labelerReasonSentence({ reason: "Pass 2 (agent): the voices differ" })).toBeUndefined();
+    });
+
+    test("a row's reason parts print the labeler's sentence and keep an agent's own words", async () => {
+        const { reviewRows } = await import("./lib/review-rows");
+        const rows = reviewRows(
+            { ...record, items: [seatLine(), voiceLine, strangerLine, agentLine] },
+            { transcript: meeting.transcript, minPriority: 0 }
+        ).rows;
+        const byId = new Map(rows.map((row) => [row.id, reasons(row)]));
+
+        for (const row of rows) {
+            for (const text of reasons(row)) {
+                expect(text).not.toMatch(CODE_TOKEN);
+                expect(text.split(/[\s,.:;()]+/u)).not.toContain("named");
+            }
+        }
+
+        expect(byId.get("i1")).toContain("Only Alice Example sat at this seat, so the line is theirs");
+        expect(byId.get("i2")).toContain("Sounds like Carol Example: 0.61 match, next closest Bob Example 0.40");
+        expect(byId.get("i3")).toContain("Does not sound like Alice Example");
+        expect(byId.get("i4")).toContain("Štítek nesleduje jednoho člověka, mluví pod ním dva lidé.");
+    });
+
+    test("a voice row carries the voice, the runner-up and the saved samples; a seat line its voice support", async () => {
+        const { reviewRows } = await import("./lib/review-rows");
+        const home = env.tools.getHome();
+        env.testing.set("GENESIS_TOOLS_HOME", mkdtempSync(join(tmpdir(), "rows-voices-")));
+        try {
+            const voices = toolDataDir("meetings", "voices");
+            mkdirSync(voices, { recursive: true });
+            const sample = (meetingId: string, fromSec: number) => ({
+                meeting: meetingId,
+                sourceSha: `digest-${meetingId}`,
+                seat: "call",
+                track: "system",
+                fromSec,
+                toSec: fromSec + 2,
+                embedding: [0.5, 0.25, fromSec],
+                confirmedAt: "2026-11-01T10:00:00Z",
+            });
+            writeFileSync(
+                join(voices, "garden.json"),
+                SafeJSON.stringify({
+                    version: 1,
+                    model: "fixture-model",
+                    people: {
+                        "Carol Example": { samples: [sample("m-one", 1), sample("m-one", 5), sample("m-two", 9)] },
+                    },
+                })
+            );
+            const supported = seatLine({
+                evidence: {
+                    labeler: "seat",
+                    reason: "seat-of-one",
+                    seat: "mic",
+                    transcriptLine: 4,
+                    voiceSupport: { person: "Alice Example", score: 0.78, samples: 0 },
+                },
+            });
+            const rows = reviewRows(
+                { ...record, project: "garden", items: [supported, voiceLine, strangerLine] },
+                { minPriority: 0 }
+            ).rows;
+            const byId = new Map(rows.map((row) => [row.id, row]));
+
+            expect(byId.get("i2")?.voice).toEqual({
+                person: "Carol Example",
+                score: 0.6083,
+                next: { person: "Bob Example", score: 0.4021 },
+                samples: { count: 3, meetings: 2 },
+                seat: "call",
+                support: false,
+            });
+            expect(byId.get("i1")?.voice).toEqual({
+                person: "Alice Example",
+                score: 0.78,
+                samples: { count: 0, meetings: 0 },
+                seat: "mic",
+                support: true,
+            });
+            // The seat's confidence stays; the voice only supports it.
+            expect(byId.get("i1")?.confidence).toBe(0.95);
+            expect(byId.get("i3")?.voice).toBeUndefined();
+
+            // A person confirmed another speaker: the row still says whom the voice matched, never the correction.
+            const corrected = item({
+                ...voiceLine,
+                id: "i9",
+                status: "confirmed",
+                speaker: "Bob Example",
+                decidedAt: meeting.start,
+                decision: { token: "fixture-token", previous: { status: "suggested", speaker: "Carol Example" } },
+            });
+            const row = reviewRows({ ...record, project: "garden", items: [corrected] }, { minPriority: 0 }).rows[0]!;
+
+            expect(row.voice?.person).toBe("Carol Example");
+            expect(reasons(row)).toContain("Sounds like Carol Example: 0.61 match, next closest Bob Example 0.40");
+        } finally {
+            env.testing.set("GENESIS_TOOLS_HOME", home);
+        }
+    });
+
+    test("every kind has a word from one table, and an unreliable label says what its choices do", async () => {
+        const { reviewRow } = await import("./lib/review-rows");
+        const label = item({
+            id: "i5",
+            kind: "label",
+            label: "Bob Example",
+            fromSec: 0,
+            toSec: 6103,
+            meaningless: true,
+            confidence: 0.8,
+            evidence: { reason: "Two people speak under this label." },
+        });
+        const row = reviewRow({ ...record, items: [label] }, label);
+
+        expect(row.kindWord).toBe("Unreliable label");
+        expect(row.what).toBe('The label "Bob Example" does not belong to one person (00:00 to 1:41:43)');
+        expect(row.choices.map((choice) => [choice.label, choice.action.kind])).toEqual([
+            ["Mark its lines unclear", "confirm"],
+            ["Keep the label", "reject"],
+        ]);
+
+        const kinds = [
+            seatLine(),
+            label,
+            item({ id: "i6", kind: "term", atSec: 5, heard: "Ada", proposed: "ADA", confidence: 0.9 }),
+            item({ id: "i7", kind: "join", atSec: 10, joined: "databází", confidence: 0.9 }),
+            item({ id: "i8", kind: "removal", fromSec: 0, toSec: 2, heard: "echo", confidence: 0.9 }),
+            item({
+                id: "i9",
+                kind: "question",
+                about: "speaker",
+                fromSec: 0,
+                toSec: 10,
+                question: "Who speaks?",
+                choices: [],
+                decides: [],
+            }),
+        ];
+        const words = kinds.map((one) => reviewRow({ ...record, items: kinds }, one).kindWord);
+
+        expect(words).toEqual([
+            "Speaker range",
+            "Unreliable label",
+            "Spelling",
+            "Join lines",
+            "Local speech output",
+            "Question",
+        ]);
+    });
+
+    test("open rows come before decided rows, each group in the order listen asks (U15, U16)", async () => {
+        const { reviewRows } = await import("./lib/review-rows");
+        const ask = (id: string, fromSec: number, status: string) =>
+            item({
+                id,
+                kind: "question",
+                status,
+                about: "speaker",
+                fromSec,
+                toSec: fromSec + 5,
+                question: `Who speaks at ${fromSec}?`,
+                choices: [],
+                decides: [],
+            });
+        const range = (id: string, fromSec: number, status: string) =>
+            item({ id, kind: "speaker-range", status, label: "Speaker 5", fromSec, toSec: fromSec, confidence: 0.9 });
+        // Questions i11 to i13, speaker ranges i21 to i23.
+        const items = [
+            ask("i11", 10, "rejected"),
+            ask("i12", 50, "suggested"),
+            ask("i13", 70, "suggested"),
+            range("i21", 5, "suggested"),
+            range("i22", 1, "confirmed"),
+            range("i23", 3, "rejected"),
+        ];
+
+        expect(reviewRows({ ...record, items }, { minPriority: 0 }).rows.map((row) => row.id)).toEqual([
+            "i12",
+            "i13",
+            "i21",
+            "i11",
+            "i22",
+            "i23",
+        ]);
+    });
+
+    test("items add --help names the reader of a reason and its language", () => {
+        const program = new Command();
+        registerItemCommands(program);
+        const add = program.commands
+            .find((command) => command.name() === "items")
+            ?.commands.find((command) => command.name() === "add");
+
+        // Commander wraps long help lines; the words are checked as one line.
+        const help = add?.helpInformation().replace(/\s+/gu, " ");
+
+        expect(help).toContain("in the meeting's language");
+        expect(help).toContain("for the person who reviews the meeting");
+    });
+});
+
 describe("appliedLine", () => {
     const none = {
         removed: 0,
@@ -1218,8 +1542,164 @@ describe("evidence rule after a leave", () => {
     });
 });
 
+test.each([
+    ["scratch", false, 0],
+    ["scratch", true, 1],
+    ["default", false, 1],
+] as const)("record start in the %s store with autostart enabled=%s", async (store, enabled, starts) => {
+    const scratch = mkdtempSync(join(tmpdir(), "meeting-record-start-"));
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: scratch }, async () => {
+        await new MeetingsConfigStore().setAutoRecord(enabled);
+        const meeting = await new MeetingStore().create(
+            { title: "Planning", start: "2026-11-02T15:00:00.000Z", createdBy: "record" },
+            { command: "test", change: "fixture" }
+        );
+        const grant = spyOn(await import("./lib/grants"), "ensureScreenRecording").mockResolvedValue({
+            granted: true,
+            identity: "fixture",
+        });
+        const spawn = spyOn(await import("@genesiscz/utils/cli"), "spawnToolDetached").mockReturnValue(12345);
+        const ack = spyOn(await import("./lib/recorder-shared"), "recorderAcknowledged").mockReturnValue(true);
+        const watcher = spyOn(await import("./lib/watcher"), "ensureWatcher").mockResolvedValue("started");
+        const stderr = spyOn(process.stderr, "write").mockReturnValue(true);
+        // The store stays in the fixture; only the question "is this the default store?" answers as the case says.
+        // An env.testing HOME override does not reach os.homedir(), which sandboxInstalled() compares with.
+        const sandbox = spyOn(
+            await import("@genesiscz/utils/storage/real-home-guard"),
+            "sandboxInstalled"
+        ).mockReturnValue(store === "scratch");
+        try {
+            const program = new Command();
+            registerRecordCommands(program);
+            await program.parseAsync(["record", "start", "--meeting", meeting.id, "--yes"], { from: "user" });
+
+            expect(spawn.mock.calls).toEqual([[["meetings", "record", "run", meeting.id]]]);
+            expect(watcher).toHaveBeenCalledTimes(starts);
+            const lines = stderr.mock.calls.map(([chunk]) => String(chunk));
+            expect(lines.some((line) => line.includes(`Recording the screen for ${meeting.id}`))).toBe(true);
+            const notice = "Watcher autostart is off for this store, so start it with `tools meetings watch`.\n";
+            expect(lines.filter((line) => line.includes("tools meetings watch"))).toEqual(starts ? [] : [notice]);
+        } finally {
+            sandbox.mockRestore();
+            stderr.mockRestore();
+            watcher.mockRestore();
+            ack.mockRestore();
+            spawn.mockRestore();
+            grant.mockRestore();
+        }
+    });
+});
+
+test.each([
+    ["scratch", false, 0],
+    ["scratch", true, 1],
+    ["default", false, 1],
+] as const)(
+    "a meeting end in the %s store with autostart enabled=%s asks for the watcher as record start does",
+    async (store, enabled, starts) => {
+        const scratch = mkdtempSync(join(tmpdir(), "meeting-end-watcher-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: scratch }, async () => {
+            await new MeetingsConfigStore().setAutoRecord(enabled);
+            const asked = spyOn(await import("./lib/assign"), "askAtMeetingEnd").mockResolvedValue({
+                outcome: "asked",
+                formId: "form-1",
+            });
+            const watcher = spyOn(await import("./lib/watcher"), "ensureWatcher").mockResolvedValue("started");
+            const sandbox = spyOn(
+                await import("@genesiscz/utils/storage/real-home-guard"),
+                "sandboxInstalled"
+            ).mockReturnValue(store === "scratch");
+            try {
+                await askProjectAtEnd(new MeetingStore(), "2026-11-02_15-00-planning");
+                expect(watcher).toHaveBeenCalledTimes(starts);
+            } finally {
+                sandbox.mockRestore();
+                watcher.mockRestore();
+                asked.mockRestore();
+            }
+        });
+    }
+);
+
+test("an unreadable Screen Recording grant reports the original error even with sound fallback disabled", async () => {
+    const read = spyOn(await import("@app/control/lib/permissions"), "readLivePermissions").mockReturnValue({
+        live: null,
+        error: "fixture helper returned an incomplete envelope",
+    });
+    try {
+        const { ensureScreenRecording } = await import("./lib/grants");
+        const result = await ensureScreenRecording({ quiet: true });
+        expect(result.granted).toBe(false);
+        expect(result.message).toContain("could not read the grant");
+        expect(result.message).toContain("fixture helper returned an incomplete envelope");
+    } finally {
+        read.mockRestore();
+    }
+});
+
+test("record start chooses frames only on a positive live grant and preserves the read error", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "meeting-grant-"));
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: scratch }, async () => {
+        const store = new MeetingStore();
+        const meeting = await store.create(
+            { title: "Orchard planning", start: "2026-11-02T15:00:00Z", createdBy: "record" },
+            { command: "test", change: "fixture" }
+        );
+        const live = {
+            accessibility: true,
+            viaGenesisApp: true,
+            responsiblePid: 42,
+            responsibleBundleId: "org.example.fixture",
+            responsiblePath: "/fixture",
+            screenRecording: true,
+        };
+        const grant = spyOn(await import("@app/control/lib/permissions"), "readLivePermissions");
+        const inbox = spyOn(await import("@app/question/lib/message"), "sendInboxMessage").mockRejectedValue(
+            new Error("fixture inbox offline")
+        );
+        const banner = spyOn(
+            await import("@genesiscz/utils/macos/notifications"),
+            "sendNotification"
+        ).mockRejectedValue(new Error("fixture notifications offline"));
+        const spawn = spyOn(await import("@genesiscz/utils/cli"), "spawnToolDetached").mockReturnValue(42);
+        const ack = spyOn(await import("./lib/recorder-shared"), "recorderAcknowledged").mockReturnValue(true);
+        const oldExit = process.exitCode;
+        try {
+            for (const [read, reason] of [
+                [{ live }, undefined],
+                [{ live: { ...live, screenRecording: false } }, "not granted"],
+                [{ live: null, error: "fixture probe timed out" }, "could not read the grant"],
+            ] as const) {
+                grant.mockReturnValue(read);
+                spawn.mockClear();
+                const program = new Command();
+                registerRecordCommands(program);
+                await program.parseAsync(["record", "start", "--meeting", meeting.id, "--yes"], { from: "user" });
+                const args = spawn.mock.calls[0]?.[0];
+                expect(args?.slice(0, 4)).toEqual(["meetings", "record", "run", meeting.id]);
+                if (reason) {
+                    expect(args?.[4]).toBe("--without-screen");
+                    expect(args?.[5]).toContain(reason);
+                    if (!read.live) {
+                        expect(args?.[5]).toContain("fixture probe timed out");
+                    }
+                } else {
+                    expect(args).toHaveLength(4);
+                }
+            }
+        } finally {
+            process.exitCode = oldExit;
+            inbox.mockRestore();
+            banner.mockRestore();
+            ack.mockRestore();
+            spawn.mockRestore();
+            grant.mockRestore();
+        }
+    });
+});
+
 describe("watchOnce", () => {
-    const settings = { enabled: true, liveWithinSec: 30, notify: true };
+    const settings = { enabled: true, liveWithinSec: 30, notify: true, permissionCard: true };
     const now = Date.parse("2026-11-02T15:10:00.000Z");
     const live = {
         sourceMeetingId: "w1",
@@ -1237,6 +1717,21 @@ describe("watchOnce", () => {
         const refreshed: string[] = [];
         let running = false;
         const deps: Partial<WatchDeps> = {
+            grantCard: async () => {},
+            grants: () => ({
+                live: {
+                    accessibility: true,
+                    screenRecording: true,
+                    viaGenesisApp: true,
+                    responsiblePid: 42,
+                    responsibleBundleId: "org.example.fixture",
+                    responsiblePath: "/fixture",
+                    responsibleName: "Fixture",
+                    microphone: true,
+                },
+            }),
+            wantsMicrophone: async () => true,
+            inbox: async () => "fixture-inbox-id",
             archiveAudio: async () => false,
             refresh: async (meetingId, sourceRef) => {
                 refreshed.push(`${meetingId} ${sourceRef}`);
@@ -1260,6 +1755,7 @@ describe("watchOnce", () => {
             notify: async (note) => {
                 notes.push(note.title);
                 posted.push(note);
+                return true;
             },
             ...over,
         };
@@ -1358,17 +1854,35 @@ describe("watchOnce", () => {
     });
 
     test("a slow source-audio pass never holds the recorder control, and one pass runs at a time", async () => {
+        const started = Promise.withResolvers<void>();
+        const copy = Promise.withResolvers<boolean>();
         let passes = 0;
         const h = harness({
             archiveAudio: () => {
                 passes += 1;
-                return new Promise<boolean>(() => {});
+                started.resolve();
+                return copy.promise;
             },
         });
 
-        expect(await watchOnce(h.store, { deps: h.deps, now, archiveBudgetMs: 5 })).toBe("started");
-        expect(await watchOnce(h.store, { deps: h.deps, now, archiveBudgetMs: 5 })).toBe("recording");
-        expect(passes).toBe(1);
+        try {
+            expect(await watchOnce(h.store, { deps: h.deps, now, archiveBudgetMs: 5 })).toBe("started");
+            await withTimeout(started.promise, 1000);
+            expect(await watchOnce(h.store, { deps: h.deps, now, archiveBudgetMs: 5 })).toBe("recording");
+            const stopping = runWatcher(h.store, {
+                loop: (store) => watchLoop(store, AbortSignal.abort()),
+            });
+            await withTimeout(stopping, 1000);
+            expect(existsSync(watcherPidPath(h.store))).toBe(false);
+
+            // A different store object for the same root cannot depend on the old watcher's in-memory promise.
+            const replacement = new MeetingStore(h.store.storage);
+            expect(await watchOnce(replacement, { deps: h.deps, now, archiveBudgetMs: 100 })).toBe("recording");
+            expect(passes).toBe(1);
+        } finally {
+            copy.resolve(true);
+            await watchOnce(h.store, { deps: h.deps, now, archiveBudgetMs: 1000 });
+        }
     });
 
     test("completed linked audio is preserved on the next tick even with capture autostart off", async () => {
@@ -1479,7 +1993,9 @@ describe("watchOnce", () => {
         });
 
         expect(await watchOnce(recent.store, { deps: recent.deps, now })).toBe("started");
-        expect(recent.runs).toEqual([["meetings", "record", "start", "--meeting", "m-dead-recent", "--yes"]]);
+        expect(recent.runs).toEqual([
+            ["meetings", "record", "start", "--meeting", "m-dead-recent", "--yes", "--from-watcher"],
+        ]);
         // A start that died again at once is not repeated within RESUME_GAP_MS.
         expect(await watchOnce(recent.store, { deps: recent.deps, now: now + 10_000 })).toBe("idle");
         expect(recent.runs).toHaveLength(1);
@@ -1523,7 +2039,7 @@ describe("watchOnce", () => {
 
         expect(await watchOnce(h.store, later(60))).toBe("idle");
         expect(await watchOnce(h.store, later(160))).toBe("started");
-        expect(h.runs.at(-1)).toEqual(["meetings", "record", "start", "--meeting", "m1", "--yes"]);
+        expect(h.runs.at(-1)).toEqual(["meetings", "record", "start", "--meeting", "m1", "--yes", "--from-watcher"]);
         expect(h.notes).toEqual(["Recording the screen"]);
 
         await h.deps.run?.(["meetings", "record", "stop"]);
@@ -1563,7 +2079,9 @@ describe("watchOnce", () => {
         });
         expect(await watchOnce(h.store, { deps: h.deps, now })).toBe("started");
         expect(await watchOnce(h.store, { deps: h.deps, now: now + 10_000 })).toBe("idle");
-        expect(h.runs).toEqual([["meetings", "record", "start", "--meeting", state.meetingId, "--yes"]]);
+        expect(h.runs).toEqual([
+            ["meetings", "record", "start", "--meeting", state.meetingId, "--yes", "--from-watcher"],
+        ]);
         recording = { status: "stopped", stopReason: "requested" };
         expect(await watchOnce(h.store, { deps: h.deps, now: now + 120_000 })).toBe("disabled");
         expect(h.runs).toHaveLength(1);
@@ -1675,7 +2193,7 @@ describe("watchOnce", () => {
         h.deps.recorder = () => readRecorderState(h.store);
         expect(hasRecordingToWatch(h.store)).toBe(true);
         expect(await watchOnce(h.store, { deps: h.deps, now })).toBe("started");
-        expect(h.runs).toEqual([["meetings", "record", "start", "--meeting", created.id, "--yes"]]);
+        expect(h.runs).toEqual([["meetings", "record", "start", "--meeting", created.id, "--yes", "--from-watcher"]]);
         await h.store.update(created.id, { command: "test", change: "explicit stop" }, (record) => {
             record.recording = { ...record.recording, status: "stopped", stopReason: "requested" };
         });
@@ -1726,7 +2244,9 @@ describe("watchOnce", () => {
         const h = harness();
 
         expect(await watchOnce(h.store, { deps: h.deps, now })).toBe("started");
-        expect(h.runs).toEqual([["meetings", "record", "start", "--source", "wisprflow:w1", "--yes"]]);
+        expect(h.runs).toEqual([
+            ["meetings", "record", "start", "--source", "wisprflow:w1", "--yes", "--from-watcher"],
+        ]);
         expect(h.notes).toEqual(["Recording the screen"]);
         // A click must do something: a stop button, and a subtitle even before Wispr names the meeting.
         expect(h.posted[0]?.actions).toEqual([expect.objectContaining({ id: "stop", title: "Stop recording" })]);
@@ -1857,6 +2377,231 @@ describe("watchOnce", () => {
         expect(readAuto(h.store)?.sourceMeetingId).toBe("w2");
     });
 
+    test("preflight persists the grant card at startup, reads hourly and clears it after recovery or disable", async () => {
+        const home = mkdtempSync(join(tmpdir(), "recording-preflight-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const { readWidgetState } = await import("@app/hub/lib/widget/storage");
+            let reads = 0;
+            let enabled = true;
+            let granted = false;
+            const h = harness({
+                settings: async () => ({ ...settings, enabled }),
+                liveRecording: async () => null,
+                grants: () => {
+                    reads++;
+                    return {
+                        live: {
+                            accessibility: true,
+                            screenRecording: granted,
+                            microphone: granted,
+                            viaGenesisApp: true,
+                            responsiblePid: 42,
+                            responsibleBundleId: "org.example.orchard",
+                            responsiblePath: "/fixture",
+                        },
+                    };
+                },
+            });
+            delete h.deps.grantCard; // Exercise the persisted widget state, including the hub's decoding schema.
+            const tick = (after: number) => watchOnce(h.store, { deps: h.deps, now: now + after });
+            await tick(0);
+            expect((await readWidgetState()).meetingRecordingWarning).toBe("Screen Recording, Microphone");
+            granted = true;
+            await tick(3_599_999);
+            expect(reads).toBe(1);
+            expect((await readWidgetState()).meetingRecordingWarning).toBe("Screen Recording, Microphone");
+            await tick(3_600_000);
+            expect(reads).toBe(2);
+            expect((await readWidgetState()).meetingRecordingWarning).toBeUndefined();
+            h.deps.grants = () => ({ live: null, error: "fixture helper timed out" });
+            await tick(7_200_000);
+            expect((await readWidgetState()).meetingRecordingWarning).toBe(
+                "could not read the grant: fixture helper timed out"
+            );
+            enabled = false;
+            await tick(7_215_000);
+            expect((await readWidgetState()).meetingRecordingWarning).toBeUndefined();
+        });
+    });
+
+    test("changing autostart refuses a non-default store without writing settings or spawning", async () => {
+        const { store } = harness();
+        const spawn = spyOn(await import("@genesiscz/utils/cli"), "spawnToolDetached").mockImplementation(() => {
+            throw new Error("watcher spawn must be refused");
+        });
+        try {
+            await expect(recordingAutostart("on", store)).rejects.toThrow("configured meetings store");
+            await expect(recordingAutostart("off", store)).rejects.toThrow("configured meetings store");
+            expect(existsSync(store.storage.getConfigPath())).toBe(false);
+            expect(spawn).not.toHaveBeenCalled();
+            expect(await recordingAutostart("status", store)).toEqual({
+                enabled: false,
+                running: false,
+                lastFailure: undefined,
+            });
+        } finally {
+            spawn.mockRestore();
+        }
+    });
+
+    test("newer code ends the old watcher and the daemon starts a fresh owner", async () => {
+        const home = mkdtempSync(join(tmpdir(), "recording-restart-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const store = new MeetingStore();
+            const { superviseMeetingsWatcher } = await import("@app/daemon/daemon");
+            const claimed = Promise.withResolvers<void>();
+            const replacement = Promise.withResolvers<void>();
+            let stamp = 0;
+            const old = runWatcher(store, {
+                everyMs: 5,
+                newest: () => stamp,
+                loop: async (_, signal) => {
+                    claimed.resolve();
+                    await new Promise<void>((resolve) =>
+                        signal.addEventListener("abort", () => resolve(), { once: true })
+                    );
+                },
+            });
+            await claimed.promise;
+            const spawn = spyOn(await import("@genesiscz/utils/cli"), "spawnToolDetached").mockImplementation(() => {
+                writePidFile(watcherPidPath(store));
+                replacement.resolve();
+                return process.pid;
+            });
+            let stopSupervising: (() => void) | undefined;
+            try {
+                expect(await ensureWatcher()).toBe("running");
+                stamp = Date.now() + 1_000;
+                await withTimeout(old, 2_000);
+                expect(existsSync(watcherPidPath(store))).toBe(false);
+                stopSupervising = superviseMeetingsWatcher(60_000);
+                await withTimeout(replacement.promise, 2_000);
+                expect(await ensureWatcher()).toBe("running");
+                expect(spawn.mock.calls).toEqual([[["meetings", "watch"]]]);
+            } finally {
+                stamp = Date.now() + 1_000;
+                stopSupervising?.();
+                spawn.mockRestore();
+                clearPidFile(watcherPidPath(store));
+            }
+        });
+    });
+
+    test("failed start logs live grants, posts one inbox message and retries only the unconfirmed banner", async () => {
+        const fields: unknown[] = [];
+        const messages: string[] = [];
+        let banners = 0;
+        const h = harness({
+            run: async () => ({ success: false, exitCode: 1, stderr: "Screen Recording permission failed\n" }),
+            inbox: async (title, text) => {
+                messages.push(`${title}\n${text}`);
+                return "receipt";
+            },
+            notify: async () => ++banners > 1,
+            logStart: (entry) => {
+                fields.push(entry);
+            },
+        });
+        const options = { deps: h.deps, now };
+        expect(await watchOnce(h.store, options)).toBe("failed");
+        expect(fields).toEqual([
+            expect.objectContaining({
+                viaGenesisApp: true,
+                responsibleName: "Fixture",
+                screenRecording: true,
+                microphone: true,
+            }),
+        ]);
+        const reopened = new MeetingStore(h.store.storage);
+        expect((await recordingAutostart("status", reopened)).lastFailure).toMatchObject({
+            meeting: "Planning",
+            at: new Date(now).toISOString(),
+            inboxId: "receipt",
+            confirmed: false,
+        });
+        await watchOnce(reopened, { ...options, now: now + 60_000 });
+        expect(messages).toHaveLength(1);
+        expect(messages[0]).toContain("Planning: Screen Recording permission failed");
+        expect(messages[0]).toContain("tools macos permissions ui");
+        expect(banners).toBe(2);
+        expect((await recordingAutostart("status", reopened)).lastFailure?.confirmed).toBe(true);
+    });
+
+    test("a lost inbox receipt is recovered without a duplicate and the autostart command prints the failure", async () => {
+        const home = mkdtempSync(join(tmpdir(), "meeting-alert-receipt-"));
+        const logBase = join(home, "question-log");
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home, QUESTION_LOG_BASE: logBase }, async () => {
+            const { registerWatchCommands } = await import("./commands/watch");
+            const { sendInboxMessage } = await import("@app/question/lib/message");
+            const store = new MeetingStore();
+            const h = harness({
+                run: async () => ({ success: false, exitCode: 1, stderr: "Microphone permission denied" }),
+                inbox: async (title, text, sessionHint) => {
+                    await sendInboxMessage(
+                        { title, text, sessionHint, source: "cli", interrupt: false },
+                        { env: {}, logBase, config: { sinks: { obsidian: false, sound: false, notify: false } } }
+                    );
+                    throw new Error("fixture stopped between append and receipt");
+                },
+            });
+            expect(await watchOnce(store, { deps: h.deps, now })).toBe("failed");
+            expect(readdirSync(logBase)).toHaveLength(1);
+            // A fresh watcher uses the actual question-log reader to find the existing card.
+            delete h.deps.inbox;
+            await watchOnce(new MeetingStore(), { deps: h.deps, now: now + 60_000 });
+            const rows = readFileSync(join(logBase, readdirSync(logBase)[0]), "utf8")
+                .trim()
+                .split("\n");
+            expect(rows).toHaveLength(1);
+            const cli = new Command();
+            registerWatchCommands(cli);
+            const warning = spyOn(ui, "warn").mockImplementation(() => {});
+            try {
+                await cli.parseAsync(["autostart"], { from: "user" });
+                const printed = String(warning.mock.calls[0]?.[0]);
+                expect(printed).toContain("Last recording failure at");
+                expect(printed).toContain("Planning: Microphone permission denied");
+                expect(printed).toContain("Notification delivery: confirmed");
+            } finally {
+                warning.mockRestore();
+            }
+        });
+    });
+
+    test("sound-only autostart posts one partial-start notice and records who owns the running recorder", async () => {
+        const messages: string[] = [];
+        let running = false;
+        const h = harness({
+            run: async () => {
+                running = true;
+                return { success: true, exitCode: 0, stderr: "" };
+            },
+            recorder: () =>
+                running
+                    ? {
+                          running,
+                          state: {
+                              meetingId: "orchard",
+                              startedAt: live.startedAt,
+                              pid: 42,
+                              display: "main",
+                              frames: 0,
+                              bytes: 0,
+                              withoutScreen: "Screen Recording is not granted.",
+                          },
+                      }
+                    : { running },
+            inbox: async (_, text) => {
+                messages.push(text);
+                return "partial-inbox";
+            },
+        });
+        expect(await watchOnce(h.store, { deps: h.deps, now })).toBe("started");
+        expect(await watchOnce(h.store, { deps: h.deps, now })).toBe("recording");
+        expect(messages).toHaveLength(1);
+        expect(h.notes).toEqual(["Meeting recording is incomplete"]);
+    });
+
     test("a start that failed (no grant) is not retried for the same meeting", async () => {
         const h = harness({
             run: async () => ({ success: false, exitCode: 1, stderr: "Screen Recording is not granted" }),
@@ -1965,6 +2710,47 @@ test("a rejected line spelling fix does not suppress an everywhere suggestion", 
 });
 
 describe("fuzzy dictionary suggestions (R2.5)", () => {
+    test("automatic terms: the fuzzy dictionary respects dictionary and spoken Czech verdicts", () => {
+        const items = suggestItems({
+            record,
+            meeting: {
+                ...meeting,
+                transcript: [line("Alice Example", 0, "Vramel."), line("Alice Example", 8, "Vrafel.")],
+            },
+            rules: ["terms"],
+            dictionary: { abbrExpansion: "off", entries: [{ type: "term", value: "Vranel" }] },
+            sourceWords: [],
+            wordCheck: {
+                language: "cs",
+                provider: "fixture",
+                verdict: (word) => ({ class: word === "Vramel" ? "dictionary" : "spoken", count: 1 }),
+                dispose() {},
+            },
+            now: meeting.start,
+        });
+        expect(items.filter((item) => item.kind === "term")).toEqual([]);
+    });
+
+    test("automatic terms: a clipped loan phrase heard once keeps its Czech ending", () => {
+        const suggest = (...vocabulary: string[]) =>
+            suggestItems({
+                record,
+                meeting: { ...meeting, transcript: [line("Alice Example", 8, "Veln basky")] },
+                rules: ["terms"],
+                dictionary: { abbrExpansion: "off", entries: [] },
+                sourceWords: vocabulary.map((value) => ({ value })),
+                now: meeting.start,
+            }).filter((item) => item.kind === "term");
+        const corrected = expect.objectContaining({
+            heard: "Veln basky",
+            proposed: "Veln rebasky",
+            status: "suggested",
+        });
+        expect(suggest("Veln rebask")).toContainEqual(corrected);
+        expect(suggest("Veln", "Veln rebask")).toContainEqual(corrected);
+        expect(suggest("Veln")).toEqual([]);
+    });
+
     test("a word close to a term but below the apply score becomes a term item with its score", () => {
         const items = suggestItems({
             record,
@@ -2176,6 +2962,29 @@ describe("questions (R2.3)", () => {
                 []
             ).map((item) => item.decides)
         ).toEqual([["i5"], ["i6"]]);
+    });
+
+    test("a question with several answer targets keeps its priority on the 1 to 3 scale and its reach in the rank", () => {
+        const [picked] = selectQuestions(
+            [
+                {
+                    kind: "question",
+                    status: "suggested",
+                    about: "speaker",
+                    fromSec: 100,
+                    toSec: 110,
+                    question: "Who?",
+                    choices: ["Bob Example", "Carol Example"],
+                    decides: ["i1", "i2", "i3"],
+                    rules: [],
+                    confidence: 0.2,
+                    evidence: { words: 20, impact: 9, labels: ["Speaker 5"] },
+                },
+            ],
+            []
+        );
+        expect(picked?.priority).toBe(3);
+        expect(picked?.evidence).toMatchObject({ reach: 3, rank: 0.8 * 20 * 3 });
     });
 
     test("a cluster question counts its one passage's words once and keeps the rank it was asked with", () => {
@@ -3062,6 +3871,26 @@ test("raw evidence uses explicit attendance for both presence and stays", () => 
     expect(raw.lines[0]?.present).toEqual(["New Example"]);
     expect(raw.people.find((person) => person.name === "New Example")?.stays).toEqual([{ fromSec: 0, toSec: 100 }]);
     expect(raw.indicator!.knownLines + raw.indicator!.unknownLines).toBe(raw.lines.length);
+});
+
+test("raw evidence identifies the source of the actual stored leave", () => {
+    const stay = {
+        fromSec: 10,
+        toSec: 2400,
+        source: "platform-roster" as const,
+        leaveSource: "goodbye" as const,
+        confidence: 0.8,
+    };
+    const read = (toSec: number) =>
+        rawMeeting({
+            record: { ...record, participants: [{ name: "River Example", from: ["platform-roster"], stays: [stay] }] },
+            meeting,
+            evidence: null,
+            points: [],
+            presence: [{ name: "River Example", fromSec: 10, toSec }],
+        }).people.find((person) => person.name === "River Example")?.stays[0];
+    expect(read(2400)).toEqual(stay);
+    expect(read(3000)).not.toHaveProperty("leaveSource");
 });
 
 test("identical single-word names match without accepting partial single-word names", () => {
@@ -5069,6 +5898,360 @@ test("characterization (stage 5): a live recorder's claim is refused and left as
     expect(existsSync(files.state)).toBe(false);
 });
 
+/** Three frame pieces on a generated sample clock. Each frame releases the corresponding sound segment. */
+async function recordSoundTimeline(interrupted: boolean) {
+    const store = new MeetingStore(new Storage(interrupted ? "sound-timeline-restart" : "sound-timeline"));
+    const zero = Date.now();
+    const iso = (offset: number) => new Date(zero + offset).toISOString();
+    const record = await store.create(
+        { title: "Sound timeline", start: iso(-3500), createdBy: "record" },
+        { command: "test", change: "fixture" }
+    );
+    const folder = store.folder(record.id);
+    if (interrupted) {
+        // A closed file survived a recorder crash. No frame or sound was kept during the next 2.5 seconds.
+        await store.update(record.id, { command: "test", change: "interrupted run" }, (next) => {
+            next.recording = { status: "recording", startedAt: iso(-3500), spans: [{ from: iso(-3500) }] };
+        });
+        mkdirSync(join(folder, "audio"), { recursive: true });
+        const file = "audio/earlier-mic.m4a";
+        writeFileSync(join(folder, file), "previous file");
+        mkdirSync(join(folder, ".piece"), { recursive: true });
+        writeFileSync(
+            join(folder, ".piece", "sound-events.jsonl"),
+            `${SafeJSON.stringify({
+                kind: "device",
+                source: "mic",
+                atMs: zero - 3400,
+                untilMs: zero - 3300,
+            })}\n`
+        );
+        writeFileSync(
+            join(folder, "audio.jsonl"),
+            `${SafeJSON.stringify({
+                file,
+                source: "mic",
+                at: iso(-3500),
+                zeroAt: iso(-3500),
+                durationMs: 1000,
+                mutedSpans: [],
+                lostSpans: [[100, 200]],
+            })}\n`
+        );
+    }
+
+    const liveDir = mkdtempSync(join(tmpdir(), "meeting-timeline-live-"));
+    const third = Promise.withResolvers<void>();
+    const allSound = Promise.withResolvers<void>();
+    const requests: CaptureRequest[] = [];
+    let starts = 0;
+    let segments = 0;
+    class TimelineRecorder extends NativeFrameRecorder {
+        override startAudioSession(options: Parameters<NativeFrameRecorder["startAudioSession"]>[0]) {
+            starts++;
+            return super.startAudioSession({
+                ...options,
+                onSegment: (row) => {
+                    options.onSegment?.(row);
+                    if (++segments === 6) {
+                        allSound.resolve();
+                    }
+                },
+            });
+        }
+
+        override async capture(request: CaptureRequest, signal?: AbortSignal): Promise<CaptureResult> {
+            const piece = requests.push(request);
+            const path = join(request.outDir, "keep.png");
+            writeFileSync(path, "png");
+            writeFileSync(join(folder, ".piece", `frame-${piece}`), "");
+            if (piece === 3) {
+                third.resolve();
+                if (signal && !signal.aborted) {
+                    await withTimeout(
+                        new Promise<void>((resolve) =>
+                            signal.addEventListener("abort", () => resolve(), { once: true })
+                        ),
+                        10_000,
+                        new Error("fixture did not receive stop")
+                    );
+                }
+            }
+            return {
+                startedAtMs: zero + (piece - 1) * 30_000,
+                frames: [{ path, atMs: 0, displayId: 1, changePercent: 10, reason: "first" }],
+            };
+        }
+    }
+    const recorder = new TimelineRecorder({
+        axTool: async () => [
+            process.execPath,
+            join(moduleDir(import.meta), "../utils/screen-recorder/__fixtures__/fake-ax-tool.ts"),
+            `--fixture-meeting-timeline=${zero}`,
+        ],
+        launch: (argv) => argv,
+    });
+    const capture = meetingsConfigSchema.parse({
+        global: {
+            capture: {
+                displays: "main",
+                ...(interrupted ? { recorders: { native: { audio: { mode: "session" } } } } : {}),
+            },
+        },
+    }).global.capture;
+    const running = runRecorder({
+        store,
+        meetingId: record.id,
+        capture,
+        deps: {
+            recorder,
+            liveDir,
+            startOcr: () => undefined,
+            notify: async () => {},
+            toJpeg: async (_png, jpg) => {
+                await Bun.write(jpg, "jpeg");
+            },
+        },
+    });
+    try {
+        await withTimeout(third.promise, 5000, new Error("missing third frame piece"));
+        expect(starts).toBe(1);
+        expect(requests.map((request) => request.audio)).toEqual([undefined, undefined, undefined]);
+        await withTimeout(allSound.promise, 5000, new Error("missing continuous sound"));
+    } finally {
+        await callRecorder({ id: meetingLiveId(record.id), method: "stop", dir: liveDir });
+        await running;
+    }
+    return { folder, zero, rows: readAudioRows(folder), frames: store.read(record.id)?.recording?.frames };
+}
+
+test("default meeting sound covers two frame piece restarts without a gap", async () => {
+    const { rows, folder, zero, frames } = await recordSoundTimeline(false);
+    expect(frames).toBe(3);
+    for (const source of ["mic", "system"]) {
+        const tracks = rows.filter((row) => row.source === source);
+        expect(tracks.map((row) => audioRowZeroMs(row) - zero)).toEqual([0, 30_000, 60_000]);
+        let samples = 0;
+        for (const row of tracks) {
+            const pcm = readFileSync(join(folder, row.file));
+            expect(pcm.toString("ascii", 0, 4)).toBe("RIFF");
+            expect(pcm.readUInt32LE(24)).toBe(16_000);
+            expect(pcm.length - 44).toBe(row.durationMs * 16 * 2);
+            expect(row.lostSpans ?? []).toEqual([]);
+            // Each second has its own sample marker, including either side of both piece boundaries.
+            for (let second = 0; second < 30; second++) {
+                const marker = samples / 16_000 + second + 1;
+                expect(pcm.readInt16LE(44 + second * 32_000)).toBe(source === "mic" ? marker : -marker);
+            }
+            samples += (pcm.length - 44) / 2;
+        }
+        expect(samples).toBe(1_440_000);
+        out.result(`${source}: ${samples / 16_000}/90 s, 3 pieces, 0 ms missing`);
+    }
+}, 15_000);
+
+test("an interrupted recorder writes the uncovered sound span and its reason", async () => {
+    const { rows } = await recordSoundTimeline(true);
+    expect(rows.find((row) => row.file === "audio/earlier-mic.m4a")).toMatchObject({
+        durationMs: 1000,
+        lostSpans: [
+            [100, 200],
+            [1000, 3500],
+        ],
+        lostSpanReasons: ["microphone input changed", "recorder interrupted"],
+    });
+    expect(rows.filter((row) => row.source === "system").every((row) => !row.lostSpans?.length)).toBe(true);
+}, 15_000);
+
+test("native sound mode and each fallback reach live status, the meeting record and recorder-last.json", async () => {
+    for (const [mode, fixture, reason] of [
+        ["pieces", "--fixture-audio-three", undefined],
+        ["session", "--fixture-audio-three", undefined],
+        ["session", "--fixture-audio-session-dies-at-start", "could not split system audio at the segment boundary"],
+        [
+            "session",
+            "--fixture-audio-session-dies-later",
+            "the system writer stopped accepting samples; the sound session already restarted within the last minute",
+        ],
+        ["session", "--fixture-audio-session-restart-fails", "could not split system audio at the segment boundary"],
+        ["session", "--fixture-no-audio-session", "the native recorder has no audio-record command"],
+    ] as const) {
+        const customHome = mkdtempSync(join(tmpdir(), "meeting-sound-status-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: customHome }, async () => {
+            const store = new MeetingStore();
+            const record = await store.create(
+                { title: "Sound fixture", start: meeting.start, createdBy: "record" },
+                { command: "test", change: "fixture" }
+            );
+            const secondFrame = Promise.withResolvers<void>();
+            const thirdFrame = Promise.withResolvers<void>();
+            const restarted = Promise.withResolvers<void>();
+            const failsDuringCapture =
+                fixture === "--fixture-audio-session-dies-later" || fixture === "--fixture-audio-session-restart-fails";
+            const requests: CaptureRequest[] = [];
+            class FixtureRecorder extends NativeFrameRecorder {
+                sessionStarts = 0;
+
+                override async startAudioSession(options: Parameters<NativeFrameRecorder["startAudioSession"]>[0]) {
+                    this.sessionStarts += 1;
+                    const session = await super.startAudioSession(options);
+                    if (this.sessionStarts === 2) {
+                        restarted.resolve();
+                    }
+                    return session;
+                }
+
+                override async capture(request: CaptureRequest, signal?: AbortSignal): Promise<CaptureResult> {
+                    const piece = requests.push(request);
+                    const controller = new AbortController();
+                    const abort = () => controller.abort();
+                    signal?.addEventListener("abort", abort, { once: true });
+                    if (signal?.aborted) {
+                        abort();
+                    }
+
+                    try {
+                        return await super.capture(
+                            {
+                                ...request,
+                                hooks: {
+                                    ...request.hooks,
+                                    onFrame: (frame) => {
+                                        request.hooks?.onFrame?.(frame);
+                                        if (piece === 2) {
+                                            secondFrame.resolve();
+                                        }
+                                        if (piece === 1 || (piece === 2 && !failsDuringCapture)) {
+                                            controller.abort();
+                                        } else if (piece >= 3) {
+                                            thirdFrame.resolve();
+                                        }
+                                    },
+                                },
+                            },
+                            controller.signal
+                        );
+                    } finally {
+                        signal?.removeEventListener("abort", abort);
+                    }
+                }
+            }
+
+            const recorder: FixtureRecorder = new FixtureRecorder({
+                axTool: async () => [
+                    process.execPath,
+                    join(moduleDir(import.meta), "../utils/screen-recorder/__fixtures__/fake-ax-tool.ts"),
+                    fixture,
+                ],
+                launch: (argv) =>
+                    failsDuringCapture && argv.includes("audio-record")
+                        ? [...argv, "--fixture-fail-when", join(customHome, `fail-session-${recorder.sessionStarts}`)]
+                        : argv,
+            });
+            const capture = meetingsConfigSchema.parse({
+                global: { capture: { displays: "main", recorders: { native: { audio: { mode } } } } },
+            }).global.capture;
+            const running = runRecorder({
+                store,
+                meetingId: record.id,
+                capture,
+                deps: {
+                    recorder,
+                    pieceSec: 1,
+                    startOcr: () => undefined,
+                    toJpeg: async (_png, jpg) => {
+                        await Bun.write(jpg, "jpeg");
+                    },
+                    notify: async () => {
+                        throw new Error("sound fallback must not send a notification");
+                    },
+                },
+            });
+            const dim = spyOn(ui, "dim").mockImplementation(() => undefined);
+            const result = spyOn(out, "result").mockImplementation(() => undefined);
+            try {
+                if (failsDuringCapture) {
+                    await withTimeout(secondFrame.promise, 5000, new Error("missing second frame before failure"));
+                    writeFileSync(join(customHome, "fail-session-1"), "");
+                    if (fixture === "--fixture-audio-session-dies-later") {
+                        await withTimeout(restarted.promise, 5000, new Error("sound session did not restart"));
+                        // An unchanged mute waits for the replacement to become the recording's active session.
+                        await callRecorder({
+                            id: meetingLiveId(record.id),
+                            method: "audio.mute",
+                            params: { source: "mic", muted: false },
+                        });
+                        writeFileSync(join(customHome, "fail-session-2"), "");
+                    }
+                }
+                await withTimeout(thirdFrame.promise, 5000, new Error(`missing third piece for ${fixture}`));
+                const current = readRecorderState(store);
+                const sound = current.state?.sound;
+                expect(current.running).toBe(true);
+                // A session that dies while it records is started again once (P16d decision 2); one that never
+                // starts, or a tool with no session, falls back at once.
+                expect(recorder.sessionStarts).toBe(
+                    mode === "pieces"
+                        ? 0
+                        : fixture === "--fixture-audio-session-dies-later" ||
+                            fixture === "--fixture-audio-session-restart-fails"
+                          ? 2
+                          : 1
+                );
+                expect(sound).toEqual(
+                    reason
+                        ? { path: "pieces", since: expect.any(String), reason }
+                        : mode === "session"
+                          ? { path: "session", sources: ["mic", "system"] }
+                          : { path: "pieces" }
+                );
+                const program = () => {
+                    const command = new Command();
+                    registerRecordCommands(command);
+                    return command;
+                };
+                await program().parseAsync(["record", "status"], { from: "user" });
+                const expected =
+                    sound?.path === "session"
+                        ? "Sound: continuous session (mic, system)"
+                        : sound?.since && reason
+                          ? `Sound: inside the screen pieces since ${new Date(sound.since).toTimeString().slice(0, 5)}, the continuous session stopped: ${reason}`
+                          : "Sound: inside the screen pieces (the setting)";
+                expect(dim.mock.calls.flat()).toContain(expected);
+                await program().parseAsync(["record", "status", "--json"], { from: "user" });
+                expect(SafeJSON.parse(String(result.mock.calls.at(-1)?.[0]))).toMatchObject({ state: { sound } });
+                expect(requests.at(-1)?.audio?.sources).toEqual(
+                    mode === "session" && !reason ? undefined : ["mic", "system"]
+                );
+            } finally {
+                dim.mockRestore();
+                result.mockRestore();
+                await callRecorder({ id: meetingLiveId(record.id), method: "stop" });
+                await running;
+            }
+            const last = SafeJSON.parse(readFileSync(join(store.folder(record.id), "recorder-last.json"), "utf8"));
+            const saved = new MeetingStore().read(record.id);
+            if (reason) {
+                expect(last).toMatchObject({ sound: { path: "pieces", reason, since: expect.any(String) } });
+                expect(saved?.recording?.warning).toBe(last.warning);
+                // One note per restart and one per fall back (P16d decision 2).
+                expect(
+                    saved?.recording?.warning?.match(/The continuous sound (stopped|did not start) at/g)
+                ).toHaveLength(
+                    fixture === "--fixture-audio-session-dies-later" ||
+                        fixture === "--fixture-audio-session-restart-fails"
+                        ? 2
+                        : 1
+                );
+                expect(saved?.recording?.warning).toContain(reason);
+            } else {
+                expect(last.warning).toBeUndefined();
+                expect(saved?.recording?.warning).toBeUndefined();
+            }
+        });
+    }
+}, 30_000);
+
 test("a recycled pid's claim and an unreadable pid file are both taken over, as the daemon and chrome-devtools do", async () => {
     const store = new MeetingStore(new Storage("recorder-claim-kinds"));
     const record = await store.create(
@@ -6305,7 +7488,7 @@ describe("suggest: words said on purpose", () => {
         expect(terms.every((item) => item.proposed === undefined)).toBe(true);
     });
 
-    test("two unknown names first heard in one line are one question; lowercase unknown words are never asked (R2-MC1)", () => {
+    test("two unknown names first heard in one line are one question; lowercase unknown words are asked only in the group words", () => {
         const named: SourceMeeting = {
             ...meeting,
             transcript: [
@@ -6330,14 +7513,17 @@ describe("suggest: words said on purpose", () => {
             now: meeting.start,
             questionBudget: 12,
         };
-        const questions = suggestItems(options).filter((item) => item.kind === "question");
+        // The second name of the line is not a second budget question; it is asked in the group words.
+        const questions = suggestItems(options).flatMap((item) => (item.kind === "question" ? [item] : []));
 
-        expect(questions.map((item) => item.kind === "question" && Math.round(item.fromSec))).toEqual([40]);
-        expect(
-            suggestItems({ ...options, meeting: slangMeeting, wordCheck: words(unknown) }).filter(
-                (item) => item.kind === "question"
-            )
-        ).toEqual([]);
+        expect(questions.filter((item) => item.group !== "words").map((item) => Math.round(item.fromSec))).toEqual([
+            40,
+        ]);
+        const slang = suggestItems({ ...options, meeting: slangMeeting, wordCheck: words(unknown) }).flatMap((item) =>
+            item.kind === "question" ? [item] : []
+        );
+        expect(slang.every((item) => item.group === "words")).toBe(true);
+        expect(slang.map((item) => item.heard).sort()).toEqual(["kvapímu", "zrelajzujem"]);
     });
 
     test("the family and the English root rule", () => {
@@ -6349,6 +7535,122 @@ describe("suggest: words said on purpose", () => {
             "mobilce",
             "mobilkou",
         ]);
+    });
+
+    test("a repeated unknown word is a question of the group words, most heard first, outside the question budget", () => {
+        const repeated: SourceMeeting = {
+            ...meeting,
+            transcript: [
+                line("Alice Example", 0, "Ten zorb a zorb-fe poběží zítra.", 1),
+                line("Carol Example", 20, "Tam zorb-fe a zorb-fe držíme v repu, zorbbe taky.", 2),
+                line("Alice Example", 40, "A zorb-fe je hotový, zorbbe ne.", 1),
+                line("Carol Example", 60, "Jednou jsme řekli kvapímu.", 2),
+            ],
+        };
+        const heard = ["zorb", "zorb-fe", "zorbbe", "kvapímu"];
+        const ordinary = new Set(
+            repeated.transcript
+                .flatMap((entry) => entry.text.toLowerCase().split(/[^\p{L}-]+/u))
+                .filter((word) => !heard.includes(word))
+        );
+        const wordCheck: WordCheck = {
+            provider: "fake",
+            language: "cs",
+            verdict: (word) =>
+                ordinary.has(word.toLowerCase()) ? { class: "dictionary", count: 9 } : { class: "unknown", count: 0 },
+            dispose: () => undefined,
+        };
+        const items = suggestItems({
+            record,
+            meeting: repeated,
+            rules: ["terms"],
+            dictionary: { abbrExpansion: "every" as const, entries: [] },
+            sourceWords: [],
+            wordCheck,
+            now: meeting.start,
+            questionBudget: 0,
+        });
+        const asked = items.flatMap((item) => (item.kind === "question" ? [item] : []));
+
+        // "zorb" (1 time) and its family stay hidden; a form heard 2 times or more is asked, whatever its family.
+        expect(asked.map((item) => [item.group, item.heard, item.evidence?.occurrences])).toEqual([
+            ["words", "zorb-fe", 4],
+            ["words", "zorbbe", 2],
+        ]);
+        expect(items.flatMap((item) => (item.kind === "term" ? [item.heard] : [])).sort()).toEqual([
+            "kvapímu",
+            "zorb-fe",
+            "zorbbe",
+        ]);
+        expect(asked.every((item) => item.decides.length === 1)).toBe(true);
+    });
+
+    test("a word question marks nothing in the transcript and comes after the other questions", () => {
+        const asked = meetingRecordSchema.parse({
+            ...record,
+            items: [
+                {
+                    id: "i1",
+                    kind: "term",
+                    status: "suggested",
+                    heard: "zorbbe",
+                    atSec: 40,
+                    confidence: 0.3,
+                    rules: [MeetingRule.UnknownWord],
+                    evidence: { occurrences: 9 },
+                    suggestedAt: meeting.start,
+                },
+                {
+                    id: "i2",
+                    kind: "speaker-range",
+                    status: "suggested",
+                    label: "Speaker 1",
+                    fromSec: 60,
+                    toSec: 80,
+                    confidence: 0.3,
+                    rules: [],
+                    suggestedAt: meeting.start,
+                },
+                {
+                    id: "i3",
+                    kind: "question",
+                    status: "suggested",
+                    about: "term",
+                    group: "words",
+                    fromSec: 40,
+                    toSec: 44,
+                    question: 'What is "zorbbe"? It is heard 9 times.',
+                    heard: "zorbbe",
+                    choices: [],
+                    decides: ["i1"],
+                    priority: 9,
+                    rules: [MeetingRule.UnknownWord],
+                    evidence: { occurrences: 9 },
+                    suggestedAt: meeting.start,
+                },
+                {
+                    id: "i4",
+                    kind: "question",
+                    status: "suggested",
+                    about: "speaker",
+                    fromSec: 60,
+                    toSec: 80,
+                    question: "Who speaks?",
+                    choices: ["Alice Example", "Carol Example"],
+                    decides: ["i2"],
+                    priority: 0.1,
+                    rules: [],
+                    suggestedAt: meeting.start,
+                },
+            ],
+        });
+
+        expect(openQuestions(asked).map((question) => question.id)).toEqual(["i4", "i3"]);
+        const corrections = correctionsOf(asked, meetingsConfigSchema.parse({}), {
+            withSuggested: true,
+            format: "txt",
+        });
+        expect(corrections.unclear?.passages.some((passage) => passage.heard === "zorbbe")).toBe(false);
     });
 
     test("a keep entry retires the suggested items of its word family and the questions that only they decide", () => {
@@ -6653,6 +7955,7 @@ test("raw facts expose indicator gaps, prehistory, indicator-only people and unk
     expect(raw.meeting.labels?.[0]).toMatchObject({ firstOwnIndicatorSec: 120, fromSec: 0, toSec: 110, lines: 12 });
     expect(raw.meeting.indicatorGaps?.some((gap) => gap.toSec - gap.fromSec >= 60)).toBe(true);
     expect(raw.people.find((person) => person.name === "Carol Example")?.origin).toBe("indicator");
+    expect(raw.people.find((person) => person.name === "Bob Example")?.origin).toBe("indicator");
     const compact = compactEvidence(raw);
     expect(compact.split("\n")).toHaveLength(transcript.length + 1);
     expect(compact).toContain("|e?|s[");
@@ -6817,11 +8120,52 @@ test("compact evidence bounds 509 line prefixes and prints microphone percent or
     expect(Buffer.byteLength(compact)).toBeLessThan(50_000);
 });
 
-test("local speech matches words and clock, emits removal at 0.9 and raw facts", () => {
+test("raw microphone share uses calibrated line windows before segment overlap", () => {
+    const current = {
+        ...meeting,
+        transcript: [0, 5, 10, 15, 20].map((start) => line("Voice", start, "A fixture line.")),
+    };
+    const raw = rawMeeting({
+        record,
+        meeting: current,
+        points: [],
+        evidence: { speaking: [], files: [], segments: [{ channel: "mic", startSec: 0, endSec: 15 }] },
+        energyMicShare: Object.assign((from: number, to: number) => (from === 0 && to === 5 ? 0 : undefined), {
+            raw: (from: number) => (from === 5 ? 0.12 : from === 15 ? 0.87 : undefined),
+        }),
+    });
+    expect(raw.lines.map((entry) => entry.channel.micShare)).toEqual([0, 0.12, 1, 0.87, null]);
+});
+
+test("local speech tolerates two word edits inside the clock window and keeps unrelated speech", () => {
+    const calls = [{ ts: Date.parse(meeting.start) + 20_000, text: "Fixture nightly render job complete" }];
+    const transcript = [
+        line("Voice", 5, "Fixture nightly renderer job complete."),
+        line("Voice", 12, "Fixture daily render job finished."),
+        line("Voice", 19, "Fixture render job almost complete."),
+        line("Voice", 20, "Fixture weekly cleanup job failed."),
+        line("Voice", 21, "Complete."),
+        line("Voice", 35.001, "Fixture nightly render job complete."),
+    ];
+    expect(localSpeechLines({ calls, transcript, start: meeting.start }).map((entry) => entry.index)).toEqual([
+        0, 1, 2,
+    ]);
+    const short = [{ ts: calls[0]!.ts, text: "Build passed" }];
+    const shortLines = [line("Voice", 19, "Build failed."), line("Voice", 20, "Build passed!")];
+    expect(
+        localSpeechLines({ calls: short, transcript: shortLines, start: meeting.start }).map((row) => row.index)
+    ).toEqual([1]);
+});
+
+test("every suggest rule offers the same local speech removals as raw evidence", () => {
     const start = "2026-11-02T15:00:00.000Z";
-    const transcript = [line("Alice", 5, "Fixture task done."), line("Alice", 100, "Fixture task done.")];
+    const transcript = [
+        line("Alice", 5, "Fixture task done."),
+        line("Voice", 5, "Fixture task done."),
+        line("Alice", 100, "Fixture task done."),
+    ];
     const calls = [{ ts: Date.parse(start) + 5_000, text: "Fixture task done" }];
-    expect(localSpeechLines({ start, transcript, calls }).map((line) => line.index)).toEqual([0]);
+    expect(localSpeechLines({ start, transcript, calls }).map((line) => line.index)).toEqual([0, 1]);
     const current = { ...meeting, start, transcript };
     const suggest = (rules: Parameters<typeof suggestItems>[0]["rules"]) =>
         suggestItems({
@@ -6833,15 +8177,17 @@ test("local speech matches words and clock, emits removal at 0.9 and raw facts",
             localSpeech: calls,
             now: start,
         });
-    const items = suggest(["evidence"]);
-    // A run of other rules leaves local speech alone: `--rules terms` proposes no removal.
-    expect(suggest(["terms"]).some((item) => item.kind === "removal")).toBe(false);
-    expect(suggest(["speakers"]).some((item) => item.kind === "removal")).toBe(false);
-    expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({ kind: "removal", confidence: 0.9, evidence: { reason: "local speech output" } });
     const raw = rawMeeting({ record, meeting: current, evidence: null, points: [], localSpeech: calls });
     expect(raw.lines[0]?.localSpeechOutput).toBe(true);
-    expect(raw.lines[1]?.localSpeechOutput).toBeUndefined();
+    expect(raw.lines[1]?.localSpeechOutput).toBe(true);
+    expect(raw.lines[2]?.localSpeechOutput).toBeUndefined();
+    for (const rule of ["terms", "speakers", "evidence"] as const) {
+        const removals = suggest([rule]).filter((item) => item.kind === "removal");
+        expect(removals.map((item) => item.evidence?.transcriptLine)).toEqual(
+            raw.lines.filter((entry) => entry.localSpeechOutput).map((entry) => entry.index)
+        );
+        expect(removals[0]).toMatchObject({ confidence: 0.9, evidence: { reason: "local speech output" } });
+    }
     expect(localSpeechDuring({ start, dbPath: join(tmpdir(), "missing-fixture-speech.db") })).toEqual([]);
 });
 

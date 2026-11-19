@@ -1,9 +1,14 @@
 import { Database } from "bun:sqlite";
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createCodeSearchCommand } from "@app/github/commands/code-search";
+import { createSearchCommand, searchCommand } from "@app/github/commands/search";
+import { env } from "@genesiscz/utils/env";
 import type { CommentRecord, IssueRecord, TimelineEventRecord } from "@genesiscz/utils/github/types";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import {
     clearCache,
     closeDatabase,
@@ -24,6 +29,185 @@ import {
     upsertIssue,
     upsertTimelineEvents,
 } from "./cache";
+import * as localIssueSearch from "./local-issue-search";
+
+const { searchCachedIssues } = localIssueSearch;
+
+describe("GitHub issue search backends", () => {
+    test.each([
+        ["semantic", "issue", "open"],
+        ["hybrid", "pr", "closed"],
+        ["semantic", "all", "all"],
+    ])("sends one hosted %s request for %s/%s and reports its source", async (mode, type, state) => {
+        const item = {
+            number: 17,
+            title: "Empty window",
+            state: state === "closed" ? "closed" : "open",
+            user: { login: "alice" },
+            created_at: "2026-01-02T00:00:00Z",
+            updated_at: "2026-01-03T00:00:00Z",
+            repository_url: "https://api.github.com/repos/acme/widgets",
+            html_url: `https://github.com/acme/widgets/${type === "pr" ? "pull" : "issues"}/17`,
+            comments: 3,
+            reactions: { total_count: 8 },
+            ...(type === "pr" && { pull_request: { url: "https://api.github.com/repos/acme/widgets/pulls/17" } }),
+        };
+        const http = spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ items: [item] }));
+        const stdout = spyOn(out, "println").mockImplementation(() => {});
+        try {
+            await env.testing.withOverrides({ GITHUB_TOKEN: "fixture-token" }, async () => {
+                await createSearchCommand().parseAsync(
+                    [
+                        "empty window reactions:>5",
+                        "--search-type",
+                        mode,
+                        "--repo",
+                        "acme/widgets",
+                        "--type",
+                        type,
+                        "--state",
+                        state,
+                        "--limit",
+                        "8",
+                        "--format",
+                        "json",
+                    ],
+                    { from: "user" }
+                );
+            });
+            expect(http).toHaveBeenCalledTimes(1);
+            const [url, init] = http.mock.calls[0];
+            const { pathname, searchParams } = new URL(String(url));
+            expect(init?.method).toBe("GET");
+            expect(pathname).toBe("/search/issues");
+            expect(searchParams.get("advanced_search")).toBe("true");
+            expect(searchParams.get("search_type")).toBe(mode);
+            expect(searchParams.get("per_page")).toBe("8");
+            const expectedTerms = ["empty", "window", "reactions:>5", "repo:acme/widgets"];
+            if (type !== "all") {
+                expectedTerms.push(`is:${type}`);
+            }
+
+            if (state !== "all") {
+                expectedTerms.push(`is:${state}`);
+            }
+
+            expect(searchParams.get("q")?.split(" ").sort()).toEqual(expectedTerms.sort());
+            expect(stdout).toHaveBeenCalledTimes(1);
+            expect(SafeJSON.parse(String(stdout.mock.calls[0][0]))).toEqual([
+                expect.objectContaining({
+                    number: 17,
+                    repo: "acme/widgets",
+                    type: type === "pr" ? "pr" : "issue",
+                    source: mode,
+                }),
+            ]);
+        } finally {
+            stdout.mockRestore();
+            http.mockRestore();
+        }
+    });
+
+    test("the default keyword search writes only its JSON to stdout", async () => {
+        const item = {
+            number: 21,
+            title: "Window flicker",
+            state: "open",
+            user: { login: "alice" },
+            created_at: "2026-01-02T00:00:00Z",
+            updated_at: "2026-01-03T00:00:00Z",
+            repository_url: "https://api.github.com/repos/acme/widgets",
+            html_url: "https://github.com/acme/widgets/issues/21",
+            comments: 1,
+            reactions: { total_count: 2 },
+        };
+        // Each backend reads its own body, so every call gets a fresh Response.
+        const reply = Object.assign(async () => Response.json({ total_count: 1, items: [item] }), {
+            preconnect: globalThis.fetch.preconnect,
+        });
+        const http = spyOn(globalThis, "fetch").mockImplementation(reply);
+        const stdout = spyOn(out, "println").mockImplementation(() => {});
+        const stderr = spyOn(out, "printlnErr").mockImplementation(() => {});
+        try {
+            await env.testing.withOverrides({ GITHUB_TOKEN: "fixture-token" }, async () => {
+                await createSearchCommand().parseAsync(
+                    ["window flicker", "--repo", "acme/widgets", "--type", "issue", "--format", "json"],
+                    { from: "user" }
+                );
+            });
+            expect(stdout).toHaveBeenCalledTimes(1);
+            expect(SafeJSON.parse(String(stdout.mock.calls[0][0]))).toEqual([
+                expect.objectContaining({ number: 21, repo: "acme/widgets" }),
+            ]);
+            expect(stderr.mock.calls.map((call) => String(call[0])).join("\n")).toContain("Searching (advanced)");
+        } finally {
+            stderr.mockRestore();
+            stdout.mockRestore();
+            http.mockRestore();
+        }
+    });
+
+    test.each([403, 429])("reports the quota reset after HTTP %i without retrying", async (status) => {
+        const response = Response.json(
+            { message: "API rate limit exceeded" },
+            { status, headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "978307200" } }
+        );
+        const http = spyOn(globalThis, "fetch").mockResolvedValue(response);
+        try {
+            await env.testing.withOverrides({ GITHUB_TOKEN: "fixture-token" }, async () => {
+                await expect(searchCommand("empty window", { searchType: "semantic" })).rejects.toThrow(
+                    new RegExp(`HTTP ${status}.*10 requests per minute.*2001-01-01T00:00:00\\.000Z`)
+                );
+            });
+            expect(http).toHaveBeenCalledTimes(1);
+        } finally {
+            http.mockRestore();
+        }
+    });
+
+    test("routes --local to the cache without a GitHub request", async () => {
+        const cached = spyOn(localIssueSearch, "searchCachedIssues").mockResolvedValue([]);
+        const http = spyOn(globalThis, "fetch").mockRejectedValue(new Error("unexpected request"));
+        const stdout = spyOn(out, "println").mockImplementation(() => {});
+        try {
+            await createSearchCommand().parseAsync(["empty window", "--search-type", "hybrid", "--local"], {
+                from: "user",
+            });
+            expect(cached).toHaveBeenCalledWith("empty window", "hybrid", expect.objectContaining({ local: true }));
+            expect(stdout).toHaveBeenCalledWith("No matching issues or pull requests in the local GitHub cache.");
+            expect(http).not.toHaveBeenCalled();
+        } finally {
+            stdout.mockRestore();
+            http.mockRestore();
+            cached.mockRestore();
+        }
+    });
+
+    test("rejects repository search, code search and hosted comment scans before a request", async () => {
+        const http = spyOn(globalThis, "fetch").mockRejectedValue(new Error("unexpected request"));
+        const stderr = spyOn(out, "printlnErr").mockImplementation(() => {});
+        const savedExitCode = process.exitCode;
+        try {
+            for (const searchType of ["semantic", "hybrid"] as const) {
+                await expect(searchCommand("window", { type: "repo", searchType })).rejects.toThrow("--type repo");
+                await createCodeSearchCommand().parseAsync(["window", "--search-type", searchType], { from: "user" });
+                expect(process.exitCode).toBe(1);
+                expect(stderr).toHaveBeenCalledWith(
+                    expect.stringContaining(`does not accept "${searchType}". Possible: keyword`)
+                );
+            }
+
+            await expect(searchCommand("window", { searchType: "hybrid", minCommentReactions: 1 })).rejects.toThrow(
+                "--min-comment-reactions"
+            );
+            expect(http).not.toHaveBeenCalled();
+        } finally {
+            process.exitCode = savedExitCode;
+            stderr.mockRestore();
+            http.mockRestore();
+        }
+    });
+});
 
 describe("updateFetchMetadata concurrency safety", () => {
     test("two sequential calls for the same issueId result in exactly one row without UNIQUE constraint error", () => {
@@ -124,6 +308,112 @@ describe("github cache database", () => {
         expect(again).toEqual(first);
         expect(other.id).not.toBe(first.id);
         expect(getCacheStats().repos).toBe(2);
+    });
+
+    test("local semantic and hybrid search filter before ranking, including cached reactions", async () => {
+        const repo = getOrCreateRepo("acme", "widgets");
+        upsertIssue(issueFields(repo.id, { title: "Save failure", reaction_total: 4, comment_total: 10 }));
+        upsertIssue(issueFields(repo.id, { number: 13, state: "closed" }));
+        upsertIssue(issueFields(getOrCreateRepo("acme", "other").id));
+        const embedder = {
+            dimensions: 2,
+            isAvailable: async () => true,
+            embed: async () => ({ dimensions: 2, vector: new Float32Array([1, 0]) }),
+        };
+        const deps = { cachePath: join(dir, "cache.db"), embedder };
+        for (const mode of ["semantic", "hybrid"] as const) {
+            const hits = await searchCachedIssues(
+                "save repo:ACME/widgets is:open type:issue reactions:>=3",
+                mode,
+                {},
+                deps
+            );
+            expect(hits).toEqual([
+                expect.objectContaining({
+                    repo: "acme/widgets",
+                    number: 12,
+                    reactions: 4,
+                    comments: 10,
+                    source: `local-${mode}`,
+                    url: "https://github.com/acme/widgets/issues/12",
+                }),
+            ]);
+        }
+        const filtered = await searchCachedIssues(
+            "save",
+            "semantic",
+            { repo: "acme/widgets", state: "closed", minReactions: 1 },
+            deps
+        );
+        expect(filtered).toEqual([]);
+        await expect(searchCachedIssues("save", "hybrid", { type: "repo" }, deps)).rejects.toThrow("issues and PRs");
+        await expect(searchCachedIssues("save", "semantic", { advanced: true }, deps)).rejects.toThrow("keyword");
+    });
+
+    test("local ranking filters by cached comment reactions before embedding", async () => {
+        const repo = getOrCreateRepo("acme", "widgets");
+        const qualifying = upsertIssue(issueFields(repo.id, { number: 1, title: "Save failure" }));
+        const below = upsertIssue(issueFields(repo.id, { number: 2, title: "Save issue" }));
+        upsertIssue(issueFields(repo.id, { number: 3, title: "Save error" }));
+        upsertComments([
+            commentRecord({ id: "a", issue_id: qualifying.id, reaction_count: 3 }),
+            commentRecord({ id: "b", issue_id: below.id, reaction_count: 2 }),
+        ]);
+        let embedded = 0;
+        const embedder = {
+            dimensions: 2,
+            isAvailable: async () => true,
+            embed: async () => {
+                embedded++;
+                return { dimensions: 2, vector: new Float32Array([1, 0]) };
+            },
+        };
+        for (const mode of ["semantic", "hybrid"] as const) {
+            const results = await searchCachedIssues(
+                "save",
+                mode,
+                { minCommentReactions: 3 },
+                { cachePath: join(dir, "cache.db"), embedder }
+            );
+            expect(results.map((result) => result.number)).toEqual([1]);
+        }
+        expect(embedded).toBe(4);
+    });
+
+    test("omitted totals survive refresh and null explicitly resets one total", () => {
+        const repo = getOrCreateRepo("acme", "widgets");
+        upsertIssue(issueFields(repo.id, { reaction_total: 7, comment_total: 10 }));
+        const kept = upsertIssue(issueFields(repo.id));
+        const reset = upsertIssue(issueFields(repo.id, { comment_total: null }));
+        closeDatabase();
+        getDatabase(dir);
+        expect(kept).toMatchObject({ reaction_total: 7, comment_total: 10 });
+        expect(reset).toMatchObject({ reaction_total: 7, comment_total: null });
+        expect(getIssue(repo.id, 12)).toEqual(reset);
+    });
+
+    test("semantic synonyms and keyword matches both contribute to hybrid rank", async () => {
+        const repo = getOrCreateRepo("acme", "widgets");
+        upsertIssue(issueFields(repo.id, { number: 1, title: "Gray screen", body: "" }));
+        upsertIssue(issueFields(repo.id, { number: 2, title: "Blank window", body: "" }));
+        upsertIssue(issueFields(repo.id, { number: 3, title: "Blank window tracker", body: "" }));
+        const deps = {
+            cachePath: join(dir, "cache.db"),
+            embedder: {
+                dimensions: 2,
+                isAvailable: async () => true,
+                embed: async (text: string) => ({
+                    dimensions: 2,
+                    vector: new Float32Array(
+                        text.trim() === "Blank window" ? [0.9, 0.1] : text.includes("tracker") ? [0, 1] : [1, 0]
+                    ),
+                }),
+            },
+        };
+        const vector = await searchCachedIssues("blank window", "semantic", {}, deps);
+        expect(vector[0].number).toBe(1);
+        const hybrid = await searchCachedIssues("blank window", "hybrid", {}, deps);
+        expect(hybrid[0].number).toBe(2);
     });
 
     test("an issue is inserted with an id, then updated in place by repository and number", () => {

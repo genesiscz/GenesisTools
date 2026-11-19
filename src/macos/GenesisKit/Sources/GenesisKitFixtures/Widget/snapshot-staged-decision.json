@@ -49,6 +49,7 @@
             "alertPopup": true,
             "alertSummary": true,
             "alertCompactAnswer": true,
+            "previewView": "sessions",
             "previewFilter": "needs-you",
             "previewSort": "attention",
             "alertAnswerSound": "same",
@@ -66,7 +67,9 @@
             "stagedReminder": true,
             "stagedOnLeave": "ask",
             "sendCloseSeconds": 2.5,
-            "inboxGrouping": "session",
+            "inboxGrouping": "feed",
+            "inboxFeedRuns": "session",
+            "inboxFeedHeaders": "all",
             "inboxFilter": "all",
             "overviewFilter": "all",
             "overviewSummary": true,
@@ -98,6 +101,7 @@
     "notifications": {
         "unread": 0,
         "needsAnswer": 1,
+        "badgeCount": 1,
         "complete": true,
         "truncated": false,
         "sessions": [

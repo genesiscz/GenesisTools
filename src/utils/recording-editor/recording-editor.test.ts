@@ -52,7 +52,12 @@ import {
     silenceDetectArgs,
 } from "@genesiscz/utils/recording-editor/idle";
 import { laneItems, resolveLanes } from "@genesiscz/utils/recording-editor/lanes";
-import { audibleTracks, integratedLoudness, transcribedTracks } from "@genesiscz/utils/recording-editor/loudness";
+import {
+    audibleTracks,
+    integratedLoudness,
+    recordingLaneInputs,
+    transcribedTracks,
+} from "@genesiscz/utils/recording-editor/loudness";
 import {
     annotateClicks,
     applyOp,
@@ -98,10 +103,12 @@ import legacyEvidence from "./__fixtures__/legacy-evidence.json";
 import logoPictureTypes from "./__fixtures__/logo-picture-types.json";
 import partAudio from "./__fixtures__/part-audio.json";
 import transcriptCuts from "./__fixtures__/transcript-cuts.json";
+import type { AudioFacts, AudioLane } from "./audio-lanes";
 import { denoisedSourceArgv, denoisedSourcePath, denoiseSchema, syncDenoisedTranscript } from "./denoise";
 import { MAX_SAMPLE_TIMES, RecordingEditor, sampleTimes } from "./editor";
 import { atempoChain, concatList, exportVideoArgv, sampleFpsFilter, speedArgv, trimArgv } from "./ffmpeg";
 import { transitionJoins } from "./fx";
+import layerCases from "./layers.cases.json";
 import { PICTURE_EXTENSIONS } from "./overlays";
 import { parseEditPlan, timeToUs } from "./plan";
 import { redactionBoxAt } from "./private-data";
@@ -4336,6 +4343,275 @@ describe("cutting by the transcript", () => {
     });
 });
 
+describe("recording layer contract", () => {
+    const source = { video: "/movies/screen.mp4", durationUs: 12_000_000, width: 1600, height: 1000 };
+    const frames: AudioFacts = {
+        movieTracks: 1,
+        mixedFrom: [
+            { source: "mic", file: "mic.m4a", offsetMs: 30 },
+            { source: "system", file: "system.m4a", offsetMs: 0 },
+        ],
+    };
+    const withCamera = () => applyOp(wholeProject(source), { op: "camera", file: "camera.mov" });
+    const soundCases: {
+        cases: Array<{
+            name: string;
+            audio: unknown;
+            facts: AudioFacts;
+            lanes: AudioLane[];
+            movieTracksPlayed: number[];
+        }>;
+    } = SafeJSON.parse(readFileSync(new URL("./audio-lanes.cases.json", import.meta.url), "utf8"), { strict: true });
+
+    for (const row of soundCases.cases) {
+        test(`shared audio lanes: ${row.name}`, async () => {
+            const { audioLanesOf, movieTracksPlayed } = await import("./audio-lanes");
+            const project = editProjectSchema.parse({ ...wholeProject(source), audio: row.audio });
+            const lanes = audioLanesOf(project, row.facts);
+            expect(lanes).toEqual(row.lanes);
+            expect(movieTracksPlayed(lanes, row.facts)).toEqual(row.movieTracksPlayed);
+        });
+    }
+
+    for (const row of layerCases.cases) {
+        test(`shared layer stack: ${row.name}`, async () => {
+            const { layerOrderOf } = await import("./layers");
+            let project = editProjectSchema.parse({
+                ...(row.camera ? withCamera() : wholeProject(source)),
+                layers: row.layers,
+            });
+            for (const [index, move] of row.moves.entries()) {
+                project = applyOp(project, editOpSchema.parse({ op: "layerMove", ...move }));
+                if (row.movesAfter) {
+                    expect(layerOrderOf(project).map(({ id }) => id)).toEqual(row.movesAfter[index]!);
+                }
+            }
+            expect<unknown>(layerOrderOf(project)).toEqual(row.order);
+        });
+    }
+
+    test("a camera can use its minimum size while media still needs five percent width", () => {
+        const project = withCamera();
+        const resized = applyOp(project, editOpSchema.parse({ op: "layer", id: "camera", width: 0.045 }));
+        expect(resized.camera?.size).toBeCloseTo(0.08, 6);
+        const media = applyOp(project, { op: "layerAdd", kind: "image", file: "logo.png" });
+        const id = media.layers!.media[0].id;
+        expect(() => applyOp(media, editOpSchema.parse({ op: "layer", id, width: 0.045 }))).toThrow();
+    });
+
+    test("a saved recording lane can't override an extra with a reserved clip ID", async () => {
+        const { audioLanesOf, syncExtraAudioLanes } = await import("./audio-lanes");
+        const before = {
+            ...wholeProject(source),
+            audio: { ...wholeProject(source).audio, lanes: audioLanesOf(wholeProject(source), frames) },
+        };
+        before.audio.lanes[0].volume = 0.25;
+        const withVoice = {
+            ...before,
+            audio: {
+                ...before.audio,
+                voiceovers: [{ id: "mic", file: "speech.wav", atUs: 0, durationUs: 1000, volume: 1 }],
+            },
+        };
+        const after = syncExtraAudioLanes(before, withVoice);
+        expect(after.audio.lanes?.map(({ source, volume }) => [source, volume])).toEqual([
+            ["mic", 0.25],
+            ["system", 1],
+            ["voiceover", 1],
+        ]);
+        const duplicate = {
+            ...after,
+            audio: { ...after.audio, lanes: [before.audio.lanes[0], before.audio.lanes[0]] },
+        };
+        expect(editProjectSchema.safeParse(duplicate).success).toBe(false);
+    });
+
+    test("opening an old edit derives both file lanes without changing its bytes or playing the mix", async () => {
+        const path = join(workspace(), "old.edit.json");
+        const original = wholeProject(source);
+        const text = SafeJSON.stringify(original);
+        writeFileSync(path, text);
+        const project = readProject(path);
+        expect(project).toEqual(original);
+        const { audioLanesOf, movieTracksPlayed } = await import("./audio-lanes");
+        const lanes = audioLanesOf(project, frames);
+        expect(lanes.map((lane) => lane.id)).toEqual(["mic", "system"]);
+        expect(movieTracksPlayed(lanes, frames)).toEqual([]);
+        expect(project.audio).not.toHaveProperty("lanes");
+        expect(project).not.toHaveProperty("layers");
+        expect(readFileSync(path, "utf8")).toBe(text);
+    });
+
+    test("audioLane writes every derived lane once and changes only the named lane", () => {
+        const project = applyOp(wholeProject(source), { op: "mute", track: 0 });
+        const first = applyOp(project, editOpSchema.parse({ op: "audioLane", id: "mic", muted: false }), {
+            audioFacts: frames,
+        });
+        const changed = applyOp(
+            first,
+            editOpSchema.parse({ op: "audioLane", id: "system", volume: 0.5, name: "Desktop" })
+        );
+        const path = join(workspace(), "lanes.edit.json");
+        writeProject(path, changed);
+        const audio = readProject(path).audio;
+        expect(audio.mutedTracks).toEqual([0]);
+        expect(audio.lanes).toEqual([
+            { id: "mic", source: "mic", file: "mic.m4a", offsetMs: 30, muted: false, volume: 1 },
+            {
+                id: "system",
+                source: "system",
+                file: "system.m4a",
+                offsetMs: 0,
+                muted: true,
+                volume: 0.5,
+                name: "Desktop",
+            },
+        ]);
+        expect(project.audio).not.toHaveProperty("lanes");
+        expect(() => applyOp(changed, editOpSchema.parse({ op: "audioLane", id: "missing", muted: true }))).toThrow(
+            "missing"
+        );
+    });
+
+    test("layerAdd returns a replayable id and layerMove sends it to the top and bottom", () => {
+        const original = withCamera();
+        const facts: projectOps.OpFacts = { playheadUs: 2_000_000 };
+        const add = editOpSchema.parse({ op: "layerAdd", kind: "image", file: "logo.png" });
+        const first = applyOp(original, add, facts);
+        const id = first.layers!.media[0].id;
+        expect(id).toMatch(/^l/);
+        expect(facts.generatedIds).toEqual([id]);
+        expect(applyOp(original, add, facts)).toEqual(first);
+        expect(first.layers?.media[0]).toMatchObject({
+            x: 0.5,
+            y: 0.5,
+            width: 0.35,
+            startUs: 2_000_000,
+            endUs: 7_000_000,
+        });
+        const second = applyOp(first, editOpSchema.parse({ op: "layerAdd", kind: "image", file: "caption.png" }));
+        const nextId = second.layers!.media[1].id;
+        const top = applyOp(second, editOpSchema.parse({ op: "layerMove", id, to: "top" }));
+        expect(top.layers?.order).toEqual(["camera", nextId, id]);
+        const bottom = applyOp(top, editOpSchema.parse({ op: "layerMove", id, to: "bottom" }));
+        const path = join(workspace(), "layers.edit.json");
+        writeProject(path, bottom);
+        expect(readProject(path).layers?.order).toEqual([id, "camera", nextId]);
+        const removed = applyOp(bottom, editOpSchema.parse({ op: "layerRemove", id }));
+        expect(removed.layers?.order).toEqual(["camera", nextId]);
+        expect(removed.layers?.media.map((item) => item.id)).toEqual([nextId]);
+    });
+
+    test("layerRemove refuses the camera and names the eye operation", () => {
+        expect(() => applyOp(withCamera(), editOpSchema.parse({ op: "layerRemove", id: "camera" }))).toThrow(
+            'layer {id: "camera", hidden: true}'
+        );
+    });
+
+    test("the camera eye, shape, centre and width edit the original camera fields", () => {
+        const original = withCamera();
+        const hidden = applyOp(original, editOpSchema.parse({ op: "layer", id: "camera", hidden: true }));
+        const path = join(workspace(), "camera.edit.json");
+        writeProject(path, hidden);
+        const saved = readProject(path);
+        expect(saved.camera).toEqual({ ...original.camera!, show: false });
+        expect(saved).not.toHaveProperty("layers");
+        const placed = applyOp(
+            saved,
+            editOpSchema.parse({ op: "layer", id: "camera", x: 0.3, width: 0.2, shape: "rounded" })
+        );
+        expect(placed.camera).toMatchObject({ corner: "custom", x: 0.3, shape: "rounded" });
+        expect(placed.camera?.size).toBeCloseTo(0.32);
+        const y = bubbleRect(original.camera!, canvasShape(original)).y / canvasShape(original).height;
+        expect(placed.camera?.y).toBeCloseTo(y);
+    });
+
+    test("video duration and edits use source time, clamp to the movie and clear a shape", () => {
+        const add = editOpSchema.parse({ op: "layerAdd", kind: "video", file: "inset.mov" });
+        const facts = { playheadUs: 3_000_000, videoDurationUs: 2_500_000 };
+        const project = applyOp(wholeProject(source), add, facts);
+        const layer = project.layers!.media[0];
+        expect(layer).toMatchObject({
+            startUs: 3_000_000,
+            endUs: 5_500_000,
+            videoStartMs: 0,
+            videoSound: false,
+            loop: false,
+        });
+        const trimmed = applyOp(
+            project,
+            editOpSchema.parse({
+                op: "layer",
+                id: layer.id,
+                startUs: 5_000_000,
+                endUs: 20_000_000,
+                x: 0,
+                y: 1,
+                width: 0.7,
+                shape: "circle",
+                opacity: 0.4,
+                name: "Inset",
+                hidden: true,
+                videoStartMs: 500,
+                videoSound: true,
+                loop: true,
+            })
+        );
+        expect(trimmed.layers?.media[0]).toMatchObject({
+            startUs: 5_000_000,
+            endUs: source.durationUs,
+            shape: "circle",
+            opacity: 0.4,
+            x: 0,
+            y: 1,
+            width: 0.7,
+            hidden: true,
+            name: "Inset",
+            videoStartMs: 500,
+            videoSound: true,
+            loop: true,
+        });
+        const reset = applyOp(trimmed, editOpSchema.parse({ op: "layer", id: layer.id, shape: null }));
+        expect(reset.layers?.media[0]).not.toHaveProperty("shape");
+        expect(() => applyOp(reset, editOpSchema.parse({ op: "layer", id: layer.id, endUs: 4_999_999 }))).toThrow();
+    });
+
+    test("check names missing files, stale order ids and a clipped span, then saving repairs the stack", () => {
+        const folder = workspace();
+        const path = join(folder, "edit.json");
+        writeFileSync(join(folder, "present.png"), "");
+        const project = editProjectSchema.parse({
+            ...wholeProject({ ...source, video: join(folder, "movie.mp4") }),
+            audio: { lanes: [{ id: "mic", source: "mic", file: "lost.m4a" }] },
+            layers: {
+                order: ["gone", "logo"],
+                media: [
+                    { kind: "image", id: "logo", file: "lost.png", startUs: 1, endUs: source.durationUs + 1 },
+                    { kind: "image", id: "present", file: "present.png", startUs: 0, endUs: 1 },
+                ],
+            },
+        });
+        const issues = checkProject(project, { hasTranscript: false, hasCursorTrack: false, musicFileExists: true });
+        expect(
+            issues
+                .filter((issue) => issue.kind === "audio-lane-missing")
+                .map((issue) => issue.message)
+                .join(" ")
+        ).toContain("lost.m4a");
+        expect(issues.filter((issue) => issue.kind === "media-layer-missing").map((issue) => issue.item)).toEqual([
+            "layer logo",
+        ]);
+        expect(issues.find((issue) => issue.kind === "media-layer-missing")?.message).toContain("lost.png");
+        expect(issues.find((issue) => issue.kind === "layer-order-missing")?.message).toContain("gone");
+        expect(issues.find((issue) => issue.kind === "layer-past-end")?.message).toContain("logo");
+        expect(project.layers?.order).toEqual(["gone", "logo"]);
+        const saved = writeProject(path, project);
+        expect(readProject(path)).toEqual(saved);
+        expect(saved.layers?.order).not.toContain("gone");
+        expect(saved.layers?.media[0].endUs).toBe(source.durationUs);
+    });
+});
+
 describe("camera bubble", () => {
     const source = { video: "/movies/screen.mp4", durationUs: 10_000_000, width: 1920, height: 1080 };
 
@@ -4931,6 +5207,39 @@ describe.skipIf(skip.integration)("normalize measures what the export plays", ()
             timeoutMs: 60_000,
         });
     };
+
+    test("an explicit sound mix measures only the unmuted lane, at its own gain and offset", async () => {
+        const dir = workspace();
+        const mixed = join(dir, "proxy.mp4");
+        const mic = join(dir, "mic.mp4");
+        await makeTone(mixed, 4, "1");
+        await makeTone(mic, 4, "0.25");
+        const inputs = recordingLaneInputs({
+            video: mixed,
+            facts: {
+                movieTracks: 1,
+                mixedFrom: [
+                    { source: "mic", file: mic, offsetMs: 100 },
+                    { source: "system", file: mixed, offsetMs: 0 },
+                ],
+            },
+            lanes: [
+                { id: "mic", source: "mic", file: mic, offsetMs: 100, muted: false, volume: 0.5 },
+                { id: "system", source: "system", file: mixed, offsetMs: 0, muted: true, volume: 1 },
+                { id: "movie-0", source: "movie", track: 0, offsetMs: 0, muted: false, volume: 1 },
+            ],
+        });
+        expect(inputs).toEqual([{ path: mic, track: 0, offsetMs: 100, volume: 0.5 }]);
+        const measured = await integratedLoudness({
+            video: mixed,
+            mix: { lanes: inputs, durationUs: 4_000_000 },
+            clips: [{ fromUs: 1_000_000, toUs: 4_000_000, speed: 1 }],
+        });
+        const micOnly = await integratedLoudness({ video: mic });
+        expect(measured).toBeDefined();
+        expect(micOnly).toBeDefined();
+        expect((micOnly ?? 0) - (measured ?? 0)).toBeCloseTo(6, 0);
+    });
 
     test("only the kept clips count, at their played speed, so a cut loud part does not lower the gain", async () => {
         const dir = workspace();

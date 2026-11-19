@@ -22,7 +22,7 @@ package func runHost() -> Never {
     // "" when there is none, so no check below can trap on an argument-less launch.
     let firstArgument = arguments.first ?? ""
     let wantsWindow = arguments.isEmpty || firstArgument == "--window" || firstArgument.hasPrefix("-psn_")
-    if !wantsWindow && AppParts.partOfFace[firstArgument] == nil && !firstArgument.contains("://") {
+    if marksBackgroundHelper(arguments) {
         markBackgroundHelper()
     }
 
@@ -65,7 +65,7 @@ package func runHost() -> Never {
     // The launcher passes its caller's environment through untouched.
     if wantsWindow || firstArgument.hasPrefix("-") || firstArgument.contains("://") {
         let hubLink = firstArgument.hasPrefix("genesis-tools://hub")
-        let windowFace = wantsWindow || AppParts.partOfFace[firstArgument] != nil || hubLink
+        let windowFace = wantsWindow || AppFaces.face(firstArgument: firstArgument)?.window == true || AppParts.partOfFace[firstArgument] != nil || hubLink
         ChildEnvironment.install(loginShell: windowFace, refresh: arguments.first == "--hub" || hubLink)
         // A face that is (or runs under) this bundle's responsible process tells its `tools` children to
         // skip the launcher; one started from a plain terminal clears the markers (App/FaceMarker.swift).
@@ -145,6 +145,11 @@ package func runHost() -> Never {
     // It replaced the separate "Genesis Router.app" (see BrowserURL.swift).
     if firstArgument == "--default-browser" {
         runDefaultBrowser(Array(arguments.dropFirst()))
+    }
+
+    // GenesisTools --requests [--socket <path>]: the resident renderer of the service's requests (RequestPresent.swift).
+    if firstArgument == "--requests" {
+        runRequestFace(Array(arguments.dropFirst()))
     }
 
     // GenesisTools --rpc '<json>' (or --rpc - to read stdin): run one request as this bundle, then

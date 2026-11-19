@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 
 // The JSON the `tools meetings … --json` doors print, decoded with only the fields this part shows. The shapes live
 // in TypeScript (src/meetings/lib/overview.ts, screen-timeline.ts, capture-cost.ts, match-preview.ts,
@@ -97,7 +98,9 @@ struct MeetingItem: Decodable, Equatable, Hashable, Identifiable {
     let question: String?
     let choices: [String]?
     let answer: String?
+    var comment: String? = nil
     var group: String? = nil
+    var decides: [String]? = nil
     let priority: Double?
     let evidence: [String: JSONValue]?
 
@@ -115,22 +118,42 @@ struct MeetingItem: Decodable, Equatable, Hashable, Identifiable {
     var departureText: String? {
         guard case .object(let event)? = evidence?["departure"],
               case .string(let name)? = event["name"] else { return nil }
-        return "\(name) said goodbye at \(Int(fromSec ?? 0)) s"
+        return "\(name) said goodbye at \(MeetingsFormat.clock(fromSec ?? 0))"
     }
-    var speakerEvidenceText: String? {
+    /// What named this speaker range, in sentences: each rule in the engine's words (`ruleNames`, the `rules.names`
+    /// read; an id it lacks is left out, as a review row leaves it), the speaking indicator it ignored, the swap's
+    /// skipped lines and a goodbye. Nil for another kind or when there is nothing to say.
+    func speakerEvidenceText(ruleNames: [String: String]) -> String? {
         guard kind == "speaker-range" else { return nil }
-        var parts = ["Rules: " + (rules ?? []).joined(separator: ", ")]
-        if case .string(let ignored)? = evidence?["indicatorIgnored"] { parts.append("Indicator ignored: " + ignored) }
-        if case .object(let swap)? = evidence?["swap"], case .array(let skipped)? = swap["skipped"] {
-            parts.append("Swap skips \(skipped.count) contradictory lines")
+        var parts = (rules ?? []).compactMap { ruleNames[$0] }
+        if case .string(let ignored)? = evidence?["indicatorIgnored"] {
+            parts.append("The speaking indicator was \(TranscriptLine.Indicator.ignoredWords(ignored)).")
         }
-        if let departureText { parts.append(departureText) }
-        return parts.joined(separator: " · ")
+        if case .object(let swap)? = evidence?["swap"], case .array(let skipped)? = swap["skipped"] {
+            parts.append("The swap skips \(Plural.count(skipped.count, "contradictory line")).")
+        }
+        if let departureText { parts.append(departureText + ".") }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
     }
     var reason: String? {
         if case .string(let text)? = evidence?["reason"] { return text }
         return nil
     }
+
+    var dictionaryTarget: String? {
+        guard about == "dictionary", case .string(let item)? = evidence?["item"] else { return nil }
+        return item
+    }
+
+    func dictionaryQuestion(in items: [MeetingItem]) -> MeetingItem? {
+        items.last {
+            guard (decides ?? []).contains($0.dictionaryTarget ?? ""),
+                  case .string(let fixed)? = $0.evidence?["fixed"] else { return false }
+            return fixed == answer
+        }
+    }
+
+    var wordSuggestion: String? { about == "term" ? choices?.first : nil }
 }
 
 struct MeetingContextRef: Decodable, Equatable, Hashable, Identifiable {
@@ -179,7 +202,7 @@ struct MeetingRecordView: Decodable, Equatable {
     var review: Review? = nil
     var speakers: Speakers
     struct Person: Decodable, Equatable {
-        struct Stay: Decodable, Equatable { var fromSec: Double; var toSec: Double?; var source: String; var confidence: Double? }
+        struct Stay: Decodable, Equatable { var fromSec: Double; var toSec: Double?; var source: String; var confidence: Double?; var leaveSource: String? = nil }
         var name: String; var from: [String]?
         var isSelf: Bool? = nil
         var firstSeenSec: Double? = nil
@@ -197,6 +220,10 @@ struct MeetingRecordView: Decodable, Equatable {
             let lines: [String: Match]
         }
         var voice: Voice?
+        /// How the sound's two channels hold the voices (`calibrateChannels`, src/utils/meetings/energy.ts):
+        /// "left-mic" or "right-mic", or "unknown" when the channels do not separate them.
+        struct Channels: Decodable, Equatable { var layout: String? }
+        var channels: Channels?
     }
     var evidence: Evidence? = nil
     struct Stay: Decodable, Equatable { var name: String; var fromSec: Double; var toSec: Double }
@@ -258,11 +285,71 @@ struct TranscriptLine: Decodable, Equatable, Hashable, Identifiable {
     var words: [TranscriptWord]? = nil
     var confidence: Double? = nil
     var suggestedSpeaker: String? = nil
+    /// `voice` when the line's suggested name comes from the voice model; `nameScore` is that match's cosine.
+    var nameSource: String? = nil
+    var nameScore: Double? = nil
     var sourceIndex: Int? = nil
     var questioned: Bool? = nil
     var guess: Bool? = nil
     var band: String? = nil
+    /// The open speaker question on the line: the source label it is about and the answers on offer. `speaker` holds
+    /// the export's mark (`[unclear: "<label>"; 1) … 2) …]`), which is never drawn as a name.
+    struct Unclear: Decodable, Equatable, Hashable {
+        let label: String
+        let readings: [String]
+    }
+    var unclear: Unclear? = nil
+    /// The voices a confirmed answer heard together on the line ("several voices").
+    var voices: [String]? = nil
     var rowID: String { id ?? "\(startSec ?? -1)-\(speaker)-\(text.prefix(24))" }
+
+    /// Who said the line, as the window draws it (window audit H2a): a name, a guess with its percent, or an open
+    /// question with the answers on offer. Read from the typed fields, never from the marks in `speaker`.
+    var who: TranscriptSpeaker {
+        if let voices, !voices.isEmpty { return .name(voices.joined(separator: " + ")) }
+        // A name the voice model gave is a suggestion of its own look (P7), whatever the threshold made of it.
+        if nameSource == "voice", band != "confirmed", let name = suggestedSpeaker { return .voice(name) }
+        if guess == true, let name = suggestedSpeaker {
+            return .guess(name, percent: confidence.map { Int(($0 * 100).rounded()) })
+        }
+        if band == "applied", let name = suggestedSpeaker { return .name(name) }
+        if let unclear { return .open(label: unclear.label, candidates: unclear.readings) }
+        if band == "open" { return .open(label: nil, candidates: []) }
+        return .name(speaker)
+    }
+}
+
+/// Who said a transcript line, in one of three states that look different (ux genesiscz.md 12a): a name, a guess (the
+/// name with its percent, in the tentative hue), or an open question ("Who is this?" in the ask hue, the candidates as
+/// answers).
+enum TranscriptSpeaker: Hashable {
+    case name(String)
+    case guess(String, percent: Int?)
+    /// A name the voice model gave: a suggestion until a person confirms it (the waveform mark, the tentative hue).
+    case voice(String)
+    /// `label`: the source label the question is about, nil when the engine did not send it.
+    case open(label: String?, candidates: [String])
+
+    /// The words a chip shows: the name, the guessed name, or "Who is this?".
+    var title: String {
+        switch self {
+        case .name(let name): return name.isEmpty ? "Unknown voice" : name
+        case .guess(let name, _), .voice(let name): return name
+        case .open: return "Who is this?"
+        }
+    }
+
+    /// The name the person colour and the initials come from; empty for an open question, which takes the neutral "?".
+    var personName: String {
+        switch self {
+        case .name(let name), .guess(let name, _), .voice(let name): return name
+        case .open: return ""
+        }
+    }
+
+    var isGuess: Bool { if case .guess = self { return true } else { return false } }
+    var isVoice: Bool { if case .voice = self { return true } else { return false } }
+    var isOpen: Bool { if case .open = self { return true } else { return false } }
 }
 
 struct MeetingTranscript: Decodable, Equatable {
@@ -468,6 +555,12 @@ struct MeetingsSettings: Decodable, Equatable {
             let retentionDays: Int
             /// `failing-and-recovered`, `failing` or `off`; absent in a config written before the key.
             let failureNotices: String?
+            var soundWithoutScreen: Bool?
+            struct Levels: Decodable, Equatable {
+                let enabled: Bool
+                let intervalSec: Int
+            }
+            var levels: Levels?
         }
         struct Assign: Decodable, Equatable {
             let ask: Bool
@@ -504,6 +597,7 @@ struct MeetingsSettings: Decodable, Equatable {
         struct AutoRecord: Decodable, Equatable {
             let enabled: Bool
             let notify: Bool
+            var permissionCard: Bool?
         }
         let match: [String: Folders]
         let autoRecord: AutoRecord
@@ -600,11 +694,17 @@ struct DictionaryShow: Decodable, Equatable {
 }
 
 struct PhraseTest: Decodable, Equatable {
+    struct Line: Decodable, Equatable {
+        let index: Int
+        let startSec, endSec: Double?
+        let speaker, before, after: String
+    }
     struct Suggestion: Decodable, Equatable, Hashable { let heard: String; let value: String; let score: Double }
     let phrase: String
     let text: String
     let fired: [DictionaryEntry]
     let suggestions: [Suggestion]
+    var lines: [Line]? = nil
 }
 
 // MARK: - A decision (`tools meetings confirm|reject <id> <items> --json`)
@@ -790,6 +890,45 @@ enum MeetingsFormat {
 }
 
 struct MeetingSeats: Codable, Equatable, Hashable {
+    /// Keep the representation of a whole-meeting string when another row changes.
+    struct Room: Codable, Equatable, Hashable {
+        var name: String
+        var fromSec: Double?
+        var toSec: Double?
+        private var wasString: Bool
+
+        init(_ name: String) {
+            self.name = name
+            wasString = true
+        }
+
+        enum CodingKeys: String, CodingKey { case name, fromSec, toSec }
+
+        init(from decoder: Decoder) throws {
+            if let value = try? decoder.singleValueContainer().decode(String.self) {
+                self.init(value)
+            } else {
+                let row = try decoder.container(keyedBy: CodingKeys.self)
+                self.init(try row.decode(String.self, forKey: .name))
+                fromSec = try row.decodeIfPresent(Double.self, forKey: .fromSec)
+                toSec = try row.decodeIfPresent(Double.self, forKey: .toSec)
+                wasString = false
+            }
+        }
+
+        func encode(to encoder: Encoder) throws {
+            if wasString && fromSec == nil && toSec == nil {
+                var value = encoder.singleValueContainer()
+                try value.encode(name)
+            } else {
+                var row = encoder.container(keyedBy: CodingKeys.self)
+                try row.encode(name, forKey: .name)
+                try row.encodeIfPresent(fromSec, forKey: .fromSec)
+                try row.encodeIfPresent(toSec, forKey: .toSec)
+            }
+        }
+    }
+
     struct Remote: Codable, Equatable, Hashable {
         var name: String = ""
         var label: String? = nil
@@ -802,7 +941,176 @@ struct MeetingSeats: Codable, Equatable, Hashable {
         var people: [String] = []
         var deviceId: String? = nil
     }
-    var room: [String] = []
-    var remote: [Remote] = []
-    var microphones: [Microphone]? = nil
+    var roomRows: [Room]
+    var remote: [Remote]
+    var microphones: [Microphone]?
+
+    enum CodingKeys: String, CodingKey { case roomRows = "room", remote, microphones }
+
+    init(room: [String] = [], remote: [Remote] = [], microphones: [Microphone]? = nil) {
+        self.roomRows = room.map(Room.init)
+        self.remote = remote
+        self.microphones = microphones
+    }
+
+    init(from decoder: Decoder) throws {
+        let rows = try decoder.container(keyedBy: CodingKeys.self)
+        roomRows = try rows.decodeIfPresent([Room].self, forKey: .roomRows) ?? []
+        remote = try rows.decodeIfPresent([Remote].self, forKey: .remote) ?? []
+        microphones = try rows.decodeIfPresent([Microphone].self, forKey: .microphones)
+        if let problem = intervalProblem(allowEmptyRemote: true) {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: problem))
+        }
+    }
+
+    func intervalProblem(allowEmptyRemote: Bool = false) -> String? {
+        var intervals: [String: [(start: Double, end: Double)]] = [:]
+        func check(_ name: String, _ from: Double?, _ to: Double?, allowEmpty: Bool) -> String? {
+            let start = from ?? 0
+            let end = to ?? .infinity
+            guard start.isFinite, start >= 0, to?.isFinite != false, end >= start else {
+                return "\(name): Enter finite, nonnegative seat times with the leave after the join."
+            }
+            if end == start { return allowEmpty ? nil : "\(name): Enter a leave time after the join." }
+            let key = PeopleText.personKey(name)
+            if intervals[key]?.contains(where: { $0.start < end && start < $0.end }) == true {
+                return "\(name): Two seat intervals overlap."
+            }
+            intervals[key, default: []].append((start, end))
+            return nil
+        }
+        for row in roomRows {
+            if let issue = check(row.name, row.fromSec, row.toSec, allowEmpty: false) { return issue }
+        }
+        for row in remote {
+            if let issue = check(row.name, row.fromSec, row.toSec, allowEmpty: allowEmptyRemote) { return issue }
+        }
+        return nil
+    }
+
+    /// Name-only callers edit membership. Retain all intervals of each name they keep.
+    var room: [String] {
+        get { Self.names(roomRows.map(\.name)) }
+        set {
+            let existing = Dictionary(grouping: roomRows, by: { PeopleText.personKey($0.name) })
+            roomRows = Self.names(newValue).flatMap { existing[PeopleText.personKey($0)] ?? [Room($0)] }
+        }
+    }
+
+    static func names(_ names: [String]) -> [String] {
+        var seen = Set<String>()
+        return names.filter { seen.insert(PeopleText.personKey($0)).inserted }
+    }
+}
+
+extension MeetingSeats.Remote {
+    init(from decoder: Decoder) throws {
+        if let name = try? decoder.singleValueContainer().decode(String.self) {
+            self.init(name: name)
+        } else {
+            let row = try decoder.container(keyedBy: CodingKeys.self)
+            self.init(name: try row.decode(String.self, forKey: .name),
+                      label: try row.decodeIfPresent(String.self, forKey: .label),
+                      fromSec: try row.decodeIfPresent(Double.self, forKey: .fromSec),
+                      toSec: try row.decodeIfPresent(Double.self, forKey: .toSec))
+        }
+    }
+}
+
+/// One saved engine threshold for the transcript and both settings surfaces. No window copy is written.
+@Observable @MainActor
+final class MeetingsApplyThreshold {
+    static let path = "global.suggest.applyAbove"
+    static let segments = ["global", "suggest", "applyAbove"]
+    static let legacyKey = "meetings.transcript.applyAbove"
+    static let shared: MeetingsApplyThreshold = {
+        let model = MeetingsApplyThreshold(migrates: !CommandLine.arguments.contains("--snapshot"))
+        if MeetingsService.shared != nil { Task { await model.load() } }
+        return model
+    }()
+    private(set) var percent: Double?
+    private var saved: Double?
+    private(set) var busy = false
+    private(set) var failure: Error?
+    private let defaults: UserDefaults
+    private let migrates: Bool
+    @ObservationIgnored private var watcher: DirectoryWatcher?
+    @ObservationIgnored private var reloadPending = false
+    @ObservationIgnored var read: () async throws -> MeetingsAPI.ConfigRead.Result
+    @ObservationIgnored var write: (Double, Double) async throws -> Double
+    @ObservationIgnored var stored: (String) async throws -> JSONValue = { file in
+        try await Task.detached {
+            let decoder = JSONDecoder(); decoder.allowsJSON5 = true
+            do { return try decoder.decode(JSONValue.self, from: Data(contentsOf: URL(fileURLWithPath: file))) }
+            catch CocoaError.fileReadNoSuchFile { return .null }
+        }.value
+    }
+
+    init(defaults: UserDefaults = .standard, migrates: Bool = true,
+         read: @escaping () async throws -> MeetingsAPI.ConfigRead.Result = {
+             guard let service = MeetingsService.shared else { throw MeetingsService.Unavailable(reason: "The Meetings service is unavailable") }
+             return try await service.call(MeetingsAPI.ConfigRead.self, .init(path: nil))
+         }, write: @escaping (Double, Double) async throws -> Double = { value, previous in
+             guard let service = MeetingsService.shared else { throw MeetingsService.Unavailable(reason: "The Meetings service is unavailable") }
+             let result = try await service.call(MeetingsAPI.ConfigSet.self, .init(path: path, value: .number(value), expect: .number(previous)))
+             guard case .number(let saved) = result.value else { throw MeetingsService.Unavailable(reason: "The saved threshold was missing") }
+             return saved
+         }) {
+        self.defaults = defaults; self.migrates = migrates; self.read = read; self.write = write
+    }
+
+    func load(clearFailure: Bool = true) async {
+        // A file event that lands while a read or write is in flight may name a value that operation never saw.
+        guard !busy else { reloadPending = true; return }
+        busy = true
+        await readSaved(clearFailure: clearFailure)
+        busy = false
+        await reloadIfPending()
+    }
+
+    /// Runs the one refresh that arrived while the threshold was busy, after that operation finished.
+    private func reloadIfPending() async {
+        guard reloadPending else { return }
+        reloadPending = false
+        await load(clearFailure: false)
+    }
+
+    private func readSaved(clearFailure: Bool) async {
+        do {
+            let config = try await read()
+            guard case .number(var value) = config.value.at(Self.segments) else { return }
+            if migrates, let old = defaults.object(forKey: Self.legacyKey) as? NSNumber {
+                // Only a genuinely absent saved engine key accepts the old window value, even if both equal 70%.
+                let raw = try await stored(config.path)
+                if raw.at(Self.segments) == .null {
+                    value = try await write(min(1, max(0, old.doubleValue / 100)), value)
+                }
+                defaults.removeObject(forKey: Self.legacyKey)
+            }
+            saved = value; percent = value * 100
+            if clearFailure { failure = nil }
+            if watcher == nil, config.path.hasPrefix("/") {
+                let file = DirectoryWatcher.normalizedEventPath(config.path)
+                watcher = DirectoryWatcher(paths: [URL(fileURLWithPath: file).deletingLastPathComponent().path], latency: 0.3,
+                                           accepts: { $0 == file }) { [weak self] _ in
+                    Task { @MainActor in await self?.load(clearFailure: false) }
+                }
+            }
+        } catch { failure = error }
+    }
+
+    func set(_ next: Double) async {
+        guard !busy, let previous = saved else { return }
+        busy = true; failure = nil
+        do { let value = try await write(next / 100, previous); saved = value; percent = value * 100 }
+        catch {
+            failure = error
+            // A stale refusal may name another editor's saved value. Show that, or retain our last saved value.
+            if let config = try? await read(), case .number(let value) = config.value.at(Self.segments) {
+                saved = value; percent = value * 100
+            }
+        }
+        busy = false
+        await reloadIfPending()
+    }
 }

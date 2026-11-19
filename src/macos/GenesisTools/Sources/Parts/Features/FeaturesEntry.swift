@@ -37,7 +37,12 @@ final class FeatureSettingsShell: FeatureSettingsPluginHost {
     /// writes go to the real defaults, since an agent drives its controls, but the page it opened is not the user's.
     private lazy var window = FeatureSettingsWindowController(
         sections: [
-            FeatureSettingsPages.general(extra: AnyView(QuitSettingsCard(defaults: defaults))),
+            FeatureSettingsPages.general(extra: AnyView(VStack(spacing: 18) {
+                if AppParts.isLinked("widget") {
+                    AppMenuSettingsCard(defaults: defaults, preview: mode == .snapshot)
+                }
+                QuitSettingsCard(defaults: defaults)
+            })),
             DaemonSettingsPages.section(store: daemon),
         ], defaults: defaults,
         appearance: appearance, frameAutosaveName: mode == .snapshot ? "" : "FeatureSettings.window",
@@ -55,12 +60,19 @@ final class FeatureSettingsShell: FeatureSettingsPluginHost {
     }
 
     /// Builds every plug-in and installs it; About goes last, with the lines the plug-ins added.
-    func installPlugins() {
-        plugins = FeatureSettingsPlugins.makers.map { $0() }
+    func installPlugins(_ instances: [FeatureSettingsPlugin]? = nil) {
+        plugins = instances ?? FeatureSettingsPlugins.makers.map { $0() }
         for plugin in plugins {
             plugin.install(in: self)
         }
         register(section: FeatureSettingsPages.about(additionalInfo: aboutInfo))
+    }
+
+    func receive(_ request: FeatureSettingsRequest, reopening: Bool) {
+        for plugin in plugins {
+            plugin.settingsRequested(pageID: request.pageID, context: request.context)
+            if reopening { plugin.settingsReopened() }
+        }
     }
 
     /// Every plug-in has its data, and so has the Daemon page when it is the one shown: in a build without plug-ins
@@ -76,7 +88,12 @@ final class FeatureSettingsShell: FeatureSettingsPluginHost {
     func addAboutInfo(_ line: String) { aboutInfo.append(line) }
 
     func showSettings(pageID: String?) {
-        window.show(pageID: pageID)
+        showSettings(FeatureSettingsRequest(pageID: pageID))
+    }
+
+    fileprivate func showSettings(_ request: FeatureSettingsRequest, reopening: Bool = false) {
+        receive(request, reopening: reopening)
+        window.show(pageID: request.pageID)
         // The ⌘Q question names this face "Settings" only while the window is open (Host/PartQuit): closed, the
         // process stays to host the parts' services, and nothing called Settings is on screen.
         guard mode == .live, let shown = window.window else { return }
@@ -166,15 +183,15 @@ final class FeatureSettingsShell: FeatureSettingsPluginHost {
 private final class FeaturesAppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var observer: NSObjectProtocol?
     private let descriptor: Int32
-    private let initialPageID: String?
+    private let initialRequest: FeatureSettingsRequest
     private let snapshotPath: String?
     private let shell: FeatureSettingsShell
     private var terminating = false
     private var terminationReplied = false
 
-    init(descriptor: Int32, pageID: String?, snapshotPath: String? = nil, headless: Bool = false) {
+    init(descriptor: Int32, request: FeatureSettingsRequest, snapshotPath: String? = nil, headless: Bool = false) {
         self.descriptor = descriptor
-        self.initialPageID = pageID
+        self.initialRequest = request
         self.snapshotPath = snapshotPath
         shell = FeatureSettingsShell(mode: snapshotPath != nil ? .snapshot : headless ? .headless : .live)
     }
@@ -190,28 +207,27 @@ private final class FeaturesAppDelegate: NSObject, NSApplicationDelegate, NSMenu
         ) { [weak self] notification in
             MainActor.assumeIsolated {
                 guard let shell = self?.shell else { return }
-                for plugin in shell.plugins {
-                    plugin.settingsReopened()
-                }
-                shell.showSettings(pageID: notification.userInfo?["page"] as? String)
+                let request = FeatureSettingsRequest(userInfo: notification.userInfo)
+                shell.showSettings(request, reopening: true)
             }
         }
     }
 
     private func launch() {
         shell.installPlugins()
+        if shell.mode != .live { shell.receive(initialRequest, reopening: false) }
         switch shell.mode {
         case .snapshot:
             let delay = Double(snapshotArgument("--snapshot-delay") ?? "") ?? 2
-            shell.snapshot(pageID: initialPageID, to: snapshotPath ?? "", delay: delay)
+            shell.snapshot(pageID: initialRequest.pageID, to: snapshotPath ?? "", delay: delay)
         case .headless:
-            shell.showHeadless(pageID: initialPageID)
+            shell.showHeadless(pageID: initialRequest.pageID)
         case .live:
             installMenu()
             // `--no-activate` is a rebuild's relaunch (relaunch.ts): the services come back without the window,
             // which would take the keyboard from the app in front.
             if !CommandLine.arguments.contains("--no-activate") {
-                shell.showSettings(pageID: initialPageID)
+                shell.showSettings(initialRequest)
             }
         }
     }
@@ -289,16 +305,14 @@ private final class FeaturesAppDelegate: NSObject, NSApplicationDelegate, NSMenu
 
 package func runFeatures(_ args: [String] = []) -> Never {
     MainActor.assumeIsolated {
-        let pageID = args.firstIndex(of: "--page").flatMap { index in
-            args.indices.contains(index + 1) ? args[index + 1] : nil
-        }
+        let request = FeatureSettingsRequest(arguments: args)
         // The staging gate's own reading, so `--snapshot --page general` never writes a file named "--page".
         let snapshotPath = NativeStaging.snapshotPath(args)
         let headless = args.contains("--headless")
         if snapshotPath != nil || headless {
             let app = NSApplication.shared
             let delegate = FeaturesAppDelegate(
-                descriptor: -1, pageID: pageID, snapshotPath: snapshotPath, headless: headless)
+                descriptor: -1, request: request, snapshotPath: snapshotPath, headless: headless)
             app.delegate = delegate
             app.setActivationPolicy(.prohibited)
             app.run()
@@ -325,12 +339,12 @@ package func runFeatures(_ args: [String] = []) -> Never {
             // A background relaunch that finds the face already running leaves it alone.
             if args.contains("--no-activate") { exit(0) }
             DistributedNotificationCenter.default().postNotificationName(
-                showSettingsNotification, object: nil, userInfo: pageID.map { ["page": $0] },
+                showSettingsNotification, object: nil, userInfo: request.userInfo,
                 deliverImmediately: true)
             exit(0)
         }
         let app = NSApplication.shared
-        let delegate = FeaturesAppDelegate(descriptor: descriptor, pageID: pageID)
+        let delegate = FeaturesAppDelegate(descriptor: descriptor, request: request)
         app.delegate = delegate
         // A notification click that runs something hands focus back to the app it was clicked over.
         BrowserURLForwarder.shared.trackOtherApps()

@@ -5,9 +5,12 @@ import {
     speakerAssignmentSchema,
     spellingReachSchema,
 } from "@genesiscz/utils/meetings/record";
+import { idSchema, ownerSchema, sourceSchema } from "@genesiscz/utils/meetings/voice-library";
+import { voicePrintSchema } from "@genesiscz/utils/meetings/voice-store";
+import { dictionaryEntrySchema } from "@genesiscz/utils/transcribe/dictionary";
 import { z } from "zod";
 import { sentCommentSchema } from "./comment-schema";
-import { findingSchema } from "./findings";
+import { refinePlainReason, savedFindingSchema } from "./findings";
 import { linePointSchema } from "./moment-schema";
 import { rejectFilterSchema } from "./reject-filter";
 
@@ -18,11 +21,21 @@ import { rejectFilterSchema } from "./reject-filter";
  */
 
 /** The file in a meeting's folder that keeps its decision journal: one entry per line, oldest first, append-only. */
-export const JOURNAL_FILE = "decisions.ndjson";
+export { JOURNAL_FILE } from "@genesiscz/utils/meetings/record";
 
-import { meetingSeatsSchema } from "@genesiscz/utils/meetings/seats";
+import { meetingSeatsSchema, storedMeetingSeatsSchema } from "@genesiscz/utils/meetings/seats";
 
 const itemRef = z.string().min(1);
+
+const setFieldsAction = z.object({
+    kind: z.literal("set"),
+    seats: meetingSeatsSchema.optional(),
+    seatsIfAbsent: z.literal(true).optional(),
+    project: z.string().min(1).optional(),
+    title: z.string().min(1).optional(),
+    labels: z.array(z.string().min(1)).optional(),
+    unlabel: z.array(z.string().min(1)).optional(),
+});
 
 /** One decision a person, an agent or a rule makes on a meeting. Item references take an id (`i42`) or `Q12`. */
 export const DECISION_ACTION_OPTIONS = [
@@ -60,6 +73,17 @@ export const DECISION_ACTION_OPTIONS = [
         kind: z.literal("answer"),
         question: itemRef,
         answer: z.string(),
+        /** Listen replayed a named speaker from these human decisions. The revisions fence a concurrent edit. */
+        knownAnswer: z
+            .object({
+                meeting: z.string().min(1),
+                date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+                revision: z.number().int().nonnegative(),
+                source: z
+                    .object({ id: z.string().regex(/^[A-Za-z0-9][\w.-]*$/), revision: z.number().int().nonnegative() })
+                    .optional(),
+            })
+            .optional(),
         comment: z.string().optional(),
         segments: z
             .array(z.object({ fromWord: z.number().int().nonnegative(), speaker: z.string().min(1) }))
@@ -82,6 +106,12 @@ export const DECISION_ACTION_OPTIONS = [
          * earlier entry is undone and this answer made in one entry, so its Undo brings the earlier answer back.
          */
         replaces: z.string().min(1).optional(),
+        /**
+         * A question about a word only. `add`: the answer goes into the meeting's project dictionary in this decision
+         * (a person's choice; refused for an agent). `none`: it does not, and nothing asks. Absent: when the word is
+         * heard often enough, a dictionary question waits on the record for a person (the owner's answer to M5).
+         */
+        learn: z.enum(["add", "none"]).optional(),
     }),
     z.object({ kind: z.literal("skip"), question: itemRef }),
     /** "Several voices": the question is cut into one question per line and voice. */
@@ -115,7 +145,7 @@ export const DECISION_ACTION_OPTIONS = [
     z.object({
         kind: z.literal("add"),
         /** Empty only with `replace`: a new plan that found nothing still takes the old suggestions back. */
-        findings: z.array(findingSchema),
+        findings: z.array(savedFindingSchema),
         allowDuplicates: z.boolean().optional(),
         force: z.boolean().optional(),
         replace: z
@@ -133,17 +163,21 @@ export const DECISION_ACTION_OPTIONS = [
      * The meeting's own fields (`set`): its project (a known name: the caller resolves it first), its title, labels
      * to add and labels to remove.
      */
-    z.object({
-        kind: z.literal("set"),
-        seats: meetingSeatsSchema.optional(),
-        project: z.string().min(1).optional(),
-        title: z.string().min(1).optional(),
-        labels: z.array(z.string().min(1)).optional(),
-        unlabel: z.array(z.string().min(1)).optional(),
-    }),
+    setFieldsAction,
 ] as const;
 
-export const decisionActionSchema = z.discriminatedUnion("kind", [...DECISION_ACTION_OPTIONS]);
+/** A decision to apply now: an add's new findings give their reasons in plain words (U18); a saved line need not. */
+export const decisionActionSchema = z
+    .discriminatedUnion("kind", [...DECISION_ACTION_OPTIONS])
+    .superRefine((action, ctx) => {
+        if (action.kind !== "add") {
+            return;
+        }
+
+        for (const [index, finding] of action.findings.entries()) {
+            refinePlainReason(finding, ctx, ["findings", index]);
+        }
+    });
 export type DecisionAction = z.infer<typeof decisionActionSchema>;
 
 /** The Undo of one entry (`items`: only these of its items; a question named brings back its whole answer). */
@@ -190,7 +224,11 @@ const savedJournalActionSchema = z.preprocess(
         }
         return value;
     },
-    z.union([journalActionSchema, unsupportedJournalAction])
+    z.union([
+        journalActionSchema,
+        setFieldsAction.extend({ seats: storedMeetingSeatsSchema.optional() }),
+        unsupportedJournalAction,
+    ])
 );
 
 /** One item a decision changed: its state before (absent: the decision made it) and after (absent: it removed it). */
@@ -223,8 +261,8 @@ export const MEETING_FIELDS = ["project", "title", "labels", "seats"] as const;
 /** One meeting field a decision changed, before and after (absent: no value). */
 export const fieldChangeSchema = z.object({
     field: z.enum(MEETING_FIELDS),
-    before: z.union([z.string(), z.array(z.string()), meetingSeatsSchema]).optional(),
-    after: z.union([z.string(), z.array(z.string()), meetingSeatsSchema]).optional(),
+    before: z.union([z.string(), z.array(z.string()), storedMeetingSeatsSchema]).optional(),
+    after: z.union([z.string(), z.array(z.string()), storedMeetingSeatsSchema]).optional(),
 });
 export type FieldChange = z.infer<typeof fieldChangeSchema>;
 
@@ -236,6 +274,20 @@ export const SKIP_NEEDS = ["speaker", "proposed", "listen", "nothing"] as const;
  */
 export const skipSchema = z.object({ id: z.string(), reason: z.string(), needs: z.enum(SKIP_NEEDS).optional() });
 export type DecisionSkip = z.infer<typeof skipSchema>;
+
+/** A dictionary level, as `MeetingsConfigStore` names it (`DictionaryScope`). */
+const dictionaryScopeSchema = z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("global") }),
+    z.object({ kind: z.literal("project"), project: z.string().min(1) }),
+]);
+
+/** One dictionary entry a decision wrote (`after`) or took back (`before`), so its Undo can do the reverse. */
+export const dictionaryChangeSchema = z.object({
+    scope: dictionaryScopeSchema,
+    before: dictionaryEntrySchema.optional(),
+    after: dictionaryEntrySchema.optional(),
+});
+export type DictionaryChange = z.infer<typeof dictionaryChangeSchema>;
 
 /**
  * One line of the journal: who decided what on a meeting, when and why, and everything it changed, so its token
@@ -264,6 +316,26 @@ export const journalEntrySchema = z.object({
     /** The speaker assignments it changed (`assign`, or the Undo of one); absent when it changed none. */
     assignments: z.array(assignmentChangeSchema).optional(),
     corrections: z.array(correctionSchema).default([]),
+    /** The dictionary entries it wrote or took back; absent when it changed none (and in entries older than it). */
+    dictionary: z.array(dictionaryChangeSchema).optional(),
+    voices: z
+        .array(
+            z.object({
+                project: z.string(),
+                person: z.string(),
+                model: z.string(),
+                source: sourceSchema.optional(),
+                owner: ownerSchema.optional(),
+                id: idSchema.optional(),
+                token: z.string().optional(),
+                item: z.string().optional(),
+                origin: z.enum(["answer", "confirm"]).optional(),
+                acquiredBy: z.enum(["live", "backfill"]).optional(),
+                before: voicePrintSchema.optional(),
+                after: voicePrintSchema,
+            })
+        )
+        .optional(),
 });
 export type JournalEntry = z.infer<typeof journalEntrySchema>;
 

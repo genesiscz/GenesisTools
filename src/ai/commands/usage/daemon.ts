@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { parseInterval } from "@app/daemon/lib/interval";
 import { getDaemonStatus } from "@app/daemon/lib/launchd";
 import { isTaskRegistered, registerTask, unregisterTask } from "@app/daemon/lib/register";
+import { launcherConfigFlag } from "@genesiscz/utils/bun/launcher-config";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import * as p from "@genesiscz/utils/prompts/p";
 import { shellCommandLine } from "@genesiscz/utils/shell/quote";
@@ -93,7 +94,7 @@ export async function registerUsagePollTask(args: RegisterUsagePollArgs): Promis
         // directory containing a space registered fine and then failed on every
         // poll, and a shell metacharacter in either path was interpreted
         // (PR #368 review t5).
-        command: shellCommandLine([bunPath(), "run", args.script ?? POLL_SCRIPT]),
+        command: shellCommandLine([bunPath(), launcherConfigFlag(), "run", args.script ?? POLL_SCRIPT]),
         every: args.interval,
         retries: 1,
         timeoutMs: 60_000,

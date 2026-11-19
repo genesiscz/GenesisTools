@@ -408,3 +408,34 @@ test("dictionary draft preview changes only matching whole tokens and never the 
     expect(preview.fired).toHaveLength(1);
     expect(SafeJSON.stringify(config)).toBe(before);
 });
+
+describe("an agent's reason is written for the person who reads it (U18)", () => {
+    const PLAIN_WORDS = "Write the reason in plain words for the person who reads it";
+    const label = { kind: "label", from: 0, to: 6103, label: "Bob Example", meaningless: true };
+
+    test("a field name, a rule id or a labeler code in a reason is refused with a plain-words hint", async () => {
+        const { findingSchema } = await import("./findings");
+
+        for (const reason of [
+            "Štítek nesleduje jednoho člověka; indikátor chybí (meeting.indicatorGaps).",
+            "Podle evidence.reason je to jiný hlas.",
+            "Pravidlo RA tu neplatí.",
+            "R18 a E1 se neshodují.",
+            "Mikrofon je seat-of-one.",
+        ]) {
+            const parsed = findingSchema.safeParse({ ...label, reason });
+            expect(parsed.success).toBe(false);
+            expect(parsed.error?.issues.map((issue) => issue.message)).toContain(PLAIN_WORDS);
+        }
+
+        for (const reason of [
+            "Štítek nesleduje jednoho člověka: pod ním mluví dva lidé.",
+            "Generovaný balíček @org.example.restapi.",
+            "Rozhraní Nabídek v admin-console.",
+            "HoHo = Bob Example.",
+            "Viz https://example.com/docs/page.html, řádek 4.",
+        ]) {
+            expect(findingSchema.safeParse({ ...label, reason }).success).toBe(true);
+        }
+    });
+});

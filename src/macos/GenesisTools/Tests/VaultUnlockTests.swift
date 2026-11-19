@@ -509,6 +509,118 @@ final class VaultUnlockTests: XCTestCase {
         XCTAssertFalse(other.injected.isEmpty)
     }
 
+    func testTheWrappersOwnConfigIsNotExtraCodeAndAnyOtherConfigIs() {
+        // `tools claude embed` as the tools wrapper starts it since 2026-11-17.
+        let embed = caller(arguments: ["gt-claude", "--config=/repo/src/utils/bun/launcher.bunfig.toml",
+                                       "--preload", "/repo/src/utils/bun/preload-solid-scoped.ts",
+                                       "--preload", "/repo/src/utils/search/stores/sqlite-vec-preload.ts",
+                                       "/repo/src/claude/index.ts", "embed"])
+        XCTAssertEqual(embed.script, "/repo/src/claude/index.ts")
+        XCTAssertEqual(embed.injected, [])
+        XCTAssertNil(embed.onceOnlyReason)
+
+        let foreign = caller(arguments: ["gt-claude", "--config=/other/src/utils/bun/launcher.bunfig.toml", "/repo/src/claude/index.ts"])
+        XCTAssertEqual(foreign.onceOnlyReason, "extra code may be loaded")
+
+        // Bun 1.4.2 runs the argument after a bare `--config` as the program, so that file is the script.
+        let bare = caller(arguments: ["gt-claude", "--config", "/tmp/evil.js", "/repo/src/claude/index.ts"])
+        XCTAssertEqual(bare.script, "/tmp/evil.js")
+        XCTAssertEqual(bare.onceOnlyReason, "extra code may be loaded")
+    }
+
+    // Decision 61 (2026-11-17): a preload of the working folder's bunfig.toml can delete its file and move to a quiet
+    // folder before the key is asked for. Read at that moment, the process showed no extra code at all.
+    func testABunfigPreloadThatDeletesItselfAndMovesAwayIsStillExtraCode() throws {
+        let bun = NSHomeDirectory() + "/.bun/bin/bun"
+        guard FileManager.default.isExecutableFile(atPath: bun) else { throw XCTSkip("no bun at \(bun)") }
+        let root = ((NSTemporaryDirectory() as NSString).appendingPathComponent("bunfig-move-\(UUID().uuidString)") as NSString)
+            .resolvingSymlinksInPath
+        let work = root + "/work", quiet = root + "/quiet", checkout = root + "/checkout"
+        for folder in [work, quiet, checkout + "/src/probe", checkout + "/src/utils/bun"] {
+            try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        }
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let script = checkout + "/src/probe/index.ts"
+        try "await Bun.write(process.argv[2], \"\");\nawait Bun.sleep(15_000);\n"
+            .write(toFile: script, atomically: true, encoding: .utf8)
+        try "import { unlinkSync } from \"node:fs\";\nunlinkSync(\"bunfig.toml\");\nprocess.chdir(\"\(quiet)\");\n"
+            .write(toFile: work + "/hide.ts", atomically: true, encoding: .utf8)
+        let config = checkout + "/" + VaultCaller.ownConfig
+        try "# no preload\n".write(toFile: config, atomically: true, encoding: .utf8)
+
+        func start(_ flags: [String], started: String) throws -> Process {
+            try "preload = [\"./hide.ts\"]\n".write(toFile: work + "/bunfig.toml", atomically: true, encoding: .utf8)
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: bun)
+            process.arguments = flags + [script, started]
+            process.currentDirectoryURL = URL(fileURLWithPath: work)
+            // Only these two, so no inherited NODE_OPTIONS or BUN_OPTIONS of the test run counts as extra code.
+            process.environment = ["HOME": NSHomeDirectory(), "PATH": "/usr/bin:/bin"]
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            try process.run()
+            let deadline = Date().addingTimeInterval(15)
+            while !FileManager.default.fileExists(atPath: started), Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+            XCTAssertTrue(FileManager.default.fileExists(atPath: started), "bun never started the script")
+            return process
+        }
+
+        let hidden = try start([], started: root + "/started-hidden")
+        defer { hidden.terminate() }
+        let moved = VaultProcess.caller(hidden.processIdentifier)
+        XCTAssertEqual(moved.cwd.map { ($0 as NSString).resolvingSymlinksInPath }, quiet, "the preload moved the process")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: work + "/bunfig.toml"), "the preload deleted its file")
+        XCTAssertEqual(moved.injected, [VaultCaller.noConfigFinding])
+        XCTAssertEqual(moved.onceOnlyReason, "extra code may be loaded")
+
+        // With the checkout's own --config= Bun never reads the folder's bunfig.toml, so nothing moved or hid.
+        let pinned = try start(["--config=\(config)"], started: root + "/started-pinned")
+        defer { pinned.terminate() }
+        let clean = VaultProcess.caller(pinned.processIdentifier)
+        XCTAssertEqual(clean.cwd.map { ($0 as NSString).resolvingSymlinksInPath }, work)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: work + "/bunfig.toml"), "the folder's preload never ran")
+        XCTAssertEqual(clean.injected, [])
+        XCTAssertNil(clean.onceOnlyReason)
+    }
+
+    func testAConfigFlagReplacesTheWorkingFoldersBunfig() throws {
+        let root = (NSTemporaryDirectory() as NSString).appendingPathComponent("bunfig-test-\(UUID().uuidString)")
+        let home = root + "/home", work = root + "/work", checkout = root + "/checkout"
+        for folder in [home, work, checkout] {
+            try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        }
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        try "preload = [\"./evil.ts\"]\n".write(toFile: work + "/bunfig.toml", atomically: true, encoding: .utf8)
+        let config = checkout + "/launcher.bunfig.toml"
+        try "# no preload\n".write(toFile: config, atomically: true, encoding: .utf8)
+
+        let after = Date().addingTimeInterval(60)
+        XCTAssertEqual(VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: [], startedAt: after),
+                       ["bunfig.toml preload ./evil.ts"], "without the flag Bun reads the working folder's file")
+        XCTAssertEqual(VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: [], startedAt: after,
+                                                           config: config), [])
+
+        // The working folder changing after the start no longer matters; the config file changing does.
+        let before = Date().addingTimeInterval(-60)
+        XCTAssertEqual(VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: [], startedAt: before,
+                                                           config: config),
+                       ["bunfig.toml preload (\(config) changed after the process started)"])
+        XCTAssertFalse(VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: [], startedAt: after,
+                                                           config: checkout + "/missing.toml").isEmpty, "a missing config fails closed")
+
+        // Bun resolves a relative entry of the config file against the working folder, not the file's folder.
+        try "preload = [\"./p.ts\"]\n".write(toFile: config, atomically: true, encoding: .utf8)
+        let workEntry: Set<String> = [((work + "/p.ts") as NSString).standardizingPath]
+        let checkoutEntry: Set<String> = [((checkout + "/p.ts") as NSString).standardizingPath]
+        let later = Date().addingTimeInterval(120)
+        XCTAssertEqual(VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: workEntry,
+                                                           startedAt: later, config: config), [])
+        XCTAssertEqual(VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: checkoutEntry,
+                                                           startedAt: later, config: config), ["bunfig.toml preload ./p.ts"])
+    }
+
     func testARememberedApprovalCoversOnlyTheSameExecutableAndScriptUntilItEnds() {
         let grant = VaultGrant(key: "k", tool: "claude", executable: "/bin/gt-claude", script: "/repo/src/claude/index.ts",
                                grantedAt: 1_000, until: 2_000, method: "touch-id")
@@ -941,6 +1053,103 @@ final class VaultUnlockTests: XCTestCase {
 
         XCTAssertEqual(VaultAutoAllow.mainCheckout(of: worktree), (main as NSString).standardizingPath)
         XCTAssertEqual(VaultAutoAllow.mainCheckout(of: main), (main as NSString).standardizingPath)
+    }
+
+    // Martin, 2026-11-17 21:27: one Claude session asked six times in four minutes for its own scratch script.
+    func testASessionApprovalCoversItsAgentProcessAndEverythingBelowItWhileItLasts() {
+        let zsh = VaultLineageEntry(pid: 812, startedAt: 2_000_000, name: "zsh")
+        let claude = VaultLineageEntry(pid: 640, startedAt: 1_000_000, name: "claude")
+        let t3 = VaultLineageEntry(pid: 300, startedAt: 500_000, name: "T3 Code (Beta)")
+        let lineage = [zsh, claude, t3]
+        let anchor = VaultSessionAnchor.nearest(in: lineage)
+        XCTAssertEqual(anchor, VaultSessionAnchor(harness: "claude", pid: 640, startedAt: 1_000_000))
+        XCTAssertNil(VaultSessionAnchor.nearest(in: [zsh, t3]), "no agent above the caller: nothing to approve as a session")
+
+        let grant = VaultSessionGrant(anchor: anchor!, sessionId: "0f3a9c1e", title: "language model pass", grantedAt: 1_000,
+                                      until: 5_000, method: "touch-id")
+        let file = VaultSessionGrantsFile(version: 1, grants: [grant])
+        XCTAssertEqual(VaultSessionGrants.live(lineage: lineage, now: 2_000, in: file), grant)
+        XCTAssertNil(VaultSessionGrants.live(lineage: lineage, now: 5_000, in: file), "it ends at its time")
+
+        let reused = [zsh, VaultLineageEntry(pid: 640, startedAt: 9_000_000, name: "claude")]
+        XCTAssertNil(VaultSessionGrants.live(lineage: reused, now: 2_000, in: file), "a later process with the same pid is not the session")
+        let other = [VaultLineageEntry(pid: 641, startedAt: 1_000_000, name: "claude"), t3]
+        XCTAssertNil(VaultSessionGrants.live(lineage: other, now: 2_000, in: file), "another session asks for itself")
+
+        // A headless `claude -p` the session starts is the narrower anchor to offer, and still inside the approval.
+        let nested = [VaultLineageEntry(pid: 900, startedAt: 3_000_000, name: "claude"), zsh, claude, t3]
+        XCTAssertEqual(VaultSessionAnchor.nearest(in: nested)?.pid, 900)
+        XCTAssertEqual(VaultSessionGrants.live(lineage: nested, now: 2_000, in: file), grant)
+
+        let later = VaultSessionGrant(anchor: anchor!, sessionId: nil, title: nil, grantedAt: 4_000, until: 9_000, method: "password")
+        let ended = VaultSessionGrant(anchor: VaultSessionAnchor(harness: "codex", pid: 70, startedAt: 7), sessionId: nil, title: nil,
+                                      grantedAt: 1, until: 3_000, method: "touch-id")
+        let next = VaultSessionGrants.remember(later, now: 4_000, in: VaultSessionGrantsFile(version: 1, grants: [grant, ended]))
+        XCTAssertEqual(next.grants, [later], "one approval per process, ended ones dropped")
+    }
+
+    func testTheWindowOffersTheSessionOnlyWhenAnAgentStartedTheCaller() throws {
+        let anchor = VaultSessionAnchor(harness: "claude", pid: 640, startedAt: 1_000_000)
+        XCTAssertEqual(VaultWindowContent.choices(rememberable: false, anchor: anchor).map(\.title),
+                       ["Just this once", "This session for 1 hour", "This session for 8 hours"])
+        XCTAssertEqual(VaultWindowContent.choices(rememberable: false, anchor: nil), [], "once only and no agent: no picker")
+        XCTAssertEqual(VaultWindowContent.choices(rememberable: true, anchor: nil), VaultWindowContent.rememberChoices)
+        XCTAssertEqual(VaultWindowContent.choices(rememberable: true, anchor: anchor),
+                       VaultWindowContent.rememberChoices + VaultWindowContent.sessionChoices)
+
+        let script = "/tmp/cc/GenesisTools/s1/gap/lm/run-arm.ts"
+        let bun = NSHomeDirectory() + "/.bun/bin/bun"
+        let who = caller(bun, arguments: ["bun", script, "hosted"], ancestors: [(812, "zsh"), (640, "claude stream-json")])
+        XCTAssertEqual(who.onceOnlyReason, "extra code may be loaded", "a bun script without the launcher's --config= holds once")
+        let params = VaultUnlockParams(tool: "run-arm", purpose: "run tools run-arm hosted", secret: "ai/acc_work/longLivedToken", command: nil)
+        let alone = VaultWindowContent.build(params, caller: who, session: VaultSessionInfo(), home: "/Users/alice")
+        XCTAssertTrue(try XCTUnwrap(alone.warning).hasSuffix("It can only be allowed once."))
+        XCTAssertNil(alone.details.first { $0.label == "“This session”" })
+
+        let offered = VaultWindowContent.build(params, caller: who, session: VaultSessionInfo(), anchor: anchor, home: "/Users/alice")
+        XCTAssertTrue(try XCTUnwrap(offered.warning).hasSuffix("This program can only be allowed once, or with its whole session."))
+        XCTAssertEqual(offered.details.first { $0.label == "“This session”" }?.value, "claude (pid 640) and every program it starts")
+    }
+
+    func testTheLineageOfARealChildNamesThisProcessByItsStartTime() throws {
+        let child = Process()
+        child.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        child.arguments = ["30"]
+        try child.run()
+        defer {
+            child.terminate()
+            child.waitUntilExit()
+        }
+
+        let lineage = VaultProcess.lineage(of: child.processIdentifier)
+        let me = try XCTUnwrap(lineage.first)
+        XCTAssertEqual(me.pid, getpid())
+        XCTAssertEqual(me.startedAt, VaultProcess.startedAt(getpid()))
+        XCTAssertGreaterThan(lineage.count, 1, "the walk goes on above the first parent")
+
+        let anchor = try XCTUnwrap(VaultSessionAnchor.nearest(in: lineage, harnesses: [me.name]))
+        XCTAssertEqual(anchor.pid, getpid())
+        let grant = VaultSessionGrant(anchor: anchor, sessionId: nil, title: nil, grantedAt: 0, until: .max, method: "touch-id")
+        let file = VaultSessionGrantsFile(version: 1, grants: [grant])
+        XCTAssertNotNil(VaultSessionGrants.live(lineage: VaultProcess.lineage(of: child.processIdentifier), now: 1, in: file))
+        XCTAssertNil(VaultSessionGrants.live(lineage: VaultProcess.lineage(of: getpid()), now: 1, in: file),
+                     "the approved process's own parents are outside its approval")
+    }
+
+    func testSessionApprovalsShareTheGrantLock() async throws {
+        let directory = (NSTemporaryDirectory() as NSString).appendingPathComponent("vault-session-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let path = (directory as NSString).appendingPathComponent("vault-session-grants.json")
+        let grant = VaultSessionGrant(anchor: VaultSessionAnchor(harness: "claude", pid: 640, startedAt: 1), sessionId: "s",
+                                      title: nil, grantedAt: 1_000, until: 9_000, method: "touch-id")
+        try Data("\(getpid())\n".utf8).write(to: URL(fileURLWithPath: path + ".lock"))
+        let blocked = await VaultSessionGrants.store(grant, now: 1_000, to: path, timeout: 0)
+        XCTAssertFalse(blocked, "the TypeScript revoker's lock holds the native write off")
+        try FileManager.default.removeItem(atPath: path + ".lock")
+        let stored = await VaultSessionGrants.store(grant, now: 1_000, to: path)
+        XCTAssertTrue(stored)
+        XCTAssertEqual(VaultSessionGrants.load(from: path).grants, [grant])
     }
 }
 

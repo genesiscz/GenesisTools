@@ -46,6 +46,11 @@ struct InboxFindHost: View {
             default: InboxMain(model: model, inbox: inbox)
             }
         }
+            .onChange(of: inbox.focusRequest, initial: true) { _, _ in
+                // The model publishes a focus request only after finding the item in the unfiltered inbox.
+                if inbox.focusedItemID != nil, !model.filter.isEmpty { model.filter = "" }
+            }
+            .taskResumePrompt(inbox.tasks)
             .panelFind(find, revision: Revision(sessions: sessions, filter: model.filter, option: option),
                        prepare: { match in prepareVariant(match, option: option) }) {
                 if let option {
@@ -74,8 +79,7 @@ struct InboxFindHost: View {
                   let entry = ListsSketchB.entries(inbox, filter: model.filter).first(where: { $0.id == match.row }) else { return false }
             inbox.selectedID = entry.session.id
             inbox.keyCardID = entry.item.id
-            pick.bucket = nil
-            pick.project = nil
+            pick.clearFilters()
             pick.open = entry.item.id
             return true
         default:

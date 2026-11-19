@@ -1,21 +1,14 @@
 import { type MeetingItem, meetingItemSchema, nextId, QUESTION_TOPICS } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
-import { parseClock } from "@genesiscz/utils/transcribe/render";
 import { z } from "zod";
+import { transcriptTimeSchema as clock } from "./moment-schema";
+import { hasCodeWord } from "./reason-words";
 
-/** A transcript time: seconds, or "37:43" / "1:02:10". */
-const clock = z.union([z.number().min(0), z.string()]).transform((value, ctx) => {
-    const sec = typeof value === "number" ? value : parseClock(value);
-
-    if (sec === undefined) {
-        ctx.addIssue({ code: "custom", message: `"${value}" is not a transcript time (37:43, 1:02:10 or seconds)` });
-        return z.NEVER;
-    }
-
-    return sec;
-});
 const confidence = z.number().min(0).max(1);
 const text = z.string().trim().min(1);
+/** An agent's reason, as a saved journal line holds it: one saved before the plain-words rule (U18) still reads. */
+const reason = text;
+const PLAIN_WORDS = "Write the reason in plain words for the person who reads it";
 /** A line's index in the source transcript: tells apart two lines that start in the same second. */
 const line = z.number().int().min(0).optional();
 /** A name for a finding that a question in the same batch can list in `decides`, before the finding has an id. */
@@ -26,12 +19,12 @@ const ref = z
     .optional();
 
 /**
- * One finding to store, from `items add` flags or one entry of `--from-file`. A speaker range, a join or a term is an
+ * One finding as an `add` journal line saves it (`findingSchema` checks new input). A speaker range, a join or a term is an
  * agent's judgement and needs a confidence and a reason; a label that tracks no one person needs a reason; a question
  * needs neither.
  */
-export const findingSchema = z.discriminatedUnion("kind", [
-    z.object({ kind: z.literal("removal"), ref, from: clock, to: clock, heard: text, confidence, reason: text }),
+export const savedFindingSchema = z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("removal"), ref, from: clock, to: clock, heard: text, confidence, reason }),
     z.object({
         kind: z.literal("speaker-range"),
         ref,
@@ -45,7 +38,7 @@ export const findingSchema = z.discriminatedUnion("kind", [
         signature: text.optional(),
         candidates: z.array(text).optional(),
         confidence,
-        reason: text,
+        reason,
     }),
     z.object({
         kind: z.literal("term"),
@@ -63,7 +56,7 @@ export const findingSchema = z.discriminatedUnion("kind", [
         /** The heard words read a document line aloud: its exact text and the source, shown instead of them. */
         quote: z.object({ text, source: text }).optional(),
         confidence,
-        reason: text,
+        reason,
     }),
     z.object({
         kind: z.literal("join"),
@@ -76,7 +69,7 @@ export const findingSchema = z.discriminatedUnion("kind", [
         /** The whole word, as the joined line shows it. */
         joined: text.optional(),
         confidence,
-        reason: text,
+        reason,
     }),
     z.object({
         kind: z.literal("label"),
@@ -87,7 +80,7 @@ export const findingSchema = z.discriminatedUnion("kind", [
         label: text,
         meaningless: z.literal(true),
         confidence: confidence.optional(),
-        reason: text,
+        reason,
     }),
     z.object({
         kind: z.literal("question"),
@@ -107,10 +100,24 @@ export const findingSchema = z.discriminatedUnion("kind", [
         /** Evidence-group identity, never inferred from matching words alone. */
         signature: text.optional(),
         confidence: confidence.optional(),
-        reason: text.optional(),
+        reason: reason.optional(),
     }),
 ]);
-export type Finding = z.output<typeof findingSchema>;
+export type Finding = z.output<typeof savedFindingSchema>;
+
+/**
+ * Refuses a new finding whose reason the meeting's owner could not read (U18): a field of `evidence --raw`
+ * (`meeting.indicatorGaps`), a rule id (`RA`) or a labeler code (`seat-of-one`). Only input doors call it: a saved
+ * journal line keeps the words it was written with, so its entry still reads and undoes.
+ */
+export function refinePlainReason(finding: Finding, ctx: z.RefinementCtx, path: (string | number)[] = []): void {
+    if (finding.reason && hasCodeWord(finding.reason)) {
+        ctx.addIssue({ code: "custom", path: [...path, "reason"], message: PLAIN_WORDS });
+    }
+}
+
+/** A new finding, from `items add` flags, `--from-file` or the toolset: its reason is in plain words. */
+export const findingSchema = savedFindingSchema.superRefine((finding, ctx) => refinePlainReason(finding, ctx));
 export const FINDING_KINDS = ["speaker-range", "label", "join", "term", "question", "removal"] as const;
 
 /** A file of findings: an array, or `{ findings: [...] }`. */

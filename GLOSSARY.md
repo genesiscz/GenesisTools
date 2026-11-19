@@ -46,6 +46,14 @@ these names.
   restarts and keeps its own socket the whole time.
 - **Recorder face**: the recorder part of GenesisTools.app, started with `--recorder`: the menu bar item, the editor and
   library windows, and the headless render modes.
+- **Control bar**: the floating panel where the user sets up a take, starts it and controls it while it records.
+  The widget's short recorder and the full recorder use the same bar.
+- **Engine adapter**: the control bar's connection to one recorder. It reports which targets and live changes that
+  recorder supports, carries the user's commands and returns the state of the take.
+- **Sound lane**: one source in an edit's sound mix, such as the microphone, system sound or a voiceover. Each lane
+  has its own mute and volume for the whole edit.
+- **Layer stack**: the bottom-to-top drawing order of the recorded camera and the image or video layers over the
+  screen picture. The top layer covers lower ones where they overlap.
 
 ## Meetings
 
@@ -72,3 +80,17 @@ these names.
 - **Reason**: why a decision was made, in the decider's words: the window's comment field, `--reason` on a command,
   `listen --comment` on an answer, an agent's stated reason. The decision journal keeps it on the entry, and each item it
   decided keeps it too.
+- **Seat timeline**: the intervals when a person occupies a room or remote seat. A gap leaves their seat unknown,
+  and a change of seat starts a new interval.
+- **Call presence**: the intervals when an account is connected to the call. A room person's account can be present
+  and muted while a shared microphone picks up their voice.
+- **Room person**: someone physically present with the recorder during the relevant interval. They may also have an
+  account on the call roster.
+- **Voice library**: the collection of learned voice samples and their corrections across meetings and projects.
+  A project can use a person's voice learned in another project.
+- **Voice print**: a model's numerical representation of a voice in a particular audio clip, used to compare that
+  voice with compatible recordings.
+- **Sample**: one voice print in the voice library, with a stable identity, an owner and a reference to the speech
+  it came from. Moving it to the correct person keeps the same sample.
+- **Exclusion naming**: proposing a speaker because other candidates were ruled out. The remaining name is a
+  question for individual review.

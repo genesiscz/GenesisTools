@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import type { RecordingTarget } from "@app/control/lib/recording-targets";
@@ -7,9 +8,11 @@ import { convertFileToMonoMp3 } from "@genesiscz/utils/audio/converter";
 import { execTool, spawnToolDetached } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { FlockState } from "@genesiscz/utils/fs/flock";
+import { fileIdentity } from "@genesiscz/utils/fs/identity-cache";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { awaitStart, startGatePath, stopPassedChild, sweepStartGates } from "@genesiscz/utils/process/start-gate";
+import { type AudioLane, audioLanesOf } from "@genesiscz/utils/recording-editor/audio-lanes";
 import {
     checkProject,
     type EditFacts,
@@ -23,7 +26,12 @@ import { MOVIE_EVENT_KINDS, type MovieEventKind, type Tap, tapSchema } from "@ge
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
 import { arrowTail } from "@genesiscz/utils/recording-editor/item-ops";
 import { DEFAULT_LANES, EFFECT_KINDS, type EffectLane } from "@genesiscz/utils/recording-editor/lanes";
-import { transcribedTracks } from "@genesiscz/utils/recording-editor/loudness";
+import { layerOrderOf, type MediaLayer } from "@genesiscz/utils/recording-editor/layers";
+import {
+    recordingLaneInputs,
+    recordingLanesToMonoMp3,
+    transcribedTracks,
+} from "@genesiscz/utils/recording-editor/loudness";
 import { cardsLeadUs, TEXT_ANIMATIONS } from "@genesiscz/utils/recording-editor/overlays";
 import {
     outputTimeSchema,
@@ -68,6 +76,7 @@ import { ReplToolset, type ToolsetContext } from "@genesiscz/utils/repl/toolset"
 import { recorderSetSchema, settingsPatchOf } from "@genesiscz/utils/repl/toolsets/recorder";
 import { readRecordingManifest, renameRecording } from "@genesiscz/utils/screen-recorder/library";
 import { callRecorder, type LiveEntry, listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { hasAudio, type MediaFacts, readMediaFacts } from "@genesiscz/utils/video/media-facts";
 import { probeVideo } from "@genesiscz/utils/video/probe";
@@ -76,6 +85,7 @@ import { cameraRefusal, recorderFaceState } from "./camera-recorder";
 import { type DemoDriver, type DemoStep, demoEditSchema, runDemo } from "./demo";
 import { duplicateRecording } from "./duplicate";
 import {
+    audioFactsOf,
     defaultExportName,
     EXPORT_FORMATS,
     type ExportFormat,
@@ -86,6 +96,7 @@ import {
     exportProgressPrinter,
     openProject,
     previewTranscriptCuts,
+    recordingLaneFacts,
     transcriptWords,
     undoDepth,
     writeSubtitles,
@@ -124,6 +135,7 @@ import {
     spreadTimes,
 } from "./moments";
 import { serviceRoutedMovie } from "./movie-client";
+import { recordingAudioIssues } from "./proxy";
 import { copyRecording, revealRecording, trashRecording } from "./quick-actions";
 import { commentOn, commentsOf, importBoardComments, resolveComment, uncomment } from "./review";
 import { type ScreenHitWithOps, screenHitsWithOps } from "./screen-ops";
@@ -195,7 +207,7 @@ const demoParamsSchema = z
     .strict();
 
 const movieDoc =
-    "{ path, revision, updatedBy, video, sourceSeconds, outputSeconds, clips, zooms, redactions, audio, export, clicks, frame, cursor, camera, captions, keys, transcriptFixes, motion, shapes, texts, lanes, transitions, lenses, tilt, warnings? }";
+    "{ path, revision, updatedBy, video, sourceSeconds, outputSeconds, clips, zooms, redactions, audio, export, clicks, frame, cursor, camera, captions, keys, transcriptFixes, motion, shapes, texts, lanes, layers?, transitions, lenses, tilt, warnings? }";
 
 /** What every edit method returns, short: the full field list once, on info(), keeps describe()'s lines readable. */
 const editResult =
@@ -247,6 +259,16 @@ function opParams(tag: EditOp["op"]): z.ZodObject {
 
 /** The method of a plain edit op: `edit()` with the op's own params. */
 const opEdit = (tag: EditOp["op"], doc: string, positional?: string[]) => edit(tag, opParams(tag), doc, positional);
+
+function editById(tag: "audioLane" | "layer", doc: string) {
+    const fields = opParams(tag);
+    return edit(tag, fields.pick({ id: true }).extend({ changes: fields.omit({ id: true }) }), doc, ["id", "changes"]);
+}
+
+const layerAddFields = opParams("layerAdd");
+type LayerAddOptions = Omit<Extract<EditOp, { op: "layerAdd" }>, "op" | "file" | "kind"> & {
+    kind?: MediaLayer["kind"];
+};
 
 const movieMethods = [
     defineMethod({
@@ -360,13 +382,65 @@ const movieMethods = [
     opEdit("volume", "Sets the volume, 0 to 2.", ["volume"]),
     opEdit(
         "mute",
-        "Mutes an audio track (0 is the first). A track the movie does not have is refused (a frames recording has one track, 0, with the mic and the system sound mixed), and so is a movie whose video has no audio track. muted: false unmutes it, as unmute(track) does.",
+        `Mutes an audio track (0 is the first), including its saved movie-track lane. Use audioLane(id, { muted: true }) for a separate microphone or system file. A missing track or a movie without sound is refused. Pass false to unmute, as unmute(track) does. Returns the edit summary from the mute op in ${toolCommand("recorder apply")}.`,
         ["track", "muted"]
     ),
     edit("unmute", z.object({ track: z.number().int().nonnegative() }).strict(), "Unmutes an audio track.", ["track"]),
-    edit("apply", z.object({ ops: z.array(editOpSchema).min(1) }).strict(), "Several ops at once, saved once.", [
-        "ops",
-    ]),
+    defineMethod({
+        name: "audioLanes",
+        params: z.object({}).strict(),
+        result: z.unknown(),
+        resultName: "{ id, source, file?, track?, offsetMs, muted, volume, name }[]",
+        doc: `Lists the sound lanes with their display names and mix settings. Reading an old edit leaves its mix unwritten. Use an id with audioLane or ${toolCommand("recorder apply")} with the audioLane op.`,
+        effect: "read",
+    }),
+    editById(
+        "audioLane",
+        `Mutes, sets volume (0–2), or renames one sound lane. Returns the edit summary from the audioLane op in ${toolCommand("recorder apply")}.`
+    ),
+    defineMethod({
+        name: "layers",
+        params: z.object({}).strict(),
+        result: z.unknown(),
+        resultName: '{ id, kind: "camera" | "image" | "video" }[]',
+        doc: `Lists camera, image and video layer ids from bottom to top. Use an id with layer or ${toolCommand("recorder apply")} with the layer op.`,
+        effect: "read",
+    }),
+    defineMethod({
+        name: "addLayer",
+        // The service resolves a param named "file" against the caller's cwd. A layer's bare file lives beside the movie.
+        params: z.strictObject({
+            layerFile: layerAddFields.shape.file,
+            options: layerAddFields.omit({ file: true }).partial({ kind: true }).optional(),
+        }),
+        positional: ["layerFile", "options"],
+        result: z.string(),
+        resultName: "string",
+        doc: `Adds an image or video above the existing layers and returns its id. A bare file name is beside the movie. Set options.kind when the extension does not identify the media. startUs and endUs are source microseconds. Runs the layerAdd op from ${toolCommand("recorder apply")}.`,
+        effect: "reversible",
+    }),
+    editById(
+        "layer",
+        `Changes a layer's placement, visibility, shape or source times (microseconds). Hiding the camera keeps its recording. Returns the edit summary from the layer op in ${toolCommand("recorder apply")}.`
+    ),
+    edit(
+        "moveLayer",
+        opParams("layerMove"),
+        `Moves a layer to top, bottom, up, down or a numeric index (0 is the bottom). Returns the edit summary from the layerMove op in ${toolCommand("recorder apply")}.`,
+        ["id", "to"]
+    ),
+    edit(
+        "removeLayer",
+        opParams("layerRemove"),
+        `Removes a media layer. For the camera use layer("camera", { hidden: true }). Returns the edit summary from the layerRemove op in ${toolCommand("recorder apply")}.`,
+        ["id"]
+    ),
+    edit(
+        "apply",
+        z.object({ ops: z.array(editOpSchema).min(1) }).strict(),
+        "Several ops at once, saved once. A single layerAdd also returns the new layerId.",
+        ["ops"]
+    ),
     edit(
         "undo",
         z.object({ all: z.boolean().optional() }).strict(),
@@ -1474,6 +1548,34 @@ function briefOf(project: EditProject, path: string) {
     };
 }
 
+function soundLaneName(lane: AudioLane): string {
+    if (lane.name) {
+        return lane.name;
+    }
+
+    switch (lane.source) {
+        case "mic":
+            return "Microphone";
+        case "system":
+            return "System sound";
+        case "movie":
+            return lane.track === undefined ? "Movie track" : `Movie track ${lane.track + 1}`;
+        case "music":
+            return "Music";
+        case "voiceover":
+            return "Voiceover";
+    }
+}
+
+function layerKindOf(file: string): MediaLayer["kind"] {
+    const kind = Bun.file(file).type.split("/")[0];
+    if (kind === "image" || kind === "video") {
+        return kind;
+    }
+
+    throw new Error('addLayer cannot infer the file type. Set options.kind to "image" or "video".');
+}
+
 export class Movie {
     /** `ctx`: the worker's scratch folder and `show`, for still(); absent outside a REPL. */
     constructor(
@@ -1501,6 +1603,7 @@ export class Movie {
     async check() {
         const opened = await openProject(this.recording);
         const issues = checkProject(opened.project, facts(opened));
+        issues.push(...recordingAudioIssues(opened.project.source.video));
         log.debug({ recording: this.recording, issues: issues.length }, "edit checked");
         // ok: nothing that breaks the export; clean: nothing to look at either (a "note" is the export handling it).
         // R6 9: the groups (one per kind, with a count) and their lines come first; issues stays the full list.
@@ -1546,9 +1649,13 @@ export class Movie {
     private async change(ops: EditOp[]) {
         const before = await openProject(this.recording);
         const edited = await editProject(this.recording, ops);
+        // layerAdd appends its layer. Take the id from this committed edit, before another writer can add one.
+        const addedLayer =
+            ops.length === 1 && ops[0].op === "layerAdd" ? edited.project.layers?.media.at(-1) : undefined;
         const seconds = (us: number) => Math.round(us / 1000) / 1000;
         return {
             ...briefOf(edited.project, edited.path),
+            ...(addedLayer ? { layerId: addedLayer.id } : {}),
             // R5 6: the summary is the edit AFTER this call; changed says what this call did.
             changed: changedParts(before.project, edited.project),
             ...(edited.removedIdleUs
@@ -1819,6 +1926,45 @@ export class Movie {
 
     async unmute(track: number) {
         return this.change([{ op: "mute", track, muted: false }]);
+    }
+
+    async audioLanes() {
+        const { project, audioFacts } = await openProject(this.recording, { prepareAudio: true });
+        const lanes =
+            project.audio.lanes ??
+            audioLanesOf(project, audioFacts ?? (await audioFactsOf(project.source.video, { prepare: true })));
+        return lanes.map((lane) => ({ ...lane, name: soundLaneName(lane) }));
+    }
+
+    async audioLane(id: string, changes: Omit<Extract<EditOp, { op: "audioLane" }>, "op" | "id">) {
+        return this.apply([{ ...changes, op: "audioLane", id }]);
+    }
+
+    async layers() {
+        const { project } = await openProject(this.recording);
+        return layerOrderOf(project);
+    }
+
+    async addLayer(file: string, options: LayerAddOptions = {}): Promise<string> {
+        const kind = options.kind ?? layerKindOf(file);
+        const result = await this.apply([{ ...options, op: "layerAdd", file, kind }]);
+        if (!result.layerId) {
+            throw new Error("layerAdd returned an edit without the new layer");
+        }
+
+        return result.layerId;
+    }
+
+    async layer(id: string, changes: Omit<Extract<EditOp, { op: "layer" }>, "op" | "id">) {
+        return this.apply([{ ...changes, op: "layer", id }]);
+    }
+
+    async moveLayer(id: string, to: Extract<EditOp, { op: "layerMove" }>["to"]) {
+        return this.apply([{ op: "layerMove", id, to }]);
+    }
+
+    async removeLayer(id: string) {
+        return this.apply([{ op: "layerRemove", id }]);
     }
 
     async apply(ops: EditOp[]) {
@@ -2131,35 +2277,72 @@ export class Movie {
         const video = opened.project.source.video;
         const cache = transcriptCachePath(video);
 
+        const { audio } = opened.project;
+        const selectionPath = `${cache}.lanes.json`;
+        const explicit = audio.lanes;
+        const lanes =
+            explicit && audio.include && audio.volume > 0
+                ? recordingLaneInputs({
+                      video,
+                      lanes: explicit,
+                      facts: opened.audioFacts ?? (await recordingLaneFacts(opened.project)),
+                  })
+                : [];
+        const selection = explicit
+            ? {
+                  durationUs: opened.project.source.durationUs,
+                  lanes: lanes.map((lane) => ({ ...lane, source: fileIdentity(lane.path) })),
+              }
+            : undefined;
+        const stamp = (transcript: string) =>
+            SafeJSON.stringify({ selection, transcript: createHash("sha256").update(transcript).digest("hex") });
+
         if (!options.refresh && existsSync(cache)) {
-            return transcriptLines(SafeJSON.parse(readFileSync(cache, "utf8"), { strict: true }), opened.project);
+            const transcript = readFileSync(cache, "utf8");
+            const previous = existsSync(selectionPath) ? readFileSync(selectionPath, "utf8") : undefined;
+
+            if (previous ? previous === stamp(transcript) : !explicit) {
+                return transcriptLines(SafeJSON.parse(transcript, { strict: true }), opened.project);
+            }
         }
 
-        if (recordedWithoutSound(opened)) {
+        if (explicit && !lanes.length) {
+            throw new Error(`${video} has no audible recording lanes, so there is nothing to transcribe`);
+        }
+
+        if (!explicit && recordedWithoutSound(opened)) {
             throw new Error(`${video} was recorded without sound, so there is nothing to transcribe`);
         }
 
-        // What the export plays, on the movie's clock: every unmuted track mixed, a late first sample kept in place.
-        const tracks = transcribedTracks(await audioTrackCount(video), opened.project.audio);
+        // What the export plays, on the movie's clock, before edits to the timeline.
+        const tracks = explicit ? [] : transcribedTracks(await audioTrackCount(video), audio);
         // The guard sits on the paid call itself: a method declared read that reaches here is refused (NR1).
         assertReach("paid", "start a transcription", "Call movie.transcript() first; it declares the paid run.");
-        const heard = join(tmpdir(), `gt-transcript-${process.pid}-${Date.now()}.mp3`);
-
+        const scratch = mkdtempSync(join(tmpdir(), "gt-transcript-"));
+        const heard = join(scratch, "heard.mp3");
+        const written = join(scratch, "transcript.json");
         try {
-            await convertFileToMonoMp3(video, heard, { tracks });
+            if (explicit) {
+                await recordingLanesToMonoMp3({ lanes, durationUs: opened.project.source.durationUs, output: heard });
+            } else {
+                await convertFileToMonoMp3(video, heard, { tracks, timeoutMs: 10 * 60_000 });
+            }
             await transcribeInto({
                 input: heard,
-                cache,
+                cache: written,
                 provider: options.provider,
                 lang: options.lang,
                 video,
                 tracks,
             });
+            const transcript = readFileSync(written, "utf8");
+            // Pair the stamp with the bytes this request wrote, even if another request replaces the cache.
+            atomicWriteFileSync(selectionPath, stamp(transcript));
+            atomicWriteFileSync(cache, transcript);
+            return transcriptLines(SafeJSON.parse(transcript, { strict: true }), opened.project);
         } finally {
-            rmSync(heard, { force: true });
+            rmSync(scratch, { recursive: true, force: true });
         }
-
-        return transcriptLines(SafeJSON.parse(readFileSync(cache, "utf8"), { strict: true }), opened.project);
     }
 
     /** One frame of the edit as it exports, shown to the model; `at` is OUTPUT seconds (what plays). */

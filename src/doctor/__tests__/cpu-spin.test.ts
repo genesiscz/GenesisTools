@@ -1,8 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { rmSync } from "node:fs";
-import { CpuSpinAnalyzer, type CpuTimeSample, processOwner, spinningProcesses } from "@app/doctor/analyzers/cpu-spin";
+import { CpuSpinAnalyzer } from "@app/doctor/analyzers/cpu-spin";
 import { analysisDirFor } from "@app/doctor/lib/paths";
 import type { AnalyzerContext } from "@app/doctor/lib/types";
+import { type CpuTimeSample, processOwner, spinningProcesses } from "@genesiscz/utils/process/cpu-spin";
 import { parseCpuTime } from "@genesiscz/utils/process/ps";
 
 const PS_LINE = /^\s*(\d+)\s+(\S+)\s+(.*)$/;
@@ -25,7 +26,7 @@ function parseCpuTimeSamples(raw: string): Map<number, CpuTimeSample> {
         }
 
         const pid = Number.parseInt(match[1], 10);
-        samples.set(pid, { pid, cpuMs, command: match[3].trim() });
+        samples.set(pid, { pid, cpuMs, command: match[3].trim(), startMs: null });
     }
 
     return samples;
@@ -74,6 +75,16 @@ describe("spinningProcesses", () => {
 
         expect(spinningProcesses(before, after, 1_000, 25)).toEqual([]);
     });
+
+    it("does not judge a pid that a new process with the same command took over between the samples", () => {
+        const sample = (cpuMs: number, startMs: number) =>
+            new Map([[77, { pid: 77, cpuMs, command: "/bin/worker", startMs }]]);
+
+        expect(spinningProcesses(sample(10, 1_000), sample(510, 2_000), 1_500, 25)).toEqual([]);
+        expect(spinningProcesses(sample(10, 1_000), sample(510, 1_000), 1_500, 25).map((found) => found.pid)).toEqual([
+            77,
+        ]);
+    });
 });
 
 describe("processOwner", () => {
@@ -95,6 +106,8 @@ describe("processOwner", () => {
         expect(processOwner("/Users/dev/.genesis-tools/bin/gt-ai /Users/dev/GenesisTools/src/ai/index.ts")).toBe(
             "genesis-tool"
         );
+        expect(processOwner("bun C:\\Projects\\GenesisTools\\src\\doctor\\index.ts")).toBe("genesis-tool");
+        expect(processOwner("C:\\Users\\dev\\.genesis-tools\\bin\\gt-ai.exe")).toBe("genesis-tool");
         expect(processOwner("/usr/libexec/logd")).toBeNull();
     });
 });

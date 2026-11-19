@@ -196,7 +196,7 @@ enum SidePanelWords {
     static let choiceTitles: [String: String] = [
         "always": "Always", "never": "Never", "auto": "Auto", "on": "On", "off": "Off",
         "edit": "Edit first", "confirm": "Confirm",
-        "inPlace": "In place", "hidden": "Hidden",
+        "inPlace": "In place", "hidden": "Hidden", "atEnd": "At the end",
         "priority": "Priority", "time": "Time",
         "hide": "Hide", "show": "Show",
         "afterAnswer": "After an answer",
@@ -216,6 +216,9 @@ enum SidePanelWords {
     /// Choices whose words depend on the key ("always" of the typed answer is "On every question").
     static let keyedTitles: [String: [String: String]] = [
         MeetingsPreferences.typedAnswerKey: ["always": "On every question", "noChoices": "Without choices"],
+        MeetingsPreferences.Transcript.timingModel.key: [MeetingsPreferences.Transcript.TimingModel.whisperTurbo.rawValue: "Whisper large v3 turbo"],
+        MeetingsPreferences.Transcript.timingLanguage.key: ["meeting": "The meeting's language", "detect": "Detect it",
+                                                            "cs": "Czech", "en": "English"],
     ]
 
     /// A number choice of 0 that means "not at all" for its key.
@@ -231,10 +234,13 @@ enum SidePanelWords {
     /// A number with the unit its key names: "1.25×", "30 s", "300 ms", or a count.
     static func number(_ value: Double, key: String) -> String {
         if value == 0, let zero = zeroTitles[key] { return zero }
-        let text = value == value.rounded() ? String(Int(value)) : String(format: "%g", value)
+        // A whole number past Int's range (a hand-written 1e300 in the config) prints as %g: `Int(_:)` would trap.
+        let text = value == value.rounded() && abs(value) < 1e15 ? String(Int(value)) : String(format: "%g", value)
         if key.hasSuffix("speed") { return "\(text)×" }
         if key.hasSuffix("Height") || key.hasSuffix(".height") { return "\(text) pt" }
         if key.hasSuffix("Ms") { return "\(text) ms" }
+        if key.hasSuffix("spotCheckCount") { return "\(text) lines" }
+        if key.hasSuffix("Words") { return "\(text) words" }
         if key.hasSuffix("Sec") || key.hasSuffix("Seconds") || key.hasSuffix("seconds") || key.hasSuffix("plainSeconds") { return "\(text) s" }
         return text
     }
@@ -311,6 +317,7 @@ enum SidePanelCatalog {
         typealias Panes = MeetingsPreferences.Panes
         typealias Transcript = MeetingsPreferences.Transcript
         typealias Speakers = MeetingsPreferences.Speakers
+        typealias Listen = MeetingsPreferences.Listen
         let playback = SidePanelSection(id: "playback", title: "Playback", rows: [
             row(Playback.view, value: Playback.view.value(defaults)),
             row(Playback.speed, value: Playback.speed.value(defaults)),
@@ -342,6 +349,9 @@ enum SidePanelCatalog {
             row(Rows.autoplayDelaySec, value: Rows.autoplayDelaySec.value(defaults))
                 .requiring(Rows.autoplayNext.key, [.text(Rows.AutoplayNext.afterAnswer.rawValue)], "Off while the next row does not play."),
             row(Rows.openPersonPicker, value: Rows.openPersonPicker.value(defaults)),
+            row(Listen.spotCheckCount, value: Listen.spotCheckCount.value(defaults)),
+            row(Listen.longStretchWords, value: Listen.longStretchWords.value(defaults)),
+            row(Listen.showPrepared, value: Listen.showPrepared.value(defaults)),
         ])
         let notices = SidePanelSection(id: "notices", title: "Notices", rows: [
             numberRow(key: MeetingsPreferences.noticeSecondsKey, title: "A notice with Undo stays for",
@@ -365,7 +375,7 @@ enum SidePanelCatalog {
             row(MeetingsPreferences.Notices.passScrollWhenFits, value: MeetingsPreferences.Notices.passScrollWhenFits.value(defaults)),
         ], settingsAnchor: MeetingsSettingsPages.noticesAnchor)
         let timelineOn: [SidePanelValue] = [.flag(true)]
-        let panes = SidePanelSection(id: "panes", title: "Timeline and Panes", rows: [
+        let panes = SidePanelSection(id: "panes", title: "Timeline and panes", rows: [
             row(Panes.timelineShown, value: Panes.timelineShown.value(defaults)),
             row(Panes.hoverDelayMs, value: Panes.hoverDelayMs.value(defaults))
                 .requiring(Panes.timelineShown.key, timelineOn, "Off while the timeline is off."),
@@ -380,6 +390,7 @@ enum SidePanelCatalog {
             row(Panes.screenHeight, value: Panes.screenHeight.value(defaults))
                 .requiring(Panes.screenBesidePlayback.key, [.flag(true)], "Off while the screen is not beside the sound."),
             row(Panes.transcriptPane, value: Panes.transcriptPane.value(defaults)),
+            row(Panes.autoHideSidebar, value: Panes.autoHideSidebar.value(defaults)),
             row(Panes.frameBoxes, value: Panes.frameBoxes.value(defaults)),
             row(Panes.frameFocusSingle, value: Panes.frameFocusSingle.value(defaults)),
             row(Panes.frameAutoDisplay, value: Panes.frameAutoDisplay.value(defaults)),
@@ -391,14 +402,18 @@ enum SidePanelCatalog {
                          value: .text(MeetingsPreferences.look(defaults).rawValue),
                          defaultValue: .text(MeetingsPreferences.defaultLook.rawValue)),
         ])
-        let transcript = SidePanelSection(id: "transcript", title: "Transcript and Speakers", rows: [
+        let transcript = SidePanelSection(id: "transcript", title: "Transcript and speakers", rows: [
             SidePanelRow(store: .window(key: MeetingsPreferences.speakerOrderKey), title: "Speakers in order of",
                          detail: "The speaker who talked longest first, or the order the transcript first names them.",
                          choices: [SidePanelChoice(value: .text("spoken"), title: "Most spoken"),
                                    SidePanelChoice(value: .text("transcript"), title: "Transcript")],
                          value: .text(MeetingsPreferences.speakerOrder(defaults).rawValue), defaultValue: .text("spoken")),
-            row(Transcript.applyAbove, value: Transcript.applyAbove.value(defaults)),
+            row(Transcript.echoAbove, value: Transcript.echoAbove.value(defaults)),
             row(Transcript.wordHighlights, value: Transcript.wordHighlights.value(defaults)),
+            row(Transcript.timingModel, value: Transcript.timingModel.value(defaults)),
+            row(Transcript.timingLanguage, value: Transcript.timingLanguage.value(defaults)),
+            row(Transcript.flashRaised, value: Transcript.flashRaised.value(defaults)),
+            row(Transcript.raisedFlashSec, value: Transcript.raisedFlashSec.value(defaults)),
             row(Transcript.dimPast, value: Transcript.dimPast.value(defaults)),
             row(Transcript.avatars, value: Transcript.avatars.value(defaults)),
             row(Transcript.blockBreakSec, value: Transcript.blockBreakSec.value(defaults)),
@@ -407,7 +422,7 @@ enum SidePanelCatalog {
             row(Speakers.hintChips, value: Speakers.hintChips.value(defaults)),
         ])
         typealias People = MeetingsPreferences.People
-        let people = SidePanelSection(id: "people", title: "Speaker Names", rows: [
+        let people = SidePanelSection(id: "people", title: "Speaker names", rows: [
             row(People.renameBlur, value: People.renameBlur.value(defaults)),
             row(People.offerNew, value: People.offerNew.value(defaults)),
         ])
@@ -451,14 +466,17 @@ enum SidePanelCatalog {
 
     /// The engine's clip and tone, from `config.read global.playback.listen` (null or missing keys read as defaults),
     /// with the named tones `presets` holds. `fileExists` checks a saved sound file (one stat per draw).
-    static func engineSection(listen: JSONValue, presets: TonePresetList = .loading,
-                              fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> SidePanelSection {
+    @MainActor static func engineSection(listen: JSONValue, presets: TonePresetList = .loading,
+                              fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
+                              threshold: MeetingsApplyThreshold? = nil) -> SidePanelSection {
         func number(_ path: [String]) -> Double? { if case .number(let value) = listen.at(path) { return value } else { return nil } }
         func flag(_ path: [String]) -> Bool? { if case .bool(let value) = listen.at(path) { return value } else { return nil } }
         func text(_ path: [String]) -> String? { if case .string(let value) = listen.at(path) { return value } else { return nil } }
         let toneOn = "\(listenPath).tone.enabled"
         let setting = toneSetting(listen.at(["tone", "sound"]))
-        return SidePanelSection(id: "engine", title: "Clip and Tone", rows: padRows(before: number(["padBeforeSec"]), after: number(["padAfterSec"])) + [
+        let threshold = threshold ?? MeetingsApplyThreshold.shared
+        let thresholdRows = threshold.percent != nil || threshold.failure != nil ? [thresholdRow(threshold)] : []
+        return SidePanelSection(id: "engine", title: "Clip and tone", rows: padRows(before: number(["padBeforeSec"]), after: number(["padAfterSec"])) + [
             SidePanelRow(store: .engine(path: toneOn), title: "Tone",
                          detail: "A short tone just before the asked spot, in the window and the terminal.",
                          choices: [], value: .flag(flag(["tone", "enabled"]) ?? true), defaultValue: .flag(true)),
@@ -479,7 +497,17 @@ enum SidePanelCatalog {
                       detail: "A longer item or speaker turn plays only its first part, this long.",
                       choices: [15, 30, 60, 120], value: number(["longestClipSec"]) ?? 30, defaultValue: 30,
                       store: .engine(path: "\(listenPath).longestClipSec")),
-        ], footnote: "Applies from the next clip. The clip that plays keeps its sound.")
+        ] + thresholdRows, footnote: thresholdRows.isEmpty ? "Applies from the next clip. The clip that plays keeps its sound."
+            : "The threshold updates the transcript immediately. Clip and tone changes apply from the next clip.")
+    }
+
+    @MainActor static func thresholdRow(_ threshold: MeetingsApplyThreshold) -> SidePanelRow {
+        SidePanelRow(store: .engine(path: MeetingsApplyThreshold.path), title: "Apply suggestions above",
+            detail: "One threshold for the engine and the transcript. Lower confidence voices keep a percentage mark.",
+            choices: Array(Set([0, 50, 60, 70, 80, 90, 100] + [threshold.percent].compactMap { $0 })).sorted().map {
+                SidePanelChoice(value: .number($0), title: "\($0.formatted(.number.precision(.fractionLength(0...2)))) %", available: !threshold.busy && threshold.percent != nil)
+            }, value: threshold.percent.map { .number($0) } ?? .text("Reading…"), defaultValue: .number(70),
+            problem: threshold.failure == nil ? nil : "The threshold was not saved or read. The control keeps its saved value; try again.")
     }
 
     /// The pads before and after the asked spot (config version 5, decision 9). Neither has a default: the first
@@ -635,6 +663,10 @@ enum SidePanelCatalog {
     static func applyEngine(_ value: SidePanelValue, for row: SidePanelRow,
                             chooseFile: @escaping @MainActor (String?) async -> String? = { await ToneFileChooser.choose(near: $0) },
                             write: @escaping @MainActor (JSONValue?) -> Void) {
+        if row.id == MeetingsApplyThreshold.path, case .number(let percent) = value {
+            Task { await MeetingsApplyThreshold.shared.set(percent) }
+            return
+        }
         switch enginePick(value, for: row) {
         case .set(let json): write(json)
         case .unset: write(nil)

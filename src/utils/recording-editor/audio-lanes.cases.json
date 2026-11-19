@@ -1,0 +1,362 @@
+{
+  "cases": [
+    {
+      "name": "frames proxy with both source files",
+      "audio": {},
+      "facts": {
+        "movieTracks": 1,
+        "mixedFrom": [
+          {
+            "source": "system",
+            "file": "system.m4a",
+            "offsetMs": -15
+          },
+          {
+            "source": "mic",
+            "file": "mic.m4a",
+            "offsetMs": 72
+          }
+        ]
+      },
+      "lanes": [
+        {
+          "id": "mic",
+          "source": "mic",
+          "file": "mic.m4a",
+          "offsetMs": 72,
+          "muted": false,
+          "volume": 1
+        },
+        {
+          "id": "system",
+          "source": "system",
+          "file": "system.m4a",
+          "offsetMs": -15,
+          "muted": false,
+          "volume": 1
+        }
+      ],
+      "movieTracksPlayed": []
+    },
+    {
+      "name": "muted proxy keeps both files muted",
+      "audio": {
+        "mutedTracks": [
+          0
+        ]
+      },
+      "facts": {
+        "movieTracks": 1,
+        "mixedFrom": [
+          {
+            "source": "mic",
+            "file": "mic.m4a",
+            "offsetMs": 10
+          },
+          {
+            "source": "system",
+            "file": "system.m4a",
+            "offsetMs": 0
+          }
+        ]
+      },
+      "lanes": [
+        {
+          "id": "mic",
+          "source": "mic",
+          "file": "mic.m4a",
+          "offsetMs": 10,
+          "muted": true,
+          "volume": 1
+        },
+        {
+          "id": "system",
+          "source": "system",
+          "file": "system.m4a",
+          "muted": true,
+          "offsetMs": 0,
+          "volume": 1
+        }
+      ],
+      "movieTracksPlayed": []
+    },
+    {
+      "name": "movie tracks followed by voiceovers and music",
+      "audio": {
+        "mutedTracks": [
+          1
+        ],
+        "voiceovers": [
+          {
+            "id": "v-intro",
+            "atUs": 0,
+            "file": "intro.m4a",
+            "durationUs": 300000,
+            "volume": 0.6,
+            "label": "Intro"
+          }
+        ],
+        "music": {
+          "file": "score.m4a",
+          "volume": 0.3
+        }
+      },
+      "facts": {
+        "movieTracks": 2,
+        "mixedFrom": []
+      },
+      "lanes": [
+        {
+          "id": "movie-0",
+          "source": "movie",
+          "track": 0,
+          "offsetMs": 0,
+          "muted": false,
+          "volume": 1
+        },
+        {
+          "id": "movie-1",
+          "source": "movie",
+          "track": 1,
+          "muted": true,
+          "offsetMs": 0,
+          "volume": 1
+        },
+        {
+          "id": "v-intro",
+          "source": "voiceover",
+          "name": "Intro",
+          "offsetMs": 0,
+          "muted": false,
+          "volume": 1
+        },
+        {
+          "id": "music",
+          "source": "music",
+          "offsetMs": 0,
+          "muted": false,
+          "volume": 1
+        }
+      ],
+      "movieTracksPlayed": [
+        0
+      ]
+    },
+    {
+      "name": "saved lanes take precedence over the legacy mute list",
+      "audio": {
+        "mutedTracks": [
+          0
+        ],
+        "lanes": [
+          {
+            "id": "movie-0",
+            "source": "movie",
+            "track": 0,
+            "name": "Mixed sound",
+            "volume": 0.65
+          },
+          {
+            "id": "movie-1",
+            "source": "movie",
+            "track": 1,
+            "muted": true
+          }
+        ]
+      },
+      "facts": {
+        "movieTracks": 2,
+        "mixedFrom": []
+      },
+      "lanes": [
+        {
+          "id": "movie-0",
+          "source": "movie",
+          "track": 0,
+          "name": "Mixed sound",
+          "volume": 0.65,
+          "offsetMs": 0,
+          "muted": false
+        },
+        {
+          "id": "movie-1",
+          "source": "movie",
+          "track": 1,
+          "muted": true,
+          "offsetMs": 0,
+          "volume": 1
+        }
+      ],
+      "movieTracksPlayed": [
+        0
+      ]
+    },
+    {
+      "name": "muting the only replacement file never brings back the proxy mix",
+      "audio": {
+        "lanes": [
+          {
+            "id": "mic",
+            "source": "mic",
+            "file": "mic.m4a",
+            "muted": true
+          },
+          {
+            "id": "movie-0",
+            "source": "movie",
+            "track": 0
+          },
+          {
+            "id": "movie-1",
+            "source": "movie",
+            "track": 1
+          }
+        ]
+      },
+      "facts": {
+        "movieTracks": 2,
+        "mixedFrom": [
+          {
+            "source": "mic",
+            "file": "mic.m4a",
+            "offsetMs": 0
+          }
+        ]
+      },
+      "lanes": [
+        {
+          "id": "mic",
+          "source": "mic",
+          "file": "mic.m4a",
+          "muted": true,
+          "offsetMs": 0,
+          "volume": 1
+        },
+        {
+          "id": "movie-0",
+          "source": "movie",
+          "track": 0,
+          "offsetMs": 0,
+          "muted": false,
+          "volume": 1
+        },
+        {
+          "id": "movie-1",
+          "source": "movie",
+          "track": 1,
+          "offsetMs": 0,
+          "muted": false,
+          "volume": 1
+        }
+      ],
+      "movieTracksPlayed": [
+        1
+      ]
+    },
+    {
+      "name": "all same-kind inputs stay editable and a voiceover named mic has its own identity",
+      "audio": {
+        "voiceovers": [
+          {
+            "id": "mic",
+            "atUs": 0,
+            "durationUs": 1000,
+            "file": "speech.wav",
+            "volume": 1
+          }
+        ]
+      },
+      "facts": {
+        "movieTracks": 2,
+        "mixedFrom": [
+          {
+            "source": "mic",
+            "file": "left.wav",
+            "offsetMs": 33
+          },
+          {
+            "source": "mic",
+            "file": "right.wav",
+            "offsetMs": -79
+          },
+          {
+            "source": "system",
+            "file": "desk.wav",
+            "offsetMs": 0
+          },
+          {
+            "source": "system",
+            "file": "call.wav",
+            "offsetMs": 7
+          }
+        ]
+      },
+      "lanes": [
+        {
+          "source": "mic",
+          "file": "left.wav",
+          "offsetMs": 33,
+          "id": "mic",
+          "name": "Microphone 1",
+          "muted": false,
+          "volume": 1
+        },
+        {
+          "source": "mic",
+          "file": "right.wav",
+          "offsetMs": -79,
+          "id": "mic-2",
+          "name": "Microphone 2",
+          "muted": false,
+          "volume": 1
+        },
+        {
+          "source": "system",
+          "file": "desk.wav",
+          "offsetMs": 0,
+          "id": "system",
+          "name": "System sound 1",
+          "muted": false,
+          "volume": 1
+        },
+        {
+          "source": "system",
+          "file": "call.wav",
+          "offsetMs": 7,
+          "id": "system-2",
+          "name": "System sound 2",
+          "muted": false,
+          "volume": 1
+        },
+        {
+          "id": "movie-1",
+          "source": "movie",
+          "track": 1,
+          "offsetMs": 0,
+          "volume": 1,
+          "muted": false
+        },
+        {
+          "id": "voice-224948ca810fc2bc9e3d80c0b1129fe2",
+          "source": "voiceover",
+          "offsetMs": 0,
+          "volume": 1,
+          "muted": false
+        }
+      ],
+      "movieTracksPlayed": [
+        1
+      ]
+    },
+    {
+      "name": "silent movie",
+      "audio": {},
+      "facts": {
+        "movieTracks": 0,
+        "mixedFrom": []
+      },
+      "lanes": [],
+      "movieTracksPlayed": []
+    }
+  ]
+}

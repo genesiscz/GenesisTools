@@ -10,7 +10,7 @@ polisher needs from it and where it falls short. Checked 2026-11-02 19:30.
 | Find the meeting | `tools wisprflow meetings list "<query>"` (`--since`, `--attendee`) |
 | Raw export, unchanged | `tools wisprflow meetings export <id> --dir <dir> --timestamps` |
 | Invitees and the Teams link | `tools wisprflow calendar search "<title>" --format json` -> `events[].attendees`, `conferenceUrl` |
-| Candidate term errors | `tools meetings new --source wisprflow:<id>`, then `tools meetings suggest <meeting>` (the Wispr tool has no term check of its own any more) |
+| Candidate term errors | `tools meetings new --source wisprflow:<id> --project <name>`, then the seats and voices step in pass 1 and `tools meetings suggest <meeting>` |
 | Per-label stats, spans and "several people" hints | `tools meetings speakers stats <meeting> --attendance teams` (`--gap 2m`, `--json`). The spans come from silences, not from goodbyes, so still scan for leave phrases (R1) |
 | Renames not yet on the server | `tools wisprflow doctor`, `--cross-check` |
 
@@ -38,5 +38,5 @@ polisher needs from it and where it falls short. Checked 2026-11-02 19:30.
   `audio-devices.json`, and `upload.ogg` (the recording; in the example it was stereo with the user's microphone on one
   channel, but that is a measurement of one recording, not a format guarantee: the tool calibrates the layout per
   recording and drops the energy check when it cannot tell). Play a passage with
-  `tools meetings play <meeting> --at <time>` (VLC), and read the per-line evidence with `tools meetings evidence
-  <meeting> --attendance teams`; `tools meetings suggest <meeting> --rules evidence` writes it as items to confirm.
+  `tools meetings play <meeting> --at <time>` and read the per-line evidence with `tools meetings evidence
+  <meeting> --raw --attendance teams`. `tools meetings suggest <meeting> --rules evidence` writes suggestions.

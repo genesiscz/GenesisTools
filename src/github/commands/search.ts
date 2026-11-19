@@ -1,200 +1,23 @@
 // Search command implementation
 
+import { rankedIssueBackends, searchKeywordIssues } from "@app/github/lib/issue-search";
 import { formatRepoResults, formatSearchResults } from "@app/github/lib/output";
+import { pickEnumFlag } from "@genesiscz/utils/cli/enum-flag";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { batchFetchCommentReactions } from "@genesiscz/utils/github/graphql";
 import { getOctokit } from "@genesiscz/utils/github/octokit";
 import { withRetry } from "@genesiscz/utils/github/rate-limit";
-import type { RepoSearchResult, SearchCommandOptions, SearchResult } from "@genesiscz/utils/github/types";
-import { parseRepo } from "@genesiscz/utils/github/url-parser";
+import {
+    ISSUE_SEARCH_TYPES,
+    type IssueSearchType,
+    type RepoSearchResult,
+    type SearchCommandOptions,
+    type SearchResult,
+} from "@genesiscz/utils/github/types";
 import { setGlobalVerbose, verbose } from "@genesiscz/utils/github/utils";
 import { logger, out } from "@genesiscz/utils/logger";
 import chalk from "chalk";
 import { Command } from "commander";
-
-interface GitHubSearchItem {
-    number: number;
-    title: string;
-    state: string;
-    user: { login: string } | null;
-    created_at: string;
-    updated_at: string;
-    comments: number;
-    reactions?: { total_count: number };
-    repository_url: string;
-    html_url: string;
-    pull_request?: { url: string | null };
-}
-
-/**
- * Extract repo name from repository_url
- */
-function extractRepoFromUrl(url: string): string {
-    const match = url.match(/repos\/([^/]+\/[^/]+)$/);
-    return match ? match[1] : "unknown/unknown";
-}
-
-/**
- * Build base query with repo and state filters (shared by both backends)
- */
-function buildBaseQuery(query: string, options: SearchCommandOptions): string {
-    let searchQuery = query;
-
-    if (options.repo) {
-        const parsed = parseRepo(options.repo);
-        if (parsed) {
-            searchQuery += ` repo:${parsed.owner}/${parsed.repo}`;
-        }
-    }
-
-    if (options.state === "open") {
-        searchQuery += " is:open";
-    } else if (options.state === "closed") {
-        searchQuery += " is:closed";
-    }
-
-    if (options.minReactions !== undefined) {
-        searchQuery += ` reactions:>=${options.minReactions}`;
-    }
-
-    if (options.minStars !== undefined) {
-        searchQuery += ` stars:>=${options.minStars}`;
-    }
-
-    return searchQuery;
-}
-
-/**
- * Map API response items to SearchResult
- */
-function mapItems(items: GitHubSearchItem[], source: "advanced" | "legacy"): SearchResult[] {
-    return items.map((item) => ({
-        type: item.pull_request ? ("pr" as const) : ("issue" as const),
-        number: item.number,
-        title: item.title,
-        state: item.state,
-        author: item.user?.login || "unknown",
-        createdAt: item.created_at,
-        updatedAt: item.updated_at,
-        comments: item.comments,
-        reactions: item.reactions?.total_count || 0,
-        repo: extractRepoFromUrl(item.repository_url),
-        url: item.html_url,
-        source,
-    }));
-}
-
-/**
- * Search using legacy backend (current behavior)
- */
-async function searchLegacy(query: string, options: SearchCommandOptions): Promise<SearchResult[]> {
-    const octokit = getOctokit();
-    let searchQuery = buildBaseQuery(query, options);
-
-    // Legacy uses is: for type filtering
-    if (options.type === "issue") {
-        searchQuery += " is:issue";
-    } else if (options.type === "pr") {
-        searchQuery += " is:pr";
-    } else {
-        searchQuery += " is:issue is:pr";
-    }
-
-    out.println(chalk.dim(`Searching (legacy): ${searchQuery}`));
-
-    const { data } = await withRetry(
-        () =>
-            octokit.rest.search.issuesAndPullRequests({
-                q: searchQuery,
-                sort: options.sort as "comments" | "reactions" | "interactions" | "created" | "updated" | undefined,
-                order: "desc",
-                per_page: options.limit || 30,
-            }),
-        { label: `GET /search/issues?q=${encodeURIComponent(searchQuery.slice(0, 50))}...` }
-    );
-
-    return mapItems(data.items as GitHubSearchItem[], "legacy");
-}
-
-/**
- * Search using advanced backend (advanced_search=true, type: qualifiers)
- * See: gh CLI PR #11638
- */
-async function searchAdvanced(query: string, options: SearchCommandOptions): Promise<SearchResult[]> {
-    const octokit = getOctokit();
-    let searchQuery = buildBaseQuery(query, options);
-
-    // Advanced uses type: instead of is: for issue/pr filtering
-    if (options.type === "issue") {
-        searchQuery += " type:issue";
-    } else if (options.type === "pr") {
-        searchQuery += " type:pr";
-    } else {
-        searchQuery += " type:issue type:pr";
-    }
-
-    out.println(chalk.dim(`Searching (advanced): ${searchQuery}`));
-
-    const { data } = await withRetry(
-        () =>
-            octokit.request("GET /search/issues", {
-                q: searchQuery,
-                sort: (options.sort || undefined) as
-                    | "comments"
-                    | "reactions"
-                    | "interactions"
-                    | "created"
-                    | "updated"
-                    | undefined,
-                order: "desc" as const,
-                per_page: options.limit || 30,
-                advanced_search: "true",
-            }),
-        { label: `GET /search/issues?advanced_search=true&q=${encodeURIComponent(searchQuery.slice(0, 50))}...` }
-    );
-
-    return mapItems(data.items as GitHubSearchItem[], "advanced");
-}
-
-interface MergeResult {
-    results: SearchResult[];
-    duplicates: Array<{ repo: string; number: number }>;
-    advancedCount: number;
-    legacyCount: number;
-}
-
-/**
- * Merge results from both backends and deduplicate by repo#number.
- * Advanced results take priority in ordering.
- */
-function mergeAndDeduplicate(advancedResults: SearchResult[], legacyResults: SearchResult[]): MergeResult {
-    const seen = new Map<string, SearchResult>();
-    const duplicates: Array<{ repo: string; number: number }> = [];
-
-    // Advanced results first (newer backend, potentially better ranking)
-    for (const r of advancedResults) {
-        const key = `${r.repo}#${r.number}`;
-        seen.set(key, { ...r, source: "advanced" });
-    }
-
-    for (const r of legacyResults) {
-        const key = `${r.repo}#${r.number}`;
-        const existing = seen.get(key);
-        if (existing) {
-            existing.source = "both";
-            duplicates.push({ repo: r.repo, number: r.number });
-        } else {
-            seen.set(key, { ...r, source: "legacy" });
-        }
-    }
-
-    return {
-        results: [...seen.values()],
-        duplicates,
-        advancedCount: advancedResults.length,
-        legacyCount: legacyResults.length,
-    };
-}
 
 /**
  * Search GitHub repositories using /search/repositories
@@ -211,7 +34,7 @@ async function searchRepos(query: string, options: SearchCommandOptions): Promis
         searchQuery += ` stars:>=${options.minStars}`;
     }
 
-    out.println(chalk.dim(`Searching repos: ${searchQuery}`));
+    out.printlnErr(chalk.dim(`Searching repos: ${searchQuery}`));
 
     const { data } = await withRetry(
         () =>
@@ -255,19 +78,44 @@ export async function searchCommand(query: string, options: SearchCommandOptions
         `Options: type=${options.type || "all"}, repo=${options.repo || "any"}, state=${options.state || "all"}`
     );
 
+    if ((options.searchType || options.local) && options.type === "repo") {
+        throw new Error("--search-type and --local apply to issues and pull requests. Omit them for --type repo.");
+    }
+
+    if (options.local && (!options.searchType || options.searchType === "keyword")) {
+        throw new Error("--local requires --search-type semantic or --search-type hybrid.");
+    }
+
+    if (options.searchType && options.searchType !== "keyword") {
+        const backend = rankedIssueBackends[options.local ? "local" : "github"];
+        const results = await backend.search(query, { ...options, searchType: options.searchType });
+        const format = options.format || "ai";
+        const output =
+            results.length || format === "json" ? formatSearchResults(results, format) : backend.emptyMessage;
+        if (options.output) {
+            await Bun.write(options.output, output);
+            out.printlnErr(chalk.green(`✔ Output written to ${options.output}`));
+        } else {
+            out.println(output);
+        }
+        return;
+    }
+
     // Repo search uses a completely different endpoint
     if (options.type === "repo") {
         const repos = await searchRepos(query, options);
+        const format = options.format || "ai";
         verbose(options, `Found ${repos.length} repositories`);
         if (repos.length === 0) {
-            out.println(chalk.yellow("No repositories found."));
-            return;
+            out.printlnErr(chalk.yellow("No repositories found."));
+            if (format !== "json") {
+                return;
+            }
         }
-        const format = options.format || "ai";
         const output = formatRepoResults(repos, format);
         if (options.output) {
             await Bun.write(options.output, output);
-            out.println(chalk.green(`✔ Output written to ${options.output}`));
+            out.printlnErr(chalk.green(`✔ Output written to ${options.output}`));
         } else {
             out.println(output);
         }
@@ -275,33 +123,17 @@ export async function searchCommand(query: string, options: SearchCommandOptions
         return;
     }
 
-    // Determine which backends to run
-    const runAdvanced = options.advanced || (!options.advanced && !options.legacy);
-    const runLegacy = options.legacy || (!options.advanced && !options.legacy);
-
-    let results: SearchResult[];
+    const { results: hits, merge } = await searchKeywordIssues(query, options);
+    let results = hits;
     let footer = "";
 
-    if (runAdvanced && runLegacy) {
-        // Run BOTH in parallel, then merge & deduplicate
-        const [advancedResults, legacyResults] = await Promise.all([
-            searchAdvanced(query, options),
-            searchLegacy(query, options),
-        ]);
-        const merged = mergeAndDeduplicate(advancedResults, legacyResults);
-        results = merged.results;
-
-        const parts: string[] = [];
-        parts.push(`Advanced: ${merged.advancedCount}, Legacy: ${merged.legacyCount}, Combined: ${results.length}`);
-        if (merged.duplicates.length > 0) {
-            const dedupIds = merged.duplicates.map((d) => `#${d.number}`).join(", ");
-            parts.push(`Deduplicated (${merged.duplicates.length}): ${dedupIds}`);
+    if (merge) {
+        const parts = [`Advanced: ${merge.advancedCount}, Legacy: ${merge.legacyCount}, Combined: ${results.length}`];
+        if (merge.duplicates.length > 0) {
+            const dedupIds = merge.duplicates.map((d) => `#${d.number}`).join(", ");
+            parts.push(`Deduplicated (${merge.duplicates.length}): ${dedupIds}`);
         }
         footer = parts.join("\n");
-    } else if (runAdvanced) {
-        results = await searchAdvanced(query, options);
-    } else {
-        results = await searchLegacy(query, options);
     }
 
     verbose(options, `Found ${results.length} results`);
@@ -309,7 +141,7 @@ export async function searchCommand(query: string, options: SearchCommandOptions
     // Client-side safety filter for issue-level reactions
     if (options.minReactions !== undefined) {
         const min = options.minReactions;
-        results = results.filter((r) => r.reactions >= min);
+        results = results.filter((r) => r.reactions !== null && r.reactions >= min);
     }
 
     // GraphQL-based comment reaction filter
@@ -317,24 +149,24 @@ export async function searchCommand(query: string, options: SearchCommandOptions
     if (options.minCommentReactions !== undefined && results.length > 0) {
         const minCommentReactions = options.minCommentReactions;
         // Estimate cost using actual comment counts from search results (capped at 100 since GraphQL fetches first:100)
-        const totalComments = results.reduce((sum, r) => sum + Math.min(r.comments, 100), 0);
+        const totalComments = results.reduce((sum, r) => sum + Math.min(r.comments ?? 0, 100), 0);
         const estimatedCost = results.length * 2 + totalComments; // 2 per issue (node + connection) + 1 per comment node
         const issueList = results.map((r) => `#${r.number} (${r.comments} comments)`).join(", ");
 
-        out.println("");
-        out.println(
+        out.printlnErr("");
+        out.printlnErr(
             chalk.yellow(
                 `⚠ GraphQL comment scan: ${results.length} issues, ${totalComments} comments (~${estimatedCost} of 5,000/hr points)`
             )
         );
-        out.println(chalk.dim(`  ${issueList}`));
-        out.println(chalk.dim(`  Tip: To check specific issues instead:`));
-        out.println(
+        out.printlnErr(chalk.dim(`  ${issueList}`));
+        out.printlnErr(chalk.dim(`  Tip: To check specific issues instead:`));
+        out.printlnErr(
             chalk.cyan(
                 `    ${toolCommand("github issue")} <number>,<number> --repo ${results[0]?.repo || "owner/repo"} --min-comment-reactions ${options.minCommentReactions}`
             )
         );
-        out.println("");
+        out.printlnErr("");
 
         preFilterResults = [...results];
 
@@ -361,42 +193,44 @@ export async function searchCommand(query: string, options: SearchCommandOptions
         }
 
         results = results.filter((r) => keep.has(`${r.repo}#${r.number}`));
-        out.println(
+        out.printlnErr(
             chalk.dim(
                 `Filtered to ${results.length} of ${preFilterResults.length} results with comment reactions >= ${options.minCommentReactions}`
             )
         );
     }
 
+    const format = options.format || "ai";
     if (results.length === 0) {
         // If comment-reaction filter eliminated everything, still show the original search results
-        if (preFilterResults && preFilterResults.length > 0) {
-            out.println(
+        if (format !== "json" && preFilterResults && preFilterResults.length > 0) {
+            out.printlnErr(
                 chalk.yellow(
                     `\nNo issues matched --min-comment-reactions ${options.minCommentReactions}. Showing all ${preFilterResults.length} search results:\n`
                 )
             );
             results = preFilterResults;
         } else {
-            out.println(chalk.yellow("No results found."));
-            return;
+            out.printlnErr(chalk.yellow("No results found."));
+            if (format !== "json") {
+                return;
+            }
         }
     }
 
     // Format output
-    const format = options.format || "ai";
     verbose(options, `Output format: ${format}`);
     const output = formatSearchResults(results, format);
 
     if (options.output) {
         await Bun.write(options.output, output);
-        out.println(chalk.green(`✔ Output written to ${options.output}`));
+        out.printlnErr(chalk.green(`✔ Output written to ${options.output}`));
     } else {
         out.println(output);
     }
 
     if (footer) {
-        out.println(chalk.dim(`\n${footer}`));
+        out.printlnErr(chalk.dim(`\n${footer}`));
     }
 
     verbose(options, `Completed: ${results.length} results displayed`);
@@ -409,6 +243,8 @@ export function createSearchCommand(): Command {
     const cmd = new Command("search")
         .description("Search GitHub issues and PRs")
         .argument("<query>", "Search query")
+        .option("--search-type [mode]", "Rank issues and PRs on GitHub: keyword (default), semantic or hybrid")
+        .option("--local", "Run semantic or hybrid search offline on the local GitHub cache")
         .option("--type <type>", "Filter: issue|pr|all|repo", "all")
         .option("-r, --repo <owner/repo>", "Limit to repository")
         .option("--state <state>", "Filter: open|closed|all", "all")
@@ -416,10 +252,10 @@ export function createSearchCommand(): Command {
             "--sort <field>",
             "Sort: created|updated|comments|reactions (issues/PRs); stars|forks|updated|help-wanted-issues (repos)"
         )
-        .option("-L, --limit <n>", "Max results", parseInt, 30)
+        .option("-L, --limit <n>", "Max results", (value) => Number.parseInt(value, 10), 30)
         .option("-f, --format <format>", "Output format: ai|md|json", "ai")
-        .option("--advanced", "Use only advanced search backend")
-        .option("--legacy", "Use only legacy search backend")
+        .option("--advanced", "Use only the advanced keyword search backend")
+        .option("--legacy", "Use only the legacy keyword search backend")
         .option("--min-reactions <n>", "Min reaction count on issue/PR", parseInt)
         .option("--min-comment-reactions <n>", "Min reactions on any comment (uses GraphQL, slower)", parseInt)
         .option("--language <lang>", "Filter repos by language (shorthand for language:<lang>)")
@@ -428,7 +264,23 @@ export function createSearchCommand(): Command {
         .option("-v, --verbose", "Enable verbose logging")
         .action(async (query, opts) => {
             try {
-                await searchCommand(query, opts);
+                const searchType = await pickEnumFlag({
+                    tool: toolCommand("github", "search"),
+                    subcommand: ["search"],
+                    flag: "--search-type",
+                    given: opts.searchType,
+                    values: ISSUE_SEARCH_TYPES,
+                    fallback: "keyword",
+                    accepts: (value): value is IssueSearchType => ISSUE_SEARCH_TYPES.some((mode) => mode === value),
+                });
+                if (searchType === null) {
+                    return;
+                }
+
+                await searchCommand(query, {
+                    ...opts,
+                    searchType: opts.searchType === undefined ? undefined : searchType,
+                });
             } catch (error) {
                 logger.error({ error }, "Search command failed");
 
@@ -446,7 +298,7 @@ export function createSearchCommand(): Command {
                 }
 
                 out.error(chalk.red(`Error: ${errorMessage}`));
-                process.exit(1);
+                process.exitCode = 1;
             }
         });
 

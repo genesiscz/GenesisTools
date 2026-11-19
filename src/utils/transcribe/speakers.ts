@@ -82,8 +82,20 @@ export const ARRIVAL_PHRASES: readonly RegExp[] = [
 
 const CLOSING_GREETING = wholeWords("(?:tak |zatím )?(?:čau|ahoj|čaute)");
 /** Rule R13: another label answers a departure with one of these within `FAREWELL_REPLY_WITHIN_SEC`. */
-const FAREWELL_REPLY = wholeWords("čau|ahoj|čaute|měj(?:te)? se|maj(?:te)? sa|nic se neděje|díky|dík|bye|see you");
-const FAREWELL_REPLY_WITHIN_SEC = 15;
+export const FAREWELL_REPLY = wholeWords(
+    "čau|ahoj|čaute|měj(?:te)? se|maj(?:te)? sa|nic se neděje|díky|dík|bye|goodbye|see you"
+);
+export const FAREWELL_REPLY_WITHIN_SEC = 15;
+/** A short spoken sign-off, optionally with a word of thanks. A greeting inside a longer sentence is not a sign-off. */
+export function isShortFarewell(text: string): boolean {
+    const words = text
+        .toLowerCase()
+        .match(/[\p{L}']+/gu)
+        ?.join(" ");
+    return /^(?:(?:jo|tak|dík|díky|ďakujem|thanks|thank you|ok) )*(?:čau|ahoj|čaute|měj se|mějte se|bye|goodbye|see you(?: later)?)$/.test(
+        words ?? ""
+    );
+}
 /**
  * A bare greeting is a goodbye only from a label that already talked: "Čau." from a label with fewer words before it
  * is a hello, as when everyone greets at the start ("Čau." at 00:15, answered "Čau." and "Ahoj.").
@@ -95,7 +107,7 @@ const GREETING_GOODBYE_SILENCE_SEC = 30;
 const ECHO = wholeWords("taky|také|i já|já taky|tiež|aj ja|me too");
 const ECHO_WITHIN_SEC = 15;
 
-function isLeavePhrase(text: string): boolean {
+export function isLeavePhrase(text: string): boolean {
     return LEAVE_PHRASES.some((phrase) => phrase.test(text));
 }
 
@@ -565,7 +577,7 @@ export function sameName(a: string, b: string): boolean {
     );
 }
 
-function presentAt(presence: Presence[], sec: number): Presence[] {
+function staysAround(presence: Presence[], sec: number): Presence[] {
     return presence.filter(
         (stay) => sec >= stay.fromSec - PRESENCE_TOLERANCE_SEC && sec <= stay.toSec + PRESENCE_TOLERANCE_SEC
     );
@@ -582,7 +594,7 @@ function possiblyPresentAt(presence: Presence[], sec: number): Presence[] {
 /** Close times form one range; with `presence`, a range also ends where the set of people in the call changes. */
 function toRanges(times: number[], presence?: Presence[]): PresenceRange[] {
     const ranges: PresenceRange[] = [];
-    const poolAt = (sec: number) => [...new Set(presentAt(presence ?? [], sec).map((stay) => stay.name))].sort();
+    const poolAt = (sec: number) => [...new Set(staysAround(presence ?? [], sec).map((stay) => stay.name))].sort();
 
     for (const sec of times) {
         const last = ranges.at(-1);
@@ -675,7 +687,7 @@ function presenceHints(lines: TranscriptEntry[], speakers: SpeakerStat[], presen
             }
 
             const person = [...here][0]!;
-            const confirmed = presentAt(presence, sec).filter((candidate) => candidate.name === person);
+            const confirmed = staysAround(presence, sec).filter((candidate) => candidate.name === person);
 
             if (confirmed.length === 0 || confirmed.some((stay) => stays.includes(stay))) {
                 continue;

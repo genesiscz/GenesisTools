@@ -3,11 +3,15 @@ import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { activeSeatPeople } from "@genesiscz/utils/meetings/seats";
 import { type LineVoice, lineVoices, voiceFrames } from "@genesiscz/utils/meetings/voice-features";
 import type { LineEvidence } from "@genesiscz/utils/transcribe/evidence";
-import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
+import { LINE_AT_TOLERANCE_SEC, TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import { callMutes, type MutedCallLines } from "./call-mutes";
 import { personKey, personPresent } from "./listen-answers";
 import type { OpenedMeeting } from "./opened-meeting";
+import { channelFor, isStrongCallForNaming } from "./speaker-eligibility";
+import type { LineSpeakers } from "./speaker-evidence";
+import { needsSpeakerReview } from "./speaker-scores";
 import { questionOwnedItems } from "./transcript-corrections";
 
 export async function qualityVoiceFeatures(opened: OpenedMeeting): Promise<LineVoice[]> {
@@ -29,9 +33,10 @@ export function addQualityQuestions(options: {
     longStretchWords?: number;
     below?: number;
     features?: readonly LineVoice[];
+    callMutes?: MutedCallLines;
+    speakers?: LineSpeakers;
+    now?: string;
     channel?: number;
-    /** At most this many new questions; a question already on the record does not count. */
-    limit?: number;
 }): string[] {
     const lines = qualityLines(options.record, options.entries);
     const groups: Array<{ group: "spot-check" | "long-stretch"; parts: QualityLine[][] }> = [
@@ -56,32 +61,65 @@ export function addQualityQuestions(options: {
         },
     ];
     const ids: string[] = [];
-    let created = 0;
+    const itemsById = new Map(options.record.items.map((item) => [item.id, item]));
     for (const { group, parts } of groups) {
+        const split: QualityLine[][] = [];
         for (const part of parts) {
+            let previous: string | undefined;
+            for (const line of part) {
+                const key = options.speakers?.key(line.index) ?? "";
+                if (previous !== key) {
+                    split.push([]);
+                    previous = key;
+                }
+                split.at(-1)!.push(line);
+            }
+        }
+        for (const part of split) {
             const confidence = part.reduce((lowest, line) => Math.min(lowest, line.confidence), 1);
             const fromSec = part[0]!.fromSec,
                 toSec = part.at(-1)!.fromSec;
+            const first = part[0]!;
+            const excluded = options.callMutes?.forIndices(part.map((line) => line.index)) ?? [];
+            const allowed = options.speakers?.choices(part.map((line) => line.index));
+            const eligible = (name: string) =>
+                allowed
+                    ? allowed.some((other) => sameName(other, name))
+                    : !excluded.some((other) => sameName(other, name));
+            const candidates = [
+                ...new Set([
+                    ...part.flatMap((line) => line.speaker ?? []),
+                    ...options.record.participants.map((person) => person.name),
+                    ...(allowed ?? []),
+                ]),
+            ];
+            const sharedStart =
+                options.entries[first.index - 1]?.startSec === fromSec ||
+                options.entries[first.index + 1]?.startSec === fromSec;
             const known = options.record.items.find(
                 (item) =>
                     item.kind === "question" &&
                     item.status === "suggested" &&
                     item.group === group &&
                     item.fromSec === fromSec &&
-                    item.toSec === toSec
+                    item.toSec === toSec &&
+                    (group !== "spot-check" ||
+                        !sharedStart ||
+                        item.evidence?.transcriptLine === first.index ||
+                        item.decides.some((id) => itemsById.get(id)?.evidence?.transcriptLine === first.index))
             );
             if (known?.kind === "question") {
+                // From the full candidates every pass: a name an earlier pass's mute evidence removed comes back
+                // when this pass's evidence no longer rules it out.
+                known.choices = [...new Set([...candidates, ...known.choices])].filter(eligible);
                 known.priority ??= 1;
                 known.confidence ??= confidence;
                 ids.push(known.id);
                 continue;
             }
-            if (options.limit !== undefined && created >= options.limit) {
-                continue;
-            }
             const decides: string[] = [];
             for (const line of part) {
-                const source = options.record.items.find((item) => item.id === line.item);
+                const source = line.item === undefined ? undefined : itemsById.get(line.item);
                 if (source?.kind === "speaker-range") {
                     const target = meetingItemSchema.parse({
                         ...source,
@@ -110,20 +148,18 @@ export function addQualityQuestions(options: {
                 group,
                 confidence,
                 priority: 1,
-                choices: [
-                    ...new Set([
-                        ...part.flatMap((line) => line.speaker ?? []),
-                        ...options.record.participants.map((person) => person.name),
-                    ]),
-                ],
+                choices: candidates.filter(eligible),
                 decides,
                 rules: [],
-                suggestedAt: new Date().toISOString(),
-                evidence: { words: part.reduce((sum, line) => sum + line.words, 0), originalSpeaker: part[0]!.speaker },
+                suggestedAt: options.now ?? new Date().toISOString(),
+                evidence: {
+                    words: part.reduce((sum, line) => sum + line.words, 0),
+                    originalSpeaker: first.speaker,
+                    ...(group === "spot-check" ? { transcriptLine: first.index } : {}),
+                },
             });
             options.record.items.push(question);
             ids.push(question.id);
-            created++;
         }
     }
     return ids;
@@ -156,6 +192,15 @@ export function qualityLines(record: MeetingRecord, entries: readonly Transcript
                 (entry.startSec ?? Infinity) <= one.toSec
         );
         const item = matches.findLast((one) => one.status === "confirmed") ?? matches.at(-1);
+        const at = entry.startSec;
+        const assigned =
+            at !== undefined &&
+            record.speakers.assignments?.some(
+                (assignment) =>
+                    assignment.label === entry.speaker &&
+                    at >= assignment.fromSec - LINE_AT_TOLERANCE_SEC &&
+                    at <= assignment.toSec + LINE_AT_TOLERANCE_SEC
+            );
         return {
             index,
             fromSec: entry.startSec ?? 0,
@@ -164,11 +209,15 @@ export function qualityLines(record: MeetingRecord, entries: readonly Transcript
             confidence: item?.confidence ?? 0,
             speaker: item?.kind === "speaker-range" ? item.speaker : undefined,
             item: item?.id,
-            confirmed: item?.status === "confirmed",
-            ...(item && item.status !== "confirmed" && questionOwned.has(item.id) ? { questionOwned: true } : {}),
+            confirmed: assigned === true || item?.status === "confirmed",
+            ...(item && item.status !== "confirmed" && (questionOwned.has(item.id) || needsSpeakerReview(item))
+                ? { questionOwned: true }
+                : {}),
             asked: record.items.some(
                 (question) =>
                     question.kind === "question" &&
+                    question.about === "speaker" &&
+                    question.evidence?.retired !== "speaker-eligibility" &&
                     (entry.startSec ?? -1) >= question.fromSec &&
                     (entry.startSec ?? Infinity) <= question.toSec
             ),
@@ -231,7 +280,9 @@ export function sampleLines(
     if (!Number.isInteger(count) || count < 1) {
         throw new RangeError("Spot check count must be a positive integer");
     }
-    const candidates = lines.filter((line) => !line.confirmed && line.confidence >= 0.5 && line.confidence < 0.7);
+    const candidates = lines.filter(
+        (line) => line.speaker && !line.confirmed && line.confidence >= 0.5 && line.confidence < 0.7
+    );
     for (let i = candidates.length - 1; i > 0; i--) {
         const at = Math.floor(random() * (i + 1));
         [candidates[i], candidates[at]] = [candidates[at]!, candidates[i]!];
@@ -287,6 +338,7 @@ export function clipProgress(options: {
 export function uncertainSharedCallRanges(options: {
     record: MeetingRecord;
     lines: readonly LineEvidence[];
+    speakers?: LineSpeakers;
 }): Array<Omit<Extract<MeetingItem, { kind: "speaker-range" }>, "id" | "suggestedAt">> {
     const result: Array<Omit<Extract<MeetingItem, { kind: "speaker-range" }>, "id" | "suggestedAt">> = [];
     let priorIndex = -2;
@@ -309,8 +361,13 @@ export function uncertainSharedCallRanges(options: {
                 ? [sourcePerson.name]
                 : []),
         ];
+        const allowed = options.speakers?.eligibility.get(line.index)?.choices;
         const candidates = names.filter(
-            (name, index) => names.findIndex((other) => personKey(other) === personKey(name)) === index
+            (name, index) =>
+                (allowed
+                    ? allowed.some((other) => sameName(other, name))
+                    : !callMutes(line).some((other) => sameName(other, name))) &&
+                names.findIndex((other) => personKey(other) === personKey(name)) === index
         );
         const confirmed = options.record.items.some(
             (item) =>
@@ -324,7 +381,7 @@ export function uncertainSharedCallRanges(options: {
         if (
             !line.speakingUnknown ||
             candidates.length < 2 ||
-            (line.energyMic ?? line.micShare ?? 1) > 0.35 ||
+            !isStrongCallForNaming(channelFor(line)) ||
             confirmed ||
             matched
         ) {

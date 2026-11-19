@@ -1,16 +1,24 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { RecordingSession, type SegmentRecorder } from "@app/control/lib/recording-session";
 import { SessionRecorderControl } from "@app/control/lib/recording-session-control";
+import { recordingTargetSchema } from "@app/control/lib/recording-targets";
 import type { AppStatus } from "@app/macos/lib/permissions/app";
 import * as appModule from "@app/macos/lib/permissions/app";
+import { registerEvidenceCommand } from "@app/meetings/commands/evidence";
 import * as channelOperation from "@app/meetings/lib/channel-operation";
 import { DecisionJournal } from "@app/meetings/lib/decision-journal";
 import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
+import { measureRoomCall } from "@app/meetings/lib/room-call-metrics";
+import type { MeetingsResult } from "@app/meetings/lib/service/api";
+import { InProcessMeetingsClient } from "@app/meetings/lib/service/client";
+import type { voiceLibraryMethods } from "@app/meetings/lib/service/toolset-api";
 import { settingsPatchFromFlags } from "@app/meetings/lib/settings-flags";
+import { deliverStartFailures } from "@app/meetings/lib/start-failures";
+import type { recordingAutostart } from "@app/meetings/lib/watcher";
 import { ReplEngine } from "@app/node-repl/lib/engine";
 import { BrowserToolset } from "@app/node-repl/lib/toolsets/browser";
 import { MeetingsToolset } from "@app/node-repl/lib/toolsets/meetings";
@@ -56,11 +64,17 @@ import { renderDocs } from "@genesiscz/utils/api-descriptor";
 import { withTimeout } from "@genesiscz/utils/async";
 import * as converter from "@genesiscz/utils/audio/converter";
 import * as cli from "@genesiscz/utils/cli";
+import { env } from "@genesiscz/utils/env";
+import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
 import { waitForPath } from "@genesiscz/utils/fs/watcher";
+import { sha256Json } from "@genesiscz/utils/hash";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import * as ocr from "@genesiscz/utils/macos/ocr";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
+import { readVoiceLibrary } from "@genesiscz/utils/meetings/voice-library";
+import { addVoicePrint } from "@genesiscz/utils/meetings/voice-store";
 import { closeStartGate, startGatePath } from "@genesiscz/utils/process/start-gate";
 import transcriptCuts from "@genesiscz/utils/recording-editor/__fixtures__/transcript-cuts.json";
 import transcriptWordsFixture from "@genesiscz/utils/recording-editor/__fixtures__/transcript-words.json";
@@ -72,11 +86,13 @@ import {
     wholeProject,
     writeProject,
 } from "@genesiscz/utils/recording-editor/project";
-import { searchMethods } from "@genesiscz/utils/repl/discovery";
+import { describeMethod, searchMethods } from "@genesiscz/utils/repl/discovery";
 import { readShowable } from "@genesiscz/utils/repl/show";
 import type { ToolsetContext } from "@genesiscz/utils/repl/toolset";
 import { type Clip, EditorToolset, editorApi, editSourceOf, ReplJob } from "@genesiscz/utils/repl/toolsets/editor";
 import {
+    libraryStartOptions,
+    RecorderToolset,
     RecordingHandle,
     recorderApi,
     recorderStartSchema,
@@ -89,6 +105,8 @@ import {
     type RecorderSettingsPatch,
     type RecorderStatus,
     type RecordingMarker,
+    RPC_ERRORS,
+    RpcError,
     recorderSettingsSchema,
     type SettingsAnswer,
     type StopAnswer,
@@ -112,6 +130,7 @@ import {
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { createCanvas } from "@napi-rs/canvas";
 import { Command } from "commander";
+import type { z } from "zod";
 
 /** The CLI's undo and collapse with no recorder service: each on a short-lived session of the edit file. */
 const undoEdit = (path: string) => withEditSession(path, (session) => session.undo({ by: "agent" }));
@@ -249,10 +268,31 @@ interface MeetingHandle {
     mark(label: string): Promise<RecordingMarker>;
 }
 
+type VoiceMethods = typeof voiceLibraryMethods;
+type VoiceDoors = {
+    [K in keyof VoiceMethods]: (
+        input: z.input<VoiceMethods[K]["params"]>
+    ) => Promise<z.output<VoiceMethods[K]["result"]>>;
+};
+
 /** The meetings toolset's global, as the meetings tests call it. */
 interface MeetingsHandle {
+    roomDevices(input?: unknown): Promise<unknown>;
+    decideRoomDevice(input: unknown): Promise<unknown>;
+    applySeats(input: unknown): Promise<unknown>;
+    backfillVoices(input: unknown): Promise<unknown>;
+    voiceJobs(): Promise<unknown>;
+    cancelVoiceJob(id: string): Promise<unknown>;
+    seats(input: unknown): Promise<unknown>;
+    thresholds(input?: unknown): Promise<unknown>;
+    voiceReadiness(input: unknown): Promise<unknown>;
+    voices: ((input: unknown) => Promise<MeetingsResult<"voices.list">>) & VoiceDoors;
+    lineEligibility(input: { meeting: string; line: number }): Promise<unknown>;
+    look(input: { meeting: string; from: number | string; to: number | string }): Promise<unknown>;
+    measure(input: { meeting: string }): Promise<ReturnType<typeof measureRoomCall>>;
     list(): Array<{ id: string; seconds: number | null }>;
     open(ref: string): MeetingHandle;
+    locate(ref: string): { store: string; setting?: string } | null;
     config: { get(path?: string): Promise<unknown> };
     projects: {
         labels(input: unknown): Promise<string[]>;
@@ -305,6 +345,541 @@ describe("browser toolset", () => {
 });
 
 describe("toolset method names", () => {
+    test("P3 voice library REPL commands document their CLI twins and forward scoped requests", async () => {
+        const api = new MeetingsToolset().api;
+        const { voices } = await loadMeetings();
+        const id = "vs_fixture";
+        const person = "Finch Example";
+        const scope = { kind: "meeting" as const, meeting: "fixture" };
+        const inputs = {
+            list: { scope },
+            samples: { scope, person },
+            quality: { person },
+            play: { id, person },
+            move: { id, person, to: { name: "Wren Example" } },
+            reject: { id, person, reason: "wrong-person" },
+            remove: { project: "harbor", person, sample: 1, preview: true },
+            undo: { token: "correction-fixture" },
+        } as const;
+        const cases = [
+            ["list", "voices.list", () => voices.list(inputs.list)],
+            ["samples", "voices.list", () => voices.samples(inputs.samples)],
+            ["quality", "voices.quality", () => voices.quality(inputs.quality)],
+            ["play", "voices.sample", () => voices.play({ ...inputs.play, start: false })],
+            ["move", "voices.move", () => voices.move(inputs.move)],
+            ["reject", "voices.reject", () => voices.reject(inputs.reject)],
+            ["remove", "voices.remove", () => voices.remove(inputs.remove)],
+            ["undo", "voices.undo", () => voices.undo(inputs.undo)],
+        ] as const;
+        const call = spyOn(InProcessMeetingsClient.prototype, "call").mockRejectedValue(new Error("service refusal"));
+        try {
+            for (const [name, rpc, invoke] of cases) {
+                const help = describeMethod([api], `meetings.voices.${name}`);
+                expect(help).toContain(name === "list" ? "meetings voices" : `meetings voices ${name}`);
+                call.mockClear();
+                await expect(invoke()).rejects.toThrow("service refusal");
+                expect(call.mock.calls).toEqual([[rpc, inputs[name]]]);
+            }
+            const samples = api.methods.find((method) => method.name === "voices.samples");
+            expect(samples?.params.safeParse({ scope }).success).toBe(false);
+        } finally {
+            call.mockRestore();
+        }
+    });
+
+    test("P3 voice library playback starts the selected player unless start is false", async () => {
+        const { voices } = await loadMeetings();
+        const id = "vs_fixture";
+        const slice: MeetingsResult<"voices.sample"> = {
+            meeting: "fixture",
+            track: "source-mic",
+            path: "fixture.wav",
+            channel: 0,
+            fromSec: 2,
+            toSec: 6,
+            fileFromSec: 12,
+            fileToSec: 16,
+            clock: "source",
+        };
+        const meetingPlayback = await import("@app/meetings/lib/sound-playback");
+        const call = spyOn(InProcessMeetingsClient.prototype, "call").mockResolvedValue(slice);
+        const play = spyOn(meetingPlayback, "playSoundSlice").mockResolvedValue({ pid: 1, player: "ffplay" });
+        try {
+            expect(await voices.play({ id, start: false })).toEqual(slice);
+            expect(play).not.toHaveBeenCalled();
+            expect(await voices.play({ id, player: "ffplay" })).toEqual(slice);
+            expect(play.mock.calls).toEqual([[{ slice, player: "ffplay" }]]);
+            expect(call.mock.calls).toEqual([
+                ["voices.sample", { id }],
+                ["voices.sample", { id }],
+            ]);
+        } finally {
+            play.mockRestore();
+            call.mockRestore();
+        }
+    });
+
+    test("meetings parity t1 previews, applies and protects saved seats", async () => {
+        const { id: meeting } = await new MeetingStore().create(
+            { title: "Rehearsal seats", start: "2026-11-01T09:00:00Z", createdBy: "new" },
+            { command: "test", change: "fixture" }
+        );
+        const meetings = await loadMeetings();
+        const input = { meeting, room: ["Reed Example"] };
+        const view = await meetings.seats(input);
+        expect(view).toMatchObject({
+            meeting,
+            current: null,
+            suggestion: {
+                seats: { room: input.room, remote: [] },
+                people: [{ name: "Reed Example", seat: "room", reason: "Set by hand.", confidence: 1 }],
+            },
+        });
+        expect(new MeetingStore().read(meeting)?.seats).toBeUndefined();
+        expect(await meetings.applySeats(input)).toMatchObject({ saved: true });
+        expect(await meetings.applySeats({ meeting, remote: input.room })).toMatchObject({ saved: false });
+        expect(new MeetingStore().read(meeting)?.seats?.room).toEqual(input.room);
+        expect(await meetings.applySeats({ meeting, remote: input.room, replace: true })).toMatchObject({
+            saved: true,
+        });
+        expect(new MeetingStore().read(meeting)?.seats).toEqual({ room: [], remote: [{ name: "Reed Example" }] });
+    });
+
+    test("meetings parity t1 reports readiness and dry-run backfill by meeting or project", async () => {
+        const project = "repl-backfill-rehearsal";
+        const { id: meeting } = await new MeetingStore().create(
+            { title: "Rehearsal voices", start: "2026-11-01T10:00:00Z", createdBy: "new", project },
+            { command: "test", change: "fixture" }
+        );
+        const meetings = await loadMeetings();
+        expect(await meetings.voiceReadiness({ meeting })).toMatchObject({ seats: false, ready: false, samples: 0 });
+        const selected = await meetings.backfillVoices({ meetings: [meeting], dryRun: true });
+        expect(selected).toMatchObject({
+            dryRun: true,
+            added: 0,
+            present: 0,
+            rows: [expect.objectContaining({ meeting })],
+        });
+        expect(await meetings.backfillVoices({ project, dryRun: true })).toEqual(selected);
+        await expect(meetings.backfillVoices({ meetings: [meeting], project })).rejects.toThrow(
+            "Choose meetings or a project"
+        );
+    });
+
+    test("J7 REPL exposes the device list and the explicit owner decision with their CLI twins", async () => {
+        const meetings = await loadMeetings();
+        expect(await meetings.roomDevices()).toHaveProperty("devices");
+        const input: { action: "unmap"; account: string } = { action: "unmap", account: "Boardroom PC" };
+        const call = spyOn(InProcessMeetingsClient.prototype, "call").mockResolvedValue({
+            changed: false,
+            device: null,
+        });
+        try {
+            expect(await meetings.decideRoomDevice(input)).toEqual({ changed: false, device: null });
+            expect(call.mock.calls).toEqual([["people.devices.decide", input]]);
+        } finally {
+            call.mockRestore();
+        }
+        for (const method of ["roomDevices", "decideRoomDevice"]) {
+            expect(describeMethod([new MeetingsToolset().api], `meetings.${method}`)).toContain(
+                "meetings people devices"
+            );
+        }
+    });
+
+    test("P6 REPL lists voice jobs and cancels by positional id", async () => {
+        const meetings = await loadMeetings();
+        expect(await meetings.voiceJobs()).toEqual([]);
+        expect(await meetings.cancelVoiceJob("missing")).toBeNull();
+        for (const [name, cli] of [
+            ["voiceJobs", "jobs"],
+            ["cancelVoiceJob", "jobs cancel"],
+        ]) {
+            expect(describeMethod([new MeetingsToolset().api], `meetings.${name}`)).toContain(`meetings voices ${cli}`);
+        }
+    });
+
+    test("meetings parity t1 describes CLI twins and reads thresholds with the CLI save guard", async () => {
+        const meetings = await loadMeetings();
+        expect(await meetings.thresholds()).toMatchObject({ thresholds: expect.any(Array), changes: [], warnings: [] });
+        await expect(meetings.thresholds({ set: { "term.applyAbove": 0.8 }, preview: true })).rejects.toThrow(
+            "Choose a meeting"
+        );
+        for (const [method, cli] of [
+            ["applySeats", "seats"],
+            ["backfillVoices", "voices backfill"],
+            ["seats", "seats"],
+            ["thresholds", "thresholds"],
+            ["voiceReadiness", "show"],
+        ]) {
+            expect(describeMethod([new MeetingsToolset().api], `meetings.${method}`)).toContain(`meetings ${cli}`);
+        }
+    });
+
+    test("meetings parity t2 carries timed room and remote stays from preview through reopen", async () => {
+        const { id: meeting } = await new MeetingStore().create(
+            {
+                title: "Timed rehearsal seats",
+                start: "2026-11-01T13:00:00Z",
+                createdBy: "new",
+                seats: {
+                    room: ["Fern Example", "Reed Example"],
+                    remote: [],
+                    microphones: [{ id: "self", people: ["Fern Example", "Reed Example"] }],
+                },
+            },
+            { command: "test", change: "fixture" }
+        );
+        const meetings = await loadMeetings();
+        const room = [{ name: "Fern Example", fromSec: 10, toSec: 30 }];
+        const remote = [{ name: "Fern Example", label: "Guest", fromSec: 30 }];
+        const expected = {
+            room: ["Reed Example", ...room],
+            remote,
+            microphones: [{ id: "self", people: ["Fern Example", "Reed Example"] }],
+        };
+        const view = await meetings.seats({ meeting, room, remote });
+        expect(view).toMatchObject({
+            current: { room: ["Fern Example", "Reed Example"] },
+            suggestion: { seats: expected },
+        });
+        await expect(
+            meetings.applySeats({ meeting, room, remote: [{ name: "Fern Example", fromSec: 29 }], replace: true })
+        ).rejects.toThrow("overlap");
+        expect(new MeetingStore().read(meeting)?.seats?.room).toEqual(["Fern Example", "Reed Example"]);
+        expect(await meetings.applySeats({ meeting, room, remote, replace: true })).toMatchObject({
+            saved: true,
+            suggestion: { seats: expected },
+        });
+        expect(new MeetingStore().read(meeting)?.seats).toEqual(expected);
+        expect(await meetings.seats({ meeting })).toMatchObject({ current: expected, suggestion: { seats: expected } });
+    });
+
+    test("meetings parity t2 browses the requested meeting, project or global voice library", async () => {
+        const meetings = await loadMeetings();
+        const store = new MeetingStore();
+        const person = "Willow Rehearsal";
+        const records = [];
+        for (const [index, project] of ["repl-scope-a", "repl-scope-a", "repl-scope-b"].entries()) {
+            records.push(
+                await store.create(
+                    {
+                        title: `Scope rehearsal ${index}`,
+                        start: "2026-11-01T14:00:00Z",
+                        createdBy: "new",
+                        project,
+                        seats: { room: [person], remote: [] },
+                    },
+                    { command: "test", change: "fixture" }
+                )
+            );
+        }
+        const ids = records.map((record) => record.id);
+        const reads = [
+            [{ scope: "meeting", meeting: ids[0], person }, ids.slice(0, 1)],
+            [{ scope: "project", project: "repl-scope-a", person }, ids.slice(0, 2)],
+            [{ scope: "global", person }, ids],
+        ] as const;
+        for (const [input, expected] of reads) {
+            const { people } = await meetings.voices(input);
+            expect(people).toHaveLength(1);
+            expect(people[0]?.person).toBe(person);
+            expect(people[0]?.meetings.toSorted()).toEqual(expected.toSorted());
+        }
+        await expect(meetings.voices({ scope: "meeting" })).rejects.toThrow();
+        expect(describeMethod([new MeetingsToolset().api], "meetings.voices")).toContain("meetings voices");
+    });
+
+    test("meetings parity t3 returns the same single-line speaker eligibility as the CLI", async () => {
+        const fields = { title: "Line rehearsal", start: "2026-11-01T15:00:00Z" };
+        const { id: meeting } = await new MeetingStore().create(
+            {
+                ...fields,
+                createdBy: "new",
+                seats: { room: [{ name: "Ash Example", fromSec: 4 }], remote: [{ name: "Pine Example" }] },
+            },
+            { command: "test", change: "fixture" }
+        );
+        const mocks = [
+            spyOn(OpenedMeeting.prototype, "meeting").mockResolvedValue({
+                ...fields,
+                sourceMeetingId: "rehearsal",
+                folders: [],
+                participants: [],
+                speakers: [],
+                transcript: [
+                    { startSec: 0, speaker: "S1", text: "One" },
+                    { startSec: 4, speaker: "S1", text: "Two" },
+                ],
+            }),
+            spyOn(OpenedMeeting.prototype, "evidence").mockResolvedValue({
+                segments: [{ channel: "mic", startSec: 0, endSec: 8 }],
+                speaking: [],
+                files: [],
+            }),
+            spyOn(OpenedMeeting.prototype, "presence").mockResolvedValue(undefined),
+            spyOn(OpenedMeeting.prototype, "energy").mockResolvedValue({}),
+        ];
+        const printed = spyOn(out, "result").mockImplementation(() => {});
+        try {
+            const meetings = await loadMeetings();
+            const result = await meetings.lineEligibility({ meeting, line: 1 });
+            expect(result).toMatchObject({
+                channel: { side: "mic", strong: true },
+                choices: ["Ash Example"],
+                excluded: [{ person: "Pine Example", reason: expect.any(String) }],
+                reviewOnly: false,
+            });
+            expect(await meetings.lineEligibility({ meeting, line: 0 })).toMatchObject({
+                choices: [],
+                reviewOnly: true,
+            });
+            await expect(meetings.lineEligibility({ meeting, line: 2 })).rejects.toThrow("line 2");
+            const cli = new Command().exitOverride();
+            registerEvidenceCommand(cli);
+            await cli.parseAsync(["evidence", meeting, "--line-eligibility", "1", "--json"], { from: "user" });
+            expect(SafeJSON.parse(String(printed.mock.lastCall?.[0]))).toEqual(result);
+            expect(describeMethod([new MeetingsToolset().api], "meetings.lineEligibility")).toContain(
+                "--line-eligibility"
+            );
+        } finally {
+            printed.mockRestore();
+            for (const mock of mocks) {
+                mock.mockRestore();
+            }
+        }
+    });
+
+    test("meetings parity t3 follows one voice ID through playback, correction receipts and token-bound removal", async () => {
+        const root = mkdtempSync(join(tmpdir(), "repl-voice-library-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: root }, async () => {
+            const project = "reed-rehearsal";
+            const person = "Reed Example";
+            const to = { name: "Fern Example", email: "fern@example.com" };
+            const start = "2026-11-01T16:00:00Z";
+            const { id: meeting } = await new MeetingStore().create(
+                { title: "Voice rehearsal", start, createdBy: "new", project },
+                { command: "test", change: "fixture" }
+            );
+            const path = join(root, "sample.wav");
+            writeFileSync(path, "fixture audio");
+            const slice = {
+                path,
+                track: "source-mic" as const,
+                channel: 0 as const,
+                fileFromSec: 2,
+                fileToSec: 6,
+                clock: "source" as const,
+            };
+            const sound = spyOn(OpenedMeeting.prototype, "sound").mockResolvedValue({ tracks: [], slice: () => slice });
+            try {
+                addVoicePrint(
+                    project,
+                    person,
+                    {
+                        meeting,
+                        fromSec: 2,
+                        toSec: 6,
+                        seat: "mic",
+                        track: slice.track,
+                        sourceSha: await sha256FileAsync(path),
+                        embedding: [1, 0],
+                        confirmedAt: start,
+                    },
+                    "fixture-model"
+                );
+                const meetings = await loadMeetings();
+                const library = meetings.voices;
+                const scoped = { scope: { kind: "meeting" as const, meeting }, person };
+                const listed = await library.list(scoped);
+                expect(listed).toEqual(await library({ scope: "meeting", meeting, person }));
+                const id = listed.people[0]!.samples[0]!.id;
+                expect(await library.quality(scoped)).toEqual({ learnt: listed.learnt });
+                expect(await library.sample({ id })).toEqual({ ...slice, meeting, fromSec: 2, toSec: 6 });
+                const preview = await library.move({ id, person, to, preview: true });
+                if (preview.status !== "preview") {
+                    throw new Error("Expected a move preview");
+                }
+                const move = {
+                    id,
+                    person,
+                    to,
+                    token: "transfer-reed",
+                    planToken: preview.planToken,
+                    expectedRevision: readVoiceLibrary().library.revision,
+                };
+                expect(await library.move(move)).toMatchObject({ status: "applied", token: move.token, ids: [id] });
+                expect(readVoiceLibrary().library.samples.find((s) => s.id === id)?.owner).toEqual(to);
+                expect(await library.move(move)).toMatchObject({ status: "applied", token: move.token });
+                expect(
+                    await library.reject({ id, reason: "wrong-person", expectedRevision: move.expectedRevision })
+                ).toMatchObject({ status: "stale", reason: expect.any(String) });
+                const rejected = await library.reject({
+                    id,
+                    person: to.name,
+                    reason: "bad-audio",
+                    token: "reject-reed",
+                });
+                expect(rejected).toMatchObject({ status: "applied", token: "reject-reed", ids: [id] });
+                expect(await library.undo({ token: "reject-reed", requestToken: "undo-rejection" })).toMatchObject({
+                    status: "applied",
+                    token: "undo-rejection",
+                    ids: [id],
+                });
+                expect(await library.undo({ token: "unknown-correction" })).toMatchObject({
+                    status: "refused",
+                    reason: expect.any(String),
+                });
+                const plan = await library.remove({ id, preview: true });
+                // Read the token first: toMatchObject below writes its matchers into the bound result.
+                const planToken = plan.planToken;
+                expect(plan).toMatchObject({ ids: [id], planToken: expect.any(String) });
+                await expect(library.remove({ id, planToken: "expired" })).rejects.toThrow("Stale");
+                expect(await library.remove({ id, planToken })).toMatchObject({
+                    removed: 1,
+                    ids: [id],
+                });
+                expect(readVoiceLibrary().library.samples.some((s) => s.id === id)).toBe(false);
+                await expect(library.list({ project: "" })).rejects.toThrow(
+                    "Invalid arguments for meetings.voices.list"
+                );
+                for (const method of ["list", "move", "quality", "reject", "remove", "sample", "undo"]) {
+                    const help = describeMethod([new MeetingsToolset().api], `meetings.voices.${method}`);
+                    expect(help).toContain(
+                        `meetings voices${method === "list" ? " " : ` ${method === "sample" ? "play" : method}`}`
+                    );
+                }
+            } finally {
+                sound.mockRestore();
+            }
+        });
+    });
+
+    test("meetings.look documents its CLI twin and accepts a meeting and two clocks", async () => {
+        const help = describeMethod([new MeetingsToolset().api], "meetings.look");
+        expect(help).toContain("meetings look");
+        expect(help).toContain("attendance");
+        const meetings = await loadMeetings();
+        const input = { meeting: "missing-look-fixture", from: 4293, to: "1:37:20" };
+        await expect(meetings.look(input)).rejects.toThrow('No meeting "missing-look-fixture"');
+        await expect(meetings.look({ ...input, to: 4292 })).rejects.toThrow("to must be at or after from");
+        const record = await new MeetingStore().create(
+            {
+                title: "Harbour bell rehearsal",
+                start: "2026-10-01T09:00:00.000Z",
+                createdBy: "new",
+                attendance: { from: "fixture", people: [{ name: "Ash Example", fromSec: 4000, toSec: 6000 }] },
+            },
+            { command: "test", change: "fixture" }
+        );
+        expect(await meetings.look({ ...input, meeting: record.id })).toMatchObject({
+            meeting: record.id,
+            fromSec: 4293,
+            toSec: 5840,
+            lines: [],
+            attendance: [{ name: "Ash Example", fromSec: 4293, toSec: 5840 }],
+            screen: null,
+        });
+    });
+
+    test("meetings.measure reads the frozen room-call bundle and identifies a missing file", async () => {
+        const root = mkdtempSync(join(tmpdir(), "repl-room-call-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: root }, async () => {
+            const store = new MeetingStore();
+            const { id: meeting } = await store.create(
+                { title: "Glasshouse rehearsal", start: "2026-10-01T09:00:00.000Z", createdBy: "new" },
+                { command: "new", change: "room-call fixture" }
+            );
+            const folder = join(store.folder(meeting), "room-call");
+            mkdirSync(folder);
+            const room = "Mica Vale";
+            const remote = "Lark Fen";
+            const line = { id: "line-glass", startSec: 2, endSec: 4 };
+            const reference = { meeting, entries: [{ ...line, speaker: remote }] };
+            const source = { rootMeeting: meeting, audioSha256: "a".repeat(64) };
+            const run = { revision: "glasshouse-revision", seats: null };
+            const holdout = {
+                source,
+                people: { owner: "Pip Ash", room: [room], remote: [remote] },
+                roomTarget: room,
+                lateRemote: { person: remote, fromSec: 1, toSec: 5 },
+                mute: { lastPositiveSec: 1, firstOmittedSec: 5 },
+                runs: { baseline: run, candidate: run },
+                libraryHash: "b".repeat(64),
+                referenceHash: sha256Json(reference),
+                lines: [line],
+                originalRemote: [line],
+                history: [],
+            };
+            const snapshot = {
+                ...run,
+                source,
+                holdoutHash: sha256Json(holdout),
+                libraryHash: holdout.libraryHash,
+                configHash: "c".repeat(64),
+                inputHash: "d".repeat(64),
+                training: [],
+                cachedDecisions: 0,
+                temporarySeeds: 0,
+                muteHint: { person: room, included: 1, explicit: 2, missing: 0 },
+                warnings: [],
+            };
+            const baseline = { ...snapshot, rows: [{ ...line, named: null, choices: [] }] };
+            const candidate = { ...snapshot, rows: [{ ...line, named: remote, choices: [] }] };
+            for (const [name, data] of Object.entries({ reference, holdout, baseline })) {
+                writeFileSync(join(folder, `${name}.json`), SafeJSON.stringify(data));
+            }
+
+            const meetings = await loadMeetings();
+            await expect(meetings.measure({ meeting })).rejects.toThrow(join("room-call", "candidate.json"));
+            writeFileSync(join(folder, "candidate.json"), SafeJSON.stringify(candidate));
+            const report = await meetings.measure({ meeting });
+            expect(report).toEqual(measureRoomCall({ reference, holdout, baseline, candidate }));
+            expect(report).toMatchObject({
+                structuralAccepted: true,
+                qualityPassed: false,
+                heldOut: 1,
+                baseline: { populations: { remote: { counts: { abstained: 1 } } } },
+                candidate: { populations: { remote: { counts: { namedCorrect: 1 } } } },
+                cohorts: { originalRemote: { recoveredName: [line.id] } },
+            });
+            const help = describeMethod([new MeetingsToolset().api], "meetings.measure");
+            for (const word of ["room-call.ts", "reference.json", "holdout.json", "baseline.json", "candidate.json"]) {
+                expect(help).toContain(word);
+            }
+        });
+    });
+
+    test("the Recording handle lists switchTarget, restart and capabilities with their effects and CLI help", () => {
+        const methods = recorderApi.handles.find((handle) => handle.name === "Recording")?.methods;
+        for (const [name, effect] of [
+            ["switchTarget", "reversible"],
+            ["restart", "destructive"],
+            ["capabilities", "read"],
+        ]) {
+            expect(methods?.find((method) => method.name === name)).toMatchObject({
+                effect,
+                doc: expect.stringContaining("tools recorder"),
+            });
+        }
+    });
+
+    test("meetings.levels documents live and saved reads and opens a transcript-free meeting", async () => {
+        const toolset = new MeetingsToolset();
+        const doc = toolset.api.methods.find((method) => method.name === "levels")?.doc;
+        expect(doc).toContain("tools meetings evidence");
+        expect(doc).toContain("--levels");
+        expect(doc).toContain("live");
+        const store = new MeetingStore();
+        const record = await store.create(
+            { title: "Silent room", start: new Date().toISOString(), createdBy: "new" },
+            { command: "new", change: "fixture" }
+        );
+        const { meetings } = (await toolset.bootstrap()) as {
+            meetings: { levels(input: { meeting: string }): Promise<unknown> };
+        };
+        expect(await meetings.levels({ meeting: record.id })).toEqual([]);
+    });
     test("a missing method names the real ones, while inspection and await still read missing names", async () => {
         const ctx: ToolsetContext = { scratchDir: tmpdir(), show: async () => {}, write: () => {} };
         const { movies } = (await new MoviesToolset().load(ctx)) as {
@@ -1726,7 +2301,10 @@ describe("recorder and editor toolsets", () => {
 
 /** A live recording that serves `settings.get` and `settings.set` and keeps the settings it was given. */
 class SettingsControl extends RecorderControl {
-    readonly kind = "meeting";
+    constructor(readonly kind = "meeting") {
+        super();
+    }
+
     readonly methods: readonly RecorderMethod[] = ["status", "stop", "marker.add", "settings.get", "settings.set"];
     settings: RecorderSettings = recorderSettingsSchema.parse({
         activeFps: 2,
@@ -1773,6 +2351,151 @@ class SettingsControl extends RecorderControl {
         return { atMs: 1234, label };
     }
 }
+
+describe("recording handle live controls", () => {
+    class Control extends SettingsControl {
+        override readonly methods: readonly RecorderMethod[] = [
+            "status",
+            "target.switch",
+            "restart",
+            "displays.list",
+            "settings.get",
+            "settings.set",
+            "audio.mute",
+        ];
+        override async switchTarget(target: unknown) {
+            if (this.kind === "control-session") {
+                recordingTargetSchema.parse(target);
+            }
+
+            return { state: "paused" as const };
+        }
+
+        override async restart() {
+            return { state: "recording" as const };
+        }
+
+        override async listDisplays() {
+            return (await new FakeRecorder().displays()).map((display) => ({ ...display, recorded: false }));
+        }
+    }
+
+    async function withHandle(control: Control, run: (recording: RecordingHandle) => Promise<void>) {
+        const id = `handle-${crypto.randomUUID()}`;
+        const server = new LiveRecordingServer({ id, kind: control.kind, title: "Fixture", control, service: false });
+        const toolset = new RecorderToolset(() => new FakeRecorder());
+        try {
+            const { recorder } = (await toolset.load(ctx)) as {
+                recorder: { attach(id: string): Promise<RecordingHandle> };
+            };
+            await run(await recorder.attach(id));
+        } finally {
+            await toolset.dispose();
+            server.close();
+        }
+    }
+
+    test("switchTarget sends the target exactly once and returns the engine answer", async () => {
+        const control = new Control("fixture");
+        const switched = spyOn(control, "switchTarget");
+        await withHandle(control, async (recording) => {
+            expect(await recording.switchTarget({ window: 42 })).toEqual({ state: "paused" });
+            expect(switched.mock.calls).toEqual([[{ window: 42 }]]);
+            expect(await recording.capabilities()).toMatchObject({ targets: null, liveTargetSwitch: true });
+        });
+    });
+
+    test("restart sends one restart and returns the engine answer", async () => {
+        const control = new Control("fixture");
+        const restarted = spyOn(control, "restart");
+        await withHandle(control, async (recording) => {
+            expect(await recording.restart()).toEqual({ state: "recording" });
+            expect(restarted).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    test("a refused switch rejects with the engine's text without retrying", async () => {
+        const control = new Control("fixture");
+        const switched = spyOn(control, "switchTarget").mockRejectedValue(
+            new RpcError(RPC_ERRORS.invalidParams, "window 42 closed")
+        );
+        await withHandle(control, async (recording) => {
+            await expect(recording.switchTarget({ window: 42 })).rejects.toThrow("window 42 closed");
+            expect(switched).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    test("control sessions receive native targets and resolve a display id to its current screen index", async () => {
+        const control = new Control("control-session");
+        const switched = spyOn(control, "switchTarget");
+        await withHandle(control, async (recording) => {
+            await recording.switchTarget({ window: 42 });
+            await recording.switchTarget({ app: "org.example.editor" });
+            await recording.switchTarget({ app: "Example Editor" });
+            await recording.switchTarget({ display: 4 });
+            const region = { kind: "region", x: 12, y: 20, width: 300, height: 200 };
+            await recording.switchTarget(region);
+            await expect(recording.switchTarget({ display: 99 })).rejects.toThrow("display 99");
+            expect(switched.mock.calls).toEqual([
+                [{ kind: "window", windowIds: [42] }],
+                [{ kind: "app", app: "org.example.editor" }],
+                [{ kind: "app", app: "Example Editor" }],
+                [{ kind: "display", screenIndex: 1 }],
+                [region],
+            ]);
+        });
+    });
+
+    test("capabilities reads the take's limit and distinguishes recorded sound from advertised methods", async () => {
+        const control = new Control("control-session");
+        const status = await control.status();
+        const read = spyOn(control, "status").mockResolvedValue({ ...status, limitMs: 32100 });
+        await withHandle(control, async (recording) => {
+            expect(await recording.capabilities()).toMatchObject({
+                targets: ["display", "area"],
+                liveTargetSwitch: true,
+                liveMicrophoneMute: true,
+                liveMicrophoneDevice: false,
+                liveSystemAudioMute: false,
+                liveFrameRate: true,
+                liveCamera: false,
+                liveDisplaysAddRemove: false,
+                maxDurationMs: 32100,
+                reasonUnavailable: { liveSystemAudioMute: expect.stringContaining("system") },
+            });
+            read.mockResolvedValue({ ...status, limitMs: 12300 });
+            expect((await recording.capabilities()).maxDurationMs).toBe(12300);
+            spyOn(control, "getSettings").mockResolvedValue({
+                ...(await control.getSettings()),
+                audio: { sources: [], muted: { mic: false, system: false } },
+            });
+            expect((await recording.capabilities()).targets).toEqual(["window", "app", "display", "area"]);
+        });
+    });
+
+    test("capabilities returns the engine's own capability report when status supplies it", async () => {
+        const control = new Control("fixture");
+        const capabilities = {
+            targets: ["area"] satisfies "area"[],
+            liveTargetSwitch: true,
+            liveMicrophoneMute: false,
+            liveMicrophoneDevice: false,
+            liveSystemAudioMute: true,
+            liveFrameRate: false,
+            liveCamera: false,
+            liveDisplaysAddRemove: false,
+            maxDurationMs: 12000,
+            reasonUnavailable: { liveFrameRate: "This take has a fixed frame rate." },
+        };
+        const status = { ...(await control.status()), capabilities };
+        spyOn(control, "status").mockResolvedValue(status);
+        const settings = spyOn(control, "getSettings");
+        await withHandle(control, async (recording) => {
+            expect(await recording.capabilities()).toEqual(capabilities);
+            expect(settings).not.toHaveBeenCalled();
+        });
+    });
+});
 
 describe("live recording settings from the movies and meetings toolsets", () => {
     test("movies: a movie recording changes fps, idleFps and threshold through its real control, and refuses the keys it keeps", async () => {
@@ -1999,6 +2722,29 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         }
     });
 
+    test("R3 the meeting handle describes and calls the read-only suggestion preview", async () => {
+        const record = await new MeetingStore().create(
+            { title: "Preview", start: "2026-11-02T17:00:00Z", createdBy: "new" },
+            { command: "new", change: "fixture" }
+        );
+        const runner = await import("@app/meetings/lib/suggest-run");
+        const result = {
+            changes: { meeting: record.id, expected: "fixture", fresh: [], updated: [], stays: [] },
+            warnings: [],
+        };
+        const preview = spyOn(runner, "previewSuggestions").mockResolvedValue(result);
+        try {
+            const { meetings } = (await new MeetingsToolset().load(ctx)) as {
+                meetings: { open(ref: string): { items: { preview(input?: unknown): Promise<unknown> } } };
+            };
+            expect(await meetings.open(record.id).items.preview({ rules: ["terms"] })).toEqual(result);
+            expect(preview.mock.calls[0]?.[0].rules).toEqual(["terms"]);
+            expect(new MeetingStore().read(record.id)?.items).toEqual([]);
+        } finally {
+            preview.mockRestore();
+        }
+    });
+
     test("meetings: items.suggest names the items it retired beside the fresh ones", async () => {
         const record = await new MeetingStore().create(
             { title: "Suggest", start: "2026-11-02T17:00:00.000Z", createdBy: "new" },
@@ -2040,6 +2786,17 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         const rows = meetings.list();
         expect(rows.find((row) => row.id === ended.id)?.seconds).toBe(1500);
         expect(rows.find((row) => row.id === running.id)?.seconds).toBeNull();
+    });
+
+    test("meetings: locate is the explicit store search behind tools meetings locate", async () => {
+        const store = new MeetingStore();
+        const record = await store.create(
+            { title: "Located", start: "2026-11-02T20:00:00.000Z", createdBy: "new" },
+            { command: "new", change: "test" }
+        );
+        const meetings = await loadMeetings();
+        expect(meetings.locate(record.id)).toEqual({ store: store.root });
+        expect(meetings.locate("last")).toBeNull();
     });
 
     test("meetings: a handle names its meeting, a confirm is undone with its token, and an unknown config path is refused", async () => {
@@ -2236,6 +2993,51 @@ describe("live recording settings from the movies and meetings toolsets", () => 
 
         const docs = new MeetingsToolset().api.handles?.find((handle) => handle.name === "Meeting")?.methods ?? [];
         expect(docs.map((method) => method.name)).toEqual(expect.arrayContaining(["settings", "setSettings", "mark"]));
+    });
+
+    test("the meetings REPL exposes recording startup and reports autostart failures", async () => {
+        const { meetings } = (await new MeetingsToolset().bootstrap()) as {
+            meetings: {
+                recordStart: (input: { audio: string }) => Promise<unknown>;
+                autostart: () => ReturnType<typeof recordingAutostart>;
+            };
+        };
+        const home = mkdtempSync(join(tmpdir(), "repl-meeting-failure-"));
+        try {
+            await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+                const store = new MeetingStore();
+                const at = "2026-11-02T15:00:00.000Z";
+                await deliverStartFailures(
+                    store,
+                    {
+                        key: "fixture-meeting",
+                        meeting: "Atlas review",
+                        problem: "Microphone permission denied",
+                        partial: true,
+                    },
+                    { inbox: async () => "fixture-receipt", banner: async () => false },
+                    Date.parse(at)
+                );
+
+                const status = await meetings.autostart();
+                expect(typeof status.enabled).toBe("boolean");
+                expect(status.lastFailure).toMatchObject({
+                    meeting: "Atlas review",
+                    problem: "Microphone permission denied",
+                    at,
+                    partial: true,
+                    inboxId: "fixture-receipt",
+                    confirmed: false,
+                });
+            });
+        } finally {
+            rmSync(home, { recursive: true, force: true });
+        }
+        await expect(meetings.recordStart({ audio: "unknown" })).rejects.toThrow("--audio");
+        const docs = new MeetingsToolset().api.methods;
+        expect(docs.find((one) => one.name === "recordStart")?.doc).toContain("tools meetings record start");
+        expect(docs.find((one) => one.name === "watchOnce")?.doc).toContain("tools meetings watch --once");
+        expect(docs.find((one) => one.name === "autostart")?.doc).toContain("tools meetings autostart");
     });
 
     test("meetings: labels, people pairings and unpairing by entry through the REPL, each method documented", async () => {
@@ -2674,6 +3476,55 @@ describe("tools recorder start names the limits each kind of recording checks", 
 });
 
 describe("the CLI doors of a frames recording and of the live OCR settings take the REPL's values", () => {
+    test("frames window exclusions reach both display captures from the CLI and REPL start options", async () => {
+        const ids = [91, 105];
+        const cli = framesStartOf(readStartArgs(["--frames", "--displays", "1,4", "--exclude-window-ids", "91,105"]));
+        const repl = recorderStartSchema.parse({ displays: [1, 4], excludeWindowIds: ids });
+        expect(cli).toMatchObject(repl);
+        expect(recorderStartSchema.safeParse({ excludeWindowIds: [0x1_0000_0000] }).success).toBe(false);
+        expect(() => framesStartOf(readStartArgs(["--frames", "--exclude-window-ids", "0"]))).toThrow(
+            "--exclude-window-ids"
+        );
+
+        const root = mkdtempSync(join(tmpdir(), "frames-exclusions-"));
+        const recorder = new ControlledRecorder();
+        const both = Promise.withResolvers<void>();
+        recorder.announce = () => {
+            if (recorder.requests.length === 2) {
+                both.resolve();
+            }
+        };
+        const providedExclusions = [91, 105];
+        let recording: Awaited<ReturnType<typeof startRecording>> | undefined;
+        try {
+            recording = await startRecording({
+                ...libraryStartOptions(cli),
+                excludeWindowIds: providedExclusions,
+                recorder,
+                folder: join(root, "rec"),
+                liveDir: join(root, "live"),
+            });
+            await withTimeout(both.promise, 2_000);
+            providedExclusions.splice(0);
+            expect(recorder.requests).toHaveLength(2);
+            expect(recorder.requests.map((request) => request.target)).toEqual(
+                expect.arrayContaining([
+                    { kind: "display", displayId: 1 },
+                    { kind: "display", displayId: 4 },
+                ])
+            );
+            for (const request of recorder.requests) {
+                expect(request).toMatchObject({ excludeWindowIds: ids });
+            }
+        } finally {
+            try {
+                await recording?.stop();
+            } finally {
+                rmSync(root, { recursive: true, force: true });
+            }
+        }
+    });
+
     test("tools recorder start --frames gives the options recorder.start() takes, checked by its schema", () => {
         const flags = readStartArgs([
             "--frames",

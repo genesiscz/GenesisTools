@@ -1,6 +1,6 @@
 import { type RpcHandlers, type RpcTable, toRpcTable } from "@genesiscz/utils/api-descriptor";
 import { logger } from "@genesiscz/utils/logger";
-import type { MeetingsConfig, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
+import { type MeetingsConfig, MeetingsConfigStore, type VoiceFreeCores } from "@genesiscz/utils/meetings/config";
 import {
     MEETINGS_CONFLICT_CODES,
     MEETINGS_STATE_CODES,
@@ -10,19 +10,24 @@ import {
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import type { channelEnergy } from "@genesiscz/utils/meetings/energy";
 import type { PeopleSource } from "@genesiscz/utils/meetings/people-directory";
-import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import { type MeetingRecord, MeetingStore, parseSourceRef } from "@genesiscz/utils/meetings/record";
 import { editMeetingPerson } from "@genesiscz/utils/meetings/room-people";
+import { meetingRuleSentences } from "@genesiscz/utils/meetings/rules";
+import { MEETING_SOURCE_IDS, type MeetingSourceId, type TranscriptSource } from "@genesiscz/utils/meetings/sources";
+import type { VoiceProgress } from "@genesiscz/utils/meetings/voice";
 import type { voiceFrames } from "@genesiscz/utils/meetings/voice-features";
 import { RpcError, type RpcErrorOptions } from "@genesiscz/utils/rpc/errors";
 import { type LineEvidence, lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import type { cutClip, cutTone, probeAudio } from "../audio";
 import { meetingListRow, selectMeetings } from "../list-rows";
 import { OpenedMeeting } from "../opened-meeting";
+import { projectRequired } from "../project";
 import type { SuggestionReads } from "../project-suggestions";
-import { TOOL } from "../shared";
+import { missingMeetingMessage } from "../shared";
 import { preservedSourceAudio } from "../source-audio";
 import type { LocalSourceAudioAccess } from "../source-audio-backfill";
-import { type LinkedSource, linkedSource } from "../sources";
+import { isMeetingSourceId, type LinkedSource, linkedSource, meetingSource, sourceRefOf } from "../sources";
+import { LineSpeakers } from "../speaker-evidence";
 import { assessIndicator } from "../speaker-indicator";
 import { correctTranscript } from "../transcript-corrections";
 import { meetingVoices } from "../voice";
@@ -63,7 +68,37 @@ export interface MeetingsCallContext {
     progress?: (update: { fraction?: number; label?: string }) => void;
 }
 
+/**
+ * The voice pass's steps as the call's `$/progress`: at most every 250 ms or 1 % of the lines, and always the last line.
+ * Every call that may run the pass uses it (`meeting.suggest`, `voices.preview`, `voices.apply`), so the window's bar
+ * reads the same words for each. None when the caller hears no progress.
+ */
+export function voicePassProgress(
+    context: Pick<MeetingsCallContext, "progress">,
+    now: () => number = () => performance.now()
+): VoiceProgress | undefined {
+    const send = context.progress;
+    if (!send) {
+        return undefined;
+    }
+
+    let lastTime = -Infinity;
+    let lastDone = -Infinity;
+    return (done, total) => {
+        const at = now();
+        if (done === total || done - lastDone >= total / 100 || at - lastTime >= 250) {
+            send({ fraction: total ? done / total : 1, label: `Voices: ${done} of ${total} lines` });
+            lastDone = done;
+            lastTime = at;
+        }
+    };
+}
+
 export interface MeetingsHandlerDeps {
+    /** Owned by the service process. A standalone CLI only commits the durable human decision. */
+    voiceJobs?: import("./voice-jobs").MeetingVoiceJobs;
+    /** The CPU sample `voices.workers` reads (`freeCores` of the voice labeler); tests pass a fixed one. */
+    freeCores?: () => Promise<VoiceFreeCores>;
     /** Local audio adapters with their live lookup; tests supply isolated ones and never read this Mac's provider. */
     localSourceAudio?: LocalSourceAudioAccess;
     /** Optional isolated cache/inference dependencies for word-timing generation tests. */
@@ -72,6 +107,8 @@ export interface MeetingsHandlerDeps {
     store?: () => MeetingStore;
     /** The transcript source of a record; tests pass a fake one, production asks the record's linked source. */
     linkedSource?: (record: MeetingRecord) => LinkedSource | undefined;
+    /** A source by its id, for the lists and links of `meeting.sources.near` and `meeting.link`; tests pass a fake. */
+    sources?: (id: MeetingSourceId) => Promise<TranscriptSource>;
     /** Where a decision's corrections go (tests keep them); the corrections ledger by default. */
     ledger?: (corrections: Correction[]) => void;
     /** The corrections ledger a plan's dictionary reach reads (tests pass lines); the ledger file by default. */
@@ -193,7 +230,7 @@ export function recordOf(store: MeetingStore, ref: string): MeetingRecord {
     }
 
     if (!record) {
-        throw refusal("meeting-not-found", `No meeting "${ref}". List them: ${TOOL} list`);
+        throw refusal("meeting-not-found", missingMeetingMessage({ ref, root: store.root }));
     }
 
     return record;
@@ -216,7 +253,12 @@ function changedPeople<T>(value: T, context: MeetingsCallContext): T {
 /** The handlers of every method but `hello`'s own work, which the context's adapter does. */
 export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<typeof meetingsApi, MeetingsCallContext> {
     const storeOf = deps.store ?? (() => new MeetingStore());
-    const acousticTarget = () => ({ store: storeOf(), linkedSource: deps.linkedSource });
+    // A missing meeting answers with the typed `meeting-not-found`, as `meeting.show` does, before the reader opens it.
+    const acousticTarget = (meeting: string) => {
+        const store = storeOf();
+        recordOf(store, meeting);
+        return { store, linkedSource: deps.linkedSource };
+    };
 
     return {
         hello: (params, context) => context.hello(params),
@@ -225,36 +267,96 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
             return params.full ? records : records.map(meetingListRow);
         },
         "meeting.show": (params) => recordOf(storeOf(), params.ref),
+        "meeting.seats.suggest": async (params) => {
+            const store = storeOf();
+            const record = recordOf(store, params.meeting);
+            const { seatSuggestion } = await import("./seat-handlers");
+            const config = await (deps.config?.() ?? deps.configStore?.().read());
+            return seatSuggestion({ store, record, config, linked: deps.linkedSource?.(record), params });
+        },
+        "meeting.thresholds.preview": async (params, context) => {
+            const store = storeOf();
+            const record = params.meeting ? recordOf(store, params.meeting) : undefined;
+            const configStore = deps.configStore?.() ?? new MeetingsConfigStore();
+            const source =
+                deps.config && !deps.configStore
+                    ? { config: await deps.config(), raw: {} }
+                    : await configStore.readWithSource();
+            const opened = record
+                ? OpenedMeeting.of(store, record, deps.linkedSource?.(record), source.config)
+                : undefined;
+            const { meetingThresholds } = await import("../thresholds");
+            return meetingThresholds({ ...source, opened, values: params.values, signal: context.signal });
+        },
         "meeting.suggest": async (params, context) => {
             const store = storeOf();
             const record = recordOf(store, params.meeting);
+            const config = await (deps.config?.() ?? (deps.configStore?.() ?? new MeetingsConfigStore()).read());
+            const required = projectRequired(record, config);
+            if (required) {
+                throw refusal("project-required", required);
+            }
+
             const { runSuggest } = await import("../suggest-run");
+            const { actorOfCall } = await decisions();
             const result = await runSuggest({
                 store,
                 record,
                 rules: ["speakers", "evidence", "terms"],
                 attendance: params.attendance,
+                actor: actorOfCall(context),
+                onProgress: voicePassProgress(context),
+                ...(context.signal ? { signal: context.signal } : {}),
             });
             context.emit?.("meeting.changed", { meeting: record.id, parts: ["show", "speakers", "transcript"] });
-            return { added: result.fresh.length, warnings: result.warnings };
+            return {
+                added: result.fresh.length,
+                warnings: result.warnings,
+                ...(result.deviceOffers ? { deviceOffers: result.deviceOffers } : {}),
+            };
         },
         "meeting.listen.prepare": async (params, context) => {
             const store = storeOf();
             const record = recordOf(store, params.meeting);
             const opened = OpenedMeeting.of(store, record, deps.linkedSource?.(record));
             const { addQualityQuestions, qualityVoiceFeatures } = await import("../listen-quality");
-            const entries = (await opened.meeting()).transcript;
+            const meeting = await opened.meeting();
+            const entries = meeting.transcript;
+            const evidence = await opened.evidence().catch((error: unknown) => {
+                log.debug({ error, meeting: record.id }, "roster readings unavailable for sampled questions");
+                return null;
+            });
+            const energy = await opened.energy().catch((error: unknown) => {
+                log.debug({ error, meeting: record.id }, "using channel segments for sampled questions");
+                return undefined;
+            });
+            const presence = await opened.presence();
+            const lines = lineEvidence(entries, evidence ?? { segments: [], speaking: [] }, presence, energy?.share);
             const features = params.group === "long-stretch" ? await qualityVoiceFeatures(opened) : undefined;
+            const below =
+                params.group === "long-stretch"
+                    ? (params.below ??
+                      (await (deps.config?.() ?? (deps.configStore?.() ?? new MeetingsConfigStore()).read())).global
+                          .suggest.applyAbove)
+                    : undefined;
             let questions: string[] = [];
             await store.update(record.id, { command: "listen", change: "prepare " + params.group }, (current) => {
                 questions = addQualityQuestions({
                     record: current,
                     entries,
+                    speakers: new LineSpeakers({
+                        devices: opened.roomDevices,
+                        lines,
+                        record: current,
+                        meeting,
+                        presence,
+                        selfName: current.participants.find((p) => p.self)?.name ?? evidence?.selfName,
+                    }),
                     features,
                     spotCheck: params.group === "spot-check" ? (params.count ?? 20) : undefined,
                     longStretchWords: params.group === "long-stretch" ? (params.words ?? 50) : undefined,
                     // `--apply-above` reaches the long-stretch preparation: a line below it is unsure enough to ask.
-                    below: params.below,
+                    below,
                     channel: current.evidence?.channels?.layout === "right-mic" ? 0 : 1,
                 });
             });
@@ -283,6 +385,71 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
             context.emit?.("meeting.changed", { meeting: record.id, parts: ["show", "speakers", "transcript"] });
             context.emit?.("people.changed", {});
             return record;
+        },
+        "meeting.sources.near": async (params) => {
+            const store = storeOf();
+            const record = recordOf(store, params.meeting);
+            const start = Date.parse(record.start);
+            const spanMs = (params.hours ?? 3) * 3_600_000;
+            const range = { from: new Date(start - spanMs), to: new Date(start + spanMs) };
+            const linked = new Map<string, MeetingRecord>();
+            for (const other of store.list()) {
+                const ref = sourceRefOf(other);
+                if (ref) {
+                    linked.set(`${ref.sourceId}:${ref.sourceMeetingId}`, other);
+                }
+            }
+
+            const meetings: MeetingsResult<"meeting.sources.near">["meetings"] = [];
+            const unavailable: string[] = [];
+            for (const id of MEETING_SOURCE_IDS) {
+                const source = await (deps.sources ?? meetingSource)(id);
+                const found = await source.meetingsBetween(range);
+                if (!found) {
+                    unavailable.push(source.label);
+                    continue;
+                }
+
+                for (const meeting of found) {
+                    const ref = `${id}:${meeting.sourceMeetingId}`;
+                    const other = linked.get(ref);
+                    meetings.push({
+                        ref,
+                        source: source.label,
+                        title: meeting.title,
+                        start: meeting.start,
+                        ...(meeting.end ? { end: meeting.end } : {}),
+                        hasTranscript: meeting.hasTranscript,
+                        ...(other ? { linkedTo: { id: other.id, title: other.title } } : {}),
+                    });
+                }
+            }
+
+            const distance = (iso: string) => Math.abs(Date.parse(iso) - start);
+            meetings.sort((a, b) => distance(a.start) - distance(b.start));
+            return { meetings, unavailable };
+        },
+        "meeting.link": async (params, context) => {
+            const store = storeOf();
+            const record = recordOf(store, params.meeting);
+            const ref = parseSourceRef(params.source);
+            if (!ref || !isMeetingSourceId(ref.source)) {
+                throw refusal("meeting-ref", `"${params.source}" is not a source meeting; write it as wisprflow:<id>`);
+            }
+
+            const { linkSource } = await import("../link");
+            const { record: linked } = await linkSource({
+                store,
+                config: deps.configStore?.() ?? new MeetingsConfigStore(),
+                sourceRef: params.source,
+                meetingRef: record.id,
+                command: "link",
+                createdBy: "link",
+                quiet: true,
+                ...(deps.sources ? { source: await deps.sources(ref.source) } : {}),
+            });
+            context.emit?.("meeting.changed", { meeting: linked.id, parts: ["show", "speakers", "transcript"] });
+            return linked;
         },
         "meeting.voice": async (params) => {
             const store = storeOf();
@@ -444,22 +611,30 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         "moment.save": async (params, context) => (await moments()).saveMomentCall(params, context, storeOf(), deps),
         "tone.preview": async (params) => (await moments()).previewTone(params, deps),
         "tone.presets": async () => (await moments()).listTonePresets(),
+        "rules.names": () => ({ names: meetingRuleSentences() }),
         "meeting.audio": async (params) => (await moments()).readMeetingAudio(params, storeOf(), deps),
         // The acoustic reads open the meeting with the service's source, as every other read does.
         "acoustic.inspect": async (params) =>
-            (await import("../acoustic")).inspectAcoustic({ ...acousticTarget(), ...params }),
+            (await import("../acoustic")).inspectAcoustic({ ...acousticTarget(params.meeting), ...params }),
         "acoustic.clip": async (params) =>
-            (await import("../acoustic")).acousticClip({ ...acousticTarget(), ...params }),
-        "voice.score": async (params) => (await import("../acoustic")).voiceMeeting({ ...acousticTarget(), ...params }),
+            (await import("../acoustic")).acousticClip({ ...acousticTarget(params.meeting), ...params }),
+        "voice.score": async (params) =>
+            (await import("../acoustic")).voiceMeeting({ ...acousticTarget(params.meeting), ...params }),
         "voice.prepare": async () => ({
             path: await (await import("@genesiscz/utils/meetings/voice")).prepareVoiceModel(),
         }),
         "voice.enroll": async (params) =>
-            (await import("../acoustic")).voiceMeeting({ ...acousticTarget(), ...params }),
+            (await import("../acoustic")).voiceMeeting({ ...acousticTarget(params.meeting), ...params }),
         "acoustic.collect": async (params) =>
-            (await import("../acoustic")).collectAcoustic({ ...acousticTarget(), meeting: params.meeting }),
+            (await import("../acoustic")).collectAcoustic({
+                ...acousticTarget(params.meeting),
+                meeting: params.meeting,
+            }),
         "voice.collect": async (params) =>
-            (await import("../acoustic")).collectVoiceEvidence({ ...acousticTarget(), meeting: params.meeting }),
+            (await import("../acoustic")).collectVoiceEvidence({
+                ...acousticTarget(params.meeting),
+                meeting: params.meeting,
+            }),
         "meeting.speakers": async (params) => (await reads()).readSpeakers(params, storeOf(), deps),
         "meeting.screen": async (params) => (await reads()).readScreen(params, storeOf()),
         "meeting.timeline": async (params) => (await reads()).readTimeline(params, storeOf()),
@@ -492,6 +667,41 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
             (await comments()).withdrawComment(params, context, storeOf(), deps),
         // The people directory loads Contacts (darwinkit) only when a call asks for people.
         "people.known": async (params) => (await people()).knownPeople(params, storeOf(), deps),
+        "people.devices.list": async (params) => (await people()).listRoomDevices(params, storeOf(), deps),
+        "people.devices.decide": async (params, context) => {
+            const result = await (await people()).decideDevice({ params, context, store: storeOf(), deps });
+            if (result.changed) {
+                context.emit?.("people.changed", {});
+            }
+            return result;
+        },
+        // The voices methods (P6): the same functions as `tools meetings voices`, loaded with the people module.
+        "voices.jobs": async (params, context) =>
+            (await people()).voicesHandlers(storeOf(), deps)["voices.jobs"](params, context),
+        "voices.jobs.cancel": async (params, context) =>
+            (await people()).voicesHandlers(storeOf(), deps)["voices.jobs.cancel"](params, context),
+        "voice.backfill": async (params, context) =>
+            (await people()).voicesHandlers(storeOf(), deps)["voice.backfill"](params, context),
+        "voices.list": async (params, context) =>
+            (await people()).voicesHandlers(storeOf(), deps)["voices.list"](params, context),
+        "voices.preview": async (params, context) =>
+            (await people()).voicesHandlers(storeOf(), deps)["voices.preview"](params, context),
+        "voices.sample": async (params, context) =>
+            (await people()).voicesHandlers(storeOf(), deps)["voices.sample"](params, context),
+        "voices.apply": async (params, context) =>
+            (await people()).voicesHandlers(storeOf(), deps)["voices.apply"](params, context),
+        "voices.remove": async (params, context) =>
+            (await people()).voicesHandlers(storeOf(), deps)["voices.remove"](params, context),
+        "voices.move": async (params, context) =>
+            (await people()).voicesHandlers(storeOf(), deps)["voices.move"](params, context),
+        "voices.reject": async (params, context) =>
+            (await people()).voicesHandlers(storeOf(), deps)["voices.reject"](params, context),
+        "voices.undo": async (params, context) =>
+            (await people()).voicesHandlers(storeOf(), deps)["voices.undo"](params, context),
+        "voices.quality": async (params, context) =>
+            (await people()).voicesHandlers(storeOf(), deps)["voices.quality"](params, context),
+        "voices.workers": async (params, context) =>
+            (await people()).voicesHandlers(storeOf(), deps)["voices.workers"](params, context),
         "people.meetings": async (params) => (await people()).personMeetings(params, storeOf(), deps),
         "people.add": async (params, context) =>
             changedPeople(await (await people()).addPerson(params, storeOf(), deps), context),

@@ -29,6 +29,13 @@ import type {
 
 const log = logger.scoped("ms-teams").log;
 
+interface AttendanceCandidateRow {
+    id: string;
+    title: string;
+    participantCount: number;
+    lastCallMs: number | null;
+}
+
 export class TeamsCache {
     private db: Database;
 
@@ -417,6 +424,35 @@ export class TeamsCache {
             .all(threadId) as Array<{ call_id: string }>;
 
         return rows.map((row) => row.call_id);
+    }
+
+    /** Cached call history, call messages and web-log thread links can each survive without the other two. */
+    attendanceCandidates(threadIds: string[]): AttendanceCandidateRow[] {
+        if (!threadIds.length) {
+            return [];
+        }
+
+        return this.db
+            .query<AttendanceCandidateRow, [string]>(`
+            WITH matched(id) AS (SELECT value FROM json_each(?)),
+            call_times(id, at) AS (
+                SELECT thread_id,
+                       MAX(ROUND((COALESCE(julianday(end_time), julianday(start_time)) - 2440587.5) * 86400000))
+                FROM calls WHERE thread_id IN matched GROUP BY thread_id
+                UNION ALL
+                SELECT conversation_id, MAX(original_arrival_time)
+                FROM messages WHERE conversation_id IN matched AND message_type = 'Event/Call' GROUP BY conversation_id
+                UNION ALL
+                SELECT subject, MAX(at)
+                FROM call_log_events WHERE kind = 'thread-link' AND subject IN matched GROUP BY subject
+            )
+            SELECT c.id, c.title, c.member_count AS participantCount, MAX(call_times.at) AS lastCallMs
+            FROM conversations c LEFT JOIN call_times ON call_times.id = c.id
+            WHERE c.id IN matched
+            GROUP BY c.id HAVING c.type = 'meeting' OR MAX(call_times.at) IS NOT NULL
+            ORDER BY lastCallMs DESC, c.id LIMIT 8
+        `)
+            .all(SafeJSON.stringify(threadIds));
     }
 
     counts(): { conversations: number; messages: number; people: number; calls: number; activity: number } {

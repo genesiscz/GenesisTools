@@ -1,9 +1,13 @@
-import { afterEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { priorityToolsOnDisk } from "@genesiscz/utils/process/priority";
+import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { skip } from "@genesiscz/utils/test/skip";
+import { taskWorkingDir } from "./config";
 import { runTask, TASK_SIGTERM_CLEANUP_MS, TASK_SIGTERM_GRACE_MS, taskArgv, taskPath } from "./runner";
 import type { DaemonTask } from "./types";
 
@@ -15,7 +19,20 @@ function makeTempDir(): string {
     return dir;
 }
 
+// runTask makes its working folders under the daemon folder; a GENESIS_TOOLS_DAEMON_DIR from the shell would point
+// them at a real one, so every test here gets its own.
+let envBefore: ReturnType<typeof env.testing.snapshot> | undefined;
+
+beforeEach(() => {
+    envBefore = env.testing.snapshot();
+    env.testing.set("GENESIS_TOOLS_DAEMON_DIR", makeTempDir());
+});
+
 afterEach(() => {
+    if (envBefore) {
+        env.testing.restore(envBefore);
+    }
+
     for (const dir of tempDirs.splice(0)) {
         if (existsSync(dir)) {
             rmSync(dir, { recursive: true, force: true });
@@ -95,7 +112,64 @@ describe("runTask", () => {
         expect(TASK_SIGTERM_GRACE_MS).toBeGreaterThan(TASK_SIGTERM_CLEANUP_MS);
         expect(elapsedMs).toBeLessThan(timeoutMs + TASK_SIGTERM_GRACE_MS);
     });
+
+    // The vault refuses to remember or auto-allow a bun whose working folder changed after it started, and the
+    // home folder changes every few seconds, so a task must start in a folder nothing writes into.
+    it.skipIf(skip.onWindows)("starts every task in the daemon's own empty working folder", async () => {
+        const logsDir = makeTempDir();
+        const task: DaemonTask = {
+            name: "cwd-task",
+            command: "pwd -P",
+            every: "every 1 minute",
+            retries: 0,
+            enabled: true,
+        };
+
+        const result = await runTask(task, 1, logsDir);
+
+        const stdout = stdoutOf(result.logFile);
+        expect(result.exitCode).toBe(0);
+        expect(stdout).toHaveLength(1);
+        expect(stdout[0]?.startsWith(`${realpathSync(taskWorkingDir())}/cwd-task-`)).toBe(true);
+        // An empty run folder is removed after the run.
+        expect(readdirSync(taskWorkingDir())).toEqual([]);
+    });
+
+    it.skipIf(skip.onWindows)("a file one run writes never reaches the next run's working folder", async () => {
+        const logsDir = makeTempDir();
+        const writer: DaemonTask = {
+            name: "writer-task",
+            command: "touch marker && pwd -P",
+            every: "every 1 minute",
+            retries: 0,
+            enabled: true,
+        };
+        const reader: DaemonTask = { ...writer, command: "ls -A && pwd -P" };
+
+        const first = await runTask(writer, 1, logsDir);
+        const second = await runTask(reader, 1, logsDir);
+        const [firstDir] = stdoutOf(first.logFile);
+        const secondOut = stdoutOf(second.logFile);
+
+        expect(second.exitCode).toBe(0);
+        // `ls -A` printed nothing, so the only line is the folder, and it is not the first run's.
+        expect(secondOut).toHaveLength(1);
+        expect(secondOut[0]).not.toBe(firstDir);
+        // The writer's file stays where it wrote it; the reader's empty folder is gone.
+        expect(readdirSync(firstDir ?? "")).toEqual(["marker"]);
+        expect(existsSync(secondOut[0] ?? "")).toBe(false);
+        rmSync(firstDir ?? "", { recursive: true, force: true });
+    });
 });
+
+function stdoutOf(logFile: string): (string | undefined)[] {
+    return readFileSync(logFile, "utf-8")
+        .trim()
+        .split("\n")
+        .map((line) => SafeJSON.parse(line, { strict: true }) as { type: string; data?: string })
+        .filter((record) => record.type === "stdout")
+        .map((record) => record.data);
+}
 
 describe("taskArgv", () => {
     it("runs low under background QoS, normal as the daemon runs, and high out of background", () => {
@@ -109,6 +183,13 @@ describe("taskArgv", () => {
 
     it("runs low as normal where taskpolicy does not exist, so a Linux task does not fail with ENOENT", () => {
         expect(taskArgv("echo hi", "low", { perl: true, taskpolicy: false })).toEqual(["sh", "-c", "echo hi"]);
+    });
+
+    it("offers no darwin wrapper off macOS, so a Linux perl never runs the darwin setpriority call", () => {
+        const linux = priorityToolsOnDisk("linux");
+        expect(linux).toEqual({ perl: false, taskpolicy: false });
+        expect(taskArgv("echo hi", "high", linux)).toEqual(["sh", "-c", "echo hi"]);
+        expect(taskArgv("echo hi", "low", linux)).toEqual(["sh", "-c", "echo hi"]);
     });
 
     it.skipIf(process.platform !== "darwin")(
@@ -157,5 +238,37 @@ describe("run log meta", () => {
             scheduledFor: "2026-10-12T01:00:00.000Z",
         });
         expect(result.exitCode).toBe(0);
+    });
+
+    // D28 (2026-11-18): the build purge is tuned by what each run costs, so the exit record carries it.
+    it.skipIf(skip.onWindows)("records the CPU of the run, the children it waited for included", async () => {
+        const logsBaseDir = makeTempDir();
+        // The child burns 200 ms of its own CPU (not of wall time, which a busy machine stretches), at most 10 s, and
+        // prints what it measured; the run's record must hold at least that much.
+        const script =
+            "const end = Date.now() + 10000; const cpu = () => process.cpuUsage(); " +
+            "while ((cpu().user + cpu().system) / 1000 < 200 && Date.now() < end) {} " +
+            "console.log(Math.floor((cpu().user + cpu().system) / 1000));";
+        const task: DaemonTask = {
+            name: "cost-task",
+            command: `${shellQuote(process.execPath)} -e ${shellQuote(script)}; true`,
+            every: "every 1 hour",
+            retries: 0,
+            enabled: true,
+        };
+        const result = await runTask(task, 1, logsBaseDir);
+        const lines = readFileSync(result.logFile, "utf8").trim().split("\n");
+        const exit = SafeJSON.parse(lines.at(-1) ?? "{}", { strict: true });
+
+        const childCpuMs = Number(stdoutOf(result.logFile)[0]);
+
+        expect(exit.type).toBe("exit");
+        expect(childCpuMs).toBeGreaterThanOrEqual(200);
+        expect(exit.usage.cpuMs).toBeGreaterThanOrEqual(childCpuMs - 5);
+        expect(exit.usage.wallMs).toBeGreaterThan(0);
+        expect(exit.usage.wallMs).toBeLessThanOrEqual(result.duration_ms);
+        expect(exit.usage.cpuMs).toBe(exit.usage.userMs + exit.usage.systemMs);
+        expect(exit.usage.maxRssMb).toBeGreaterThan(0);
+        expect(result.usage).toEqual(exit.usage);
     });
 });

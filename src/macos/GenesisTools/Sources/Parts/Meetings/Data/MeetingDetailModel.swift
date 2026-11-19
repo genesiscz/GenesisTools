@@ -41,6 +41,12 @@ final class MeetingDetailModel {
     var busyItems: Set<String> = []
     var busy: Set<String> = []
     var suggestionWarnings: [String] = []
+    /// The running suggest's newest step from the service; nil when none runs or before its first step.
+    var suggestProgress: MeetingsCallProgress?
+    /// The running suggest, so its Cancel can stop it.
+    @ObservationIgnored private var suggestTask: Task<Void, Never>?
+    /// The Voices pane's state for this meeting (VoicesPane.swift): made when the pane first opens, dropped with the meeting.
+    @ObservationIgnored private(set) lazy var voices = VoicesModel(meeting: id, detail: self)
     /// The notices of this pane's actions, floating over its tabs: several at once, each with its own Undo and time.
     @ObservationIgnored let notices: NoticeStackModel
     private var recordGeneration = 0
@@ -114,6 +120,9 @@ final class MeetingDetailModel {
     /// Rows this window just answered that keep their open height until the reader scrolls, so the rows under them do
     /// not move (G33, `meetings.rows.keepPlace`).
     var heldFolds: Set<String> = []
+    /// Decided rows the reader unfolded (U14): they show the open layout with the whole reason, who decided and when.
+    /// Kept here, not in the row, so a row the lazy list rebuilt after a scroll stays unfolded.
+    var unfoldedRows: Set<String> = []
     /// The row each window decision was about, by its journal token: an event of it is not news.
     @ObservationIgnored var ownTokens: Set<String> = []
     /// The tokens of the decision events heard since the last event refresh: a burst that holds only decisions whose
@@ -846,25 +855,16 @@ final class MeetingDetailModel {
 
 /// The words the window uses for the data's values, in one place, so the row, the button and the note agree.
 enum MeetingsWords {
-    static func itemKind(_ item: MeetingItem) -> String {
-        switch item.kind {
-        case "speaker-range": return "Speaker range"
-        case "label": return "Mixed voices"
-        case "removal": return "Local speech output"
-        case "join": return "Join lines"
-        case "term": return "Word"
-        case "question": return "Question"
-        default: return item.kind
-        }
-    }
-
     static func itemTitle(_ item: MeetingItem) -> String {
         switch item.kind {
         case "speaker-range":
             let from = MeetingsFormat.clock(item.fromSec ?? 0), to = MeetingsFormat.clock(item.toSec ?? 0)
             let range = from == to ? "at \(from)" : "from \(from) to \(to)"
             return "\(item.label ?? "?") \(range) is \(item.speaker ?? "someone else")"
-        case "label": return "\(item.label ?? "?") holds several voices"
+        case "label":
+            // The row's title in the same words (`itemTitle` in src/meetings/lib/item-text.ts, U17).
+            let from = MeetingsFormat.clock(item.fromSec ?? 0), to = MeetingsFormat.clock(item.toSec ?? 0)
+            return "The label \"\(item.label ?? "?")\" does not belong to one person (\(from) to \(to))"
         case "removal": return "Remove local speech output: \(item.heard ?? "")"
         case "join": return "Join the line at \(MeetingsFormat.clock(item.atSec ?? 0))"
         case "term":
@@ -884,6 +884,12 @@ enum MeetingsWords {
 
     static func confidence(_ value: Double?) -> String? {
         value.map { "\(Int(($0 * 100).rounded())) %" }
+    }
+
+    /// A row's or a choice's score as it reads: a voice cosine as "0.61", since a cosine is no probability (U13), and
+    /// every other confidence as "61 %".
+    static func score(_ value: Double?, cosine: Bool) -> String? {
+        cosine ? value.map(VoiceScore.text) : confidence(value)
     }
 
     static func status(_ status: String) -> String {
@@ -929,6 +935,14 @@ extension MeetingDetailModel {
         items.filter { item in
             item.canConfirm && (item.confidence ?? 0) >= threshold
         }
+    }
+
+    /// The ids at or above the apply line. With the record's items, the CLI's pick (`confirmable`); before the record
+    /// arrives, each open row that is no question decides by its own confidence, so the counts do not drop to zero
+    /// while the rows already show. The Items tab's projection and `reveal` ask this one rule.
+    static func atLine(_ rows: [ReviewRow], items: [MeetingItem]?, applyAbove: Double) -> Set<String> {
+        if let items { return Set(confirmable(items, atOrAbove: applyAbove).map(\.id)) }
+        return Set(rows.filter { $0.isOpen && !$0.isQuestion && ($0.confidence ?? 0) >= applyAbove }.map(\.id))
     }
 
     /// The note after a bulk confirm: how many, at which line, and how many wait for the reader.
@@ -1009,7 +1023,8 @@ extension MeetingDetailModel {
     /// The empty state of a pane the CLI refuses with `[no-transcript-source]`; its button opens the screen recording.
     func noTranscriptSource(_ what: String) -> NoTranscriptSource {
         let screen = window?.meeting(id)?.hasRecording ?? (record.value?.recording != nil)
-        return NoTranscriptSource(what: what, showScreen: screen ? { [weak self] in self?.show(.screen) } : nil)
+        return NoTranscriptSource(what: what, showScreen: screen ? { [weak self] in self?.show(.screen) } : nil,
+                                  linkTo: service == nil ? nil : self)
     }
 
     /// The tab a meeting opens on: its screen recording when it has nothing else, since the transcript, speakers and
@@ -1023,23 +1038,48 @@ extension MeetingDetailModel {
 // MARK: - Suggest
 
 extension MeetingDetailModel {
-    /// Runs the rules on the transcript (`tools meetings suggest`), from the Items tab's empty state.
-    func suggest() {
+    /// Runs the rules on the transcript (`meeting.suggest`, or `tools meetings suggest` without a service), from the
+    /// Items tab's empty state. While it runs, `suggestProgress` holds the service's newest step (nil before the first
+    /// one); `projectRequired` runs when the service refuses a meeting without a project.
+    func suggest(projectRequired: (() -> Void)? = nil) {
         guard let service else {
             change("suggest", ["suggest", id], done: "The rules ran on the transcript")
             return
         }
         guard !busy.contains("suggest") else { return }
         busy.insert("suggest")
-        Task {
-            defer { busy.remove("suggest") }
+        suggestProgress = nil
+        suggestTask = Task {
+            defer {
+                busy.remove("suggest")
+                suggestProgress = nil
+                suggestTask = nil
+            }
             do {
-                let result = try await service.call(MeetingsAPI.MeetingSuggest.self, .init(meeting: id, attendance: nil))
+                // The deadline of every call (`MeetingsService.silenceLimit`): the service repeats a running call's
+                // newest step every 15 s, so it ends this call only when the service stopped answering (w_gu80y4mc).
+                let result = try await service.call(MeetingsAPI.MeetingSuggest.self, .init(meeting: id, attendance: nil)) { [weak self] step in
+                    self?.suggestProgress = step
+                }
                 suggestionWarnings = result.warnings
                 readRecordAndRows()
-            } catch { notices.push(.meetingsFailure(error)) }
+            } catch let failure as MeetingsCLI.Failure where failure.code == "project-required" && projectRequired != nil {
+                projectRequired?()
+                readRecordAndRows()
+            } catch where Task.isCancelled || error is CancellationError {
+                // Cancel: the service hears `$/cancel`, kills the voice workers and saves nothing (w_s12ed97x).
+                notices.push(StackedNotice(text: "Stopped the rules; nothing was saved"))
+            } catch {
+                notices.push(.meetingsFailure(error) { [weak self] in self?.suggest(projectRequired: projectRequired) })
+            }
         }
     }
+
+    /// Stops a running suggest from its progress bar.
+    func cancelSuggest() {
+        suggestTask?.cancel()
+    }
+
 }
 
 // MARK: - Context: links and notes
@@ -1077,6 +1117,7 @@ extension MeetingDetailModel {
             args += ["--note", ref.ref]
         } else {
             args.append(ref.ref)
+            if let revision = ref.file?.revision { args += ["--rev", revision.commit] }
             if let note = ref.note { args += ["--note", note] }
         }
         if let title = ref.title { args += ["--title", title] }
@@ -1173,5 +1214,28 @@ extension MeetingsWords {
     static func contextNote(_ ref: MeetingContextRef) -> String? {
         if ref.kind == "note" { return ref.title?.isEmpty == false ? ref.ref : nil }
         return ref.note
+    }
+}
+
+// MARK: - Link a source meeting (audit M9)
+
+extension MeetingDetailModel {
+    static let noServiceToLink = MeetingsCLI.Failure(
+        sentence: "The Meetings service does not answer, so the source meetings cannot be listed or linked.",
+        detail: "No Meetings service answers this window.")
+
+    /// The source meetings that started near this one (`meeting.sources.near`), nearest first.
+    func sourceMeetingsNear() async throws -> MeetingsAPI.MeetingSourcesNear.Result {
+        guard let service else { throw Self.noServiceToLink }
+        return try await service.call(MeetingsAPI.MeetingSourcesNear.self, .init(meeting: id, hours: nil))
+    }
+
+    /// Links one (`meeting.link`) and reads every part of the meeting again: its transcript, speakers and people come
+    /// from the source now.
+    func linkSource(_ candidate: MeetingsAPI.MeetingSourcesNear.Candidate) async throws {
+        guard let service else { throw Self.noServiceToLink }
+        _ = try await service.call(MeetingsAPI.MeetingLink.self, .init(meeting: id, source: candidate.ref), timeout: 120)
+        notices.push(StackedNotice(text: "Linked “\(candidate.title)”; its transcript and people are read now"))
+        refreshLoaded(force: true)
     }
 }

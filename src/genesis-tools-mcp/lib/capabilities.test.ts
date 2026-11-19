@@ -206,7 +206,7 @@ describe("the tool group table", () => {
         const unset = enabledToolGroups(TOOL_GROUPS, undefined).map((row) => row.id);
 
         expect(optIn.sort()).toEqual(["alza", "waze"]);
-        expect(unset.sort()).toEqual(["control", "fetch", "jev", "usage"]);
+        expect(unset.sort()).toEqual(["control", "fetch", "jev", "usage", "work"]);
         expect(enabledToolGroups(TOOL_GROUPS, ["question_answer", "jev"]).map((row) => row.id)).toEqual(["jev"]);
     });
 

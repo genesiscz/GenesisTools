@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
+import { checkAppInstalled, describeNeedFailure, type NeedEnv } from "@genesiscz/utils/genesis-tools/capability/needs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import {
@@ -12,9 +13,10 @@ import {
     type ResponsibleIdentity,
     responsibleIdentity,
 } from "@genesiscz/utils/macos/genesis-app";
-import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
-import { type AppStatus, appStatus } from "./app";
+import { isTestProcess } from "@genesiscz/utils/test-process";
+import { type AppStatus, appRebuildCommand, appStatus } from "./app";
 import { type PermissionKindId, parsePermissionStatusLines, permissionStatusLabel } from "./kinds";
+import { currentLinkRoute, type LinkRoute, linkRouteProblem } from "./links";
 import {
     type LocalNetworkAnswer,
     localNetworkAnswer,
@@ -62,6 +64,8 @@ export interface PermissionsReport {
     launchdJobsOutsideApp: string[];
     /** the settings window's "Route tools through this app" switch is off */
     disabledByMarker: boolean;
+    /** which running instance macOS hands links to (links.ts); null when the app is not built */
+    links: LinkRoute | null;
     userDb: Pick<TccReadResult, "readable" | "error">;
     systemDb: Pick<TccReadResult, "readable" | "error">;
     problems: string[];
@@ -119,6 +123,10 @@ function liveGrant(wire: string): { granted?: boolean; label: string } {
  * `<kind> <wire value>` line per grant for `all`.
  */
 export function runPermissionStatus(kind: PermissionKindId | "all", timeoutMs: number) {
+    if (isTestProcess()) {
+        throw new Error("a test process never reaches GenesisTools.app --permission-status");
+    }
+
     return Bun.spawnSync([genesisAppLauncherPath(), "--permission-status", kind], {
         stdout: "pipe",
         stderr: "pipe",
@@ -134,7 +142,7 @@ export function runPermissionStatus(kind: PermissionKindId | "all", timeoutMs: n
  */
 export function liveGrantStatuses(timeoutMs = 3_000): Map<PermissionKindId, string> | null {
     const launcher = genesisAppLauncherPath();
-    if (!existsSync(launcher)) {
+    if (isTestProcess() || !existsSync(launcher)) {
         return null;
     }
 
@@ -209,7 +217,26 @@ export function launchdJobsOutsideApp(launcherPath: string, dir = LAUNCH_AGENTS_
     return labels.sort();
 }
 
-export function collectProblems(report: Omit<PermissionsReport, "problems">): string[] {
+/** How the calendar and reminders doctors identify the process whose grants they inspected. */
+export function doctorResponsibleLabel(identity: ResponsibleIdentity, needEnv?: NeedEnv): string {
+    if (identity.kind === "genesis-app") {
+        return `GenesisTools.app (${identity.bundleId})`;
+    }
+
+    if (identity.kind === "unknown") {
+        return "unknown (no bundle; launchd or a bare shell)";
+    }
+
+    const installed = checkAppInstalled(needEnv);
+    if (installed.ok) {
+        return `${identity.bundleId} (launching app)`;
+    }
+
+    const purpose = installed.fix ? "build GenesisTools.app to own the grants. " : "";
+    return `${identity.bundleId} (launching app; ${purpose}${describeNeedFailure(installed)})`;
+}
+
+export function collectProblems(report: Omit<PermissionsReport, "problems">, needEnv?: NeedEnv): string[] {
     const problems: string[] = [];
 
     // The per-user TCC.db is itself behind Full Disk Access, so failing to open it while running as
@@ -220,14 +247,25 @@ export function collectProblems(report: Omit<PermissionsReport, "problems">): st
         );
     }
 
-    if (!report.app.built) {
-        problems.push(`GenesisTools.app is not built: permissions follow the terminal. ${genesisAppBuildHint()}`);
-    } else if (!report.app.identityStable) {
+    const installed = checkAppInstalled(needEnv);
+    if (report.app.built && report.disabledByMarker) {
+        const reason = installed.ok ? "The launcher is switched off" : describeNeedFailure(installed);
+        problems.push(
+            `${reason}. The switch in GenesisTools window > Settings (\`${toolCommand("macos permissions disable")}\`) routes tools through the terminal. Re-enable with \`${toolCommand("macos permissions enable")}\`.`
+        );
+    } else if (!installed.ok) {
+        const consequence = report.app.built ? "" : "Permissions follow the terminal. ";
+        problems.push(consequence + describeNeedFailure(installed));
+    }
+
+    if (report.app.built && !report.app.identityStable) {
         problems.push(
             "GenesisTools.app is ad-hoc signed: every rebuild gets a new identity and macOS forgets its grants. Sign with a Developer ID or Apple Development certificate."
         );
-    } else if (report.app.stale) {
-        problems.push(`GenesisTools.app sources changed since the last build. ${genesisAppBuildHint()}`);
+    } else if (report.app.built && report.app.stale) {
+        problems.push(
+            `GenesisTools.app sources changed since the last build. Run \`${appRebuildCommand(needEnv?.builder)}\`.`
+        );
     }
 
     if (report.app.built && report.launchdJobsOutsideApp.length > 0) {
@@ -236,14 +274,16 @@ export function collectProblems(report: Omit<PermissionsReport, "problems">): st
         );
     }
 
-    if (report.app.built && report.disabledByMarker) {
-        problems.push(
-            `The launcher is switched off (GenesisTools window > Settings, or \`${toolCommand("macos permissions disable")}\`): tools run under the terminal's grants. Re-enable with \`${toolCommand("macos permissions enable")}\`.`
-        );
-    } else if (report.app.built && report.identity.kind !== "genesis-app") {
+    if (report.app.built && !report.disabledByMarker && report.identity.kind !== "genesis-app") {
         problems.push(
             "This process is not running under GenesisTools.app (GENESIS_TOOLS_NO_APP set, or started outside `tools`)."
         );
+    }
+
+    const linkProblem = report.links ? linkRouteProblem(report.links) : null;
+
+    if (linkProblem) {
+        problems.push(linkProblem);
     }
 
     return problems;
@@ -262,6 +302,7 @@ export function permissionsReport(): PermissionsReport {
         oldBuilds: app.built ? oldBuildsInUse(app.launcherPath, lanRules) : [],
         launchdJobsOutsideApp: app.built ? launchdJobsOutsideApp(app.launcherPath) : [],
         disabledByMarker: isGenesisAppDisabledByMarker(),
+        links: app.built ? currentLinkRoute() : null,
         userDb: { readable: user.readable, error: user.error },
         systemDb: { readable: system.readable, error: system.error },
     };

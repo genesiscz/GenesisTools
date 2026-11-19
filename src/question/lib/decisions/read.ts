@@ -1,5 +1,5 @@
-import { canonicalAgent, type HandoffAgent } from "@app/handoff/targeting";
 import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
+import { canonicalAgent, type HandoffAgent } from "@genesiscz/utils/agent/recipient";
 import { routerLink } from "@genesiscz/utils/browser-router/router-link";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { json2md } from "@genesiscz/utils/json2md";
@@ -171,9 +171,11 @@ export function decisionsMarkdown(rows: DecisionRecord[]): string {
     return json2md(
         rows.flatMap((row) => {
             const todo = kindOf(row) === "todo";
-            const heading = `${todo ? "☐ TODO" : "❓ DECISION"} ${row.number}${row.title ? ` — ${row.title}` : ""}`;
+            const heading = todo
+                ? `☐ TODO ${row.number} (for ${row.for === "human" ? "you" : row.for || "agent"})${row.title ? `: ${row.title}` : ""}`
+                : `❓ DECISION ${row.number}${row.title ? ` — ${row.title}` : ""}`;
             const meta = [
-                row.for ? `for: ${row.for}` : null,
+                !todo && row.for ? `for: ${row.for}` : null,
                 row.blocking ? "blocking" : null,
                 // A sub-agent's section is read by its lead, who may relay several sessions' DECISION 1 (DECISION 46 b).
                 decisionAskedIn(row) ? `asked in ${decisionAskedIn(row)}` : null,

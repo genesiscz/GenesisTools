@@ -10,12 +10,20 @@ struct MeetingsRootView: View {
     @State private var dockHeight: CGFloat = 0
     /// The window's width: below `panelHidesListBelow` the open settings panel hides the meetings list (G53).
     @State private var windowWidth: CGFloat = 0
+    /// The three columns' visibility: below `sidebarHidesBelow` the sidebar steps aside (`.doubleColumn`), and the
+    /// toolbar's sidebar button shows it again or hides it, as in any Mac app (w_21k9ux1b).
+    @State private var columns: NavigationSplitViewVisibility = .all
+    @AppStorage(MeetingsPreferences.Panes.autoHideSidebar.key) private var autoHideSidebar =
+        MeetingsPreferences.Panes.autoHideSidebar.defaultValue
+    @State private var serviceFailure: MeetingsCLI.Failure?
 
     var body: some View {
         // The dock floats over the columns with a bottom inset (G-LAYOUT-1). As the second child of a VStack it took its
         // height from the columns, so starting a Moment shrank the list under the pointer.
         Group {
-            if model.place == .contacts {
+            if case .projectVoices(let project) = model.place {
+                projectVoices(project)
+            } else if model.place == .contacts {
                 contactsPanes
             } else if Self.panelHidesList(width: windowWidth, panelOpen: model.sidePanelOpen && model.detail != nil) {
                 meetingWithPanel
@@ -23,6 +31,15 @@ struct MeetingsRootView: View {
                 panes
             }
         }
+            .overlay(alignment: .top) {
+                if let failure = serviceFailure {
+                    NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
+                               fixes: [failure.detailsFix { checkService() }])
+                        .padding(.top, 32)
+                }
+            }
+            .onChange(of: model.overview, initial: true) { _, _ in checkService() }
+            .onChange(of: model.service?.state) { _, _ in checkService() }
             .environment(\.meetingsDockInset, dockHeight)
             .sheet(item: Bindable(model.people).pendingAssign) { pending in
                 AssignReachSheet(pending: pending, window: model)
@@ -39,8 +56,31 @@ struct MeetingsRootView: View {
             }
             .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: model.player.isActive)
             .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { windowWidth = $0 }
+            // Only a crossing of the width moves the sidebar, so the reader's own choice holds inside each band; with
+            // "Hide the sidebar in a narrow window" off, no crossing moves it.
+            .onChange(of: Self.sidebarHides(width: windowWidth)) { _, hides in
+                if let next = Self.columns(sidebarHides: hides, auto: autoHideSidebar) { columns = next }
+            }
+            // Turned on again: the sidebar takes the place the width gives it at once.
+            .onChange(of: autoHideSidebar) { _, auto in
+                if let next = Self.columns(sidebarHides: Self.sidebarHides(width: windowWidth), auto: auto) { columns = next }
+            }
             // Last, so the dock and the sheets above take the look too.
             .meetingsLook()
+    }
+
+    private func checkService() {
+        serviceFailure = Self.serviceFailure(model.service?.discover(), readFailure: model.overview.failure)
+    }
+    static func serviceFailure(_ discovery: MeetingsService.Discovery?, readFailure: MeetingsCLI.Failure?) -> MeetingsCLI.Failure? {
+        switch discovery {
+        case .otherCheckout(let root):
+            return .init(sentence: "The Meetings service belongs to another checkout; this window uses its command instead.",
+                         detail: "Service checkout: \(root ?? "not named"). Close that checkout's service to let this window start its own.")
+        case .none, .some(.none):
+            return readFailure.map { .init(sentence: "No Meetings service answers. \($0.sentence)", detail: $0.detail) }
+        default: return nil
+        }
     }
 
     /// The settings panel takes 320 pt of the meeting's column (`MeetingDetailView.paneWidth`). Below this window width
@@ -51,6 +91,48 @@ struct MeetingsRootView: View {
 
     static func panelHidesList(width: CGFloat, panelOpen: Bool) -> Bool {
         panelOpen && width > 0 && width < panelHidesListBelow
+    }
+
+    /// Below this window width the sidebar column steps aside and its places are a menu at the top of the list (window
+    /// audit H5): at the 900 pt minimum the sidebar and the list left the meeting about 335 pt, so its chips wrapped to
+    /// three rows and its tabs dropped their glyphs. The three columns stay one split view whose visibility hides the
+    /// sidebar, so the toolbar's sidebar button shows and hides the sidebar; a two-column layout here made that button
+    /// fold the meeting list instead (w_21k9ux1b).
+    static let sidebarHidesBelow: CGFloat = 1150
+
+    static func sidebarHides(width: CGFloat) -> Bool {
+        width > 0 && width < sidebarHidesBelow
+    }
+
+    /// The columns a width crossing sets: the list and the meeting below `sidebarHidesBelow`, all three above it.
+    static func columns(sidebarHides: Bool) -> NavigationSplitViewVisibility {
+        sidebarHides ? .doubleColumn : .all
+    }
+
+    /// The columns a width crossing sets while the setting lets the width move the sidebar; nil leaves the reader's choice.
+    static func columns(sidebarHides: Bool, auto: Bool) -> NavigationSplitViewVisibility? {
+        auto ? columns(sidebarHides: sidebarHides) : nil
+    }
+
+    /// The places stand as a menu above the list while the sidebar that holds them is hidden.
+    static func listShowsPlaces(_ columns: NavigationSplitViewVisibility) -> Bool {
+        columns == .doubleColumn || columns == .detailOnly
+    }
+
+    private var openMeeting: some View {
+        Group {
+            if let detail = model.detail {
+                MeetingDetailView(detail: detail, window: model)
+                    .environment(\.meetingDetail, detail)
+                    .id(detail.id)
+            } else {
+                EmptyState(symbol: "person.2.wave.2", text: "Choose a meeting", detail: "Its transcript, screen and items show here.")
+            }
+        }
+        .heightFromWindow()
+        .toolbar {
+            if model.detail != nil { SidePanelToolbar(model: model) }
+        }
     }
 
     /// Sidebar | the open meeting with the settings panel, for a window too narrow for the list beside them.
@@ -75,6 +157,24 @@ struct MeetingsRootView: View {
         }
     }
 
+    private func projectVoices(_ project: String) -> some View {
+        NavigationSplitView {
+            MeetingsSidebar(model: model)
+                .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 300)
+        } detail: {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VoiceSampleRows(model: model.voiceLibrary, destination: .project(project), focus: model.voiceFocus,
+                                    reveal: { id in Task { @MainActor in proxy.scrollTo(id, anchor: .top) } })
+                        .padding()
+                }
+            }
+            .navigationTitle("\(project) · Voices")
+            .safeAreaPadding(.bottom, dockHeight)
+            .noticeStack(model.notices, alignment: model.noticePlace.alignment)
+        }
+    }
+
     private var contactsPanes: some View {
         NavigationSplitView {
             MeetingsSidebar(model: model)
@@ -92,29 +192,17 @@ struct MeetingsRootView: View {
     }
 
     private var panes: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columns) {
             MeetingsSidebar(model: model)
                 .safeAreaPadding(.bottom, dockHeight)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 300)
         } content: {
-            MeetingsListPane(model: model)
+            MeetingsListPane(model: model, showsPlaces: Self.listShowsPlaces(columns))
                 .safeAreaPadding(.bottom, dockHeight)
                 .heightFromWindow()
-                .navigationSplitViewColumnWidth(min: 280, ideal: 340, max: 480)
+                .navigationSplitViewColumnWidth(min: 260, ideal: 340, max: 480)
         } detail: {
-            Group {
-                if let detail = model.detail {
-                    MeetingDetailView(detail: detail, window: model)
-                        .environment(\.meetingDetail, detail)
-                        .id(detail.id)
-                } else {
-                    EmptyState(symbol: "person.2.wave.2", text: "Choose a meeting", detail: "Its transcript, screen and items show here.")
-                }
-            }
-            .heightFromWindow()
-            .toolbar {
-                if model.detail != nil { SidePanelToolbar(model: model) }
-            }
+            openMeeting
         }
         // ⌘1 Needs you, ⌘2 All meetings and ⌘R Reload are View menu items (MeetingsMenu), so they work wherever focus is.
     }
@@ -188,6 +276,7 @@ private struct MeetingsContactsPane: View {
                 setSource: { people.setSource($0, on: $1) },
                 grantContacts: { people.grantContacts() },
                 showMeetings: { people.showMeetings($0) },
+                showVoices: { people.showMeetings($0, voices: true) },
                 mergeSearch: { people.mergeSearch() })
                 .overlay {
                     if answer == nil, people.known.failure == nil {
@@ -202,8 +291,11 @@ private struct MeetingsContactsPane: View {
         }
         .onAppear { people.ensure() }
         .sheet(item: $people.history) { history in
-            PersonMeetingsSheet(history: history, retry: { people.showMeetings(history.person) },
-                                open: { people.openHistoryMeeting($0) }, close: { people.history = nil })
+            if let window = people.window {
+                PersonMeetingsSheet(history: people.history ?? history, library: window.voiceLibrary, retry: { people.showMeetings(history.person) },
+                                    open: { people.openHistoryMeeting($0) }, close: { people.history = nil })
+                    .noticeStack(window.notices, alignment: window.noticePlace.alignment)
+            }
         }
     }
 }
@@ -261,6 +353,11 @@ private struct MeetingsSidebar: View {
                 ForEach(overview?.projects ?? [], id: \.name) { project in
                     row(project.name, symbol: "folder", count: project.meetings, place: .project(project.name),
                         tooltip: "The \(project.name) project: its rules, labels, people and meetings")
+                    if model.place == .project(project.name) || model.place == .projectVoices(project.name) {
+                        row("Voices", symbol: "waveform", count: nil, place: .projectVoices(project.name),
+                            tooltip: "Voice samples learned in \(project.name)")
+                            .padding(.leading, 14)
+                    }
                 }
             }
         }
@@ -287,9 +384,15 @@ private struct MeetingsSidebar: View {
 
 private struct MeetingsListPane: View {
     @Bindable var model: MeetingsWindowModel
+    /// The sidebar's places as a menu above the list, while the sidebar column is hidden (`listShowsPlaces`).
+    var showsPlaces = false
 
     var body: some View {
         VStack(spacing: 0) {
+            if showsPlaces {
+                MeetingsPlacesMenu(model: model, title: title)
+                Divider()
+            }
             if case .project(let name) = model.place {
                 // A failed config read is not an empty project: the summary shows only data that was read.
                 if let unread = MeetingsUnread.of([(.projectSettings, model.settings.failure)]).first {
@@ -299,8 +402,12 @@ private struct MeetingsListPane: View {
                         .padding(10)
                 }
                 if let settings = model.settings.value {
-                    ProjectSummary(name: name, settings: settings.projects[name], wispr: settings.wispr)
+                    ProjectSummary(name: name, settings: settings.projects[name], wispr: settings.wispr,
+                                   meetingID: model.selectedMeetingID)
                 }
+                GhostButton("Voices", symbol: "waveform", tooltip: "Open voice samples for \(name)") {
+                    model.go(.projectVoices(name))
+                }.padding(.bottom, 6)
                 Divider()
             }
             if let failure = model.overview.failure {
@@ -340,6 +447,7 @@ private struct MeetingsListPane: View {
         case .all: return "All meetings"
         case .contacts: return "People"
         case .project(let name): return name
+        case .projectVoices(let name): return "\(name) · Voices"
         }
     }
 
@@ -379,6 +487,66 @@ private struct MeetingsListPane: View {
                        detail: "A meeting appears here when Wispr Flow records one, or after tools meetings new.",
                        actionTitle: longer.map { "Show \($0) days" }) { if let longer { model.show(days: longer) } }
         }
+    }
+}
+
+/// The sidebar's places in one menu: Needs you, All meetings, All people and each project, with their counts. Built
+/// at the click (`MenuButton`).
+private struct MeetingsPlacesMenu: View {
+    @Bindable var model: MeetingsWindowModel
+    let title: String
+
+    var body: some View {
+        HStack(spacing: 0) {
+            MenuButton(style: .genHoverPlain(), items: { items() }) {
+                HStack(spacing: 5) {
+                    Image(systemName: symbol).font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text(verbatim: title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                    Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(.secondary)
+                }
+                .frame(minHeight: 22)
+                .contentShape(Rectangle())
+            }
+            .instantTooltip("Show another place: Needs you, all meetings, the people or a project")
+            .accessibilityLabel("Place: \(title)")
+            .accessibilityIdentifier("meetings.places")
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 6)
+    }
+
+    private var symbol: String {
+        switch model.place {
+        case .needs: return "exclamationmark.bubble"
+        case .all: return "calendar"
+        case .contacts: return "person.crop.circle"
+        case .project: return "folder"
+        case .projectVoices: return "waveform"
+        }
+    }
+
+    private func items() -> [MenuButtonItem] {
+        let overview = model.overview.value
+        func counted(_ title: String, _ count: Int?) -> String {
+            guard let count, count > 0 else { return title }
+            return "\(title)  \(count)"
+        }
+        var items: [MenuButtonItem] = [
+            .action(counted("Needs you", overview?.needsYou.total), checked: model.place == .needs) { model.go(.needs) },
+            .action(counted("All meetings", overview?.meetings.count), checked: model.place == .all) { model.go(.all) },
+            .action("All people") { model.go(.contacts) },
+        ]
+        let projects = overview?.projects ?? []
+        if !projects.isEmpty {
+            items.append(.divider)
+            items.append(.note("Projects"))
+            items += projects.map { project in
+                .action(counted(project.name, project.meetings), checked: model.place == .project(project.name)) {
+                    model.go(.project(project.name))
+                }
+            }
+        }
+        return items
     }
 }
 
@@ -468,9 +636,13 @@ struct MeetingBadgesView: View {
 
     var body: some View {
         let badges = meeting.badges
-        if let audio = meeting.sourceAudio {
+        // A list row only: every meeting keeps its sound now (P14), so in the header the badge said the same thing on
+        // every meeting and took a place in its one chip line.
+        if let audio = meeting.sourceAudio, open == nil {
             Badge("Audio preserved", color: KitPalette.added, symbol: "waveform")
-                .instantTooltip("Permanent source audio: \(audio.bytes) bytes")
+                // Permanent is the fact: audio retention removes only the recorder's own sound, never `source-audio/`
+                // (src/utils/meetings/source-audio-paths.ts, src/meetings/lib/retention.ts).
+                .instantTooltip("Permanent source audio, \(ByteFormat.file(audio.bytes)). Audio retention never removes it.")
                 .accessibilityIdentifier("meetings.sourceAudio.preserved")
         }
         if meeting.live { Badge("Recording", color: KitPalette.removed, symbol: "record.circle") }
@@ -488,7 +660,18 @@ struct MeetingBadgesView: View {
             badge(Badge("Recording only", color: KitPalette.dim, symbol: "rectangle.on.rectangle"),
                   opens: .screen, tooltip: "Show the screen recording")
         }
-        if badges.transcriptOnly { Badge("Transcript only", color: KitPalette.dim, symbol: "text.alignleft") }
+        if badges.transcriptOnly {
+            let words = Self.noScreenRecording(hasSound: meeting.sourceAudio != nil)
+            Badge(words.title, color: KitPalette.dim, symbol: "video.slash", tooltip: words.tooltip)
+                .accessibilityIdentifier("meetings.badge.noScreenRecording")
+        }
+    }
+
+    /// A meeting with a transcript and no screen recording. The pill read "Transcript only" with no tooltip, which
+    /// hid that the sound was kept too (U4); it names what is missing, and the tooltip says what was kept.
+    static func noScreenRecording(hasSound: Bool) -> (title: String, tooltip: String) {
+        let kept = hasSound ? "Only the transcript and the sound were saved." : "Only the transcript was saved."
+        return ("No screen recording", "\(kept) No screen recording exists for this meeting.")
     }
 
     @ViewBuilder
@@ -517,10 +700,13 @@ private struct NeedsYouList: View {
             List(selection: Binding(get: { needs.row(for: model.needsSelection) },
                                     set: { tag in Task { @MainActor in model.select(needsTag: tag) } })) {
                 ForEach(needs.groups, id: \.title) { group in
-                    Section(group.title) {
+                    // "Suggestions" count those at or above the apply line on every surface; the line is said once,
+                    // here, instead of at the end of every row (window audit L1).
+                    Section(group.title == MeetingsOverview.NeedsYou.readyTitle
+                            ? "\(group.title) at \(Int(overview.applyAbove * 100)) % or more" : group.title) {
                         ForEach(group.rows, id: \.id) { row in
                             if let meeting = model.meeting(row.id) {
-                                NeedsRow(meeting: meeting, reason: row.reason(applyAbove: overview.applyAbove)).tag(row.tag)
+                                NeedsRow(meeting: meeting, reason: row.reason()).tag(row.tag)
                             }
                         }
                     }
@@ -548,14 +734,14 @@ extension MeetingsOverview.NeedsYou {
         /// The selection tag: "q:<id>" and "s:<id>" open Items, a bare id opens the meeting's first tab.
         var tag: String { questions > 0 ? "q:" + id : suggestions > 0 ? "s:" + id : id }
 
-        /// The row's second line. One need reads in full; several read short, so the line fits the column.
-        func reason(applyAbove: Double) -> String {
-            let above = "at \(Int(applyAbove * 100)) % or more"
+        /// The row's second line. One need reads in full; several read short, so the line fits the column. A
+        /// suggestion is one at or above the apply line, which the list says once in a section title.
+        func reason() -> String {
             let needs = [noProject, questions > 0, suggestions > 0].filter { $0 }.count
             var parts: [String] = []
             if noProject { parts.append("Choose its project") }
             if questions > 0 { parts.append(Plural.count(questions, "question") + (needs == 1 ? " to answer by ear" : "")) }
-            if suggestions > 0 { parts.append(Plural.count(suggestions, "suggestion") + (needs == 3 ? "" : " " + above)) }
+            if suggestions > 0 { parts.append(Plural.count(suggestions, "suggestion") + (needs == 1 ? " to confirm" : "")) }
             return parts.joined(separator: " · ")
         }
     }
@@ -564,6 +750,8 @@ extension MeetingsOverview.NeedsYou {
         let title: String
         let rows: [Row]
     }
+
+    static let readyTitle = "Ready to confirm"
 
     /// The list's groups in its order. A meeting stands in the first group it belongs to.
     var groups: [Group] {
@@ -578,7 +766,7 @@ extension MeetingsOverview.NeedsYou {
         }
         return [Group(title: "Without a project", rows: rows(noProject)),
                 Group(title: "Questions to answer", rows: rows(questions.map(\.id))),
-                Group(title: "Ready to confirm", rows: rows(suggestions.map(\.id)))].filter { !$0.rows.isEmpty }
+                Group(title: Self.readyTitle, rows: rows(suggestions.map(\.id)))].filter { !$0.rows.isEmpty }
     }
 
     /// The row of the open meeting. A row is tagged "q:<id>", "s:<id>" or the bare id, and a meeting opened by its id
@@ -648,6 +836,7 @@ struct ProjectSummary: View {
     let name: String
     let settings: ProjectSettings?
     let wispr: MeetingsSettings.Source?
+    let meetingID: String?
 
     var body: some View {
         let rules = Self.rules(folders: wispr?.match[name]?.folders ?? [], calendars: settings?.match?.calendar?.calendars ?? [],
@@ -666,11 +855,11 @@ struct ProjectSummary: View {
             HStack(spacing: 8) {
                 GhostButton("Edit rules…", symbol: "slider.horizontal.3", tooltip: "Open Settings → Meetings → Projects at this project",
                             identifier: "meetings.project.rules") {
-                    FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.projectsPage + "#project-\(name)")
+                    FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.projectsPage + "#project-\(name)", context: meetingID)
                 }
                 GhostButton("Dictionary…", symbol: "character.book.closed", tooltip: "Open Settings → Meetings → Dictionary",
                             identifier: "meetings.project.dictionary") {
-                    FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.dictionaryPage)
+                    FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.dictionaryPage, context: meetingID)
                 }
             }
         }

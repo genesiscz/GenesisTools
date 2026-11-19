@@ -20,7 +20,7 @@ export function createRemoveCommand(): Command {
         .action(async (id, opts) => {
             const projectRoot = resolveProjectRoot(opts.project);
             const store = storeForProject(opts.project);
-            const existing = await store.get(id);
+            const existing = await store.getForRemoval(id);
 
             if (!existing) {
                 const missing = await reportMissingTodo(id, projectRoot);

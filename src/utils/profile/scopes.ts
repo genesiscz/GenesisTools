@@ -14,6 +14,7 @@ export const PROFILER_SCOPE_NAMES = [
     "du.cli",
     "clones",
     "teams",
+    "meetings-suggest",
     "hub-agents",
     // One line per call the resident hub server answers: the door, its exit code, wall time and process CPU.
     "hub-server",

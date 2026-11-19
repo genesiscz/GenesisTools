@@ -1,12 +1,33 @@
 import AppKit
 import Foundation
 import XCTest
+@testable import GenesisToolsFeatures
 @testable import GenesisToolsMeetings
 
 /// The Meetings part's logic: decoding what `tools meetings … --json` prints, the CLI's error sentence, the words and
 /// times it shows, and which meetings each sidebar place lists.
 @MainActor
 final class MeetingsWindowTests: XCTestCase {
+    func testMicrophoneTestRequiresMicrophoneSamplesEvenWhenSystemSoundWorks() {
+        let empty = #"{"mic":{"sampled":false},"system":{"sampled":false},"calibration":{"layout":"unknown"}}"#
+        let systemOnly = #"{"mic":{"sampled":false},"system":{"sampled":true,"dbfs":-30},"calibration":{"layout":"unknown"}}"#
+        let systemTest = MicrophoneTest()
+        systemTest.receive([empty, systemOnly])
+        XCTAssertEqual(systemTest.status, "Waiting for microphone samples…")
+        XCTAssertEqual(systemTest.reading?.system.dbfs, -30)
+        systemTest.finished(status: 0, stderr: "")
+        XCTAssertEqual(systemTest.status, "Test unavailable")
+        XCTAssertEqual(systemTest.warning, "No microphone samples were received.")
+
+        let silentMic = #"{"mic":{"sampled":true},"system":{"sampled":false},"calibration":{"layout":"unknown"}}"#
+        let microphoneTest = MicrophoneTest()
+        microphoneTest.receive([silentMic, empty])
+        XCTAssertEqual(microphoneTest.status, "Listening")
+        microphoneTest.finished(status: 0, stderr: "")
+        XCTAssertEqual(microphoneTest.status, "Test finished")
+        XCTAssertNil(microphoneTest.warning)
+    }
+
     func testStemAndRemovalItemsDecodeWithoutLosingNativeReviewFields() throws {
         let source = #"{"id":"i1","kind":"term","status":"confirmed","heard":"fixture","proposed":"correct","heardStem":"fixture","proposedStem":"correct","rules":[],"suggestedAt":"2026-11-02T15:00:00.000Z"}"#
         let item = try JSONDecoder().decode(MeetingItem.self, from: Data(source.utf8))
@@ -14,7 +35,6 @@ final class MeetingsWindowTests: XCTestCase {
         XCTAssertEqual(item.proposedStem, "correct")
         let removal = #"{"id":"i2","kind":"removal","status":"suggested","fromSec":5,"toSec":5,"heard":"Fixture done","rules":["local-speech"],"suggestedAt":"2026-11-02T15:00:00.000Z"}"#
         let removed = try JSONDecoder().decode(MeetingItem.self, from: Data(removal.utf8))
-        XCTAssertEqual(MeetingsWords.itemKind(removed), "Local speech output")
         XCTAssertTrue(removed.isDecidable)
     }
 
@@ -230,7 +250,6 @@ final class MeetingsWindowTests: XCTestCase {
         {"kind":"speaker-range","id":"i3","status":"suggested","label":"S1","fromSec":62,"toSec":75,"speaker":"Bob",
          "confidence":0.83,"rules":["E1"],"evidence":{"reason":"the call channel held it"},"suggestedAt":"2026-11-04T10:00:00.000Z"}
         """.utf8))
-        XCTAssertEqual(MeetingsWords.itemKind(item), "Speaker range")
         XCTAssertEqual(MeetingsWords.itemTitle(item), "S1 from 01:02 to 01:15 is Bob")
         XCTAssertEqual(MeetingsWords.confidence(item.confidence), "83 %")
         XCTAssertEqual(item.reason, "the call channel held it")
@@ -590,6 +609,39 @@ final class MeetingsWindowTests: XCTestCase {
         XCTAssertFalse(MeetingDetailModel.firstReadWaitsForList(rowKnown: false, listLoaded: false, tabIsDefault: false, tab: .transcript),
                        "a tab the request named reads at once")
         XCTAssertFalse(MeetingDetailModel.firstReadWaitsForList(rowKnown: false, listLoaded: false, tabIsDefault: true, tab: .screen))
+    }
+
+    func testDictionaryPreviewFollowsTheSettingsRequestOnFirstLoadAndReopen() throws {
+        let shell = FeatureSettingsShell(mode: .headless)
+        let plugin = MeetingsSettingsPlugin()
+        shell.installPlugins([plugin])
+        let model = try XCTUnwrap(plugin.model)
+        let page = MeetingsSettingsPages.dictionaryPage
+        let request = FeatureSettingsRequest(pageID: page, context: "a")
+        let launched = FeatureSettingsRequest(arguments: ["--features"] + request.arguments)
+        XCTAssertEqual(launched, request)
+        shell.receive(launched, reopening: false)
+        XCTAssertEqual(model.dictionaryPreviewMeetings.selection, "a")
+        XCTAssertEqual(model.dictionaryPreviewMeetings.options.map(\.value), ["", "a"])
+
+        let overview = try JSONDecoder().decode(MeetingsOverview.self, from: MeetingsUXTests.overviewJSON())
+        model.dictionaryPreviewMeetings.receive(overview.meetings)
+        XCTAssertEqual(model.dictionaryPreviewMeetings.options.map(\.title), ["Choose a meeting…", "Weekly sync", "Screen only"])
+        model.dictionaryPreviewMeetings.selection = "b"
+        model.dictionaryPreviewMeetings.receive(overview.meetings)
+        XCTAssertEqual(model.dictionaryPreviewMeetings.selection, "b", "A list response preserves an explicit pick")
+        shell.receive(FeatureSettingsRequest(userInfo: launched.userInfo), reopening: true)
+        XCTAssertEqual(model.dictionaryPreviewMeetings.selection, "a", "Reopening from the same meeting selects it again")
+
+        let older = FeatureSettingsRequest(pageID: MeetingsSettingsPages.windowPage, context: "older")
+        let reopened = FeatureSettingsRequest(userInfo: FeatureSettingsRequest(arguments: older.arguments).userInfo)
+        XCTAssertEqual(reopened, older)
+        shell.receive(reopened, reopening: true)
+        XCTAssertEqual(model.dictionaryPreviewMeetings.selection, "older")
+        XCTAssertTrue(model.dictionaryPreviewMeetings.options.contains { $0.value == "older" })
+        shell.receive(FeatureSettingsRequest(userInfo: ["page": page]), reopening: true)
+        XCTAssertEqual(model.dictionaryPreviewMeetings.selection, "")
+        XCTAssertFalse(model.dictionaryPreviewMeetings.options.contains { $0.value == "older" })
     }
 
     /// MP9: reopening Settings read every Meetings page's data, the pages never shown included.

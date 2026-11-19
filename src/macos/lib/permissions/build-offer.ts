@@ -35,7 +35,7 @@ const GATED_MACOS_OPTION_COMMANDS = new Map<string, ReadonlySet<string>>([
  * `macos permissions` is the command that manages the app. The read-only words count only as a
  * subcommand, never as an option value: `control see --app status` still drives the UI.
  */
-const READ_ONLY_SUBCOMMANDS = new Set(["doctor", "audit", "status", "help"]);
+const READ_ONLY_SUBCOMMANDS = new Set(["doctor", "audit", "status", "report", "help"]);
 /** Documentation flags, anywhere in the arguments: runTool prints the help or README and exits. */
 const DOCUMENTATION_FLAGS = new Set(["--help", "-h", "--readme"]);
 

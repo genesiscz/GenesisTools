@@ -1,5 +1,8 @@
+import AppKit
 import AudioToolbox
+import AVFoundation
 import Foundation
+import SwiftUI
 import XCTest
 @testable import GenesisToolsMeetings
 
@@ -45,6 +48,7 @@ private final class FakeEngine {
     var cuts: [MeetingsAPI.MomentParams] = []
     var plans: [MeetingsAPI.MomentParams] = []
     var cutFailure: Error?
+    var itemMoment: Moment?
     var planAnswer = MeetingsAPI.MomentPlan.Result(moment: nil, cannot: nil)
     var audio: MeetingsAPI.MeetingAudio.Result?
     /// A cut waits until the test lets it go.
@@ -85,6 +89,7 @@ private final class FakeEngine {
                 default: spot = params.target.startSec ?? 0
                 }
                 var moment = Self.moment(params.meeting, params.target, spot: spot, pad: params.padSec ?? 5)
+                if case .item = params.target, let itemMoment = self.itemMoment { moment = itemMoment }
                 if case .range(let from, let to) = params.target {
                     moment = Moment(meeting: params.meeting, target: params.target, label: moment.label, fromSec: from, toSec: to,
                                     padSec: params.padSec ?? 5, startSec: from - (params.padSec ?? 5), endSec: to + (params.padSec ?? 5),
@@ -127,9 +132,9 @@ final class MeetingsPlayerTests: XCTestCase {
         try? FileManager.default.removeItem(at: engine.folder)
     }
 
-    private func makePlayer() -> MomentPlayer {
+    private func makePlayer(clipDuration: TimeInterval = 20) -> MomentPlayer {
         MomentPlayer(engine: engine.engine, load: { [unowned self] url in
-            let sound = FakeSound(url: url, duration: 20, seeksExactly: self.recordingSeeks || url.pathExtension == "wav")
+            let sound = FakeSound(url: url, duration: clipDuration, seeksExactly: self.recordingSeeks || url.pathExtension == "wav")
             self.sounds.append(sound)
             return sound
         }, defaults: defaults)
@@ -201,6 +206,23 @@ final class MeetingsPlayerTests: XCTestCase {
 
     // MARK: Playing a Moment
 
+    func testQuestionPlaybackShowsTheGapAndKeepsTheLastDecidedLineOnTheMeetingClock() async throws {
+        engine.itemMoment = try JSONDecoder().decode(Moment.self, from: Data("""
+        {"meeting":"m","target":{"kind":"item","id":"i3"},"label":"Q1","fromSec":10,"toSec":65,"padSec":1,
+         "startSec":9,"endSec":66,"spotSec":10,"delaySec":0,"gapNote":"Also plays intervening audio 00:24–01:00"}
+        """.utf8))
+        let player = makePlayer(clipDuration: 57)
+        player.play(.item("i3"), in: "m", from: .row)
+        try await until("the question plays") { player.phase == .playing }
+        let top = try XCTUnwrap(player.top)
+        XCTAssertEqual(top.startSec, 9)
+        XCTAssertEqual(top.endSec, 66)
+        player.seek(to: 60)
+        XCTAssertEqual(sounds.first?.currentTime, 51)
+        XCTAssertEqual(TimelineDock.crumbTitle(of: top, meeting: "m", rows: []),
+                       "Q1 · Also plays intervening audio 00:24–01:00")
+    }
+
     func testARowPlaysItsClipFromTheStartAndASecondClickPausesIt() async throws {
         let player = makePlayer()
         player.play(.item("i3"), in: "m", from: .row)
@@ -221,6 +243,32 @@ final class MeetingsPlayerTests: XCTestCase {
         player.resume()
         XCTAssertEqual(player.phase, .playing)
         XCTAssertEqual(sounds[0].currentTime, 4.75, accuracy: 0.0001, "play on goes back to the tone's end, not into the tone")
+    }
+
+    func testAClipThatFinishesCuttingDuringACommentWaitsUntilTheEditorCloses() async throws {
+        let window = MeetingsWindowModel(defaults: defaults, service: nil, loadDetail: { _ in })
+        let player = makePlayer()
+        window.player = player
+        let detail = MeetingDetailModel(id: "m", window: window)
+        let row = TimelineFixture.questionRow
+        engine.holdCuts = true
+        player.play(row.target, in: detail.id, from: .row)
+        try await until("the cut started") { !self.engine.cuts.isEmpty }
+        var appeared = false
+        let editor = ListenCommentEditor(row: row, detail: detail, close: {}).onAppear { appeared = true }
+        let host = NSHostingView(rootView: AnyView(editor))
+        let panel = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 200), styleMask: [.borderless], backing: .buffered, defer: false)
+        panel.isReleasedWhenClosed = false
+        panel.contentView = host
+        panel.orderInForSnapshot()
+        defer { engine.release(); player.stop(); panel.orderOut(nil); panel.close() }
+        try await until("the comment field opened during the cut") { appeared }
+        engine.release()
+        try await until("typing pauses the newly prepared clip") { player.phase == .paused }
+        XCTAssertEqual(playingCount, 0)
+        host.rootView = AnyView(EmptyView())
+        try await until("closing the editor resumes its clip") { player.phase == .playing }
+        XCTAssertEqual(engine.cuts.count, 1)
     }
 
     func testAPushedMomentPausesTheOneBelowAndGivesItBackWhenItEnds() async throws {
@@ -690,5 +738,106 @@ extension MeetingsPlayerTests {
         NotificationCenter.default.post(name: MomentPlayer.previewWillPlay, object: nil)
         XCTAssertEqual(player.phase, .paused, "the evidence's own recording never plays over the meeting")
         XCTAssertEqual(playingCount, 0)
+    }
+
+    // MARK: The clip's flag and the spelling dialog (U11, U12)
+
+    /// U11: the flag stood on the asked span's start, 1.5 s before a spelling's word (a "Hoho" item: the flag at 17:13.6,
+    /// the word at 17:15.4). The dock's timeline and the playing row's bar both put it where `flagSec` says: on the
+    /// asked spot.
+    func testTheFlagStandsOnTheAskedSpotNotOnTheStartOfTheAskedSpan() throws {
+        let span = ZoomSpan(startSec: 1028.92, endSec: 1042.92, fromSec: 1033.92, toSec: 1037.92, spotSec: 1035.42,
+                            toneSec: 1035.02, label: "i897")
+        XCTAssertEqual(span.flagSec, 1035.42)
+        for view in [span.fitView, span.startSec...span.endSec] {
+            XCTAssertEqual(TimelineGeometry.x(span.flagSec, in: view, width: 600), TimelineGeometry.x(span.spotSec, in: view, width: 600),
+                           "the flag's x is the spot's x")
+            XCTAssertGreaterThan(TimelineGeometry.x(span.flagSec, in: view, width: 600) - TimelineGeometry.x(span.fromSec, in: view, width: 600), 30,
+                                 "1.5 s after the asked span's start, where the flag stood")
+        }
+        let clip = span.startSec...span.endSec
+        let timeline = MomentTimeline(span: span, view: clip, peaks: [], peaksRange: clip, position: { nil })
+        let bar = PlayingRowBar(span: span, position: { nil }, showsLength: false)
+        try assertRenderedFlag(timeline, span: span, range: clip, stemRows: 42..<80)
+        try assertRenderedFlag(bar, span: span, range: clip, stemRows: 12..<16)
+
+        let range = ZoomSpan(startSec: 95, endSec: 125, fromSec: 100, toSec: 120, spotSec: 100, isRange: true, label: "Q3")
+        XCTAssertEqual(range.flagSec, 100, "a range question's spot is its start: the flag stays there, the tick marks its end")
+        let outside = ZoomSpan(startSec: 95, endSec: 110, fromSec: 100, toSec: 105, spotSec: 300, label: "Q4")
+        XCTAssertEqual(outside.flagSec, 100, "a spot the clip does not hold leaves the flag on the asked span's start")
+    }
+
+    private func assertRenderedFlag<V: View>(_ view: V, span: ZoomSpan, range: ClosedRange<Double>,
+                                              stemRows: Range<Int>, file: StaticString = #filePath, line: UInt = #line) throws {
+        let width: CGFloat = 600
+        let renderer = ImageRenderer(content: view.frame(width: width).accentColor(.purple).background(.white))
+        renderer.scale = 2
+        let bitmap = NSBitmapImageRep(cgImage: try XCTUnwrap(renderer.cgImage, file: file, line: line))
+        func stemPixels(at sec: Double) -> Int {
+            let x = Int((TimelineGeometry.x(sec, in: range, width: width) * renderer.scale).rounded())
+            return stemRows.reduce(0) { count, y in
+                count + ((x - 2)...(x + 5)).filter { column in
+                    guard let color = bitmap.colorAt(x: column, y: y * 2)?.usingColorSpace(.deviceRGB) else { return false }
+                    return color.blueComponent - color.greenComponent > 0.35
+                        && color.redComponent - color.greenComponent > 0.25
+                }.count
+            }
+        }
+        XCTAssertGreaterThan(stemPixels(at: span.spotSec), 2, file: file, line: line)
+        XCTAssertEqual(stemPixels(at: span.fromSec), 0, file: file, line: line)
+    }
+
+    func testVoiceSampleRejectsNonfiniteAndOverflowingFrameOffsets() async throws {
+        let path = engine.folder.appendingPathComponent("frame-offsets.caf")
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 8_000, channels: 1))
+        let silence = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8))
+        silence.frameLength = 8
+        try AVAudioFile(forWriting: path, settings: format.settings).write(from: silence)
+        for (from, to) in [(0.0, Double.infinity), (Double.nan, 1), (0, Double(Int64.max))] {
+            let sample = MeetingsAPI.VoicesSample.Result(meeting: "fixture", track: "source-mic", path: path.path,
+                                                        channel: nil, fromSec: 0, toSec: 1, fileFromSec: from, fileToSec: to)
+            do {
+                _ = try await MomentPlayer.voiceClip(sample)
+                XCTFail("Expected the sample to be rejected")
+            } catch let failure as MeetingsCLI.Failure {
+                XCTAssertEqual(failure.sentence, "The recording does not cover this sample.")
+            }
+        }
+    }
+
+    /// U12: the dialog said "Besides i897, this decision also changes:" and never named the new spelling. It leads with
+    /// what changes and where, and follows the ticked lines and the dictionary box.
+    func testTheSpellingDialogLeadsWithTheWordsTheCountAndTheDictionary() {
+        XCTAssertEqual(ReachSheet.spellingLead(heard: "Hoho", proposed: "HoHo", lines: 4, dictionary: true).text,
+                       "“Hoho” becomes “HoHo” in 4 lines and in the dictionary.")
+        XCTAssertEqual(ReachSheet.spellingLead(heard: "Hoho", proposed: "HoHo", lines: 1, dictionary: false).text,
+                       "“Hoho” becomes “HoHo” in 1 line.")
+        XCTAssertEqual(ReachSheet.spellingLead(heard: "Hoho", proposed: "HoHo", lines: 0, dictionary: true).text,
+                       "“Hoho” becomes “HoHo” in the dictionary.")
+        let unchanged = ReachSheet.spellingLead(heard: "heard “HoHo” 👍", proposed: "HoHo", lines: 0, dictionary: false)
+        XCTAssertEqual(unchanged.text, "“heard “HoHo” 👍” stays as it is: tick a line or the dictionary.")
+        XCTAssertTrue(unchanged.ranges.isEmpty)
+        let lead = ReachSheet.spellingLead(heard: "heard “HoHo” 👍", proposed: "HoHo", lines: 4, dictionary: true)
+        XCTAssertEqual(lead.ranges, [(lead.text as NSString).range(of: "HoHo", options: .backwards)])
+    }
+
+    /// The engine's spelling reach (decision.plan) brings the two spellings and where the heard words sit in each line,
+    /// and the dialog draws the lead and the marked words from them.
+    func testASpellingReachBringsItsWordsAndWhereTheySitInEachLine() throws {
+        let reach = try JSONDecoder().decode(DecisionReach.self, from: Data(#"""
+        {"items":[],"dictionary":[],"spelling":{"heard":"Hoho","proposed":"HoHo","dictionary":true,"occurrences":[
+          {"line":175,"atSec":1035,"speaker":"Speaker 5","text":"Hoho. Pochop.","selected":true,"primary":true,
+           "ranges":[{"location":0,"length":4}]},
+          {"line":921,"atSec":5871,"speaker":"Speaker 5","text":"jenom Hoho řekl","selected":true,"primary":false,
+           "ranges":[{"location":6,"length":4}]}]}}
+        """#.utf8))
+        let spelling = try XCTUnwrap(reach.spelling)
+        XCTAssertEqual(ReachSheet.spellingLead(heard: spelling.heard, proposed: spelling.proposed, lines: spelling.occurrences.count,
+                                               dictionary: spelling.dictionary).text,
+                       "“Hoho” becomes “HoHo” in 2 lines and in the dictionary.")
+        let marked = spelling.occurrences.map { line in
+            HighlightedText.segments(line.text, ranges: line.ranges).filter(\.marked).map(\.text)
+        }
+        XCTAssertEqual(marked, [["Hoho"], ["Hoho"]])
     }
 }

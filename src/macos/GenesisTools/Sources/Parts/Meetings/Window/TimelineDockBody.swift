@@ -120,6 +120,10 @@ struct TimelineDockBody<Trailing: View>: View {
                             ConversationStrip(durationSec: state.durationSec, peaks: state.wholePeaks, zoom: state.view,
                                               position: position, pins: state.pins, voices: state.voices,
                                               onZoom: actions.setView, pinActions: actions.pins)
+                                .overlay(alignment: .bottom) {
+                                    TimelineCutTicks(pins: state.pins, view: 0...max(1, state.durationSec))
+                                        .padding(.horizontal, 4).frame(height: 28).padding(.bottom, 22)
+                                }
                             ZoomConnector(zoom: state.view, durationSec: state.durationSec)
                         }
                         MomentTimeline(span: state.zoom == .meeting ? nil : state.span, view: state.view,
@@ -129,6 +133,10 @@ struct TimelineDockBody<Trailing: View>: View {
                                        pinLanes: state.pinLanes, onFlag: actions.flag, onSeek: actions.seek,
                                        onZoom: { out in actions.setZoom(out ? .context : .clip) },
                                        onPlayMore: actions.playMore, pinActions: actions.pins)
+                            .overlay(alignment: .top) {
+                                TimelineCutTicks(pins: state.pins, view: state.view)
+                                    .frame(height: 30).padding(.top, state.zoom == .meeting ? 20 + CGFloat(state.pinLanes) * PinMark.laneHeight : 26)
+                            }
                     }
                     if Trailing.self != EmptyView.self {
                         trailing().frame(width: trailingWidth)

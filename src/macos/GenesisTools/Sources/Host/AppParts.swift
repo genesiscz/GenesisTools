@@ -81,7 +81,7 @@ package enum AppParts {
     }
 
     /// The parts this build links, sorted, for `--version` and the build manifest check.
-    static var linked: [String] {
+    package static var linked: [String] {
         linkedParts.sorted()
     }
 

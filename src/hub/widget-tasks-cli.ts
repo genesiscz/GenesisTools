@@ -5,7 +5,7 @@ import type { Command } from "commander";
 import {
     createWidgetTask,
     editWidgetTask,
-    listWidgetTasks,
+    listLiveWidgetTasks,
     updateWidgetTask,
     WIDGET_TASK_ACTIONS,
     WIDGET_TASK_SCOPES,
@@ -22,7 +22,7 @@ export function registerWidgetTasks(widget: Command): void {
         .option("--project <project...>", "Exact stored project names")
         .option("--session <identity...>", "Exact provider:session identities")
         .option("--limit <count>", "Maximum rows (1–250)", Number, 200)
-        .action(async (options) => {
+        .action(async (options, command: Command) => {
             const scope = await pickEnumFlag({
                 tool: "tools",
                 subcommand: ["hub", "widget", "tasks", "list"],
@@ -37,14 +37,18 @@ export function registerWidgetTasks(widget: Command): void {
                 return;
             }
             out.result(
-                listWidgetTasks({
+                await listLiveWidgetTasks({
+                    root: command.optsWithGlobals().stateRoot,
                     filters: { scope, projects: options.project, sessions: options.session, limit: options.limit },
                 })
             );
         });
     tasks
         .command("update <id>")
-        .requiredOption("--action [action]", "acknowledge, complete, reopen or dismiss")
+        .option("--after-resume", "Wait for the session just resumed by the user")
+        .option("--comment <text>", "Reason for dismissing a task")
+        .option("--source-home <path>", "Native home of the selected receiving session")
+        .requiredOption("--action [action]", "acknowledge, complete, reopen, dismiss, send to the agent, or take back")
         .requiredOption("--revision <revision>", "Revision shown by list", Number)
         .requiredOption("--state [state]", "open, acknowledged, implemented or dismissed; use the state shown by list")
         .requiredOption("--updated-at <timestamp>", "Stored updatedTs shown by list")
@@ -83,6 +87,9 @@ export function registerWidgetTasks(widget: Command): void {
                             input: {
                                 id,
                                 action,
+                                afterResume: options.afterResume,
+                                comment: options.comment,
+                                sourceHome: options.sourceHome,
                                 expected: {
                                     revision: options.revision,
                                     state,
@@ -101,6 +108,7 @@ export function registerWidgetTasks(widget: Command): void {
         .command("create")
         .description("Add a task by hand: on a chosen session, or on the local task list")
         .option("--json")
+        .option("--for <addressee>", "human (default) or agent")
         .requiredOption("--title <title>", "One line; up to 180 characters")
         .option("--details <text>", "The longer text; up to 2000 characters")
         .option("--session <identity>", "provider:sessionId the task belongs to (default: local tasks)")
@@ -114,6 +122,7 @@ export function registerWidgetTasks(widget: Command): void {
                         await createWidgetTask({
                             signal,
                             input: {
+                                for: options.for,
                                 title: options.title,
                                 details: options.details,
                                 session: options.session,

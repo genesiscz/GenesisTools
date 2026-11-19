@@ -3,9 +3,9 @@ import SwiftUI
 
 /// One review row (`meeting.rows`), the one row of the Items tab for questions and suggestions alike (R9, R12, R17).
 /// Open, it reads as points (who, what was said, when, what it asks, what it settles, why), offers its choices with
-/// the engine's confidence (R49), and opens its editor on Return or a double click (R11, R45). Decided, it folds in
-/// place to one line that names who decided it and why (R16, R35), with "Revert and edit". While its Moment plays, its
-/// header carries its own timeline (R25).
+/// the engine's confidence (R49), and opens its editor on Return or a double click (R11, R45). Decided, it folds to one
+/// line: its text, then a short status ("Rejected by an agent", R16, R35), with "Revert and edit". A click unfolds it
+/// with the whole reason, who decided it and when (U14). While its Moment plays, its header carries its own timeline (R25).
 ///
 /// The row is a value (`Equatable`, `.equatable()` in the list): the list hands in what it shows (selected, editing,
 /// busy, the player's state for its Moments, its draft), and a click, a hover or a play re-runs only the rows it
@@ -25,8 +25,13 @@ struct ReviewRowView: View, Equatable {
     var choiceKeys = true
     /// The row's draft in its editor, for "Use mine instead".
     var draft: String?
-    @State private var editingVoices = false
-    @State private var writingListenComment = false
+    /// "Something else…" or "Two voices…" of the answers' More menu, a popover on that menu.
+    @State private var morePopover: MorePopover?
+
+    enum MorePopover: String, Identifiable {
+        case comment, voices
+        var id: String { rawValue }
+    }
     /// The row is in `detail.changingRows`: its answer is being changed.
     var changingAnswer = false
     /// Which of `foldedShapes` a folded row draws (`foldedFit`, from the list's width).
@@ -36,6 +41,17 @@ struct ReviewRowView: View, Equatable {
     /// This window just decided the row and it still keeps its place (G33): its choices stay in the same slot until
     /// the reader scrolls, so another choice can change the answer without opening a separate editor.
     var held = false
+    /// A decided row the reader unfolded (`MeetingDetailModel.unfoldedRows`, U14): the open layout, its whole reason,
+    /// who decided it and when.
+    var unfolded = false
+    /// A question that asks who speaks (`ItemsProjection.speakerQuestions`): it offers "Somebody else…", "Something
+    /// else…" and "Two voices…". Passed in, so no row searches the record's items in its body.
+    var asksSpeaker = false
+    /// A speaker question's people whose choice score is a voice cosine (`ItemsProjection.voicePeople`): their chips
+    /// read "0.63" as the question's text does, never "63 %".
+    var voicePeople: Set<String> = []
+    /// The rows its "It settles" line names, in words (`ItemsProjection.references`).
+    var references: [ItemsProjection.Reference] = []
     /// The list selects and focuses itself immediately, while the title still listens for a second click.
     var selectRow: (() -> Void)? = nil
     @Environment(\.kitLook) private var look
@@ -53,8 +69,12 @@ struct ReviewRowView: View, Equatable {
         lhs.row == rhs.row && lhs.selected == rhs.selected && lhs.editing == rhs.editing && lhs.busy == rhs.busy
             && lhs.meanwhile == rhs.meanwhile && lhs.choiceKeys == rhs.choiceKeys && lhs.held == rhs.held
             && lhs.play == rhs.play && lhs.draft == rhs.draft && lhs.changingAnswer == rhs.changingAnswer
-            && lhs.foldedFit == rhs.foldedFit && lhs.player === rhs.player
+            && lhs.foldedFit == rhs.foldedFit && lhs.player === rhs.player && lhs.asksSpeaker == rhs.asksSpeaker
+            && lhs.voicePeople == rhs.voicePeople && lhs.references == rhs.references && lhs.unfolded == rhs.unfolded
     }
+
+    /// A decided row shown in its open layout because the reader unfolded it.
+    private var showsUnfolded: Bool { unfolded && !row.isOpen }
 
     /// Every Moment the row offers to play: its own, the times in its text, and the transcript lines it comes from.
     static func targets(_ row: ReviewRow) -> [MomentTarget] {
@@ -72,11 +92,12 @@ struct ReviewRowView: View, Equatable {
     }
 
     var body: some View {
-        Group {
-            if row.isOpen || editing || meanwhile != nil || held || changing {
+        VStack(alignment: .leading, spacing: 6) {
+            if row.isOpen || editing || meanwhile != nil || held || changing || showsUnfolded {
                 open
             } else {
                 folded
+                if row.isQuestion { QuestionEvidence(row: row, detail: detail, expanded: false) }
             }
         }
         .padding(.vertical, 4)
@@ -105,9 +126,10 @@ struct ReviewRowView: View, Equatable {
             headerLine
             Group {
                 title
-                ForEach(Array(row.parts.enumerated()), id: \.offset) { _, part in
+                ForEach(Array(Self.shownParts(row).enumerated()), id: \.offset) { _, part in
                     partLine(part)
                 }
+                if let voice = row.voice { voiceLine(voice) }
             }
             .opacity(row.isOpen || editing ? 1 : 0.6)
             if let meanwhile {
@@ -125,7 +147,7 @@ struct ReviewRowView: View, Equatable {
                 if detail.editingQuestion == row.id {
                     QuestionWordingEditor(row: row, detail: detail)
                 } else {
-                    RowEditor(row: row, detail: detail)
+                    RowEditor(row: row, detail: detail, asksSpeaker: asksSpeaker)
                 }
             } else if row.isOpen || held {
                 choices
@@ -136,13 +158,11 @@ struct ReviewRowView: View, Equatable {
                                 tooltip: "Leave the answer as it is") { detail.keepAnswer(row) }
                 }
             } else {
-                HStack(spacing: 8) {
-                    decidedMark
-                    decidedTail(words: true)
-                    Spacer(minLength: 6)
-                    revertButton(words: true)
-                }
+                decidedDetail
             }
+            // The answers come first (genesiscz.md 5): the lines the question decides follow them, folded to three, so
+            // Q1's 16 lines no longer pushed every answer below the window.
+            if row.isQuestion { QuestionEvidence(row: row, detail: detail, expanded: true, speaker: Self.who(row)) }
             if let comment = row.comment { Text(comment).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
             if !Self.shownSources(row).isEmpty { sources }
         }
@@ -150,30 +170,34 @@ struct ReviewRowView: View, Equatable {
 
     private var headerLine: some View {
         HStack(spacing: 6) {
+            if showsUnfolded {
+                IconButton(systemName: "chevron.down", tooltip: "Fold this row to one line") { detail.toggleUnfolded(row.id) }
+                    .accessibilityLabel("Fold \(row.label)")
+                    .frameProbe("meetings.row.\(row.id).fold")
+            }
             Text(verbatim: row.label).font(.system(size: 11, weight: .semibold).monospacedDigit())
                 .lineLimit(1).fixedSize()
                 .foregroundStyle(asks ? AnyShapeStyle(KitHue.ask.ink) : AnyShapeStyle(.primary))
                 .padding(.horizontal, 5).padding(.vertical, 1)
                 .background(asks ? KitHue.ask.ink.opacity(0.18) : Color.secondary.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
+                .instantTooltip(row.questionPriority ?? "")
             // The label, the kind and the score never break: the playing bar takes only the room they leave. Beside it at
             // 900 pt "Question" broke into "Questi" and "on", then "Q15" into "Q1" and "5", then "30 %".
-            Text(verbatim: Self.kindWord(row.kind)).font(.system(size: 11, weight: .semibold))
+            Text(verbatim: row.kindWord).font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(asks ? AnyShapeStyle(KitHue.ask.ink) : AnyShapeStyle(.secondary))
                 .lineLimit(1).fixedSize()
             if let player {
                 MomentButton(player: player, meeting: detail.id, target: row.target, label: row.whenText, source: .row,
                              shown: play.button(row.target))
             }
-            if let confidence = MeetingsWords.confidence(row.confidence), row.isOpen {
-                Text(verbatim: confidence).font(.system(size: 11).monospacedDigit()).foregroundStyle(.tertiary)
+            // The score says what it is. The priority number is not drawn: the list is already in priority order, and at
+            // 900 pt it broke one syllable per line down the card.
+            if row.isOpen, row.isVoiceModel {
+                // A name the voice model gave carries its mark and cosine, never a percent "sure" (P7, ux 12a).
+                VoiceModelMark(score: row.confidence).lineLimit(1).fixedSize()
+            } else if let confidence = MeetingsWords.confidence(row.confidence), row.isOpen {
+                Text(verbatim: "\(confidence) sure").font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
                     .lineLimit(1).fixedSize()
-            }
-            if let priority = row.priority, row.isOpen {
-                Text(verbatim: "Priority \(priority.formatted(.number.precision(.fractionLength(0...2))))")
-                    .font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
-            }
-            if let reach = row.reach, row.isQuestion {
-                Text("Affects \(Int(reach)) ranges").font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             if let player, let span = playingSpan() {
                 // R25, G-ROW-1: the playing row's own timeline takes the header's free room, so the row keeps its height.
@@ -222,7 +246,7 @@ struct ReviewRowView: View, Equatable {
             }
         case .said(let text, let speaker, let context):
             // The line above already names the speaker: the same name before the quote said it twice.
-            bullet("quote.opening", saidText(text, speaker: speaker == Self.who(row) ? nil : speaker, context: context))
+            if !row.isQuestion { bullet("quote.opening", saidText(text, speaker: speaker == Self.who(row) ? nil : speaker, context: context)) }
         case .when:
             EmptyView() // the header's MomentButton is the row's time (R13)
         case .asks(let pieces):
@@ -245,6 +269,95 @@ struct ReviewRowView: View, Equatable {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Image(systemName: symbol).font(.system(size: 10)).foregroundStyle(.tertiary).frame(width: 14).accessibilityHidden(true)
             text.font(.system(size: 12.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// The parts a row draws. A row with a voice line leaves out the labeler's sentence about the same voice ("Sounds
+    /// like …", `labelerReasonSentence` in src/meetings/lib/reason-words.ts): the voice line says it, with the samples.
+    static func shownParts(_ row: ReviewRow) -> [RowPart] {
+        guard row.voice != nil else { return row.parts }
+        return row.parts.filter { part in
+            guard case .reason(let pieces) = part else { return true }
+            return !pieces.map(\.text).joined().hasPrefix(voiceLead)
+        }
+    }
+
+    private static let voiceLead = "Sounds like "
+
+    /// The voice line's words around its sample count, which is a button (U13).
+    struct VoiceWords: Equatable {
+        /// "Sounds like Alice: 0.61 match (next Bob 0.40). Compared with"
+        let lead: String
+        /// "6 saved samples"; empty when the library holds none.
+        let samples: String
+        /// "from 2 meetings."
+        let tail: String
+    }
+
+    /// "Sounds like <person>: 0.61 match (next <next> 0.40). Compared with 6 saved samples from 2 meetings." A cosine
+    /// reads as "0.61", never as a percent: it is no probability (U13).
+    static func voiceWords(person: String, score: Double, next: (person: String, score: Double)?, samples: Int,
+                           meetings: Int) -> VoiceWords {
+        let nearest = next.map { " (next \($0.person) \(VoiceScore.text($0.score)))" } ?? ""
+        let sounds = "\(voiceLead)\(person): \(VoiceScore.text(score)) match\(nearest)."
+        guard samples > 0 else { return VoiceWords(lead: sounds, samples: "", tail: "") }
+        return VoiceWords(lead: "\(sounds) Compared with", samples: Plural.count(samples, "saved sample"),
+                          tail: "from \(Plural.count(meetings, "meeting")).")
+    }
+
+    /// U13: whom the line sounds like, the cosine, the next closest voice and the saved samples it was compared with.
+    /// The sample count opens the Voices pane on that person.
+    private func voiceLine(_ voice: RowVoice) -> some View {
+        let words = Self.voiceWords(person: voice.person, score: voice.score,
+                                    next: voice.next.map { (person: $0.person, score: $0.score) },
+                                    samples: voice.samples.count, meetings: voice.samples.meetings)
+        let size: CGFloat = 11.5
+        return HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: "waveform").font(.system(size: 10)).foregroundStyle(.tertiary).frame(width: 14).accessibilityHidden(true)
+            WrapLayout(spacing: 0, lineSpacing: 2) {
+                ForEach(Array(Self.flow([TextPiece(text: words.lead + " ")]).enumerated()), id: \.offset) { _, token in
+                    Text(verbatim: token.piece.text).font(.system(size: size)).foregroundStyle(.secondary)
+                        .padding(.trailing, token.spaceAfter ? size * Self.wordSpace : 0)
+                }
+                if !words.samples.isEmpty {
+                    LiveButton(tooltip: "Open the Voices pane on \(voice.person): the saved samples this line was compared with",
+                               pressable: true, action: { detail.showVoices(of: voice.person) }) {
+                        Text(verbatim: words.samples).font(.system(size: size)).foregroundStyle(Color.accentColor)
+                    }
+                    .accessibilityLabel("\(words.samples) of \(voice.person): open the Voices pane")
+                    .frameProbe("meetings.row.\(row.id).samples")
+                    .padding(.trailing, size * Self.wordSpace)
+                    ForEach(Array(Self.flow([TextPiece(text: words.tail)]).enumerated()), id: \.offset) { _, token in
+                        Text(verbatim: token.piece.text).font(.system(size: size)).foregroundStyle(.secondary)
+                            .padding(.trailing, token.spaceAfter ? size * Self.wordSpace : 0)
+                    }
+                }
+            }
+        }
+    }
+
+    /// An unfolded decided row (U14): what it was decided as, who decided it and when, "Revert and edit", and the whole
+    /// reason as a paragraph.
+    private var decidedDetail: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                decidedMark
+                if let answer = Self.foldedAnswer(row) {
+                    Text(verbatim: "→ \(answer)").font(.system(size: 12.5, weight: .semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Text(verbatim: Self.decidedByAndWhen(row)).font(.system(size: 11.5)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 6)
+                revertButton(words: true)
+            }
+            if let reason = row.decision?.reason, !reason.isEmpty {
+                Text(verbatim: reason).font(.system(size: 12)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .padding(.leading, 22)
+                    .frameProbe("meetings.row.\(row.id).why")
+            }
         }
     }
 
@@ -340,31 +453,83 @@ struct ReviewRowView: View, Equatable {
         return nil
     }
 
-    /// The choices as buttons, each with its number key (G23) and the engine's confidence in secondary digits (R49).
+    /// The answers a question card keeps out of the first row (window audit H4): "None of these" and "Several voices"
+    /// are rare, so they sit in the More menu with "Two voices…" and "Something else…". A rare one the engine suggests
+    /// or an answer already given stays a button, so the state is never hidden.
+    static let rareRoles: Set<String> = ["none", "split"]
+
+    /// The choices as buttons, each with its number key (G23) and the engine's confidence in secondary digits (R49): the
+    /// names first in the engine's order, then "Somebody else…" and More, and Skip last, set apart. The number keys keep
+    /// the engine's order of all choices, also those in More, whose items name their key.
     private var choices: some View {
-        WrapLayout(spacing: 6, lineSpacing: 6) {
-            ForEach(Array(row.choices.enumerated()), id: \.element.id) { index, choice in
-                ChoiceButton(choice: choice, state: DecisionState.of(choice, in: row), stateLook: stateLook,
-                             number: choiceKeys && selected && index < 9 ? index + 1 : nil, enabled: !busy) {
-                    detail.choose(choice, on: row)
+        let numbered = Array(row.choices.enumerated())
+        let inMore = numbered.filter { Self.rareRoles.contains($0.element.role) && DecisionState.of($0.element, in: row) == .plain }
+        let skip = numbered.first { $0.element.role == "skip" }
+        let shown = numbered.filter { item in item.element.role != "skip" && !inMore.contains { $0.offset == item.offset } }
+        let speakerQuestion = row.isQuestion && asksSpeaker
+        return HStack(alignment: .top, spacing: 12) {
+            WrapLayout(spacing: 6, lineSpacing: 6) {
+                ForEach(shown, id: \.element.id) { index, choice in choiceButton(choice, index: index) }
+                if speakerQuestion {
+                    GhostButton("Somebody else…", symbol: "person.crop.circle.badge.questionmark", tooltip: "Search for the person") { detail.edit(row) }
+                }
+                // A speaker question has its "Somebody else…" above; a second one beside it did the same thing.
+                if row.edit != "none", !speakerQuestion {
+                    GhostButton(row.choices.contains { $0.role == "split" } ? "Somebody else…" : Self.editWord(row.edit), symbol: "pencil", tooltip: "Type your own \(Self.editWord(row.edit).lowercased()) (Return)") {
+                        detail.edit(row)
+                    }
+                    .disabled(busy)
+                }
+                if !inMore.isEmpty || speakerQuestion {
+                    moreMenu(inMore, speakerQuestion: speakerQuestion)
                 }
             }
-            if row.isQuestion && detail.record.value?.items.first(where: { $0.id == row.id })?.about == "speaker" {
-                GhostButton("Somebody else…", symbol: "person.crop.circle.badge.questionmark", tooltip: "Search for the person") { detail.edit(row) }
-                GhostButton("Something else…", symbol: "text.bubble", tooltip: "Comment and keep the question open") { writingListenComment = true }
-                    .popover(isPresented: $writingListenComment) {
-                        ListenCommentEditor(row: row, detail: detail) { writingListenComment = false }
-                    }
-                GhostButton("Two voices…", symbol: "person.2", tooltip: "Choose speakers in order and the word split") { editingVoices = true }
-                    .popover(isPresented: $editingVoices) {
-                        ListenVoicesEditor(row: row, detail: detail) { editingVoices = false }
-                    }
+            if let skip {
+                Spacer(minLength: 0)
+                choiceButton(skip.element, index: skip.offset)
             }
-            if row.edit != "none" {
-                GhostButton(row.choices.contains { $0.role == "split" } ? "Somebody else…" : Self.editWord(row.edit), symbol: "pencil", tooltip: "Type your own \(Self.editWord(row.edit).lowercased()) (Return)") {
-                    detail.edit(row)
-                }
-                .disabled(busy)
+        }
+    }
+
+    private func choiceButton(_ choice: RowChoice, index: Int) -> some View {
+        ChoiceButton(choice: choice, state: DecisionState.of(choice, in: row), stateLook: stateLook,
+                     cosine: row.scoresByVoice(choice, voicePeople: voicePeople),
+                     number: choiceKeys && selected && index < 9 ? index + 1 : nil, enabled: !busy) {
+            detail.choose(choice, on: row)
+        }
+    }
+
+    /// "More ▾": the rare answers with their number keys, and for a speaker question "Two voices…" and "Something
+    /// else…", which open their editor as a popover on this button.
+    private func moreMenu(_ rare: [(offset: Int, element: RowChoice)], speakerQuestion: Bool) -> some View {
+        MenuButton(style: .genHoverPlain(), items: {
+            var items: [MenuButtonItem] = rare.map { index, choice in
+                let key = choiceKeys && index < 9 ? "  (\(index + 1))" : ""
+                return .action(choice.label + key, enabled: !busy) { detail.choose(choice, on: row) }
+            }
+            if speakerQuestion {
+                if !items.isEmpty { items.append(.divider) }
+                items.append(.action("Two voices…", enabled: !busy) { morePopover = .voices })
+                items.append(.action("Something else…") { morePopover = .comment })
+            }
+            return items
+        }) {
+            HStack(spacing: 4) {
+                Text("More").font(.system(size: 12))
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 8)
+            .frame(minHeight: 22)
+            .contentShape(Rectangle())
+        }
+        .instantTooltip(speakerQuestion ? "More answers: none of these, several voices, two voices with the word split, or a comment"
+                                        : "More answers")
+        .accessibilityLabel("More answers")
+        .accessibilityIdentifier("meetings.row.more")
+        .popover(item: $morePopover, arrowEdge: .bottom) { popover in
+            switch popover {
+            case .comment: ListenCommentEditor(row: row, detail: detail) { morePopover = nil }
+            case .voices: ListenVoicesEditor(row: row, detail: detail) { morePopover = nil }
             }
         }
     }
@@ -456,6 +621,7 @@ struct ReviewRowView: View, Equatable {
     static func foldedNeed(_ row: ReviewRow, shape: FoldedShape, busy: Bool) -> CGFloat {
         let answer = foldedAnswer(row) != nil
         var parts: [CGFloat] = [
+            KitTextWidth.symbol(unfoldGlyph, size: 9, weight: .semibold),
             KitTextWidth.symbol(row.status == "confirmed" ? "checkmark.circle.fill" : "xmark.circle", size: 13, weight: .regular),
             FoldedShape.Nominal.label,
         ]
@@ -470,11 +636,43 @@ struct ReviewRowView: View, Equatable {
         return parts.reduce(0, +) + FoldedShape.Nominal.gap * CGFloat(parts.count - 1)
     }
 
+    /// The folded line's glyph that says a click unfolds it (U14).
+    static let unfoldGlyph = "chevron.right"
+
     private func foldedLine(_ shape: FoldedShape) -> some View {
         // A row without an answer of its own measures its text as the text and an answer, so it takes the shape the
         // questions around it take.
         let answerRoom = Self.foldedAnswer(row) == nil ? FoldedShape.Nominal.answer + FoldedShape.Nominal.gap : 0
         return HStack(spacing: FoldedShape.Nominal.gap) {
+            // Everything before the spacer is one click target that unfolds the row (U14). It ranks above the spacer:
+            // beside a spacer of its own priority, the line's text got half the free room and truncated with room to spare.
+            foldedSummary(shape, answerRoom: answerRoom)
+                .contentShape(Rectangle())
+                .onTapGesture { unfold() }
+                .frameProbe("meetings.row.\(row.id).folded")
+                .layoutPriority(1)
+            Spacer(minLength: 6)
+            if busy { ProgressView().controlSize(.small) }
+            revertButton(words: shape.revertWords)
+            IconButton(systemName: "clock.arrow.circlepath", tooltip: "This row's history") { detail.openHistory(item: row.id) }
+                .accessibilityLabel("History of \(row.label)")
+        }
+    }
+
+    /// A click on the folded line: the row is selected, as a click anywhere on a row selects it, and unfolds.
+    private func unfold() {
+        selectTitle()
+        detail.toggleUnfolded(row.id)
+    }
+
+    /// The folded line's text part: the unfold glyph, the decided mark, the label, the item text, then a short status.
+    /// The item text keeps its room: the status is a few words, and the reason waits for the unfolded row (U14: the
+    /// 232-character reason of an agent pass left "i132 …" of the item).
+    private func foldedSummary(_ shape: FoldedShape, answerRoom: CGFloat) -> some View {
+        HStack(spacing: FoldedShape.Nominal.gap) {
+            Image(systemName: Self.unfoldGlyph).font(.system(size: 9, weight: .semibold)).foregroundStyle(.tertiary)
+                .instantTooltip("Click the row to unfold it: why, who decided it and when")
+                .accessibilityHidden(true)
             decidedMark
             Text(verbatim: row.label).font(.system(size: 11, weight: .semibold).monospacedDigit()).foregroundStyle(.secondary)
                 .lineLimit(1).fixedSize()
@@ -489,18 +687,13 @@ struct ReviewRowView: View, Equatable {
                     .accessibilityLabel(Self.decidedWords(row))
             }
             if let width = shape.textWidth {
-                // Above the spacer's priority: beside a spacer of its own priority a one-line text gets half the free
-                // room and truncates with room to spare. The ideal width is the room this shape asks for its text.
+                // Below the short status: the status stays whole and the text takes all the room after it. The ideal
+                // width is the room this shape asks for its text.
                 Text(verbatim: Self.foldedText(row)).font(.system(size: 12.5)).lineLimit(1).truncationMode(.tail)
                     .frame(idealWidth: width + answerRoom, alignment: .leading)
                     .layoutPriority(0.5)
             }
             decidedTail(words: shape.words)
-            Spacer(minLength: 6)
-            if busy { ProgressView().controlSize(.small) }
-            revertButton(words: shape.revertWords)
-            IconButton(systemName: "clock.arrow.circlepath", tooltip: "This row's history") { detail.openHistory(item: row.id) }
-                .accessibilityLabel("History of \(row.label)")
         }
     }
 
@@ -535,10 +728,11 @@ struct ReviewRowView: View, Equatable {
                 .instantTooltip("\(answer)\n\(Self.decidedWords(row))")
         }
         if words {
-            Text(verbatim: Self.decidedWords(row)).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
+            // A few words: who decided it, never why. The whole reason is the tooltip and the unfolded row's paragraph.
+            Text(verbatim: Self.foldedStatus(row)).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
                 .frame(idealWidth: FoldedShape.Nominal.words, alignment: .leading)
                 .layoutPriority(1)
-                .instantTooltip(row.decision?.reason.map { "Why: \($0)" } ?? "")
+                .instantTooltip(Self.decidedWords(row))
         }
     }
 
@@ -604,7 +798,7 @@ struct ReviewRowView: View, Equatable {
     private func settlesLine(_ text: String, items: [String]) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Image(systemName: "checkmark.seal").font(.system(size: 10)).foregroundStyle(.tertiary).frame(width: 14).accessibilityHidden(true)
-            SettlesReferences(text: text, items: items, detail: detail)
+            SettlesReferences(text: text, items: items, references: references, detail: detail)
         }
     }
 
@@ -631,7 +825,7 @@ struct ReviewRowView: View, Equatable {
 
     /// How a row is named where another row refers to it: "Speaker range 1:45:15–1:53:22", never a bare item id.
     static func reference(_ row: ReviewRow) -> String {
-        "\(kindWord(row.kind)) \(row.whenText ?? row.label)"
+        "\(row.kindWord) \(row.whenText ?? row.label)"
     }
 
     /// "Confirmed by an agent (Claude Code, session 3f98b772)", "Rejected by you".
@@ -641,15 +835,20 @@ struct ReviewRowView: View, Equatable {
         return "\(status) by \(decision.by)" + (decision.reason.map { ": \($0)" } ?? "")
     }
 
-    static func kindWord(_ kind: String) -> String {
-        switch kind {
-        case "speaker-range": return "Speaker range"
-        case "label": return "Mixed voices"
-        case "join": return "Join lines"
-        case "term": return "Word"
-        case "question": return "Question"
-        default: return kind
-        }
+    /// The folded line's status: "Rejected by an agent", "Confirmed by you" (U14). The actor's session and the reason
+    /// wait for the tooltip and the unfolded row.
+    static func foldedStatus(_ row: ReviewRow) -> String {
+        let status = MeetingsWords.status(row.status)
+        guard let decision = row.decision else { return status }
+        return "\(status) by \(MeetingsWords.shortActor(decision.actor))"
+    }
+
+    /// The unfolded row's status line: "Rejected by an agent (Claude Code, session a1523c66) · Today 18:15".
+    static func decidedByAndWhen(_ row: ReviewRow) -> String {
+        let status = MeetingsWords.status(row.status)
+        guard let decision = row.decision else { return status }
+        let when = MeetingsFormat.dayTime(decision.at)
+        return "\(status) by \(decision.by)" + (when.isEmpty ? "" : " · \(when)")
     }
 
     static func editWord(_ edit: String) -> String {
@@ -665,7 +864,7 @@ struct ReviewRowView: View, Equatable {
 
     private var accessibilityLabel: String {
         let state = row.isOpen ? "open" : Self.decidedWords(row)
-        return "\(row.label), \(Self.kindWord(row.kind)), \(row.what), \(state)"
+        return [row.label, row.kindWord, row.what, state, row.questionPriority].compactMap { $0 }.joined(separator: ", ")
     }
 
     @ViewBuilder
@@ -676,6 +875,7 @@ struct ReviewRowView: View, Equatable {
             }
             if row.edit != "none" { Button("Edit") { detail.edit(row) } }
         } else {
+            Button(unfolded ? "Fold the decision" : "Show the whole decision") { detail.toggleUnfolded(row.id) }
             Button("Revert and edit") { detail.revertAndEdit(row) }
         }
         if row.isQuestion { Button("Edit question wording") { detail.editQuestion(row) } }
@@ -692,6 +892,8 @@ private struct ChoiceButton: View {
     let state: DecisionState
     /// `meetings.rows.stateLook`, read once by the row.
     let stateLook: MeetingsPreferences.Rows.StateLook
+    /// The choice's score is a voice cosine (`ReviewRow.scoresByVoice`): "0.61", never "61 %" (U13).
+    var cosine = false
     let number: Int?
     let enabled: Bool
     let action: () -> Void
@@ -726,16 +928,18 @@ private struct ChoiceButton: View {
                 }
                 Text(verbatim: choice.label).font(.system(size: 12.5, weight: state == .plain ? .regular : .semibold))
                     .strikethrough(state.struck)
-                if let confidence = MeetingsWords.confidence(choice.confidence) {
-                    // With its sign, as the row's header writes it: a bare "58" beside a name read as a count.
-                    Text(verbatim: confidence).font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
+                if let score = MeetingsWords.score(choice.confidence, cosine: cosine) {
+                    // With its sign, as the row's header writes it: a bare "58" beside a name read as a count. A voice
+                    // cosine keeps its two decimals, as the header's voice mark does.
+                    Text(verbatim: score).font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
                 }
             }
             .foregroundStyle(Self.ink(state: state, stateLook: stateLook, kitLook: look))
             .padding(.horizontal, 8).padding(.vertical, 3)
             .background(ground)
         }
-        .accessibilityLabel([choice.label, choice.confidence.map { "\(Int(($0 * 100).rounded())) percent" }, state.words.isEmpty ? nil : state.words]
+        .accessibilityLabel([choice.label, choice.confidence.map { cosine ? "voice match \(VoiceScore.text($0))" : "\(Int(($0 * 100).rounded())) percent" },
+                             state.words.isEmpty ? nil : state.words]
             .compactMap { $0 }.joined(separator: ", "))
     }
 
@@ -769,6 +973,8 @@ private struct ChoiceButton: View {
 private struct RowEditor: View {
     let row: ReviewRow
     let detail: MeetingDetailModel
+    /// The question asks who speaks (`ReviewRowView.asksSpeaker`).
+    var asksSpeaker = false
     @FocusState private var focused: Bool
     @FocusState private var reasonFocused: Bool
     @FocusState private var commentFocused: Bool
@@ -777,14 +983,12 @@ private struct RowEditor: View {
     @State private var picking = false
     @State private var commenting = false
     @State private var commentText = ""
-    @State private var resumesAfterTyping = false
     @AppStorage(MeetingsPreferences.Rows.openPersonPicker.key) private var opensPicker =
         MeetingsPreferences.Rows.openPersonPicker.defaultValue
 
     /// A speaker range is confirmed as a person: the picker ranks the people in the call at its start first.
     private var picksPerson: Bool {
-        (row.kind == "speaker-range" && row.edit == "person") ||
-        (row.isQuestion && detail.record.value?.items.first(where: { $0.id == row.id })?.about == "speaker")
+        (row.kind == "speaker-range" && row.edit == "person") || (row.isQuestion && asksSpeaker)
     }
 
     private var draft: Binding<String> {
@@ -801,7 +1005,7 @@ private struct RowEditor: View {
                     .onExitCommand { detail.closeEditor() }
                     .accessibilityLabel("\(ReviewRowView.editWord(row.edit)) for \(row.label)")
                     .popover(isPresented: $picking, arrowEdge: .bottom) {
-                        SpeakerNamePopover(name: draft, atSec: row.startSec) { name in
+                        QuestionPersonPicker(row: row, detail: detail, name: draft, cancel: { picking = false }) { name in
                             picking = false
                             detail.decide(row, row.isQuestion ? .answer(row.id, name) : .confirm([row.id], speaker: name))
                         }
@@ -839,18 +1043,8 @@ private struct RowEditor: View {
             focused = true
             if picksPerson && opensPicker { picking = true }
         }
-        .onChange(of: focused || reasonFocused || commentFocused) { _, active in
-            if active {
-                resumesAfterTyping = detail.window?.player.phase == .playing
-                detail.window?.player.pause()
-            } else if resumesAfterTyping && !commenting && !picking {
-                detail.window?.player.resume()
-                resumesAfterTyping = false
-            }
-        }
-        .onDisappear {
-            if resumesAfterTyping { detail.window?.player.resume() }
-        }
+        .modifier(PauseQuestionPlayback(player: detail.window?.player,
+                                        editing: focused || reasonFocused || commentFocused || picking || commenting))
     }
 
     private var prompt: String {
@@ -862,24 +1056,112 @@ private struct RowEditor: View {
     }
 }
 
+/// Reads the extra evidence separately, keeping the value row's equality independent of the whole rows reply.
+private struct QuestionEvidence: View {
+    let row: ReviewRow
+    let detail: MeetingDetailModel
+    let expanded: Bool
+    /// The question's own speaker: its lines drop the name the card already shows.
+    var speaker: String? = nil
+
+    var body: some View {
+        Group {
+            if let evidence = detail.rows.value?.questionDetailsByID[row.id] {
+                QuestionLines(evidence: evidence, expanded: expanded, answered: !row.isOpen, speaker: speaker,
+                              player: detail.window?.player, meeting: detail.id)
+            } else if expanded {
+                ForEach(Array(row.parts.enumerated()), id: \.offset) { _, part in
+                    if case .said(let text, _, _) = part { Text(verbatim: text).font(.system(size: 12)).italic() }
+                }
+            }
+        }
+        .onChange(of: row.decision?.token, initial: true) { _, _ in
+            if (row.decision?.question == row.id || row.decision?.question == row.label),
+               detail.rows.value?.needsQuestionDetails(for: row) == true { detail.readRows(quiet: true) }
+        }
+    }
+}
+
+struct QuestionLines: View {
+    let evidence: QuestionDetails
+    let expanded: Bool
+    let answered: Bool
+    /// The question's own speaker: a line said by that speaker drops the name the card already shows.
+    var speaker: String? = nil
+    /// Each line's time plays it as a `MomentButton`, the one play control of the card (the header's time is one).
+    /// Without a player (a test, a card outside the window) the time is plain text.
+    var player: MomentPlayer? = nil
+    var meeting: String? = nil
+    /// The lines shown before "All N lines".
+    static let foldedLines = 3
+    @State private var showsAll = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            if expanded {
+                Text("Decides \(Plural.count(evidence.impact.lines, "line")), \(Plural.count(evidence.impact.words, "word")); same doubt on \(Plural.count(evidence.impact.sameDoubtLines, "line"))")
+                    .foregroundStyle(.secondary)
+                ForEach(evidence.decidedLines.prefix(Self.foldedLines), id: \.index) { line in lineRow(line) }
+                if evidence.decidedLines.count > Self.foldedLines {
+                    GenDisclosure(isExpanded: $showsAll, minHeight: 22, identifier: "meetings.question.lines") {
+                        VStack(alignment: .leading, spacing: 5) {
+                            ForEach(evidence.decidedLines.dropFirst(Self.foldedLines), id: \.index) { line in lineRow(line) }
+                        }
+                    } label: {
+                        Text(verbatim: Self.allLinesWords(evidence)).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            if answered, let raised = evidence.raisedLines {
+                Text("Raised confidence on \(Plural.count(raised.count, "line"))").foregroundStyle(.secondary)
+            }
+        }.font(.system(size: 12))
+    }
+
+    /// "All 16 lines (276 words)", or the lines alone when the words count covers more than the listed lines.
+    static func allLinesWords(_ evidence: QuestionDetails) -> String {
+        let lines = Plural.count(evidence.decidedLines.count, "line")
+        return evidence.decidedLines.count == evidence.impact.lines ? "All \(lines) (\(Plural.count(evidence.impact.words, "word")))" : "All \(lines)"
+    }
+
+    /// One decided line: its time in a fixed column, so every text starts at the same x, then its words.
+    private func lineRow(_ line: QuestionDetails.Line) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Group {
+                if let start = line.startSec, let player, let meeting {
+                    MomentButton(player: player, meeting: meeting, target: .time(start), label: MeetingsFormat.clock(start), source: .row)
+                } else if let start = line.startSec {
+                    Text(verbatim: MeetingsFormat.clock(start)).monospacedDigit().foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 76, alignment: .leading)
+            Text(verbatim: line.speaker == speaker ? line.text : "\(line.speaker): \(line.text)")
+                .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
 /// A settles line's text and its items as live references. Its own view, because it reads the meeting's rows: read in
 /// the row's body, every new rows list (one per decision) re-ran every row that settles something.
 private struct SettlesReferences: View {
     let text: String
     let items: [String]
+    /// The settled rows in words, found once per rows change (`ItemsProjection.references`). A row the list did not
+    /// project (an empty list in a test) names its items by number.
+    let references: [ItemsProjection.Reference]
     let detail: MeetingDetailModel
 
     var body: some View {
         WrapLayout(spacing: 6, lineSpacing: 2) {
             Text(verbatim: items.isEmpty ? text : "\(text):").font(.system(size: 12.5)).foregroundStyle(.secondary)
             ForEach(items, id: \.self) { id in
-                let settled = detail.rows.value?.rows.first { $0.id == id }
+                let settled = references.first { $0.id == id }
                 // lint-rules-ignore: short list (the one to three items a question settles; LiveButton reads the review row's liveness)
                 LiveButton(tooltip: settled.map { "\($0.what). Click to select it in the list." } ?? "Item \(id)", pressable: true,
                            action: { detail.reveal(row: id) }) {
-                    Text(verbatim: settled.map(ReviewRowView.reference) ?? id).font(.system(size: 12)).foregroundStyle(Color.accentColor)
+                    Text(verbatim: settled?.words ?? "Item \(id)").font(.system(size: 12)).foregroundStyle(Color.accentColor)
                 }
-                .accessibilityLabel("Select \(settled.map(ReviewRowView.reference) ?? id)")
+                .accessibilityLabel("Select \(settled?.words ?? "item \(id)")")
             }
         }
     }

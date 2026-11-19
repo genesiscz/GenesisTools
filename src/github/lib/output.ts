@@ -555,7 +555,8 @@ function formatSearchMarkdown(results: SearchResult[]): string {
     for (const result of results) {
         const typeIcon = result.type === "pr" ? "🔀" : "📋";
         const stateIcon = result.state === "open" ? "🟢" : "🔴";
-        const reactionsCol = result.reactions > 0 ? String(result.reactions) : "-";
+        const reactionsCol =
+            result.reactions === null ? "unknown" : result.reactions > 0 ? String(result.reactions) : "-";
         const baseRow = `| [#${result.number}](${result.url}) | ${typeIcon} | ${result.title} | ${stateIcon} ${result.state} | @${result.author} | ${reactionsCol} | ${result.repo} |`;
 
         if (hasSource) {
@@ -566,7 +567,7 @@ function formatSearchMarkdown(results: SearchResult[]): string {
                       ? "A"
                       : result.source === "legacy"
                         ? "L"
-                        : "";
+                        : (result.source ?? "");
             lines.push(`${baseRow} ${sourceTag} |`);
         } else {
             lines.push(baseRow);

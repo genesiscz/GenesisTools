@@ -65,6 +65,9 @@ struct AgentWidgetPreview: View {
     let surface: WidgetSurfaceID
     /// The session whose cmux panel was opened from the row's accessibility action (the button itself exists only on the hovered row).
     @State private var cmuxPanelKey: String?
+    @GenReduceMotion private var reduceMotion
+
+    private var showsItems: Bool { model.previewView == "items" }
 
     var body: some View {
         let _ = RenderProbe.hit("widget.preview")
@@ -75,7 +78,7 @@ struct AgentWidgetPreview: View {
                 Text("Inbox").font(.system(size: 12, weight: .semibold))
                 Spacer()
                 if model.inbox.needsAnswer > 0 {
-                    Button { model.toggleInboxOverview(on: surface) } label: {
+                    Button { model.toggleInboxOverview(on: surface, filter: "needs") } label: {
                         HStack(spacing: 4) {
                             WidgetInboxCount(count: model.inbox.needsAnswer, needsAnswer: true,
                                 pulse: model.waitingPulse, reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete)
@@ -84,7 +87,7 @@ struct AgentWidgetPreview: View {
                     }.buttonStyle(.genHoverPlain()).instantTooltip("Every inbox item that waits for your answer")
                 }
                 if model.inbox.unread > 0 {
-                    Button { model.toggleInboxOverview(on: surface) } label: {
+                    Button { model.toggleInboxOverview(on: surface, filter: "unread") } label: {
                         HStack(spacing: 4) {
                             WidgetInboxCount(count: model.inbox.unread, needsAnswer: false,
                                 pulse: model.inboxPulse, reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete)
@@ -96,48 +99,38 @@ struct AgentWidgetPreview: View {
                     Text(model.snapshot == nil ? "Loading inbox" : model.inbox.complete ? "All caught up" : "Inbox status unavailable")
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                 } else {
-                    IconButton(systemName: "checkmark.circle", tooltip: "Mark all read. Nothing is deleted.",
-                               size: 11, action: model.markAllRead)
-                        .accessibilityLabel("Mark all inbox items read")
+                    WidgetMarkAllReadButton(model: model)
                 }
             }.padding(.horizontal, 5)
 
-            HStack(spacing: 6) {
+            let toolbar = model.agentsPreviewWidth >= 300
+                ? AnyLayout(HStackLayout(spacing: 6))
+                : AnyLayout(VStackLayout(alignment: .trailing, spacing: 4))
+            toolbar {
                 GenSegmentedTabs(
-                    "Show", items: WidgetPreviewChoices.filters.map { .init($0.value, $0.title) },
-                    selection: Binding(get: { model.previewFilter }, set: { model.setPreview(filter: $0) }),
-                    minSegmentWidth: 70, identifier: "widget.preview.filter")
-                Spacer(minLength: 4)
-                // The order is named beside its icon, so reading it needs no hover (Martin, 2026-10-25).
-                Button {
-                    let sorts = WidgetPreviewChoices.sorts.map(\.value)
-                    let index = sorts.firstIndex(of: model.previewSort) ?? 0
-                    model.setPreview(sort: sorts[(index + 1) % sorts.count])
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "arrow.up.arrow.down").font(.system(size: 10.5))
-                        Text(WidgetPreviewChoices.shortTitle(sort: model.previewSort)).font(.system(size: 11))
-                    }
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 5).frame(minHeight: 22)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.genHoverPlain())
-                .instantTooltip(sortTooltip)
-                .accessibilityLabel("Order: " + WidgetPreviewChoices.title(sort: model.previewSort))
-                .accessibilityHint("Click for the next order")
-                IconButton(systemName: "slider.horizontal.3", tooltip: "Choose what this list shows and its order",
-                           size: 10.5) {
-                    model.showSettingsPage?("widgets.sessions#inbox-preview")
-                }.accessibilityLabel("Inbox preview settings")
-            }.padding(.horizontal, 5).padding(.bottom, 3)
+                    "Show", items: WidgetPreviewChoices.filters.map { .init($0.value, $0.title) } + [.init("items", "Items")],
+                    selection: Binding(get: { model.previewSegment }, set: model.choosePreviewSegment),
+                    identifier: "widget.preview.filter", fillsWidth: true, size: .small)
+                HStack(spacing: 6) {
+                    if !showsItems { previewOrderButton }
+                    IconButton(systemName: "slider.horizontal.3", tooltip: "Choose what this list shows and its order",
+                               size: 10.5) {
+                        model.showSettingsPage?("widgets.sessions#inbox-preview")
+                    }.accessibilityLabel("Inbox preview settings")
+                }.fixedSize()
+            }
+            .padding(.horizontal, 5).padding(.bottom, 3)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("widget.preview.view")
 
-            if model.previewList.isEmpty && model.snapshot == nil {
+            if model.snapshot == nil {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text("Loading sessions").font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text(showsItems ? "Loading inbox items" : "Loading sessions").font(.system(size: 11)).foregroundStyle(.secondary)
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 5).padding(.vertical, 6)
                     .accessibilityElement(children: .combine)
+            } else if showsItems {
+                itemsView
             } else if model.previewList.isEmpty {
                 HStack(spacing: 12) {
                     GenesisWidgetMark()
@@ -165,8 +158,10 @@ struct AgentWidgetPreview: View {
                     Image(systemName: "rectangle.stack").font(.system(size: 10))
                     Text("Projects & sessions").font(.system(size: 11, weight: .medium))
                     Spacer()
-                    Text(Plural.count(model.previewList.count, "session")).font(.system(size: 11)).monospacedDigit()
-                    Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold))
+                    if let sessions = model.snapshot?.sessions {
+                        Text(Plural.count(sessions.count, "session")).font(.system(size: 11)).monospacedDigit()
+                    }
+                    Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold)).accessibilityHidden(true)
                 }
                 .foregroundStyle(.white.opacity(0.6)).padding(.horizontal, 5).padding(.vertical, 5)
                 .contentShape(Rectangle())
@@ -182,11 +177,75 @@ struct AgentWidgetPreview: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         // Like the row button's own popover: while it is open the edge panel must not collapse.
         .onChange(of: cmuxPanelKey) { _, key in model.cmuxPopoverOpen = key != nil }
-        .onDisappear { if cmuxPanelKey != nil { model.cmuxPopoverOpen = false } }
+        .onDisappear {
+            if cmuxPanelKey != nil { model.cmuxPopoverOpen = false }
+            model.closePreviewEntry()
+        }
+        .onChange(of: showsItems) { _, items in
+            if items { cmuxPanelKey = nil } else { model.closePreviewEntry() }
+        }
+        .onChange(of: model.inboxGeneration) { _, _ in
+            if let id = model.previewOpenItemID, !model.inboxOverviewItems.contains(where: { $0.id == id }) {
+                model.closePreviewEntry()
+            }
+        }
         // A row that leaves the list takes its popover along; its key must not hold the panel open.
         .onChange(of: model.previewList.map(\.key)) { _, keys in
             if let key = cmuxPanelKey, !keys.contains(key) { cmuxPanelKey = nil }
         }
+    }
+
+    @ViewBuilder private var itemsView: some View {
+        if model.inboxFeeds.all.isEmpty {
+            HStack(spacing: 12) {
+                GenesisWidgetMark()
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(model.inbox.complete ? "Nothing new in the inbox." : "Inbox status unavailable.")
+                        .font(.system(size: 13, weight: .medium))
+                    if model.inbox.complete {
+                        Text("Questions, answers and finished work from every session land here.")
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 5).padding(.vertical, 6)
+        } else {
+            FittedScroll(maxHeight: 360, initialHeight: model.previewListHeight,
+                         measured: { if $0 > 0 { model.previewListHeight = $0 } }) {
+                LazyVStack(alignment: .leading, spacing: 6) {
+                    WidgetFeedRows(runs: model.inboxFeeds.all, model: model, surface: surface) { item, context in
+                        let open = model.previewOpenItemID == item.id
+                        WidgetInboxEntry(model: model, item: item, open: open, focused: false,
+                                         context: context, compact: true, surface: surface) {
+                            GenMotion.perform(expanding: !open, reduceMotion: reduceMotion) {
+                                model.togglePreviewEntry(item)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var previewOrderButton: some View {
+        Button {
+            let sorts = WidgetPreviewChoices.sorts.map(\.value)
+            let index = sorts.firstIndex(of: model.previewSort) ?? 0
+            model.setPreview(sort: sorts[(index + 1) % sorts.count])
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "arrow.up.arrow.down")
+                if model.agentsPreviewWidth >= 300 {
+                    Text(WidgetPreviewChoices.shortTitle(sort: model.previewSort))
+                }
+            }
+            .font(.system(size: 11)).foregroundStyle(.secondary)
+            .padding(.horizontal, 5).frame(minHeight: 22)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.genHoverPlain())
+        .instantTooltip(sortTooltip)
+        .accessibilityLabel("Order: " + WidgetPreviewChoices.title(sort: model.previewSort))
+        .accessibilityHint("Click for the next order")
     }
 
     private var sortTooltip: String {
@@ -343,11 +402,11 @@ struct WidgetSessionTimes: View {
             if session.visualStatus == .working {
                 Text("working now")
             } else if session.activityAt > 0 {
-                LiveAgo(date: Date(timeIntervalSince1970: session.activityAt / 1000), style: .brief) { "active " + $0 }
+                LiveAgo(date: Date(timeIntervalSince1970: session.activityAt / 1000), style: .spelled) { "active " + $0 }
             }
             if let entry = Self.latest(inbox) {
                 Text("·")
-                LiveAgo(date: Date(timeIntervalSince1970: entry.at / 1000), style: .brief) { entry.verb + " " + $0 }
+                LiveAgo(date: Date(timeIntervalSince1970: entry.at / 1000), style: .spelled) { entry.verb + " " + $0 }
                     .foregroundStyle(entry.waiting ? Color.orange.opacity(0.8) : .white.opacity(0.6))
             }
         }
@@ -383,7 +442,7 @@ struct WidgetSessionFacts: View {
                 WidgetActivityIndicator(status: .working, animate: animate)
                 Text("working").foregroundStyle(session.visualStatus.color)
             } else if session.activityAt > 0 {
-                LiveAgo(date: Date(timeIntervalSince1970: session.activityAt / 1000), style: .brief) { "idle " + $0 }
+                LiveAgo(date: Date(timeIntervalSince1970: session.activityAt / 1000), style: .spelled) { "idle " + $0 }
             } else {
                 Text(session.visualStatus.label)
             }

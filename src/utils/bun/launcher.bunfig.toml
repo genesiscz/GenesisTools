@@ -1,0 +1,8 @@
+# The bunfig the `tools` wrapper passes to every tool as `--config=<this file>`.
+#
+# Without it Bun reads the bunfig.toml of the folder `tools` runs in, and loads that folder's preloads into the tool
+# (a GenesisTools worktree loaded its own copy of every preload a second time; any other Bun project would load its
+# own). GenesisTools.app then cannot remember a vault approval for the tool: "Extra code may be loaded".
+#
+# Keep it without a `preload` list. The wrapper passes the checkout's own preloads with `--preload`, and Bun resolves
+# a relative preload here against the working folder, not against this file.

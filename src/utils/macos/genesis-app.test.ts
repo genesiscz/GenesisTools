@@ -1,16 +1,26 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { LIVE_FACTS } from "@genesiscz/utils/genesis-tools/capability/facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { buildPidRecord, serializePidRecord } from "@genesiscz/utils/process/pidfile";
 import { skip } from "@genesiscz/utils/test/skip";
 import {
+    launcherConfigArgs,
+    launcherConfigFlag,
+    launcherConfigForSavedCommand,
+    savedLauncherConfigIsStale,
+} from "../bun/launcher-config";
+import { shellCommandLine } from "../shell/quote";
+import {
     describeResponsibleIdentity,
     GENESIS_APP_BUNDLE_ID,
     genesisAppLauncher,
+    installedAppAccepts,
     isRunningUnderGenesisApp,
+    openGenesisAppWindow,
     responsibleIdentity,
     wrapWithGenesisApp,
 } from "./genesis-app";
@@ -25,6 +35,31 @@ import {
     widgetLockPaths,
     writeNativeInboxStateFile,
 } from "./native-inbox";
+
+it("opening the permissions window in a test returns the engine refusal without starting the app", async () => {
+    const platform = spyOn(LIVE_FACTS, "platform").mockReturnValue("darwin");
+    const spawn = spyOn(Bun, "spawn").mockImplementation(() => {
+        throw new Error("unexpected app launch");
+    });
+    try {
+        const outcome = await openGenesisAppWindow();
+        expect(outcome).toMatchObject({
+            status: "unreachable",
+            skipped: [
+                {
+                    way: "native",
+                    code: "in-test",
+                    reason: "app.bundle: a test process never reaches GenesisTools.app",
+                    fix: null,
+                },
+            ],
+        });
+        expect(spawn).not.toHaveBeenCalled();
+    } finally {
+        spawn.mockRestore();
+        platform.mockRestore();
+    }
+});
 
 describe("responsibleIdentity", () => {
     it("reports GenesisTools.app when the launcher marker is set", async () => {
@@ -328,6 +363,89 @@ describe("nativeInboxState", () => {
             expect(writeNativeInboxStateFile(installed, path)).toBe(false);
             expect(writeNativeInboxStateFile(none, path)).toBe(true);
             expect(SafeJSON.parse(readFileSync(path, "utf8")).installed).toBe(false);
+        });
+    });
+});
+
+// 2026-11-18 00:24: a worktree's build without the `--config=` rule replaced the install, and every `tools` start
+// from the main checkout could only be allowed once. Callers now ask the installed build's manifest first.
+describe("what the installed app accepts", () => {
+    async function withManifest(manifest: object | string | undefined, run: () => void): Promise<void> {
+        const home = mkdtempSync(join(tmpdir(), "gt-app-accepts-"));
+
+        if (manifest) {
+            mkdirSync(join(home, ".genesis-tools", "app"), { recursive: true });
+            writeFileSync(
+                join(home, ".genesis-tools", "app", "manifest.json"),
+                typeof manifest === "string" ? manifest : SafeJSON.stringify(manifest)
+            );
+        }
+
+        // The manifest sits beside the installed bundle in the app home; a GENESIS_TOOLS_HOME sandbox does not move it.
+        const sandbox = mkdtempSync(join(tmpdir(), "gt-app-accepts-sandbox-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_APP_HOME: home, GENESIS_TOOLS_HOME: sandbox }, run);
+    }
+
+    const saved = shellCommandLine(["/opt/bun", launcherConfigFlag(), "run", "/repo/poll daemon.ts"]);
+
+    it("an older build gets no --config=, from a direct start or a saved daemon command", async () => {
+        await withManifest({ builtAt: "2026-11-17T23:24:33Z", parts: ["hub"] }, () => {
+            expect(installedAppAccepts("launcher-config")).toBe(false);
+            expect(launcherConfigArgs()).toEqual([]);
+            expect(launcherConfigForSavedCommand(saved)).toBe(
+                shellCommandLine(["/opt/bun", "run", "/repo/poll daemon.ts"])
+            );
+        });
+    });
+
+    it("a build that accepts it, or no build at all, keeps the flag", async () => {
+        await withManifest({ accepts: ["launcher-config"] }, () => {
+            expect(installedAppAccepts("launcher-config")).toBe(true);
+            expect(launcherConfigArgs()).toEqual([launcherConfigFlag()]);
+            expect(launcherConfigForSavedCommand(saved)).toBe(saved);
+        });
+
+        await withManifest(undefined, () => {
+            expect(installedAppAccepts("launcher-config")).toBeUndefined();
+            expect(launcherConfigArgs()).toEqual([launcherConfigFlag()]);
+        });
+    });
+
+    it("an installed build whose manifest cannot be read is treated as an older one", async () => {
+        await withManifest("{ not json", () => {
+            expect(installedAppAccepts("launcher-config")).toBe(false);
+            expect(launcherConfigArgs()).toEqual([]);
+        });
+    });
+
+    it("a saved command loses only the whole flag word, never the same text inside another argument", async () => {
+        const printed = `printf '%s\\n' 'keep ${launcherConfigFlag()} unchanged'`;
+        const windowsFlag = launcherConfigFlag("C:\\repo\\src\\utils\\bun\\launcher.bunfig.toml");
+        const windows = shellCommandLine(["C:\\bun.exe", windowsFlag, "run", "poll.ts"]);
+
+        await withManifest({ parts: ["hub"] }, () => {
+            expect(launcherConfigForSavedCommand(printed)).toBe(printed);
+            expect(launcherConfigForSavedCommand(windows)).toBe(shellCommandLine(["C:\\bun.exe", "run", "poll.ts"]));
+            expect(launcherConfigForSavedCommand(`/opt/bun ${launcherConfigFlag()} run x.ts`)).toBe(
+                "/opt/bun run x.ts"
+            );
+        });
+    });
+
+    it("a launchd plist is stale when its flag disagrees with the installed build", async () => {
+        const withFlag = `<string>/opt/bun</string><string>${launcherConfigFlag()}</string><string>run</string>`;
+        const without = "<string>/opt/bun</string><string>run</string>";
+
+        await withManifest({ parts: ["hub"] }, () => {
+            expect(savedLauncherConfigIsStale(withFlag)).toBe(true);
+            expect(savedLauncherConfigIsStale(without)).toBe(false);
+        });
+        await withManifest({ accepts: ["launcher-config"] }, () => {
+            expect(savedLauncherConfigIsStale(withFlag)).toBe(false);
+            expect(savedLauncherConfigIsStale(without)).toBe(true);
+        });
+        await withManifest(undefined, () => {
+            expect(savedLauncherConfigIsStale(without)).toBe(false);
         });
     });
 });

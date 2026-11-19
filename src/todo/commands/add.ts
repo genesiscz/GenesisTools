@@ -4,7 +4,7 @@ import { parseLinks } from "@app/todo/lib/links";
 import { PROJECT_OPTION_DESCRIPTION, resolveProjectRoot } from "@app/todo/lib/project";
 import { parseReminderTime } from "@app/todo/lib/reminders";
 import { TodoStore } from "@app/todo/lib/store";
-import { buildSyncReport, type SyncReport, type SyncTarget, syncTodo } from "@app/todo/lib/sync";
+import { buildSyncReport, type SyncReport, type SyncTarget, syncTodoAndPair } from "@app/todo/lib/sync";
 import type { OutputFormat, TodoPriority } from "@app/todo/lib/types";
 import { isInteractive, parseVariadic, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -184,7 +184,7 @@ export function createAddCommand(): Command {
             // that arrived after the JSON.
             if (opts.syncTo) {
                 const target = opts.syncTo as SyncTarget;
-                const result = await syncTodo({ store, todo, target, calendarName: opts.calendar });
+                const result = await syncTodoAndPair({ store, todo, target, calendarName: opts.calendar });
                 report = buildSyncReport(result, todo.id);
                 todo = (await store.get(todo.id)) ?? todo;
             }

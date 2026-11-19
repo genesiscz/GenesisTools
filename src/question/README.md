@@ -426,6 +426,18 @@ tools question message "Build is green, the hub after the fix:" --image /abs/hub
 tools question message --title "Blocked" --file notes.md
 ```
 
+A service outside Claude, Codex or Grok can post from its own project:
+
+```bash
+tools question message --project-path /srv/orchard --agent orchard-watch \
+  --title "Backup delayed" $'The nightly backup is still running.\n\nNext check in five minutes.'
+```
+
+Pass the repository directory with `--project-path` when the service may start in another directory.
+`--agent` identifies the sender on the card. Without it, a command-line message shows `cli`.
+Use `--title` for a separate heading and pass the markdown as one argument or with `--file`.
+Omit `--session` for a standalone service. Supply it only when the message belongs to an existing session.
+
 Flags: `--image <path>` (repeatable), `--title <title>` (default: the first line of the text), `--file <path>`
 (markdown text), `--agent <label>`, `--session <id>` (only outside Claude, Codex or Grok), `--project-path <path>`
 (relative `--image` and `--file` paths resolve here), `--json`.
@@ -660,15 +672,16 @@ Throw `TransclusionError` for an expected failure; its message becomes the reaso
 
 ## How it works
 
-Everything lives under `~/.genesis-tools/question/`. `GENESIS_TOOLS_HOME` replaces the home folder, so the data
-moves to `$GENESIS_TOOLS_HOME/.genesis-tools/question/`:
+The question logs, database, settings and assets live under `~/.genesis-tools/question/`. Numbered to-dos live
+under `~/.genesis-tools/work/`. `GENESIS_TOOLS_HOME` replaces the home folder for both paths. The paths below
+are relative to the question directory.
 
 | Path | What it holds |
 |------|---------------|
 | `log/<date>.jsonl` | The Q→A log, one day file, append-only (`QUESTION_LOG_BASE` moves it) |
 | `qa.db` | SQLite: the read model over the log, and the pending forms (`qa_pending`) |
 | `pending/<date>.jsonl` | Form lifecycle events; the dashboard tails them |
-| `decisions/decisions.jsonl` | The decision and todo log |
+| `decisions/decisions.jsonl` | The decision log. The numbered to-do items live in the work store (`~/.genesis-tools/work/work.db`, an item of type `task` with the tag `session-todo` each); every read of the log merges them back, and a rewrite moves an older to-do row out of the file |
 | `decisions/events.jsonl` | Its event log |
 | `assets/` | Images from `{{image}}` tokens and item attachments, named by content hash |
 | `config.json` | The settings (`QUESTION_CONFIG_PATH` moves it) |

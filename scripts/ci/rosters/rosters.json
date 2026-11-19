@@ -4,9 +4,7 @@
         "src/azure-devops/lib/ancestors.ts": 1,
         "src/azure-devops/timelog-api.ts": 1
     },
-    "roster-app-status-outside-permissions": {
-        "src/update/index.ts": 1
-    },
+    "roster-app-status-outside-permissions": {},
     "roster-cdp-conn-outside-connect": {},
     "roster-cdp-socket-outside-connect": {},
     "roster-choose-cost-outside-priced-usage": {},
@@ -849,7 +847,6 @@
         "question → daemon": 1,
         "question → dev-dashboard": 1,
         "question → grok": 1,
-        "question → handoff": 1,
         "recorder → control": 1,
         "recorder → macos": 1,
         "recorder → meetings": 1,
@@ -871,7 +868,6 @@
         "telegram-bot → question": 1,
         "tmux → dev-dashboard": 1,
         "transcribe → youtube": 1,
-        "ts → json": 1,
         "update → genesis-tools-mcp": 1,
         "update → macos": 1,
         "update → tools": 1,

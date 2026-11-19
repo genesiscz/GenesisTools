@@ -81,6 +81,10 @@ struct HubRequest {
     var widgetProvider: String?
     /// Selects this worktree path in the Worktrees mode, or the cleanup panel (`--worktree cleanup`).
     var worktree: String?
+    /// --work <ref> opens one task or handoff in Work.
+    var workItem: String?
+    /// --work-project <name> opens the named project's Items pane.
+    var workProject: String?
     /// Inbox mode: opens the resume dialog (`--inbox-resume <id>`) or the session info popover
     /// (`--inbox-info <id>`) for this session (id or prefix) once the list has loaded; for snapshots.
     var inboxResume: String?
@@ -213,6 +217,16 @@ struct HubRequest {
             case "--widget-cwd": widgetCwd = value; index += 1
             case "--widget-provider": widgetProvider = value; index += 1
             case "--worktree": worktree = value; index += 1
+            case "--work-project":
+                mode = .work
+                workProject = Self.optionalText(value)
+                if workProject?.isEmpty != false { workProject = nil; problems.append("--work-project needs a project") }
+                index += 1
+            case "--work":
+                mode = .work
+                workItem = Self.optionalText(value)
+                if workItem?.isEmpty != false { workItem = nil; problems.append("--work needs an item id") }
+                index += 1
             case "--inbox-resume": inboxResume = value; index += 1
             case "--inbox-info": inboxInfo = value; index += 1
             case "--decision", "--question": inboxItem = value; index += 1
@@ -575,11 +589,12 @@ struct HubNotice: Equatable {
 /// What the left column lists: agent sessions, the worktrees (branches) they worked in, PRs, the
 /// sessions waiting for an answer (Hub/HubInbox.swift), or today's activity (Hub/HubTimeline.swift).
 enum HubMode: String, CaseIterable {
-    case sessions, worktrees, prs, inbox, timeline, agents, usage
+    case sessions, worktrees, prs, inbox, timeline, agents, usage, work
 
     var title: String {
         switch self {
         case .usage: return "Usage"
+        case .work: return "Work"
         case .sessions: return "Sessions"
         case .worktrees: return "Worktrees"
         case .prs: return "PRs"
@@ -599,6 +614,7 @@ enum HubMode: String, CaseIterable {
         case .timeline: return "Activity: sessions, commits, pushes, PR events, review comments, decisions and CI results across your projects, by day"
         case .agents: return "Agents: every session's sub-agents, teammates and codex or grok workers, live, each with its whole transcript"
         case .usage: return "Usage: every AI account's limits, burn and forecast, spend over time, who ate the bar, plans and workers"
+        case .work: return "Work: each project's handoffs and their tasks, the spotted items, the reopened ones and who hears about them"
         }
     }
 
@@ -612,6 +628,7 @@ enum HubMode: String, CaseIterable {
         case .timeline: return "clock"
         case .agents: return "person.2"
         case .usage: return "chart.bar.xaxis"
+        case .work: return "checklist"
         }
     }
 }
@@ -878,6 +895,7 @@ final class HubModel {
     private var navUnsaved: [String]?
     private var navLimitWatch: AnyCancellable?
     private var navRecorder: AnyCancellable?
+    private var workTitleWatch: AnyCancellable?
     private var navRecordPending = false
     private var navRestoring = false
 
@@ -889,12 +907,15 @@ final class HubModel {
     let agents: HubAgentsModel
     /// Usage mode state (`tools ai usage … --json`), Usage/HubUsageModel.swift.
     let usage: HubUsageModel
+    /// Work mode state (the `work` area of the actions service), Work/HubWork.swift.
+    let work: HubWorkModel
 
-    init(wantedSession: String?, tab: HubTab) {
+    init(wantedSession: String?, tab: HubTab, workSource: WorkSource? = nil) {
         prs = MainActor.assumeIsolated { PRsModel() }
         inbox = MainActor.assumeIsolated { HubInboxModel() }
         timeline = MainActor.assumeIsolated { HubTimelineModel() }
         agents = MainActor.assumeIsolated { HubAgentsModel() }
+        work = MainActor.assumeIsolated { HubWorkModel(source: workSource) }
         // A scripted run reads and writes its scratch copy of the settings, and tells no other process.
         usage = MainActor.assumeIsolated {
             HubUsageModel(preferences: HubDefaults.isolated
@@ -926,9 +947,23 @@ final class HubModel {
             prs.$selectedID.map { _ in () }.eraseToAnyPublisher(),
             inbox.$selectedID.map { _ in () }.eraseToAnyPublisher(),
             agents.$selectedID.map { _ in () }.eraseToAnyPublisher(),
+            work.screen.$itemRef.dropFirst().handleEvents(receiveOutput: { [weak self] next in
+                // The publisher still sees the list here. The deferred recorder would only see the open item
+                // if the list and its first keyboard selection happened in the same main-queue turn.
+                guard let self, next != nil, !self.navRestoring, self.mode == .work,
+                      self.work.screen.itemRef == nil, self.work.screen.project != nil,
+                      self.work.screen.pane == .items else { return }
+                self.recordPlace()
+            }).map { _ in () }.eraseToAnyPublisher(),
+            work.screen.$project.dropFirst().map { _ in () }.receive(on: DispatchQueue.main).eraseToAnyPublisher(),
         ]
         navRecorder = Publishers.MergeMany(changes).sink { [weak self] in
             self?.placeChanged()
+        }
+        workTitleWatch = work.screen.$itemDetail.compactMap { $0 }.sink { [weak self] detail in
+            guard let self, let ref = self.work.screen.itemRef, let id = self.history.currentID,
+                  self.history.entry(id)?.target["work"] == ref else { return }
+            self.persistNav(self.history.retitle(id, "Work: \(detail.item.title)"))
         }
         watchOwnPlace()
     }
@@ -1037,7 +1072,7 @@ final class HubModel {
         if let linked = prLinkedCommit, place.mode == .prs, place.selection != linked.prID {
             prLinkedCommit = nil
         }
-        guard place.selection != nil else {
+        guard place.selection != nil || place.workItem != nil else {
             history.visit(navTarget(place), title: navTitle(place), provisional: true)
             return
         }
@@ -1081,7 +1116,7 @@ final class HubModel {
             if let shown = shownCommit, shown.repo == place.selection {
                 return HubNavTarget(place: place, commit: shown.commit, repo: shown.repo)
             }
-        case .sessions, .inbox, .timeline, .agents, .usage:
+        case .sessions, .inbox, .timeline, .agents, .usage, .work:
             break
         }
         return HubNavTarget(place: place)
@@ -1090,6 +1125,10 @@ final class HubModel {
     /// Whether the hub now shows the place a request asked for.
     @MainActor
     func navRequestMatches(_ asked: HubNavRequest) -> Bool {
+        if let ref = asked.workItem { return mode == .work && work.screen.itemRef == ref }
+        if let project = asked.workProject {
+            return mode == .work && work.screen.itemRef == nil && work.screen.project == project && work.screen.pane == .items
+        }
         if let pr = asked.pr {
             return mode == .prs && prs.selected.map(pr.matches) == true
         }
@@ -1109,7 +1148,7 @@ final class HubModel {
             return mode == .sessions && (selectedID == session || selected?.sessionId.hasPrefix(session) == true)
         }
         if let wanted = asked.mode {
-            return mode == wanted
+            return mode == wanted && (wanted != .work || work.screen.itemRef == nil)
         }
         return false
     }
@@ -1144,7 +1183,11 @@ final class HubModel {
         switch owner(of: mode) {
         case .sessions: return HubNavEntry(mode: .sessions, selection: selectedID)
         case .worktrees: return HubNavEntry(mode: .worktrees, selection: selectedWorktree)
-        case .model(let model): return HubNavEntry(mode: mode, selection: model.navSelection)
+        case .model(let model):
+            if mode == .work, let ref = work.screen.itemRef {
+                return HubNavEntry(mode: .work, selection: nil, workItem: ref)
+            }
+            return HubNavEntry(mode: mode, selection: model.navSelection)
         }
     }
 
@@ -1204,6 +1247,10 @@ final class HubModel {
     @MainActor
     private func restorePlace(_ entry: HubNavEntry, commit: String?, repo: String?) {
         setMode(entry.mode)
+        if entry.mode == .work {
+            restoreWorkItem(entry.workItem, project: entry.selection)
+            return
+        }
         guard let id = entry.selection else { return }
         switch entry.mode {
         case .sessions:
@@ -1247,6 +1294,8 @@ final class HubModel {
                     usage.section = place.section
                 }
             }
+        case .work:
+            if id != Self.wholeList { work.openProject(id) }
         case .agents:
             if id == Self.wholeList {
                 agents.selectedID = nil
@@ -1290,6 +1339,10 @@ final class HubModel {
     /// What a history entry shows, for the arrows' tooltips.
     @MainActor
     func navTitle(_ entry: HubNavEntry) -> String {
+        if let ref = entry.workItem {
+            if work.screen.itemRef == ref, let title = work.screen.itemDetail?.item.title { return "Work: \(title)" }
+            return entry.selection.map { "Work item in \($0)" } ?? "Work item"
+        }
         guard let id = entry.selection else { return entry.mode.title }
         let name: String
         switch owner(of: entry.mode) {
@@ -1352,6 +1405,7 @@ final class HubModel {
             // The two modes that watch or poll stop when they leave the screen.
             if next != .agents { agents.deactivate() }
             if next != .usage { usage.deactivate() }
+            if next != .work { work.deactivate() }
             // No `default`: the compiler names this switch for a new mode, which never opens as Sessions unnoticed.
             switch next {
             case .agents:
@@ -1367,6 +1421,8 @@ final class HubModel {
                 }
             case .usage:
                 usage.activate()
+            case .work:
+                work.activate(sessions: sessions)
             case .inbox:
                 inbox.loadIfStale()
             case .timeline:
@@ -1500,7 +1556,7 @@ final class HubModel {
     }
 
     func openSession(_ session: HubSession) {
-        mode = .sessions
+        setMode(.sessions)
         select(session.id)
     }
 
@@ -1833,6 +1889,15 @@ final class HubModel {
             setMode(.usage)
             onSettled?()
             onSettled = nil
+        } else if initialMode == .work {
+            // The Work mode loads when it opens; a snapshot waits for its first answer.
+            MainActor.assumeIsolated {
+                work.onLoaded = { [weak self] in
+                    self?.onSettled?()
+                    self?.onSettled = nil
+                }
+            }
+            setMode(.work)
         } else if initialMode == .inbox || initialMode == .timeline {
             let settle: () -> Void = { [weak self] in
                 self?.onSettled?()
@@ -1930,7 +1995,7 @@ final class HubModel {
             if let path = selectedWorktree, path != WorktreeCleanup.selectionID { return path }
         case .prs:
             if let path = prs.selected?.localWorktree ?? prs.selected?.repoRoot { return path }
-        case .sessions, .inbox, .timeline, .agents, .usage:
+        case .sessions, .inbox, .timeline, .agents, .usage, .work:
             break
         }
         return selected.map { $0.cwd.isEmpty ? nil : projectRoot(of: $0.cwd) } ?? nil
@@ -2034,6 +2099,12 @@ final class HubModel {
         if request.opensUsage {
             MainActor.assumeIsolated { usage.open(request) }
         }
+        if request.mode == .work {
+            MainActor.assumeIsolated {
+                if request.workItem == nil, let project = request.workProject { work.openLinkedProject(project) }
+                else { restoreWorkItem(request.workItem) }
+            }
+        }
         if let text = request.filter {
             filter = text
         }
@@ -2089,6 +2160,16 @@ final class HubModel {
         }
         if let id = request.timelineOpen {
             MainActor.assumeIsolated { openTimelineRequest(id, action: request.timelineAction) }
+        }
+    }
+
+    @MainActor
+    private func restoreWorkItem(_ ref: String?, project: String? = nil) {
+        if let ref { work.screen.openItem(ref) }
+        else {
+            if let project, project != work.screen.project { work.openProject(project) }
+            else { work.screen.closeItem() }
+            work.screen.pane = .items
         }
     }
 
@@ -2398,7 +2479,7 @@ struct HubRootView: View {
                 parts.append(String(session.displayTitle.prefix(40)))
             }
             showsPanes = true
-        case .worktrees, .prs, .inbox, .timeline, .usage:
+        case .worktrees, .prs, .inbox, .timeline, .usage, .work:
             showsPanes = false
         }
         if showsPanes {
@@ -2423,7 +2504,7 @@ struct HubRootView: View {
         case .agents:
             // An agent's transcript is the full session screen, as a session's transcript alone is.
             return model.agents.selected != nil || model.agents.selectedMain != nil ? 761 : 520
-        case .worktrees, .inbox, .timeline, .usage:
+        case .worktrees, .inbox, .timeline, .usage, .work:
             return 520
         case .sessions:
             break
@@ -2474,6 +2555,9 @@ struct HubRootView: View {
                 }
             case .usage:
                 UsageMain(model: model, usage: model.usage)
+                    .flexiblePane(neighbourOf: "hub.sidebar")
+            case .work:
+                HubWorkContent(model: model, screen: model.work.screen)
                     .flexiblePane(neighbourOf: "hub.sidebar")
             case .agents:
                 // Held like Sessions: the transcript keeps its layout while the sidebar drags.
@@ -2573,7 +2657,7 @@ extension HubModel {
         switch mode {
         case .prs: return prs.review
         case .sessions, .worktrees, .agents: return review
-        case .inbox, .timeline, .usage: return nil
+        case .inbox, .timeline, .usage, .work: return nil
         }
     }
 
@@ -2584,7 +2668,7 @@ extension HubModel {
     var visibleReview: ReviewModel? {
         switch mode {
         case .sessions, .agents: return panes.contains(.changes) ? mainReview : nil
-        case .prs, .worktrees, .inbox, .timeline, .usage: return mainReview
+        case .prs, .worktrees, .inbox, .timeline, .usage, .work: return mainReview
         }
     }
 
@@ -2596,7 +2680,7 @@ extension HubModel {
     var snapshotShowsDiff: Bool {
         switch mode {
         case .prs: return true
-        case .inbox, .timeline, .usage: return false
+        case .inbox, .timeline, .usage, .work: return false
         case .worktrees: return selectedWorktree != WorktreeCleanup.selectionID && review != nil
         case .agents: return (agents.selectedMain != nil || agents.selected?.parent != nil) && panes.contains(.changes) && review != nil
         case .sessions: return selected != nil && selectedID != AgentProcs.selectionID && panes.contains(.changes) && review != nil
@@ -2811,6 +2895,7 @@ private struct SessionListView: View {
         case .timeline: return "Filter activity, authors, SHAs…"
         case .agents: return "Filter agents, sessions, models, accounts…"
         case .usage: return "Filter accounts…"
+        case .work: return "Filter projects…"
         case .worktrees: return "Filter repos, branches…"
         // The field searches PRs (`PRQuery`): title, repo, branch, author, number.
         case .prs: return "Filter PRs: title, #123, @author…"
@@ -2897,6 +2982,10 @@ private struct SessionListView: View {
                     }
                     .fixedSize()
                     .instantTooltip("Group sessions: \(mode.title.lowercased())")
+                } else if model.mode == .work {
+                    IconButton(systemName: "gearshape", tooltip: "Choose which project Work opens") {
+                        FeatureSettingsLaunch.open(pageID: "\(HubSettingsPages.panesPageID)#work")
+                    }
                 }
             }
             .padding(.horizontal, 10)
@@ -2992,6 +3081,9 @@ private struct SessionListView: View {
                 case "b": UsageSettingsSketchSidebarB(usage: model.usage, filter: model.filter)
                 default: UsageListView(usage: model.usage, filter: model.filter)
                 }
+            case .work:
+                WorkProjectsList(screen: model.work.screen, filter: model.filter, openProject: model.work.openProject,
+                                 clearFilter: { model.filter = "" })
             case .agents:
                 AgentsListView(model: model, agents: model.agents)
             case .sessions:

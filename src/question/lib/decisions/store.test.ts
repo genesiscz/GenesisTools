@@ -2,11 +2,12 @@ import { Database } from "bun:sqlite";
 import { describe, expect, spyOn, test } from "bun:test";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
     createWidgetTask,
     editWidgetTask,
     LOCAL_TASK_SESSION,
+    listLiveWidgetTasks,
     listWidgetTasks,
     updateWidgetTask,
     widgetTask,
@@ -17,6 +18,10 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { answerGitWithoutSpawning } from "@genesiscz/utils/test/no-git";
+import { mirrorSessionTodos } from "@genesiscz/utils/work/legacy/session-todos";
+import { ingestLegacyHandoff } from "@genesiscz/utils/work/legacy/shadow";
+import { listItems } from "@genesiscz/utils/work/read";
+import { openWorkDb, workDbPath } from "@genesiscz/utils/work/store/db";
 import { z } from "zod";
 import { stagedSendText } from "../inbox/drafts";
 import { setNoticeDeps } from "../notices/notices";
@@ -36,6 +41,7 @@ import { DeliveryUnknownError } from "./deliver";
 import { livePaneTargets } from "./deliver.fixtures";
 import { RELAYED_ANSWER_HEAD } from "./delivery-text";
 import { decisionPayload, validateQuestionItems } from "./items";
+import { decisionFiles } from "./paths";
 import {
     decisionLine,
     decisionQuestion,
@@ -66,6 +72,7 @@ import {
     recordChatAnswers,
     reopenEmptyDraft,
     repairDecisionLog,
+    storedTodoRows,
     updateDecision,
     updateDecisions,
     updateTodo,
@@ -934,8 +941,8 @@ describe("decision kinds, batch updates, harvest and staleness", () => {
 
         expect(markdown).toContain("### ❓ DECISION 1 — Cache");
         expect(markdown).toContain("b) no (recommended)");
-        expect(markdown).toContain("### ☐ TODO 1 — Bench");
-        expect(markdown).toContain("for: agent");
+        expect(markdown).toContain("### ☐ TODO 1 (for agent): Bench");
+        expect(markdown).not.toContain("for: agent");
     });
 
     test("a reply's unposted DECISION blocks are parsed with their number, title and options", () => {
@@ -1467,7 +1474,7 @@ describe("answers recorded by an agent, and superseded decisions", () => {
         ).toEqual([old.id]);
     });
 
-    test("superseded is legal from open, drafted, sent and acknowledged, and never for an answered row or a todo", async () => {
+    test("superseded is legal from open, drafted, sent and acknowledged, and for an open todo, but never for an answered decision", async () => {
         const { file, events, rows } = await fixture(["Open?", "Drafted?", "Sent?", "Acked?", "Answered?", "Done?"]);
         const [open, drafted, sent, acked, answered, done] = rows;
         await updateDecision(file, events, drafted.id, { state: "drafted", draftOption: "a" });
@@ -1492,7 +1499,9 @@ describe("answers recorded by an agent, and superseded decisions", () => {
             sessionId: "recorded-session",
             decisions: [{ type: "todo", prompt: "Ship it", options: [] }],
         });
-        await expect(updateDecision(file, events, todo.id, why)).rejects.toThrow("cannot move");
+        expect(readDecisions(file).find((row) => row.id === todo.id)?.for).toBe("agent");
+        await expect(updateDecision(file, events, todo.id, { state: "dismissed" })).rejects.toThrow("comment");
+        expect((await updateDecision(file, events, todo.id, why)).state).toBe("superseded");
     });
 });
 
@@ -1762,18 +1771,105 @@ describe("Widget Tasks use the canonical TODO ledger", () => {
         provider: row.provider ?? "unknown",
     });
 
+    test("sending reserves the shown todo once and taking it back keeps its state", async () => {
+        const { row, files } = fixture();
+        const input = { id: row.id, action: "send", expected: expected(row) };
+        const sent = await updateWidgetTask({
+            files,
+            input,
+            deliver: async ({ session, text }) => {
+                expect(session).toBe(row.sessionId);
+                expect(text).toContain(row.prompt);
+                await expect(updateWidgetTask({ files, input })).rejects.toThrow();
+                return { channel: "cmux", delivered: true };
+            },
+        });
+        expect(readDecisions(files.file)[0]).toMatchObject({ for: "agent", state: "acknowledged" });
+        await updateWidgetTask({
+            files,
+            input: {
+                ...input,
+                action: "take",
+                expected: expected({ ...row, state: sent.task.state, updatedTs: sent.task.updatedTs }),
+            },
+        });
+        expect(readDecisions(files.file)[0]).toMatchObject({ for: "human", state: "acknowledged" });
+    });
+
+    test("a task finished by the receiving agent stays finished when its delivery receipt arrives", async () => {
+        const { row, files } = fixture();
+        const result = await updateWidgetTask({
+            files,
+            input: { id: row.id, action: "send", expected: expected(row) },
+            deliver: async () => {
+                await updateDecision(files.file, files.events, row.id, {
+                    state: "implemented",
+                    commitRefs: ["abc1234"],
+                });
+                return { delivered: true, channel: "t3" };
+            },
+        });
+        expect(result.task.state).toBe("implemented");
+        expect(readDecisions(files.file)[0]).toMatchObject({
+            for: "agent",
+            state: "implemented",
+            commitRefs: ["abc1234"],
+            delivery: { route: "t3" },
+        });
+    });
+
+    test("a refused send keeps the task available and an unknown receipt blocks resending", async () => {
+        const { row, files } = fixture();
+        const send = (deliver: typeof import("./deliver").deliverToSession) =>
+            updateWidgetTask({
+                files,
+                deliver,
+                input: { id: row.id, action: "send", expected: expected(readDecisions(files.file)[0]) },
+            });
+        await expect(send(async () => ({ channel: "queued", delivered: false, error: "offline" }))).rejects.toThrow(
+            "offline"
+        );
+        expect(readDecisions(files.file)[0].delivery).toBeUndefined();
+        await expect(
+            send(async () => {
+                throw new Error("lost receipt");
+            })
+        ).rejects.toThrow("lost receipt");
+        expect(readDecisions(files.file)[0].delivery?.uncertain).toBe(true);
+        await expect(
+            send(async () => {
+                throw new Error("duplicate");
+            })
+        ).rejects.toThrow("already have been sent");
+    });
+
     test("acknowledge, complete, reopen and dismiss append ordinary audit receipts", async () => {
         const { files, row } = fixture();
         let current = row;
         for (const state of ["acknowledged", "implemented", "open", "acknowledged", "dismissed", "open"] as const) {
+            if (state === "dismissed") {
+                await expect(
+                    updateTodo({
+                        ...files,
+                        id: row.id,
+                        state,
+                        expected: expected(current),
+                        comment: "  ",
+                    })
+                ).rejects.toThrow("comment");
+            }
             const next = await updateTodo({
                 ...files,
                 id: row.id,
                 state,
+                ...(state === "dismissed" ? { comment: "The fixture issue was closed." } : {}),
                 expected: expected(current),
                 now: () => row.updatedTs,
             });
             expect(next.state).toBe(state);
+            if (state === "dismissed") {
+                expect(readDecisions(files.file)[0].comments).toContain("The fixture issue was closed.");
+            }
             expect(Date.parse(next.updatedTs)).toBeGreaterThan(Date.parse(current.updatedTs));
             current = next;
         }
@@ -1912,6 +2008,210 @@ describe("Widget Tasks use the canonical TODO ledger", () => {
         const controller = new AbortController();
         controller.abort();
         expect(() => listWidgetTasks({ file: files.file, signal: controller.signal })).toThrow();
+    });
+
+    test("a claimed handoff shows before the first to-do import and disappears when its session exits", async () => {
+        const { files, row } = fixture();
+        const store = join(dirname(files.file), "work.db");
+        const by = {
+            agent: "codex",
+            sessionId: "s-a",
+            sessionTitle: "Release session",
+            project: "App",
+            repoRoot: "/fixture/App",
+            branch: null,
+            commitSha: null,
+        };
+        const id = "h_release1";
+        const db = openWorkDb(store);
+        try {
+            ingestLegacyHandoff(
+                db,
+                {
+                    id,
+                    project: "App",
+                    title: "Prepare the release",
+                    description: "Follow .claude/plans/Release.md",
+                    status: "claimed",
+                    postedByContext: by,
+                    createdTs: row.updatedTs,
+                    tasks: [
+                        {
+                            id: "t1",
+                            text: "Write release notes",
+                            acceptanceCriteria: "Include the receipt",
+                            checked: true,
+                            denied: false,
+                        },
+                    ],
+                },
+                [{ event: { ev: "claim", id, by, ts: row.updatedTs, uid: "claim-1" }, outcome: null }]
+            );
+        } finally {
+            db.close();
+        }
+
+        const liveSessions = async (ids: string[]) => {
+            expect(ids).toEqual(["s-a"]);
+            return new Set(ids);
+        };
+        const options = { file: files.file, store, liveSessions };
+        const first = await listLiveWidgetTasks(options);
+        expect(first.tasks.map((task) => task.id)).toEqual([row.id]);
+        expect(first.sourcePath).toBe(files.file);
+        expect(first.additionalSourcePaths).toContain(`${store}-wal`);
+        expect(first.projects).toContain("App");
+        expect(first.sessions).toContainEqual({ id: "codex:s-a", title: "Release session" });
+        expect(first.claimedHandoffs).toMatchObject([
+            {
+                id,
+                body: "Follow .claude/plans/Release.md",
+                repoRoot: "/fixture/App",
+                members: [
+                    {
+                        id: `${id}:t1`,
+                        slot: "t1",
+                        state: "done",
+                        title: "Write release notes",
+                        acceptance: "Include the receipt",
+                    },
+                ],
+            },
+        ]);
+        const noLog = await listLiveWidgetTasks({ ...options, file: join(dirname(files.file), "absent.jsonl") });
+        expect(noLog.tasks).toEqual([]);
+        expect(noLog.claimedHandoffs).toEqual(first.claimedHandoffs);
+        const filtered = await listLiveWidgetTasks({ ...options, filters: { sessions: ["codex:other"] } });
+        expect(filtered.claimedHandoffs).toEqual([]);
+        const exited = await listLiveWidgetTasks({ ...options, liveSessions: async () => new Set<string>() });
+        expect(exited.claimedHandoffs).toEqual([]);
+    });
+
+    test("listed session tasks keep their ledger id and open the mirrored Work id", async () => {
+        const { files, row } = fixture();
+        const store = join(dirname(files.file), "work.db");
+        const db = openWorkDb(store);
+        const prompt = "Inspect the receipt. ".repeat(110);
+        try {
+            mirrorSessionTodos(db, [{ ...row, prompt }], () => "receipt1");
+        } finally {
+            db.close();
+        }
+        const snapshot = await listLiveWidgetTasks({ file: files.file, store, liveSessions: async () => new Set() });
+        expect(snapshot.tasks[0]).toMatchObject({
+            id: row.id,
+            workRef: "w_receipt1",
+            fullText: prompt,
+            truncated: true,
+        });
+    });
+
+    test("parity (work-items P9, list 2): every task the log shows today shows the same from the work store", () => {
+        const { files, row } = fixture();
+        const rows: DecisionRecord[] = [
+            row,
+            {
+                ...row,
+                id: "t_2_fixture",
+                number: 2,
+                state: "acknowledged",
+                title: undefined,
+                prompt: "No title\nsecond",
+            },
+            { ...row, id: "t_3_fixture", number: 3, state: "implemented", project: "Other", blocking: false },
+            { ...row, id: "t_4_fixture", number: 4, state: "dismissed", provider: "grok" },
+            { ...row, id: "t_5_local", sessionId: LOCAL_TASK_SESSION, number: 1, provider: undefined },
+            { ...row, id: "d_1_fixture", type: "decision" },
+        ];
+        writeFileSync(files.file, rows.map((entry) => SafeJSON.stringify(entry)).join("\n") + "\n");
+        const store = join(files.file, "..", "work.db");
+        const db = openWorkDb(store);
+
+        try {
+            mirrorSessionTodos(
+                db,
+                rows.filter((r) => r.type === "todo")
+            );
+        } finally {
+            db.close();
+        }
+
+        for (const filters of [
+            {},
+            { scope: "all" as const },
+            { scope: "completed" as const },
+            { scope: "dismissed" as const },
+            { scope: "all" as const, projects: ["Other"] },
+            { scope: "all" as const, sessions: [`codex:${LOCAL_TASK_SESSION}`] },
+        ]) {
+            const fromLog = listWidgetTasks({ file: files.file, filters });
+            const fromStore = listWidgetTasks({ file: files.file, store, filters });
+            expect(fromStore.sourcePath).toBe(`${store}-wal`);
+            const { sourcePath: _a, sourceStamp: _b, ...log } = fromLog;
+            const { sourcePath: _c, sourceStamp: _d, work: _e, ...stored } = fromStore;
+            expect(stored).toEqual(log);
+        }
+    });
+
+    test("the default log keeps its to-do rows in the work store: a post, a move, the numbering, an old row moved over", async () => {
+        const files = decisionFiles();
+        const session = `p9-switch-${Date.now()}`;
+        mkdirSync(dirname(files.file), { recursive: true });
+        // A to-do row written by the old code still sits in the log.
+        const old: DecisionRecord = {
+            ...fixture().row,
+            id: `t_1_${session}`,
+            sessionId: session,
+            number: 1,
+            state: "open",
+        };
+        appendFileSync(files.file, `${SafeJSON.stringify(old)}\n`);
+        expect(readDecisions(files.file).filter((r) => r.sessionId === session)).toHaveLength(1);
+
+        const next = await createTodo({
+            ...files,
+            todo: { title: "Second step", sessionId: session, provider: "claude" },
+        });
+        expect(next).toMatchObject({ number: 2, sessionId: session });
+        const logged = () =>
+            readFileSync(files.file, "utf8")
+                .split("\n")
+                .filter((line) => line.includes(session));
+        // The new row went to the store only, and the old row stays in the log until the log's next rewrite.
+        expect(logged()).toHaveLength(1);
+        expect(
+            storedTodoRows()
+                .filter((r) => r.sessionId === session)
+                .map((r) => r.number)
+        ).toEqual([2]);
+
+        const done = await updateTodo({ ...files, id: old.id, state: "implemented", expected: expected(old) });
+        expect(done.state).toBe("implemented");
+        expect(logged()).toHaveLength(0);
+        const rows = readDecisions(files.file).filter((r) => r.sessionId === session);
+        expect(rows.map((r) => [r.number, r.state]).sort()).toEqual([
+            [1, "implemented"],
+            [2, "open"],
+        ]);
+        // A process with older code appends a newer copy of a to-do row to the log: the read shows that copy.
+        const second = readDecisions(files.file).find((r) => r.id === next.id);
+        const newer = {
+            ...second,
+            title: "Changed by old code",
+            updatedTs: new Date(Date.now() + 60_000).toISOString(),
+        };
+        appendFileSync(files.file, `${SafeJSON.stringify(newer)}\n`);
+        expect(readDecisions(files.file).find((r) => r.id === next.id)?.title).toBe("Changed by old code");
+        expect(readDecisions(files.file).filter((r) => r.id === next.id)).toHaveLength(1);
+
+        const db = openWorkDb(workDbPath());
+
+        try {
+            const items = listItems(db, { tag: "session-todo", states: ["done"] });
+            expect(items.ok && items.rows.some((r) => r.title === old.title)).toBe(true);
+        } finally {
+            db.close();
+        }
     });
 
     test("a task's session is trimmed once, so it numbers on with that session's tasks", async () => {

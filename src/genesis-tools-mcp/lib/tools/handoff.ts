@@ -1,12 +1,6 @@
-import {
-    executeHandoffActions,
-    getHandoff,
-    type HandoffDeps,
-    listHandoffs,
-    type PostHandoffResponse,
-    postHandoff,
-} from "@app/handoff/executor";
+import { executeHandoffActions, type HandoffDeps, type PostHandoffResponse, postHandoff } from "@app/handoff/executor";
 import type { HandoffActionInput, HandoffTarget, HandoffTaskInput } from "@app/handoff/types";
+import { workHandoffReader } from "@app/handoff/work-reader";
 import { linkFor, type PlannedLink, planMintedLink } from "@genesiscz/utils/browser-router/links";
 import { cmuxLaunchUrl } from "@genesiscz/utils/browser-router/presets";
 import { routerStatus } from "@genesiscz/utils/browser-router/status";
@@ -56,6 +50,8 @@ function render(value: unknown): string {
 }
 
 const DEFAULT_MCP_INCLUDE = ["tasks"];
+/** handoff_get answers the compact view by default: the head and one row per task (work-items P6). */
+const COMPACT_GET_INCLUDE = ["rows"];
 
 const RUN_LINK_LABEL = "Run handoff in new cmux surface";
 const RUN_LINK_INFO = "Show paste.runLink.markdown to the user so they can open the handoff in a new cmux surface.";
@@ -129,11 +125,11 @@ export async function handleHandoffPost(args: HandoffPostArgs, deps: HandoffDeps
 }
 
 export async function handleHandoffGet(args: HandoffGetArgs, deps: HandoffDeps = {}): Promise<string> {
-    return render(getHandoff({ ...args, include: args.include ?? DEFAULT_MCP_INCLUDE }, deps));
+    return render(workHandoffReader.getHandoff({ ...args, include: args.include ?? COMPACT_GET_INCLUDE }, deps));
 }
 
 export async function handleHandoffList(args: HandoffListArgs, deps: HandoffDeps = {}): Promise<string> {
-    return render(listHandoffs(args, deps));
+    return render(workHandoffReader.listHandoffs(args, deps));
 }
 
 export async function handleHandoffAction(args: HandoffActionArgs, deps: HandoffDeps = {}): Promise<string> {
@@ -169,8 +165,10 @@ export const HANDOFF_GET_DESCRIPTION =
     "is per-session not per-human), the response also returns your editId; if the posting session is gone " +
     "and the editId is lost, your user can read it on the dev-dashboard /qa Agent-tasks tab. info[] always " +
     "states where you stand and the one next step. After claiming, record work via handoff_action check_task. " +
-    'Optional include: string[] scopes the response (default ["tasks"] — full task array). Sections: tasks, ' +
-    'claimedBy, comments, attachments, events, postedBy, postedByContext. Special: include:["events"] alone ' +
+    'Optional include: string[] scopes the response. Default ["rows"]: the head and one row per task ' +
+    "(id, text, open/done/denied), no description. Sections: rows, description, tasks (full task array with " +
+    "proofs, adds the description), claimedBy, comments, attachments, events, postedBy, postedByContext; " +
+    '["full"] is the whole handoff. Special: include:["events"] alone ' +
     "returns {events, info} without the handoff envelope.";
 
 export const HANDOFF_LIST_DESCRIPTION =
@@ -210,8 +208,8 @@ const INCLUDE_PROP = {
     type: "array",
     items: { type: "string" },
     description:
-        "optional response sections — tasks | claimedBy | comments | attachments | events | postedBy | postedByContext. " +
-        'Default on get/action: ["tasks"]. Unknown names → error listing valid sections.',
+        "optional response sections — rows | description | full | tasks | claimedBy | comments | attachments | events | " +
+        'postedBy | postedByContext. Default on get: ["rows"]; on action: ["tasks"]. Unknown names → error listing valid sections.',
 } as const;
 
 const TASK_ITEM_SCHEMA = {
@@ -296,8 +294,8 @@ export const HANDOFF_GET_INPUT_SCHEMA = {
 export const HANDOFF_LIST_INPUT_SCHEMA = {
     type: "object",
     properties: {
-        limit: { type: "number", description: "max rows (default 20)" },
-        offset: { type: "number", description: "skip this many rows (paging)" },
+        limit: { type: "integer", minimum: 1, description: "max rows (default 20)" },
+        offset: { type: "integer", minimum: 0, description: "skip this many rows (paging)" },
         mine: {
             type: "boolean",
             description: "only handoffs posted by, claimed by, or targeted at this session",

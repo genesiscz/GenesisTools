@@ -81,6 +81,34 @@ describe("decision hub hooks", () => {
         expect(existsSync(log.file)).toBe(false);
     });
 
+    it("reminds only when the open agent todo list changes", async () => {
+        const { deps, log } = harness();
+        let previous = "";
+        const wired = {
+            ...deps,
+            todoReminder: {
+                read: () => previous,
+                save: (_: string, value: string) => {
+                    previous = value;
+                },
+            },
+        };
+        const [todo] = await postDecisions(log.file, log.events, {
+            sessionId: "sess-1",
+            decisions: [
+                { type: "todo", title: "Review notes", prompt: "Check notes" },
+                { type: "todo", for: "human", prompt: "Choose" },
+            ],
+        });
+        const stop = () => runDecisionStop(stopPayload("Done."), decisionsOn(), wired);
+        expect(await stop()).toEqual({ systemMessage: "Your open tasks: TODO 1: Review notes" });
+        expect(await stop()).toBeNull();
+        await updateDecision(log.file, log.events, todo.id, { state: "implemented" });
+        expect(await stop()).toBeNull();
+        await updateDecision(log.file, log.events, todo.id, { state: "open" });
+        expect(await stop()).toEqual({ systemMessage: "Your open tasks: TODO 1: Review notes" });
+    });
+
     it("blocks an unposted DECISION, counts it, and falls back to a warning past the loop guard", async () => {
         const { deps, counts } = harness();
         const config = decisionsOn({ maxBlocksPerSession: 1 });

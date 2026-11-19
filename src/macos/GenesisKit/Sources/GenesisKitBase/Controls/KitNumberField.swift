@@ -48,10 +48,35 @@ public enum KitNumberFieldMath {
 
     /// The number a typed text means: the digits with an optional minus, inside the range. Text that is no number
     /// gives `fallback`, so a field left empty puts its value back.
-    public static func parsed(_ text: String, fallback: Int, in range: ClosedRange<Int>) -> Int {
+    public static func parsed(_ text: String, fallback: Int, in range: ClosedRange<Int>, fractionDigits: Int = 0) -> Int {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
-        guard let typed = Int(trimmed) else { return clamped(fallback, in: range) }
-        return clamped(typed, in: range)
+        let digits = min(6, max(0, fractionDigits))
+        if digits == 0 {
+            guard let typed = Int(trimmed) else { return clamped(fallback, in: range) }
+            return clamped(typed, in: range)
+        }
+        let strategy = Decimal.ParseStrategy(format: decimalStyle(digits), lenient: false)
+        guard let typed = try? strategy.parse(trimmed), typed.isFinite else {
+            return clamped(fallback, in: range)
+        }
+        var scaled = typed * Decimal(sign: .plus, exponent: digits, significand: 1)
+        guard scaled.isFinite else { return typed < 0 ? range.lowerBound : range.upperBound }
+        var rounded = Decimal()
+        NSDecimalRound(&rounded, &scaled, 0, .plain)
+        if rounded <= Decimal(range.lowerBound) { return range.lowerBound }
+        if rounded >= Decimal(range.upperBound) { return range.upperBound }
+        return NSDecimalNumber(decimal: rounded).intValue
+    }
+
+    public static func formatted(_ value: Int, fractionDigits: Int) -> String {
+        let digits = min(6, max(0, fractionDigits))
+        guard digits > 0 else { return String(value) }
+        let number = Decimal(value) * Decimal(sign: .plus, exponent: -digits, significand: 1)
+        return number.formatted(decimalStyle(digits))
+    }
+
+    private static func decimalStyle(_ digits: Int) -> Decimal.FormatStyle {
+        .number.precision(.fractionLength(0...digits)).grouping(.never)
     }
 
     /// `value` moved by `count` steps. A value off the step grid lands on the grid first ("7" with a step of 5 goes
@@ -107,7 +132,7 @@ public enum KitNumberFieldMath {
     }
 }
 
-/// A whole number with its unit in one control: "− 48 hours +", "± 15 min", "14 days".
+/// A number with its unit in one control: "− 48 hours +", "± 15 min", "1.25 s".
 ///
 /// - The number is a text field: a click anywhere on it edits. Return and a click elsewhere commit, Escape puts the
 ///   value back, and a typed value outside the range lands on the nearest limit.
@@ -127,6 +152,7 @@ public struct KitNumberField: View {
     private let size: KitControlSize
     private let identifier: String?
     private let minWidth: CGFloat?
+    private let fractionDigits: Int
     private var previewFocused = false
 
     /// The text in the field: the value, the value of a hold that runs, or what the reader types.
@@ -151,10 +177,11 @@ public struct KitNumberField: View {
     ///   - identifier: of the text field; the buttons are `<identifier>.decrement` and `<identifier>.increment`.
     ///   - minWidth: the least width of the whole control; the number stays in its middle. Fields under each other
     ///     (the rows of a settings card) take one value, so their buttons stand in two straight columns.
+    ///   - fractionDigits: decimal places in the binding's fixed-point representation, e.g. 6 for microseconds shown as seconds.
     public init(_ title: String, value: Binding<Int>, in range: ClosedRange<Int>, step: Int = 1,
                 prefix: KitNumberAdornment? = nil, suffix: KitNumberAdornment? = nil,
                 style: KitNumberFieldStyle = .stepper, size: KitControlSize = .regular, identifier: String? = nil,
-                minWidth: CGFloat? = nil) {
+                minWidth: CGFloat? = nil, fractionDigits: Int = 0) {
         self.title = title
         _value = value
         self.range = range
@@ -165,7 +192,8 @@ public struct KitNumberField: View {
         self.size = size
         self.identifier = identifier
         self.minWidth = minWidth
-        _entry = State(initialValue: String(value.wrappedValue))
+        self.fractionDigits = min(6, max(0, fractionDigits))
+        _entry = State(initialValue: KitNumberFieldMath.formatted(value.wrappedValue, fractionDigits: fractionDigits))
     }
 
     /// Draws the field as it looks while the reader types in it. For a picture, where nothing has the keyboard.
@@ -176,7 +204,12 @@ public struct KitNumberField: View {
     }
 
     /// The number the field shows now.
-    private var current: Int { KitNumberFieldMath.parsed(entry, fallback: value, in: range) }
+    private var current: Int { KitNumberFieldMath.parsed(entry, fallback: value, in: range, fractionDigits: fractionDigits) }
+    private func formatted(_ value: Int) -> String { KitNumberFieldMath.formatted(value, fractionDigits: fractionDigits) }
+    private var digits: Int {
+        let whole = KitNumberFieldMath.digits(in: range)
+        return fractionDigits == 0 ? whole : max(whole + 1, fractionDigits + (range.lowerBound < 0 ? 3 : 2))
+    }
     private var ink: Color { scheme == .dark ? .white : .black }
     private var inset: CGFloat { 2 }
     private var valueFont: Font {
@@ -230,7 +263,7 @@ public struct KitNumberField: View {
             }
             // What the reader types is theirs until they commit or press Escape.
             guard !editing else { return }
-            let text = String(updated)
+            let text = formatted(updated)
             if text != entry { entry = text }
         }
         .onChange(of: editing) { _, now in
@@ -245,7 +278,7 @@ public struct KitNumberField: View {
             // The room of the widest value and wording: the control never changes its width.
             HStack(spacing: 4) {
                 if let prefix { adornmentRoom(prefix) }
-                Text(verbatim: String(repeating: "8", count: KitNumberFieldMath.digits(in: range)))
+                Text(verbatim: String(repeating: "8", count: digits))
                     .font(valueFont).padding(.horizontal, 3)
                 if let suffix { adornmentRoom(suffix) }
             }
@@ -287,7 +320,7 @@ public struct KitNumberField: View {
                     }
                     .onKeyPress(.escape) {
                         guard editing else { return .ignored }
-                        entry = String(value)
+                        entry = formatted(value)
                         editing = false
                         return .handled
                     }
@@ -347,14 +380,14 @@ public struct KitNumberField: View {
 
     private func nudge(_ direction: Int, big: Bool) {
         let next = KitNumberFieldMath.stepped(current, by: direction * (big ? 10 : 1), step: step, in: range)
-        let text = String(next)
+        let text = formatted(next)
         if text != entry { entry = text }
     }
 
     /// Ends a gesture: the field shows the value inside the range, and the binding gets it when it changed.
     private func commit() {
         let next = current
-        let text = String(next)
+        let text = formatted(next)
         if text != entry { entry = text }
         guard next != value else { return }
         sent = next
@@ -369,7 +402,8 @@ public struct KitNumberField: View {
             try? await Task.sleep(for: Self.settleTime)
             guard !Task.isCancelled else { return }
             sent = nil
-            if !editing, String(value) != entry { entry = String(value) }
+            let text = formatted(value)
+            if !editing, text != entry { entry = text }
         }
     }
 }

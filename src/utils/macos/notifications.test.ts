@@ -7,6 +7,8 @@ import { systemChannelDelivered } from "@genesiscz/utils/notifications/channels/
 import { keptExecutable } from "@genesiscz/utils/test/kept-executable";
 import * as notifications from "./notifications";
 import { launchdSession, resolveNotificationFallbackState, sendViaTerminalNotifier } from "./notifications";
+import { appNotificationBackend } from "./notifications-app";
+import { appNeedFixture } from "./testing/app-need";
 
 /** Kept, one per body: a fake started and then deleted with the run's temp root is the syspolicyd trap. */
 function fakeNotifier(body: string): string {
@@ -14,6 +16,21 @@ function fakeNotifier(body: string): string {
 }
 
 describe("sendViaTerminalNotifier", () => {
+    it("appends the install reason and fix only when the alternative app backend is unavailable", () => {
+        const missing = appNeedFixture({ installed: false });
+        expect(appNotificationBackend.available(missing)).toBe(false);
+        expect(appNotificationBackend.terminalNotifierFixHint(missing)).toBe(
+            " (GenesisTools.app is not installed at /fixture/GenesisTools.app. Run `fixture-build`.)"
+        );
+        expect(appNotificationBackend.available(appNeedFixture())).toBe(true);
+        expect(appNotificationBackend.terminalNotifierFixHint(appNeedFixture())).toBe("");
+        const refused = appNeedFixture({ isTest: true });
+        expect(appNotificationBackend.available(refused)).toBe(false);
+        expect(appNotificationBackend.terminalNotifierFixHint(refused)).toBe(
+            " (a test process never reaches GenesisTools.app)"
+        );
+    });
+
     // Regression test: #455 — terminal-notifier returning exit 3 ("Could not request
     // notification permission: Notifications are not allowed for this application") was
     // ignored; GenesisTools logged "Notification sent via terminal-notifier" and exited 0

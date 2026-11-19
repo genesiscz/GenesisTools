@@ -83,6 +83,8 @@ async function sourceEvidence(input: {
 export interface ClipPlan {
     /** The split boundary came from accepted acoustic word timings, so quiet-gap refinement must keep it. */
     wordTimed?: true;
+    /** Shown while playing a question whose decided passages are separated by other audio. */
+    gapNote?: string;
     fromSec: number;
     toSec: number;
     /** Audio before the heard stretch, and after it unless `padAfterSec` says otherwise. */

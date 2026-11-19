@@ -55,8 +55,10 @@ struct VaultCaller {
     private static let scriptExtensions = [".ts", ".tsx", ".js", ".mjs", ".cjs"]
 
     /// Interpreter flags whose value is the next argument (`--preload <file>`): that value is not the script.
+    /// `--config` is not one: Bun 1.4.2 takes its file only as `--config=<file>`, and `bun --config x.js y.ts` runs
+    /// x.js as the program (measured 2026-11-17).
     private static let valueFlags: Set<String> = [
-        "--preload", "-r", "--require", "--import", "--loader", "--config", "--cwd", "--env-file",
+        "--preload", "-r", "--require", "--import", "--loader", "--cwd", "--env-file",
     ]
 
     /// The preloads the `tools` wrapper passes to every tool, relative to the checkout the script is in. They are
@@ -66,6 +68,14 @@ struct VaultCaller {
         "src/utils/bun/preload-solid-scoped.ts", "src/utils/search/stores/sqlite-vec-preload.ts",
         "src/utils/bun/preload-orphan-watchdog.ts",
     ]
+
+    /// The bunfig.toml the `tools` wrapper passes as `--config=<checkout>/<this>`, relative to the checkout the script
+    /// is in. With it Bun reads no bunfig.toml of the working folder (2026-11-17: `tools claude embed` in a GenesisTools
+    /// worktree loaded that worktree's preloads too, and every T3 session start could only be allowed once).
+    static let ownConfig = "src/utils/bun/launcher.bunfig.toml"
+
+    /// What a bun request started without any `--config=` shows as its extra code.
+    static let noConfigFinding = "bunfig.toml preload (started without --config=, so a preload of its folder can hide itself)"
 
     private var supportsRunSubcommand: Bool {
         let name = executable.map { ($0 as NSString).lastPathComponent.lowercased() } ?? ""
@@ -178,8 +188,12 @@ struct VaultCaller {
         // A checkout's own preloads are part of the program; any other preload, or any other loading flag, is not.
         let checkout = script.flatMap { path in path.range(of: "/src/", options: .backwards).map { String(path[..<$0.lowerBound]) } }
         let own = Set(Self.ownPreloads.compactMap { relative in checkout.map { root in "\(root)/\(relative)" } })
+        let ownConfig = checkout.map { root in "\(root)/\(Self.ownConfig)" }
         let foreign = leadingFlags.filter { flag in
-            !(flag.flag == "--preload" && flag.value.map { value in own.contains((value as NSString).standardizingPath) } == true)
+            let value = flag.value.map { value in (value as NSString).standardizingPath }
+            if flag.flag == "--preload", let value, own.contains(value) { return false }
+            if flag.flag == "--config", let value, value == ownConfig { return false }
+            return true
         }
         if !foreign.isEmpty {
             let shown = foreign.map { flag in flag.value.map { value in "\(flag.flag) \(value)" } ?? flag.flag }
@@ -190,9 +204,15 @@ struct VaultCaller {
         // `~/.bunfig.toml` and `$XDG_CONFIG_HOME/.bunfig.toml`. Neither an argument nor a variable names it.
         if let executable, VaultGrants.runtime(of: executable) == "bun" {
             let startedAt = identity.map { Date(timeIntervalSince1970: TimeInterval($0.startSeconds) + TimeInterval($0.startMicroseconds) / 1_000_000) }
+            // Bun reads the last `--config=` file instead of the working folder's; any other one is foreign above.
+            let config = leadingFlags.last { flag in flag.flag == "--config" }?.value
+            // Without one, what the folder held at the start is unknown: a preload of its bunfig.toml can delete the
+            // file and `chdir` to a quiet folder before it asks, and the folder read here is the one it moved to
+            // (decision 61, 2026-11-17). The tools wrapper and GenesisTools' own respawns pass the checkout's file.
+            if config == nil { found.append(Self.noConfigFinding) }
             found += Self.untrustedBunfigPreloads(cwd: cwd, home: NSHomeDirectory(),
                                                   xdgConfigHome: args?.environmentValue("XDG_CONFIG_HOME"), own: own,
-                                                  startedAt: startedAt)
+                                                  startedAt: startedAt, config: config)
         }
 
         return found
@@ -205,10 +225,18 @@ struct VaultCaller {
     /// The files are read now, not at the start: a preload of an untrusted bunfig.toml can delete its own file before
     /// the key is asked for. So the working folder counts as changed, and fails closed, when its bunfig.toml (or, with
     /// none, the folder itself) changed after the process started: the state that was read then can no longer be shown.
+    ///
+    /// With `config` (the file of a `--config=<file>` flag) Bun reads that file instead of the working folder's, and
+    /// resolves its relative entries against the working folder (measured on Bun 1.4.2, 2026-11-17). Then that file is
+    /// the one watched, and a change of the working folder no longer matters.
     static func untrustedBunfigPreloads(cwd: String?, home: String, xdgConfigHome: String?, own: Set<String>,
-                                        startedAt: Date?, fileManager: FileManager = .default) -> [String] {
+                                        startedAt: Date?, config: String? = nil,
+                                        fileManager: FileManager = .default) -> [String] {
+        let config = config.flatMap { path in path.isEmpty ? nil : path }
         var files: [(path: String, base: String)] = []
-        if let cwd, !cwd.isEmpty { files.append(((cwd as NSString).appendingPathComponent("bunfig.toml"), cwd)) }
+        if let cwd, !cwd.isEmpty {
+            files.append(config.map { path in (path, cwd) } ?? ((cwd as NSString).appendingPathComponent("bunfig.toml"), cwd))
+        }
         files.append(((home as NSString).appendingPathComponent(".bunfig.toml"), home))
         if let xdgConfigHome, !xdgConfigHome.isEmpty {
             files.append(((xdgConfigHome as NSString).appendingPathComponent(".bunfig.toml"), xdgConfigHome))
@@ -217,7 +245,7 @@ struct VaultCaller {
         var found: [String] = cwd == nil ? ["bunfig.toml preload (the working folder is not known)"] : []
         if let cwd, !cwd.isEmpty {
             let file = (cwd as NSString).appendingPathComponent("bunfig.toml")
-            let watched = fileManager.fileExists(atPath: file) ? file : cwd
+            let watched = config ?? (fileManager.fileExists(atPath: file) ? file : cwd)
             if let startedAt {
                 if let changed = Self.changeTime(of: watched), changed >= startedAt {
                     found.append("bunfig.toml preload (\(watched) changed after the process started)")
@@ -637,6 +665,11 @@ enum VaultGrants {
     /// claim arbiter is a directory with the suffix below; hold it while creating the PID record and updating.
     /// Never steal here: TypeScript owns stale recovery; an unavailable lock makes this allow once-only.
     static func store(_ grant: VaultGrant, now: Int64, to path: String = path, timeout: TimeInterval = 10) async -> Bool {
+        await withLock(path, timeout: timeout) { save(remember(grant, now: now, in: load(from: path)), to: path) }
+    }
+
+    /// Runs `update` while holding `<path>.lock`, the lock `tools ai gate revoke` takes for the same file.
+    static func withLock(_ path: String, timeout: TimeInterval = 10, _ update: () -> Bool) async -> Bool {
         let lockPath = path + ".lock"
         do {
             try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent,
@@ -652,7 +685,7 @@ enum VaultGrants {
                     defer { close(fd); unlink(lockPath) }
                     let pid = Data("\(getpid())\n".utf8)
                     guard pid.withUnsafeBytes({ Darwin.write(fd, $0.baseAddress, $0.count) }) == pid.count else { return false }
-                    return save(remember(grant, now: now, in: load(from: path)), to: path)
+                    return update()
                 }
                 guard errno == EEXIST else { return false }
             } else if errno != EEXIST { return false }
@@ -662,7 +695,7 @@ enum VaultGrants {
     }
 
     @discardableResult
-    static func save(_ file: VaultGrantsFile, to path: String = path) -> Bool {
+    static func save<File: Encodable>(_ file: File, to path: String = path) -> Bool {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         guard let data = try? encoder.encode(file) else { return false }
@@ -733,6 +766,20 @@ struct VaultWindowContent {
         ApprovalRemember(seconds: nil, title: "Always for this program"),
     ]
 
+    /// The whole agent session that started the caller (`VaultSessionGrant`), offered whenever one did.
+    static let sessionChoices = [
+        ApprovalRemember(seconds: 3_600, title: "This session for 1 hour"),
+        ApprovalRemember(seconds: 8 * 3_600, title: "This session for 8 hours"),
+    ]
+
+    /// The program choices when the program may be remembered, then the session choices when an agent session started
+    /// it. A single choice shows no picker, and the window says why it holds once.
+    static func choices(rememberable: Bool, anchor: VaultSessionAnchor?) -> [ApprovalRemember] {
+        let program = rememberable ? rememberChoices : Array(rememberChoices.prefix(1))
+        let all = program + (anchor == nil ? [] : sessionChoices)
+        return all.count > 1 ? all : []
+    }
+
     static let footnote = "The vault key unlocks every secret GenesisTools stores (AI account tokens and API keys), so an allowed program can read all of them."
 
     static func shortPath(_ path: String, home: String = NSHomeDirectory()) -> String {
@@ -762,7 +809,7 @@ struct VaultWindowContent {
     }
 
     static func build(_ params: VaultUnlockParams, caller: VaultCaller, session: VaultSessionInfo,
-                      home: String = NSHomeDirectory()) -> VaultWindowContent {
+                      anchor: VaultSessionAnchor? = nil, home: String = NSHomeDirectory()) -> VaultWindowContent {
         let tool = caller.toolName ?? params.tool
         let starter = caller.ancestors.last.map { "None: started by \($0.command)" } ?? "None: started by launchd"
         var facts = [ApprovalFact("Session", session.summary ?? starter)]
@@ -803,6 +850,10 @@ struct VaultWindowContent {
             details.append(ApprovalFact("cmux tab", tab, monospaced: true))
         }
 
+        if let anchor {
+            details.append(ApprovalFact("“This session”", "\(anchor.label) and every program it starts"))
+        }
+
         let injected = caller.injected
         let asked = GateCredentialRedactor.text(params.purpose).trimmingCharacters(in: .whitespacesAndNewlines)
         let line = GateCredentialRedactor.text(params.command ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -813,7 +864,8 @@ struct VaultWindowContent {
             command: onlyRuns ? line : nil,
             facts: facts,
             details: details,
-            warning: injected.isEmpty ? nil : "Extra code may be loaded (\(injected.joined(separator: ", "))). It can only be allowed once.",
+            warning: injected.isEmpty ? nil : "Extra code may be loaded (\(injected.joined(separator: ", "))). "
+                + (anchor == nil ? "It can only be allowed once." : "This program can only be allowed once, or with its whole session."),
             onceOnlyReason: caller.onceOnlyReason)
     }
 }
@@ -945,12 +997,20 @@ func vaultAudit(_ event: String, params: VaultUnlockParams, caller: VaultCaller,
     GateAudit.appendLine(data, to: path)
 }
 
-private func emitVaultKey(remembered: Bool, params: VaultUnlockParams, caller: VaultCaller, session: VaultSessionInfo) -> Never {
+/// `sessionAnchor`: the agent process whose session approval releases this key. It must still be the caller's ancestor
+/// when the key goes out, read again after the keychain (which can block): a session approval ends with its process.
+private func emitVaultKey(remembered: Bool, params: VaultUnlockParams, caller: VaultCaller, session: VaultSessionInfo,
+                          sessionAnchor: VaultSessionAnchor? = nil) -> Never {
     switch VaultKeychain.key() {
     case let .key(key, fromCopy):
         logClick("vault.unlock key from=\(fromCopy ? "app copy" : "keychain item")")
         // Keychain access can block: inspect the recipient after it finishes, immediately before serialization.
         if let reason = VaultRecipient.releaseRejection(caller: caller.identity) {
+            vaultAudit("denied", params: params, caller: caller, session: session, detail: reason)
+            vaultDeny(reason)
+        }
+        if let anchor = sessionAnchor, !anchor.isIn(VaultProcess.lineage(of: caller.pid)) {
+            let reason = "the approved session \(anchor.label) ended before the key was released"
             vaultAudit("denied", params: params, caller: caller, session: session, detail: reason)
             vaultDeny(reason)
         }
@@ -1017,6 +1077,17 @@ func unlockVault(_ params: VaultUnlockParams) {
         emitVaultKey(remembered: true, params: params, caller: caller, session: session)
     }
 
+    let anchor = VaultSessionAnchor.nearest(in: VaultProcess.lineage(of: caller.pid))
+    // The parent chain is read again for every check: the approved agent can exit while this request waits for the
+    // window lock (up to 150 s), and its surviving child is then reparented out of the approved tree.
+    let sessionGrant = { (at: Int64) in
+        VaultSessionGrants.live(lineage: VaultProcess.lineage(of: caller.pid), now: at, in: VaultSessionGrants.load())
+    }
+    if let grant = sessionGrant(now) {
+        vaultAudit("session-allowed", params: params, caller: caller, session: session, detail: "session approval: \(grant.anchor.label)")
+        emitVaultKey(remembered: true, params: params, caller: caller, session: session, sessionAnchor: grant.anchor)
+    }
+
     // The caller waits 180 s in all (VAULT_UNLOCK_TIMEOUT_MS); a window of its own needs at least 20 s of that.
     let windowSeconds = 170.0
     let shortestWindow = 20.0
@@ -1033,8 +1104,14 @@ func unlockVault(_ params: VaultUnlockParams) {
         emitVaultKey(remembered: true, params: params, caller: caller, session: session)
     }
 
+    if lock.waited > 0, let grant = sessionGrant(Int64(Date().timeIntervalSince1970 * 1_000)) {
+        vaultAudit("session-allowed", params: params, caller: caller, session: session, detail: "session approval: \(grant.anchor.label)")
+        emitVaultKey(remembered: true, params: params, caller: caller, session: session, sessionAnchor: grant.anchor)
+    }
+
     let deadlineSeconds = windowSeconds - lock.waited
-    let content = VaultWindowContent.build(params, caller: caller, session: session)
+    let content = VaultWindowContent.build(params, caller: caller, session: session, anchor: anchor)
+    let choices = VaultWindowContent.choices(rememberable: rememberable, anchor: anchor)
     // A host that stops a slow child kills its whole process group: T3 Code gives a provider probe 10 to 20 s, and the
     // window closed with it before anyone could answer. In a group of its own the window stays, and an allow it
     // remembers serves the program's next start. The key itself never reaches a caller that is gone
@@ -1048,7 +1125,7 @@ func unlockVault(_ params: VaultUnlockParams) {
         let model = ApprovalDialogModel(
             title: content.title, purpose: content.purpose, command: content.command, symbol: "key.fill", facts: content.facts,
             details: content.details, warning: content.warning, footnote: VaultWindowContent.footnote,
-            rememberChoices: rememberable ? VaultWindowContent.rememberChoices : [],
+            rememberChoices: choices,
             rememberNote: content.onceOnlyReason.map { "Only once: \($0)" },
             allowTitle: "Use password…",
             deadline: Date().addingTimeInterval(deadlineSeconds), identifier: "vault-unlock", verifier: verifier,
@@ -1068,7 +1145,7 @@ func unlockVault(_ params: VaultUnlockParams) {
             guard !callerGone, !model.answered else { return }
             callerGone = true
             callerExit.cancel()
-            guard rememberable else {
+            guard !choices.isEmpty else {
                 deadline.cancel()
                 vaultPresenter.close()
                 vaultAudit("denied", params: params, caller: caller, session: session, detail: "the caller exited before an answer")
@@ -1099,6 +1176,18 @@ func unlockVault(_ params: VaultUnlockParams) {
                 vaultDeny("the caller exited before an answer")
             }
             Task { @MainActor in
+                if let choice, let anchor, let seconds = choice.seconds, VaultWindowContent.sessionChoices.contains(choice) {
+                    let at = Int64(Date().timeIntervalSince1970 * 1_000)
+                    let grant = VaultSessionGrant(anchor: anchor, sessionId: session.sessionId, title: session.title,
+                                                  grantedAt: at, until: at + Int64(seconds) * 1_000, method: method)
+                    let stored = await VaultSessionGrants.store(grant, now: at)
+                    if !stored { logClick("vault.unlock could not remember the session approval: grant lock or write failed") }
+                    vaultAudit("allowed", params: params, caller: caller, session: session,
+                               detail: "method: \(method); remembered: \(stored ? "session \(seconds / 3_600) h, \(anchor.label)" : "once")")
+                    logClick("vault.unlock decision=allow tool=\(tool) method=\(method) session=\(anchor.label)")
+                    emitVaultKey(remembered: false, params: params, caller: caller, session: session)
+                }
+
                 let forever = rememberable && choice != nil && choice?.seconds == nil
                 var stored = false
                 if rememberable, remember != 0 || forever {
