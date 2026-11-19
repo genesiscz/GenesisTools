@@ -52,6 +52,7 @@ public final class WorkScreenModel: ObservableObject {
     private var trailing: Task<Void, Never>?
     /// A change arrived that no reload has read yet.
     private var stale = false
+    private var projectsStale = false
     public private(set) var visible = true
     /// Reloads that a change of the store started, for tests and the bench.
     private(set) var changeReloads = 0
@@ -68,7 +69,7 @@ public final class WorkScreenModel: ObservableObject {
         guard next != visible else { return }
         visible = next
         if next {
-            if stale { schedule() }
+            if stale || projectsStale { schedule() }
         } else {
             trailing?.cancel()
             trailing = nil
@@ -100,6 +101,11 @@ public final class WorkScreenModel: ObservableObject {
         listening = nil
         trailing?.cancel()
         trailing = nil
+        loading?.cancel()
+        loading = nil
+        loadToken = UUID()
+        isLoading = false
+        stale = true
     }
 
     public func loadProjects() async {
@@ -122,6 +128,10 @@ public final class WorkScreenModel: ObservableObject {
     }
 
     public func reload() {
+        guard visible, listening != nil else {
+            stale = true
+            return
+        }
         loading?.cancel()
         guard let project else {
             loading = nil
@@ -156,28 +166,39 @@ public final class WorkScreenModel: ObservableObject {
             self.isLoading = false
             self.loading = nil
             // Changes that came during this reload get one more, by the same rules.
-            if self.stale { self.schedule() }
+            if self.stale || self.projectsStale { self.schedule() }
         }
     }
 
     /// A change of the store: the screen is stale, and one reload follows by the rules above.
     func changed() {
         stale = true
+        projectsStale = true
         schedule()
     }
 
     /// One reload after the burst settles, no sooner than `reloadInterval` after the last one, never beside a running
     /// one, never while hidden. A burst that keeps going still reloads once per interval.
     private func schedule() {
-        guard visible, trailing == nil, loading == nil else { return }
+        guard visible, listening != nil, trailing == nil, loading == nil else { return }
         let wait = max(settle, reloadInterval - Date().timeIntervalSince(lastReload))
         trailing = Task { [weak self] in
             try? await Task.sleep(for: .seconds(wait))
             guard let self, !Task.isCancelled else { return }
-            self.trailing = nil
-            guard self.visible, self.stale, self.loading == nil else { return }
+            guard self.visible, self.listening != nil, (self.stale || self.projectsStale), self.loading == nil else {
+                self.trailing = nil
+                return
+            }
             self.changeReloads += 1
-            self.reload()
+            let previousLoad = self.loadToken
+            if self.projectsStale {
+                self.projectsStale = false
+                await self.loadProjects()
+            }
+            guard !Task.isCancelled else { return }
+            self.trailing = nil
+            guard self.visible, self.listening != nil else { return }
+            if self.loadToken == previousLoad { self.reload() }
         }
     }
 
