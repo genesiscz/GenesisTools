@@ -229,10 +229,10 @@ export function lineTallies(options: {
             self.mic.set(rule, (self.mic.get(rule) ?? 0) + 1);
         }
 
+        // lineEvidence counts only successful observations. The start can be unknown even when a later read
+        // shows a speaker. That read contributes to the score without establishing full-line identity.
         const shown = Object.entries(line.speaking).flatMap(([name, readings]) =>
-            !line.speakingUnknown && readings > 0 && allows(name) && !muted(name) && !sameName(name, options.selfName)
-                ? [name]
-                : []
+            readings > 0 && allows(name) && !muted(name) && !sameName(name, options.selfName) ? [name] : []
         );
 
         for (const tally of once(shown)) {
