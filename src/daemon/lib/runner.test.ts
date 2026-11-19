@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { priorityToolsOnDisk } from "@genesiscz/utils/process/priority";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { skip } from "@genesiscz/utils/test/skip";
 import { taskWorkingDir } from "./config";
@@ -182,6 +183,13 @@ describe("taskArgv", () => {
 
     it("runs low as normal where taskpolicy does not exist, so a Linux task does not fail with ENOENT", () => {
         expect(taskArgv("echo hi", "low", { perl: true, taskpolicy: false })).toEqual(["sh", "-c", "echo hi"]);
+    });
+
+    it("offers no darwin wrapper off macOS, so a Linux perl never runs the darwin setpriority call", () => {
+        const linux = priorityToolsOnDisk("linux");
+        expect(linux).toEqual({ perl: false, taskpolicy: false });
+        expect(taskArgv("echo hi", "high", linux)).toEqual(["sh", "-c", "echo hi"]);
+        expect(taskArgv("echo hi", "low", linux)).toEqual(["sh", "-c", "echo hi"]);
     });
 
     it.skipIf(process.platform !== "darwin")(

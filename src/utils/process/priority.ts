@@ -9,7 +9,7 @@ import { libSystem } from "@genesiscz/utils/fs/native/libsystem";
  * - `normal`: the parent's QoS. A child of a background parent (a launchd `ProcessType=Background` job) is throttled.
  * - `high`: the child clears any background state it inherited before the command starts, so it runs at normal QoS
  *   even under a background parent.
- * Without /usr/sbin/taskpolicy or /usr/bin/perl (any system but macOS) `low` and `high` run as `normal`.
+ * Off macOS, or without /usr/sbin/taskpolicy or /usr/bin/perl, `low` and `high` run as `normal`.
  */
 export const PROCESS_PRIORITIES = ["high", "normal", "low"] as const;
 export type ProcessPriority = (typeof PROCESS_PRIORITIES)[number];
@@ -26,12 +26,20 @@ const TASKPOLICY = "/usr/sbin/taskpolicy";
 const RAISE_FROM_BACKGROUND =
     'setpriority(4, 0, 0) or warn "setpriority: $!\\n"; exec { $ARGV[0] } @ARGV or die "exec $ARGV[0]: $!\\n"';
 
+/** The darwin tools a priority can use. Both wrappers call darwin-only interfaces, so they are false off macOS. */
 export interface PriorityTools {
+    /** /usr/bin/perl on macOS, which runs the `setpriority(PRIO_DARWIN_PROCESS, …)` wrapper. */
     perl: boolean;
+    /** /usr/sbin/taskpolicy (macOS only). */
     taskpolicy: boolean;
 }
 
-export function priorityToolsOnDisk(): PriorityTools {
+export function priorityToolsOnDisk(platform: NodeJS.Platform = process.platform): PriorityTools {
+    if (platform !== "darwin") {
+        // A Linux perl would run the darwin wrapper, fail its setpriority call and warn on every start.
+        return { perl: false, taskpolicy: false };
+    }
+
     return { perl: existsSync(PERL), taskpolicy: existsSync(TASKPOLICY) };
 }
 
