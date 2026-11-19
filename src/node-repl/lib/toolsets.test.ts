@@ -275,6 +275,8 @@ type VoiceDoors = {
 interface MeetingsHandle {
     applySeats(input: unknown): Promise<unknown>;
     backfillVoices(input: unknown): Promise<unknown>;
+    voiceJobs(): Promise<unknown>;
+    cancelVoiceJob(id: string): Promise<unknown>;
     seats(input: unknown): Promise<unknown>;
     thresholds(input?: unknown): Promise<unknown>;
     voiceReadiness(input: unknown): Promise<unknown>;
@@ -454,6 +456,18 @@ describe("toolset method names", () => {
         await expect(meetings.backfillVoices({ meetings: [meeting], project })).rejects.toThrow(
             "Choose meetings or a project"
         );
+    });
+
+    test("P6 REPL lists voice jobs and cancels by positional id", async () => {
+        const meetings = await loadMeetings();
+        expect(await meetings.voiceJobs()).toEqual([]);
+        expect(await meetings.cancelVoiceJob("missing")).toBeNull();
+        for (const [name, cli] of [
+            ["voiceJobs", "jobs"],
+            ["cancelVoiceJob", "jobs cancel"],
+        ]) {
+            expect(describeMethod([new MeetingsToolset().api], `meetings.${name}`)).toContain(`meetings voices ${cli}`);
+        }
     });
 
     test("meetings parity t1 describes CLI twins and reads thresholds with the CLI save guard", async () => {
