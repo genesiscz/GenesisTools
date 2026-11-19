@@ -140,7 +140,12 @@ test("voices has one tree, the voice alias, and all old and new subcommands", as
     for (const requested of ["voices", "voice"]) {
         const program = new Command().exitOverride();
         await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested });
-        const tree = program.commands.find((command) => command.name() === "voices")!;
+        const trees = program.commands.filter((command) =>
+            [command.name(), ...command.aliases()].some((name) => name === "voices" || name === "voice")
+        );
+        expect(trees).toHaveLength(1);
+        const [tree] = trees;
+        expect(tree.name()).toBe("voices");
         expect(tree.aliases()).toContain("voice");
         expect(tree.commands.map((command) => command.name()).sort()).toEqual([
             "add",
