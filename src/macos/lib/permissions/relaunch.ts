@@ -214,8 +214,12 @@ const WIDGET_ONE_SHOTS: OneShotFlags = {
     optional: new Set(),
 };
 
-/** Parts/Features/FeaturesEntry.swift: the settings page to open. */
-const FEATURES_ONE_SHOTS: OneShotFlags = { value: new Set(["--page"]), bare: new Set(), optional: new Set() };
+/** Parts/Features/FeaturesEntry.swift: the settings page to open, and the context it opens with. */
+const FEATURES_ONE_SHOTS: OneShotFlags = {
+    value: new Set(["--page", "--page-context"]),
+    bare: new Set(),
+    optional: new Set(),
+};
 
 function withoutOneShots(argv: string[], flags: OneShotFlags): string[] {
     const kept: string[] = [];
@@ -223,6 +227,12 @@ function withoutOneShots(argv: string[], flags: OneShotFlags): string[] {
     for (let index = 0; index < argv.length; index++) {
         const arg = argv[index];
         const next = argv[index + 1];
+        // `--page=widgets.general`: the one-argument form (Host/FeatureSettingsLaunch.swift writes it).
+        const joinedFlag = arg.startsWith("--") && arg.includes("=") ? arg.slice(0, arg.indexOf("=")) : undefined;
+
+        if (joinedFlag !== undefined && (flags.value.has(joinedFlag) || flags.optional.has(joinedFlag))) {
+            continue;
+        }
 
         if (flags.value.has(arg)) {
             index++;

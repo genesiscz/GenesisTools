@@ -375,6 +375,15 @@ describe("a rebuild reopens exactly the faces it stopped", () => {
         ]);
     });
 
+    it("drops the page and its context in the one-argument form the app writes", () => {
+        const listing = ps(`  312 ${LAUNCHER} --features --page=meetings.window --page-context=--draft`);
+
+        expect(plan({ psStdout: listing, stalePids: ["312"] })).toEqual([
+            ["open", "-n", "-g", BUNDLE, "--args", "--link-relay"],
+            ["open", "-n", "-g", "--env", "HOME=/Users/alice", BUNDLE, "--args", "--features", "--no-activate"],
+        ]);
+    });
+
     it("never starts a face that was not running, nor a relay for short-lived faces alone", () => {
         const hubOnly = ps(`  321 ${LAUNCHER} --hub --mode sessions`);
         const commands = plan({ psStdout: hubOnly, stalePids: ["321"] });
