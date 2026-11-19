@@ -914,6 +914,7 @@ final class MeetingsApplyThreshold {
     private let defaults: UserDefaults
     private let migrates: Bool
     @ObservationIgnored private var watcher: DirectoryWatcher?
+    @ObservationIgnored private var reloadPending = false
     @ObservationIgnored var read: () async throws -> MeetingsAPI.ConfigRead.Result
     @ObservationIgnored var write: (Double, Double) async throws -> Double
     @ObservationIgnored var stored: (String) async throws -> JSONValue = { file in
@@ -938,9 +939,22 @@ final class MeetingsApplyThreshold {
     }
 
     func load(clearFailure: Bool = true) async {
-        guard !busy else { return }
+        // A file event that lands while a read or write is in flight may name a value that operation never saw.
+        guard !busy else { reloadPending = true; return }
         busy = true
-        defer { busy = false }
+        await readSaved(clearFailure: clearFailure)
+        busy = false
+        await reloadIfPending()
+    }
+
+    /// Runs the one refresh that arrived while the threshold was busy, after that operation finished.
+    private func reloadIfPending() async {
+        guard reloadPending else { return }
+        reloadPending = false
+        await load(clearFailure: false)
+    }
+
+    private func readSaved(clearFailure: Bool) async {
         do {
             let config = try await read()
             guard case .number(var value) = config.value.at(Self.segments) else { return }
@@ -976,5 +990,6 @@ final class MeetingsApplyThreshold {
             }
         }
         busy = false
+        await reloadIfPending()
     }
 }

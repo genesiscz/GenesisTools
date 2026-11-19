@@ -65,6 +65,58 @@ final class MeetingsTranscriptRowsTests: XCTestCase {
         defaults.removeObject(forKey: MeetingsApplyThreshold.legacyKey)
     }
 
+    /// A file event that lands while a read or a write is in flight is read again when that operation ends, so a value
+    /// another Settings window saved after the operation's own read still reaches the control.
+    func testAThresholdChangeDuringABusyReadOrWriteIsReadOnceItEnds() async throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "MeetingsTranscriptRowsTests.\(UUID().uuidString)"))
+        var saved = 0.5
+        var reads = 0
+        var holdNextRead = false
+        var held: CheckedContinuation<Void, Never>?
+        var holdNextWrite = false
+        var heldWrite: CheckedContinuation<Void, Never>?
+        func config(_ value: Double) -> MeetingsAPI.ConfigRead.Result {
+            .init(path: "fixture", value: .object(["global": .object(["suggest": .object(["applyAbove": .number(value)])])]))
+        }
+        let model = MeetingsApplyThreshold(defaults: defaults, migrates: false, read: {
+            reads += 1
+            let value = saved
+            if holdNextRead { holdNextRead = false; await withCheckedContinuation { held = $0 } }
+            return config(value)
+        }, write: { next, _ in
+            if holdNextWrite { holdNextWrite = false; await withCheckedContinuation { heldWrite = $0 } }
+            saved = next; return next
+        })
+        func waitFor(_ what: String, _ ready: () -> Bool) async throws {
+            let deadline = ContinuousClock.now + .seconds(5)
+            while !ready() {
+                guard ContinuousClock.now < deadline else { return XCTFail("\(what) never happened") }
+                try await Task.sleep(for: .milliseconds(2))
+            }
+        }
+
+        holdNextRead = true
+        let first = Task { await model.load() }
+        try await waitFor("the first read started") { held != nil }
+        saved = 0.8 // another Settings window saves after this read took its value
+        await model.load(clearFailure: false) // the file watcher's event, while the read is busy
+        held?.resume()
+        await first.value
+        XCTAssertEqual(model.percent, 80, "the event that arrived while busy was read after the read ended")
+        XCTAssertEqual(reads, 2)
+
+        holdNextWrite = true
+        let write = Task { await model.set(60) }
+        try await waitFor("the write started") { heldWrite != nil }
+        await model.load(clearFailure: false)
+        XCTAssertEqual(reads, 2, "no read runs while the write is in flight")
+        heldWrite?.resume()
+        await write.value
+        XCTAssertEqual(reads, 3, "the event during the write is read once the write ends")
+        XCTAssertEqual(model.percent, 60)
+        XCTAssertFalse(model.busy)
+    }
+
     func testT12SkippedSwapNamesTheSwapAndUsesSourceIndexes() throws {
         let swaps = try items("""
         [{"id":"i1","kind":"speaker-range","status":"suggested","fromSec":5,"toSec":30,"speaker":"Alice Example"}]
