@@ -201,19 +201,26 @@ test("a personal mute and a partial call stay leave room speech eligible and onl
     });
     sample(finch, { seat: "mic" });
     sample(lark, { seat: "call" });
+    const indicator = [
+        { tSec: 0, speaking: [], muted: [finch] },
+        { tSec: 16, speaking: [], muted: [finch, lark] },
+    ];
     f.reads.mockResolvedValue({
         segments: [],
         files: [],
-        speaking: [
-            { tSec: 0, speaking: [], muted: [finch] },
-            { tSec: 16, speaking: [], muted: [finch, lark] },
-        ],
+        speaking: indicator,
     });
     const { suggestion } = await f.preview();
     expect(suggestion.people).toMatchObject([
         { name: finch, seat: "room", reason: expect.stringContaining("2 microphone, 0 call") },
         { name: lark, seat: "unsure", reason: expect.stringContaining("0 microphone, 1 call") },
     ]);
+    await f.store.update(f.record.id, { command: "link", change: "stored indicator" }, (current) => {
+        current.evidence = { ...current.evidence, indicator };
+    });
+    f.reads.mockResolvedValue({ segments: [], speaking: [], files: [] });
+    const stored = await f.preview();
+    expect(stored.suggestion.people[1]?.reason).toContain("0 microphone, 1 call");
 });
 
 test("a source with unknown channel order cannot support a seat from its default left and right tracks", async () => {
@@ -290,7 +297,7 @@ test("saved seats and five decided lines take precedence over a new voice sugges
         current.seats = { room: [lark], remote: [] };
         current.items.push({
             kind: "speaker-range",
-            id: "heard",
+            id: "i1",
             status: "confirmed",
             label: "Speaker 1",
             speaker: finch,

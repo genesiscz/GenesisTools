@@ -9,7 +9,7 @@ import {
     type VoiceFreeCores,
     voiceWorkerCount,
 } from "@genesiscz/utils/meetings/config";
-import { voiceRootMeeting } from "@genesiscz/utils/meetings/record";
+import { type MeetingRecord, voiceRootMeeting } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { embedVoiceLines, type VoiceProgress } from "@genesiscz/utils/meetings/voice";
 import {
@@ -245,6 +245,87 @@ async function meetingVoiceLines(opened: OpenedMeeting, context: LabelContext): 
     });
 }
 
+/** Resolve the meeting's names against one library snapshot, preserving the source of every selected print. */
+export function meetingPredictionVoices(options: {
+    record: MeetingRecord;
+    project: string;
+    people: readonly string[];
+    scope: MeetingsConfig["global"]["speakerLabels"]["voice"]["sampleScope"];
+}) {
+    const view = readVoiceLibrary();
+    const owners = options.people.map((name) => meetingVoiceOwner(options.record, name));
+    const prints = predictionPrints({ project: options.project, scope: options.scope, owners, view });
+    const directory = groupedOwners(view);
+    const names = new Map(owners.map((owner) => [directory.select(owner), owner.name]));
+    const store: VoiceStore = { version: 1, model: prints.model, people: Object.create(null) };
+    const sources = new Map<VoicePrint, SampleSource>();
+    for (const sample of prints.samples) {
+        const name = names.get(directory.binding(sample.owner));
+        if (name) {
+            const person: { samples: VoicePrint[] } = store.people[name] ?? { samples: [] };
+            person.samples.push(sample);
+            store.people[name] = person;
+            sources.set(sample, sample.source);
+        }
+    }
+    return { view, directory, store, sources };
+}
+
+/** Address an embedded line on the transcript clock. A pass hashes each recording at most once. */
+export async function embeddedLineSource(options: {
+    line: VoiceLine;
+    root: string;
+    lineKey?: string;
+    hashes: Map<string, string>;
+}) {
+    const { line, root, lineKey, hashes } = options;
+    const ready = line.channels.find((channel) => channel.quality === "ready");
+    if (!ready) {
+        return undefined;
+    }
+    const file = ready.source.audioPath;
+    const sourceSha = hashes.get(file) ?? (await sha256FileAsync(file));
+    hashes.set(file, sourceSha);
+    return sourceForVoicePrint(
+        {
+            meeting: root,
+            sourceSha,
+            seat: line.seat,
+            track: line.track,
+            fromSec: line.fromSec ?? ready.fromSec,
+            toSec: line.toSec ?? ready.toSec,
+        },
+        root,
+        lineKey
+    );
+}
+
+export function localVoiceDecisions(options: {
+    record: MeetingRecord;
+    root: string;
+    prediction: ReturnType<typeof meetingPredictionVoices>;
+}) {
+    const { view, directory } = options.prediction;
+    const localRefusals = view.library.rejected.filter((row) => row.source.rootMeeting === options.root);
+    const localSamples = view.library.samples.filter(
+        (row) => row.source.rootMeeting === options.root && !refused(view.library, row.source, row.owner)
+    );
+    return {
+        any: localRefusals.length > 0 || localSamples.length > 0,
+        allows(name: string, source: SampleSource) {
+            const owner = meetingVoiceOwner(options.record, name);
+            const binding = directory.select(owner) ?? directory.binding(owner);
+            return (
+                !refused(view.library, source, owner) &&
+                !localRefusals.some(
+                    (r) => (!r.owner || directory.binding(r.owner) === binding) && sameLine(r.source, source)
+                ) &&
+                !localSamples.some((s) => sameLine(s.source, source) && directory.binding(s.owner) !== binding)
+            );
+        },
+    };
+}
+
 export function voiceLabeler(options: {
     opened: OpenedMeeting;
     settings: MeetingsConfig["global"]["speakerLabels"]["voice"];
@@ -258,37 +339,19 @@ export function voiceLabeler(options: {
             if (!context.project || !context.attended.some((stay) => stay.seat)) {
                 return [];
             }
-            const view = readVoiceLibrary();
-            const owners = context.attended.map((stay) => meetingVoiceOwner(options.opened.record, stay.person));
-            const prints = predictionPrints({
+            const prediction = meetingPredictionVoices({
+                record: options.opened.record,
                 project: context.project,
                 scope: options.settings.sampleScope,
-                owners,
-                view,
+                people: context.attended.map((stay) => stay.person),
             });
-            const directory = groupedOwners(view);
-            const names = new Map(owners.map((owner) => [directory.select(owner), owner.name]));
-            const store: VoiceStore = { version: 1, model: prints.model, people: Object.create(null) };
-            const sources = new Map<VoicePrint, SampleSource>();
-            for (const sample of prints.samples) {
-                const name = names.get(directory.binding(sample.owner));
-                if (name) {
-                    const person: { samples: VoicePrint[] } = store.people[name] ?? { samples: [] };
-                    person.samples.push(sample);
-                    store.people[name] = person;
-                    sources.set(sample, sample.source);
-                }
-            }
+            const { store, sources } = prediction;
             if (!Object.keys(store.people).length && !context.certain?.size) {
                 return [];
             }
             const root = voiceRootMeeting(options.opened.store, options.opened.record);
-            const localRefusals = view.library.rejected.filter((r) => r.source.rootMeeting === root);
-            const localSamples = view.library.samples.filter(
-                (s) => s.source.rootMeeting === root && !refused(view.library, s.source, s.owner)
-            );
-            const lineKeys =
-                localRefusals.length || localSamples.length ? voiceLineKeys(await options.opened.meeting()) : undefined;
+            const decisions = localVoiceDecisions({ record: options.opened.record, root, prediction });
+            const lineKeys = decisions.any ? voiceLineKeys(await options.opened.meeting()) : undefined;
             const lines = options.readLines
                 ? await options.readLines(context, store.model)
                 : await meetingVoiceLines(options.opened, context);
@@ -306,33 +369,14 @@ export function voiceLabeler(options: {
             const hashes = new Map<string, string>();
             for (const line of lines) {
                 const name = certain.get(line.index);
-                const ready = line.channels.find((channel) => channel.quality === "ready");
-                if (!name || !ready || (!localRefusals.length && !localSamples.length)) {
+                if (!name || !decisions.any) {
                     continue;
                 }
-                const file = ready.source.audioPath;
-                const sha = hashes.get(file) ?? (await sha256FileAsync(file));
-                hashes.set(file, sha);
-                const source = sourceForVoicePrint(
-                    {
-                        meeting: root,
-                        sourceSha: sha,
-                        seat: line.seat,
-                        track: line.track,
-                        fromSec: line.fromSec ?? ready.fromSec,
-                        toSec: line.toSec ?? ready.toSec,
-                    },
-                    root,
-                    lineKeys?.[line.index]
-                );
-                const owner = meetingVoiceOwner(options.opened.record, name);
-                const binding = directory.select(owner) ?? directory.binding(owner);
-                const blockers = localRefusals.filter((r) => !r.owner || directory.binding(r.owner) === binding);
-                if (
-                    refused(view.library, source, owner) ||
-                    blockers.some((r) => sameLine(r.source, source)) ||
-                    localSamples.some((s) => sameLine(s.source, source) && directory.binding(s.owner) !== binding)
-                ) {
+                const source = await embeddedLineSource({ line, root, lineKey: lineKeys?.[line.index], hashes });
+                if (!source) {
+                    continue;
+                }
+                if (!decisions.allows(name, source)) {
                     certain.delete(line.index);
                 }
             }

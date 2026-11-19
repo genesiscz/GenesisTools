@@ -11,6 +11,7 @@ import {
 import type { LineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { LINE_AT_TOLERANCE_SEC } from "@genesiscz/utils/transcribe/lines";
 import { baselineStays } from "./person-stays";
+import type { SeatVoiceHint } from "./seat-voice";
 import type { MeetingsResult } from "./service/api";
 import type { MeetingsClient } from "./service/client";
 
@@ -320,4 +321,59 @@ export function suggestSeats(options: {
         }
     }
     return { seats, people };
+}
+
+/** Add sound only where a saved seat, a hand choice and the decided-line rule left the preview open. */
+export function includeSeatVoiceHints(options: {
+    record: MeetingRecord;
+    suggestion: ReturnType<typeof suggestSeats>;
+    hints: ReadonlyArray<SeatVoiceHint>;
+}): void {
+    const { record, suggestion, hints } = options;
+    const byName = new Map(hints.map((hint) => [nameKey(hint.person), hint]));
+    for (const person of suggestion.people) {
+        // A saved move between room and remote also appears as "unsure", with confidence 1.
+        if (person.seat !== "unsure" || person.confidence === 1) {
+            continue;
+        }
+        const hint = byName.get(nameKey(person.name));
+        if (!hint) {
+            continue;
+        }
+        person.seat = hint.seat;
+        person.confidence = hint.confidence;
+        person.reason = hint.seat === "unsure" ? `${person.reason} ${hint.reason}` : hint.reason;
+        if (hint.seat === "room") {
+            suggestion.seats.room.push(person.name);
+        } else if (hint.seat === "remote") {
+            suggestion.seats.remote.push(
+                ...remoteSeats(
+                    person.name,
+                    baselineStays(record, person.name)?.map(({ stay }) => stay)
+                )
+            );
+        }
+    }
+}
+
+/** The preview's hand choices take effect together. A decided-line inference is still a rival voice on either side. */
+export function explicitPreviewSeats(options: {
+    saved?: MeetingSeats;
+    edits: Pick<Parameters<typeof suggestSeats>[0], "room" | "remote">;
+    suggested: MeetingSeats;
+}): MeetingSeats | undefined {
+    const { saved, edits, suggested } = options;
+    if (!edits.room?.length && !edits.remote?.length) {
+        return saved;
+    }
+    const names = new Set(
+        [...(saved?.room ?? []), ...(saved?.remote ?? []), ...(edits.room ?? []), ...(edits.remote ?? [])].map((row) =>
+            nameKey(seatSpan(row).name)
+        )
+    );
+    return {
+        ...suggested,
+        room: suggested.room.filter((row) => names.has(nameKey(seatSpan(row).name))),
+        remote: suggested.remote.filter((row) => names.has(nameKey(row.name))),
+    };
 }
