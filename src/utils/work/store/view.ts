@@ -52,12 +52,11 @@ export function sqlView(db: Database): StoreView {
         item: (id) => selectItem(db, id),
         resolve(raw) {
             const ref = normalizeRef(raw);
-            const direct = selectItem(db, ref);
             const slotRef = splitSlotRef(ref);
 
             if (slotRef !== null) {
                 const member = selectMemberBySlot(db, slotRef.handoff, slotRef.slot);
-                const item = member !== null ? selectItem(db, member) : direct;
+                const item = selectItem(db, member ?? ref);
 
                 if (item === null) {
                     return null;
@@ -69,6 +68,7 @@ export function sqlView(db: Database): StoreView {
                 };
             }
 
+            const direct = selectItem(db, ref);
             return direct === null ? null : { item: direct };
         },
         refsFrom: (id) => selectRefsFrom(db, id),
