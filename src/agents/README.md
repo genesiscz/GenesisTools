@@ -163,6 +163,9 @@ newest N unique Bash commands from the Claude transcripts, default 2000, and cou
 | `hooks diff show <call>` | Print the full diff a cut message linked, by tool call id or a prefix of it. |
 | `hooks diff log` | What the diff hook decided per Bash call. |
 | `hooks diff audit` | Decides every logged file again by today's rules: printed files with no proof, declined files with proof. |
+| `hooks diff modes list` | The status arms the config gives (active, reference, shadow) and whether each watch driver is installed. Opens nothing. |
+| `hooks diff modes try [root]` | Reads one worktree once with every status mode and driver, and compares each answer to Git. |
+| `hooks diff modes report` | The shadow run per arm from the metrics store, with the gates of each mode. Reads only. |
 
 `diff log` flags: `--session <id prefix>`, `--since <duration>` (24h), `--decision <list>` (`emitted`, `noted`,
 `failed`, `silent`, `skip` or `all`; default `emitted,noted,failed`), `-n, --lines <count>` (50), `--extended`
@@ -174,10 +177,17 @@ newest N unique Bash commands from the Claude transcripts, default 2000, and cou
 makes a root shared), the transcripts for the commands, and every session's Edit and Write rows of the change log.
 It cannot rebuild a command that was still running in another session, so it is the more generous side.
 
+`diff modes list` and `diff modes try` take `--json`; `try` defaults to the current folder. `try` may open a watch in
+the GenesisTools service, ask the service to start when none runs, and write the narrow-git admission record, as the
+hooks would. `diff modes report` takes `--since <when>` (a duration such as `6h` or `7d`, or a date; default `7d`)
+and `--json`. See [Status modes](#status-modes-how-the-hooks-read-the-git-state).
+
 ```bash
 tools agents hooks diff log --extended --since 6h
 tools agents hooks diff audit --since 2d
 tools agents hooks diff show toolu_01abc
+tools agents hooks diff modes try .
+tools agents hooks diff modes report --since 2d
 ```
 
 ### Hooks: the config
@@ -693,6 +703,60 @@ Paths are read through `git status --porcelain=v2 -z` and the repository's own `
 not a detail**: without it git C-quotes any path with a space or a non-ASCII byte as `?? "a file.ts"`, and the hook
 then goes silent on a file that plainly changed. Every git-derived file list handed to `tar` is preceded by `--`, or a
 repository file named `-C` would be read as an option.
+
+#### Status modes: how the hooks read the Git state
+
+Each phase reads the Git status of every root once (a "boundary": `pre` before the command, `post` after it). How
+that read is made is a **status mode**, chosen per command shape in `diff.status.active`:
+
+- `git` (the default for both shapes): one `git status` process per root and boundary, as before.
+- `snapshot`: one call to the GenesisTools service (`worktree.snapshot`, see
+  [the service README](../genesis-tools/README.md)), which keeps the status of the root current with a file watcher.
+  The watcher is a **driver**: `watchman` (the default) or `parcel`. The pre answer leaves a mark in the call folder
+  (`status-marks.json`), and the post call sends it back. The Parcel driver refuses a linked worktree.
+- `narrow-git`: no service. A worktree is admitted once by a full status (an ordinary index: nothing staged, no
+  conflict, no submodule, no sparse or split index). While the index hash and HEAD stay the same, a boundary runs
+  `git diff --name-status` and `git ls-files --others` instead of a status; any change admits it again.
+
+Every entry is printed by Git in every mode. A mode that cannot answer (no service, a fence timeout, a refused
+admission, an error) is "unavailable", and the hooks read Git for that root at once; it never counts as an empty
+status. A call that began on Git ends on Git: a post boundary without a mark from pre reads Git.
+
+**The shadow run.** `diff.status.shadow.modes` names modes that also run for the same call. Their answers are
+recorded and never used. On one call in `shadow.every`, a boundary reads the git reference, then each shadow arm (an
+arm is a mode, plus its driver for `snapshot`: `git`, `narrow-git`, `snapshot:watchman`, `snapshot:parcel`) until
+`shadow.budgetMs` is spent. Each arm is compared with the reference at the same boundary, and a difference is read
+again before it counts. Every arm, root and boundary writes two metrics events (project `agent-context`:
+`hook.status.cpu_ms` and `hook.status.wall_ms`) with the parity class (`same`, `missing-dirty`, `missing-other`,
+`extra`, `letters`, `order`, `head`, `unconfirmed`, `none`). A background call, a command that leaves a writer behind
+(`&`, `nohup`, `disown`, `setsid`) and a test process use Git only. With an active mode other than `git`, a sampled
+call also reads the reference, so that mode saves nothing while `shadow.every` is 1.
+
+`diff modes report` prints, per arm, the answered share, the fallback reasons, parity by class, CPU and wall time per
+phase, full status runs per call, roots and linked roots, then the gates of its mode (value, threshold, holds) and the
+differences grouped by cause. The gates are a report: nothing switches a mode automatically. Turning shadow on and
+changing `active` are the owner's acts.
+
+```bash
+tools agents hooks config set diff.status.shadow.modes snapshot,narrow-git --write   # shadow both new modes
+tools agents hooks diff modes report --since 2d
+```
+
+**Roll back** by setting both active keys to `git`; the hooks then run today's two status reads and load no mode:
+
+```bash
+tools agents hooks config set diff.status.active.read git --write
+tools agents hooks config set diff.status.active.write git --write
+```
+
+**A known limit.** A clean tracked file that a detached child still holds open while it writes can be missing from a
+`snapshot` answer until it is closed: a file watcher reports a write when the file is closed. Git's own status sees
+it. The P2 probe found 0 of 5 such writes (`scripts/benchmarks/hooks/watch-driver-probe.ts`).
+
+Measured on 2026-11-19 with `bun scripts/benchmarks/hooks/status-ab.ts --modes --runs 15` (load average 13 to 17,
+a clone of this repository): median hook CPU per call, edit then read, git 341 and 254 ms, narrow-git 359 and 267 ms,
+`snapshot:watchman` 175 and 135 ms, `snapshot:parcel` 173 and 135 ms, plus about 4 to 9 ms in the service and the
+Watchman daemon. These were measured with no parity sampling (`shadow.every` very large).
 
 #### Claude Code's own Bash diff
 
@@ -1235,7 +1299,13 @@ the config in effect. `doctor` reports a value that does not parse, and the defa
 | `diff.replaceNative` | `true` | Turn Claude Code's own diff off at install. |
 | `diff.showTempScratch` | `true` | Show named temp files. |
 | `diff.othersSummary` | `line` | `line` or `hidden`. |
-| `diff.harnesses.<harness>.<field>` | | Per-harness diff overrides. |
+| `diff.status.active.read` / `.write` | `git` / `git` | The status mode the hooks use, per command shape: `git`, `snapshot`, `narrow-git`. |
+| `diff.status.shadow.modes` | empty | Comma list of modes that also run and are only recorded. |
+| `diff.status.shadow.every` / `.budgetMs` | `1` / `400` | One call in N runs the shadow arms; their time budget per call. |
+| `diff.status.modes.snapshot.driver` | `watchman` | The watch driver of the snapshot mode: `watchman`, `parcel`. |
+| `diff.status.modes.snapshot.shadowDrivers` | empty | More drivers that run only in shadow. |
+| `diff.status.modes.snapshot.deadlineMs` / `.fenceMs` | `700` / `500` | Deadline of one service call; the watcher's fence. |
+| `diff.harnesses.<harness>.<field>` | | Per-harness diff overrides (`status` is shared, never per harness). |
 | `unpushed.enabled` | `true` | The unpushed reminder. |
 | `unpushed.maxCommits` / `.maxAgeMinutes` | `3` / `60` | When it fires. |
 | `unpushed.remindEveryMinutes` | `30` | Once per repository per interval. |
