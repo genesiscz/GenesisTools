@@ -15,18 +15,29 @@ final class MeetingsUXTests: XCTestCase {
         let record = try JSONDecoder().decode(MeetingRecordView.self, from: Data(#"{"id":"m","title":"Word review","labels":[],"start":"2026-11-12T14:00:00Z","items":[],"context":[],"speakers":{"labels":{}},"sources":{}}"#.utf8))
         detail.settleDecisionRecord(record)
         detail.rows = .loaded(.init(meeting: "m", rows: [], hidden: .init(lowPriority: 0, minPriority: 0.5)))
+        var picked: [String?] = []
+        let picker = MeetingProjectPicker(detail: detail, record: record, known: ["Alpha Project"], select: { picked.append($0) })
+        XCTAssertFalse(MeetingDetailView.headerShowsProjectPicker(project: nil, tab: .items), "the Items tab holds the menu instead of the header")
+        XCTAssertTrue(MeetingDetailView.headerShowsProjectPicker(project: nil, tab: .transcript))
+        XCTAssertTrue(MeetingDetailView.headerShowsProjectPicker(project: "Alpha Project", tab: .items))
+        let proposed = [AssignProposals.Project(project: "Beta Project", score: 7.4)]
+        let menu = MeetingProjectPicker.items(current: nil, proposed: proposed, reading: false, known: ["Alpha Project", "Beta Project"],
+                                              select: { picked.append($0) })
+        var titles: [String] = []
+        for item in menu {
+            guard case .action(let title, let checked, _, let run) = item else { continue }
+            titles.append(checked ? "\(title) ✓" : title)
+            run()
+        }
+        XCTAssertEqual(titles, ["Beta Project  (7 points)", "Alpha Project", "No project ✓"], "a proposed project is listed once, with its points")
+        XCTAssertEqual(picked, ["Beta Project", "Alpha Project", nil], "each pick writes its project, and No project clears it")
         for width in [300.0, 600.0] {
-            let renderer = ImageRenderer(content: ItemsTab(detail: detail, projectPicker: AnyView(Text("Choose project")))
-                .frame(width: width, height: 240).background(Color.white).environment(\.colorScheme, .light))
-            renderer.scale = 2
-            let request = VNRecognizeTextRequest()
-            request.recognitionLevel = .fast
-            request.usesLanguageCorrection = false
-            try VNImageRequestHandler(cgImage: XCTUnwrap(renderer.cgImage)).perform([request])
-            let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+            // Drawn in a window: the menu button holds an AppKit view, which an ImageRenderer picture leaves out.
+            let text = try MeetingQuestionPicture.text(ItemsTab(detail: detail, projectPicker: AnyView(picker)).frame(height: 240),
+                                                       name: "items-no-project-\(Int(width))", native: true, width: width)
             XCTAssertTrue(text.contains("This meeting has no project."), text)
             XCTAssertTrue(text.contains("dictionary."), text)
-            XCTAssertTrue(text.contains("Choose project"), text)
+            XCTAssertTrue(text.contains("No project"), "the production project menu is in the empty state: \(text)")
             XCTAssertFalse(text.contains("Suggest items"), text)
         }
     }
