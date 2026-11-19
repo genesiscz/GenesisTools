@@ -373,29 +373,51 @@ test("voice readiness hints from set and raw evidence leave stdout as a single J
         spyOn(wisprflowSource, "evidence").mockResolvedValue(null),
         spyOn(wisprflowSource, "dictionary").mockResolvedValue([]),
     ];
-    const info = spyOn(ui, "info").mockImplementation(() => {});
-    const output = spyOn(out, "result").mockImplementation(() => {});
+    // The real streams, not the writers: a hint that reached stdout through any path breaks the JSON contract.
+    const streams = { stdout: "", stderr: "" };
+    const capture = (name: keyof typeof streams) =>
+        spyOn(process[name], "write").mockImplementation(
+            (
+                chunk: string | Uint8Array,
+                encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void),
+                callback?: (error?: Error | null) => void
+            ) => {
+                streams[name] += String(chunk);
+                (typeof encodingOrCallback === "function" ? encodingOrCallback : callback)?.();
+                return true;
+            }
+        );
+    const writes = [capture("stdout"), capture("stderr")];
     const hints = [`tools meetings seats ${record.id} --apply`, `tools meetings voices backfill --project ${project}`];
+    const runs: Array<typeof streams> = [];
     try {
         for (const [command, ...args] of [
             ["set", record.id, "--project", project],
             ["evidence", record.id, "--raw", "--word-check", "off"],
         ] as const) {
-            info.mockClear();
+            streams.stdout = "";
+            streams.stderr = "";
             const program = new Command().exitOverride();
             await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: command });
             await program.parseAsync([command, ...args], { from: "user" });
-            expect(info.mock.calls.map(([text]) => text)).toEqual(expect.arrayContaining(hints));
+            runs.push({ ...streams });
         }
-        expect(output).toHaveBeenCalledTimes(1);
-        expect(SafeJSON.parse(String(output.mock.calls[0]?.[0]))).toMatchObject({
-            voice: { seats: false, samples: 0, people: {}, ready: false, hints },
-        });
     } finally {
-        for (const mock of [...mocks, info, output]) {
+        for (const mock of [...mocks, ...writes]) {
             mock.mockRestore();
         }
     }
+    const [set, evidence] = runs;
+    for (const run of runs) {
+        for (const hint of hints) {
+            expect(run.stderr).toContain(hint);
+        }
+    }
+    // A strict parse of the whole stdout fails on any line printed beside the one JSON value.
+    expect(set?.stdout).toBe("");
+    expect(SafeJSON.parse(evidence?.stdout ?? "", { strict: true })).toMatchObject({
+        voice: { seats: false, samples: 0, people: {}, ready: false, hints },
+    });
 });
 
 test("play's positional time and track reach the original track's file seconds without starting sound", async () => {
