@@ -897,6 +897,59 @@
     }
   },
   {
+    "method": "work.projects",
+    "params": {
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": [],
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "work.projects",
+    "params": {
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
     "method": "work.show",
     "params": {
       "ref": "fixture",

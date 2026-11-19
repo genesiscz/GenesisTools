@@ -43,6 +43,14 @@ export const workMethods = {
         effect: "read",
         doc: "List items, one short row each, no bodies.",
     }),
+    projects: defineMethod({
+        name: "projects",
+        params: z.object({}),
+        result: z.array(z.string()),
+        resultName: `${reply}, data: string[]`,
+        effect: "read",
+        doc: "List the distinct projects that have work items.",
+    }),
     show: defineMethod({
         name: "show",
         params: z.object({ ref, section: z.enum(["all", "body", "log", "refs", "context"]).optional() }),

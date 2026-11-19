@@ -94,6 +94,7 @@ export type ListResult = (ItemRow | Record<string, unknown>)[];
 
 export interface WorkResults {
     list: ListResult;
+    projects: string[];
     show: ShowResult;
     tree: TreeResult;
     triage: (TriageRow & RowPairings)[];
@@ -227,6 +228,16 @@ export const workHandlers: WorkHandlers = {
             ? result.rows.map((row) => Object.fromEntries(fields.map((f) => [f, Reflect.get(row, f)])))
             : result.rows;
         return okReply("list", rows);
+    },
+
+    async projects(_p, session) {
+        const rows = session.ctx.db
+            .query<{ project: string }, []>("SELECT DISTINCT project FROM items ORDER BY project")
+            .all();
+        return okReply(
+            "projects",
+            rows.map((row) => row.project)
+        );
     },
 
     async show(p, session) {
