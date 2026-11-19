@@ -224,8 +224,12 @@ public final class LiveWorkSource: WorkSource {
         let call = WorkTreeParamsCall(project: project)
         async let tree = rpc.work.tree(WorkTreeParams(project: project, call: call))
         async let triage = rpc.work.triage(WorkTriageParams(project: project, call: WorkTriageParamsCall(project: project)))
-        let treeData: TreeData = try reply(await tree)
-        let rows: [WorkTriageValue] = try reply(await triage)
+        return try await assembleSnapshot(project: project, tree: tree, triage: triage)
+    }
+
+    private nonisolated func assembleSnapshot(project: String, tree: WorkTreeResult, triage: WorkTriageResult) async throws -> WorkSnapshotValue {
+        let treeData: TreeData = try reply(tree)
+        let rows: [WorkTriageValue] = try reply(triage)
         return WorkSnapshotValue(project: project, containers: treeData.containers, triage: rows)
     }
 
@@ -300,19 +304,22 @@ public final class LiveWorkSource: WorkSource {
     public func changes() -> AsyncStream<Void> {
         let rpc = rpc
         let wal = walPath
+        let directory = (wal as NSString).deletingLastPathComponent
+        let config = (directory as NSString).appendingPathComponent("config.json")
         return AsyncStream { continuation in
             // A write through the service sends `work.changed`; a write of the CLI or the MCP tools only touches the
             // store's WAL file, which every write changes (a write after a checkpoint creates it again).
             let events = Task { @MainActor in
+                // The event stream ends, with an error, when the service connection closes; the screen then reads as stopped.
                 do {
                     for try await _ in rpc.events.workChanged { continuation.yield(()) }
                 } catch {
-                    // The stream ends with the connection error when the service goes; the WAL watcher still sees writes.
                     workSourceLog.notice("work.changed ended: \(error.localizedDescription, privacy: .public)")
                 }
+                continuation.finish()
             }
-            let watcher = DirectoryWatcher(paths: [(wal as NSString).deletingLastPathComponent], latency: 0.3,
-                                           accepts: { $0 == wal }) { _ in continuation.yield(()) }
+            let watcher = DirectoryWatcher(paths: [directory], latency: 0.3,
+                                           accepts: { $0 == wal || $0 == config }) { _ in continuation.yield(()) }
             continuation.onTermination = { _ in
                 events.cancel()
                 watcher.stop()
@@ -357,11 +364,11 @@ public final class LiveWorkSource: WorkSource {
         var rows: [Row]
     }
 
-    private func decode<D: Decodable, E: Encodable>(_ result: E) throws -> Envelope<D> {
+    private nonisolated func decode<D: Decodable, E: Encodable>(_ result: E) throws -> Envelope<D> {
         try JSONDecoder().decode(Envelope<D>.self, from: JSONEncoder().encode(result))
     }
 
-    private func reply<D: Decodable, E: Encodable>(_ result: E) throws -> D {
+    private nonisolated func reply<D: Decodable, E: Encodable>(_ result: E) throws -> D {
         let outcome: Envelope<D> = try decode(result)
         guard let value = outcome.value else {
             throw WorkSourceError(outcome.skipped.first?.reason ?? "The work service could not answer")
