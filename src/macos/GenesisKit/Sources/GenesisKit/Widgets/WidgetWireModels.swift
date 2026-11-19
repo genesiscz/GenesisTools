@@ -841,6 +841,8 @@ public struct WidgetInboxItem: Codable, Equatable, Sendable {
     public var takesSeveral: Bool { kind == "decision" && multiple == true }
     public var isStaged: Bool { kind == "decision" && needsAnswer && (draftOption != nil || draft != nil) }
     public var isAnsweredElsewhere: Bool { kind == "decision" && !needsAnswer && answeredVia != nil }
+    var isUnreadEntry: Bool { !needsAnswer && (kind == "answer" || kind == "result") }
+    var representedCount: Int { max(1, count ?? 1) }
 }
 public struct WidgetInboxSession: Codable, Equatable, Sendable {
     public var key: String

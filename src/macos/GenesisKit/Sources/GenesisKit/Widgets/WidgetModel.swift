@@ -114,6 +114,8 @@ public final class WidgetModel: ObservableObject {
     /// The expanded agents pane shows the inbox entries of every session instead of one session (the inbox button).
     /// Opening a session ends it.
     @Published public var inboxOverview = false { didSet { if inboxOverview != oldValue { presentationChanged?() } } }
+    /// The current visit's tab. A badge opens its own tab without changing the saved opening filter.
+    @Published var overviewFilterPick: String?
     @Published public var selectedCardID: String? {
         didSet {
             presentationChanged?()
@@ -1662,10 +1664,12 @@ public final class WidgetModel: ObservableObject {
         return true
     }
 
-    /// Opens `item` in its session's inbox, unfolded; with `surface`, the panel opens there too.
+    /// Open the session's entire inbox even when the previous visit had a narrower filter.
     public func openSessionInbox(_ session: WidgetSession, on surface: WidgetSurfaceID? = nil) {
         listOrigin = .overview
         select(session.key)
+        inboxFilterPicked = true
+        inboxFilter = "all"
         section = "Inbox"
         if let surface { openModule("agents", on: surface) }
     }
@@ -1709,13 +1713,15 @@ public final class WidgetModel: ObservableObject {
     }
 
     /// The inbox button: every session's entries in one list. A second click while that list is open hides the panel.
-    public func toggleInboxOverview(on surface: WidgetSurfaceID) {
+    public func toggleInboxOverview(on surface: WidgetSurfaceID, filter: String? = nil) {
         guard !stopping else { return }
-        if presentation(for: surface) == .expanded, activeModuleID == "agents", inboxOverview {
+        if filter == nil, presentation(for: surface) == .expanded, activeModuleID == "agents", inboxOverview {
             requestCollapse()
             return
         }
 
+        overviewFilterPick = filter
+        stagedView = nil
         inboxOverview = true
         section = "Inbox"
         openModule("agents", on: surface)

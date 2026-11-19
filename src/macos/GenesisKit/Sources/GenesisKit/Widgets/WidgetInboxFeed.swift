@@ -22,7 +22,9 @@ struct WidgetFeedSection<Row: View>: View {
 
     var body: some View {
         if run.items.count == 1, model.preferences.inboxFeedHeaders != "all", let item = run.items.first {
-            row(item, .inlineSource)
+            VStack(spacing: 0) { row(item, .inlineSource) }
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("widget.feed.run." + run.id)
         } else {
             let context: WidgetInboxRowContext = run.spansSessions ? .projectHeader : .sessionHeader
             Section {
@@ -71,7 +73,7 @@ struct WidgetInboxFeeds {
     init(_ items: [WidgetInboxItem] = [], by: String = "session", project: (WidgetInboxItem) -> String? = { _ in nil }) {
         all = WidgetInboxFeed.runs(items, by: by, project: project)
         waiting = WidgetInboxFeed.runs(items.filter(\.needsAnswer), by: by, project: project)
-        unread = WidgetInboxFeed.runs(items.filter { !$0.needsAnswer }, by: by, project: project)
+        unread = WidgetInboxFeed.runs(items.filter(\.isUnreadEntry), by: by, project: project)
     }
 
     subscript(filter: String) -> [WidgetFeedRun] {
@@ -106,10 +108,11 @@ struct WidgetFeedRunHeader: View, Equatable {
         let sessionTitle = run.items.count == 1 && session?.title == first.map(WidgetInboxOverview.title)
             ? nil : session?.title
         subtitle = sessions > 1 ? Plural.count(sessions, "session") : (project.isEmpty ? nil : sessionTitle)
-        let count = run.items.filter(\.needsAnswer).count
+        let count = run.items.reduce(0) { $0 + ($1.needsAnswer ? $1.representedCount : 0) }
+        let total = run.items.reduce(0) { $0 + $1.representedCount }
         waiting = count > 0
         // One item says what it is in its own row (kind, waiting, time); a count only adds words.
-        counts = run.items.count < 2 ? "" : [Plural.count(run.items.count, "item"), count > 0 ? WidgetWords.waitingShort(count) : nil]
+        counts = run.items.count < 2 ? "" : [Plural.count(total, "item"), count > 0 ? WidgetWords.waitingShort(count) : nil]
             .compactMap { $0 }.joined(separator: " · ")
         inboxTooltip = "Open the whole inbox of " + (session?.title ?? "this session")
         if let session, !run.spansSessions {
@@ -137,7 +140,7 @@ struct WidgetFeedRunHeader: View, Equatable {
             }
             Spacer(minLength: 0)
             if !counts.isEmpty {
-                Text(counts).font(.system(size: 10)).foregroundStyle(waiting ? Color.orange : .secondary)
+                Text(counts).font(.system(size: 11)).foregroundStyle(waiting ? Color.orange : .secondary)
                     .lineLimit(1).fixedSize()
             }
             if let openInbox {

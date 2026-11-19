@@ -78,7 +78,7 @@ struct AgentWidgetPreview: View {
                 Text("Inbox").font(.system(size: 12, weight: .semibold))
                 Spacer()
                 if model.inbox.needsAnswer > 0 {
-                    Button { model.toggleInboxOverview(on: surface) } label: {
+                    Button { model.toggleInboxOverview(on: surface, filter: "needs") } label: {
                         HStack(spacing: 4) {
                             WidgetInboxCount(count: model.inbox.needsAnswer, needsAnswer: true,
                                 pulse: model.waitingPulse, reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete)
@@ -87,7 +87,7 @@ struct AgentWidgetPreview: View {
                     }.buttonStyle(.genHoverPlain()).instantTooltip("Every inbox item that waits for your answer")
                 }
                 if model.inbox.unread > 0 {
-                    Button { model.toggleInboxOverview(on: surface) } label: {
+                    Button { model.toggleInboxOverview(on: surface, filter: "unread") } label: {
                         HStack(spacing: 4) {
                             WidgetInboxCount(count: model.inbox.unread, needsAnswer: false,
                                 pulse: model.inboxPulse, reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete)

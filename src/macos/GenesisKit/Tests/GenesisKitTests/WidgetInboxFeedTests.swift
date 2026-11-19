@@ -58,12 +58,17 @@ final class WidgetInboxFeedTests: XCTestCase {
         XCTAssertEqual(headers.first?.inboxTooltip, "Open the whole inbox of Alpha")
         XCTAssertNil(headers[1].openInbox, "The project covers two different session inboxes")
         XCTAssertNil(headers[1].provider)
+        XCTAssertEqual(model.inboxFeeds["unread"].flatMap(\.items).map(\.id), ["answer:m"],
+                       "The task is shown under All, but never contributes to the unread badge.")
     }
 
     func testExternalMessagesUseTheirSenderAndEqualTimesUseTheItemID() {
         var note = items[1]
         note.message?.origin = "External"
         note.at = items[0].at
+        note.count = 3
+        XCTAssertEqual(WidgetInboxOverview.summary([note]), "3 items · from 1 sender")
+        XCTAssertEqual(WidgetInboxOverview.summary([note, items[0]]), "4 items · 1 waiting for your answer · from 1 session and 1 sender")
         for mode in ["session", "project"] {
             let runs = WidgetInboxFeed.runs([items[0], note], by: mode) { _ in "" }
             XCTAssertEqual(runs.map(\.runKey), ["sender/External", alpha.key])
@@ -106,6 +111,50 @@ final class WidgetInboxFeedTests: XCTestCase {
         let lines = try WidgetInboxRender.draw(list, size: .init(width: 460, height: 640), name: "feed-project")
         assertOrder(["Orchard", "Pick a basket", "Meadow", "2 sessions", "Delivery note", "Beta",
                      "Sort the crates", "Gamma", "Orchard", "Choose a shelf", "Choose a label"], in: lines)
+    }
+
+    func testOverviewFilterAndOrderStayVisibleAfterScrollingANarrowFeed() throws {
+        let rows = (0..<30).map { index in
+            WidgetInboxItem(id: "answer:\(index)", sourceId: String(index), kind: "answer", key: alpha.key,
+                            at: Double(30 - index) * 1000, needsAnswer: false, title: "Sample basket \(index)")
+        }
+        let model = try WidgetInboxRender.model(sessions: [alpha], items: rows)
+        defer { model.stop() }
+        let list = WidgetInboxOverview(model: model, viewport: { content in AnyView(ScrollView { content }) })
+        let lines = try WidgetInboxRender.draw(list, size: CGSize(width: 324, height: 330), name: "feed-scrolled") { _, host in
+            let scroll = try XCTUnwrap(Self.itemScroll(in: host))
+            let document = try XCTUnwrap(scroll.documentView)
+            // The lazy stack refines its document height as the last rows come into view.
+            for _ in 0..<4 {
+                let bottom = max(0, document.bounds.height - scroll.contentView.bounds.height)
+                scroll.contentView.scroll(to: NSPoint(x: 0, y: bottom))
+                scroll.reflectScrolledClipView(scroll.contentView)
+                WidgetInboxRender.settle()
+                if abs(document.bounds.height - scroll.contentView.bounds.height - scroll.contentView.bounds.origin.y) < 1 {
+                    break
+                }
+            }
+        }
+        let text = lines.joined(separator: " ")
+        for label in ["Waiting", "Unread", "Newest", "Sample basket 29"] {
+            XCTAssertTrue(text.contains(label), text)
+        }
+    }
+
+    func testCountBadgesOpenTheirOwnTabAndTheNormalEntryUsesTheSavedFilter() throws {
+        let model = try makeModel()
+        defer { model.stop() }
+        model.actionRunner = { _ in ["ok": true] }
+        let surface = WidgetSurfaceID(edge: .right)
+        for filter in ["unread", "needs"] {
+            model.toggleInboxOverview(on: surface, filter: filter)
+            XCTAssertEqual(model.overviewFilterPick, filter)
+            XCTAssertTrue(model.inboxOverview)
+            XCTAssertEqual(model.preferences.overviewFilter, "all")
+        }
+        model.expanded = nil
+        model.toggleInboxOverview(on: surface)
+        XCTAssertNil(model.overviewFilterPick)
     }
 
     func testHoverSegmentsKeepTheSessionFilterWhenItemsIsSelected() throws {

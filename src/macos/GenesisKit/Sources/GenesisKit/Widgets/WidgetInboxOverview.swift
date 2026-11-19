@@ -10,8 +10,6 @@ struct WidgetInboxOverview: View {
     @State private var readingBoundary: WidgetInboxItem?
     @State private var visibleOpenID: String?
     @State private var orderAnchor: String?
-    /// The filter picked here; until then the one the `overviewFilter` setting opens with.
-    @State private var filterPick: String?
     @State private var openID: String?
     /// The row Up and Down chose (`WidgetModel.listKey`); Return opens or folds it. The pointer never moves it.
     @State private var focusID: String?
@@ -19,13 +17,13 @@ struct WidgetInboxOverview: View {
     @State private var focusedOption: String?
     @GenReduceMotion private var reduceMotion
 
-    private var filter: String { filterPick ?? model.preferences.overviewFilter }
+    private var filter: String { model.overviewFilterPick ?? model.preferences.overviewFilter }
 
     private var items: [WidgetInboxItem] {
         let all = model.inboxOverviewItems
         switch filter {
         case "needs": return all.filter(\.needsAnswer)
-        case "unread": return all.filter { !$0.needsAnswer }
+        case "unread": return all.filter(\.isUnreadEntry)
         default: return all
         }
     }
@@ -38,6 +36,14 @@ struct WidgetInboxOverview: View {
         let feedRows = WidgetFeedReadingPlace.split(model.inboxFeeds[filter], at: readingBoundary)
         let drawn = feed ? feedRows.runs.flatMap(\.items) : grouped ? Self.groups(items).flatMap(\.items) : items
         let _ = RenderProbe.hit("widget.overview")
+        VStack(alignment: .leading, spacing: 8) {
+            controls
+            scrolledList(items: items, feedRows: feedRows, drawn: drawn)
+        }
+    }
+
+    private func scrolledList(items: [WidgetInboxItem], feedRows: (runs: [WidgetFeedRun], pending: Int),
+                              drawn: [WidgetInboxItem]) -> some View {
         ScrollViewReader { proxy in
             viewport(AnyView(list(items, runs: feedRows.runs)))
                 .overlay(alignment: .top) {
@@ -63,7 +69,8 @@ struct WidgetInboxOverview: View {
                     orderAnchor = nil
                 }
                 .onChange(of: filter) { _, _ in
-                    readingBoundary = feed && belowTop ? model.inboxFeeds[filter].first?.items.first : nil
+                    readingBoundary = nil
+                    proxy.scrollTo("widget.overview.top", anchor: .top)
                 }
                 .onChange(of: model.listKey) { _, key in
                     guard let key else { return }
@@ -168,8 +175,8 @@ struct WidgetInboxOverview: View {
             return
         }
         guard alternate else {
-            model.postNote(swaps ? "Return does not send an answer. ⌘-Return sends it."
-                                 : "Return does not send an answer. Click the option to send it.")
+            model.postNote(swaps ? "Click the option to send it, or press ⌘-Return to stage it."
+                                 : "Press ⌘-Return to send this option.")
             return
         }
         guard model.clickStagesNow else {
@@ -183,39 +190,52 @@ struct WidgetInboxOverview: View {
         model.sendStaged([item.sourceId], known: [item])
     }
 
+    private var controls: some View {
+        HStack(spacing: 6) {
+            GenSegmentedTabs(
+                "Inbox items",
+                items: [.init("all", "All"), .init("needs", "Waiting"), .init("unread", "Unread")],
+                selection: Binding(get: { filter }, set: { value in
+                    model.holdAgentFit()
+                    model.overviewFilterPick = value
+                }), minSegmentWidth: 54, identifier: "widget.overview.filter", fillsWidth: true)
+            Spacer(minLength: 4)
+            orderMenu
+            if model.inboxCount > 0 {
+                IconButton(systemName: "checkmark.circle", tooltip: "Mark all read", action: model.markAllRead)
+            }
+        }
+    }
+
     private func list(_ items: [WidgetInboxItem], runs: [WidgetFeedRun]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                GenSegmentedTabs(
-                    "Inbox items",
-                    items: [.init("all", "All"), .init("needs", "Waiting"), .init("unread", "Unread")],
-                    selection: Binding(get: { filter }, set: { value in
-                        model.holdAgentFit()
-                        filterPick = value
-                    }), minSegmentWidth: 70, identifier: "widget.overview.filter")
-                Spacer(minLength: 4)
-                orderMenu
-                if model.inboxCount > 0 {
-                    Button("Mark all read", action: model.markAllRead)
-                        .buttonStyle(.genHover()).font(.system(size: 11, weight: .medium))
-                        .instantTooltip("Answers become read; older questions and decisions stop counting. Nothing is deleted.")
+        VStack(alignment: .leading, spacing: 0) {
+            Color.clear.frame(height: 1)
+                .accessibilityHidden(true)
+                .id("widget.overview.top")
+                .onGeometryChange(for: Bool.self, of: { $0.frame(in: .scrollView).minY < -1 }) { scrolled in
+                    belowTop = scrolled
+                    readingBoundary = feed && scrolled ? model.inboxFeeds[filter].first?.items.first : nil
                 }
-            }
-            .id("widget.overview.top")
-            .onGeometryChange(for: Bool.self, of: { $0.frame(in: .scrollView).minY < -1 }) { scrolled in
-                belowTop = scrolled
-                readingBoundary = feed && scrolled ? model.inboxFeeds[filter].first?.items.first : nil
-            }
             if items.isEmpty {
                 VStack(spacing: 10) {
                     GenesisWidgetMark()
-                    Text(filter == "needs" ? "Nothing waits for your answer." : "Nothing new in the inbox.")
+                    Text(!model.inbox.complete ? "Inbox status unavailable." : filter == "needs"
+                         ? "Nothing waits for your answer." : filter == "unread" ? "No unread items." : "Nothing new in the inbox.")
                         .font(.headline)
-                    Text("Questions, screenshots and finished work from every session land here.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    if !model.inboxOverviewItems.isEmpty, filter != "all" {
+                        Button("Show all items") {
+                            model.holdAgentFit()
+                            model.overviewFilterPick = "all"
+                        }
+                            .buttonStyle(.genHover())
+                    } else if model.inbox.complete {
+                        Text("Questions, screenshots and finished work from every session land here.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }.frame(maxWidth: .infinity).padding(.vertical, 28)
             } else {
                 Text(Self.summary(items) + (feed ? " · newest first" : "")).font(.system(size: 11)).foregroundStyle(.secondary)
+                    .padding(.bottom, 8)
                 // Hundreds of entries: lazy, so only the rows on screen exist (swift skill, dense lists).
                 LazyVStack(alignment: .leading, spacing: 10) {
                     if feed {
@@ -238,7 +258,7 @@ struct WidgetInboxOverview: View {
                 }
                 if model.inbox.truncated {
                     Text("The newest items are shown. Open a session for its whole inbox.")
-                        .font(.caption2).foregroundStyle(.tertiary)
+                        .font(.system(size: 11)).foregroundStyle(.secondary).padding(.top, 8)
                 }
             }
         }
@@ -270,7 +290,8 @@ struct WidgetInboxOverview: View {
                 .font(.system(size: 11)).lineLimit(1)
         }
         .instantTooltip("Order of the inbox list")
-        .accessibilityLabel(feed ? "Order of the inbox list" : grouped ? "Show one list" : "Group by session")
+        .accessibilityLabel("Order of the inbox list")
+        .accessibilityValue(feed ? "Newest first" : grouped ? "By session" : "One list")
         .accessibilityHint("Opens the inbox order menu")
         .accessibilityIdentifier("widget.overview.grouping")
     }
@@ -289,7 +310,8 @@ struct WidgetInboxOverview: View {
 
     private func header(_ key: String, items: [WidgetInboxItem]) -> some View {
         let session = model.session(forKey: key)
-        let waiting = items.filter(\.needsAnswer).count
+        let waiting = items.reduce(0) { $0 + ($1.needsAnswer ? $1.representedCount : 0) }
+        let total = items.reduce(0) { $0 + $1.representedCount }
         return HStack(spacing: 7) {
             if let session {
                 AIProviderGlyph(meta: AIProviders.meta(for: session.target.provider), size: 14)
@@ -297,7 +319,7 @@ struct WidgetInboxOverview: View {
             Text(items.first?.message?.origin ?? session?.title ?? "Unknown session")
                 .font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
             if items.count > 1 {
-                Text([Plural.count(items.count, "item"), waiting > 0 ? WidgetWords.waitingShort(waiting) : nil]
+                Text([Plural.count(total, "item"), waiting > 0 ? WidgetWords.waitingShort(waiting) : nil]
                     .compactMap { $0 }.joined(separator: " · "))
                     .font(.system(size: 11)).foregroundStyle(waiting > 0 ? Color.orange : .secondary)
             }
@@ -312,11 +334,15 @@ struct WidgetInboxOverview: View {
         .accessibilityElement(children: .contain)
     }
 
-    private static func summary(_ items: [WidgetInboxItem]) -> String {
-        let waiting = items.filter(\.needsAnswer).count
-        let sessions = Set(items.map(\.key)).count
-        return [Plural.count(items.count, "item"), waiting > 0 ? WidgetWords.waiting(waiting) : nil,
-                "from " + Plural.count(sessions, "session")].compactMap { $0 }.joined(separator: " · ")
+    static func summary(_ items: [WidgetInboxItem]) -> String {
+        let waiting = items.reduce(0) { $0 + ($1.needsAnswer ? $1.representedCount : 0) }
+        let total = items.reduce(0) { $0 + $1.representedCount }
+        let sessions = Set(items.filter { $0.message?.origin == nil }.map(\.key)).count
+        let senders = Set(items.compactMap { $0.message?.origin }).count
+        let sources = [sessions > 0 ? Plural.count(sessions, "session") : nil,
+                       senders > 0 ? Plural.count(senders, "sender") : nil].compactMap { $0 }.joined(separator: " and ")
+        return [Plural.count(total, "item"), waiting > 0 ? WidgetWords.waiting(waiting) : nil,
+                sources.isEmpty ? nil : "from " + sources].compactMap { $0 }.joined(separator: " · ")
     }
 
     private func toggle(_ item: WidgetInboxItem) {
