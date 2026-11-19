@@ -239,8 +239,8 @@ struct MeetingSeatChoices {
 
     init(_ suggestion: MeetingsAPI.SeatsSuggest.Suggestion) {
         self.suggestion = suggestion
-        choices = Dictionary(uniqueKeysWithValues: suggestion.people.map { ($0.name, $0.seat) })
-        count = suggestion.seats.room.count + suggestion.seats.remote.count
+        choices = Dictionary(suggestion.people.map { ($0.name, $0.seat) }, uniquingKeysWith: { first, _ in first })
+        count = Set(suggestion.seats.room + suggestion.seats.remote.map(\.name)).count
     }
 
     mutating func set(_ seat: Seat, for name: String) {
@@ -252,13 +252,15 @@ struct MeetingSeatChoices {
 
     /// Built only when a button takes the choices. A remote person's original fractional times survive the review.
     func seats(record: MeetingRecordView?) -> MeetingSeats {
-        let remote = Dictionary(uniqueKeysWithValues: suggestion.seats.remote.map { ($0.name, $0) })
+        // A person who left and came back has one remote seat per stay; every stay is kept.
+        let remote = Dictionary(grouping: suggestion.seats.remote, by: \.name)
         var seats = MeetingSeats()
-        for person in suggestion.people {
+        var placed = Set<String>()
+        for person in suggestion.people where placed.insert(person.name).inserted {
             switch choices[person.name] ?? .unsure {
             case .room: seats.room.append(person.name)
             case .remote:
-                if let original = remote[person.name] { seats.remote.append(original) }
+                if let originals = remote[person.name] { seats.remote.append(contentsOf: originals) }
                 else {
                     let stay = PersonStay.of(person.name, in: record)
                     seats.remote.append(.init(name: person.name, fromSec: stay.fromSec, toSec: stay.toSec))
