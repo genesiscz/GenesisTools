@@ -6,6 +6,7 @@
  */
 import type { Database } from "bun:sqlite";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import type { Change } from "../model/change";
 import type { Actor, Item, ItemId } from "../model/item";
 import { asItemId } from "../model/item";
@@ -207,7 +208,11 @@ async function pushProject({
             continue;
         }
 
-        const config = connectorConfigOf(layers, id).config;
+        const { config, problems } = connectorConfigOf(layers, id);
+
+        if (problems.length > 0) {
+            logger.warn({ connector: id, project, problems }, "work sync: invalid connector configuration");
+        }
 
         if (!config?.enabled) {
             continue;
@@ -288,7 +293,13 @@ async function pushProject({
             project,
             machinePrefix: deps.machinePrefix,
         };
-        const results = await connector.push(intents, ctx);
+        const results = await connector.push(intents, ctx).catch((error: unknown) => {
+            logger.warn({ connector: id, project, err: error }, "work sync: connector push failed");
+            return intents.map(() => ({
+                ok: false as const,
+                error: error instanceof Error ? error.message : String(error),
+            }));
+        });
 
         inTransaction(db, () => {
             intents.forEach((intent, index) => {
@@ -436,18 +447,23 @@ export async function pullRemote(
     connectorId: string,
     remoteKeys: readonly string[]
 ): Promise<PullReport> {
-    const connector = deps.connectors[connectorId];
+    const connector = Object.hasOwn(deps.connectors, connectorId) ? deps.connectors[connectorId] : undefined;
     const report: PullReport = { made: [], updated: [], drift: [] };
 
     if (connector === undefined || !connector.can.pull) {
-        return report;
+        throw new Error(`Connector ${connectorId} does not support pull.`);
     }
 
     const loaded = await deps.loadRules({ project: deps.project });
-    const config = connectorConfigOf(loaded.rules.layers, connectorId).config;
+    const { config, problems } = connectorConfigOf(loaded.rules.layers, connectorId);
+
+    if (!config?.enabled) {
+        throw new Error(problems.join("; ") || `Connector ${connectorId} is disabled in ${deps.project}.`);
+    }
+
     const remotes = await connector.pull(
         { remoteKeys },
-        { settings: config?.settings, project: deps.project, machinePrefix: deps.machinePrefix }
+        { settings: config.settings, project: deps.project, machinePrefix: deps.machinePrefix }
     );
     const { db } = deps;
     const actor = CONNECTOR_ACTOR(connectorId);

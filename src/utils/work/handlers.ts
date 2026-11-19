@@ -618,8 +618,16 @@ export const workHandlers: WorkHandlers = {
         }
 
         const random = session.ctx.random ?? randomItemSuffix;
-        const report = await pullRemote({ ...sync.deps, project, newId: () => newItemId(random) }, p.connector, p.keys);
-        return okReply("pull", report);
+        try {
+            const report = await pullRemote(
+                { ...sync.deps, project, newId: () => newItemId(random) },
+                p.connector,
+                p.keys
+            );
+            return okReply("pull", report);
+        } catch (error) {
+            return failReply("pull", [errorDiagnostic("CONNECTOR_PULL_FAILED", String(error), "connector")]);
+        }
     },
 
     async sync(p, session) {
