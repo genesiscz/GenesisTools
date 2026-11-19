@@ -57,15 +57,20 @@ function ctx(sessionId: string, over: Partial<WorkContext> = {}): WorkContext {
 }
 
 describe("the config file", () => {
-    test.each(["", "projects..App", "__proto__", "projects.constructor.setting", "projects.App.prototype"])(
-        "rejects the invalid path %j without writing the config",
-        async (path) => {
-            const before = SafeJSON.stringify({ version: WORK_CONFIG_VERSION });
-            writeFileSync(configPath, before);
-            expect(await setWorkConfigValue({ configPath, path, value: "ignored" })).toMatchObject({ ok: false });
-            expect(readFileSync(configPath, "utf8")).toBe(before);
-        }
-    );
+    test.each([
+        "",
+        "projects..App",
+        "__proto__",
+        "projects.constructor.setting",
+        "projects.App.prototype",
+        "unexpected",
+        "projects.App.rules.types.bug.unexpected",
+    ])("rejects the invalid path %j without writing the config", async (path) => {
+        const before = SafeJSON.stringify({ version: WORK_CONFIG_VERSION });
+        writeFileSync(configPath, before);
+        expect(await setWorkConfigValue({ configPath, path, value: "ignored" })).toMatchObject({ ok: false });
+        expect(readFileSync(configPath, "utf8")).toBe(before);
+    });
 
     test("an old fixture loads, a set round-trips, a newer file gives defaults and a problem", async () => {
         writeFileSync(
@@ -91,13 +96,14 @@ describe("the config file", () => {
         });
         expect(reread.projects?.App?.rules?.types?.bug?.fields?.where).toEqual({ level: "required" });
 
+        const beforeRefusal = readFileSync(configPath, "utf8");
         const refused = await setWorkConfigValue({
             path: "projects.App.rules.types.bug.fields.why",
             value: { level: "maybe" },
             configPath,
         });
         expect(refused.ok).toBe(false);
-        expect(SafeJSON.parse(readFileSync(configPath, "utf8"))).toMatchObject({ version: WORK_CONFIG_VERSION });
+        expect(readFileSync(configPath, "utf8")).toBe(beforeRefusal);
 
         writeFileSync(configPath, SafeJSON.stringify({ version: 7 }));
         const newer = readWorkConfig(configPath);

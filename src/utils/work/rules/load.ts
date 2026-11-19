@@ -286,6 +286,18 @@ export async function setWorkConfigValue({
             return { keep: { ok: false, problem: `the value does not fit the shape: ${detail}` } };
         }
 
+        if (value !== undefined) {
+            let found: unknown = parsed.data;
+
+            for (const key of keys) {
+                if (typeof found !== "object" || found === null || !Object.hasOwn(found, key)) {
+                    return { keep: { ok: false, problem: `Unknown configuration path: ${path}.` } };
+                }
+
+                found = Reflect.get(found, key);
+            }
+        }
+
         return { write: parsed.data, result: { ok: true, file: parsed.data } };
     });
 }
