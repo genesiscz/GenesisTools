@@ -61,10 +61,12 @@ public struct WorkItemsView: View {
     /// The reason and proof drafts. A host that also shows the inspector gives the store both share.
     @State private var localDrafts: WorkItemInspectorDrafts
     private let drafts: WorkItemInspectorDrafts?
+    private let handoffs: HandoffChoices
 
     public init(snapshot: WorkSnapshotValue, pending: Set<String>, expandAll: Bool = false,
                 foldedSections: Binding<Set<String>>? = nil, drafts: WorkItemInspectorDrafts? = nil,
                 perform: @escaping (WorkScreenAction) -> Void) {
+        handoffs = HandoffChoices(snapshot: snapshot)
         self.snapshot = snapshot; self.pending = pending
         self.perform = { action in perform(action); return Task { true } }
         projection = nil; filter = .default; selection = nil
@@ -82,6 +84,7 @@ public struct WorkItemsView: View {
                 select: @escaping (String) -> Void, toggleExpansion: @escaping (String, Bool) -> Void,
                 showMore: @escaping () -> Void, clearFilters: @escaping () -> Void,
                 retryIndex: @escaping () -> Void, perform: @escaping @MainActor (WorkScreenAction) async -> Bool) {
+        handoffs = HandoffChoices(snapshot: snapshot)
         self.snapshot = snapshot; self.projection = projection; self.filter = filter
         self.selection = selection; self.pending = pending
         self.indexLoading = indexLoading; self.indexFailure = indexFailure
@@ -143,7 +146,7 @@ public struct WorkItemsView: View {
                     empty: "No open handoff or epic in \(snapshot.project)") {
                 ForEach(items.containers) { container in
                     ContainerRow(container: container, filtered: filter.isActive, showsRef: showsRef,
-                                 snapshot: snapshot, pending: pending, selection: selection,
+                                 handoffs: handoffs, pending: pending, selection: selection,
                                  selectable: projection != nil, drafts: drafts ?? localDrafts, select: select,
                                  toggle: { open in
                                      if let toggleExpansion { toggleExpansion(container.ref, open) }
@@ -208,7 +211,7 @@ public struct WorkItemsView: View {
 
     private func row(_ value: WorkRowValue, archive: Bool = false) -> some View {
         ItemRow(value: value, detail: nil, summary: nil, accept: value.state == "spotted", archive: archive,
-                showActions: true, showsRef: showsRef, snapshot: snapshot, pending: pending,
+                showActions: true, showsRef: showsRef, handoffs: handoffs, pending: pending,
                 selected: selection == value.ref, selectable: projection != nil, drafts: drafts ?? localDrafts,
                 select: select, perform: perform).equatable()
     }
@@ -218,7 +221,7 @@ public struct WorkItemsView: View {
                                    severity: value.severity, worker: value.worker, title: value.title,
                                    pairings: value.pairings),
                 detail: [value.userSees, value.why, value.where].compactMap { $0 }.joined(separator: " · "), summary: nil,
-                accept: accept, archive: false, showActions: true, showsRef: showsRef, snapshot: snapshot, pending: pending,
+                accept: accept, archive: false, showActions: true, showsRef: showsRef, handoffs: handoffs, pending: pending,
                 selected: selection == value.ref, selectable: projection != nil, drafts: drafts ?? localDrafts,
                 select: select, perform: perform).equatable()
     }
@@ -257,7 +260,7 @@ public struct WorkItemsView: View {
         let container: WorkItemsProjection.Container
         let filtered: Bool
         let showsRef: Bool
-        let snapshot: WorkSnapshotValue
+        let handoffs: HandoffChoices
         let pending: Set<String>
         let selection: String?
         let selectable: Bool
@@ -268,7 +271,7 @@ public struct WorkItemsView: View {
 
         static func == (lhs: Self, rhs: Self) -> Bool {
             lhs.container == rhs.container && lhs.filtered == rhs.filtered && lhs.showsRef == rhs.showsRef
-                && lhs.snapshot == rhs.snapshot && lhs.pending == rhs.pending && lhs.selection == rhs.selection
+                && lhs.handoffs == rhs.handoffs && lhs.pending == rhs.pending && lhs.selection == rhs.selection
                 && lhs.selectable == rhs.selectable && lhs.drafts === rhs.drafts
         }
 
@@ -287,7 +290,7 @@ public struct WorkItemsView: View {
                     ItemRow(value: WorkRowValue(ref: value.ref, state: value.state, type: value.type,
                                                 title: value.title, pairings: value.pairings),
                             detail: nil, summary: summary, accept: false, archive: false, showActions: false,
-                            showsRef: showsRef, snapshot: snapshot, pending: pending, selected: selection == value.ref,
+                            showsRef: showsRef, handoffs: handoffs, pending: pending, selected: selection == value.ref,
                             selectable: selectable, drafts: drafts, select: select, perform: perform).equatable()
                 }
                 if container.isExpanded {
@@ -321,7 +324,7 @@ public struct WorkItemsView: View {
         let archive: Bool
         let showActions: Bool
         let showsRef: Bool
-        let snapshot: WorkSnapshotValue
+        let handoffs: HandoffChoices
         let pending: Set<String>
         let selected: Bool
         let selectable: Bool
@@ -332,7 +335,7 @@ public struct WorkItemsView: View {
         static func == (lhs: Self, rhs: Self) -> Bool {
             lhs.value == rhs.value && lhs.detail == rhs.detail && lhs.summary == rhs.summary
                 && lhs.accept == rhs.accept && lhs.archive == rhs.archive && lhs.showActions == rhs.showActions
-                && lhs.showsRef == rhs.showsRef && lhs.snapshot == rhs.snapshot && lhs.pending == rhs.pending
+                && lhs.showsRef == rhs.showsRef && lhs.handoffs == rhs.handoffs && lhs.pending == rhs.pending
                 && lhs.selected == rhs.selected && lhs.selectable == rhs.selectable && lhs.drafts === rhs.drafts
         }
 
@@ -440,9 +443,10 @@ public struct WorkItemsView: View {
                     reasonButton(.reopen, ref: ref, title: title)
                 }
                 if state != "dropped" && state != "done" {
-                    if !handoffs(excluding: ref).isEmpty {
+                    let excluded = handoffs.excludedByItem[ref] ?? []
+                    if excluded.count < handoffs.open.count {
                         MenuButton(items: {
-                            let choices = handoffs(excluding: ref)
+                            let choices = handoffs.open.filter { !excluded.contains($0.ref) }
                             let byTitle = Dictionary(grouping: choices, by: \.title)
                             return choices.map { handoff in
                                 let label = byTitle[handoff.title]?.count == 1 ? handoff.title : "\(handoff.title) (\(handoff.ref))"
@@ -473,8 +477,28 @@ public struct WorkItemsView: View {
             }
         }
 
-        private func handoffs(excluding ref: String) -> [WorkContainerValue] {
-            snapshot.openHandoffs.filter { handoff in handoff.ref != ref && !handoff.members.contains { $0.ref == ref } }
+    }
+
+    private struct HandoffChoices: Equatable {
+        struct Choice: Equatable {
+            let ref: String
+            let title: String
+        }
+
+        let open: [Choice]
+        let excludedByItem: [String: Set<String>]
+
+        init(snapshot: WorkSnapshotValue) {
+            let openHandoffs = snapshot.openHandoffs
+            open = openHandoffs.map { Choice(ref: $0.ref, title: $0.title) }
+            var index: [String: Set<String>] = [:]
+            for handoff in openHandoffs {
+                index[handoff.ref, default: []].insert(handoff.ref)
+                for member in handoff.members {
+                    index[member.ref, default: []].insert(handoff.ref)
+                }
+            }
+            excludedByItem = index
         }
     }
 }
