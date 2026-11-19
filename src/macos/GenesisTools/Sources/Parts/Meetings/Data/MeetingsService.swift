@@ -1200,6 +1200,8 @@ final class MeetingsRowsRefresh {
     }
 
     func cached(_ key: Key) -> ReviewRows? { snapshots[key] }
+    /// How many loads are parked until the writes in flight end.
+    var loadsWaitingForWrites: Int { writeWaiters.count }
 
     func apply(_ patch: ReviewRowsPatch, token: String) {
         for key in recent where key.meeting == patch.meeting {
