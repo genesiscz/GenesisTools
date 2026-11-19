@@ -358,7 +358,15 @@ export class HandoffReader {
 
     listHandoffs(input: ListHandoffsInput = {}, deps: HandoffDeps = {}): ListHandoffsResponse {
         const by = buildBy(deps);
-        const limit = input.limit !== undefined && input.limit > 0 ? input.limit : 20;
+        if (input.limit !== undefined && (!Number.isSafeInteger(input.limit) || input.limit < 1)) {
+            throw new Error("limit must be a positive integer.");
+        }
+
+        if (input.offset !== undefined && (!Number.isSafeInteger(input.offset) || input.offset < 0)) {
+            throw new Error("offset must be a nonnegative integer.");
+        }
+
+        const limit = input.limit ?? 20;
         const offset = input.offset !== undefined && input.offset > 0 ? input.offset : 0;
         const sections = input.include !== undefined ? parseIncludeSections(input.include) : [];
         const wantTasks = sections.includes("tasks");
