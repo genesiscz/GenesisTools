@@ -236,8 +236,9 @@ const judged = (verdicts: Verdict[], label: LineLabel): string | undefined => {
     if (!verdict || !label.person) {
         return undefined;
     }
-    if (verdict.status === "doubtful" && verdict.heard !== label.person) {
-        return "doubtful";
+    // A doubtful ear is never a confirmed match; its agreement is counted on its own.
+    if (verdict.status === "doubtful") {
+        return verdict.heard === label.person ? "doubtful-agrees" : "doubtful";
     }
     return verdict.heard === label.person ? "right" : "wrong";
 };
@@ -281,7 +282,8 @@ const summary = {
     allNamed: merged.filter((label) => label.person).length,
     right: labels.filter((label) => judged(union, label) === "right").length,
     wrong: labels.filter((label) => judged(union, label) === "wrong").length,
-    doubtful: labels.filter((label) => judged(union, label) === "doubtful").length,
+    doubtful: labels.filter((label) => judged(union, label)?.startsWith("doubtful")).length,
+    doubtfulAgrees: labels.filter((label) => judged(union, label) === "doubtful-agrees").length,
     leftOpen: labels.filter((label) => !label.person).length,
     beforeJoin,
     scenario: {} as Record<string, number>,
