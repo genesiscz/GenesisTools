@@ -31,6 +31,14 @@ afterEach(() => {
 });
 
 describe("sessions range flags", () => {
+    test("context and resumes list the harnesses for an unknown --provider", async () => {
+        for (const sub of ["context", "resumes"]) {
+            const { exitCode, errors } = await run(["sessions", sub, "some-id", "--provider", "nope"]);
+            expect(exitCode).toBe(1);
+            expect(errors.join("\n")).toContain('does not accept "nope"');
+            expect(errors.join("\n")).toContain("claude");
+        }
+    });
     test("cold comparison reads the resumed agent and makes an unknown comparison price explicit", async () => {
         const root = mkdtempSync(join(tmpdir(), "cold-cli-"));
         const path = join(root, "session.jsonl");

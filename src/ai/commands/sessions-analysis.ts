@@ -1,10 +1,45 @@
 import { ACCOUNT_PROVIDER_ALIASES, type AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { parseDuration } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { type Command, Option } from "commander";
 
 function providerOption(): Option {
-    return new Option("--provider <name>", "Limit the report to this harness").choices([...ACCOUNT_PROVIDER_ALIASES]);
+    return new Option("--provider [name]", `Limit the report to this harness: ${ACCOUNT_PROVIDER_ALIASES.join(", ")}`);
+}
+
+/** `--provider` with no value: a TTY picks the harness. An unknown value, or no TTY, lists the values and exits 1. */
+async function pickProvider(
+    given: string | boolean | undefined,
+    subcommand: string
+): Promise<{ provider: AccountProviderAlias | undefined } | undefined> {
+    if (given === undefined) {
+        return { provider: undefined };
+    }
+
+    const known = ACCOUNT_PROVIDER_ALIASES.find((alias) => alias === given);
+    if (known) {
+        return { provider: known };
+    }
+
+    if (given !== true || !isInteractive()) {
+        out.printlnErr(
+            suggestEnumFlag(`tools ai sessions ${subcommand}`, "--provider", ACCOUNT_PROVIDER_ALIASES, {
+                subcommand: ["sessions", subcommand],
+                given: typeof given === "string" ? given : undefined,
+            })
+        );
+        process.exitCode = 1;
+        return undefined;
+    }
+
+    const picked = await p.select({
+        message: "Harness",
+        options: ACCOUNT_PROVIDER_ALIASES.map((value) => ({ value, label: value })),
+        cancel: "back",
+    });
+    return p.isCancel(picked) ? undefined : { provider: picked };
 }
 
 function sinceTime(value: string): number {
@@ -39,7 +74,7 @@ export function registerSessionAnalysis(sessions: Command): void {
             async (
                 ids: string[],
                 opts: {
-                    provider?: AccountProviderAlias;
+                    provider?: string | boolean;
                     agents: boolean;
                     top: string;
                     agentsTop: string;
@@ -57,9 +92,15 @@ export function registerSessionAnalysis(sessions: Command): void {
                         }
                         return n;
                     };
+                    const picked = await pickProvider(opts.provider, "context");
+                    if (!picked) {
+                        return;
+                    }
+
                     const { printContext } = await import("../lib/sessions/session-context");
                     await printContext(ids, {
                         ...opts,
+                        provider: picked.provider,
                         top: count("--top", opts.top),
                         agentsTop: count("--agents-top", opts.agentsTop),
                         items: count("--items", opts.items),
@@ -92,7 +133,7 @@ export function registerSessionAnalysis(sessions: Command): void {
                 ids: string[],
                 opts: {
                     since?: string;
-                    provider?: AccountProviderAlias;
+                    provider?: string | boolean;
                     project?: string;
                     ttlOnly?: boolean;
                     waits?: boolean;
@@ -133,9 +174,15 @@ export function registerSessionAnalysis(sessions: Command): void {
                             "--top and --fresh-start need nonnegative integers; --idle-seconds needs a nonnegative duration."
                         );
                     }
+                    const picked = await pickProvider(opts.provider, "resumes");
+                    if (!picked) {
+                        return;
+                    }
+
                     const { printResumes } = await import("../lib/sessions/session-resumes");
                     await printResumes(ids, {
                         ...opts,
+                        provider: picked.provider,
                         top,
                         idleSeconds,
                         freshStart,
