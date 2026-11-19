@@ -126,7 +126,8 @@ import {
     speakerScoresOf,
 } from "./lib/speaker-scores";
 import { printSpeakerStats } from "./lib/speakers-view";
-import { settledTermItems, spokenOnPurpose, suggestItems, wordFamily } from "./lib/suggest";
+import { suggestItems } from "./lib/suggest";
+import { settledTermItems, spokenOnPurpose, wordFamily } from "./lib/suggest-terms";
 import { correctionsOf } from "./lib/transcript-corrections";
 import { transcriptDocument } from "./lib/transcript-document";
 import {

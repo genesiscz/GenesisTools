@@ -10,7 +10,7 @@ import { Command } from "commander";
 import { registerMeetingCommands } from "../commands/meeting";
 import { contextEntryText, contextFileRevision, contextFileText } from "./context-file";
 import { duplicateMeeting } from "./duplicate";
-import { rawTerms } from "./suggest";
+import { rawTerms } from "./suggest-terms";
 
 const repo = mkdtempSync(join(tmpdir(), "gt-test-context-file-"));
 const page = join(repo, "Proposals.md");

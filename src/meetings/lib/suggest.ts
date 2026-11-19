@@ -64,8 +64,6 @@ import {
 import { knownWord, settledTermItems, type TermThresholds, termItems } from "./suggest-terms";
 import { unlabeledStretches, unlabeledView } from "./unlabeled";
 
-export { dictionaryKeeps, knownWord, rawTerms, settledTermItems, spokenOnPurpose, wordFamily } from "./suggest-terms";
-
 const prof = profiler.scope("meetings-suggest");
 
 export const SUGGEST_RULES = ["speakers", "evidence", "terms"] as const;
