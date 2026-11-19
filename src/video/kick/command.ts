@@ -4,7 +4,8 @@ import { parseNonNegativeInt } from "@genesiscz/utils/cli";
 import { pickEnumFlag } from "@genesiscz/utils/cli/enum-flag";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { formatBytes, formatDuration, formatRelativeTime } from "@genesiscz/utils/format";
+import { parseSince } from "@genesiscz/utils/date";
+import { formatBytes, formatDuration, formatRelativeTime, parseDuration } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, formatDotStatus, truncateDisplay } from "@genesiscz/utils/table";
 import type { Command } from "commander";
@@ -27,6 +28,7 @@ interface ListFlags {
     sort?: string | boolean;
     range?: string | boolean;
     limit: string;
+    since?: string;
     json?: boolean;
 }
 
@@ -53,7 +55,7 @@ async function listFilters({
     subcommand: string;
     flags: ListFlags;
     fromUrl: { sort?: KickClipSort; range?: KickClipRange };
-}): Promise<{ sort: KickClipSort; range: KickClipRange; limit: number } | null> {
+}): Promise<{ sort: KickClipSort; range: KickClipRange; limit: number; since?: Date } | null> {
     const tool = toolCommand("video", "kick", subcommand);
     const sort = await pickEnumFlag({
         tool,
@@ -84,7 +86,32 @@ async function listFilters({
     }
 
     const limit = parseNonNegativeInt(flags.limit, "--limit");
-    return { sort, range, limit: Math.max(1, limit) };
+
+    if (flags.since === undefined) {
+        return { sort, range, limit };
+    }
+
+    const since = parseSinceFlag(flags.since);
+
+    if (!since) {
+        out.log.error(`--since "${flags.since}" is neither a duration (12h, 90m, 2d) nor a time (HH:MM, an ISO date)`);
+        process.exitCode = 1;
+        return null;
+    }
+
+    return { sort, range, limit, since };
+}
+
+/** `12h`, `90m`, `2d` count back from now; `HH:MM` and ISO dates name the instant. */
+function parseSinceFlag(value: string): Date | null {
+    const at = parseSince(value);
+
+    if (at) {
+        return at;
+    }
+
+    const ms = parseDuration(value);
+    return ms > 0 ? new Date(Date.now() - ms) : null;
 }
 
 function clipAge(clip: KickClip): string {
@@ -157,10 +184,10 @@ async function runList(input: string, flags: ListFlags): Promise<void> {
 
     renderClipTable(clips);
     out.log.info(
-        `${clips.length} clips of ${target.channel} (sort ${filters.sort}, range ${filters.range}${clips.length === filters.limit ? `, --limit ${filters.limit} reached` : ""}).`
+        `${clips.length} clips of ${target.channel} (sort ${filters.sort}, range ${filters.range}${filters.since ? `, since ${filters.since.toLocaleString("en-GB")}` : ""}${clips.length === filters.limit ? `, --limit ${filters.limit} reached` : ""}).`
     );
     out.log.info(
-        `Download them: ${toolCommand("video", "kick", "download", target.channel, "--sort", filters.sort, "--range", filters.range, "--limit", String(filters.limit))}`
+        `Download them: ${toolCommand("video", "kick", "download", target.channel, "--sort", filters.sort, "--range", filters.range, "--limit", String(filters.limit), ...(flags.since ? ["--since", flags.since] : []))}`
     );
 }
 
@@ -283,7 +310,11 @@ export function registerKickCommands(program: Command): void {
                 "--range [value]",
                 `${KICK_CLIP_RANGES.join(", ")} (default: the page URL's range, else ${DEFAULT_RANGE})`
             )
-            .option("--limit <n>", "Most clips taken from each channel", "20")
+            .option("--limit <n>", "Most clips taken from each channel, 0 for all", "20")
+            .option(
+                "--since <when>",
+                "Only clips made since then: a duration back from now (12h, 90m, 2d), HH:MM or an ISO date"
+            )
             .option("--json", "Print the result as JSON");
 
     filterOptions(

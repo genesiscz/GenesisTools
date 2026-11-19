@@ -202,24 +202,32 @@ export async function fetchKickClip(id: string, signal?: AbortSignal): Promise<K
     return toClip(clip);
 }
 
-/** The channel's clips, page after page, until `limit` clips or the last page. */
+/**
+ * The channel's clips, page after page, until `limit` clips or the last page. `since` keeps only clips made at or after
+ * it; sorted by date, the pages stop at the first page that reaches back past it.
+ */
 export async function listKickClips({
     channel,
     sort,
     range,
     limit,
+    since,
     signal,
 }: {
     channel: string;
     sort: KickClipSort;
     range: KickClipRange;
+    /** 0 takes every clip. */
     limit: number;
+    since?: Date;
     signal?: AbortSignal;
 }): Promise<KickClip[]> {
     const clips: KickClip[] = [];
+    const max = limit === 0 ? Number.POSITIVE_INFINITY : limit;
     let cursor: string | null = null;
+    let pages = 0;
 
-    while (clips.length < limit) {
+    while (clips.length < max) {
         const params = new URLSearchParams({ sort, time: range });
 
         if (cursor) {
@@ -231,15 +239,24 @@ export async function listKickClips({
             schema: clipListSchema,
             signal,
         });
-        clips.push(...page.clips.map(toClip));
+        pages++;
+        const found = page.clips.map(toClip);
+        clips.push(...(since ? found.filter((clip) => Date.parse(clip.createdAt) >= since.getTime()) : found));
+        const reachedPast =
+            since !== undefined &&
+            sort === "date" &&
+            found.some((clip) => Date.parse(clip.createdAt) < since.getTime());
 
-        if (!page.nextCursor || page.clips.length === 0 || page.nextCursor === cursor) {
+        if (reachedPast || !page.nextCursor || page.clips.length === 0 || page.nextCursor === cursor) {
             break;
         }
 
         cursor = page.nextCursor;
     }
 
-    logger.debug({ channel, sort, range, limit, found: clips.length }, "Kick clips listed");
-    return clips.slice(0, limit);
+    logger.debug(
+        { channel, sort, range, limit, since: since?.toISOString(), pages, found: clips.length },
+        "Kick clips listed"
+    );
+    return clips.slice(0, max);
 }

@@ -404,6 +404,7 @@ tools video kick list-clips "https://kick.com/somechannel/clips?sort=date&range=
 tools video kick list-clips somechannel --sort view --range week --limit 50 --json
 tools video kick download "https://kick.com/somechannel/clips/clip_01ABCDEFGHJKMNPQRSTVWXYZ01"
 tools video kick download somechannel --range day --limit 10 --out-dir ./clips
+tools video kick download somechannel --since 12h --limit 0 --out-dir ./clips
 ```
 
 - `list-clips <channel>` takes a slug, a channel page, or a clips page URL copied from the browser. The page's own
@@ -411,7 +412,9 @@ tools video kick download somechannel --range day --limit 10 --out-dir ./clips
 - `download <targets...>` takes clip URLs (`kick.com/<channel>/clips/clip_…` or `?clip=clip_…`), bare clip ids, and
   channel or clips page URLs. A channel downloads the clips that `list-clips` shows for the same flags.
 - `--sort date|view` (default `date`), `--range day|week|month|all` (default `all`), `--limit <n>` clips per channel
-  (default 20; the list is read page by page until the limit).
+  (default 20, `0` for all; the list is read page by page until the limit).
+- `--since <when>` keeps only clips made since then: a duration back from now (`12h`, `90m`, `2d`), `HH:MM` today, or
+  an ISO date. With `--sort date` the pages stop at the first page that reaches back past it.
 - `--out-dir <dir>` (default the current folder), `--jobs <n>` clips at once (default 3), `--force` downloads a clip
   again. Without `--force` a clip whose file exists is skipped, so a rerun only fetches new clips.
 - `--json` prints the clips (`list-clips`) or one row per clip with `status` `saved`, `exists` or `failed`
