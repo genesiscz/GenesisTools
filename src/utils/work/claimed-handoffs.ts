@@ -30,6 +30,14 @@ const openHandoffClaims = `FROM items h JOIN claims c ON c.item = h.id
     WHERE h.type = 'handoff' AND h.state IN (${OPEN_STATES.map(() => "?").join(", ")})
       AND c.active = 1 AND json_extract(c.by, '$.sessionId') IS NOT NULL`;
 
+export const WIDGET_WORK_PREVIEW_CHARS = 1024;
+
+/** Bound the data in the snapshot before SQLite materializes it in the widget process. */
+export function widgetWorkPreview(column: "h.body" | "m.body" | "m.acceptance" | "i.acceptance"): string {
+    return `CASE WHEN length(${column}) > ${WIDGET_WORK_PREVIEW_CHARS}
+            THEN substr(${column}, 1, ${WIDGET_WORK_PREVIEW_CHARS - 1}) || '…' ELSE ${column} END`;
+}
+
 interface ClaimRow {
     id: string;
     project: string;
@@ -59,7 +67,8 @@ export function claimedHandoffTree(db: Database, liveSessionIds: ReadonlySet<str
         const handoffs = new Map<string, ClaimedHandoff>();
         const claims = db
             .query<ClaimRow, string[]>(
-                `SELECT h.id, h.project, h.title, h.body, json_extract(h.created_by, '$.repoRoot') AS repoRoot, c.session_id AS sessionId,
+                `SELECT h.id, h.project, h.title, ${widgetWorkPreview("h.body")} AS body,
+                        json_extract(h.created_by, '$.repoRoot') AS repoRoot, c.session_id AS sessionId,
                         json_extract(c.by, '$.harness') AS harness, json_extract(c.by, '$.sessionTitle') AS sessionTitle
                  ${openHandoffClaims} AND c.session_id IN (SELECT value FROM json_each(?))
                  ORDER BY h.project, h.title, h.id, c.session_id`
@@ -102,7 +111,8 @@ export function claimedHandoffTree(db: Database, liveSessionIds: ReadonlySet<str
                 },
                 [string]
             >(
-                `SELECT r.from_id AS handoff, m.id, m.title, r.slot, m.state, m.body, m.acceptance,
+                `SELECT r.from_id AS handoff, m.id, m.title, r.slot, m.state,
+                        ${widgetWorkPreview("m.body")} AS body, ${widgetWorkPreview("m.acceptance")} AS acceptance,
                         json_extract(m.created_by, '$.repoRoot') AS repoRoot
                  FROM refs r JOIN items m ON m.id = r.to_id
                  WHERE r.from_id IN (SELECT value FROM json_each(?)) AND r.kind = 'member'

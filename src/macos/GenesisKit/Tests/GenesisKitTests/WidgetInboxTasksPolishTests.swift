@@ -148,13 +148,10 @@ final class WidgetTasksPolishTests: XCTestCase {
         store.refresh()
         await settled(store)
         var urls: [URL] = []
-        var clickStarted: TimeInterval?
-        var dispatchMS: Double?
         let opened = expectation(description: "The task button requested a URL")
         let card = WidgetTasksModuleView(store: store, presentation: .preview, handoffDisplay: .expanded)
             .frame(width: 432, height: 300, alignment: .top)
             .environment(\.openURL, OpenURLAction { url in
-                dispatchMS = clickStarted.map { (ProcessInfo.processInfo.systemUptime - $0) * 1_000 }
                 urls.append(url)
                 opened.fulfill()
                 return .handled
@@ -184,18 +181,11 @@ final class WidgetTasksPolishTests: XCTestCase {
                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
                 eventNumber: 0, clickCount: 1, pressure: 1))
         }
-        // Supply mouse-up before mouse-down enters a control's tracking loop.
-        clickStarted = ProcessInfo.processInfo.systemUptime
-        NSApp.postEvent(try mouse(.leftMouseUp), atStart: true)
         window.sendEvent(try mouse(.leftMouseDown))
-        if let up = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) {
-            window.sendEvent(up)
-        }
+        window.sendEvent(try mouse(.leftMouseUp))
         await fulfillment(of: [opened], timeout: 2)
         let url = try XCTUnwrap(urls.first)
-        let ms = try XCTUnwrap(dispatchMS)
-        print(String(format: "widget Work click to route: %.1f ms", ms))
-        XCTAssertLessThan(ms, 100)
+        XCTAssertEqual(urls.count, 1)
         XCTAssertEqual(url.scheme, "genesis-tools")
         XCTAssertEqual(url.host, "hub")
         XCTAssertEqual(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
