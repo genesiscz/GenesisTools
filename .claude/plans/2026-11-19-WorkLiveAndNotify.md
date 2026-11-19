@@ -33,7 +33,8 @@ what it links.
     build in your worktree, and the commands in "Rules for the executor".
   - One Swift build or test at a time on this Mac. Before EVERY `swift build`, `swift test`,
     `bun scripts/native/swift-package.ts ...` or `bun run app:test`, wait until
-    `pgrep -f 'swift-build|swift-test|swift-frontend'` prints nothing (loop with a 20 s sleep).
+    `pgrep -x swift-build || pgrep -x swift-test || pgrep -x swift-frontend` finds nothing (loop with a 20 s sleep;
+    2026-11-19 03:30: `pgrep -f` with the pattern matched the waiting shells themselves and deadlocked them).
   - Never `rm`. Delete with `tools rm <paths>`. Scratch files go under
     `/tmp/cc/GenesisTools/ae3ac312-7dbe-4045-970a-292aa93ed9ab/work-live-b/`.
   - Never write Martin's real config file in a test or a probe: every test uses a temporary `configPath` or a
@@ -178,6 +179,8 @@ read it.
 Level glyphs and colours (the same in the cell, the menu and the legend; different states differ in hue and glyph,
 not only shade, per the ux skill): Nobody `bell.slash` dim; In the list `list.bullet` dim; Inbox line `tray` blue;
 Inbox and banner `bell.badge` orange.
+
+- 2026-11-19 01:01 The machine-wide path is global.rules.notify.<type>.<action>. For exact bulk Undo, configSet also accepts restore (instead of notify), a bounded list of concrete type/action pairs with raw from/to rules. Undo checks the expected current values under the same lock before restoring. Each changed path includes its structural type/action so dots in a project name are preserved.
 
 ## Order
 
@@ -497,6 +500,58 @@ back. After this package:
 
 ## Progress
 
+- 2026-11-19 00:57 Claimed h_rkksvd0u on the requested branch at 49ff462117. bun install passed.
+
+- 2026-11-19 01:12 P1 model/header and capture tests are staged; native gate is queued behind another worktree. During the Swift wait, P2 focused tests passed (19), TS5115 was the only type diagnostic, and scratch CLI config-set plus config --json verified inbox from config.project in Orchard. Evidence: /tmp/cc/GenesisTools/ae3ac312-7dbe-4045-970a-292aa93ed9ab/work-live-b/probe-write.log and probe-read.json.
+
+- 2026-11-19 01:16 P1 committed locally as d099e7a7be; its Swift gate is pending. P2 typed Swift calls and Undo receipt decoding joined the worktree while the shared build slot is occupied. The queued kit run will exercise both packages.
+
+- 2026-11-19 01:27 P2 is committed as 4d28b6d833. The first native build compiled the Work product and exposed a read-only system environment key in two test fixtures. Switched the fixtures to the kit’s writable Reduce Motion environment. The wider work and registry run passed 119 tests; the row write plus Undo test took 3.49 ms on its first run.
+
+- 2026-11-19 01:34 The native product compiled. A fixture correction is queued for WorkScreenTests and the original grid capture. P3 scratch drafts are in /tmp/cc/GenesisTools/ae3ac312-7dbe-4045-970a-292aa93ed9ab/work-live-b (WorkNotifyViews.swift, P3Model.swift, P3Tests.swift, P3MenuButton.swift, assemble-p3.py); integrate after the baseline is captured. The handoff tasks remain open pending native verification.
+
+- 2026-11-19 01:47 The 13 WorkScreenTests, including real socket EOF and the generated null edit, passed. The original 2200×1200 grid capture is /tmp/cc/GenesisTools/ae3ac312-7dbe-4045-970a-292aa93ed9ab/work-live-b/work-notify-original-ImageRenderer.png. Removed-row capture passed its assertions, but the one failing calibration made it inconclusive. Changed the recorder to yield between every frame and require distinct intermediate values. P3 is integrated, with the first combined gate queued.
+
+- 2026-11-19 01:51 Folded the motion fixture correction into P1 and the wildcard/readback metadata into P2. The first three package commits are e0dadd2b50, 971cd484cb and 7e230698e6; before/after history preparation had the identical tree 2688726a57724ffe58be0e2bff0f17dc94950e11. ConfigSet service tests passed for a human edit, a rejected agent edit, dry-run and no-op event counts.
+
+- 2026-11-19 02:08 First combined visual run: zero value-row evaluations for a crosshair move; unchanged model read 0.082 ms including task resumption. The real removal recorded 0.87 and 0.13 of the original ink, with none intermediate under Reduce Motion. The corrected calibration passed. The first menu rendering drew symbols without titles and unhosted NSMenu dispatch missed two bulk actions; those fixtures were corrected for the next gate.
+
+- 2026-11-19 02:10 UX checklist, pointer and layout: each actionable cell has a native menu, full cell hit area, label and identifier. Header recovery reserves its width; the column highlight and type rail stop at the last row. The existing project sidebar and Items content retain their ownership. Media thumbnails, drop targets, drag edges, pane resize, sticky session order, notch/rail bubbles, video and attachment previews do not apply to a rules table.
+
+- 2026-11-19 02:10 UX checklist, keyboard and accessibility: grid arrows reach the pinned heads, Return and Space request the selected menu, Escape exits the grid or clears the filter. The project context command also has the existing hub reload shortcut. Composer send/newline keys, staged text on dismissal and multi-step confirmation keys do not apply. VoiceOver, Full Keyboard Access and OS preference changes were outside the authorized scope. Test hosts use the kit’s Reduce Motion environment.
+
+- 2026-11-19 02:10 UX checklist, feedback and recovery: first reads, stale reads, saving, failure and disconnected states have separate presentations. Writes retain their pending look through readback; notices float, offer Undo for saved rules or Details for a failure. Media capture/cancel, login and privacy grants, agent approvals, dangerous deletions, unsent drafts and modal confirmations do not apply to reversible rule edits.
+
+- 2026-11-19 02:10 UX checklist, windows, attention and settings: this work adds no production window, title-bar drag behavior, overlay panel, sound, delivery channel or system notification. Dock activation, display placement, window restore/minimum sizes, timers for attention flashes, quiet hours and audio previews therefore do not apply. The scope menu defaults to For this project; For all projects edits the existing global layer. Command line starts closed. Reduce Motion uses the established setting. The disk schema gains no preference keys.
+
+- 2026-11-19 02:10 UX checklist, words and loading: action/type/level/layer labels come from the Work vocabulary. Filtering keeps the viewport; a selected cell shows pending and then the confirmed rule. Time links, transcripts, mixed media, grouped session lists, file diffs/renames, tab-switching commands, badges for unread inbox totals and draggable shelves are outside this view. Menu and grid captures use fixture state; foreground operation of the installed app was excluded by the brief.
+
+- 2026-11-19 02:49 Hub capture: zero changed pixels in each of nine strips from three slow background reads, zero changes left of the stopped pill, and 7,986 moving pixels in the old spinner control. Frame size 2600×104. After the shared Mac’s Vision accurate recognizer reported E5RT/InvalidTransition before recognizing text, the fixtures adopted the fast CPU recognizer, which the existing native test suite uses for rendered labels. The final kit and hub gates are rerunning in order.
+
+- 2026-11-19 03:05 Picture pairs use /tmp/cc/GenesisTools/ae3ac312-7dbe-4045-970a-292aa93ed9ab/work-live-b/. Header, 2600×104: header/work-header-before.png, header/work-header-after.png, header/work-header-stopped.png and header/work-header-reconnected.png. The nine waiting, slow and settled strips are recorded in header/work-header-pixels.json. Grid, 2200×1200: work-notify-before.png and work-notify-after.png. work-notify-cell-menu.png and work-notify-row-menu.png are offscreen drawings of the production NSMenu entries over the grid at their measured anchors. The baseline, fixture and menu provenance stay alongside the PNGs.
+
+- 2026-11-19 03:07 At final head ea26030d31, all 114 Work tests, lint, commit subjects, generated outputs, package boundaries and the placeholder probe pass. The only TypeScript diagnostic is the allowed TS5115 at evaluate.ts:7. The serialized native gates are queued behind Swift builds and a sibling inbox-feed2 wrapper (PID 14567) whose command line matches this worktree’s pgrep check. macOS excludes ancestors from pgrep by default, so the sibling’s own check can finish normally.
+
+- 2026-11-19 03:25 GenesisKit passed all 22 cases on ea26030d31, including the calibrated fade and Reduce Motion controls. The equal read emitted zero changes and took 0.100 ms including task resumption. The remaining hub wait was restarted with the repository lock and exact process names (pgrep -x for swift-build, swift-test and swift-frontend, in a 20 s loop), per the corrected rule.
+
+- 2026-11-19 03:31 Gate passed on ea26030d31e02151e5cd64cece03cf8dc2e08da3. Local commits in order: e0dadd2b50 (quiet live header), 971cd484cb (atomic rule edits and Undo), 7e230698e6 (editable notification grid), ea26030d31 (rendered verification). Native tests passed 22/22 in GenesisKit and 13/13 in HubWorkTests; Work passed 114/114, service 6/6. tsc-rs returned only the allowed TS5115, lint checked 11,040 files, four commit subjects passed, and 813 placeholder patterns matched nothing. Generated files and package boundaries passed. All nine reload frames matched, row opacity reached 87%, 9% and 2% before disappearing, and Reduce Motion had zero intermediate frames. All four handoff tasks checked and finish_handoff accepted.
+
 ## Seen, not fixed
 
+- 2026-11-19 01:01 Severity thresholds remain editable in the config file. The grid displays the configured threshold; changing a level preserves it.
+
+- 2026-11-19 02:08 The assigned base renders counts as one summary. Keep the parallel clickable counts when merging the header. The legacy config read still reports per-surface delivery overrides; this editor changes the four project-rule layers described above.
+
 ## Deviations
+
+- 2026-11-19 00:57 The direct MCP connector had no caller session and the handoff CLI has no get command. tools scripts call genesis-tools.handoff_get inherited the Codex identity and confirmed the claim.
+
+- 2026-11-19 00:59 The shared RPC event stream never ended on socket loss. Added opt-in disconnect completion in its generator and regenerated the client. The existing Work file watch also observes machine config changes. Existing event subscriptions keep their reconnect behavior.
+
+- 2026-11-19 01:47 For cells that inherit from a stronger remaining rule, reset names the actual inherited level. A wildcard-decided level cannot be removed for a single cell; its menu explains this and still allows a concrete override. Bulk edits skip repository-decided cells in the same transaction.
+
+- 2026-11-19 01:51 The existing notify entry takes only project and rows inside an outer ScrollView. WorkMain.body now hosts the editable pane, notice stack and first-load/row-motion modifiers; the existing WorkMain.content and WorkItemsView bodies were left intact for the sibling. The project row hosts the specified context action. MenuButton gained optional symbols, identifiers and a keyboard anchor, with existing defaults.
+
+- 2026-11-19 02:49 Scratch homes have separate app/build.lock files. The final runners also acquire the real shared cross-worktree build slot, then pass the required empty pgrep check before launching each command with the scratch home. No installed app or OS accessibility setting is changed.
+
+- 2026-11-19 03:05 Final fixture OCR uses the accurate revision 1 recognizer on CPU, including for small counts. The calibration and production opacity tests now require intermediate ink to exceed five times the measured fit error, use the same criterion for instant removal and Reduce Motion, and require two distinct intermediate ink levels for a fade.

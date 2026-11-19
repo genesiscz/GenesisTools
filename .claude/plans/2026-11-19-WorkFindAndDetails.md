@@ -33,7 +33,8 @@ it alone commits. It reads only this file and what it links.
     build in your worktree, and the commands in "Rules for the executor".
   - One Swift build or test at a time on this Mac. Before EVERY `swift build`, `swift test`,
     `bun scripts/native/swift-package.ts ...` or `bun run app:test`, wait until
-    `pgrep -f 'swift-build|swift-test|swift-frontend'` prints nothing (loop with a 20 s sleep).
+    `pgrep -x swift-build || pgrep -x swift-test || pgrep -x swift-frontend` finds nothing (loop with a 20 s sleep;
+    2026-11-19 03:30: `pgrep -f` with the pattern matched the waiting shells themselves and deadlocked them).
   - Never `rm`. Delete with `tools rm <paths>`. Scratch files go under
     `/tmp/cc/GenesisTools/ae3ac312-7dbe-4045-970a-292aa93ed9ab/work-find-a/`.
   - No agent attribution in commits (no `Co-Authored-By`, no "Generated with"). Commit titles follow
@@ -242,6 +243,12 @@ names in the store code before you write the decoder, and write any kind you add
   with a line "This item is no longer in <project>" and a button "Open it" that routes to its new project.
 - A write from the inspector failed: the outcome `NoticePill` stays (error), and the reason or proof text the reader
   typed is kept in the popover so nothing typed is lost.
+
+- 2026-11-19 00:57 Event.action carries the verb derived from the event payload; Event.summary keeps the note, reason or proof. The archive index also supplies matching open rows that have neither a container nor a triage entry.
+
+- 2026-11-19 03:08 Item.checkoutPath reads the creating actor's repoRoot only when that actor named the item's project. The host resolves its main checkout off the main thread so relative file links also work on a cold Work route.
+
+- 2026-11-19 03:24 Executor clarification: wait while pgrep -x swift-build, pgrep -x swift-test or pgrep -x swift-frontend finds an actual process. Keep the 20-second poll and the repository build lock. This supersedes the original full-command-line guard for every remaining Swift call.
 
 ## Order
 
@@ -497,6 +504,144 @@ every pair exists, and Progress lists each checklist item that did not apply wit
 
 ## Progress
 
+- 2026-11-19 00:57 Verified base 49ff462117, installed dependencies, and claimed the five handoff tasks. P1 is in progress.
+
+- 2026-11-19 01:00 The detail decoder handles claimed, released, paired and unpaired journal events in addition to the frozen list. The model shares one 20-entry detail cache and one project index.
+
+- 2026-11-19 01:07 P1 committed at 1b0f05bde5. The compiler stopped during the external interruption before reporting a test result. The resumed gate is waiting for the shared Swift slot.
+
+- 2026-11-19 01:19 The P1-only WorkFindTests passed in this worktree. The 5,000-row matcher averaged 45 ms across ten samples (42.5–56.4 ms) against the 10 ms target; folding and tokenizing each row on each scan costs time. Full gate in progress.
+
+- 2026-11-19 01:39 The combined GenesisKit gate passed 33 tests on 1b0f05bde5 (10.17 s). The app gate started after it.
+
+- 2026-11-19 01:50 P1 gate passed: 33 kit and 11 app tests, lint, subject check and tracked-file placeholder scan. No TS changed. Current-account MCP handoff check was refused because the resumed connector has no sessionId; local action recovery in progress.
+
+- 2026-11-19 01:51 The resumed shell retains its original CODEX_THREAD_ID. The same handoff action executor accepted the P1 proof from that identity; handoff_get confirms 1/5.
+
+- 2026-11-19 02:06 P2 find bar, projected list and offscreen tests committed at 043548e385. Tests enter basket through the actual native field editor. Awaiting the shared Swift slot for the kit gate; the app gate follows it. Scratch evidence: /tmp/cc/GenesisTools/ae3ac312-7dbe-4045-970a-292aa93ed9ab/work-find-a/p2-kit.log and /tmp/cc/GenesisTools/ae3ac312-7dbe-4045-970a-292aa93ed9ab/work-find-a/p2-app.log.
+
+- 2026-11-19 02:15 P2's rendered basket, Done and clear tests passed. The 100-row projection/layout/bitmap averaged 264 ms with substantial load variance, above the 50 ms threshold. The field now echoes immediately and applies the filter after 80 ms. Restored the existing lowercase noun in section counts after WorkScreenTests caught the regression.
+
+- 2026-11-19 02:17 Captured the local pre-inspector baseline from the verified P1 app at 1300 × 820 pt, on work=w_5d4ch4ts. Read the image: the old detail replaces the list. Title-bar audit ended in ok. Local-only pair begins at /tmp/cc/GenesisTools/ae3ac312-7dbe-4045-970a-292aa93ed9ab/work-find-a/work-inspector-before.png.
+
+- 2026-11-19 03:01 P2 kit gate passed 35/35 at 43bd8504fb, including native typing, reset text parity, archived-only results, legacy rendering, and the 80 ms change. App gate is building in the isolated worktree.
+
+- 2026-11-19 03:04 Remaining inspector and keyboard/placement drafts are in /tmp/cc/GenesisTools/ae3ac312-7dbe-4045-970a-292aa93ed9ab/work-find-a/design as WorkItemInspector.swift, WorkReasonButton.swift, HubWorkTests.swift and settings/*.swift. integrate-p3.py then integrate-p4.py apply the staged design to the worktree; they have only been exercised against scratch copies. Validate each package separately before ticking it.
+
+- 2026-11-19 03:08 P2 gate passed on 43bd8504fb: 35 kit tests, 11 app tests, lint, subjects, and placeholder checks. Verified both 2000 × 3000 fixture images at /tmp/cc/GenesisTools/ae3ac312-7dbe-4045-970a-292aa93ed9ab/work-find-a/work-find-before.png and /tmp/cc/GenesisTools/ae3ac312-7dbe-4045-970a-292aa93ed9ab/work-find-a/work-find-after.png. Final 100-row sample 69 ms (bitmap rendering included).
+
+- 2026-11-19 03:12 P3 inspector and its production host, source actions and fixture tests are in commit 213b8f34a8. The host owns routing and drafts, including when the window crosses the placement threshold. App build pending.
+
+- 2026-11-19 03:24 P3 gate waiting on the prescribed pgrep: two successive samples found only waiting zsh processes, PIDs 14567 and 25132, in the separate inbox-feed2 worktree. Their inline command includes the pgrep pattern itself. Asked whether to exclude verified waiting shells; left the original gate and the other processes alone.
+
+- 2026-11-19 03:36 Image inspection found the default State menu truncates before its selected-count suffix. CPU OCR read 'State: Open or activ...' in work-find-before.png. The P5 checklist pass will use the short Open label for a multi-choice summary and keep Open or active in the menu.
+
+- 2026-11-19 03:43 The first native inspector pair showed the list and selected detail side by side and titlebar audit ok. P3 first app run exposed a narrow title truncation and a hidden test window that queued mouse events without dispatching them. Updated the row layout and event pump; rerunning.
+
+- 2026-11-19 03:51 After fixing the moved-project refresh and native event pump, 36 kit and 14 app tests passed, including task click/back and all four matched inspector pairs. Toolchain lint required a conventional EnvironmentKey for compact rows on Command Line Tools machines; removed the @Entry macro and am verifying the amended head.
+
+- 2026-11-19 03:51 The shared perf log reported work.detail.load spans of 8.9, 394.0 and 18.5 ms alongside this worktree's live captures. One exceeded 300 ms. They include service wait, and the Mac was shared. The cache test separately proves same-frame availability on a repeated selection.
+
+- 2026-11-19 04:15 P3 passed on 1f20b07cce: 36/36 kit and 14/14 app tests, all static gate checks, live title-bar audit ok. Hidden-window member click and back both passed.
+
+- 2026-11-19 04:16 P4 adds Item details (hub.work.detailPlacement). Beside the list is the default; replace opens details in place. Below 900 pt selection uses the replacement layout. Filters stay per window and reset on project changes.
+
+- 2026-11-19 04:45 P4 gate passed at 8348648870: 43 kit and 16 app tests. Hub Back/Forward, wide replace, route clearing and all three rendered settings layouts passed, along with lint, subjects and the placeholder scan.
+
+- 2026-11-19 04:53 Checklist references below use each section's bullet order in .claude/skills/ux/references/checklist.md. Affordance 4/5 (media thumbnails, agent attachments), 7 (custom button style), 8 (drop target), and 11 (context-only commands) do not apply: these views use text and existing kit controls. For 2 the named container row selects its details; its separately labelled chevron folds the tasks. For 14/15 we used the worktree host, real field-editor input and real member/back clicks. The installed app was outside the brief. Menu pointer selections and each individual RPC write were not exercised in the installed app.
+
+- 2026-11-19 04:53 Windows and overlays 1/2/4/5/7/8/9/11 are existing window dragging, responder, tab, floating-window, screen placement, modal and Dock policies. Work adds an interior pane. Item 3 has no unsolicited overlay. Layout 2/5/9/10/12/13 do not apply to autosizing panels, nonactivating tabs, module icons, timeline marks, held answer rows or inline time links. Work uses the existing window and a trailing divider. Wide/narrow renders cover the reachable 900 pt breakpoint.
+
+- 2026-11-19 04:53 Widget and panel controls 4 is for a session terminal; each row here is a work item. Round 2 items 3/4/5/6/7/8/9 concern fitted widget height, agent headers, session activity, sounds, preview bubbles, parallel session lists and flashes; none was introduced here. Counts describe the sections immediately below them. Hit targets and keyboard were inspected on the actual fields, disclosures, row selectors and labelled actions. Keyboard 13/14 remain the host's standard app and mode commands.
+
+- 2026-11-19 04:53 VoiceOver 1–14 were reviewed at the code level for meaningful labels, control IDs, selection traits, glyphs and reading order. Manual VoiceOver, Full Keyboard Access and changed accessibility settings were outside the explicitly confirmed scope. VoiceOver 4/5/10/11 have no new hover-only action, unsolicited alert, exiting overlay or glass material. Feedback 5 uses the existing screen notice by the interface freeze; 9/12 have no agent-blocking approval or batch write. Errors and recovery 8 has no permission request. Undo and destructive actions 1/3/6 have no new undo stack, permanent deletion or repeated confirmation. Drop/finish change work state; Reopen remains available. Empty and loading states 4 has no onboarding flow.
+
+- 2026-11-19 04:53 Motion 2/8/9/10/11 introduce no AppKit animator, chained animation, entry scale, decorative loop or flash. Motion 4 was checked in source; OS settings were not toggled. Attention and notifications 1–7 belong to approvals, notification focus, popups, system notices, alert actions, notice timers and sounds; this package uses the existing notice and leaves notification delivery to the sibling. Counts/words 3/8/10 have no numbered option badges, repeated time chips or nearest-media timestamps. Settings 4/7/8/9 have no dependent option, editable preference text, numeric unit or stepping control. Settings 1–3 were checked through isolated preferences, reopened domains and all three rendered layouts.
+
+- 2026-11-19 04:53 Loading, swaps and diffs 3/4/6/7/8/10/11/12/13/14 cover saved window frames, highlighted diffs, tab animation, changed file reveal, follow-latest scrolling, renames, file recency, file-tree outline keys, tab-following and hosted repositories. No such behavior was added. The selected item is replaced immediately only on an explicit selection; the last successful detail stays visible during a refresh. Dragged edges 1–5 use the existing ResizableSidePanel, value rows and liveRow controls; 6/7 are resize-engine benchmark and dev-monitor checks. The engine was reused and the wide/narrow end states were rendered. Drag-frame latency and release costs were not measured.
+
+- 2026-11-19 05:16 Opus took over. Feature A's five commits were cherry-picked onto feat/2026-11-19-work-find-live a97ebb7ddb (feature B; backup branch backup/2026-11-19-work-find-a-pre-restack at 7ef2c67c0c). Conflicts in WorkScreenModel (snapshot didSet beside B's preview state, write() with B's NoticeStack and readAfterWrite, activate/deactivate), WorkScreenTests (B's GenesisKitFixtureTextRequest kept), HubWork (B's WorkHeader beside A's HubWorkContent) and HubWorkTests (B's file plus A's three hunks). The owned diff now uses a97ebb7ddb.
+
+- 2026-11-19 05:45 Two adaptations to feature B after the restack, both in the owned range. 4f9a364598: the list read beside an open item now goes through the same adopt path as a list read (B's pending-state preview and row animation), and an equal live read refreshes a dropped find index without publishing (the first kit run failed WorkFindTests.testTheModelReadsTheIndexOnDemand... and WorkScreenTests.testAnEqualLiveReadPublishesNothing... until this). d75dc384e4: a routed row already in the list when the list first appears scrolls into view after layout; HubWorkTests.testARoutedArchiveRowFarBelowTheFoldIsScrolledIntoView covers both orders.
+
+- 2026-11-19 05:45 Gate on d75dc384e4 in the worktree on this Mac: kit `swift-package.ts test --filter 'Work|HubPreferencesTests'` 105 tests, 3 skipped, 0 failures (final-kit.log); app `app:test -- --filter HubWork` 22 tests, 0 failures (final-app.log); lint-rules OK on 11,047 files and 23 rules; check-commits 7 commits in a97ebb7ddb..HEAD, 0 to fix; placeholder-check 813 patterns, no match. WorkScreenTestsRemoval passed in every kit run, so no flaky rerun was needed. No TypeScript changed. Logs are in /tmp/cc/GenesisTools/ae3ac312-7dbe-4045-970a-292aa93ed9ab/work-find-a.
+
+- 2026-11-19 05:45 Picture pairs on this HEAD's code, same size per pair: work-find-{before,after}.png 2000 x 3000 (kit WorkFindTests with WIDGET_SHOTS); hub-work-inspector-{bug,handoff,done}-{before,selected}.png 3000 x 2000 and hub-work-inspector-narrow-{before,selected}.png 1640 x 2000 (app HubWorkTests with HUB_WORK_SHOTS). The handoff pair shows B's WorkHeader (no reload button, no spinner) above A's list and inspector. Find OCR in the test asserts 'Find items by words or ref' and 'State: Open +2'.
+
+- 2026-11-19 05:45 Live capture from the worktree build, work=w_5d4ch4ts at 1300 x 820 pt: work-inspector-after.png beside work-inspector-before.png, title-bar audit ended in ok. The details sit beside the list with State: Done, but the done row itself is not in the list: the app's project index counts 361 GenesisTools items while `tools work list` returns 970, and w_5d4ch4ts is not among the 361. Filed as w_no6yvic6. The real picture stays local.
+
+- 2026-11-19 05:45 UX pass closed on the owned range: `git diff --name-only --diff-filter=ACM a97ebb7ddb..HEAD -- '*.swift' | xargs bun .claude/skills/ux/scripts/ux-scan.ts` scanned 14 Swift files (WorkScreenTests left the owned diff, since B's OCR helper replaced A's one-line change there). Facts: no file animates without reading Reduce Motion, no file has two reload buttons, 5 arrow-key handlers. The item-by-item exclusions of 04:53 still apply; the restack added no new control. VoiceOver, Full Keyboard Access and OS settings were not tested (no confirmation in this task).
+
 ## Seen, not fixed
 
+- 2026-11-19 01:00 A project with more than 5,000 items can have rows beyond the single allowed list response. The store currently returns its oldest 5,000.
+
+- 2026-11-19 05:45 w_no6yvic6: the Work screen's project index misses closed items that the CLI lists, so a route to one of them shows its details but not its row.
+
 ## Deviations
+
+- 2026-11-19 00:57 The local handoff CLI has no get subcommand. Claimed through handoff_get instead.
+
+- 2026-11-19 01:00 The work.list SQL orders by created_ts ascending, so the source reverses the returned rows to show the newest archive item first. The 5,000-row request limit still applies.
+
+- 2026-11-19 01:10 The search bar keeps its focus through resizing. When the list is too narrow for one row, the search stays above the facet controls; all four remain visible.
+
+- 2026-11-19 01:13 WorkScreenModel keeps the existing reload function and change-stream task. Its changed() and successful-write paths invalidate the find cache so the next settled reload refreshes the index and the visible detail.
+
+- 2026-11-19 02:56 The machine's Vision E5RT engine failed before OCR in six existing and new kit tests. The Work screenshot read now retries the same image through the system CPU recognizer; the expected text and capture paths stay the same.
+
+- 2026-11-19 04:52 The live route to an archived item showed 314 of 362 rows and expanded unrelated open handoffs. A routed standalone done or dropped item now selects its own archive state. A canonical full ref with a matching row yields that exact item across sections. A header carries no worker in work.tree; Mine uses actual index ownership or matching members.
+
+## 2026-11-19 04:56 — Handoff from the astra worker
+
+### DONE
+
+P1–P4 are checked on handoff `h_kxboe8h2`. P5 is committed and remains open. These are the exact commands behind the results below, run from the assigned worktree.
+
+| Check | Command |
+|---|---|
+| Kit | `bun scripts/native/swift-package.ts test --package-path src/macos/GenesisKit --filter 'WorkFindTests|WorkScreenTests|HubPreferencesTests'` |
+| App | `bun run app:test -- --filter HubWorkTests` |
+| Lint | `bun scripts/ci/lint-rules.ts` |
+| Subjects | `bun scripts/git/check-commits.ts origin/feat/2026-11-19-work-find-live..HEAD` |
+| Placeholders | `bash scripts/ci/placeholder-check.sh` |
+
+| Package and commit | Implementation and verification on that commit | Kit / App passed | Lint files / rules | Subjects checked / rejected | Placeholder patterns / hits |
+|---|---|---:|---:|---:|---:|
+| P1 `1b0f05bde5` | Full detail decoding, filter, lazy project index and 20-item cache. The additional command `bun scripts/native/swift-package.ts test --package-path src/macos/GenesisKit --filter WorkFindTests` passed 11/11. | 33 / 11 | 11,036 / 23 | 1 / 0 | 813 / 0 |
+| P2 `43bd8504fb` | Find bar, facets, matching members and archive. A native field-editor test entered “basket” and verified the restored rendering after clearing. | 35 / 11 | 11,037 / 23 | 2 / 0 | 813 / 0 |
+| P3 `1f20b07cce` | Inspector, writes, history, links and draft retention. Real mouse events selected a member and returned to its container. The worktree's live 1300 × 820 capture recorded a title-bar audit ending in `ok`. | 36 / 14 | 11,038 / 23 | 3 / 0 | 813 / 0 |
+| P4 `8348648870` | Filtered keyboard selection, Back/Forward, route reveal and placement. `hub.work.detailPlacement` defaults to `beside`, supports `replace`, and uses replacement below 900 pt. Both choices rendered in all three settings layouts. | 43 / 16 | 11,038 / 23 | 4 / 0 | 813 / 0 |
+| P5 `7ef2c67c0c` | Shorter facet summary, cross-section exact-ref results, archive routing, ownership checks and revision-safe draft writes. The already-running App test finished at 04:55 with 16/16 passing. | 46 / 16 | unrun | unrun | unrun |
+
+### STATE
+
+**HEAD `7ef2c67c0cb5684a9b1bba8180863bf1a0453294`** on `feat/2026-11-19-work-find-a`. `git status --short` produced no output. All edits were already committed. The P5 gate wrapper was stopped before its remaining commands. No new build or test was started for this handoff. No TypeScript changed, so the conditional TypeScript check does not apply.
+
+All paths below are under [the evidence directory](/tmp/cc/GenesisTools/ae3ac312-7dbe-4045-970a-292aa93ed9ab/work-find-a/). Brace groups name individual files in that directory.
+
+| Evidence | Files |
+|---|---|
+| Passing package logs | `p1-{resumed,all-kit,app,lint,personal}.log`, `p2-retry-{kit,app,lint,commits,personal}.log`, `p3-{kit,app,lint,commits,personal}.log`, `p4-verify-{kit,app,lint,commits,personal}.log`. The P1 subject check printed its result in the session. |
+| HEAD test and UX logs | [p5-kit.log](/tmp/cc/GenesisTools/ae3ac312-7dbe-4045-970a-292aa93ed9ab/work-find-a/p5-kit.log), [p5-app.log](/tmp/cc/GenesisTools/ae3ac312-7dbe-4045-970a-292aa93ed9ab/work-find-a/p5-app.log), `p5-ux-scan-before.log`, `p5-ux-scan.log`, `p5-ux-changed.log` |
+| HEAD fixture pairs | `work-find-{before,after}.png` and `hub-work-inspector-{bug,handoff,done,narrow}-{before,selected}.png`. Inspector “before” means the same fixture with no selection. All four inspector pairs were written by the final App test. |
+| Other fixture pictures | `hub-work.png`, `hub-work-linked.png`, `hub-work-cold-bug.png`, `hub-work-member-container.png`, `hub-work-member-task.png`, `hub-work-wide-replace.png`. The member-task picture is from an earlier run. |
+| Earlier live captures, local-only | `work-inspector-{before,after}.png` and corresponding `.geometry.json` files, `baseline-snapshot.log`, `p3-first-snapshot.log`, `p3-snapshot.log`, `p4-live.png`, `p4-live.geometry.json`, `p4-snapshot.log`. The live “after” predates P5. |
+| Troubleshooting | `p1-kit.log` (interrupted), `p2-kit.log` (count wording and initial timings), `p2-lock-timeout.log`, `p2-vision-failure.log`, `p3-first-app.log` (click and truncation), `p3-final-kit.log` (moved item), `p3-verify-lint.log` (macro), `p4-kit.log` (OCR). `swift-check` contains the corrected wait. `design/` contains historical drafts already integrated into the branch. |
+
+### TODO
+
+1. **Finish P5's HEAD gate.** Run Lint, Subjects and Placeholders exactly as listed above. Record their outputs in `p5-{lint,commits,personal}.log`. If source changes, repeat the applicable gate on the new HEAD. Both Swift suites already passed on the current HEAD.
+2. **Finish P5 picture verification.** Open the five HEAD fixture pairs listed above and record their paths and dimensions in Progress. Refresh the live “after” using the worktree executable against the same item as the baseline. From the worktree run `GENESIS_TOOLS_BIN="$PWD/tools" GENESIS_HUB_SERVER=0 src/macos/GenesisTools/.build/opt/debug/GenesisTools --hub --mode work --work w_5d4ch4ts --width 1300 --height 820 --snapshot "$D/work-inspector-after.png"`, with `D` set to the evidence directory. Confirm the archive row is visible beside its detail and the title-bar audit ends in `ok`. Keep real-data pictures local.
+3. **Close the UX pass in this main-checkout spec.** The exact scan was `git diff --name-only --diff-filter=ACM 49ff462117..HEAD -- '*.swift' | xargs bun .claude/skills/ux/scripts/ux-scan.ts`. It scanned 15 Swift files. The changed-line report flags glyph sizes, text derived from data, loading and empty states, destructive actions, error strings and one clipped selectable title for manual judgment. The item-by-item exclusions are already in Progress. HEAD find-picture OCR read both “Find items by words or ref” and “State: Open +2”.
+4. **Finish the handoff.** Append final evidence to Progress, check `p5` with its commit and proof, then send `finish_handoff`. Handoff state at transfer is 4/5. Leave publication to the orchestrator.
+
+**Known limits.** In `WorkSource.swift`, the single list read returns the oldest 5,000 rows before the UI reverses them. Larger projects can omit newer items. In `WorkFilter.swift`, Mine can establish container ownership only from available index data or matching members. HEAD measured 44 ms for 5,000 matches and 64 ms for the 100-row render against the 10/16 ms targets. Typing uses the specified 80 ms debounce. One live detail read took 394 ms against a 300 ms target. These targets are non-gating. The executor brief asks for one combined follow-up question about them. Manual VoiceOver, Full Keyboard Access, OS setting changes, installed-app testing and drag-frame measurements were outside this run.
+
+### TRAPS
+
+- Use the owner-approved 20-second loop with `pgrep -x swift-build || pgrep -x swift-test || pgrep -x swift-frontend`, then the repository wrapper. Full-command-line matching caught another waiting shell. A 240-second repository lock timeout also occurred. Retry without removing the shared lock.
+- Vision sometimes failed to initialize E5RT before OCR. The Work fixture tests retry the same pixels on CPU. OCR also read “I” as “l” and inserted a space after a path's colon. The fixtures now avoid the ambiguous setting label and normalize that one path-spacing artifact.
+- Hidden-window clicks require dispatching queued mouse events. Keep frame probes and bitmap reads in the same window. A render alone previously let a missed member click go undetected.
+- Use `49ff462117` for the owned diff. The integration branch moved during the run. The lint rule requires a conventional `EnvironmentKey` for Command Line Tools compatibility.
+- The resumed MCP connector had no session ID. The original shell's genuine `CODEX_THREAD_ID` allowed `tick.ts` to record proofs through the normal handoff executor. Opus should claim using its own identity.
