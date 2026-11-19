@@ -605,6 +605,7 @@ final class MeetingsWindowModel {
             receive(event)
         case .resumed:
             voiceLibrary.refresh()
+            voiceLibrary.loadJobs()
             setLive(true)
             preparePlayingTimeline()
             // Events between the two connections were not heard: what the window shows reads again once.
@@ -644,6 +645,7 @@ final class MeetingsWindowModel {
             voiceLibrary.refresh()
             if place == .contacts { people.load() }
         }
+        if case .voiceJob(let job) = event { voiceLibrary.receive(job) }
         if Self.changesOverview(event) { scheduleOverviewRefresh(event) }
         guard let entry = event.entry, let meeting = event.meeting, entry.actor.kind != DecisionActor.window.kind else { return }
         noteDecision(entry, meeting: meeting)
@@ -656,7 +658,7 @@ final class MeetingsWindowModel {
         switch event {
         case .meetingChanged(let changed): changed.parts.contains("show")
         case .decisionApplied, .decisionReverted, .commentSent: true
-        case .peopleChanged, .commentChanged, .wordTimingsChanged: false
+        case .peopleChanged, .commentChanged, .wordTimingsChanged, .voiceJob: false
         }
     }
 

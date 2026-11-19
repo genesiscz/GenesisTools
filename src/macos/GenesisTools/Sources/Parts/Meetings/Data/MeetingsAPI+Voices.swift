@@ -104,11 +104,42 @@ extension MeetingsAPI {
         typealias Result = VoiceCorrectionReply
     }
 
+    enum VoicesJobs: MeetingsServiceMethod {
+        static let name = "voices.jobs"
+        struct Params: Codable, Equatable { var project: String? }
+        typealias Result = [VoiceJob]
+    }
+    enum VoicesJobsCancel: MeetingsServiceMethod {
+        static let name = "voices.jobs.cancel"
+        struct Params: Codable, Equatable { let id: String }
+        typealias Result = VoiceJob?
+    }
+
     /// The worker count for an automatic voice pass.
     enum VoicesWorkers: MeetingsServiceMethod {
         static let name = "voices.workers"
         struct Params: Codable, Equatable {}
         struct Result: Decodable, Equatable { let auto: Int; let performanceCores: Double; let idleCores: Double }
+    }
+}
+
+struct VoiceJob: Decodable, Equatable, Identifiable {
+    static let event = "voices.job"
+    enum State: String, Decodable { case queued, running, done, cancelled, failed }
+    struct Progress: Decodable, Equatable { let done, total: Int; let step: String }
+    let id, kind, project: String
+    let meeting: String?
+    let state: State
+    let progress: Progress
+    let added, skipped: Int
+    let error: String?
+    var canCancel: Bool { state == .queued || state == .running }
+
+    func matches(_ destination: VoiceDestination, meetings: Set<String>) -> Bool {
+        if let project = destination.project, project != self.project { return false }
+        if let current = destination.meeting { return current == meeting }
+        if destination.owner != nil { return meeting.map(meetings.contains) == true }
+        return true
     }
 }
 

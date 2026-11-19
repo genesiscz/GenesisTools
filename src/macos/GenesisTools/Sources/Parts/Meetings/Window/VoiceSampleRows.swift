@@ -152,6 +152,14 @@ final class VoiceLibraryModel {
     @ObservationIgnored private var read: Task<Void, Never>?
     @ObservationIgnored private var response: MeetingsAPI.VoicesList.Result?
     private(set) var doubtfulFirst = true
+    private(set) var jobs: [VoiceJob] = []
+    private(set) var jobsFailure: MeetingsCLI.Failure?
+    private(set) var cancelling: Set<String> = []
+    @ObservationIgnored private var allJobs: [VoiceJob] = []
+    @ObservationIgnored private var jobRead: Task<Void, Never>?
+    @ObservationIgnored private var duringRead: [String: VoiceJob] = [:]
+    /// Offscreen snapshots can replay one recorded service response at a specific point in the job.
+    @ObservationIgnored var snapshotJobs: [VoiceJob]?
 
     init(window: MeetingsWindowModel) { self.window = window }
 
@@ -168,12 +176,16 @@ final class VoiceLibraryModel {
         response = nil
         rows = .idle
         confirmation = nil
+        allJobs = []; jobs = []; jobsFailure = nil
         refresh()
+        loadJobs()
     }
 
     func hide(_ old: VoiceDestination) {
         guard destination == old else { return }
         read?.cancel()
+        jobRead?.cancel()
+        jobRead = nil
         destination = nil
         response = nil
         confirmation = nil
@@ -194,11 +206,78 @@ final class VoiceLibraryModel {
                 if response != result || rows.failure != nil {
                     response = result
                     rows = .loaded(.init(result, destination: destination, doubtfulFirst: doubtfulFirst))
+                    prepareJobs()
                 }
             } catch {
                 guard !Task.isCancelled, self.destination == destination else { return }
                 rows = .failed(asFailure(error), previous: rows.value)
             }
+        }
+    }
+
+    func loadJobs() {
+        guard let destination else { return }
+        jobRead?.cancel()
+        duringRead.removeAll()
+        if let snapshotJobs {
+            allJobs = snapshotJobs
+            prepareJobs()
+            return
+        }
+        guard let service = window?.service else { return }
+        jobRead = Task {
+            do {
+                let listed = try await service.call(MeetingsAPI.VoicesJobs.self, .init(project: destination.project))
+                guard !Task.isCancelled, self.destination == destination else { return }
+                // An event after the read started wins over the snapshot. Keep arrival order for newly queued jobs.
+                let ids = Set(listed.map(\.id))
+                allJobs = listed.map { duringRead[$0.id] ?? $0 } + allJobs.filter { !ids.contains($0.id) && duringRead[$0.id] != nil }
+                jobsFailure = nil
+                prepareJobs()
+            } catch {
+                guard !Task.isCancelled, self.destination == destination else { return }
+                jobsFailure = asFailure(error)
+            }
+            duringRead.removeAll()
+            jobRead = nil
+        }
+    }
+
+    func receive(_ job: VoiceJob) {
+        guard snapshotJobs == nil, let destination,
+              destination.project == nil || destination.project == job.project else { return }
+        if jobRead != nil { duringRead[job.id] = job }
+        if let index = allJobs.firstIndex(where: { $0.id == job.id }) {
+            allJobs[index] = job
+        } else {
+            allJobs.append(job)
+        }
+        prepareJobs()
+        if !job.canCancel, job.added > 0, destination.meeting == nil || destination.meeting == job.meeting || destination.scope.kind == "project" {
+            refresh()
+        }
+    }
+
+    private func prepareJobs() {
+        guard let destination else { return }
+        let matching = allJobs.reversed().filter { $0.matches(destination, meetings: rows.value?.meetings ?? []) }
+        let next = matching.filter(\.canCancel) + Array(matching.filter { !$0.canCancel }.prefix(50))
+        if jobs != next { jobs = next }
+    }
+
+    func cancel(_ job: VoiceJob) {
+        guard job.canCancel, !cancelling.contains(job.id), let service = window?.service else { return }
+        cancelling.insert(job.id)
+        Task {
+            defer { cancelling.remove(job.id) }
+            do {
+                if let current = try await service.call(MeetingsAPI.VoicesJobsCancel.self, .init(id: job.id)) {
+                    receive(current)
+                } else {
+                    window?.notices.push(StackedNotice(text: "This job is no longer in the queue."))
+                    loadJobs()
+                }
+            } catch { window?.notices.push(.meetingsFailure(error)) }
         }
     }
 
@@ -287,6 +366,9 @@ struct VoiceSampleRows: View {
                     FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.speakersPage + "#voiceLibrary")
                 }
                 IconButton(systemName: "arrow.clockwise", tooltip: "Read the voice library again") { model.refresh() }
+            }
+            if model.destination == destination {
+                VoiceJobRows(model: model)
             }
             if model.destination == destination, let failure = model.rows.failure {
                 FailureInline(failure.report(outcome: "Voice samples did not load", action: "Read voice samples"), form: .compact) { model.refresh() }
@@ -464,5 +546,53 @@ private struct VoiceClipRow: View {
          .action("Several voices…") { model.preview(.reject(id: id, person: owner, reason: "several-voices")) },
          .divider,
          .action("Remove sample…") { model.preview(.remove(id: id, person: owner, scope: scope)) }]
+    }
+}
+
+private struct VoiceJobRows: View {
+    let model: VoiceLibraryModel
+    @State private var olderOpen = false
+
+    var body: some View {
+        if let failure = model.jobsFailure {
+            FailureInline(failure.report(outcome: "Voice jobs did not load", action: "Read voice jobs"), form: .compact) { model.loadJobs() }
+        }
+        if let first = model.jobs.first {
+            jobRow(first)
+            if model.jobs.count > 1 {
+                GenDisclosure("Other jobs (\(model.jobs.count - 1))", isExpanded: $olderOpen) {
+                    ForEach(model.jobs.dropFirst()) { jobRow($0) }
+                }
+            }
+            Divider()
+        }
+    }
+
+    private func jobRow(_ job: VoiceJob) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Label(job.kind == "backfill" ? "Recovering voice samples" : "Learning voices", systemImage: "waveform")
+                    .fontWeight(.medium)
+                Text(job.state.rawValue.capitalized).font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                if job.canCancel {
+                    Button("Cancel") { model.cancel(job) }.buttonStyle(.genHoverPlain())
+                        .disabled(model.cancelling.contains(job.id))
+                        .instantTooltip("Stop this job. Samples already saved stay in the library.")
+                }
+            }
+            if job.state == .running, job.progress.total > 0 {
+                ProgressView(value: Double(job.progress.done), total: Double(job.progress.total))
+            }
+            Text(job.progress.step).font(.callout)
+            Text("\(job.progress.done) of \(Plural.count(job.progress.total, "line")) · \(job.added) added · \(job.skipped) skipped")
+                .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+            if let error = job.error { NoticePill(text: "Voice learning failed", more: error, tone: .error) }
+            if let meeting = job.meeting, model.destination?.meeting == nil {
+                Text(meeting).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("meetings.voices.job.\(job.id)")
     }
 }

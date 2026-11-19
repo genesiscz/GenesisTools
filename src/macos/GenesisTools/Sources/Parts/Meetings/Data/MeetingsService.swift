@@ -290,6 +290,7 @@ enum MeetingsAPI {
         CommentSent.name: { .commentSent(try MeetingsService.decode(CommentSent.self, $0)) },
         CommentChanged.name: { .commentChanged(try MeetingsService.decode(CommentChanged.self, $0)) },
         PeopleChanged.name: { .peopleChanged(try MeetingsService.decode(PeopleChanged.self, $0)) },
+        VoiceJob.event: { .voiceJob(try MeetingsService.decode(VoiceJob.self, $0)) },
         WordTimingsChanged.name: { .wordTimingsChanged(try MeetingsService.decode(WordTimingsChanged.self, $0)) },
     ]
 
@@ -298,7 +299,7 @@ enum MeetingsAPI {
         static let name = "people.changed"
     }
 
-    static let windowEvents = [MeetingChanged.name, DecisionApplied.name, DecisionReverted.name, CommentSent.name, CommentChanged.name, PeopleChanged.name, WordTimingsChanged.name]
+    static let windowEvents = [MeetingChanged.name, DecisionApplied.name, DecisionReverted.name, CommentSent.name, CommentChanged.name, PeopleChanged.name, WordTimingsChanged.name, VoiceJob.event]
 }
 
 /// One event of the Meetings service, as the window hears it.
@@ -309,6 +310,7 @@ enum MeetingsEvent: Equatable {
     case commentSent(MeetingsAPI.CommentSent)
     case commentChanged(MeetingsAPI.CommentChanged)
     case peopleChanged(MeetingsAPI.PeopleChanged)
+    case voiceJob(VoiceJob)
     case wordTimingsChanged(MeetingsAPI.WordTimingsChanged)
 
     /// The meeting the event is about.
@@ -321,6 +323,7 @@ enum MeetingsEvent: Equatable {
         case .commentSent(let event): return event.meeting
         case .commentChanged(let event): return event.meeting
         case .peopleChanged: return nil
+        case .voiceJob(let job): return job.meeting
         }
     }
 
@@ -329,7 +332,7 @@ enum MeetingsEvent: Equatable {
         switch self {
         case .decisionApplied(let event): return event.entry
         case .decisionReverted(let event): return event.entry
-        case .meetingChanged, .commentSent, .commentChanged, .peopleChanged, .wordTimingsChanged: return nil
+        case .meetingChanged, .commentSent, .commentChanged, .peopleChanged, .wordTimingsChanged, .voiceJob: return nil
         }
     }
 }
