@@ -329,7 +329,12 @@ public final class LiveWorkSource: WorkSource {
     }
 
     public func notify(project: String) async throws -> [WorkNotifyRow] {
-        let data: ConfigData = try reply(await rpc.work.config(WorkConfigParams(project: project, call: WorkConfigParamsCall(project: project))))
+        let result = try await rpc.work.config(WorkConfigParams(project: project, call: .init(project: project)))
+        return try await notifyRows(from: result)
+    }
+
+    private nonisolated func notifyRows(from result: WorkConfigResult) async throws -> [WorkNotifyRow] {
+        let data: ConfigData = try reply(result)
         return data.rows.map { row in
             WorkNotifyRow(type: row.type, cells: row.notify.map { cell in
                 let data = cell.editor ?? cell.resolved

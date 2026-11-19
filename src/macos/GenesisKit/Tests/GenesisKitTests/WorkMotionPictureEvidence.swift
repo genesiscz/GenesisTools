@@ -15,6 +15,14 @@ enum WorkMotionPictureEvidence {
         let image: CGImage
     }
 
+    typealias FadeSample = (time: Double, oldInk: Double, residual: Double)
+
+    /// Count a partial fade only when its distance from both endpoints exceeds the pixel fit error.
+    static func isIntermediate(_ sample: FadeSample) -> Bool {
+        let margin = max(0.01, 5 * sample.residual)
+        return sample.residual < 0.05 && sample.oldInk > margin && sample.oldInk < 1 - margin
+    }
+
     /// Async counterpart for real model stream ticks. Suspension lets the actual model's load task and
     /// production animation transaction run; the test never inserts its own animation context.
     static func recordLive(_ view: some View, size: CGSize, mutate: () -> Void) async throws -> [Frame] {
@@ -52,7 +60,7 @@ enum WorkMotionPictureEvidence {
     /// ink and background, with no sibling moving into it. Use the last row in a fixture section.
     /// Values near 1 are old pixels, near 0 are final pixels; an intermediate value with a low residual
     /// supports an opacity fade. Distinct frames alone could instead be a slide or a changing clock.
-    static func fadeSamples(_ frames: [Frame], crop: CGRect) throws -> [(time: Double, oldInk: Double, residual: Double)] {
+    static func fadeSamples(_ frames: [Frame], crop: CGRect) throws -> [FadeSample] {
         let before = try rgba(try XCTUnwrap(frames.first?.image.cropping(to: crop)))
         let after = try rgba(try XCTUnwrap(frames.last?.image.cropping(to: crop)))
         XCTAssertEqual(before.count, after.count)
@@ -135,9 +143,11 @@ final class WorkScreenTestsMotionCapture: XCTestCase {
                         state.opacity = 0
                     }
                 }
+            // The calibration patch has uniform brightness. A small patch of its interior suffices.
+            let image = frames[0].image
             let samples = try WorkMotionPictureEvidence.fadeSamples(frames, crop: CGRect(
-                x: 0, y: 0, width: CGFloat(frames[0].image.width), height: CGFloat(frames[0].image.height)))
-            let middle = samples.filter { $0.oldInk > 0.08 && $0.oldInk < 0.92 && $0.residual < 0.12 }
+                x: CGFloat(image.width) * 0.4, y: CGFloat(image.height) * 0.4, width: 16, height: 16).integral)
+            let middle = samples.filter { WorkMotionPictureEvidence.isIntermediate($0) }
             if animated {
                 XCTAssertGreaterThanOrEqual(Set(middle.map { Int(($0.oldInk * 100).rounded()) }).count, 2,
                     "The capture must distinguish known intermediate opacity levels.")

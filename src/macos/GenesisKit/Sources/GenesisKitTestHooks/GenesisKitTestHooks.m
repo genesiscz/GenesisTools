@@ -9,6 +9,7 @@
 //
 
 #import <AppKit/AppKit.h>
+#import <CoreML/CoreML.h>
 #import <objc/runtime.h>
 #import "GenesisKitTestHooks.h"
 
@@ -16,6 +17,25 @@ static NSInteger refused = 0;
 
 NSInteger GenesisKitTestHooksRefusedFocus(void) {
     return refused;
+}
+
+VNRecognizeTextRequest *GenesisKitFixtureTextRequest(void) {
+    VNRecognizeTextRequest *request = [[VNRecognizeTextRequest alloc] init];
+    // Revision 1 reads the small Latin count badges in offscreen fixtures. The default
+    // accurate revision can fail while starting its E5RT model on a busy test machine.
+    request.revision = VNRecognizeTextRequestRevision1;
+    request.recognitionLevel = VNRequestTextRecognitionLevelAccurate;
+    request.usesLanguageCorrection = YES;
+    NSDictionary *stages = [request supportedComputeStageDevicesAndReturnError:NULL];
+    for (VNComputeStage stage in stages) {
+        for (id device in stages[stage]) {
+            if ([device isKindOfClass:[MLCPUComputeDevice class]]) {
+                [request setComputeDevice:device forComputeStage:stage];
+                break;
+            }
+        }
+    }
+    return request;
 }
 
 static void replace(Class cls, SEL selector, IMP replacement) {

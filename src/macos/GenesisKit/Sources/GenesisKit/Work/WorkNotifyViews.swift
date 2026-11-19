@@ -288,11 +288,30 @@ private enum WorkNotifyMetrics {
     static let cellWidth: CGFloat = 94
     static let rowHeight: CGFloat = 32
     static let headerHeight: CGFloat = 54
+
+    static func visibleHeight(rows: Int, origin: CGFloat, viewport: CGFloat) -> CGFloat {
+        min(viewport, max(headerHeight, headerHeight + CGFloat(rows) * rowHeight + origin))
+    }
 }
 
 struct WorkNotifyCoordinate: Equatable {
     var type: String?
     var action: String?
+
+    func moved(_ key: KeyEquivalent, rows: [WorkNotifyRow], actions: [String]) -> Self? {
+        guard !rows.isEmpty, !actions.isEmpty else { return nil }
+        var row = type.flatMap { type in rows.firstIndex { $0.type == type } } ?? -1
+        var column = action.flatMap { actions.firstIndex(of: $0) } ?? -1
+        switch key {
+        case .leftArrow: column = max(-1, column - 1)
+        case .rightArrow: column = min(actions.count - 1, column + 1)
+        case .upArrow: row = max(-1, row - 1)
+        case .downArrow: row = min(rows.count - 1, row + 1)
+        default: return nil
+        }
+        guard row >= 0 || column >= 0 else { return self }
+        return .init(type: row >= 0 ? rows[row].type : nil, action: column >= 0 ? actions[column] : nil)
+    }
 }
 
 final class WorkNotifyCrosshair: ObservableObject {
@@ -375,7 +394,10 @@ struct WorkNotifyFrozenGrid: View {
                     .coordinateSpace(name: "work-notify-viewport")
                     .onPreferenceChange(WorkNotifyOriginKey.self) { if origin != $0 { origin = $0 } }
                     .scrollOverflowContent()
-                    pinnedTypes.frame(width: WorkNotifyMetrics.typeWidth, height: geometry.size.height, alignment: .top)
+                    pinnedTypes.frame(width: WorkNotifyMetrics.typeWidth,
+                                      height: WorkNotifyMetrics.visibleHeight(rows: rows.count, origin: origin.y,
+                                                                              viewport: geometry.size.height),
+                                      alignment: .top)
                     pinnedActions.frame(width: max(0, geometry.size.width - WorkNotifyMetrics.typeWidth),
                                         height: WorkNotifyMetrics.headerHeight, alignment: .topLeading)
                         .clipped().padding(.leading, WorkNotifyMetrics.typeWidth)
@@ -432,6 +454,7 @@ struct WorkNotifyFrozenGrid: View {
                         .simultaneousGesture(TapGesture().onEnded { focus(.init(type: row.type, action: nil)) })
                         .accessibilityLabel("Change all notifications for \(WorkNotifyWords.type(row.type))")
                         .accessibilityIdentifier("work-notify-type-\(row.type)")
+                        .frameProbe("work-notify-type-\(row.type)")
                         .instantTooltip("Change the notification level for every action on \(WorkNotifyWords.type(row.type)).")
                     } else { typeLabel(row.type) }
                 }
@@ -446,7 +469,9 @@ struct WorkNotifyFrozenGrid: View {
         .frame(maxHeight: .infinity, alignment: .top)
         .background(Color(nsColor: .windowBackgroundColor))
         .clipped()
-        .overlay(alignment: .trailing) { Divider().allowsHitTesting(false) }
+        .overlay(alignment: .trailing) {
+            Rectangle().fill(Color(nsColor: .separatorColor)).frame(width: 1).allowsHitTesting(false)
+        }
     }
 
     private func typeLabel(_ type: String) -> some View {
@@ -513,8 +538,6 @@ struct WorkNotifyFrozenGrid: View {
         guard gridFocused, !rows.isEmpty, !actions.isEmpty else { return .ignored }
         if key == .escape { gridFocused = false; return .handled }
         let current = crosshair.focus ?? .init(type: rows.first?.type, action: actions.first)
-        var row = current.type.flatMap { type in rows.firstIndex { $0.type == type } } ?? -1
-        var column = current.action.flatMap { actions.firstIndex(of: $0) } ?? -1
         if key == .space || key == .return {
             guard apply != nil else { return .handled }
             let target = WorkNotifyMenu.Target(type: current.type ?? "*", action: current.action ?? "*",
@@ -527,18 +550,7 @@ struct WorkNotifyFrozenGrid: View {
             }
             return .handled
         }
-        switch key {
-        case .leftArrow: column = max(-1, column - 1)
-        case .rightArrow: column = min(actions.count - 1, column + 1)
-        case .upArrow: row = max(-1, row - 1)
-        case .downArrow: row = min(rows.count - 1, row + 1)
-        default: return .ignored
-        }
-        if row == -1 && column == -1 {
-            if key == .upArrow { column = 0 } else { row = 0 }
-        }
-        let next = WorkNotifyCoordinate(type: row >= 0 ? rows[row].type : nil,
-                                       action: column >= 0 ? actions[column] : nil)
+        guard let next = current.moved(key, rows: rows, actions: actions) else { return .ignored }
         focus(next)
         let rect = WorkNotifyCrosshairLayer.rect(next, rows: rows, actions: actions, origin: origin)
         let hiddenHorizontally = next.action != nil && (rect.minX < WorkNotifyMetrics.typeWidth || rect.maxX > viewport.width)
@@ -598,6 +610,7 @@ private struct WorkNotifyValueRow: View, Equatable {
                     .accessibilityLabel("\(WorkNotifyWords.type(row.type)), \(WorkNotifyWords.action(action)), \(WorkNotifyWords.level(level))")
                     .accessibilityValue(optimistic == nil ? WorkNotifyWords.layer(cell.from) : "Saving")
                     .accessibilityIdentifier("work-notify-cell-\(row.type)-\(action)")
+                    .frameProbe("work-notify-cell-\(row.type)-\(action)")
                     .onHover { hover(coordinate, $0) }
                     .id("notify:\(row.type):\(action)")
                 }
@@ -634,6 +647,7 @@ private struct WorkNotifyCrosshairLayer: View {
     var body: some View {
         GeometryReader { geometry in
             let _ = RenderProbe.hit("work.notify.crosshair")
+            let tableHeight = WorkNotifyMetrics.visibleHeight(rows: rows.count, origin: origin.y, viewport: geometry.size.height)
             let active = crosshair.hover ?? (keyboard ? crosshair.focus : nil)
             if let active {
                 let rect = Self.rect(active, rows: rows, actions: actions, origin: origin)
@@ -651,8 +665,8 @@ private struct WorkNotifyCrosshairLayer: View {
                                                           width: max(0, geometry.size.width - WorkNotifyMetrics.typeWidth), height: rect.height))
                     if !visible.isNull {
                         Rectangle().fill(Color.primary.opacity(0.045))
-                            .frame(width: visible.width, height: geometry.size.height)
-                            .position(x: visible.midX, y: geometry.size.height / 2)
+                            .frame(width: visible.width, height: tableHeight)
+                            .position(x: visible.midX, y: tableHeight / 2)
                     }
                 }
             }
@@ -682,7 +696,7 @@ private struct WorkNotifyNativeFocusRing: NSViewRepresentable {
     final class Ring: NSView {
         override func draw(_ dirtyRect: NSRect) {
             NSGraphicsContext.saveGraphicsState()
-            NSSetFocusRingStyle(.only)
+            NSFocusRingPlacement.only.set()
             NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2), xRadius: 4, yRadius: 4).fill()
             NSGraphicsContext.restoreGraphicsState()
         }

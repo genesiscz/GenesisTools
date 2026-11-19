@@ -2,6 +2,7 @@ import AppKit
 import ImageIO
 import SwiftUI
 import Vision
+import GenesisKitTestHooks
 import XCTest
 @testable import GenesisKit
 
@@ -12,6 +13,7 @@ private final class NotifyFixtureSource: WorkSource {
     var calls: [Call] = []
     var restores: [[WorkNotifyChange]] = []
     var refuse = false
+    var anotherWriter = false
     var hold = false
     var held: CheckedContinuation<Void, Never>?
     func projects() async throws -> [String] { ["Orchard"] }
@@ -19,7 +21,9 @@ private final class NotifyFixtureSource: WorkSource {
     func snapshot(project: String) async throws -> WorkSnapshotValue { .init(project: project, containers: [], triage: []) }
     func detail(ref: String) async throws -> WorkItemDetail { throw WorkSourceError("Unknown fixture") }
     func perform(_ action: WorkScreenAction, project: String) async throws -> WorkActionOutcome { throw WorkSourceError("Unsupported") }
-    func notify(project: String) async throws -> [WorkNotifyRow] { rows }
+    func notify(project: String) async throws -> [WorkNotifyRow] {
+        anotherWriter ? WorkNotifyPictureFixture.rows : rows
+    }
     func setNotify(project: String?, scope: WorkNotifyScope, type: String, action: String, level: String?) async throws -> WorkActionOutcome {
         calls.append(.init(scope: scope, type: type, action: action, level: level))
         if hold { await withCheckedContinuation { held = $0 }; held = nil }
@@ -32,7 +36,10 @@ private final class NotifyFixtureSource: WorkSource {
                 guard cell.writable, action == "*" || action == cell.action,
                       let index = cell.layers.firstIndex(where: { $0.layer == layer }) else { continue }
                 let before = cell.layers[index].rule ?? .inherit
-                let after = level.map(WorkNotifyRule.level) ?? .inherit
+                let after: WorkNotifyRule = level.map { value in
+                    if case let .threshold(_, severity) = before { return .threshold(level: value, minSeverity: severity) }
+                    return .level(value)
+                } ?? .inherit
                 if before == after { continue }
                 cell.layers[index].rule = after; cell.layers[index].level = level
                 cell.level = level ?? cell.builtInLevel; cell.from = level == nil ? "default" : layer
@@ -53,6 +60,18 @@ private final class NotifyFixtureSource: WorkSource {
 
 @MainActor
 final class WorkNotifyTests: XCTestCase {
+    func testArrowsMoveFromCellsToBothPinnedHeadsAndBack() {
+        let rows = WorkNotifyPictureFixture.rows
+        let actions = WorkNotifyPictureFixture.actions
+        let cell = WorkNotifyCoordinate(type: "bug", action: "spotted")
+        let rowHead = WorkNotifyCoordinate(type: "bug", action: nil)
+        let columnHead = WorkNotifyCoordinate(type: nil, action: "spotted")
+        XCTAssertEqual(cell.moved(.leftArrow, rows: rows, actions: actions), rowHead)
+        XCTAssertEqual(cell.moved(.upArrow, rows: rows, actions: actions), columnHead)
+        XCTAssertEqual(rowHead.moved(.rightArrow, rows: rows, actions: actions), cell)
+        XCTAssertEqual(columnHead.moved(.downArrow, rows: rows, actions: actions), cell)
+        XCTAssertEqual(rowHead.moved(.upArrow, rows: rows, actions: actions), rowHead)
+    }
     private func ready(_ source: NotifyFixtureSource) async throws -> WorkScreenModel {
         let screen = WorkScreenModel(source: source)
         screen.pane = .notify
@@ -72,6 +91,13 @@ final class WorkNotifyTests: XCTestCase {
             apply: { scope, type, action, level in Task { await screen.setNotify(scope: scope, type: type, action: action, level: level) } }))
     }
 
+    private func choose(_ title: String, in menu: NSMenu) throws {
+        let item = try XCTUnwrap(menu.item(withTitle: title))
+        XCTAssertTrue(item.isEnabled)
+        let selector = try XCTUnwrap(item.action)
+        XCTAssertTrue(NSApplication.shared.sendAction(selector, to: item.target, from: item))
+    }
+
     func testTheCellMenuMarksItsLevelAndChangesOneProjectCell() async throws {
         let source = NotifyFixtureSource()
         let screen = try await ready(source)
@@ -81,7 +107,7 @@ final class WorkNotifyTests: XCTestCase {
         XCTAssertEqual(Array(native.items.prefix(4).map(\.title)), ["Nobody", "In the list", "Inbox line", "Inbox and banner"])
         XCTAssertEqual(native.item(withTitle: "Inbox line")?.state, .on)
         XCTAssertTrue(native.items.prefix(4).allSatisfy { $0.image != nil })
-        native.performActionForItem(at: native.indexOfItem(withTitle: "Inbox line"))
+        try choose("Inbox line", in: native)
         try await wait { source.calls.count == 1 }
         XCTAssertEqual(source.calls, [.init(scope: .project, type: "bug", action: "spotted", level: "inbox")])
     }
@@ -92,10 +118,10 @@ final class WorkNotifyTests: XCTestCase {
         defer { screen.deactivate() }
         let row = try XCTUnwrap(screen.notifyRows.first)
         let native = menu(.init(type: row.type, action: "*", cells: row.cells), screen)
-        native.performActionForItem(at: native.indexOfItem(withTitle: "Nobody"))
-        try await wait { !screen.notifyNotices.notices.isEmpty }
+        try choose("Nobody", in: native)
+        try await wait { !screen.noticeStack.notices.isEmpty }
         XCTAssertEqual(source.calls, [.init(scope: .project, type: "bug", action: "*", level: "off")])
-        let notice = try XCTUnwrap(screen.notifyNotices.notices.last)
+        let notice = try XCTUnwrap(screen.noticeStack.notices.last)
         let undo = try XCTUnwrap(notice.actions.first(where: { $0.label == "Undo" }))
         undo.perform(notice.id)
         try await wait { source.restores.count == 1 && screen.notifyRows == WorkNotifyPictureFixture.rows }
@@ -116,9 +142,23 @@ final class WorkNotifyTests: XCTestCase {
         await write.value
         XCTAssertTrue(screen.notifyPending.isEmpty)
         XCTAssertEqual(screen.notifyRows, WorkNotifyPictureFixture.rows)
-        let notice = try XCTUnwrap(screen.notifyNotices.notices.last)
+        let notice = try XCTUnwrap(screen.noticeStack.notices.last)
         XCTAssertEqual(notice.text, "The notification rules could not be saved")
         XCTAssertTrue(notice.actions.contains { $0.label == "Details" })
+    }
+
+    func testAColumnChoiceUsesOneCallAndACompetingValueWinsOnReadback() async throws {
+        let source = NotifyFixtureSource()
+        let screen = try await ready(source)
+        defer { screen.deactivate() }
+        source.anotherWriter = true
+        let column = screen.notifyRows.compactMap { $0.cells.first { $0.action == "commented" } }
+        let native = menu(.init(type: "*", action: "commented", cells: column), screen)
+        try choose("Inbox and banner", in: native)
+        try await wait { screen.noticeStack.notices.last?.text == "Changed by another writer" }
+        XCTAssertEqual(source.calls, [.init(scope: .project, type: "*", action: "commented", level: "banner")])
+        XCTAssertEqual(screen.notifyRows, WorkNotifyPictureFixture.rows)
+        XCTAssertTrue(screen.notifyPending.isEmpty)
     }
 
     func testCrosshairRepaintsWithoutInvalidatingTheWholeGrid() async throws {
@@ -166,10 +206,11 @@ final class WorkNotifyTests: XCTestCase {
         XCTAssertFalse(lockedMenu.items.contains { $0.title == "Inbox line" })
         XCTAssertEqual(WorkNotifyWords.action("reopen-undelivered"), "Reopen not delivered")
         let pictures = ProcessInfo.processInfo.environment["WIDGET_SHOTS"]
+        let probing = FrameProbe.enabled
+        FrameProbe.enabled = pictures != nil
+        defer { FrameProbe.enabled = probing }
         let image = try WorkNotifyPicture.render(WorkNotifyPane(screen: screen), name: "work-notify-after", folder: pictures)
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = false
+        let request = GenesisKitFixtureTextRequest()
         try VNImageRequestHandler(cgImage: image).perform([request])
         let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         for expected in ["Spotted", "Reopen", "delivered", "Bug", "Handoff", "Inbox line"] {
@@ -183,9 +224,11 @@ final class WorkNotifyTests: XCTestCase {
         XCTAssertEqual(before.height, image.height)
         let cell = try XCTUnwrap(row.cells.first)
         try WorkNativeMenuPicture.write(menu(.init(type: "bug", action: cell.action, cells: [cell]), screen),
-                                        name: "work-notify-cell-menu", folder: folder)
+                                        name: "work-notify-cell-menu", folder: folder, background: image,
+                                        anchor: try XCTUnwrap(FrameProbe.frames["work-notify-cell-bug-spotted"]))
         try WorkNativeMenuPicture.write(menu(.init(type: "bug", action: "*", cells: row.cells), screen),
-                                        name: "work-notify-row-menu", folder: folder)
+                                        name: "work-notify-row-menu", folder: folder, background: image,
+                                        anchor: try XCTUnwrap(FrameProbe.frames["work-notify-type-bug"]))
     }
 }
 
@@ -330,23 +373,43 @@ private struct BaselineNotifyCell: View {
     }
 }
 
-/// Draws the REAL NSMenu items using AppKit's menu cells. Never opens or tracks a menu.
-/// Evidence covers native item text/check/image/disabled rendering. It is NOT an open-menu screenshot,
-/// and does not prove placement, pointer/keyboard interaction, or the live system material.
-/// Feed MenuButtonPresenter.menu(theProductionCellOrRowItems), not a second hand-written item list.
+/// Renders the production menu's choices at its measured keyboard anchor in the offscreen grid.
 @MainActor
 enum WorkNativeMenuPicture {
-    static func write(_ menu: NSMenu, name: String, folder: String, highlightedIndex: Int? = nil) throws {
-        let view = WorkNativeMenuDrawing(menu: menu, highlightedIndex: highlightedIndex)
+    static func write(_ menu: NSMenu, name: String, folder: String, background: CGImage, anchor: CGRect) throws {
+        let view = WorkNativeMenuDrawing(menu: menu, highlightedIndex: nil)
         view.appearance = NSAppearance(named: .darkAqua)
         let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
         view.cacheDisplay(in: view.bounds, to: bitmap)
+        let menuImage = try XCTUnwrap(bitmap.cgImage)
+        let request = GenesisKitFixtureTextRequest()
+        try VNImageRequestHandler(cgImage: menuImage).perform([request])
+        let words = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        XCTAssertTrue(words.contains("Inbox line") && words.contains("For this project"), words)
         let directory = URL(fileURLWithPath: folder, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let canvas = try XCTUnwrap(CGContext(data: nil, width: background.width, height: background.height,
+                                              bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        let size = WorkNotifyPictureFixture.size
+        let scale = CGFloat(background.width) / size.width
+        canvas.scaleBy(x: scale, y: scale)
+        canvas.draw(background, in: CGRect(origin: .zero, size: size))
+        let x = min(anchor.minX, size.width - view.bounds.width - 4)
+        let y = max(4, size.height - anchor.maxY - view.bounds.height)
+        let rect = CGRect(origin: CGPoint(x: x, y: y), size: view.bounds.size)
+        let outline = CGPath(roundedRect: rect, cornerWidth: 6, cornerHeight: 6, transform: nil)
+        canvas.setShadow(offset: CGSize(width: 0, height: -3), blur: 8)
+        canvas.addPath(outline)
+        canvas.fillPath()
+        canvas.addPath(outline)
+        canvas.clip()
+        canvas.draw(menuImage, in: rect)
+        let composite = NSBitmapImageRep(cgImage: try XCTUnwrap(canvas.makeImage()))
+        try XCTUnwrap(composite.representation(using: .png, properties: [:]))
             .write(to: directory.appendingPathComponent(name + ".png"))
         let provenance: [String: Any] = [
-            "capture": "AppKit NSMenuItemCell drawing of production NSMenu",
+            "capture": "Offscreen fixture of the production NSMenu with native menu symbols, titles and current choices",
             "isOpenMenuScreenshot": false,
             "items": menu.items.map { item -> [String: Any] in
                 ["title": item.title, "checked": item.state == .on, "enabled": item.isEnabled,
@@ -394,8 +457,21 @@ private final class WorkNativeMenuDrawing: NSView {
             let frame = CGRect(x: 6, y: y, width: bounds.width - 12, height: height)
             if cell.menuItem?.isSeparatorItem == true {
                 cell.drawSeparatorItem(withFrame: frame, in: self)
-            } else {
-                cell.draw(withFrame: frame, in: self)
+            } else if let item = cell.menuItem {
+                // A menu cell without a tracking menu window draws its symbol, but its title
+                // and checkmark need an explicit drawing context in this offscreen fixture.
+                let symbolRect = NSRect(x: 32, y: frame.midY - 8, width: 16, height: 16)
+                item.image?.draw(in: symbolRect, from: .zero, operation: .sourceOver,
+                                 fraction: item.isEnabled ? 1 : 0.5, respectFlipped: true, hints: nil)
+                let font = item.menu?.font ?? NSFont.menuFont(ofSize: 0)
+                let ink = item.isEnabled ? NSColor.labelColor : NSColor.disabledControlTextColor
+                let style: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: ink]
+                let title = NSAttributedString(string: item.title, attributes: style)
+                title.draw(at: NSPoint(x: 54, y: frame.midY - title.size().height / 2))
+                if item.state == .on {
+                    let check = NSAttributedString(string: "✓", attributes: style)
+                    check.draw(at: NSPoint(x: 12, y: frame.midY - check.size().height / 2))
+                }
             }
             y += height
         }

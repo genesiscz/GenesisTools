@@ -1,5 +1,6 @@
 import SwiftUI
 import Vision
+import GenesisKitTestHooks
 import XCTest
 @testable import GenesisKit
 
@@ -301,9 +302,7 @@ final class WorkScreenTests: XCTestCase {
             CGImageDestinationAddImage(destination, image, nil)
             XCTAssertTrue(CGImageDestinationFinalize(destination))
         }
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = false
+        let request = GenesisKitFixtureTextRequest()
         try VNImageRequestHandler(cgImage: image).perform([request])
         return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
     }
