@@ -24,6 +24,7 @@ import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import type { SpeakerHint } from "@genesiscz/utils/transcribe/speakers";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { ANSWER_LOG_FILE, readAnswerEvents } from "./answer-log";
+import { MutedCallLines } from "./call-mutes";
 import {
     actorOf,
     actorText,
@@ -2540,6 +2541,13 @@ describe("workshop listen contracts", () => {
         prepared.confidence = 0.6;
         expect(addQualityQuestions({ record, entries, spotCheck: 20 })).toEqual([prepared.id]);
         expect(prepared).toMatchObject({ priority: 2.5, confidence: 0.6 });
+        const mutes = new MutedCallLines([]);
+        spyOn(mutes, "forIndices").mockReturnValue(["Alice Example"]);
+        expect(addQualityQuestions({ record, entries, spotCheck: 20, callMutes: mutes })).toEqual([prepared.id]);
+        expect(prepared.choices).not.toContain("Alice Example");
+        // A later pass without that mute evidence offers the name again.
+        expect(addQualityQuestions({ record, entries, spotCheck: 20 })).toEqual([prepared.id]);
+        expect(prepared.choices).toContain("Alice Example");
         const parts = splitVoiceStretch(
             Array.from({ length: 12 }, (_, index) => ({ pitchHz: Math.floor(index / 3) % 2 ? 210 : 120 }))
         );

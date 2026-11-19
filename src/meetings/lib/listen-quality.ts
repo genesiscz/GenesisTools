@@ -65,6 +65,12 @@ export function addQualityQuestions(options: {
             const first = part[0]!;
             const excluded = options.callMutes?.forIndices(part.map((line) => line.index)) ?? [];
             const eligible = (name: string) => !excluded.some((other) => sameName(other, name));
+            const candidates = [
+                ...new Set([
+                    ...part.flatMap((line) => line.speaker ?? []),
+                    ...options.record.participants.map((person) => person.name),
+                ]),
+            ];
             const sharedStart =
                 options.entries[first.index - 1]?.startSec === fromSec ||
                 options.entries[first.index + 1]?.startSec === fromSec;
@@ -81,7 +87,9 @@ export function addQualityQuestions(options: {
                         item.decides.some((id) => itemsById.get(id)?.evidence?.transcriptLine === first.index))
             );
             if (known?.kind === "question") {
-                known.choices = known.choices.filter(eligible);
+                // From the full candidates every pass: a name an earlier pass's mute evidence removed comes back
+                // when this pass's evidence no longer rules it out.
+                known.choices = [...new Set([...candidates, ...known.choices])].filter(eligible);
                 known.priority ??= 1;
                 known.confidence ??= confidence;
                 ids.push(known.id);
@@ -118,12 +126,7 @@ export function addQualityQuestions(options: {
                 group,
                 confidence,
                 priority: 1,
-                choices: [
-                    ...new Set([
-                        ...part.flatMap((line) => line.speaker ?? []),
-                        ...options.record.participants.map((person) => person.name),
-                    ]),
-                ].filter(eligible),
+                choices: candidates.filter(eligible),
                 decides,
                 rules: [],
                 suggestedAt: new Date().toISOString(),
