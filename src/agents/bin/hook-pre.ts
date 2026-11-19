@@ -12,7 +12,8 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { diffFor, keepsCommand, loadHooksConfig, megabytes } from "../lib/hooks/config";
 import { guardRules, logCustomRuleProblems } from "../lib/hooks/custom-rules";
-import { capturePre } from "../lib/hooks/diff/capture";
+import { capturePre, captureStart } from "../lib/hooks/diff/capture";
+import { gitReads, prepareStatus, type StatusCall, statusEligible } from "../lib/hooks/diff/status/prepare";
 import { evaluateGuard } from "../lib/hooks/guard";
 import { settleGuardVerdict } from "../lib/hooks/guard-metrics";
 import { logDecision, setDiagLogPath, setMaxLogBytes } from "../lib/hooks/log";
@@ -69,7 +70,20 @@ const denied = verdict?.outcome === "block" && !config.shadow;
 const diff = diffFor(config, payload.harness);
 
 if (!denied && diff.enabled) {
-    const capture = capturePre(payload, diff);
+    // The status reads come first and may be async (an RPC, a shadow run); the capture itself stays synchronous.
+    const start = captureStart(payload, diff);
+    const statusCall: StatusCall = {
+        harness: payload.harness,
+        sessionId: payload.sessionId ?? "",
+        toolUseId: payload.toolUseId ?? "",
+        command: payload.command,
+        dir: payload.cwd,
+    };
+    const need = start.readOnly ? "deletions" : "all";
+    const status = statusEligible(statusCall, { background: false, deferred: false })
+        ? await prepareStatus({ phase: "pre", roots: start.roots, need, call: statusCall, config: diff.status })
+        : gitReads(need);
+    const capture = capturePre(payload, diff, { start, status });
 
     logDecision(
         {
