@@ -32,13 +32,11 @@ export function registerContextCommand(program: Command): void {
     context
         .command("bind")
         .description('Declare what this session works for, e.g. --kind improve --target "gt-hub iteration 3"')
-        .requiredOption("--kind <kind>", BIND_KINDS.join("|"))
+        .option("--kind [kind]", BIND_KINDS.join("|"))
         .requiredOption("--target <text>")
         .option("--json", "print the reply object as JSON")
-        .action((opts: { kind: string; target: string; json?: boolean }) => {
-            const { actor } = actorHere({ model: false });
-
-            if (!isOneOf(BIND_KINDS, opts.kind)) {
+        .action(async (opts: { kind?: string | true; target: string; json?: boolean }) => {
+            if (typeof opts.kind !== "string" || !isOneOf(BIND_KINDS, opts.kind)) {
                 const refused = failReply<{ session: string; bindings: Binding[] }>("context bind", [
                     errorDiagnostic("BAD_VALUE", `--kind must be one of: ${BIND_KINDS.join(", ")}.`),
                 ]);
@@ -46,6 +44,7 @@ export function registerContextCommand(program: Command): void {
                 return;
             }
 
+            const { actor } = actorHere({ model: false });
             if (actor.sessionId === null) {
                 const refused = failReply<{ session: string; bindings: Binding[] }>("context bind", [
                     errorDiagnostic("NO_SESSION", "This shell runs in no agent session, so there is nothing to bind."),
@@ -54,10 +53,9 @@ export function registerContextCommand(program: Command): void {
                 return;
             }
 
-            const bindings = bindContext(actor.sessionId, {
-                kind: opts.kind,
-                target: opts.target,
-                ts: new Date().toISOString(),
+            const bindings = await bindContext({
+                sessionId: actor.sessionId,
+                binding: { kind: opts.kind, target: opts.target, ts: new Date().toISOString() },
             });
             emit(okReply("context bind", { session: actor.sessionId, bindings }), bindFormatter, opts, cliDoor);
         });

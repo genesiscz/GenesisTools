@@ -10,6 +10,7 @@ import type { PrInfo } from "@genesiscz/utils/git/origins/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import type { ContextStamp } from "../model/change";
 import type { Actor } from "../model/item";
@@ -298,10 +299,13 @@ export function readBindings(sessionId: string | null): Binding[] {
 }
 
 /** The one write of the context: a session declares what it works for (`--kind improve --target <text>`). */
-export function bindContext(sessionId: string, binding: Binding): Binding[] {
-    const next = [...readBindings(sessionId).filter((b) => b.kind !== binding.kind), binding];
+export async function bindContext(input: { sessionId: string; binding: Binding }): Promise<Binding[]> {
+    const { sessionId, binding } = input;
     const path = bindingsPath(sessionId);
     mkdirSync(dirname(path), { recursive: true });
-    atomicWriteFileSync(path, `${SafeJSON.stringify({ version: 1, bindings: next }, null, 2)}\n`);
-    return next;
+    return withFileLock(`${path}.lock`, async () => {
+        const next = [...readBindings(sessionId).filter((b) => b.kind !== binding.kind), binding];
+        atomicWriteFileSync(path, `${SafeJSON.stringify({ version: 1, bindings: next }, null, 2)}\n`);
+        return next;
+    });
 }
