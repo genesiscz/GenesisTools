@@ -211,11 +211,8 @@ public struct WorkItemsView: View {
                     }
                 }
                 Spacer(minLength: 0)
-                if pairings.contains(where: \.enabled) {
-                    let syncTip = "Sync now. Push this item's local fields to enabled connectors and release held changes."
-                    let driftTip = " A successful push clears the drift flag without pulling remote fields."
-                    IconButton(systemName: "arrow.triangle.2.circlepath",
-                               tooltip: syncTip + (pairings.contains { $0.enabled && $0.state == .drift } ? driftTip : "")) {
+                if pairings.contains(where: { $0.enabled && $0.state == .held }) {
+                    IconButton(systemName: "arrow.triangle.2.circlepath", tooltip: "Release this item's held changes.") {
                         perform(.sync(ref: ref, project: project))
                     }
                 }
