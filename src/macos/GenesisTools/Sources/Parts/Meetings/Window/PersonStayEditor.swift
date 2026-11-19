@@ -11,7 +11,10 @@ struct PersonStayEditor: View {
     /// The meeting's length, for the check that a time is inside it; nil when not known.
     let duration: Double?
     let close: () -> Void
+    /// The person the stay is for: the original's name, a picked person or an allowed new name. Never the search text.
     @State private var name: String
+    /// What the picker searches for; Save waits until a row of it is picked or added.
+    @State private var query = ""
     @State private var from: String
     @State private var to: String
     @State private var atMic: Bool
@@ -128,8 +131,8 @@ struct PersonStayEditor: View {
     /// Adding: the people the window knows for this meeting, or a typed new name.
     @ViewBuilder
     private var person: some View {
-        if name.isEmpty || search != nil {
-            PersonPicker(people: search?.people ?? [], query: $name, sources: search?.sources ?? [], title: "Who",
+        if name.isEmpty {
+            PersonPicker(people: search?.people ?? [], query: $query, sources: search?.sources ?? [], title: "Who",
                          prompt: "Search people or type a new name",
                          addRule: MeetingsPreferences.People.offerNew.value(), visibleRows: 4,
                          pick: { picked in name = picked.name; search?.cancel(); search = nil },
@@ -139,15 +142,15 @@ struct PersonStayEditor: View {
                 .onAppear {
                     let next = detail.peopleSearch(atSec: nil)
                     search = next
-                    next.ask(name, after: .zero)
+                    next.ask(query, after: .zero)
                 }
-                .onChange(of: name) { _, now in search?.ask(now) }
+                .onChange(of: query) { _, now in search?.ask(now) }
                 .onDisappear { search?.cancel() }
         } else {
             HStack(spacing: 8) {
                 Text("Who").foregroundStyle(.secondary).font(.system(size: 12))
                 Text(verbatim: name).font(.system(size: 13, weight: .medium))
-                Button("Change") { name = ""; search = nil }
+                Button("Change") { query = name; name = ""; search = nil }
                     .buttonStyle(.genHoverPlain()).font(.system(size: 12))
                     .accessibilityIdentifier("meetings.stay.changePerson")
             }
