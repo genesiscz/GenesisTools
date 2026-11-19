@@ -64,7 +64,38 @@ enum PeopleCalls {
 
     @MainActor
     static func decideDevice(_ change: RoomDeviceChange, service: MeetingsService?) async throws -> MeetingsAPI.DecideRoomDevice.Result {
-        try await deviceService(service).call(MeetingsAPI.DecideRoomDevice.self, change.params)
+        let connection = try deviceService(service)
+        var params = change.params
+        if case let .answer(offer, nil, _) = change {
+            params.meeting = try await supportingMeeting(for: offer, service: connection)
+        }
+        return try await connection.call(MeetingsAPI.DecideRoomDevice.self, params)
+    }
+
+    /// The evidence counts original recordings. A duplicate can hold the microphone group even when its original
+    /// doesn't. The service chooses which offers a record supports and rechecks the exact evidence on the write.
+    @MainActor
+    private static func supportingMeeting(for offer: RoomDeviceOffer, service: MeetingsService) async throws -> String {
+        func supportsOffer(_ id: String) async throws -> Bool {
+            do {
+                let result = try await service.call(MeetingsAPI.RoomDevices.self, .init(meeting: id))
+                return result.offers.contains {
+                    $0.account.lowercased() == offer.account.lowercased() && $0.group == offer.group && $0.meetings == offer.meetings
+                }
+            } catch let failure as MeetingsCLI.Failure where failure.code == "meeting-not-found" {
+                return false
+            }
+        }
+        for id in offer.meetings {
+            if try await supportsOffer(id) { return id }
+        }
+        let roots = Set(offer.meetings)
+        let history = try await service.call(MeetingsAPI.PeopleMeetings.self, .init(person: offer.account))
+        for appearance in history.meetings where !roots.contains(appearance.meeting) {
+            if try await supportsOffer(appearance.meeting) { return appearance.meeting }
+        }
+        throw MeetingsCLI.Failure(sentence: "The room device offer has changed. Review the refreshed suggestions.",
+                                  detail: "No meeting still supports the offered account, microphone group and evidence.")
     }
 
     /// `people.known`, or `people list [query] --json`.

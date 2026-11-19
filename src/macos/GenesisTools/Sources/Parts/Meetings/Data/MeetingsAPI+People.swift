@@ -217,7 +217,8 @@ struct RoomDeviceOffer: Codable, Equatable, Identifiable {
 enum RoomDeviceChange {
     case map(RoomDevice)
     case unmap(RoomDevice)
-    case answer(RoomDeviceOffer, meeting: String, yes: Bool)
+    /// The people book spans meetings. Its answer resolves a supporting record before the write.
+    case answer(RoomDeviceOffer, meeting: String?, yes: Bool)
 
     var params: MeetingsAPI.DecideRoomDevice.Params {
         switch self {

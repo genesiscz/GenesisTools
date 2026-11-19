@@ -65,6 +65,34 @@ final class MeetingsContactsTests: XCTestCase {
         }
     }
 
+    func testPeopleBookAnswersFromTheCopyThatHasTheRosterEvidence() async throws {
+        let fake = try FakeMeetingsService()
+        let evidence = ["planning", "review"]
+        let offer = RoomDeviceOffer(account: "Boardroom PC", group: "north", meetings: evidence, question: "Shared?")
+        fake.fixtureMethods = ["people.devices.list", "people.meetings", "people.devices.decide"]
+        fake.fixtureReply = { method, params in
+            if method == "people.meetings" {
+                return ["person": ["id": "name:boardroom pc", "name": "Boardroom PC", "rank": "meetings", "sources": ["meetings"]],
+                        "meetings": [["meeting": "planning-copy", "title": "Planning copy", "start": "2026-01-12T10:00:00Z",
+                                      "as": ["participant"], "present": [], "labels": []]]] as [String: Any]
+            }
+            if method == "people.devices.list" {
+                let matches = params["meeting"] as? String == "planning-copy"
+                return ["devices": [], "offers": matches ? [try MeetingsService.paramsObject(offer)] : []]
+            }
+            return ["changed": true, "device": NSNull()] as [String: Any]
+        }
+        try await fake.withVoiceWindow { window in
+            _ = try await PeopleCalls.decideDevice(.answer(offer, meeting: nil, yes: false), service: window.service)
+            let answer = try fake.line { $0["method"] as? String == "people.devices.decide" }
+            XCTAssertEqual(answer["params"] as? NSDictionary, [
+                "action": "answer", "account": "Boardroom PC", "group": "north",
+                "meeting": "planning-copy", "meetings": evidence, "yes": false,
+            ] as NSDictionary)
+            XCTAssertEqual(fake.count("people.devices.decide"), 1)
+        }
+    }
+
     func testRoomDeviceSectionShowsConfirmedAccountsAndUnansweredQuestions() throws {
         let data = try MeetingsService.decode(MeetingsAPI.RoomDevices.Result.self, [
             "devices": [["account": "Boardroom PC", "group": "North"], ["account": "Desk PC"]],

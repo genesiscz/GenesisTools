@@ -479,9 +479,7 @@ struct RoomDeviceRows: View {
                 }
             }
             ForEach(data.offers) { offer in
-                if let meeting = offer.meetings.first {
-                    RoomDeviceOfferRow(offer: offer, window: window) { decide(.answer(offer, meeting: meeting, yes: $0)) }
-                }
+                RoomDeviceOfferRow(offer: offer, window: window) { decide(.answer(offer, meeting: nil, yes: $0)) }
             }
         }
     }
