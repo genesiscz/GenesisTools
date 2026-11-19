@@ -19,14 +19,25 @@ stage_done() {
     stage_started=$now
 }
 
-# Skip if pushing nothing (e.g. delete-only push).
-if ! read -r local_ref local_sha remote_ref remote_sha; then
+# Skip if pushing nothing (e.g. delete-only push). Git sends one line per pushed ref; the stages below read the first,
+# the stack guard reads them all.
+push_lines=$(cat)
+first_line=$(printf '%s\n' "$push_lines" | head -n 1)
+if [ -z "$first_line" ]; then
     exit 0
 fi
+
+read -r local_ref local_sha remote_ref remote_sha <<EOF
+$first_line
+EOF
 
 if [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
     exit 0
 fi
+
+# A push that rewrites a branch must also move the open PRs stacked on it (2026-11-19: a hand-made restack left one
+# child PR showing 133 commits instead of 8). Answers at once when no pushed branch is rewritten.
+printf '%s\n' "$push_lines" | bun scripts/git/stack-children-guard.ts "${1:-origin}"
 
 # Every stage runs through scripts/ci/pre-push-profile.ts: wall time, CPU time with child processes, the peak memory
 # of its process tree and its largest process, the load when it started, and the wait between stages. The table
