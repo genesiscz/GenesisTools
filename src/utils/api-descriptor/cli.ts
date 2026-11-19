@@ -69,6 +69,10 @@ function coerce(kind: ReturnType<typeof kindOf>, raw: unknown): unknown {
             .filter((v) => v.length > 0);
     }
 
+    if (kind === "boolean" && (raw === "true" || raw === "false")) {
+        return raw === "true";
+    }
+
     if (kind === "number" && typeof raw === "string") {
         return Number(raw);
     }
@@ -103,7 +107,9 @@ export function toCliCommands(api: ApiDescriptor, program: Command, options: Cli
 
             const kind = kindOf(property);
             const flag =
-                kind === "boolean" ? `--${kebab(key)}` : `--${kebab(key)} <${kind === "array" ? `${key},…` : key}>`;
+                kind === "boolean"
+                    ? `--${kebab(key)} [true|false]`
+                    : `--${kebab(key)} <${kind === "array" ? `${key},…` : key}>`;
 
             if (required.has(key) && kind !== "boolean") {
                 command.requiredOption(flag, describe(property));
