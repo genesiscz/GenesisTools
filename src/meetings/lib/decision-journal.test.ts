@@ -57,7 +57,13 @@ import * as voiceLabeler from "./speaker-labels/voice";
 import { correctTranscript } from "./transcript-corrections";
 import { looksLikeOnePerson } from "./voice-backfill";
 import { enrolRemoteVoices, remoteStays, scoreRemoteLines } from "./voice-enrolment";
-import { answeredVoiceTargets, replayAnsweredVoiceSamples } from "./voice-samples";
+import {
+    answeredVoiceTargets,
+    replayAnsweredVoiceSamples,
+    undoAnsweredVoiceSamples,
+    type VoicePrintChange,
+    writeAnsweredVoiceSamples,
+} from "./voice-samples";
 
 const now = "2026-11-09T18:00:00.000Z";
 let stores = 0;
@@ -577,6 +583,63 @@ describe("speaker answers and their project voice prints", () => {
             expect(readVoiceStore(fx.project)).toEqual(restored);
         } finally {
             fx.restore();
+        }
+    });
+
+    test("a batch of answer prints writes each project once, undoes in reverse, and a failed project leaves no print", () => {
+        const base: VoicePrint = {
+            meeting: "batch-fixture",
+            sourceSha: "batch-digest",
+            seat: "mic",
+            track: "source-mic",
+            fromSec: 0,
+            toSec: 4,
+            embedding: [1, 0],
+            confirmedAt: "2026-11-01T10:00:00Z",
+            question: "q-earlier",
+        };
+        const [first, second] = ["voice-batch-first-fixture", "voice-batch-second-fixture"];
+        addVoicePrint(first, "Alice Example", base, "fixture-model");
+        const replaced = { ...base, embedding: [0, 1], question: "q-batch" };
+        const changes: VoicePrintChange[] = [
+            { project: first, person: "Alice Example", model: "fixture-model", before: base, after: replaced },
+            ...[1, 2, 3].map((n) => ({
+                project: first,
+                person: "Alice Example",
+                model: "fixture-model",
+                after: { ...base, fromSec: n * 10, toSec: n * 10 + 4, question: "q-batch" },
+            })),
+            {
+                project: second,
+                person: "Bob Example",
+                model: "fixture-model",
+                after: { ...base, seat: "call", track: "source-call" },
+            },
+        ];
+        const writes = spyOn(atomicFile, "atomicWriteFileSync");
+        try {
+            writeAnsweredVoiceSamples(changes);
+            expect(writes).toHaveBeenCalledTimes(2);
+            expect(readVoiceStore(first).people["Alice Example"]?.samples.map((one) => one.fromSec)).toEqual([
+                0, 10, 20, 30,
+            ]);
+            expect(readVoiceStore(first).people["Alice Example"]?.samples[0]?.embedding).toEqual([0, 1]);
+            undoAnsweredVoiceSamples(changes);
+            expect(writes).toHaveBeenCalledTimes(4);
+            expect(readVoiceStore(first).people["Alice Example"]?.samples).toEqual([base]);
+            expect(readVoiceStore(second).people).toEqual({});
+
+            // A project that keeps another model fails its write: the first project is undone, that one unwritten.
+            const third = "voice-batch-third-fixture";
+            addVoicePrint(third, "Carol Example", { ...base, meeting: "other" }, "other-model");
+            const failing = changes.map((change) =>
+                change.project === second ? { ...change, project: third } : change
+            );
+            expect(() => writeAnsweredVoiceSamples(failing)).toThrow("Voice model changed");
+            expect(readVoiceStore(first).people["Alice Example"]?.samples).toEqual([base]);
+            expect(Object.keys(readVoiceStore(third).people)).toEqual(["Carol Example"]);
+        } finally {
+            writes.mockRestore();
         }
     });
 

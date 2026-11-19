@@ -61,7 +61,7 @@ function sameVoicePrint(a: VoicePrintIdentity, b: VoicePrintIdentity): boolean {
 }
 
 /** A single model owns a store; incompatible prints must never be silently mixed. */
-function putVoicePrint(store: VoiceStore, person: string, print: VoicePrint, model?: string): void {
+function checkedVoicePrint(store: VoiceStore, person: string, print: VoicePrint, model?: string): VoicePrint {
     const checked = voicePrintSchema.parse(print);
     if (!person.trim()) {
         throw new Error("A voice print needs a person");
@@ -73,6 +73,11 @@ function putVoicePrint(store: VoiceStore, person: string, print: VoicePrint, mod
     if (!store.model) {
         throw new Error("The first voice print needs its model identity");
     }
+    return checked;
+}
+
+function putVoicePrint(store: VoiceStore, person: string, print: VoicePrint, model?: string): void {
+    const checked = checkedVoicePrint(store, person, print, model);
     const samples = store.people[person]?.samples ?? [];
     store.people[person] = { samples: [...samples.filter((sample) => !sameVoicePrint(sample, checked)), checked] };
 }
@@ -108,6 +113,63 @@ export function addVoicePrints(
             putVoicePrint(store, change.person, change.after, change.model);
         }
         atomicWriteFileSync(file, SafeJSON.stringify(store));
+    });
+}
+
+function identityKey(print: VoicePrintIdentity): string {
+    return SafeJSON.stringify([print.meeting, print.sourceSha, print.seat, print.track, print.fromSec, print.toSec]);
+}
+
+/**
+ * A loaded project store whose prints are indexed by person and identity, so a batch of lookups and edits does not
+ * search the samples again for each print. Edits keep the index current; `store()` is the result in the file's order
+ * (a replaced print moves to the end, as `addVoicePrint` does).
+ */
+export class VoicePrintSnapshot {
+    private readonly prints = new Map<string, Map<string, VoicePrint>>();
+
+    constructor(private readonly loaded: VoiceStore) {
+        for (const [person, row] of Object.entries(loaded.people)) {
+            this.prints.set(person, new Map(row.samples.map((print) => [identityKey(print), print])));
+        }
+    }
+
+    find(person: string, at: VoicePrintIdentity): VoicePrint | undefined {
+        return this.prints.get(person)?.get(identityKey(at));
+    }
+
+    put(person: string, print: VoicePrint, model?: string): void {
+        const checked = checkedVoicePrint(this.loaded, person, print, model);
+        const prints = this.prints.get(person) ?? new Map<string, VoicePrint>();
+        const key = identityKey(checked);
+        prints.delete(key);
+        prints.set(key, checked);
+        this.prints.set(person, prints);
+    }
+
+    remove(person: string, at: VoicePrintIdentity): boolean {
+        return this.prints.get(person)?.delete(identityKey(at)) ?? false;
+    }
+
+    store(): VoiceStore {
+        const people: VoiceStore["people"] = {};
+        for (const [person, prints] of this.prints) {
+            if (prints.size) {
+                people[person] = { samples: [...prints.values()] };
+            }
+        }
+        return { ...this.loaded, people };
+    }
+}
+
+/** One locked read-modify-write of a project's store; `edit` returns whether it changed anything to write. */
+export function editVoiceStore(project: string, edit: (snapshot: VoicePrintSnapshot) => boolean): void {
+    const file = storeFile(project);
+    withPathArbitrationSync(file, () => {
+        const snapshot = new VoicePrintSnapshot(readVoiceStore(project));
+        if (edit(snapshot)) {
+            atomicWriteFileSync(file, SafeJSON.stringify(snapshot.store()));
+        }
     });
 }
 

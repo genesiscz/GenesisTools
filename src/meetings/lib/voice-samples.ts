@@ -2,10 +2,10 @@ import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import {
-    addVoicePrint,
+    editVoiceStore,
     readVoiceStore,
-    removeVoicePrint,
     type VoicePrint,
+    VoicePrintSnapshot,
 } from "@genesiscz/utils/meetings/voice-store";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
@@ -248,12 +248,31 @@ async function printsOf(options: {
     return changes;
 }
 
+/** The changes of each project, in their order: one store read and at most one write per project. */
+function byProject(changes: readonly VoicePrintChange[]): Map<string, VoicePrintChange[]> {
+    const groups = new Map<string, VoicePrintChange[]>();
+    for (const change of changes) {
+        groups.set(change.project, [...(groups.get(change.project) ?? []), change]);
+    }
+    return groups;
+}
+
+function samePrint(a: VoicePrint | undefined, b: VoicePrint): boolean {
+    return a !== undefined && SafeJSON.stringify(a) === SafeJSON.stringify(b);
+}
+
+/** Each project's prints in one write; a project that fails is not written, and the ones before it are undone. */
 export function writeAnsweredVoiceSamples(changes: readonly VoicePrintChange[]): void {
     const written: VoicePrintChange[] = [];
     try {
-        for (const change of changes) {
-            addVoicePrint(change.project, change.person, change.after, change.model);
-            written.push(change);
+        for (const [project, group] of byProject(changes)) {
+            editVoiceStore(project, (snapshot) => {
+                for (const change of group) {
+                    snapshot.put(change.person, change.after, change.model);
+                }
+                return group.length > 0;
+            });
+            written.push(...group);
         }
     } catch (error) {
         undoAnsweredVoiceSamples(written);
@@ -302,23 +321,21 @@ export function transitionAnsweredVoiceSamples(options: {
             );
         }
     }
-    const owned = removed.filter((change) =>
-        readVoiceStore(change.project).people[change.person]?.samples.some(
-            (sample) => SafeJSON.stringify(sample) === SafeJSON.stringify(change.after)
-        )
-    );
     added.push(...(options.entry.voices ?? []));
+    // One loaded store per project for every ownership lookup below, not one read per print.
+    const snapshots = new Map<string, VoicePrintSnapshot>();
+    const snapshotOf = (project: string) => {
+        const snapshot = snapshots.get(project) ?? new VoicePrintSnapshot(readVoiceStore(project));
+        snapshots.set(project, snapshot);
+        return snapshot;
+    };
+    const owned = removed.filter((change) =>
+        samePrint(snapshotOf(change.project).find(change.person, change.after), change.after)
+    );
     // Snapshot ownership at the moment of the write, so another answer's later sample survives rollback.
     const captured = added.map((change) => ({
         ...change,
-        before: readVoiceStore(change.project).people[change.person]?.samples.find(
-            (sample) =>
-                sample.meeting === change.after.meeting &&
-                sample.sourceSha === change.after.sourceSha &&
-                sample.track === change.after.track &&
-                sample.fromSec === change.after.fromSec &&
-                sample.toSec === change.after.toSec
-        ),
+        before: snapshotOf(change.project).find(change.person, change.after),
     }));
     const rollback = () => {
         undoAnsweredVoiceSamples(captured);
@@ -345,17 +362,23 @@ export function replayAnsweredVoiceSamples(entries: readonly JournalEntry[]): vo
 
 /** Undo removes only a print this answer still owns; a later confirmation survives. */
 export function undoAnsweredVoiceSamples(changes: readonly VoicePrintChange[]): void {
-    for (const change of [...changes].reverse()) {
-        const samples = readVoiceStore(change.project).people[change.person]?.samples ?? [];
-        if (!samples.some((sample) => SafeJSON.stringify(sample) === SafeJSON.stringify(change.after))) {
-            continue;
-        }
+    for (const [project, group] of byProject(changes)) {
+        editVoiceStore(project, (snapshot) => {
+            let changed = false;
+            for (const change of [...group].reverse()) {
+                if (!samePrint(snapshot.find(change.person, change.after), change.after)) {
+                    continue;
+                }
 
-        // `before` has the identity of `after`, so putting it back replaces this answer's print in one write.
-        if (change.before) {
-            addVoicePrint(change.project, change.person, change.before, change.model);
-        } else {
-            removeVoicePrint(change.project, change.person, change.after);
-        }
+                // `before` has the identity of `after`, so putting it back replaces this answer's print.
+                if (change.before) {
+                    snapshot.put(change.person, change.before, change.model);
+                } else {
+                    snapshot.remove(change.person, change.after);
+                }
+                changed = true;
+            }
+            return changed;
+        });
     }
 }
