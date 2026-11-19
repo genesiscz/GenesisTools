@@ -27,6 +27,7 @@ export interface WalkSourceRootsOptions {
     filtered?: boolean;
     signal?: AbortSignal;
     maxDepth?: number;
+    mtimeFrom?: number;
     shouldDescend?: (entry: { root: string; path: string; relativePath: string; depth: number }) => boolean;
     includeFile?: (entry: DiscoveredSourceFile) => boolean;
 }
@@ -367,7 +368,7 @@ async function walkRoots(options: WalkSourceRootsOptions): Promise<WalkSourceRoo
             continue;
         }
         seenRoots.add(root);
-        let complete = !options.filtered;
+        let complete = !options.filtered && options.mtimeFrom === undefined;
         const directories: Array<{ directory: string; depth: number }> = [{ directory: root, depth: 0 }];
 
         async function visit(directory: string, depth: number): Promise<void> {
@@ -438,6 +439,16 @@ async function walkRoots(options: WalkSourceRootsOptions): Promise<WalkSourceRoo
                 seenFiles.add(path);
                 const file = { root, path, relativePath };
                 if (!options.includeFile || options.includeFile(file)) {
+                    if (options.mtimeFrom !== undefined) {
+                        try {
+                            if (statSync(path).mtimeMs < options.mtimeFrom) {
+                                continue;
+                            }
+                        } catch (error) {
+                            issues.push(discoveryIssue(path, errorCategory(error, "Source timestamp read failed")));
+                            continue;
+                        }
+                    }
                     files.push(file);
                 }
             }

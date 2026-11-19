@@ -1,5 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { untilAborted } from "@genesiscz/utils/async";
 import {
     claimChildFolder,
     claimPrivateFolder,
@@ -326,24 +327,26 @@ export function ownerOf(cwd: string, worktreePaths: string[]): string | null {
     return best;
 }
 
-async function readRecentSessions(cutoff: number): Promise<LiveUsers["sessions"]> {
+async function readRecentSessions(cutoff: number, signal: AbortSignal): Promise<LiveUsers["sessions"]> {
     const sessions: LiveUsers["sessions"] = [];
     // Read native metadata directly. Even a backup dry run must see newly started sessions without writing an index.
     const { resolveHistoryProvider } = await import("@genesiscz/utils/agent-sessions/provider");
     const { ACCOUNT_PROVIDER_ALIASES } = await import("@genesiscz/utils/ai/providers/alias-list");
     for (const provider of ACCOUNT_PROVIDER_ALIASES) {
         const { reader } = resolveHistoryProvider(provider);
-        const found = await reader.discover(reader.roots(), { excludeAgents: true });
+        signal.throwIfAborted();
+        const found = await reader.discover(reader.roots(), { excludeAgents: true, mtimeFrom: cutoff, signal });
         const problem = found.issues.find((issue) => issue.code !== "root-missing");
         if (problem) {
             throw new Error(problem.message);
         }
         for (const source of found.sources) {
+            signal.throwIfAborted();
             const mtime = statSync(source.filePath).mtimeMs;
             if (mtime < cutoff) {
                 continue;
             }
-            const { metadata, complete, issues } = await reader.readMetadata(source);
+            const { metadata, complete, issues } = await reader.readMetadata(source, { signal });
             if (!complete || !metadata?.cwd) {
                 throw new Error(issues[0]?.message ?? `Cannot determine the working folder of ${source.filePath}`);
             }
@@ -371,7 +374,7 @@ export async function readLiveUsers({
 }: {
     liveMinutes: number;
     includeOwnLineage?: boolean;
-    readSessions?: (cutoff: number) => Promise<LiveUsers["sessions"]>;
+    readSessions?: (cutoff: number, signal: AbortSignal) => Promise<LiveUsers["sessions"]>;
 }): Promise<LiveUsers> {
     const [{ batchCwd, ownLineage }, { listProcesses }] = await Promise.all([
         import("@genesiscz/utils/process/cwd"),
@@ -392,7 +395,8 @@ export async function readLiveUsers({
     let sessions: LiveUsers["sessions"] = [];
     let sessionsError: string | null = null;
     try {
-        sessions = (await readSessions(cutoff))
+        const signal = AbortSignal.timeout(GIT_READ_TIMEOUT_MS);
+        sessions = (await untilAborted(readSessions(cutoff, signal), signal))
             .filter((row) => row.mtime >= cutoff && row.cwd)
             .map(({ provider, sessionId, title, mtime, cwd }) => ({
                 provider,

@@ -168,6 +168,7 @@ export async function discoverGrokHistorySources(
         filtered,
         filePaths: options.filePaths,
         signal: options.signal,
+        mtimeFrom: options.mtimeFrom,
         // A transcript sits at `<root>/<cwd>/<session>/`. Below that are only a session's own
         // folders (terminal, subagents, images, ...): 630 of 1,500 directories here, none holding a
         // transcript, and skipping them cut a filtered walk from 207 to 124 ms of CPU. A filtered
