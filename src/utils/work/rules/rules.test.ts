@@ -158,7 +158,7 @@ describe("the write rules", () => {
         const rules = resolveWorkRules([
             { layer: "config.project", rules: { types: { bug: { writes: { spot: ["owner"], edit: [] } } } } },
         ]);
-        const spot = { verb: "spot", type: "bug", title: "report", during: "none", fields: {} } as const;
+        const spot = { verb: "spot", type: "bug", title: "report", fields: {} } as const;
         expect((await write(ctx("agent", { rules }), spot)).diagnostics[0].code).toBe("ROLE_REFUSED");
         expect((await write(ctx("owner", { rules, actor: actor("owner", "owner") }), spot)).ok).toBe(true);
 
