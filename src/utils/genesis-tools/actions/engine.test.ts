@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,6 +28,7 @@ import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { appNeedFixture } from "@genesiscz/utils/macos/testing/app-need";
 import { JSON_RPC_ERRORS, RpcError } from "@genesiscz/utils/rpc/errors";
 import { startServiceHost } from "@genesiscz/utils/rpc/service-host";
+import { shellWord } from "@genesiscz/utils/shell/quote";
 import { z } from "zod";
 import { APP_SURFACE_PATH, readAppSurfaceInput, renderAppSurface } from "../../../../scripts/gen-genesis-app-surface";
 
@@ -89,7 +90,7 @@ const REGISTRY = { demo };
 function deps(overrides: Partial<EngineDeps> = {}): EngineDeps {
     const dir = mkdtempSync(join(tmpdir(), "gt-actions-"));
     return {
-        config: createConfigStore({ registry: REGISTRY, file: join(dir, "config.json") }),
+        config: createConfigStore({ registry: { ...REGISTRY, ...AREAS }, file: join(dir, "config.json") }),
         state: memoryStateStore(),
         facts: fakeFacts(),
         app: { rpc: async () => ({ ok: false, error: { code: "refused_in_test", message: "test" } }) },
@@ -635,6 +636,60 @@ describe("the real areas", () => {
             deps({ config, builder, facts: fakeFacts({ ...noHub, hasTerminal: () => true }) })
         ).catch(() => undefined);
         expect(builds).toEqual(["hub"]);
+    });
+
+    test("a failed window click posts the failed need and its build command once", async () => {
+        const postNotice = mock<NonNullable<EngineDeps["postNotice"]>>(async () => {});
+        const args = { window: "--hub", fix: "skip" };
+        const missingPart = deps({ postNotice });
+        const missingApp = deps({
+            postNotice,
+            facts: { ...appNeedFixture({ installed: false }).facts, hasTerminal: () => true },
+        });
+
+        for (const [engine, code, command] of [
+            [missingPart, "part-missing", "tools macos permissions build --add-part hub"],
+            [missingApp, "app-missing", "tools macos permissions build"],
+        ] as const) {
+            postNotice.mockClear();
+            const result = await runAreaAction(AREAS, "windows.open", args, engine);
+            const failure = result.skipped[0];
+            expect(result.status).toBe("unreachable");
+            expect(failure).toMatchObject({ code, fix: { command } });
+            expect(postNotice.mock.calls).toEqual([
+                [{ title: "Could not open --hub", message: `${failure?.reason}\n${command}` }],
+            ]);
+        }
+
+        postNotice.mockClear();
+        await runAreaAction(AREAS, "windows.open", { window: "--hub" }, missingPart);
+        expect(postNotice).not.toHaveBeenCalled();
+    });
+
+    test("a refused window click posts the manual command and a successful click posts nothing", async () => {
+        const postNotice = mock<NonNullable<EngineDeps["postNotice"]>>(async () => {});
+        const args = { window: "--hub", fix: "skip" };
+        const open = AREAS.windows.actions.open;
+        const run = mock(() => ({ window: "--hub", opened: true }));
+        run.mockImplementationOnce(() => {
+            throw new Error("Launch Services refused the window");
+        });
+        const registry = { windows: { ...AREAS.windows, actions: { open: { ...open, native: run } } } };
+        const engine = deps({ postNotice });
+        const refused = await runAreaAction(registry, "windows.open", args, engine);
+        expect(refused.status).toBe("unreachable");
+        const manual = windowOpenArgv(open.args.parse(args)).map(shellWord).join(" ");
+        expect(postNotice.mock.calls).toEqual([
+            [
+                {
+                    title: "Could not open --hub",
+                    message: `Launch Services refused the window\n${manual}`,
+                },
+            ],
+        ]);
+
+        expect((await runAreaAction(registry, "windows.open", args, engine)).status).toBe("ran");
+        expect(postNotice).toHaveBeenCalledTimes(1);
     });
 
     test("explain windows.open names the ways and changes no state without --fresh", async () => {

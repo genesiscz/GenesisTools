@@ -130,6 +130,19 @@ export const windows = defineArea({
                 return policy === "offer" ? ctx.offerBuild(part) : ctx.skip();
             },
             manual: (args) => windowOpenArgv(args).map(shellWord).join(" "),
+            failureNotice: (args, { skipped, manual }) => {
+                const failure = skipped[0];
+                if (args.fix !== "skip" || !failure) {
+                    return null;
+                }
+
+                return {
+                    title: `Could not open ${args.window}`,
+                    message: failure.fix
+                        ? windowFailureMessage(failure)
+                        : [failure.reason, manual].filter(Boolean).join("\n"),
+                };
+            },
         }),
     },
 });
