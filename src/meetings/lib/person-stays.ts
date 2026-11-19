@@ -190,10 +190,18 @@ export function personStays(options: {
             if (lastSec !== undefined) {
                 const stay = stays.findLast((one) => endable(one, lastSec));
                 const until = lastSec + options.silenceMinutes * 60;
-                const quiet = options.callSilent.some((span) => span.fromSec <= lastSec + 5 && span.toSec >= until);
+                const quiet = options.callSilent.find((span) => span.fromSec <= lastSec + 5 && span.toSec >= until);
                 if (stay && quiet && options.durationSec >= until && !laterEvidence(lastSec + 5)) {
+                    // A read inside a transcript line is not the end of that speech: keep the departure at the line's
+                    // end, but never past the start of the call's silence (a line's span can run to the next line).
+                    const lineEnd = Math.max(
+                        lastSec,
+                        ...(options.lines ?? [])
+                            .filter((line) => line.startSec <= lastSec && lastSec < line.endSec)
+                            .map((line) => line.endSec)
+                    );
                     inexact.delete(stay);
-                    stay.toSec = lastSec;
+                    stay.toSec = Math.max(lastSec, Math.min(lineEnd, quiet.fromSec));
                     stay.leaveSource = "silence";
                     stay.confidence = 0.5;
                 }
