@@ -37,7 +37,7 @@ const WRITE_OPTIONS = [
     { flags: "--dry-run", description: "print the changes, write nothing" },
     {
         flags: "--owner-said <words>",
-        description: "the owner's words when you act on them; they give you the owner's role",
+        description: "record the owner's words in the journal",
     },
 ];
 

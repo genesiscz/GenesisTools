@@ -75,8 +75,6 @@ export interface WriteEnv {
     inferred?: { during: string; evidence: string };
     /** The effective rules of the project (P3); the built-in defaults when absent. */
     rules?: ResolvedRules;
-    /** The owner's words when an agent acts on them (`--owner-said`); they give the role `owner`. */
-    ownerSaid?: string;
 }
 
 export type Decision =
@@ -1083,7 +1081,7 @@ function decideAddMember(cmd: Extract<WorkCommand, { verb: "add-member" }>, view
                 action: "add_tasks",
                 handoff: handoff.id,
                 tasks,
-                ...(env.actor.kind === "owner" || env.ownerSaid !== undefined ? { asOwner: true } : {}),
+                ...(env.actor.kind === "owner" ? { asOwner: true } : {}),
             },
         ],
         items: [handoff.id, ...items],
@@ -1161,7 +1159,7 @@ function decideHandoff(cmd: Extract<WorkCommand, { verb: "handoff" }>, view: Sto
 /** The role check of each write (P3): the rule of the item's type, against the roles the rows give the caller. */
 function guard(command: WorkCommand, view: StoreView, env: WriteEnv): Decision | null {
     const rules = env.rules ?? DEFAULT_RULES;
-    const ask = { lineage: env.lineage, ownerKind: env.actor.kind === "owner", ownerSaid: env.ownerSaid !== undefined };
+    const ask = { lineage: env.lineage, ownerKind: env.actor.kind === "owner" };
     const check = (ref: string, verb: WriteVerb, workerMay = false): Decision | null => {
         const resolved = view.resolve(ref);
 
@@ -1183,7 +1181,7 @@ function guard(command: WorkCommand, view: StoreView, env: WriteEnv): Decision |
             diagnostics: [
                 errorDiagnostic(
                     "ROLE_REFUSED",
-                    `${verb} of ${item.id} (type ${item.type}) needs ${needs}; this session is ${roles.length > 0 ? roles.join(", ") : "none of these"}. When the owner asked for it, pass his words with --owner-said "<words>".`
+                    `${verb} of ${item.id} (type ${item.type}) needs ${needs}; this session is ${roles.length > 0 ? roles.join(", ") : "none of these"}.`
                 ),
             ],
             next: [{ do: "ask the owner", ask: `May this session ${verb} ${item.id} (${item.title})?` }],

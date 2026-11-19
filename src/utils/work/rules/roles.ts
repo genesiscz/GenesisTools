@@ -7,7 +7,6 @@ export interface RoleAsk {
     /** The actor's own session first; then the sessions of its lead (a T3 parent thread's session). */
     lineage: readonly string[];
     ownerKind: boolean;
-    ownerSaid: boolean;
 }
 
 function claimedBy(view: StoreView, item: string, session: string): boolean {
@@ -52,7 +51,7 @@ export function rolesOf(view: StoreView, item: Item, ask: RoleAsk): Role[] {
     const roles = new Set<Role>();
     const self = ask.lineage[0];
 
-    if (ask.ownerKind || ask.ownerSaid) {
+    if (ask.ownerKind) {
         roles.add("owner");
     }
 
