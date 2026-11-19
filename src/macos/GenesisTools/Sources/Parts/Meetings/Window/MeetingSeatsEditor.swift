@@ -429,6 +429,7 @@ struct RoomDeviceOfferRow: View {
             HStack {
                 Text(verbatim: offer.question).fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
+                // lint-rules-ignore: short list (one row per room device offer; an account needs two supporting meetings to be offered, so a sheet shows a few)
                 Button("Yes") { answer(true) }
                     .accessibilityLabel("Yes, mark \(offer.account) as a room device")
                     .accessibilityIdentifier("meetings.devices.yes.\(offer.account)")
