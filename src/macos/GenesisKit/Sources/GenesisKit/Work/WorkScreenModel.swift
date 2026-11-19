@@ -850,7 +850,7 @@ public final class WorkScreenModel: ObservableObject {
     }
 }
 
-private extension WorkSnapshotValue {
+extension WorkSnapshotValue {
     func previewing(_ states: [String: String]) -> Self {
         guard !states.isEmpty else { return self }
         var result = self
