@@ -1,5 +1,5 @@
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
     claimChildFolder,
     claimPrivateFolder,
@@ -10,7 +10,6 @@ import {
 } from "@genesiscz/utils/fs/move-aside";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { Storage } from "@genesiscz/utils/storage";
 import { escapeShellArg } from "@genesiscz/utils/string";
 import { type DetectedBase, detectBase } from "./base-detect";
 import { createGit } from "./core";
@@ -229,14 +228,18 @@ export function worktreeUseBlockers(facts: WorktreeUse): Blocker[] {
 }
 
 export function worktreeUse(path: string, paths: string[], live: LiveUsers): Omit<WorktreeUse, "locked"> {
-    return {
-        processes: live.processes.filter((p) => ownerOf(p.cwd, paths) === path).map(({ pid, name }) => ({ pid, name })),
-        sessions: live.sessions
-            .filter((s) => ownerOf(s.cwd, paths) === path)
-            .map(({ cwd: _cwd, ...session }) => session),
+    return groupWorktreeUsers(paths, live)(path);
+}
+
+function groupWorktreeUsers(paths: string[], live: LiveUsers): (path: string) => Omit<WorktreeUse, "locked"> {
+    const processes = Map.groupBy(live.processes, (process) => ownerOf(process.cwd, paths));
+    const sessions = Map.groupBy(live.sessions, (session) => ownerOf(session.cwd, paths));
+    return (path) => ({
+        processes: (processes.get(path) ?? []).map(({ pid, name }) => ({ pid, name })),
+        sessions: (sessions.get(path) ?? []).map(({ cwd: _cwd, ...session }) => session),
         sessionsError: live.sessionsError,
         ...(live.processesError ? { processesError: live.processesError } : {}),
-    };
+    });
 }
 
 /** `--older-than <days>`: only worktrees idle at least this long count as removable. */
@@ -306,7 +309,8 @@ export function canonicalWorktreePath(path: string): string {
 }
 
 function inside(child: string, parent: string): boolean {
-    return child === parent || child.startsWith(`${parent}/`);
+    const rel = relative(parent, child);
+    return !isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`);
 }
 
 /** The deepest worktree containing `cwd`: a worktree nested in another owns its own users. */
@@ -486,7 +490,11 @@ interface StatusFacts {
 
 /** Tracked changes and untracked entries (folders collapsed); the status takes no optional locks. */
 async function statusFacts(path: string): Promise<StatusFacts> {
-    const { entries } = await createGit({ cwd: path }).status({ cwd: path, untracked: "normal", timeout: 60_000 });
+    const { entries } = await createGit({ cwd: path }).status({
+        cwd: path,
+        untracked: "normal",
+        timeout: GIT_READ_TIMEOUT_MS,
+    });
     const untracked = entries.filter((e) => e.index === "?").map((e) => e.path);
     const changed = entries.filter((e) => e.index !== "?" && e.index !== "!").map((e) => e.path);
     return { changed, untracked };
@@ -510,8 +518,8 @@ async function ignoredTopLevel(path: string): Promise<string[]> {
     });
 
     // Exit 1 with no output means "nothing ignored"; anything on stderr is a real failure.
-    if (!res.success && res.stderr.trim()) {
-        throw new Error(`git check-ignore failed in ${path}: ${res.stderr.trim()}`);
+    if (!res.success && (res.exitCode !== 1 || res.stderr.trim() || res.stdout.trim())) {
+        throw new Error(`git check-ignore failed in ${path} (exit ${res.exitCode}): ${res.stderr.trim()}`);
     }
 
     return res.stdout.split("\n").filter(Boolean).sort();
@@ -555,6 +563,7 @@ export interface ScanOptions {
     only?: string[];
     /** Tests inject the live users; production reads them. */
     live?: LiveUsers;
+    readSessions?: Parameters<typeof readLiveUsers>[0]["readSessions"];
     /** A worktree active more recently than this many days stays (blocker `recent`); 0 or absent: off. */
     olderThanDays?: number;
     /** Epoch ms for the age rule; tests pin it. */
@@ -582,8 +591,8 @@ async function scanRepo({
     const git = createGit({ cwd: repoRoot });
     const warnings: string[] = [];
     const all = await git.worktrees();
-    const allPaths = all.map((w) => canonicalWorktreePath(w.path));
-    const entries = all.filter((w) => !w.isMain && !w.isBare && (!only || only.has(canonicalWorktreePath(w.path))));
+    const checkouts = all.map((entry) => ({ entry, path: canonicalWorktreePath(entry.path) }));
+    const entries = checkouts.filter(({ entry, path }) => !entry.isMain && !entry.isBare && (!only || only.has(path)));
 
     if (entries.length === 0) {
         return { repoRoot, base: null, facts: [], warnings };
@@ -607,7 +616,7 @@ async function scanRepo({
     const stashError = stashRes.success ? null : stashRes.stderr.trim() || "git stash list failed";
     const epochs = await commitEpochs(
         repoRoot,
-        entries.map((e) => e.head)
+        entries.map(({ entry }) => entry.head)
     );
     const ctx: CollectContext | null = base
         ? {
@@ -621,10 +630,13 @@ async function scanRepo({
               nowEpoch: Math.floor(Date.now() / 1000),
           }
         : null;
-    const repo = canonicalWorktreePath(repoRoot).split("/").pop() ?? repoRoot;
+    const repo = basename(canonicalWorktreePath(repoRoot));
 
-    const results = await mapPool(entries, ENTRY_CONCURRENCY, async (entry): Promise<WorktreeFacts> => {
-        const path = canonicalWorktreePath(entry.path);
+    const usersAt = groupWorktreeUsers(
+        checkouts.map(({ path }) => path),
+        live
+    );
+    const results = await mapPool(entries, ENTRY_CONCURRENCY, async ({ entry, path }): Promise<WorktreeFacts> => {
         const present = existsSync(path);
         let verdict: Verdict | null = null;
         let how: How | null = null;
@@ -685,7 +697,7 @@ async function scanRepo({
             ignored,
             stashes: stashesFor(stashes, entry.branch, entry.head),
             stashError,
-            ...worktreeUse(path, allPaths, live),
+            ...usersAt(path),
             lastCommitAt: commitAt,
             lastActivityAt: activity.length > 0 ? Math.max(...activity) : null,
         };
@@ -736,7 +748,7 @@ export async function scanWorktrees(options: ScanOptions): Promise<WorktreeClean
         }
     }
 
-    const live = options.live ?? (await readLiveUsers({ liveMinutes }));
+    const live = options.live ?? (await readLiveUsers({ liveMinutes, readSessions: options.readSessions }));
     const only = options.only ? new Set(options.only.map(canonicalWorktreePath)) : undefined;
     const scans = await mapPool([...roots], REPO_CONCURRENCY, async (repoRoot): Promise<RepoScan> => {
         try {
@@ -890,13 +902,6 @@ export interface MoveAsideRecord {
     at: string;
 }
 
-/** The folder that worktrees are moved into, under the day's agents-removals folder in /tmp. */
-export const MOVE_ASIDE_CONTEXT = "hub-worktrees";
-
-export function moveAsideJournalPath(): string {
-    return join(new Storage("hub").getBaseDir(), "moved-aside.jsonl");
-}
-
 /**
  * Move the worktrees the rules still call removable into the day's move-aside folder with
  * `git worktree move`, re-checked right before each move. Nothing is deleted: git keeps each one a
@@ -909,8 +914,8 @@ export async function moveAsideWorktrees({
     base,
     live,
     olderThanDays,
-    destRoot = moveAsideRoot({ context: MOVE_ASIDE_CONTEXT }),
-    journal = moveAsideJournalPath(),
+    destRoot = moveAsideRoot({ context: "git-worktrees" }),
+    journal,
     now = new Date(),
     moveWorktree = gitWorktreeMove,
 }: {
@@ -920,7 +925,7 @@ export async function moveAsideWorktrees({
     live?: LiveUsers;
     olderThanDays?: number;
     destRoot?: string;
-    journal?: string;
+    journal: string;
     now?: Date;
     /** The `git worktree move` step. Tests pass a spy that wraps it. */
     moveWorktree?: typeof gitWorktreeMove;
