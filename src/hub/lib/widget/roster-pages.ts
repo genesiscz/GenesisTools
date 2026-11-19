@@ -138,13 +138,11 @@ export async function updateRosterPaths(
         const workerKey = (node: AgentsTree["orphans"][number]) => `${node.harness}:${node.id}`;
         const workersOf = (parent: AgentsTree["parents"][number]) =>
             new Set(parent.children.filter((node) => node.kind === "worker").map(workerKey));
+        // Set.prototype.difference is ES2025: the dashboard programs that load this file target an older lib.
+        const sameWorkers = (a: Set<string>, b: Set<string>) => a.size === b.size && [...a].every((key) => b.has(key));
         const unchangedWorkers = updated.parents.every((parent) => {
             const previous = parents.find((row) => row.filePath === parent.filePath);
-            return (
-                previous &&
-                workersOf(parent).difference(workersOf(previous)).size === 0 &&
-                workersOf(previous).difference(workersOf(parent)).size === 0
-            );
+            return previous !== undefined && sameWorkers(workersOf(parent), workersOf(previous));
         });
         if (updated.parents.length === parents.length && unchangedWorkers) {
             const ranked = rankedParents(
