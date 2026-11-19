@@ -1,7 +1,14 @@
 /** Reads the old handoff read model for the one backfill and for the parity check. */
-import type { Database } from "bun:sqlite";
+import { Database } from "bun:sqlite";
+import { existsSync } from "node:fs";
 // lint-rules-ignore: the one backfill and the parity check read the old handoff read model until the switch (spec P1, P10)
-import { catchUpHandoffs, listHandoffEvents, listHandoffRows, openHandoffModel } from "@app/handoff/read-model";
+import {
+    catchUpHandoffs,
+    handoffDbPath,
+    listHandoffEvents,
+    listHandoffRows,
+    openHandoffModel,
+} from "@app/handoff/read-model";
 // lint-rules-ignore: the one backfill and the parity check read the old handoff read model until the switch (spec P1, P10)
 import type { Handoff } from "@app/handoff/types";
 import type { LegacyEventRef } from "@genesiscz/utils/work/legacy/shadow";
@@ -19,14 +26,26 @@ export interface LegacySource {
  * passes false, so it reads and never writes.
  */
 export function openLegacySource(options: { catchUp: boolean; dbPath?: string; base?: string }): LegacySource {
-    const db: Database = openHandoffModel(options.dbPath);
+    const path = options.dbPath ?? handoffDbPath();
+    const db = options.catchUp
+        ? openHandoffModel(path)
+        : existsSync(path)
+          ? new Database(path, { readonly: true })
+          : null;
+
+    if (db === null) {
+        return { handoffs: () => [], events: () => [], close: () => {} };
+    }
 
     if (options.catchUp) {
         catchUpHandoffs(db, options.base);
     }
 
     return {
-        handoffs: () => listHandoffRows(db, {}),
+        handoffs: () =>
+            db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'handoffs'").get() !== null
+                ? listHandoffRows(db, {})
+                : [],
         events(handoffId) {
             const all: LegacyEventRef[] = [];
             let before: { ts: string; uid: string } | undefined;

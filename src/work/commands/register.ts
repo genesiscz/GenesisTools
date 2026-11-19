@@ -12,13 +12,14 @@ import { errorDiagnostic, failReply, okReply, type Reply } from "@genesiscz/util
 import { WORK_CLI_POSITIONAL, type WorkMethodName, workApi, workMethods } from "@genesiscz/utils/work/api";
 import { workFormatters } from "@genesiscz/utils/work/formatters";
 import { type MirrorReport, mirrorSessionTodos } from "@genesiscz/utils/work/legacy/session-todos";
-import { ingestLegacyHandoff, type ParityDifference, parityOf } from "@genesiscz/utils/work/legacy/shadow";
+import { ingestLegacyHandoff } from "@genesiscz/utils/work/legacy/shadow";
 import { showItem } from "@genesiscz/utils/work/read";
 import { setWorkConfigValue, workConfigPath } from "@genesiscz/utils/work/rules/load";
 import { openWorkDb, withWorkDb } from "@genesiscz/utils/work/store/db";
 import type { Command } from "commander";
 import { openLegacySource } from "../adapters/legacy-source";
 import { callWorkHere } from "../doors/service";
+import { checkWork, type DoctorReport } from "../lib/doctor";
 import { cliDoor } from "./emit";
 
 const FORMAT_OPTIONS = [
@@ -226,35 +227,11 @@ export function registerWorkCommands(program: Command): void {
         .option("--parity", "compare every handoff with the old read model")
         .option("--json", "print the reply object as JSON")
         .action((opts: { parity?: boolean; json?: boolean }) => {
-            const db = openWorkDb();
-            const source = openLegacySource({ catchUp: false });
-            const formatter = defineFormatter<{ handoffs: number; differences: ParityDifference[] }>({
-                text: (d) =>
-                    d.differences.length === 0
-                        ? [`parity: ${d.handoffs} handoffs, 0 differences`]
-                        : d.differences.map((x) => `${x.handoff}${x.slot ? `:${x.slot}` : ""}  ${x.what}`),
-            });
-
-            try {
-                const handoffs = source.handoffs();
-                const differences = handoffs.flatMap((handoff) => parityOf(db, handoff));
-                const diagnostics =
-                    differences.length === 0
-                        ? []
-                        : [
-                              errorDiagnostic(
-                                  "PARITY",
-                                  `${differences.length} differences. A process with old code wrote past the hook: restart it, then run the backfill.`
-                              ),
-                          ];
-                emitAs(okReply("doctor", { handoffs: handoffs.length, differences }, { diagnostics }), formatter, opts);
-
-                if (differences.length > 0) {
-                    process.exitCode = 1;
-                }
-            } finally {
-                source.close();
-                db.close();
-            }
+            const formatter = defineFormatter<DoctorReport>({ text: (d) => [d.message] });
+            emitAs(
+                checkWork(opts.parity === true ? () => openLegacySource({ catchUp: false }) : undefined),
+                formatter,
+                opts
+            );
         });
 }
