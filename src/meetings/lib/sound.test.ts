@@ -548,6 +548,22 @@ describe("MeetingSound.slice", () => {
         expect(voice?.fileFromSec).toBeCloseTo(10.14, 6);
     });
 
+    test("a voice sample over a muted or lost recorder span falls back to the source's microphone", () => {
+        const withSpans = (span: Partial<AudioRow>): SoundInputs => ({
+            ...inputs,
+            clock: measured,
+            rows: rows.map((row) => (row.source === "mic" ? { ...row, ...span } : row)),
+        });
+        const request = { seat: "mic", fromSec: 40, toSec: 42, purpose: "voice" } as const;
+
+        expect(meetingSound(withSpans({ mutedSpans: [[10_000, 11_000]] })).slice(request)?.track).toBe("source-mic");
+        expect(meetingSound(withSpans({ lostSpans: [[11_500, 11_600]] })).slice(request)?.track).toBe("source-mic");
+        expect(
+            meetingSound(withSpans({ lostSpans: [[11_500, 11_600]] })).slice({ ...request, purpose: "listen" })?.track
+        ).toBe("source-mic");
+        expect(meetingSound(withSpans({ mutedSpans: [[20_000, 21_000]] })).slice(request)?.track).toBe("mic-raw");
+    });
+
     test("without source sound a voice sample on a stamped recorder track is undefined", () => {
         const { source: _source, ...withoutSource } = inputs;
         const sound = meetingSound(withoutSource);
