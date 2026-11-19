@@ -301,7 +301,7 @@ public struct WorkItemsView: View {
                         }
                         ForEach(container.members) { member in
                             ItemRow(value: member, detail: nil, summary: nil, accept: member.state == "spotted",
-                                    archive: false, showActions: true, showsRef: showsRef, snapshot: snapshot,
+                                    archive: false, showActions: true, showsRef: showsRef, handoffs: handoffs,
                                     pending: pending, selected: selection == member.ref, selectable: selectable,
                                     drafts: drafts, select: select, perform: perform).equatable()
                         }
@@ -534,11 +534,9 @@ struct WorkPairingActions: View {
                 }
             }
             Spacer(minLength: 0)
-            if pairings.contains(where: \.enabled) {
-                let syncTip = "Push local fields and release held changes. An enabled connector may create a remote item."
-                let driftTip = " A successful push clears the drift flag without pulling remote fields."
-                KitButton("Sync", symbol: "arrow.triangle.2.circlepath", kind: .ghost, size: .small,
-                          tooltip: syncTip + (pairings.contains { $0.enabled && $0.state == .drift } ? driftTip : "")) {
+            if pairings.contains(where: { $0.enabled && $0.state == .held }) {
+                KitButton("Release held changes", symbol: "arrow.triangle.2.circlepath", kind: .ghost, size: .small,
+                          tooltip: "Release this item's held changes.") {
                     perform(.sync(ref: ref, project: project))
                 }
             }
