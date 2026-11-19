@@ -1376,14 +1376,20 @@ function buildSuggestions(options: SuggestInputs): void {
 
             wordLines.add(line);
             return true;
-        })
-        .slice(0, budget);
+        });
+    let left = budget;
 
+    // A stranger stretch's question is a speaker question of the group rules too: it comes first, inside the budget.
     for (const question of [...voiceQuestions, ...worth]) {
         if (known.has(questionKey(question))) {
             continue;
         }
 
+        if (left <= 0) {
+            break;
+        }
+
+        left -= 1;
         known.add(questionKey(question));
         const asked = meetingItemSchema.parse({ ...question, id: nextId("i", taken), suggestedAt: options.now });
         taken.push(asked);
