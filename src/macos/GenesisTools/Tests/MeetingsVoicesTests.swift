@@ -90,9 +90,10 @@ final class MeetingsVoicesTests: XCTestCase {
          {"project":"Atlas","person":"Carol Example","meetings":["n"],"samples":[{"sample":1,"meeting":"n","seat":"mic","track":"source-mic","fromSec":1,"toSec":2,"confirmedAt":"2026-11-01T10:00:00Z","words":"Yes.","available":false}]},
          {"project":"Atlas","person":"Dana Example","meetings":["n"],"samples":[]}]
         """#)
-        let split = VoicesPeople(people, meeting: "m")
-        XCTAssertEqual(split.inMeeting.map(\.person), ["Alice Example", "Bob Example"])
-        XCTAssertEqual(split.others.map(\.person), ["Carol Example"], "a person of another meeting with no sample is left out")
+        let split = VoiceLibraryRows(.init(people: people), destination: .inspector(meeting: "m", project: "Atlas", meetingOnly: false),
+                                     doubtfulFirst: true)
+        XCTAssertEqual(split.people.map(\.person.person), ["Alice Example", "Bob Example"])
+        XCTAssertEqual(split.others.map(\.person.person), ["Carol Example"], "a person of another meeting with no sample is left out")
     }
 
     func testTheNamedLinesComeFromTheRecordsVoiceRangesWithTheirScoreStateAndWords() throws {
@@ -114,12 +115,9 @@ final class MeetingsVoicesTests: XCTestCase {
     }
 
     func testTheRemovalQuestionSaysWhatItAlsoChanges() {
-        let plan = MeetingsAPI.VoicesRemove.Result(project: "Atlas", person: "Bob Example", removed: 1,
-                                                   affected: [.init(meeting: "m", item: "i1", fromSec: 1, toSec: 1),
-                                                              .init(meeting: "m", item: "i4", fromSec: 9, toSec: 9)])
-        XCTAssertEqual(VoicesModel.removalQuestion(.init(person: "Bob Example", sample: 3, plan: plan)),
-                       "Remove sample 3 of Bob Example? 2 suggested lines lose the name Bob Example.")
-        XCTAssertEqual(VoicesModel.removedText(plan), "Removed 1 sample of Bob Example; 2 suggested lines lost the name")
+        let action = LibraryCorrection.remove(id: "vs_chosen", person: "Aster", scope: .project("Orchard"))
+        XCTAssertEqual(action.title, "Remove sample of Aster")
+        XCTAssertEqual(action.effect, "A later backfill can learn this clip again.")
         XCTAssertEqual(VoicesModel.decidedText(count: 1, confirm: false),
                        "Marked 1 line as not this person; the voice model will not name it so again")
         XCTAssertEqual(VoicesModel.appliedText(0), "The voice model named no new lines")

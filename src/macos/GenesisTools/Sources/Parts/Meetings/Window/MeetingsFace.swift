@@ -542,8 +542,13 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
             if request.voices != nil || request.voicesProgress != nil, let detail = model.detail {
                 let voices = detail.voices
                 voices.open = true
-                voices.load(project: detail.record.value?.project)
-                _ = await waitUntil(60) { voices.people.value != nil || voices.people.failure != nil }
+                if let project = detail.record.value?.project {
+                    if request.voices == "meeting" { voices.meetingOnlyOverride = true }
+                    let only = voices.meetingOnlyOverride ?? model.defaults.bool(forKey: "meetings.voices.meetingOnly")
+                    model.voiceLibrary.show(.inspector(meeting: detail.id, project: project, meetingOnly: only),
+                                            doubtfulFirst: model.defaults.object(forKey: "meetings.voices.doubtfulFirst") as? Bool ?? true)
+                    _ = await waitUntil(60) { model.voiceLibrary.rows.value != nil || model.voiceLibrary.rows.failure != nil }
+                }
                 if request.voices == "preview" {
                     voices.runPreview()
                     // A cold voice pass of a 172-minute meeting takes up to 90 s with one worker.
