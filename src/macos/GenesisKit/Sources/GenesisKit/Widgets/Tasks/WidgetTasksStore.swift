@@ -66,6 +66,8 @@ public final class WidgetTasksStore: ObservableObject {
     }
 
     public var tasks: [WidgetTask] { displayedKey == queryKey ? snapshot?.tasks ?? [] : [] }
+    var hasCurrentList: Bool { displayedKey == queryKey && snapshot != nil }
+    var remainingPreviewCount: Int { hasCurrentList ? max(0, (snapshot?.total ?? 0) - min(4, tasks.count)) : 0 }
     /// The work store's counts of the projects the filter shows, the ones with something to count.
     public var workCounts: [WidgetWorkCount] {
         (snapshot?.work ?? []).filter { (project.isEmpty || $0.project == project) && !$0.summary.isEmpty }
@@ -73,7 +75,11 @@ public final class WidgetTasksStore: ObservableObject {
     var claimedHandoffs: [WidgetClaimedHandoff]? { displayedKey == queryKey ? snapshot?.claimedHandoffs : nil }
     public var activeCount: Int { snapshot?.activeCount ?? 0 }
     public var isMutating: Bool { !mutatingIDs.isEmpty }
-    public var projects: [String] { snapshot?.projects ?? [] }
+    public var projects: [String] {
+        guard let snapshot else { return [] }
+        return Set(snapshot.projects + (snapshot.work ?? []).filter { !$0.summary.isEmpty }.map(\.project))
+            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
     public var sessionFilters: [(id: String, title: String)] { (snapshot?.sessions ?? []).map { ($0.id, $0.title) } }
     private var queryKey: String { "\(scope)|\(project.utf8.count):\(project)|\(session)" }
 

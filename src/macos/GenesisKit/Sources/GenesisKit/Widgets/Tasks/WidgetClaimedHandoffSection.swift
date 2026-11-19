@@ -4,7 +4,6 @@ struct WidgetClaimedHandoffSection: View {
     let handoffs: [WidgetClaimedHandoff]
     let initiallyExpanded: Bool
     var showTooltip = true
-    var openSettings: (() -> Void)?
     @State private var toggled: Set<String> = []
     @GenReduceMotion private var reduceMotion
     @Environment(\.genExpansionHost) private var expansionHost
@@ -14,9 +13,6 @@ struct WidgetClaimedHandoffSection: View {
             HStack {
                 Text("Claimed handoffs").font(.system(size: 12, weight: .semibold))
                 Spacer()
-                if let openSettings {
-                    IconButton(systemName: "gearshape", tooltip: "Claimed handoff settings", action: openSettings)
-                }
             }
             if handoffs.isEmpty {
                 EmptyState(text: "No handoffs claimed by a live session in this view")
@@ -46,13 +42,18 @@ struct WidgetClaimedHandoffSection: View {
                         .font(.caption.weight(.semibold)).frame(width: 26, height: 26).contentShape(Rectangle())
                 }
                 .buttonStyle(RowButtonStyle())
+                .instantTooltip(expanded.wrappedValue ? "Hide tasks" : "Show tasks")
                 .accessibilityLabel("\(expanded.wrappedValue ? "Collapse" : "Expand") \(handoff.title)")
                 .accessibilityValue(expanded.wrappedValue ? "Expanded" : "Collapsed")
                 .accessibilityIdentifier("tasks-handoff-\(handoff.id)")
                 WidgetWorkButton(item: link, showTooltip: showTooltip) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(handoff.title).font(.system(size: 12, weight: .medium)).lineLimit(2)
-                        Text(verbatim: detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        Text(verbatim: "\(handoff.project) · \(count)").font(.caption).foregroundStyle(.secondary)
+                        if !handoff.claimants.isEmpty {
+                            Text(verbatim: handoff.claimants.map(\.title).joined(separator: ", "))
+                                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                 }
                 .accessibilityValue(detail)
@@ -65,11 +66,12 @@ struct WidgetClaimedHandoffSection: View {
         if handoff.members.isEmpty {
             EmptyState(text: "This handoff has no tasks")
         } else {
+            let parentPlan = link.plan
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(handoff.members, id: \.rowID) { member in
                     let item = WidgetWorkLink(id: member.id, title: member.title, body: member.body,
                                               acceptance: member.acceptance, repoRoot: member.repoRoot ?? handoff.repoRoot)
-                    WidgetWorkButton(item: item, showTooltip: showTooltip, parentPlan: { link.plan }) {
+                    WidgetWorkButton(item: item, showTooltip: showTooltip, parentPlan: { parentPlan }) {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Image(systemName: WorkStateLook.symbol(member.state))
                                 .foregroundStyle(WorkStateLook.color(member.state))

@@ -225,7 +225,7 @@ private struct WidgetGeneralSettings: View {
                     }.labelsHidden().pickerStyle(.segmented)
                 }
                 Divider()
-                NativeSettingsToggle("Task tooltips", detail: "Show the full text and acceptance criteria when you hover over a task.",
+                NativeSettingsToggle("Task tooltips", detail: "Show task or handoff text and available acceptance criteria on hover.",
                                      isOn: Binding(get: { prefs.tasks?.showTooltips ?? true }, set: { value in write {
                                          if $0.tasks == nil { $0.tasks = WidgetTasksPreferences() }
                                          $0.tasks?.showTooltips = value

@@ -65,6 +65,7 @@ final class WidgetTasksPolishTests: XCTestCase {
         await settled(store)
         XCTAssertEqual(store.workCounts.map(\.project), ["Fixture", "Other"])
         XCTAssertEqual(store.workCounts.first?.summary, "7 spotted · 1 reopened")
+        XCTAssertEqual(store.workCounts.last?.summary, "2 spotted · 3 held links")
 
         let all = try renderTasks(WidgetTasksModuleView(store: store, presentation: .preview).frame(width: 432),
                                   name: "widget-tasks-work-counts")
@@ -79,6 +80,23 @@ final class WidgetTasksPolishTests: XCTestCase {
         // A snapshot from before the store (no `work` key) decodes and shows no line.
         let old = Data(#"{"tasks":[],"total":0,"activeCount":0,"truncated":false,"sourcePath":"/x","sourceStamp":"s","projects":[],"sessions":[]}"#.utf8)
         XCTAssertNil(try JSONDecoder().decode(WidgetTaskSnapshot.self, from: old).work)
+    }
+
+    func testWorkOnlyProjectsAndTheWholeMatchingCountSurviveThePreviewLimit() async throws {
+        var snap = WidgetTaskSnapshot(tasks: (0..<4).map { task("t_\($0)_fixture") }, total: 250,
+                                      activeCount: 250, truncated: true, sourcePath: "/fixture/tasks.jsonl",
+                                      sourceStamp: "fixture", projects: [], sessions: [])
+        snap.work = [.init(project: "Studio & Tools", spotted: 1, reopened: 0, held: 1)]
+        let data = try JSONEncoder().encode(snap)
+        let store = WidgetTasksStore(request: { _ in data })
+        defer { store.stop() }
+        store.refresh()
+        await settled(store)
+        XCTAssertEqual(store.remainingPreviewCount, 246)
+        XCTAssertEqual(store.projects, ["Studio & Tools"])
+        let url = WidgetWorkLink.project("Studio & Tools")
+        XCTAssertEqual(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+                       [URLQueryItem(name: "work-project", value: "Studio & Tools")])
     }
 
     private func renderTasks<V: View>(_ view: V, name: String) throws -> String {
@@ -129,6 +147,18 @@ final class WidgetTasksPolishTests: XCTestCase {
             .frame(width: 432), name: "widget-handoffs-hidden")
         XCTAssertTrue(hidden.contains("Tasks"), hidden)
         XCTAssertFalse(hidden.contains("Prepare the release"), hidden)
+    }
+
+    func testTheHandoffShowsEveryClaimantAtTheWidgetsNarrowWidth() throws {
+        let handoff = WidgetClaimedHandoff(id: "h_fixture", project: "Build and release automation",
+                                           title: "Prepare the release", claimants: [
+                                               .init(title: "Archive verification session"), .init(title: "Signing review"),
+                                           ], members: [])
+        let text = try renderTasks(WidgetClaimedHandoffSection(handoffs: [handoff], initiallyExpanded: false)
+            .frame(width: 288), name: "widget-handoff-narrow")
+        for word in ["verification", "Signing", "review", "0 tasks"] {
+            XCTAssertTrue(text.contains(word), text)
+        }
     }
 
     /// Send a window-local click to the real member row. Vision locates its text so the same test can

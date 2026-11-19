@@ -6,7 +6,8 @@ public extension WidgetTasksStore {
                     openHandoffSettings: (() -> Void)? = nil) -> WidgetModuleDescriptor {
         WidgetModuleDescriptor(
             id: "tasks", title: "Tasks", symbol: "checklist", tint: .mint,
-            summary: { "\(self.activeCount) active tasks" }, visibilityChanged: { self.visibilityChanged($0) }
+            summary: { self.snapshot == nil ? "Tasks" : Plural.count(self.activeCount, "active task") },
+            visibilityChanged: { self.visibilityChanged($0) }
         ) { WidgetTasksModuleView(store: self, presentation: $0, handoffDisplay: handoffs(),
                                   showTaskTooltips: showTaskTooltips(), openHandoffSettings: openHandoffSettings) }
     }
@@ -26,23 +27,24 @@ struct WidgetTasksModuleView: View {
             if presentation == .compact {
                 HStack(spacing: 7) {
                     Image(systemName: "checklist").foregroundStyle(.mint)
-                    Text("\(store.activeCount) tasks").font(.system(size: 11, weight: .medium))
+                    Text(store.snapshot == nil ? "Tasks" : Plural.count(store.activeCount, "active task")).font(.system(size: 11, weight: .medium))
                 }
             } else {
                 VStack(alignment: .leading, spacing: 12) {
                     header
-                    workLine
                     if presentation == .expanded {
                         WidgetTaskComposer(store: store)
                         filters
                         feedback
                         inventory
                     } else {
+                        workLine
                         handoffSection
                         preview
                     }
                     Button {
-                        openURL(WidgetWorkLink.destination(nil)) { opened in
+                        let destination = store.project.isEmpty ? WidgetWorkLink.destination(nil) : WidgetWorkLink.project(store.project)
+                        openURL(destination) { opened in
                             if !opened { CopyToast.post(title: "Could not open Work", detail: "GenesisTools hub", style: .problem) }
                         }
                     } label: {
@@ -50,6 +52,7 @@ struct WidgetTasksModuleView: View {
                             .font(.caption.weight(.medium)).frame(minHeight: 26)
                     }
                     .buttonStyle(.genHoverPlain())
+                    .instantTooltip(store.project.isEmpty ? "Open the Work screen" : "Open \(store.project) in Work")
                     .accessibilityIdentifier("tasks.open-work")
                 }
                 // The host's own rows (Expand, the module switcher) sit 18 pt in; the module's edges line up with them.
@@ -65,7 +68,7 @@ struct WidgetTasksModuleView: View {
         if handoffDisplay != .hidden, let handoffs = store.claimedHandoffs,
            presentation == .expanded || !handoffs.isEmpty {
             WidgetClaimedHandoffSection(handoffs: handoffs, initiallyExpanded: handoffDisplay == .expanded,
-                                        showTooltip: showTaskTooltips, openSettings: openHandoffSettings)
+                                        showTooltip: showTaskTooltips)
                 .id(handoffDisplay)
         }
     }
@@ -75,9 +78,20 @@ struct WidgetTasksModuleView: View {
             Image(systemName: "checklist").foregroundStyle(.mint)
             Text("Tasks").font(.system(size: 15, weight: .semibold))
             Spacer()
-            if store.isLoading { SpinningArc(color: .mint).frame(width: 13, height: 13) }
-            Text("\(store.activeCount) active").font(.system(size: 10)).foregroundStyle(.secondary)
+            if store.snapshot != nil {
+                Text("\(store.activeCount) active overall").font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+            if let openHandoffSettings {
+                IconButton(systemName: "gearshape", tooltip: "Tasks settings", action: openHandoffSettings)
+                    .accessibilityLabel("Claimed handoff settings")
+                    .accessibilityHint("Opens Tasks settings, including tooltips")
+            }
             IconButton(systemName: "arrow.clockwise", tooltip: "Refresh tasks") { store.refresh(force: true) }
+                .opacity(store.isLoading ? 0 : 1)
+                .disabled(store.isLoading)
+                .overlay {
+                    if store.isLoading { SpinningArc(color: .mint).frame(width: 13, height: 13).allowsHitTesting(false) }
+                }
                 .accessibilityLabel("Refresh tasks")
         }
     }
@@ -88,13 +102,25 @@ struct WidgetTasksModuleView: View {
         if !counts.isEmpty {
             VStack(alignment: .leading, spacing: 3) {
                 ForEach(counts) { count in
-                    HStack(spacing: 6) {
-                        Image(systemName: "tray.full").foregroundStyle(.secondary).imageScale(.small)
-                        Text(count.project).font(.system(size: 11, weight: .medium)).lineLimit(1)
-                        Text(count.summary).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                    Button {
+                        openURL(WidgetWorkLink.project(count.project)) { opened in
+                            if !opened { CopyToast.post(title: "Could not open Work", detail: count.project, style: .problem) }
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "tray.full").foregroundStyle(.secondary).imageScale(.small)
+                            Text(count.project).font(.system(size: 11, weight: .medium)).lineLimit(2)
+                            Text(count.summary).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 0)
+                            Image(systemName: "arrow.up.forward").imageScale(.small).foregroundStyle(.secondary)
+                        }
+                        .frame(minHeight: 24).contentShape(Rectangle())
                     }
+                    .buttonStyle(RowButtonStyle())
+                    .instantTooltip("Open \(count.project) in Work\n\(count.summary)")
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("\(count.project): \(count.summary)")
+                    .accessibilityHint("Opens this project in Work")
                 }
             }
             .accessibilityIdentifier("tasks-work-counts")
@@ -105,8 +131,8 @@ struct WidgetTasksModuleView: View {
     @ViewBuilder private var preview: some View {
         if store.isLoading && store.tasks.isEmpty {
             Label("Loading your tasks…", systemImage: "ellipsis").font(.caption)
-        } else if store.tasks.isEmpty && !hasShownHandoffs {
-            Text("Nothing waiting. Open Tasks to add one.").font(.caption).foregroundStyle(.secondary)
+        } else if store.hasCurrentList && store.tasks.isEmpty && !hasShownHandoffs && store.error == nil {
+            Text(store.scope == "active" ? "No active tasks in this view." : "No tasks match this view.").font(.caption).foregroundStyle(.secondary)
         }
         VStack(alignment: .leading, spacing: 4) {
             ForEach(store.tasks.prefix(4)) { task in
@@ -121,8 +147,8 @@ struct WidgetTasksModuleView: View {
                 }
             }
         }
-        if store.tasks.count > 4 {
-            Text("\(store.tasks.count - 4) more in Tasks").font(.caption2).foregroundStyle(.secondary)
+        if store.remainingPreviewCount > 0 {
+            Text("\(store.remainingPreviewCount) more in Tasks").font(.caption2).foregroundStyle(.secondary)
         }
         if let error = store.error {
             FailureInline(message: error, outcome: "The tasks did not load", action: "Load the tasks", area: "widget", identifier: "widget.tasks.failure")
@@ -206,11 +232,12 @@ struct WidgetTasksModuleView: View {
     private var inventory: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 8) {
+                workLine
                 handoffSection
-                if store.tasks.isEmpty && store.recent.isEmpty && !store.isLoading && !hasShownHandoffs {
+                if store.hasCurrentList && store.tasks.isEmpty && store.recent.isEmpty && !store.isLoading && !hasShownHandoffs && store.error == nil {
                     VStack(spacing: 10) {
                         Image(systemName: "checklist").font(.system(size: 30, weight: .light)).foregroundStyle(.mint.opacity(0.75))
-                        Text(store.scope == "active" ? "Nothing waiting here" : "No tasks match this view")
+                        Text(store.scope == "active" ? "No active tasks in this view" : "No tasks match this view")
                             .font(.system(size: 13, weight: .medium))
                         Text(store.scope == "active"
                              ? "Add one above, or ask an agent to post a TODO. Both land here."
@@ -224,7 +251,7 @@ struct WidgetTasksModuleView: View {
                         .foregroundStyle(.secondary).padding(.top, 4)
                     ForEach(store.recent) { task in row(task).equatable() }
                 }
-                if store.snapshot?.truncated == true {
+                if store.hasCurrentList && store.snapshot?.truncated == true {
                     Text("Showing \(store.tasks.count) of \(store.snapshot?.total ?? 0) matching tasks. Narrow the filters to see more.")
                         .font(.caption2).foregroundStyle(.secondary)
                 }
