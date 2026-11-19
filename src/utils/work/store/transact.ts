@@ -16,6 +16,7 @@ export interface WriteOutcome {
     changes: Change[];
     /** Writes for the old handoff log that the caller still has to run. */
     legacy: LegacyAction[];
+    completedLegacy?: PendingWrite["completed"];
     noop: boolean;
     projected?: Item[];
 }
@@ -115,7 +116,12 @@ export function transact(
     db: Database,
     command: WorkCommand,
     env: WriteEnv,
-    options: { dryRun?: boolean; projectItems?: boolean; approvedLegacy?: LegacyAction[] } = {}
+    options: {
+        dryRun?: boolean;
+        projectItems?: boolean;
+        approvedLegacy?: LegacyAction[];
+        writeLegacy?: (action: LegacyAction) => LegacyWriteResult;
+    } = {}
 ): Reply<WriteOutcome> | { replay: Reply<unknown> } | { pending: PendingWrite; existing: boolean } {
     const principal = principalOf(env);
     db.run("BEGIN IMMEDIATE");
@@ -178,9 +184,35 @@ export function transact(
         }
 
         const applied = decision.changes.map((change) => applyChange(db, change));
+        const completedLegacy: PendingWrite["completed"] = [];
+        if (options.writeLegacy !== undefined) {
+            for (const action of decision.legacy) {
+                const written = options.writeLegacy(action);
+                if (!written.ok) {
+                    db.run("ROLLBACK");
+                    return failReply(
+                        command.verb,
+                        [
+                            errorDiagnostic(
+                                "LEGACY_REFUSED",
+                                `Handoff action ${action.action} was refused: ${written.error ?? "no result"}.`
+                            ),
+                        ],
+                        decision.next
+                    );
+                }
+                completedLegacy.push({ action: action.action, ...written });
+            }
+        }
         const reply = okReply(
             command.verb,
-            { items: decision.items, changes: applied, legacy: decision.legacy, noop: decision.noop === true },
+            {
+                items: decision.items,
+                changes: applied,
+                legacy: decision.legacy,
+                noop: decision.noop === true,
+                ...(completedLegacy.length > 0 ? { completedLegacy } : {}),
+            },
             {
                 diagnostics: decision.diagnostics,
                 next: decision.next,
@@ -197,7 +229,7 @@ export function transact(
                 kind: "work.pending",
                 operationId: randomUUID(),
                 outcome: reply,
-                completed: [],
+                completed: completedLegacy,
             };
             storeReply(db, principal, env.request, pending, env.now);
             db.run("COMMIT");

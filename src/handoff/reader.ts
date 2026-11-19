@@ -51,6 +51,10 @@ export function buildBy(deps: HandoffDeps): HandoffEventBy {
 }
 
 export function withDb<T>(deps: HandoffDeps, fn: (db: Database) => T): T {
+    if (deps.transactionDb !== undefined) {
+        return fn(deps.transactionDb);
+    }
+
     const db = openHandoffModel(deps.dbPath);
 
     try {

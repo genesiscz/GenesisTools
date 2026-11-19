@@ -10,6 +10,8 @@ import {
     posterEditId,
     postHandoff,
 } from "@app/handoff/executor";
+// lint-rules-ignore: the Work adapter folds handoff events on the same transaction as the Work item
+import { catchUpHandoffs, ensureHandoffModel, flushHandoffCopies, handoffDbPath } from "@app/handoff/read-model";
 // lint-rules-ignore: the type of the old executor's input, for the same LegacyHandoffs adapter until P10 removes it
 import type { HandoffActionInput } from "@app/handoff/types";
 // lint-rules-ignore: the adapter of the SessionDelivery port wraps deliverToSession until the sessions area exists (spec, Session delivery)
@@ -52,42 +54,58 @@ function failed(error: unknown): LegacyWriteResult {
 
 /** Writes into the old handoff log through its own executor; its hook brings each event into the work store. */
 export function legacyHandoffs(deps: HandoffDeps = {}): LegacyHandoffs {
-    return {
-        async write(action: LegacyAction, operationId?: string): Promise<LegacyWriteResult> {
-            const operation = operationId === undefined ? deps : { ...deps, workOperationId: operationId };
-            try {
-                if (action.action === "post") {
-                    const posted = postHandoff(
-                        {
-                            title: action.title,
-                            tasks: action.tasks,
-                            ...(action.description !== undefined ? { description: action.description } : {}),
-                            ...(action.project !== undefined ? { project: action.project } : {}),
-                            ...(action.target !== undefined ? { target: action.target } : {}),
-                        },
-                        operation
-                    );
-                    return { ok: true, handoff: posted.handoff.id, taskIds: posted.handoff.tasks.map((t) => t.id) };
-                }
-
-                const response = executeHandoffActions(
-                    { ...executorInput(action, deps), include: ["tasks"] },
+    function write(action: LegacyAction, operation: HandoffDeps): LegacyWriteResult {
+        try {
+            if (action.action === "post") {
+                const posted = postHandoff(
+                    {
+                        title: action.title,
+                        tasks: action.tasks,
+                        ...(action.description !== undefined ? { description: action.description } : {}),
+                        ...(action.project !== undefined ? { project: action.project } : {}),
+                        ...(action.target !== undefined ? { target: action.target } : {}),
+                    },
                     operation
                 );
-                const result = response.results[0];
-
-                if (result === undefined || !result.ok) {
-                    return { ok: false, error: result?.error ?? "the old store applied nothing" };
-                }
-
-                return {
-                    ok: true,
-                    handoff: action.handoff,
-                    ...(result.assignedTaskIds ? { taskIds: result.assignedTaskIds } : {}),
-                };
-            } catch (error) {
-                return failed(error);
+                return { ok: true, handoff: posted.handoff.id, taskIds: posted.handoff.tasks.map((t) => t.id) };
             }
+
+            const response = executeHandoffActions(
+                { ...executorInput(action, operation), include: ["tasks"] },
+                operation
+            );
+            const result = response.results[0];
+
+            if (result === undefined || !result.ok) {
+                return { ok: false, error: result?.error ?? "the old store applied nothing" };
+            }
+
+            return {
+                ok: true,
+                handoff: action.handoff,
+                ...(result.assignedTaskIds ? { taskIds: result.assignedTaskIds } : {}),
+            };
+        } catch (error) {
+            return failed(error);
+        }
+    }
+
+    return {
+        async write(action, operationId) {
+            return write(action, operationId === undefined ? deps : { ...deps, workOperationId: operationId });
+        },
+        atomic(db) {
+            if (db.filename !== (deps.dbPath ?? handoffDbPath())) {
+                return undefined;
+            }
+            return {
+                write(action) {
+                    ensureHandoffModel(db);
+                    catchUpHandoffs(db, deps.base);
+                    return write(action, { ...deps, transactionDb: db });
+                },
+                flush: () => flushHandoffCopies(db),
+            };
         },
 
         async check(actions: LegacyAction[]): Promise<LegacyWriteResult[]> {

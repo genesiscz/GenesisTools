@@ -116,6 +116,10 @@ function createTables(db: Database): { eventsTableCreated: boolean } {
     return { eventsTableCreated: !hadEventsTable && tableExists(db, "handoff_events") };
 }
 
+export function ensureHandoffModel(db: Database): void {
+    createTables(db);
+}
+
 export function openHandoffModel(dbPath?: string): Database {
     const path = dbPath ?? handoffDbPath();
     const db = openWorkDb(path);
