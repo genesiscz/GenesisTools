@@ -787,6 +787,72 @@ test("threshold preview rescores a shared seat from local voice evidence without
     expect(readVoiceStore(record.project!).people).toEqual({});
 });
 
+test("a human-confirmed range seeds a line only when it spans the whole line", async () => {
+    const { record, opened } = await sampledMeeting("whole-line-seed-fixture");
+    record.seats = { room: [alice.person, bob.person], remote: [] };
+    const meeting = await opened.meeting();
+    meeting.transcript = [0, 5, 10, 15].map((startSec) => ({ speaker: "Speaker 1", startSec, text: "Hello." }));
+    const config = meetingsConfigSchema.parse({});
+    config.global.speakerLabels.seat.enabled = false;
+    spies.push(
+        spyOn(opened, "presence").mockResolvedValue([
+            { name: alice.person, fromSec: 0, toSec: 20 },
+            { name: bob.person, fromSec: 0, toSec: 20 },
+        ]),
+        spyOn(opened, "evidence").mockResolvedValue({
+            segments: [{ startSec: 0, endSec: 20, channel: "mic" }],
+            files: [],
+            speaking: [],
+        }),
+        spyOn(voice, "embedVoiceLines").mockImplementation(async (input) =>
+            input.spans.map((span) => timedLine(span.index, span.fromSec, span.index < 2 ? [1, 0] : [0, 1], "mic"))
+        )
+    );
+    const decision = {
+        token: "answer",
+        actor: { kind: "listen" as const },
+        entry: { action: "answer" as const, question: "i2" },
+        previous: { status: "suggested" as const },
+    };
+    const range = {
+        id: "i1",
+        kind: "speaker-range" as const,
+        status: "confirmed" as const,
+        suggestedAt: record.start!,
+        label: "Speaker 1",
+        speaker: alice.person,
+        fromSec: 0,
+        toSec: 0,
+        rules: [],
+        decision,
+    };
+    record.items.push(range, {
+        id: "i2",
+        kind: "question",
+        status: "confirmed",
+        suggestedAt: record.start!,
+        about: "speaker",
+        fromSec: 0,
+        toSec: 0,
+        decides: ["i1"],
+        choices: [alice.person],
+        answer: alice.person,
+        question: "Who spoke?",
+        rules: [],
+        decision,
+    });
+    const preview = () =>
+        proposeSpeakerLabels(opened, config.global.speakerLabels, undefined, {
+            voiceOnly: true,
+            applyAbove: config.global.suggest.applyAbove,
+        });
+
+    // The decision ends where the 5 s line starts: the rest of the line was never decided.
+    expect(await preview()).toEqual([]);
+    range.toSec = 5;
+    expect((await preview())[1]?.person).toBe(alice.person);
+});
+
 test("exclusion survives the preview contract and creates a question even for short lines and a zero question budget", async () => {
     const { record, opened, store } = await sampledMeeting("exclusion-question-fixture");
     const meeting = await opened.meeting();

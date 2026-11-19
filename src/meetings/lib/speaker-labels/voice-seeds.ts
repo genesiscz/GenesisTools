@@ -96,9 +96,14 @@ export function meetingVoiceSeeds(options: {
         const label = meeting.transcript[line.index]?.speaker;
         const covers = (range: { fromSec: number; toSec: number; label: string }) =>
             range.label === label && range.fromSec <= line.fromSec && range.toSec >= line.fromSec;
+        // A human decision seeds training audio only when it spans the whole line, as a standalone answer must.
+        const wholly = (range: { toSec: number; evidence?: Record<string, unknown> }) =>
+            range.toSec >= line.toSec ||
+            (typeof range.evidence?.endSec === "number" && range.evidence.endSec >= line.toSec) ||
+            range.evidence?.transcriptLine === line.index;
         const assignment = assignments.find(covers);
         if (assignment) {
-            if (assignedByPerson.has(`${assignment.id}|${assignment.at}`)) {
+            if (wholly(assignment) && assignedByPerson.has(`${assignment.id}|${assignment.at}`)) {
                 certain.set(line.index, assignment.person);
             }
             continue;
@@ -109,7 +114,11 @@ export function meetingVoiceSeeds(options: {
                 (range.evidence?.transcriptLine === undefined || range.evidence.transcriptLine === line.index)
         );
         const confirmed = covering.filter((range) => range.status === "confirmed");
-        if (confirmed.some((range) => range.voices?.length || range.segments?.length || !decidedIds.has(range.id))) {
+        if (
+            confirmed.some(
+                (range) => !wholly(range) || range.voices?.length || range.segments?.length || !decidedIds.has(range.id)
+            )
+        ) {
             continue;
         }
         const answers = standaloneAnswers.flatMap((q) =>
