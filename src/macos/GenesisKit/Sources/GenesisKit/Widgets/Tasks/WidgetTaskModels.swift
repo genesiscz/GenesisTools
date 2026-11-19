@@ -85,6 +85,18 @@ public enum WidgetTaskAction: String, CaseIterable, Sendable {
         case .dismiss: return "dismissed"
         }
     }
+
+    func failureHeadline(_ title: String) -> String {
+        let item = "“\(title)”"
+        switch self {
+        case .acknowledge: return "Could not start \(item)"
+        case .complete: return "Could not mark \(item) as done"
+        case .reopen: return "Could not reopen \(item)"
+        case .dismiss: return "Could not dismiss \(item)"
+        case .send: return "Could not confirm delivery of \(item)"
+        case .take: return "Could not assign \(item) to you"
+        }
+    }
     /// The actions that move a task back to `state`, in order; empty when there is no way back. The ledger has no
     /// move from done straight to in progress, so that one is a reopen and then an acknowledge.
     static func returning(to state: String) -> [WidgetTaskAction] {

@@ -12,6 +12,7 @@ final class WidgetTaskEditSession: ObservableObject {
     @Published var title = ""
     @Published var details = ""
     private var generation = 0
+    var onClose: (() -> Void)?
 
     var isOpen: Bool { opened != nil }
 
@@ -25,6 +26,17 @@ final class WidgetTaskEditSession: ObservableObject {
     func cancel() {
         generation += 1
         opened = nil
+        onClose?()
+    }
+
+    func needsReview(_ current: WidgetTask) -> Bool {
+        guard let opened else { return false }
+        return opened.revision != current.revision || opened.updatedTs != current.updatedTs || opened.state != current.state
+    }
+
+    func useReviewedVersion(_ current: WidgetTask) {
+        guard opened?.id == current.id, current.editable else { return }
+        opened = current
     }
 
     /// A refusal or a failure leaves the editor open with its text.
@@ -36,6 +48,7 @@ final class WidgetTaskEditSession: ObservableObject {
             guard let self, self.generation == generation else { return }
             if self.title == submitted.title, self.details == submitted.details {
                 self.opened = nil
+                self.onClose?()
             } else {
                 // The ledger now holds the saved text at a newer revision; the next Save must carry that one.
                 self.opened = saved

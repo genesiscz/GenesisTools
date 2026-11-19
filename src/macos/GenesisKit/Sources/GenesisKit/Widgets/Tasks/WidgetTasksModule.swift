@@ -35,7 +35,6 @@ struct WidgetTasksModuleView: View {
                     if presentation == .expanded {
                         WidgetTaskComposer(store: store)
                         filters
-                        feedback
                         inventory
                     } else {
                         workLine
@@ -79,7 +78,9 @@ struct WidgetTasksModuleView: View {
             Text("Tasks").font(.system(size: 15, weight: .semibold))
             Spacer()
             if store.snapshot != nil {
-                Text("\(store.activeCount) active overall").font(.system(size: 11)).foregroundStyle(.secondary)
+                Text(Plural.count(store.activeCount, "active to-do") + (store.project.isEmpty && store.session.isEmpty ? "" : " overall"))
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .instantTooltip("Open and in-progress to-dos across projects and sessions. Handoff tasks are counted in their handoff.")
             }
             if let openHandoffSettings {
                 IconButton(systemName: "gearshape", tooltip: "Tasks settings", action: openHandoffSettings)
@@ -132,7 +133,7 @@ struct WidgetTasksModuleView: View {
         if store.isLoading && store.tasks.isEmpty {
             Label("Loading your tasks…", systemImage: "ellipsis").font(.caption)
         } else if store.hasCurrentList && store.tasks.isEmpty && !hasShownHandoffs && store.error == nil {
-            Text(store.scope == "active" ? "No active tasks in this view." : "No tasks match this view.").font(.caption).foregroundStyle(.secondary)
+            Text(store.scope == "active" ? "No active to-dos in this view." : "No to-dos match this view.").font(.caption).foregroundStyle(.secondary)
         }
         VStack(alignment: .leading, spacing: 4) {
             ForEach(store.tasks.prefix(4)) { task in
@@ -150,9 +151,7 @@ struct WidgetTasksModuleView: View {
         if store.remainingPreviewCount > 0 {
             Text("\(store.remainingPreviewCount) more in Tasks").font(.caption2).foregroundStyle(.secondary)
         }
-        if let error = store.error {
-            FailureInline(message: error, outcome: "The tasks did not load", action: "Load the tasks", area: "widget", identifier: "widget.tasks.failure")
-        }
+        feedback
     }
 
     private var hasShownHandoffs: Bool {
@@ -194,18 +193,8 @@ struct WidgetTasksModuleView: View {
     }
 
     @ViewBuilder private var feedback: some View {
-        if let error = store.error {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(KitPalette.removed)
-                Text(error).font(.system(size: 11)).foregroundStyle(KitPalette.removed).textSelection(.enabled)
-                Spacer(minLength: 0)
-                IconButton(systemName: "doc.text.magnifyingglass", tooltip: "Details of this failure") {
-                    FailureReporter.shared.showDetails(FailureReport.unexpected(
-                        error, outcome: "A task action failed", action: "Change a task", area: "widget", app: .launch))
-                }
-                IconButton(systemName: "xmark", tooltip: "Dismiss this message", action: store.clearFeedback)
-            }
-        } else if let receipt = store.receipt {
+        ForEach(store.failures) { failure in failureRow(failure) }
+        if let receipt = store.receipt {
             HStack(alignment: .center, spacing: 8) {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(.mint)
                 Text(receipt).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
@@ -215,29 +204,39 @@ struct WidgetTasksModuleView: View {
                         .buttonStyle(.genHover()).font(.system(size: 11, weight: .medium))
                         .disabled(store.mutatingIDs.contains(undo.task.id))
                 }
-                IconButton(systemName: "xmark", tooltip: "Dismiss this message", action: store.clearFeedback)
+                IconButton(systemName: "xmark", tooltip: "Dismiss this message", action: store.dismissReceipt)
             }
         }
         if store.isMutating {
             HStack(spacing: 7) {
                 SpinningArc(color: .mint).frame(width: 12, height: 12)
-                Text(store.mutatingIDs.count == 1 ? "Saving…" : "Saving \(store.mutatingIDs.count) tasks…")
+                Text(store.mutationProgress)
                     .font(.caption)
                 Spacer()
-                Button("Stop", action: store.cancelUpdate).buttonStyle(.genHover()).font(.caption)
+                Button(store.mutatingIDs.count > 1 ? "Stop all" : "Stop", action: store.cancelUpdate).buttonStyle(.genHover()).font(.caption)
             }
+        }
+    }
+
+    private func failureRow(_ failure: WidgetTaskFailure) -> some View {
+        let retry: (@MainActor () -> Void)?
+        if failure.id == .list { retry = { store.refresh(force: true) } } else { retry = nil }
+        return HStack(alignment: .top, spacing: 6) {
+            FailureInline(failure.report, form: .compact, identifier: "widget.tasks.failure", retry: retry)
+            IconButton(systemName: "xmark", tooltip: "Dismiss this message") { store.clearFailure(failure.id) }
         }
     }
 
     private var inventory: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 8) {
+                feedback
                 workLine
                 handoffSection
                 if store.hasCurrentList && store.tasks.isEmpty && store.recent.isEmpty && !store.isLoading && !hasShownHandoffs && store.error == nil {
                     VStack(spacing: 10) {
                         Image(systemName: "checklist").font(.system(size: 30, weight: .light)).foregroundStyle(.mint.opacity(0.75))
-                        Text(store.scope == "active" ? "No active tasks in this view" : "No tasks match this view")
+                        Text(store.scope == "active" ? "No active to-dos in this view" : "No to-dos match this view")
                             .font(.system(size: 13, weight: .medium))
                         Text(store.scope == "active"
                              ? "Add one above, or ask an agent to post a TODO. Both land here."
@@ -267,6 +266,7 @@ struct WidgetTasksModuleView: View {
     private func row(_ task: WidgetTask) -> WidgetTaskRow {
         WidgetTaskRow(
             task: task, state: store.shownState(task), busy: store.mutatingIDs.contains(task.id), showTooltip: showTaskTooltips,
+            edit: store.editSessions[task.id], beginEdit: { store.beginEditing(task) },
             toggle: { store.toggle(task) }, perform: { store.perform($0, on: task) },
             hasSource: { store.sourceSession(for: task) != nil }, openSource: { store.openSource(task) },
             save: { session in session.save(in: store) })
@@ -333,7 +333,8 @@ struct WidgetTaskCheckbox: View {
 private struct WidgetTaskComposer: View {
     @ObservedObject var store: WidgetTasksStore
     @FocusState private var focused: Bool
-    @State private var showsDetails = false
+    @State private var detailsChoice: Bool?
+    private var showsDetails: Bool { detailsChoice ?? !store.draft.details.isEmpty }
     @GenReduceMotion private var reduceMotion
 
     var body: some View {
@@ -346,14 +347,16 @@ private struct WidgetTaskComposer: View {
                     .accessibilityIdentifier("tasks.new.title")
                 if store.isCreating {
                     SpinningArc(color: .mint).frame(width: 12, height: 12)
+                    Text("Adding…").font(.caption)
+                    Button("Stop waiting", action: store.stopWaitingForCreate)
+                        .buttonStyle(.genHoverPlain()).font(.caption).frame(minHeight: 22)
                 } else if !store.draft.title.trimmingCharacters(in: .whitespaces).isEmpty {
                     Button("Add", action: store.create)
                         .buttonStyle(.genHover(accent: .mint)).font(.system(size: 11, weight: .semibold))
-                        .keyboardShortcut(.defaultAction)
                         .accessibilityIdentifier("tasks.new.add")
                 }
             }
-            if showsDetails || !store.draft.details.isEmpty {
+            if showsDetails {
                 TextField("Details (optional)", text: $store.draft.details, axis: .vertical)
                     .textFieldStyle(.plain).font(.system(size: 11.5)).lineLimit(1...5)
                     .padding(.leading, 22)
@@ -373,7 +376,7 @@ private struct WidgetTaskComposer: View {
                 .instantTooltip("The project this task files under")
                 Button(showsDetails ? "Hide details" : "Details…") {
                     let opening = !showsDetails
-                    GenMotion.perform(expanding: opening, reduceMotion: reduceMotion) { showsDetails = opening }
+                    GenMotion.perform(expanding: opening, reduceMotion: reduceMotion) { detailsChoice = opening }
                 }
                     .buttonStyle(.genHoverPlain()).padding(.horizontal, 6).padding(.vertical, 3)
                 Spacer(minLength: 0)
@@ -388,8 +391,7 @@ private struct WidgetTaskComposer: View {
     private func sessionItems() -> [MenuButtonItem] {
         let choices = store.sessionChoices()
         return [.action("Local task (no session)", checked: store.draft.session.isEmpty) {
-            store.draft.session = ""
-            store.draft.sessionTitle = ""
+            store.chooseLocalTask()
         }, .divider] + (choices.isEmpty ? [.note("No recent sessions")] : choices.map { choice in
             .action(choice.title, checked: store.draft.session == choice.id) { store.chooseSession(choice) }
         })
@@ -421,6 +423,8 @@ private struct WidgetTaskRow: View, Equatable {
     /// A change of this task is in flight.
     let busy: Bool
     let showTooltip: Bool
+    let edit: WidgetTaskEditSession?
+    let beginEdit: () -> Void
     let toggle: () -> Void
     let perform: (WidgetTaskAction) -> Void
     /// The task's session is in the widget's list; asked when the menu or the details are built.
@@ -428,11 +432,9 @@ private struct WidgetTaskRow: View, Equatable {
     let openSource: () -> Void
     let save: (WidgetTaskEditSession) -> Void
     @State private var expanded = false
-    /// The open editor; nil while the row shows its title.
-    @State private var edit: WidgetTaskEditSession?
 
     static func == (a: WidgetTaskRow, b: WidgetTaskRow) -> Bool {
-        a.task == b.task && a.state == b.state && a.busy == b.busy && a.showTooltip == b.showTooltip
+        a.task == b.task && a.state == b.state && a.busy == b.busy && a.showTooltip == b.showTooltip && a.edit === b.edit
     }
 
     var body: some View {
@@ -441,7 +443,7 @@ private struct WidgetTaskRow: View, Equatable {
             WidgetTaskCheckbox(task: task, state: state, busy: busy, toggle: toggle)
             VStack(alignment: .leading, spacing: 5) {
                 if let edit {
-                    WidgetTaskEditor(edit: edit, busy: busy, save: { save(edit) }, close: { self.edit = nil })
+                    WidgetTaskEditor(edit: edit, current: task, busy: busy, save: { save(edit) })
                 } else {
                     WidgetWorkButton(item: WidgetWorkLink(task), showTooltip: showTooltip) {
                         Text(task.title).font(.system(size: 12, weight: .semibold)).lineLimit(3)
@@ -467,12 +469,6 @@ private struct WidgetTaskRow: View, Equatable {
         .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 11))
         .accessibilityElement(children: .contain)
         .liveRow(selected: expanded || edit != nil)
-    }
-
-    private func beginEdit() {
-        let session = WidgetTaskEditSession()
-        session.begin(task)
-        edit = session
     }
 
     private func meta(_ state: String) -> String {
@@ -503,8 +499,7 @@ private struct WidgetTaskRow: View, Equatable {
                     .compactMap { $0 }.joined(separator: " · "))
                     .font(.caption2).foregroundStyle(.secondary).textSelection(.enabled)
                 if let cwd = task.sourceContext.cwd {
-                    Text(cwd).font(.caption2).foregroundStyle(.secondary).textSelection(.enabled).lineLimit(1)
-                        .truncationMode(.middle)
+                    PathLabel(path: cwd, font: .caption2, showIcons: false)
                 }
                 if hasSource() {
                     Button("Open source session", action: openSource).buttonStyle(.genHoverPlain())
@@ -520,7 +515,7 @@ private struct WidgetTaskRow: View, Equatable {
         var items: [MenuButtonItem] = task.actions.map { action in
             .action(action == .acknowledge ? "Start" : action.title) { perform(action) }
         }
-        if task.editable {
+        if task.editable && edit == nil {
             items += [.divider, .action("Edit…") { beginEdit() }]
         }
         if hasSource() {
@@ -584,26 +579,45 @@ private struct WidgetRestingIconPadding: ViewModifier {
 /// confirmation or Cancel, and the row then drops it. It observes the session, so only an open editor does.
 private struct WidgetTaskEditor: View {
     @ObservedObject var edit: WidgetTaskEditSession
+    let current: WidgetTask
     let busy: Bool
     let save: () -> Void
-    let close: () -> Void
+    @FocusState private var focused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             TextField("Title", text: $edit.title).textFieldStyle(.roundedBorder).font(.system(size: 12))
-                .onSubmit(save)
+                .focused($focused)
+                .onSubmit { if canSave { save() } }
             TextField("Details (optional)", text: $edit.details, axis: .vertical).textFieldStyle(.roundedBorder)
                 .font(.system(size: 11.5)).lineLimit(2...6)
+            if edit.needsReview(current) {
+                Text("This task changed while you were editing.").font(.caption.weight(.medium))
+                Text(verbatim: current.fullTitle ?? current.title).font(.caption).textSelection(.enabled)
+                if current.summary != current.title {
+                    Text(verbatim: current.fullText ?? current.summary).font(.caption).textSelection(.enabled)
+                }
+                if current.editable {
+                    Button("Keep my draft against this version") { edit.useReviewedVersion(current) }
+                        .buttonStyle(.genHoverPlain()).disabled(busy)
+                } else {
+                    Text("Its \(current.statusLabel.lowercased()) state prevents editing. You can still copy your draft.").font(.caption)
+                }
+            }
             HStack(spacing: 8) {
                 Button("Save", action: save).buttonStyle(.genHover(accent: .mint)).font(.system(size: 11, weight: .semibold))
-                    .disabled(edit.title.trimmingCharacters(in: .whitespaces).isEmpty || busy)
+                    .disabled(!canSave)
                 Button("Cancel") { edit.cancel() }.buttonStyle(.genHoverPlain()).font(.system(size: 11))
-                    .keyboardShortcut(.cancelAction)
+                    .disabled(busy)
+                    .instantTooltip(busy ? "Wait for this save or stop it above." : "Discard the unsaved draft")
             }
         }
-        .onChange(of: edit.isOpen) { _, open in
-            if !open { close() }
-        }
+        .onAppear { focused = true }
+        .onExitCommand { if !busy { edit.cancel() } }
+    }
+
+    private var canSave: Bool {
+        !busy && current.editable && !edit.needsReview(current) && !edit.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 
