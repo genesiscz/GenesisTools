@@ -141,7 +141,8 @@ stop that, and the render result names them under `master`:
   down, by 9 dB at most.
 - `limiterLossDb` and `shortOfTargetDb`: the clipper and the limiter may take away 3 dB of loudness and no more.
   A mix that needs more ships under its target by `shortOfTargetDb`. Make the mix itself denser or lower the
-  target; do not push the limiter.
+  target; do not push the limiter. When a lossy encoder lifts the peaks over the cap, the file ships that much
+  quieter again, and `shortOfTargetDb` counts that too.
 
 `"guard": false` in `master` switches the three off.
 
