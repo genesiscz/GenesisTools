@@ -4,6 +4,9 @@ struct WidgetFeedRun: Equatable, Identifiable {
     let id: String
     let runKey: String
     var items: [WidgetInboxItem]
+    var sessionCount: Int { Set(items.map(\.key)).count }
+
+    var headerNamesSession: Bool { items.first?.message?.origin != nil || sessionCount == 1 }
 }
 
 enum WidgetInboxFeed {
@@ -30,6 +33,25 @@ enum WidgetInboxFeed {
             }
         }
         return result
+    }
+}
+
+/// Headers and items are siblings so moving an item between runs keeps its SwiftUI state.
+enum WidgetFeedRow: Identifiable {
+    case header(WidgetFeedRun, first: Bool)
+    case item(WidgetInboxItem, grouped: Bool)
+
+    var id: String {
+        switch self {
+        case .header(let run, _): "header/" + run.id
+        case .item(let item, _): "item/" + item.id
+        }
+    }
+
+    static func rows(_ runs: [WidgetFeedRun]) -> [Self] {
+        runs.enumerated().flatMap { index, run in
+            [.header(run, first: index == 0)] + run.items.map { .item($0, grouped: run.headerNamesSession) }
+        }
     }
 }
 
@@ -68,10 +90,10 @@ struct WidgetFeedRunHeader: View, Equatable {
         let first = run.items.first
         let external = first?.message?.origin
         let session = external == nil ? first.flatMap { model.session(forKey: $0.key) } : nil
-        provider = session?.target.provider
+        let sessions = run.sessionCount
+        provider = sessions == 1 ? session?.target.provider : nil
         let project = session?.project ?? ""
         title = external ?? (project.isEmpty ? session?.title ?? "Unknown session" : project)
-        let sessions = Set(run.items.map(\.key)).count
         // A session named after its only item (an agent result) would print the same words twice: the row keeps them.
         let sessionTitle = run.items.count == 1 && session?.title == first.map(WidgetInboxOverview.title)
             ? nil : session?.title
@@ -80,7 +102,7 @@ struct WidgetFeedRunHeader: View, Equatable {
         waiting = count > 0
         counts = [Plural.count(run.items.count, "item"), count > 0 ? WidgetWords.waitingShort(count) : nil]
             .compactMap { $0 }.joined(separator: " · ")
-        if let session {
+        if sessions == 1, let session {
             openInbox = {
                 model.select(session.key)
                 model.section = "Inbox"
@@ -121,9 +143,10 @@ struct WidgetFeedRunHeader: View, Equatable {
 /// Keep the displayed prefix fixed while the reader is below the top. The next visit to the top reveals all
 /// arrivals together. A refresh can still update or remove any existing row, including a resolved decision.
 enum WidgetFeedReadingPlace {
-    static func split(_ runs: [WidgetFeedRun], at boundary: WidgetInboxItem?) -> (runs: [WidgetFeedRun], pending: Int) {
+    static func split(_ runs: [WidgetFeedRun], at boundary: WidgetInboxItem?)
+        -> (runs: [WidgetFeedRun], pending: Int, replacement: WidgetInboxItem?) {
         guard let boundary, let first = runs.first?.items.first, WidgetInboxFeed.newer(first, boundary) else {
-            return (runs, 0)
+            return (runs, 0, nil)
         }
         var pending = 0
         for (index, run) in runs.enumerated() {
@@ -131,10 +154,10 @@ enum WidgetFeedReadingPlace {
             pending += run.items.count - rest.count
             if let head = rest.first {
                 let visible = WidgetFeedRun(id: run.runKey + "|" + head.id, runKey: run.runKey, items: Array(rest))
-                return ([visible] + runs.dropFirst(index + 1), pending)
+                return ([visible] + runs.dropFirst(index + 1), pending, nil)
             }
         }
         // The entire old window has gone. Show the new data, including its first header.
-        return (runs, 0)
+        return (runs, 0, first)
     }
 }

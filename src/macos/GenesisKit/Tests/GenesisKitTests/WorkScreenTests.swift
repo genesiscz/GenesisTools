@@ -18,6 +18,7 @@ private final class FakeWorkSource: WorkSource {
     var resumeWrite: CheckedContinuation<Void, Never>?
     var subscriptions = 0
     var serviceDown = false
+    var readsToFail = 0
     var projectNames = ["App", "Other"]
     private var continuation: AsyncStream<WorkSourceEvent>.Continuation?
 
@@ -27,6 +28,10 @@ private final class FakeWorkSource: WorkSource {
     func detail(ref: String) async throws -> WorkItemDetail { throw WorkSourceError("No fixture item \(ref)") }
     func snapshot(project: String) async throws -> WorkSnapshotValue {
         reads += 1
+        if readsToFail > 0 {
+            readsToFail -= 1
+            throw WorkSourceError("Fixture read failed")
+        }
         let confirmed = snapshotValue
         if holdNextRead {
             holdNextRead = false
@@ -174,6 +179,22 @@ final class WorkScreenTests: XCTestCase {
         XCTAssertEqual(model.notice, WorkActionOutcome(ok: true, message: "Dropped: w_spot0002"))
         XCTAssertTrue(model.pending.isEmpty)
         model.deactivate()
+    }
+
+    func testAFailedChangeReloadRetriesWithoutAnotherWrite() async {
+        let source = FakeWorkSource(fixture())
+        let model = WorkScreenModel(source: source, reloadInterval: 0.2, settle: 0.05)
+        model.activate()
+        defer { model.deactivate() }
+        await settle { model.snapshot != nil }
+        let before = source.reads
+        source.readsToFail = 1
+        source.tick()
+        await settle { model.failure != nil }
+        XCTAssertEqual(source.reads, before + 1)
+        await settle { source.reads >= before + 2 && model.failure == nil }
+        XCTAssertEqual(source.reads, before + 2)
+        XCTAssertNil(model.failure)
     }
 
     /// Every session writes the store, and a reload costs the service about 1.3 s of CPU: a burst is one reload, a

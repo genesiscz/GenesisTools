@@ -105,38 +105,21 @@ struct AgentWidgetPreview: View {
                 }
             }.padding(.horizontal, 5)
 
-            HStack(spacing: 6) {
+            let toolbar = model.agentsPreviewWidth >= 300
+                ? AnyLayout(HStackLayout(spacing: 6))
+                : AnyLayout(VStackLayout(alignment: .trailing, spacing: 4))
+            toolbar {
                 GenSegmentedTabs(
                     "Show", items: WidgetPreviewChoices.filters.map { .init($0.value, $0.title) } + [.init("items", "Items")],
                     selection: Binding(get: { model.previewSegment }, set: model.choosePreviewSegment),
-                    minSegmentWidth: 64, identifier: "widget.preview.filter", fillsWidth: true)
-                Spacer(minLength: 4)
-                // The order is named beside its icon, so reading it needs no hover (Martin, 2026-10-25).
-                Button {
-                    let sorts = WidgetPreviewChoices.sorts.map(\.value)
-                    let index = sorts.firstIndex(of: model.previewSort) ?? 0
-                    model.setPreview(sort: sorts[(index + 1) % sorts.count])
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "arrow.up.arrow.down").font(.system(size: 10.5))
-                        Text(WidgetPreviewChoices.shortTitle(sort: model.previewSort)).font(.system(size: 11))
-                    }
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 5).frame(minHeight: 22)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.genHoverPlain())
-                .instantTooltip(sortTooltip)
-                .accessibilityLabel("Order: " + WidgetPreviewChoices.title(sort: model.previewSort))
-                .accessibilityHint("Click for the next order")
-                .opacity(showsItems ? 0 : 1)
-                .disabled(showsItems)
-                .allowsHitTesting(!showsItems)
-                .accessibilityHidden(showsItems)
-                IconButton(systemName: "slider.horizontal.3", tooltip: "Choose what this list shows and its order",
-                           size: 10.5) {
-                    model.showSettingsPage?("widgets.sessions#inbox-preview")
-                }.accessibilityLabel("Inbox preview settings")
+                    identifier: "widget.preview.filter", fillsWidth: true, size: .small)
+                HStack(spacing: 6) {
+                    if !showsItems { previewOrderButton }
+                    IconButton(systemName: "slider.horizontal.3", tooltip: "Choose what this list shows and its order",
+                               size: 10.5) {
+                        model.showSettingsPage?("widgets.sessions#inbox-preview")
+                    }.accessibilityLabel("Inbox preview settings")
+                }.fixedSize()
             }
             .padding(.horizontal, 5).padding(.bottom, 3)
             .accessibilityElement(children: .contain)
@@ -226,25 +209,46 @@ struct AgentWidgetPreview: View {
             FittedScroll(maxHeight: 360, initialHeight: model.previewListHeight,
                          measured: { if $0 > 0 { model.previewListHeight = $0 } }) {
                 LazyVStack(alignment: .leading, spacing: 6) {
-                    ForEach(model.inboxFeeds.all) { run in
-                        Section {
-                            ForEach(run.items, id: \.id) { item in
-                                let open = model.previewOpenItemID == item.id
-                                WidgetInboxEntry(model: model, item: item, open: open, focused: false,
-                                                 grouped: true, compact: true, surface: surface) {
-                                    GenMotion.perform(expanding: !open, reduceMotion: reduceMotion) {
-                                        model.togglePreviewEntry(item)
-                                    }
+                    ForEach(WidgetFeedRow.rows(model.inboxFeeds.all)) { entry in
+                        switch entry {
+                        case .header(let run, let first):
+                            WidgetFeedRunHeader(run: run, model: model, surface: surface).equatable()
+                                .padding(.top, first ? 0 : 8)
+                        case .item(let item, let grouped):
+                            let open = model.previewOpenItemID == item.id
+                            WidgetInboxEntry(model: model, item: item, open: open, focused: false,
+                                             grouped: grouped, compact: true, surface: surface) {
+                                GenMotion.perform(expanding: !open, reduceMotion: reduceMotion) {
+                                    model.togglePreviewEntry(item)
                                 }
                             }
-                        } header: {
-                            WidgetFeedRunHeader(run: run, model: model, surface: surface).equatable()
-                                .padding(.top, run.id == model.inboxFeeds.all.first?.id ? 0 : 8)
                         }
                     }
                 }
             }
         }
+    }
+
+    private var previewOrderButton: some View {
+        Button {
+            let sorts = WidgetPreviewChoices.sorts.map(\.value)
+            let index = sorts.firstIndex(of: model.previewSort) ?? 0
+            model.setPreview(sort: sorts[(index + 1) % sorts.count])
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "arrow.up.arrow.down")
+                if model.agentsPreviewWidth >= 300 {
+                    Text(WidgetPreviewChoices.shortTitle(sort: model.previewSort))
+                }
+            }
+            .font(.system(size: 11)).foregroundStyle(.secondary)
+            .padding(.horizontal, 5).frame(minHeight: 22)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.genHoverPlain())
+        .instantTooltip(sortTooltip)
+        .accessibilityLabel("Order: " + WidgetPreviewChoices.title(sort: model.previewSort))
+        .accessibilityHint("Click for the next order")
     }
 
     private var sortTooltip: String {

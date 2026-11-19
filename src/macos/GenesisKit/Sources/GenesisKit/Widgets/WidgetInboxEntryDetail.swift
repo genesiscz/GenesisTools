@@ -53,8 +53,7 @@ struct WidgetInboxEntryDetail: View {
     var focusRow = false
     var surface: WidgetSurfaceID?
     @State private var earlierOpen = false
-    @State private var entries: [WidgetGroupEntry]?
-    @State private var groupFailure: String?
+    @State private var earlierResult: Result<[WidgetGroupEntry], Error>?
     @State private var groupAttempt = 0
 
     /// An open decision's options, each staging (or sending, by the setting) that pick from here; the shared option
@@ -151,7 +150,8 @@ struct WidgetInboxEntryDetail: View {
         GenDisclosure(Plural.count(count, "earlier answer"), isExpanded: $earlierOpen,
                       identifier: "widget.overview.earlier." + item.id) {
             VStack(alignment: .leading, spacing: 8) {
-                if let entries {
+                switch earlierResult {
+                case .success(let entries)?:
                     ForEach(entries) { entry in
                         VStack(alignment: .leading, spacing: 3) {
                             LiveAgo(date: Date(timeIntervalSince1970: entry.at / 1000), style: .brief)
@@ -170,17 +170,17 @@ struct WidgetInboxEntryDetail: View {
                             Button("Whole inbox") { wholeInbox(session) }.buttonStyle(.genHoverPlain())
                         }.font(.caption)
                     }
-                } else if let groupFailure {
-                    Text("Earlier answers could not be read: \(groupFailure)").font(.caption).foregroundStyle(.secondary)
+                case .failure(let error)?:
+                    Text("Earlier answers could not be read: \(error.localizedDescription)").font(.caption).foregroundStyle(.secondary)
                     Button("Try again") { groupAttempt += 1 }.buttonStyle(.genHoverPlain())
-                } else {
+                case nil:
                     ProgressView("Loading earlier answers").controlSize(.small)
                 }
             }.task(id: groupAttempt) {
-                guard entries == nil else { return }
-                groupFailure = nil
-                do { entries = try await model.answerGroup(for: item) }
-                catch { if !Task.isCancelled { groupFailure = error.localizedDescription } }
+                if case .success? = earlierResult { return }
+                earlierResult = nil
+                do { earlierResult = .success(try await model.answerGroup(for: item)) }
+                catch { if !Task.isCancelled { earlierResult = .failure(error) } }
             }
         }
     }
@@ -232,7 +232,7 @@ private struct WidgetReceiptBlock: View {
                 WidgetCardAttachments(images: images, height: imageHeight, maxWidth: imageHeight * 2.4,
                                       compare: !earlier, showMedia: showMedia)
             }
-            if let failure, more {
+            if let failure {
                 Text("The full \(label.lowercased()) could not be read: \(failure)")
                     .font(.caption).foregroundStyle(.secondary)
                 // lint-rules-ignore: short list (at most five earlier answers, and only after a failed read)

@@ -529,7 +529,7 @@ public final class WorkScreenModel: ObservableObject {
         read(explicit: true)
     }
 
-    private func read(explicit: Bool = false, change: Bool = false) {
+    private func read(explicit: Bool = false, change: Bool = false, retryOnFailure: Bool = true) {
         loading?.cancel()
         if live == .catchingUp { live = .live }
         let project = project
@@ -549,6 +549,7 @@ public final class WorkScreenModel: ObservableObject {
         loading = Task { [weak self] in
             guard let self else { return }
             let span = PerfSpans.begin("work.live.reload", awaits: true)
+            var failed = false
             let slow = change ? Task { [weak self, catchUpDelay] in
                 try? await Task.sleep(for: .seconds(catchUpDelay))
                 guard !Task.isCancelled, let self, self.loadToken == token, self.live == .live else { return }
@@ -562,7 +563,14 @@ public final class WorkScreenModel: ObservableObject {
                     if self.live == .catchingUp { self.live = .live }
                     self.loading = nil
                     // Changes that came during this reload get one more, by the same rules.
-                    if self.stale || self.projectsStale { self.schedule() }
+                    if self.stale || self.projectsStale {
+                        self.schedule()
+                    } else if failed, change, retryOnFailure, self.active {
+                        // A failed read after a store change retries once by itself; a second failure waits for the
+                        // next change.
+                        self.stale = true
+                        self.schedule(retryOnFailure: false)
+                    }
                 }
             }
             do {
@@ -593,6 +601,7 @@ public final class WorkScreenModel: ObservableObject {
                 if self.failure != nil { self.failure = nil }
             } catch {
                 guard !Task.isCancelled else { return }
+                failed = true
                 if self.failure != error.localizedDescription { self.failure = error.localizedDescription }
             }
             if !Task.isCancelled, ref != nil, let project = self.project,
@@ -643,7 +652,7 @@ public final class WorkScreenModel: ObservableObject {
 
     /// One reload after the burst settles, no sooner than `reloadInterval` after the last one, never beside a running
     /// one, never while hidden. A burst that keeps going still reloads once per interval.
-    private func schedule() {
+    private func schedule(retryOnFailure: Bool = true) {
         guard active, visible, trailing == nil, loading == nil else { return }
         let wait = max(settle, reloadInterval - Date().timeIntervalSince(lastReload))
         trailing = Task { [weak self] in
@@ -662,7 +671,7 @@ public final class WorkScreenModel: ObservableObject {
             guard !Task.isCancelled else { return }
             self.trailing = nil
             guard self.active, self.visible, self.loadToken == previousLoad else { return }
-            self.read(change: true)
+            self.read(change: true, retryOnFailure: retryOnFailure)
         }
     }
 
