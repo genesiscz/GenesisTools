@@ -155,7 +155,8 @@ struct SpeakerChip: View {
                 items.append(.divider)
             }
         case .open(_, let candidates):
-            items += answers(speaker: speaker, startSec: startSec, candidates: candidates, detail: detail, pick: pick)
+            items += answers(speaker: speaker, label: actingLabel(shown, speaker: speaker, detail: detail),
+                              startSec: startSec, candidates: candidates, detail: detail, pick: pick)
         case .name:
             break
         }
@@ -176,18 +177,15 @@ struct SpeakerChip: View {
     /// journal with an Undo (`reviewAnswerItems`), and "Show in Items" leads to its row. Without one, the facts the window
     /// has (`OpenSpeakerOffer`): the covering suggestion with its score, the mark's candidates and the meeting's people.
     /// "Somebody else…" opens the person picker for the stretch.
-    private static func answers(speaker: String, startSec: Double?, candidates: [String], detail: MeetingDetailModel,
-                                pick: @escaping (PickerMode) -> Void) -> [MenuButtonItem] {
+    private static func answers(speaker: String, label: String, startSec: Double?, candidates: [String],
+                                detail: MeetingDetailModel, pick: @escaping (PickerMode) -> Void) -> [MenuButtonItem] {
         var items: [MenuButtonItem] = [.note("Who said this?")]
         guard let startSec else {
             items.append(.note("This line has no time, so it cannot be given to someone here"))
             return items
         }
         let somebodyElse = MenuButtonItem.action("Somebody else…") { pick(.assign) }
-        let question = detail.record.value?.items.first { item in
-            item.kind == "question" && item.status == "suggested" && item.about == "speaker"
-                && (item.fromSec ?? .infinity) <= startSec && startSec <= (item.toSec ?? -.infinity)
-        }
+        let question = Self.speakerQuestion(in: detail.record.value?.items ?? [], at: startSec, label: label)
         if let question, let row = detail.rows.value?.rows.first(where: { $0.id == question.id }) {
             items += reviewAnswerItems(for: row, detail: detail)
             items.append(somebodyElse)
@@ -198,6 +196,22 @@ struct SpeakerChip: View {
         items += OpenSpeakerOffer.items(speaker: speaker, startSec: startSec, candidates: candidates, detail: detail)
         items.append(somebodyElse)
         return items
+    }
+
+    /// The open speaker question a block starting at `startSec` answers. A question covers the half-open range from
+    /// its start to its end, so at a boundary shared by two questions the later one answers, never the one that ended
+    /// there; a zero-length question covers its one instant. When several still cover the start, the one about the
+    /// block's source label (`evidence.labels`) wins.
+    static func speakerQuestion(in items: [MeetingItem], at startSec: Double, label: String) -> MeetingItem? {
+        let covering = items.filter { item in
+            guard item.kind == "question", item.status == "suggested", item.about == "speaker",
+                  let from = item.fromSec, let to = item.toSec else { return false }
+            return from <= startSec && (startSec < to || (from == to && startSec == to))
+        }
+        return covering.first { item in
+            if case .array(let labels) = item.evidence?["labels"] ?? .null { return labels.contains(.string(label)) }
+            return false
+        } ?? covering.first
     }
 
     private func open(_ mode: PickerMode, detail: MeetingDetailModel) {
