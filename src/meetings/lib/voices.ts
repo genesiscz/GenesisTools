@@ -354,22 +354,7 @@ export async function removeVoice(options: VoicesAccess & { project: string; per
     if (options.sample === undefined) {
         removeVoicePrint(options.project, options.person);
     } else {
-        const selected = selectedSample(options);
-        const store = readVoiceStore(options.project);
-        const siblings = store.people[options.person]!.samples.filter(
-            (sample) =>
-                sample !== selected && sample.meeting === selected.meeting && sample.fromSec === selected.fromSec
-        );
-        removeVoicePrint(options.project, options.person, selected);
-        for (const sibling of siblings) {
-            if (
-                sibling.track !== selected.track ||
-                sibling.sourceSha !== selected.sourceSha ||
-                sibling.toSec !== selected.toSec
-            ) {
-                addVoicePrint(options.project, options.person, sibling, store.model);
-            }
-        }
+        removeVoicePrint(options.project, options.person, selectedSample(options));
     }
 
     return plan;

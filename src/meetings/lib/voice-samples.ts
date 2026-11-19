@@ -347,21 +347,15 @@ export function replayAnsweredVoiceSamples(entries: readonly JournalEntry[]): vo
 export function undoAnsweredVoiceSamples(changes: readonly VoicePrintChange[]): void {
     for (const change of [...changes].reverse()) {
         const samples = readVoiceStore(change.project).people[change.person]?.samples ?? [];
-        const at = samples.filter(
-            (sample) => sample.meeting === change.after.meeting && sample.fromSec === change.after.fromSec
-        );
-        if (!at.some((sample) => SafeJSON.stringify(sample) === SafeJSON.stringify(change.after))) {
+        if (!samples.some((sample) => SafeJSON.stringify(sample) === SafeJSON.stringify(change.after))) {
             continue;
         }
-        removeVoicePrint(change.project, change.person, {
-            meeting: change.after.meeting,
-            fromSec: change.after.fromSec,
-        });
-        for (const sample of at.filter((sample) => SafeJSON.stringify(sample) !== SafeJSON.stringify(change.after))) {
-            addVoicePrint(change.project, change.person, sample, change.model);
-        }
+
+        // `before` has the identity of `after`, so putting it back replaces this answer's print in one write.
         if (change.before) {
             addVoicePrint(change.project, change.person, change.before, change.model);
+        } else {
+            removeVoicePrint(change.project, change.person, change.after);
         }
     }
 }

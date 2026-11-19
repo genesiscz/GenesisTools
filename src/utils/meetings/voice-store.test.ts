@@ -31,10 +31,25 @@ test("project prints persist, reopen, deduplicate and remove without leaking acr
     expect(disk.model).toBe("fixture-model");
     expect(disk.people["Alice Example"]?.samples).toEqual([{ ...print, embedding: [0.8, 0.2] }]);
     expect(readVoiceStore("other-voice-project").people).toEqual({});
-    expect(removeVoicePrint("voice-store-fixture", "Alice Example", { meeting: "another", fromSec: 2 })).toBe(0);
-    expect(removeVoicePrint("voice-store-fixture", "Alice Example", { meeting: "planning", fromSec: 2 })).toBe(1);
+    expect(removeVoicePrint("voice-store-fixture", "Alice Example", { ...print, meeting: "another" })).toBe(0);
+    expect(removeVoicePrint("voice-store-fixture", "Alice Example", print)).toBe(1);
     expect(readVoiceStore("voice-store-fixture").people["Alice Example"]).toBeUndefined();
     expect(readVoiceStore("voice-store-fixture").people["Bob Example"]?.samples).toHaveLength(1);
+});
+
+test("removing one print keeps the prints of another track, source or end at the same start", () => {
+    const project = "voice-store-siblings-fixture";
+    const siblings: VoicePrint[] = [
+        { ...print, track: "mic-raw" },
+        { ...print, sourceSha: "other-digest" },
+        { ...print, toSec: 6 },
+    ];
+    for (const one of [print, ...siblings]) {
+        addVoicePrint(project, "Alice Example", one, "fixture-model");
+    }
+
+    expect(removeVoicePrint(project, "Alice Example", print)).toBe(1);
+    expect(readVoiceStore(project).people["Alice Example"]?.samples).toEqual(siblings);
 });
 
 test("invalid project paths, mismatched seats and changed models cannot overwrite stored prints", () => {

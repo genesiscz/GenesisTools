@@ -46,6 +46,20 @@ export function readVoiceStore(project: string): VoiceStore {
         : { version: 1, model: "", people: {} };
 }
 
+/** What names one print in a person's samples: its meeting, source file, track and interval. */
+export type VoicePrintIdentity = Pick<VoicePrint, "meeting" | "sourceSha" | "seat" | "track" | "fromSec" | "toSec">;
+
+function sameVoicePrint(a: VoicePrintIdentity, b: VoicePrintIdentity): boolean {
+    return (
+        a.meeting === b.meeting &&
+        a.sourceSha === b.sourceSha &&
+        a.seat === b.seat &&
+        a.track === b.track &&
+        a.fromSec === b.fromSec &&
+        a.toSec === b.toSec
+    );
+}
+
 /** A single model owns a store; incompatible prints must never be silently mixed. */
 function putVoicePrint(store: VoiceStore, person: string, print: VoicePrint, model?: string): void {
     const checked = voicePrintSchema.parse(print);
@@ -60,14 +74,7 @@ function putVoicePrint(store: VoiceStore, person: string, print: VoicePrint, mod
         throw new Error("The first voice print needs its model identity");
     }
     const samples = store.people[person]?.samples ?? [];
-    const same = (sample: VoicePrint) =>
-        sample.meeting === checked.meeting &&
-        sample.sourceSha === checked.sourceSha &&
-        sample.seat === checked.seat &&
-        sample.track === checked.track &&
-        sample.fromSec === checked.fromSec &&
-        sample.toSec === checked.toSec;
-    store.people[person] = { samples: [...samples.filter((sample) => !same(sample)), checked] };
+    store.people[person] = { samples: [...samples.filter((sample) => !sameVoicePrint(sample, checked)), checked] };
 }
 
 /** Historical samples identify the confirmed source interval, even if another track describes it. */
@@ -108,7 +115,8 @@ export function addVoicePrint(project: string, person: string, print: VoicePrint
     addVoicePrints(project, [{ person, after: print, model }]);
 }
 
-export function removeVoicePrint(project: string, person: string, at?: { meeting: string; fromSec: number }): number {
+/** Removes the one print `at` names (another track or end at the same start stays), or every print of the person. */
+export function removeVoicePrint(project: string, person: string, at?: VoicePrintIdentity): number {
     const file = storeFile(project);
     if (!existsSync(file)) {
         return 0;
@@ -116,9 +124,7 @@ export function removeVoicePrint(project: string, person: string, at?: { meeting
     return withPathArbitrationSync(file, () => {
         const store = readVoiceStore(project);
         const samples = store.people[person]?.samples ?? [];
-        const remaining = at
-            ? samples.filter((sample) => sample.meeting !== at.meeting || sample.fromSec !== at.fromSec)
-            : [];
+        const remaining = at ? samples.filter((sample) => !sameVoicePrint(sample, at)) : [];
         const removed = samples.length - remaining.length;
         if (removed === 0) {
             return 0;
