@@ -9,5 +9,6 @@ export function replyToToolAnswer<T>(reply: Reply<T>, formatter: Formatter<T>, d
     return {
         text: text.length > 0 ? text : reply.ok ? "ok" : "failed",
         structuredContent: { ...reply },
+        ...(!reply.ok ? { isError: true } : {}),
     };
 }

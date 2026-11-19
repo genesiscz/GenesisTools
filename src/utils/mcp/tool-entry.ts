@@ -5,7 +5,13 @@ import type { CallToolResult, Tool } from "@modelcontextprotocol/server";
  * `structuredContent`. A tool whose usable data lives only in the structured result (ids, links, raw fields) answers
  * the object form, so the shared server hands out the same answer as the tool's own standalone server.
  */
-export type ToolAnswer = string | { text: string; structuredContent?: CallToolResult["structuredContent"] };
+export type ToolAnswer =
+    | string
+    | {
+          text: string;
+          structuredContent?: CallToolResult["structuredContent"];
+          isError?: boolean;
+      };
 
 export interface ToolEntry {
     description: string;
@@ -29,6 +35,7 @@ export function toolCallResult(answer: ToolAnswer): CallToolResult {
     return {
         content: [{ type: "text", text: answer.text }],
         ...(answer.structuredContent ? { structuredContent: answer.structuredContent } : {}),
+        ...(answer.isError === true ? { isError: true } : {}),
     };
 }
 
