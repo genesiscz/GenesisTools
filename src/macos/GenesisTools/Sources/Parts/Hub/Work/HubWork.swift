@@ -305,8 +305,16 @@ struct WorkMain: View {
                         if reduceMotion { reader.scrollTo(ref, anchor: nil) }
                         else { withAnimation(.easeOut(duration: 0.12)) { reader.scrollTo(ref, anchor: nil) } }
                     }
-                    .onChange(of: screen.selection.map { screen.visibleRefs.contains($0) } ?? false) { _, nowVisible in
-                        if nowVisible, let ref = screen.selection { reader.scrollTo(ref, anchor: nil) }
+                    .onChange(of: screen.selection.map { screen.visibleRefs.contains($0) } ?? false, initial: true) { old, nowVisible in
+                        guard nowVisible, let ref = screen.selection else { return }
+                        // A routed item can already be in the list when the list first appears (an archive row far
+                        // below the fold). On that first value the rows are not laid out yet, so the scroll waits one
+                        // turn. A row already on screen does not move.
+                        if old == nowVisible {
+                            DispatchQueue.main.async { reader.scrollTo(ref, anchor: nil) }
+                        } else {
+                            reader.scrollTo(ref, anchor: nil)
+                        }
                     }
                 }
             } else if let failure = screen.listFailure ?? (screen.selection == nil ? screen.failure : nil) {
