@@ -430,6 +430,11 @@ extension MeetingsPreferences {
         static let transcriptPane = MeetingsWindowSetting(
             key: "meetings.items.transcriptPane", defaultValue: TranscriptPane.auto, choices: TranscriptPane.allCases,
             title: "Transcript beside the rows", detail: "Auto shows it when the window is wide enough.")
+        /// The window's width moves the sidebar by default (window audit H5); off, only the toolbar button does (eve t101).
+        static let autoHideSidebar = MeetingsWindowSetting(
+            key: "meetings.window.autoHideSidebar", defaultValue: true, choices: [true, false],
+            title: "Hide the sidebar in a narrow window",
+            detail: "Below 1150 pt wide the sidebar steps aside and comes back when the window widens. Off: only the toolbar button shows or hides it.")
         /// 700, not the first pick of 560: 560 is the window's smallest height (`MeetingsFace.minimumSize`), so the dock
         /// never folded at any size, and at 600 pt the full dock (about 330 pt) left about 90 pt of rows.
         static let collapseHeight = MeetingsWindowSetting(

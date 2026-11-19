@@ -13,6 +13,8 @@ struct MeetingsRootView: View {
     /// The three columns' visibility: below `sidebarHidesBelow` the sidebar steps aside (`.doubleColumn`), and the
     /// toolbar's sidebar button shows it again or hides it, as in any Mac app (w_21k9ux1b).
     @State private var columns: NavigationSplitViewVisibility = .all
+    @AppStorage(MeetingsPreferences.Panes.autoHideSidebar.key) private var autoHideSidebar =
+        MeetingsPreferences.Panes.autoHideSidebar.defaultValue
     @State private var serviceFailure: MeetingsCLI.Failure?
 
     var body: some View {
@@ -52,8 +54,15 @@ struct MeetingsRootView: View {
             }
             .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: model.player.isActive)
             .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { windowWidth = $0 }
-            // Only a crossing of the width moves the sidebar, so the reader's own choice holds inside each band.
-            .onChange(of: Self.sidebarHides(width: windowWidth)) { _, hides in columns = Self.columns(sidebarHides: hides) }
+            // Only a crossing of the width moves the sidebar, so the reader's own choice holds inside each band; with
+            // "Hide the sidebar in a narrow window" off, no crossing moves it.
+            .onChange(of: Self.sidebarHides(width: windowWidth)) { _, hides in
+                if let next = Self.columns(sidebarHides: hides, auto: autoHideSidebar) { columns = next }
+            }
+            // Turned on again: the sidebar takes the place the width gives it at once.
+            .onChange(of: autoHideSidebar) { _, auto in
+                if let next = Self.columns(sidebarHides: Self.sidebarHides(width: windowWidth), auto: auto) { columns = next }
+            }
             // Last, so the dock and the sheets above take the look too.
             .meetingsLook()
     }
@@ -96,6 +105,11 @@ struct MeetingsRootView: View {
     /// The columns a width crossing sets: the list and the meeting below `sidebarHidesBelow`, all three above it.
     static func columns(sidebarHides: Bool) -> NavigationSplitViewVisibility {
         sidebarHides ? .doubleColumn : .all
+    }
+
+    /// The columns a width crossing sets while the setting lets the width move the sidebar; nil leaves the reader's choice.
+    static func columns(sidebarHides: Bool, auto: Bool) -> NavigationSplitViewVisibility? {
+        auto ? columns(sidebarHides: sidebarHides) : nil
     }
 
     /// The places stand as a menu above the list while the sidebar that holds them is hidden.

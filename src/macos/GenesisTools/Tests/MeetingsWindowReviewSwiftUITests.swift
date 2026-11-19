@@ -122,4 +122,17 @@ final class MeetingsWindowReviewSwiftUITests: XCTestCase {
         XCTAssertEqual(SuggestRunStrip.label(MeetingsCallProgress(fraction: 0.4, label: "Reading the transcript")),
                        "Reading the transcript (40 %)")
     }
+
+    /// eve t101: the width moves the sidebar by default, and with the setting off it leaves the reader's choice.
+    func testTheNarrowWindowSidebarRuleCanBeTurnedOff() throws {
+        XCTAssertEqual(MeetingsRootView.columns(sidebarHides: true, auto: true), .doubleColumn)
+        XCTAssertEqual(MeetingsRootView.columns(sidebarHides: false, auto: true), .all)
+        XCTAssertNil(MeetingsRootView.columns(sidebarHides: true, auto: false))
+        XCTAssertNil(MeetingsRootView.columns(sidebarHides: false, auto: false))
+        let setting = MeetingsPreferences.Panes.autoHideSidebar
+        XCTAssertTrue(setting.defaultValue, "the adaptive sidebar stays the default")
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "sidebar-\(UUID())"))
+        let row = SidePanelCatalog.windowSections(defaults).first { $0.id == "panes" }?.rows.first { $0.id == setting.key }
+        XCTAssertNotNil(row, "the Settings page and the side panel offer it")
+    }
 }
