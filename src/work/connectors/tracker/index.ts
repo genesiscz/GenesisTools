@@ -112,8 +112,9 @@ export const trackerConnector: Connector<unknown> = {
                 const results: PushResult[] = [];
 
                 for (const intent of intents) {
+                    let key = intent.pairing?.remoteKey ?? "";
+
                     try {
-                        let key = intent.pairing?.remoteKey ?? "";
                         const bornHere = intent.pairing === null || intent.pairing.born === "local";
 
                         if (key === "") {
@@ -161,7 +162,11 @@ export const trackerConnector: Connector<unknown> = {
 
                         results.push({ ok: true, remoteKey: key });
                     } catch (error) {
-                        results.push({ ok: false, error: error instanceof Error ? error.message : String(error) });
+                        results.push({
+                            ok: false,
+                            error: error instanceof Error ? error.message : String(error),
+                            ...(key !== "" ? { remoteKey: key } : {}),
+                        });
                     }
                 }
 
