@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /** Observe the current watch for 30 minutes. Timers overlap: CPU is process-wide during each named span. */
-import { readFileSync } from "node:fs";
+import { createReadStream, readFileSync } from "node:fs";
 import { loadavg } from "node:os";
 import { join } from "node:path";
 import { compareToBaseline, formatComparison, recordBaseline } from "@app/benchmark/lib";
@@ -8,6 +8,7 @@ import { parseProfileLine } from "@app/genesis-tools/lib/profile-log";
 import { widgetRoot } from "@app/hub/lib/widget/storage";
 import { runTool } from "@genesiscz/utils/cli";
 import { formatLocalDate } from "@genesiscz/utils/date";
+import { splitLines } from "@genesiscz/utils/fs/read-lines";
 import { out } from "@genesiscz/utils/logger";
 import { parsePidRecord } from "@genesiscz/utils/process/pidfile";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
@@ -85,8 +86,10 @@ const program = new Command()
             if (!options.profileLog && formatLocalDate(new Date()) !== day) {
                 throw new Error("Daily log rotated during sampling. Use a fixed --profile-log across midnight.");
             }
-            const log = await Bun.file(logPath).slice(offset).text();
-            for (const line of log.split("\n")) {
+            const end = Bun.file(logPath).size;
+            const log =
+                end > offset ? createReadStream(logPath, { start: offset, end: end - 1 }) : new Blob([]).stream();
+            for await (const line of splitLines(log)) {
                 const entry = parseProfileLine(line, day);
                 if (!entry || entry.pid !== pid) {
                     continue;
@@ -100,15 +103,6 @@ const program = new Command()
                     sample(`${step[1]}CpuMs`, Number(cpu[1]));
                 }
             }
-            const metrics: Record<string, number> = {};
-            for (const [key, samples] of values) {
-                samples.sort((a, b) => a - b);
-                metrics[`${key}.min`] = samples[0];
-                metrics[`${key}.median`] = samples[Math.floor(samples.length / 2)];
-                metrics[`${key}.max`] = samples[samples.length - 1];
-                out.println(`${key} n=${samples.length} median=${metrics[`${key}.median`].toFixed(2)}`);
-            }
-            out.result(metrics);
             for (const [, label] of steps) {
                 if ((values.get(`${label}WallMs`)?.length ?? 0) < 5) {
                     throw new Error(
@@ -118,6 +112,15 @@ const program = new Command()
                     );
                 }
             }
+            const metrics: Record<string, number> = {};
+            for (const [key, samples] of values) {
+                samples.sort((a, b) => a - b);
+                metrics[`${key}.min`] = samples[0];
+                metrics[`${key}.median`] = samples[Math.floor(samples.length / 2)];
+                metrics[`${key}.max`] = samples[samples.length - 1];
+                out.println(`${key} n=${samples.length} median=${metrics[`${key}.median`].toFixed(2)}`);
+            }
+            out.result(metrics);
             if (options.baseline) {
                 await recordBaseline({
                     name,
