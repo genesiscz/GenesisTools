@@ -32,6 +32,7 @@ public final class WorkScreenModel: ObservableObject {
                     project = oldValue
                 } else if project != oldValue {
                     resetFind()
+                    clearProjectEdits()
                 }
                 return
             }
@@ -553,7 +554,17 @@ public final class WorkScreenModel: ObservableObject {
                 guard !Task.isCancelled, let self, self.loadToken == token, self.live == .live else { return }
                 self.live = .catchingUp
             } : nil
-            defer { slow?.cancel(); span.end() }
+            defer {
+                slow?.cancel()
+                span.end()
+                if self.loadToken == token {
+                    if self.isLoading { self.isLoading = false }
+                    if self.live == .catchingUp { self.live = .live }
+                    self.loading = nil
+                    // Changes that came during this reload get one more, by the same rules.
+                    if self.stale || self.projectsStale { self.schedule() }
+                }
+            }
             do {
                 if let ref {
                     let detail = try await self.source.detail(ref: ref)
@@ -597,12 +608,6 @@ public final class WorkScreenModel: ObservableObject {
                     self.listFailure = error.localizedDescription
                 }
             }
-            guard self.loadToken == token else { return }
-            if self.isLoading { self.isLoading = false }
-            if self.live == .catchingUp { self.live = .live }
-            self.loading = nil
-            // Changes that came during this reload get one more, by the same rules.
-            if self.stale || self.projectsStale { self.schedule() }
         }
     }
 

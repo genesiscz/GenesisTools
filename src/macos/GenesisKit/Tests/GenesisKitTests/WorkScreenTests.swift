@@ -216,7 +216,7 @@ final class WorkScreenTests: XCTestCase {
         model.deactivate()
     }
 
-    func testAnEqualLiveReadPublishesNothingAndKeepsTheSnapshot() async {
+    func testAnEqualLiveReadPublishesNothingAndKeepsTheSnapshot() async throws {
         let source = FakeWorkSource(fixture())
         let model = WorkScreenModel(source: source, reloadInterval: 0, settle: 0)
         model.activate()
@@ -231,7 +231,7 @@ final class WorkScreenTests: XCTestCase {
         XCTAssertFalse(model.isFirstLoad)
         XCTAssertFalse(model.isLoading)
         let start = CFAbsoluteTimeGetCurrent()
-        source.resumeRead?.resume()
+        try XCTUnwrap(source.resumeRead).resume()
         await model.finishCurrentRead()
         let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
         print(String(format: "Work unchanged fixture read applied in %.3f ms, including task resumption", elapsed))

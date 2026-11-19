@@ -327,6 +327,39 @@ final class WorkFindTests: XCTestCase {
         XCTAssertEqual(WorkFilter(text: "H_ABCD1234:T5").fullRef, "h_abcd1234:T5")
     }
 
+    func testArchivedIndexRowUsesItsOwnStateAndTheTriageSearchText() {
+        let ref = "w_filing01"
+        let stale = WorkTriageValue(ref: ref, group: "reopened-no-worker", type: "task", state: "reopened",
+                                   title: "File the receipt", why: "The export timed out")
+        let snapshot = WorkSnapshotValue(project: "Orchard", containers: [], triage: [stale])
+        let closed = WorkRowValue(ref: ref, state: "done", type: "task", title: "File the receipt")
+        let filter = WorkFilter(text: "timed", states: [.done])
+        XCTAssertEqual(WorkItemsProjection(snapshot: snapshot, filter: filter, index: [closed]).archive, [closed])
+        XCTAssertTrue(WorkFilter(severities: ["high"]).requiresIndex)
+    }
+
+    @MainActor
+    func testDeactivationDiscardsABlockedDetailAndActivationReadsItAgain() async {
+        let source = WorkFindSource()
+        let model = WorkScreenModel(source: source)
+        model.activate()
+        await settle { model.snapshot != nil }
+        let ref = "w_delayed1"
+        source.delayedRef = ref
+        model.select(ref)
+        await settle { source.delayedDetail != nil }
+        model.deactivate()
+        source.finishDelayed()
+        await settle { source.delayedReturned }
+        XCTAssertNil(model.itemDetail)
+        XCTAssertFalse(model.isLoading)
+        source.delayedRef = nil
+        model.activate()
+        defer { model.deactivate() }
+        await settle { model.itemDetail?.item.id == ref }
+        XCTAssertEqual(source.detailRefs, [ref, ref])
+    }
+
     @MainActor
     func testMineLoadsOwnershipAndChangesDoNotStarveTheIndexOrAnOpenList() async {
         let source = WorkFindSource()
