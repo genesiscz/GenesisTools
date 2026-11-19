@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -133,6 +133,19 @@ describe("sessions range flags", () => {
                 ],
             });
             expect(result.mock.calls[0]?.[0]).not.toHaveProperty("metrics");
+
+            const [one, two] = ["session-one", "session-two"].map((name) => join(dir, `${name}.jsonl`));
+            writeFileSync(one, readFileSync(path, "utf8"));
+            writeFileSync(two, readFileSync(path, "utf8"));
+            const exported = join(dir, "exported");
+            const args = ["sessions", "context", one, two, "--provider", "claude", "--json", "--out", exported];
+            expect((await run(args)).errors).toEqual([]);
+            expect(readdirSync(exported).sort()).toEqual([
+                "claude-session-one.context-sources.json",
+                "claude-session-one.context-sources.txt",
+                "claude-session-two.context-sources.json",
+                "claude-session-two.context-sources.txt",
+            ]);
         } finally {
             result.mockRestore();
         }

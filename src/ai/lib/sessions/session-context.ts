@@ -271,7 +271,8 @@ export async function printContext(ids: string[], opts: ContextOptions): Promise
         }
         if (opts.out) {
             await mkdir(opts.out, { recursive: true });
-            const base = join(opts.out, basename(session.sessionId).slice(0, 8));
+            const id = basename(session.sessionId).replace(/[^A-Za-z0-9._-]+/g, "_");
+            const base = join(opts.out, `${session.provider}-${id}`);
             await Bun.write(`${base}.context-sources.json`, SafeJSON.stringify(result));
             await Bun.write(`${base}.context-sources.txt`, `${rendered}\n`);
         }

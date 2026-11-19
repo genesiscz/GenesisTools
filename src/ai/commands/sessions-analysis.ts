@@ -29,7 +29,10 @@ export function registerSessionAnalysis(sessions: Command): void {
         .option("--top <n>", "Rows in each source table", "25")
         .option("--agents-top <n>", "Agents to show by cache read", "15")
         .option("--items <n>", "Largest individual items by carry", "20")
-        .option("--out <dir>", "Also write the session's JSON and text reports to a directory")
+        .option(
+            "--out <dir>",
+            "Also write each session's JSON and text reports to a directory, as <provider>-<session id>.context-sources.{json,txt}"
+        )
         .option("--record-metrics", "Append a new context.item snapshot to the metrics spool and report its id")
         .option("--json", "Print sessions.context@1")
         .action(
