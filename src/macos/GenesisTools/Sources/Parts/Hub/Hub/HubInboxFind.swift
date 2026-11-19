@@ -46,6 +46,7 @@ struct InboxFindHost: View {
             default: InboxMain(model: model, inbox: inbox)
             }
         }
+            .taskResumePrompt(inbox.tasks)
             .panelFind(find, revision: Revision(sessions: sessions, filter: model.filter, option: option),
                        prepare: { match in prepareVariant(match, option: option) }) {
                 if let option {

@@ -257,10 +257,12 @@ struct InboxSession: Decodable, Identifiable, Hashable {
         ]
     }
 
+    var displayProvider: String? { provider.flatMap { $0 == "unknown" || $0.isEmpty ? nil : $0 } }
+
     var displayTitle: String {
-        if let title, !title.trimmed.isEmpty { return title }
-        if let sessionId { return "Session \(sessionId.prefix(8))" }
-        return "Questions without a session"
+        if let title, !title.trimmed.isEmpty, !(title == "unknown" && sessionId == "unknown") { return title }
+        if let sessionId, sessionId != "unknown" { return "Session \(sessionId.prefix(8))" }
+        return !items.isEmpty && items.allSatisfy(\.isForm) ? "Questions without a session" : "Items without a session"
     }
 
     var projectName: String {
@@ -393,6 +395,8 @@ enum InboxSort: String, CaseIterable {
 
 @MainActor
 final class HubInboxModel: ObservableObject {
+    /// Keep an unsent task and its last Undo when the reader switches hub modes or Inbox layouts.
+    lazy var tasks = WidgetTasksStore(binaryPath: ToolsBridge.defaultBinaryPath(), sessions: { [] }, openSession: { _, _ in })
     /// The Inbox rows the arrow keys step through, in InboxListView's order: the waiting sessions, then the quiet ones
     /// while their fold is open.
     nonisolated static func keyOrder(_ rows: [InboxSession], showsQuiet: Bool) -> [String] {
@@ -1018,6 +1022,11 @@ final class HubInboxModel: ObservableObject {
             sendStaged(sendableIDs(session), in: session)
             return
         }
+        // The resumed terminal takes every stored draft. It cannot exclude a decision during its Undo window.
+        guard !session.draftedItems.contains(where: { staging.held.contains($0.id) }) else {
+            record(.failure("A dismissal is pending. Wait for it to finish or undo it before sending."), for: sessionId)
+            return
+        }
         sendingSessions.insert(sessionId)
         var args = ["question", "inbox", "send", "--session", sessionId]
         if let provider = session.provider { args += ["--provider", provider] }
@@ -1339,20 +1348,22 @@ struct InboxListView: View {
         let rows = inbox.sorted(sort, filter: model.filter)
         VStack(spacing: 0) {
             HStack(spacing: 6) {
-                MenuButton(items: {
-                    InboxSort.allCases.map { option in
-                        .action(option.title, checked: option == sort) {
-                            HubMainBusy.measure("inbox.sort")
-                            sortKey = option.rawValue
+                if !rows.isEmpty {
+                    MenuButton(items: {
+                        InboxSort.allCases.map { option in
+                            .action(option.title, checked: option == sort) {
+                                HubMainBusy.measure("inbox.sort")
+                                sortKey = option.rawValue
+                            }
                         }
+                    }) {
+                        Label(sort.title, systemImage: "arrow.up.arrow.down")
+                            .font(.system(size: 11.5))
+                            .foregroundColor(ReviewPalette.dim)
                     }
-                }) {
-                    Label(sort.title, systemImage: "arrow.up.arrow.down")
-                        .font(.system(size: 11.5))
-                        .foregroundColor(ReviewPalette.dim)
+                    .fixedSize()
+                    .instantTooltip("Order the waiting sessions")
                 }
-                .fixedSize()
-                .instantTooltip("Order the waiting sessions")
                 Spacer()
                 // A fixed slot, so the controls before it stay put while the list loads.
                 ZStack {
@@ -1478,8 +1489,7 @@ private struct InboxSessionRow: View, Equatable {
     var body: some View {
         let _ = RenderProbe.hit("inbox.sessionRow.body")
         HStack(alignment: .top, spacing: 9) {
-            ProviderBadge(provider: session.provider ?? "?")
-                .padding(.top, 1)
+            if let provider = session.displayProvider { ProviderBadge(provider: provider).padding(.top, 1) }
             VStack(alignment: .leading, spacing: 3) {
                 Text(session.displayTitle)
                     .font(.system(size: 12.5, weight: selected ? .semibold : .regular))
@@ -1489,7 +1499,7 @@ private struct InboxSessionRow: View, Equatable {
                 HStack(spacing: 6) {
                     Text(session.projectName).lineLimit(1)
                     Spacer(minLength: 0)
-                    LiveAgo(date: session.date, style: .brief).fixedSize()
+                    LiveAgo(date: session.date, style: .spelled).fixedSize()
                 }
                 .font(.system(size: 10.5))
                 .foregroundColor(ReviewPalette.dim)
@@ -1531,6 +1541,133 @@ private struct InboxSessionRow: View, Equatable {
     }
 }
 
+/// A task performs only task actions, including in the focus and table Inbox layouts.
+struct InboxTaskCard: View {
+    @ObservedObject var store: WidgetTasksStore
+    let task: WidgetTask
+    let session: InboxSession
+
+    var body: some View {
+        let busy = store.mutatingIDs.contains(task.id)
+        VStack(alignment: .leading, spacing: 6) {
+            Text(task.title).font(.headline).textSelection(.enabled)
+            HStack(spacing: 6) {
+                Text(task.addressee + " · " + task.statusLabel)
+                if busy { ProgressView("Saving…").controlSize(.small) }
+            }.font(.caption).foregroundStyle(.secondary)
+            if task.summary != task.title { Text(task.summary).textSelection(.enabled) }
+            if task.sendUncertain == true { Text("Check the session before sending this task again.") }
+            WrapLayout(spacing: 6, lineSpacing: 4) {
+                ForEach(task.actions, id: \.self) { action in
+                    Button(action.title) { store.perform(action, on: task, sourceHome: session.sourceHome) }
+                        .buttonStyle(.genHover()).accessibilityLabel(action.title + ": " + task.title)
+                }
+            }.disabled(busy)
+        }
+        .padding(.vertical, 6)
+        .accessibilityIdentifier("hub.inbox.task." + task.id)
+    }
+}
+
+struct InboxAddTaskButton: View {
+    let model: HubModel
+    @ObservedObject var tasks: WidgetTasksStore
+    @State private var addingTask = false
+    @State private var sendImmediately = false
+    @State private var triedToAdd = false
+    @FocusState private var taskTitleFocused: Bool
+
+    var body: some View {
+        Button("Add task", systemImage: "plus") {
+            sendImmediately = false
+            triedToAdd = false
+            addingTask = true
+        }
+            .buttonStyle(.genHover()).fixedSize()
+            .accessibilityIdentifier("hub.inbox.addTask")
+            .sheet(isPresented: $addingTask) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Add task").font(.headline)
+                    TextField("Title", text: $tasks.draft.title)
+                        .focused($taskTitleFocused)
+                    TextField("Details (optional)", text: $tasks.draft.details, axis: .vertical)
+                    Picker("Session", selection: $tasks.draft.session) {
+                        Text("Local tasks").tag("")
+                        ForEach(model.sessions, id: \.id) { session in
+                            Text(session.title ?? "Session " + session.sessionId.prefix(8))
+                                .tag(session.provider + ":" + session.sessionId)
+                        }
+                    }
+                    .onChange(of: tasks.draft.session) { _, key in
+                        let row = model.sessions.first { $0.provider + ":" + $0.sessionId == key }
+                        tasks.draft.sessionTitle = row?.title ?? ""
+                        tasks.draft.project = row?.project ?? ""
+                        tasks.draft.cwd = row?.cwd ?? ""
+                        if key.isEmpty { tasks.draft.owner = "human" }
+                        sendImmediately = false
+                    }
+                    Picker("Assigned to", selection: $tasks.draft.owner) {
+                        Text("For you").tag("human")
+                        if !tasks.draft.session.isEmpty { Text("For agent").tag("agent") }
+                    }
+                    if tasks.draft.owner == "agent" && !tasks.draft.session.isEmpty {
+                        Toggle("Send to the session now", isOn: $sendImmediately)
+                    }
+                    if triedToAdd, let error = tasks.error { InboxTaskFailure(message: error) }
+                    HStack {
+                        Spacer()
+                        Button("Close") { addingTask = false }.keyboardShortcut(.cancelAction)
+                        Button(tasks.isCreating ? "Adding…" : "Add task") {
+                            triedToAdd = true
+                            tasks.create(sendImmediately: sendImmediately)
+                        }
+                            .buttonStyle(.genPrimary())
+                            .disabled(tasks.draft.title.trimmed.isEmpty)
+                    }
+                }
+                .padding(18).frame(width: 390)
+                .disabled(tasks.isCreating)
+                .onAppear { taskTitleFocused = true }
+            }
+            .onChange(of: tasks.isCreating) { wasCreating, creating in
+                if wasCreating, !creating, tasks.draft.title.isEmpty { addingTask = false }
+            }
+    }
+}
+
+private struct InboxTaskFailure: View {
+    let message: String
+    var body: some View {
+        FailureInline(FailureReport(title: "Task update", headline: "The task update could not be confirmed.",
+                                    summary: "Check the saved task before trying again.", action: "Update task",
+                                    log: message, area: "hub"), form: .compact, identifier: "hub.inbox.taskFailure")
+    }
+}
+
+struct InboxTaskFeedback: View {
+    @ObservedObject var store: WidgetTasksStore
+    let saved: () -> Void
+
+    var body: some View {
+        Group {
+            if let error = store.error {
+                HStack {
+                    InboxTaskFailure(message: error)
+                    IconButton(systemName: "xmark", tooltip: "Dismiss task feedback", action: store.clearFeedback)
+                }.padding(.horizontal)
+            } else if let receipt = store.receipt {
+                let fixes = store.undo.map { undo in
+                    [NoticeFix.button("Undo", symbol: "arrow.uturn.backward") {
+                        store.perform(undo.action, on: undo.task, then: undo.then)
+                    }]
+                } ?? []
+                NoticePill(text: receipt, tone: .success, fixes: fixes, dismiss: store.clearFeedback)
+                    .padding(.horizontal)
+            }
+        }.onChange(of: store.receipt) { _, receipt in if receipt != nil { saved() } }
+    }
+}
+
 enum InboxStyle {
     static let accent = Color(red: 1, green: 0.63, blue: 0.12)
 }
@@ -1542,9 +1679,6 @@ struct InboxMain: View {
     @ObservedObject var inbox: HubInboxModel
     @AppStorage("hub.inbox.sort") private var sortKey = InboxSort.recent.rawValue
     /// The list has the keyboard: Up and Down move the key card, 1 to 9 pick its options, Return opens its note (F8).
-    @StateObject private var tasks = WidgetTasksStore(binaryPath: ToolsBridge.defaultBinaryPath(), sessions: { [] }, openSession: { _, _ in })
-    @State private var addingTask = false
-    @State private var sendImmediately = false
     @FocusState private var keysFocused: Bool
     @GenReduceMotion private var reduceMotion
 
@@ -1553,19 +1687,11 @@ struct InboxMain: View {
         let rows = inbox.sorted(InboxSort(rawValue: sortKey) ?? .recent, filter: model.filter)
         VStack(spacing: 0) {
             header(rows)
-                .onChange(of: tasks.receipt) { _, notice in
-                    if notice != nil { addingTask = false; inbox.load() }
-                }
-            if let error = tasks.error {
-                Text(error).foregroundStyle(.red).textSelection(.enabled)
-            } else if let receipt = tasks.receipt {
-                HStack {
-                    Text(receipt)
-                    if let undo = tasks.undo {
-                        Button("Undo") { tasks.perform(undo.action, on: undo.task, then: undo.then) }
-                    }
-                }
+            if let missing = inbox.revealMissing {
+                NoticePill(text: missing.text, tone: .warning, fixes: revealFixes) { inbox.revealMissing = nil }
+                    .padding(.horizontal)
             }
+            InboxTaskFeedback(store: inbox.tasks, saved: inbox.load)
             // ⌘F: the shared find bar, wired around InboxMain (Hub/HubInboxFind.swift); draws nothing until opened.
             PanelFindBarSlot()
             ScrollViewReader { proxy in
@@ -1583,7 +1709,7 @@ struct InboxMain: View {
                                 actionTitle: "Clear filter"
                             ) { model.filter = "" }
                             .padding(.top, 40)
-                        } else if rows.isEmpty {
+                        } else if rows.isEmpty, inbox.loadedAt != nil {
                             // One empty state and one reload: the header's refresh icon (P6).
                             EmptyState(symbol: "tray", text: "No session is waiting for an answer.")
                                 .padding(.top, 40)
@@ -1636,7 +1762,6 @@ struct InboxMain: View {
             inbox.loadIfStale(maxAge: 30)
         }
         .onReceive(NotificationCenter.default.publisher(for: HubSettingsPages.inboxKindsChanged)) { _ in inbox.load() }
-        .taskResumePrompt(tasks)
         .sheet(item: $inbox.resumeFor) { session in
             InboxResumeSheet(model: model, inbox: inbox, session: session)
         }
@@ -1735,17 +1860,7 @@ struct InboxMain: View {
         case .card(let session, let item):
             Group {
                 if let task = item.task {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(task.title).font(.headline)
-                        Text(task.addressee + " · " + task.statusLabel).foregroundStyle(.secondary)
-                        if task.summary != task.title { Text(task.summary).textSelection(.enabled) }
-                        if task.sendUncertain == true { Text("Check the session before sending this task again.") }
-                        HStack {
-                            ForEach(task.actions, id: \.self) { action in
-                                Button(action.title) { tasks.perform(action, on: task, sourceHome: session.sourceHome) }
-                            }
-                        }.disabled(tasks.mutatingIDs.contains(task.id))
-                    }
+                    InboxTaskCard(store: inbox.tasks, task: task, session: session)
                 } else if item.kind == "message" || item.kind == "answer" {
                     VStack(alignment: .leading) {
                         Text(item.kind.capitalized).font(.caption).foregroundStyle(.secondary)
@@ -1797,50 +1912,12 @@ struct InboxMain: View {
                     Image(systemName: "tray.full").foregroundColor(InboxStyle.accent)
                         .accessibilityHidden(true)
                     Text("Waiting for you").font(.system(size: 14, weight: .semibold))
-                    Text(verbatim: Self.summary(rows, staged: staged))
-                        .font(.system(size: 12))
-                        .foregroundColor(ReviewPalette.dim)
                 }
                 .titlebarLabel()
                 Spacer()
 
-                Button("Add task", systemImage: "plus") { addingTask = true }
-                    .popover(isPresented: $addingTask) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            TextField("Title", text: $tasks.draft.title)
-                            TextField("Details (optional)", text: $tasks.draft.details, axis: .vertical)
-                            Picker("Session", selection: $tasks.draft.session) {
-                                Text("Local tasks").tag("")
-                                ForEach(model.sessions, id: \.id) { session in
-                                    Text(session.title ?? session.sessionId).tag(session.provider + ":" + session.sessionId)
-                                }
-                            }
-                            .onChange(of: tasks.draft.session) { _, key in
-                                let row = model.sessions.first { $0.provider + ":" + $0.sessionId == key }
-                                tasks.draft.sessionTitle = row?.title ?? ""
-                                tasks.draft.project = row?.project ?? ""
-                                tasks.draft.cwd = row?.cwd ?? ""
-                                if key.isEmpty { tasks.draft.owner = "human" }
-                                sendImmediately = false
-                            }
-                            Picker("Assigned to", selection: $tasks.draft.owner) {
-                                Text("For you").tag("human")
-                                if !tasks.draft.session.isEmpty { Text("For agent").tag("agent") }
-                            }
-                            if tasks.draft.owner == "agent" && !tasks.draft.session.isEmpty {
-                                Toggle("Send to the session now", isOn: $sendImmediately)
-                            }
-                            Button("Add task") { tasks.create(sendImmediately: sendImmediately) }
-                                .disabled(tasks.isCreating || tasks.draft.title.trimmed.isEmpty)
-                        }.padding().frame(width: 340)
-                    }
+                InboxAddTaskButton(model: model, tasks: inbox.tasks)
 
-                if let missing = inbox.revealMissing {
-                    // Not an error: the decision moved on. It names the decision and offers the way to it (F18).
-                    NoticePill(text: missing.text, tone: .warning, fixes: revealFixes) {
-                        inbox.revealMissing = nil
-                    }
-                }
                 if staged > 0 {
                     Button {
                         inbox.sendAllStaged()
@@ -1859,14 +1936,24 @@ struct InboxMain: View {
                     .instantTooltip("Send every staged decision of every session; each session gets one message (⌘↩)")
                     .accessibilityHint(Text("Command-Return"))
                 }
+                IconButton(systemName: "arrow.clockwise", tooltip: "Look for waiting sessions again") { inbox.load() }
+                    .disabled(inbox.loading)
+            }
+        } details: {
+            HStack(spacing: 10) {
+                if inbox.loadedAt != nil, !rows.isEmpty {
+                    Text(verbatim: Self.summary(rows, staged: model.filter.trimmed.isEmpty ? staged : rows.reduce(0) {
+                        $0 + inbox.sendableIDs($1).count
+                    }))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    Spacer(minLength: 0)
+                }
                 if let loadedAt = inbox.loadedAt {
                     LiveAgo(date: loadedAt) { "checked \($0)" }
-                        .font(.system(size: 11))
-                        .foregroundColor(ReviewPalette.dim)
-                        .titlebarLabel()
+                        .fixedSize()
                 }
-                IconButton(systemName: "arrow.clockwise", tooltip: "Look for waiting sessions again") { inbox.load() }
-            }
+            }.font(.system(size: 11)).foregroundStyle(.secondary)
         }
     }
 
@@ -1931,7 +2018,7 @@ private struct InboxSessionHeader: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            ProviderBadge(provider: session.provider ?? "?")
+            if let provider = session.displayProvider { ProviderBadge(provider: provider) }
             FindText(session.displayTitle, field: "title")
                 .font(.system(size: 13.5, weight: .semibold))
                 .lineLimit(1)
@@ -1950,7 +2037,7 @@ private struct InboxSessionHeader: View {
                     .instantTooltip(branch)
             }
             Spacer(minLength: 8)
-            if let sessionId = session.sessionId {
+            if let sessionId = session.sessionId, sessionId != "unknown" {
                 Button {
                     showInfo.toggle()
                 } label: {
@@ -2001,7 +2088,7 @@ struct InboxSendBar: View {
     /// The Decisions pane shows one session's bar, whatever the Inbox has selected, so that bar takes ⌘↩.
     var claimsShortcut = false
 
-    private var drafted: [InboxItem] { session.draftedItems }
+    private var drafted: [InboxItem] { session.draftedItems.filter { !inbox.staging.held.contains($0.id) } }
     private var sending: Bool { session.sessionId.map { inbox.sendingSessions.contains($0) } ?? false }
     private var result: InboxDelivery? { session.sessionId.flatMap { inbox.sessionResults[$0] } }
     /// A send that takes longer than 10 s says what it waits for (F19).
@@ -2387,7 +2474,7 @@ struct InboxDecisionCard: View, Equatable {
             }
             Spacer(minLength: 8)
             if item.isOpen {
-                Label { LiveAgo(date: item.date, style: .brief) } icon: { Image(systemName: "clock") }
+                Label { LiveAgo(date: item.date, style: .spelled) } icon: { Image(systemName: "clock") }
                     .font(.system(size: 11))
                     .foregroundColor(ReviewPalette.dim)
             } else {
@@ -2893,7 +2980,7 @@ private struct SessionInfoPopover: View {
     private var identity: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                ProviderBadge(provider: session.provider ?? "?")
+                if let provider = session.displayProvider { ProviderBadge(provider: provider) }
                 Text(session.displayTitle).font(.system(size: 13, weight: .semibold)).lineLimit(2)
             }
             if let sessionId = session.sessionId {
@@ -3030,7 +3117,7 @@ struct InboxResumeSheet: View {
                 }
                 Button("Copy the answer") {
                     // The same text Send would type, choice labels included.
-                    PathOpener.copy(InboxSendBar.preview(session.draftedItems))
+                    PathOpener.copy(InboxSendBar.preview(session.draftedItems.filter { !inbox.staging.held.contains($0.id) }))
                 }
                 Spacer()
                 // One Cancel: the picker brings its own, so this one shows only without a picker.
@@ -3084,7 +3171,8 @@ struct QaAttachedImage: Identifiable {
             _ = sweepPreviousImages
             try png.write(to: url)
         } catch {
-            return .failed("Could not save that image: \(error.localizedDescription)")
+            HubPerf.log("inbox.image.write " + error.localizedDescription)
+            return .failed("The image could not be saved. Check available disk space and choose it again.")
         }
 
         return .staged(QaAttachedImage(path: url.path, thumbnail: NSImage(data: png) ?? image))
@@ -3214,7 +3302,7 @@ struct InboxFormCard: View {
                     .accessibilityHidden(true)
                 Text("Question form").font(.system(size: 13, weight: .semibold))
                 Spacer()
-                Label { LiveAgo(date: item.date, style: .brief) } icon: { Image(systemName: "clock") }
+                Label { LiveAgo(date: item.date, style: .spelled) } icon: { Image(systemName: "clock") }
                     .font(.system(size: 11))
                     .foregroundColor(ReviewPalette.dim)
                 // The id is for a bug report, not for answering: an icon, not a chip of raw text (P10).
@@ -3291,8 +3379,9 @@ struct InboxFormCard: View {
             FindText(choice.label, field: "q:\(question.itemId):\(choice.id)")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(chosen ? .black : Color.white.opacity(0.9))
-                .padding(.horizontal, 10)
-                .frame(height: 24)
+                .padding(.horizontal, 10).padding(.vertical, 3)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(minHeight: 24)
                 .background(Capsule().fill(chosen ? InboxStyle.accent : Color.white.opacity(0.08)))
         }
         .buttonStyle(.genHoverPlain())

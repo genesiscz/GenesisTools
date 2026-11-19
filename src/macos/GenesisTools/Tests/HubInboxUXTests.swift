@@ -105,6 +105,23 @@ final class HubInboxUXTests: XCTestCase {
         XCTAssertEqual(inbox.sendableIDs(session), [item.id])
     }
 
+    @MainActor
+    func testAFormOffersEveryChoiceAtNarrowWidth() throws {
+        let form = try Self.decision("""
+        {"kind":"form","title":"Pick a sample","questions":[{"itemId":"sample","prompt":"Which sample?",
+         "multiple":false,"freeText":false,"required":true,"fileTags":false,"imagePaste":true,
+         "choices":[{"id":"a","label":"First basket of apples"},{"id":"b","label":"Second basket of pears"},
+                    {"id":"c","label":"Third basket of berries"}]}]}
+        """)
+        let inbox = HubInboxModel()
+        let card = InboxFormCard(inbox: inbox, item: form)
+            .frame(width: 300).padding(8).background(Color.black).environment(\.colorScheme, .dark)
+        let text = try Self.drawnText(Self.render(view: AnyView(card), name: "narrow-form", folderKey: "HUB_INBOX_SHOTS"))
+        for phrase in ["First basket of apples", "Second basket of pears", "Third basket of berries", "Send answer"] {
+            XCTAssertTrue(text.contains(phrase), text)
+        }
+    }
+
     /// P4: the Decisions pane's caption follows the Decision click setting, and its empty text says what is empty.
     func testTheDecisionsPaneSaysWhatAClickDoesAndWhatIsEmpty() {
         XCTAssertEqual(DecisionsView.caption(stages: true).text, "A click stages an option · Send delivers")
