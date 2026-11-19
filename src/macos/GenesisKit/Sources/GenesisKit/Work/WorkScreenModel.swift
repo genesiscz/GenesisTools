@@ -347,7 +347,7 @@ public final class WorkScreenModel: ObservableObject {
             do {
                 let value = try await source.snapshot(project: project)
                 guard !Task.isCancelled, self.project == project else { return }
-                snapshot = value
+                adopt(value)
             } catch {
                 guard !Task.isCancelled, self.project == project else { return }
                 listFailure = error.localizedDescription
@@ -361,7 +361,8 @@ public final class WorkScreenModel: ObservableObject {
         indexedProject = nil
         indexTask?.cancel()
         indexTask = nil
-        indexLoading = false
+        // An equal live read publishes nothing, so only a real change of this flag may publish.
+        if indexLoading { indexLoading = false }
         companionReadNeeded = true
     }
 
@@ -544,19 +545,7 @@ public final class WorkScreenModel: ObservableObject {
                 } else if let project, pane == .items {
                     let confirmed = try await self.source.snapshot(project: project)
                     guard !Task.isCancelled, self.project == project else { return }
-                    PerfSpans.measure("work.reload") {
-                        self.confirmedSnapshot = confirmed
-                        let next = confirmed.previewing(self.pendingItemStates)
-                        if self.snapshot != next {
-                            PerfMainBusy.measure("work.reload")
-                            self.rowAnimation = self.snapshot.flatMap { previous in
-                                let old = previous.rowRefs, new = next.rowRefs
-                                let count = old.symmetricDifference(new).count
-                                return (1...GenMotion.maxAnimatedRows).contains(count) ? new.count >= old.count : nil
-                            }
-                            self.snapshot = next
-                        }
-                    }
+                    self.adopt(confirmed)
                 } else if let project {
                     let rows = try await self.source.notify(project: project)
                     guard !Task.isCancelled, self.project == project else { return }
@@ -576,6 +565,26 @@ public final class WorkScreenModel: ObservableObject {
             // Changes that came during this reload get one more, by the same rules.
             if self.stale { self.schedule() }
         }
+    }
+
+    /// The one way a read list reaches the screen: beside an open item too, so a pending state change previews over
+    /// the newest confirmed list and a small change animates its rows.
+    private func adopt(_ confirmed: WorkSnapshotValue) {
+        PerfSpans.measure("work.reload") {
+            confirmedSnapshot = confirmed
+            let next = confirmed.previewing(pendingItemStates)
+            if snapshot != next {
+                PerfMainBusy.measure("work.reload")
+                rowAnimation = snapshot.flatMap { previous in
+                    let old = previous.rowRefs, new = next.rowRefs
+                    let count = old.symmetricDifference(new).count
+                    return (1...GenMotion.maxAnimatedRows).contains(count) ? new.count >= old.count : nil
+                }
+                snapshot = next
+            }
+        }
+        // An unchanged list sets no snapshot, so a store change that dropped the index reads it here.
+        loadIndexIfNeeded()
     }
 
     /// A change of the store: the screen is stale, and one reload follows by the rules above.
