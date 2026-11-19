@@ -1,3 +1,6 @@
+import AppKit
+import SwiftUI
+import Vision
 import Foundation
 import XCTest
 @testable import GenesisKit
@@ -375,5 +378,208 @@ final class WorkFindTests: XCTestCase {
         var matched = 0
         measure { matched = rows.filter { filter.matches($0) }.count }
         XCTAssertEqual(matched, 500)
+    }
+}
+
+@MainActor
+private final class WorkFindRenderInput {
+    let snapshot: WorkSnapshotValue
+    let index: [WorkRowValue]
+    var filter: WorkFilter = .default
+    var expanded: Set<String> = []
+    var collapsed: Set<String> = []
+
+    init(snapshot: WorkSnapshotValue = WorkFindFixture.snapshot,
+         index: [WorkRowValue] = WorkFindFixture.index) {
+        self.snapshot = snapshot
+        self.index = index
+    }
+
+    func change(_ value: WorkFilter) {
+        if filter != value { collapsed = [] }
+        filter = value
+    }
+
+    func clear() { change(.default) }
+
+    var projection: WorkItemsProjection {
+        WorkItemsProjection(snapshot: snapshot, filter: filter, index: index,
+                            expanded: expanded, collapsed: collapsed)
+    }
+
+    var view: some View {
+        let projected = projection
+        return VStack(alignment: .leading, spacing: 0) {
+            WorkFindBar(filter: Binding(get: { self.filter }, set: { self.change($0) }),
+                        matchedCount: projected.matchedCount, totalCount: projected.totalCount,
+                        onClear: clear, onSubmit: {})
+            Divider()
+            WorkItemsView(snapshot: snapshot, projection: projected, filter: filter,
+                          selection: nil, pending: [], indexLoading: false, indexFailure: nil,
+                          select: { _ in }, toggleExpansion: { ref, opens in
+                              if opens {
+                                  self.expanded.insert(ref)
+                                  self.collapsed.remove(ref)
+                              } else {
+                                  self.expanded.remove(ref)
+                                  self.collapsed.insert(ref)
+                              }
+                          }, showMore: {}, clearFilters: clear, retryIndex: {}, perform: { _ in })
+                .padding(12)
+            Spacer(minLength: 0)
+        }
+        .background(Color.black)
+        .environment(\.colorScheme, .dark)
+    }
+}
+
+@MainActor
+extension WorkFindTests {
+    func testFindRendersTheFixtureBasketDoneAndClearRestoresTheFirstText() throws {
+        let input = WorkFindRenderInput()
+        let size = CGSize(width: 1000, height: 1500)
+        let (window, rawHost) = HostedShot.host(input.view, size: size)
+        defer { window.close() }
+        let host = try XCTUnwrap(rawHost as? NSHostingView<AnyView>)
+
+        func draw(_ name: String? = nil) throws -> String {
+            host.rootView = AnyView(input.view.frame(width: size.width, height: size.height, alignment: .topLeading))
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            let bitmap = try XCTUnwrap(HostedShot.bitmap(host))
+            let image = try XCTUnwrap(bitmap.cgImage)
+            if let name, let folder = ProcessInfo.processInfo.environment["WIDGET_SHOTS"] {
+                let directory = URL(fileURLWithPath: folder, isDirectory: true)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                try png.write(to: directory.appendingPathComponent(name + ".png"))
+            }
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.usesLanguageCorrection = false
+            try readWorkScreenshot(image, with: request)
+            let lines = (request.results ?? []).compactMap { result in
+                result.topCandidates(1).first.map { (text: $0.string, y: result.boundingBox.midY, x: result.boundingBox.minX) }
+            }.sorted { left, right in
+                if abs(left.y - right.y) > 0.004 { return left.y > right.y }
+                return left.x < right.x
+            }.map(\.text)
+            XCTAssertFalse(lines.isEmpty, "The offscreen capture must contain readable text")
+            return lines.joined(separator: "\n")
+        }
+
+        let first = try draw("work-find-before")
+        for expected in ["Find items by words or ref", "Prepare the autumn release", "Improve account settings",
+                         "Make delivery times clear", "Spotted", "Review orchard item 9",
+                         "Restore the delivery reminder", "Check the empty receipt again"] {
+            XCTAssertTrue(first.contains(expected), "Missing \(expected) in:\n\(first)")
+        }
+        XCTAssertFalse(first.contains("Clear filters"), first)
+        XCTAssertFalse(first.contains("Done and dropped"), first)
+
+        func editableField(in view: NSView) -> NSTextField? {
+            if let field = view as? NSTextField, field.isEditable { return field }
+            return view.subviews.lazy.compactMap { editableField(in: $0) }.first
+        }
+        let field = try XCTUnwrap(editableField(in: host))
+        XCTAssertTrue(window.makeFirstResponder(field))
+        let editor = try XCTUnwrap(field.currentEditor() as? NSTextView)
+        editor.insertText("basket", replacementRange: editor.selectedRange())
+        _ = window.makeFirstResponder(nil)
+        let typed = Date().addingTimeInterval(2)
+        while input.filter.text != "basket" && Date() < typed {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        XCTAssertEqual(input.filter.text, "basket")
+        let basket = try draw("work-find-after")
+        for expected in ["basket", "Keep a basket after checkout", "1 of 4 tasks match",
+                         "No match in Spotted", "No match in Reopened", "Clear filters"] {
+            XCTAssertTrue(basket.contains(expected), "Missing \(expected) in:\n\(basket)")
+        }
+        for hidden in ["Improve account settings", "Make delivery times clear", "Read the release checklist",
+                       "Review orchard item 9", "Restore the delivery reminder", "Repair archived invoice images"] {
+            XCTAssertFalse(basket.contains(hidden), "Unexpected \(hidden) in:\n\(basket)")
+        }
+        XCTAssertEqual(input.projection.containers.map(\.ref), [WorkFindFixture.basketRef])
+        XCTAssertTrue(try XCTUnwrap(input.projection.containers.first).isExpanded)
+
+        input.change(WorkFilter(states: [.done]))
+        let done = try draw()
+        for expected in ["State: Done", "Done and dropped", "Repair archived invoice images", "Write release notes"] {
+            XCTAssertTrue(done.contains(expected), "Missing \(expected) in:\n\(done)")
+        }
+        for hidden in ["Handoffs and epics", "Spotted", "Reopened, nobody working", "Prepare the autumn release",
+                       "Keep a basket after checkout", "Add a seasonal greeting", "Review orchard item 9"] {
+            XCTAssertFalse(done.contains(hidden), "Unexpected \(hidden) in:\n\(done)")
+        }
+
+        // This is the same callback passed to the production bar and the list's Clear filters button.
+        input.clear()
+        let restored = try draw()
+        XCTAssertEqual(restored, first, "Clearing every facet restores the first rendering's complete drawn text")
+    }
+
+    func testOneFilterChangeAndRenderWithOneHundredOpenRowsPerformance() throws {
+        let rows = (0..<100).map { number in
+            WorkRowValue(ref: "h_render01:t\(number)", state: "open", type: "task",
+                         title: number.isMultiple(of: 2) ? "Keep basket item \(number)" : "Read receipt item \(number)",
+                         slot: "t\(number)")
+        }
+        let snapshot = WorkSnapshotValue(project: WorkFindFixture.project, containers: [
+            WorkContainerValue(ref: "h_render01", type: "handoff", state: "open", title: "Prepare the fixture release",
+                               open: 100, total: 100, members: rows),
+        ], triage: [])
+        let input = WorkFindRenderInput(snapshot: snapshot, index: [])
+        input.expanded = ["h_render01"]
+        let size = CGSize(width: 1000, height: 900)
+        let (window, rawHost) = HostedShot.host(input.view, size: size)
+        defer { window.close() }
+        let host = try XCTUnwrap(rawHost as? NSHostingView<AnyView>)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        _ = try XCTUnwrap(HostedShot.bitmap(host))
+        var iteration = 0
+        var lastImage: CGImage?
+        var renderFailure: Error?
+
+        // XCTest reports wall time for a changed query, projection, view update, layout and drawing.
+        // OCR, file output, host construction and fixed settling waits are outside the measured block.
+        // Compare the reported mean with P2's 16 ms target and 50 ms debounce decision threshold.
+        measure {
+            iteration += 1
+            input.change(WorkFilter(text: iteration.isMultiple(of: 2) ? "basket" : "receipt"))
+            host.rootView = AnyView(input.view.frame(width: size.width, height: size.height, alignment: .topLeading))
+            host.layoutSubtreeIfNeeded()
+            do {
+                let bitmap = try XCTUnwrap(HostedShot.bitmap(host))
+                lastImage = try XCTUnwrap(bitmap.cgImage)
+            } catch { renderFailure = error }
+        }
+        XCTAssertNil(renderFailure)
+        let image = try XCTUnwrap(lastImage)
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        try readWorkScreenshot(image, with: request)
+        let drawn = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+        let expected = iteration.isMultiple(of: 2) ? "Keep basket item" : "Read receipt item"
+        let hidden = iteration.isMultiple(of: 2) ? "Read receipt item" : "Keep basket item"
+        XCTAssertTrue(drawn.contains(expected), drawn)
+        XCTAssertFalse(drawn.contains(hidden), drawn)
+        XCTAssertEqual(input.projection.containers.first?.matchingCount, 50)
+    }
+}
+
+/// Vision's accurate recognizer can fail to initialize its E5RT model on a busy Mac. Read the same
+/// rendered pixels with its CPU recognizer in that case. Every visible-word assertion still runs.
+func readWorkScreenshot(_ image: CGImage, with request: VNRecognizeTextRequest) throws {
+    do {
+        try VNImageRequestHandler(cgImage: image).perform([request])
+    } catch {
+        request.recognitionLevel = .fast
+        for (stage, devices) in try request.supportedComputeStageDevices {
+            if let cpu = devices.first(where: { if case .cpu = $0 { return true }; return false }) {
+                request.setComputeDevice(cpu, for: stage)
+            }
+        }
+        try VNImageRequestHandler(cgImage: image).perform([request])
     }
 }
