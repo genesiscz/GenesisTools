@@ -537,16 +537,24 @@ final class WidgetTasksPolishTests: XCTestCase {
 
     func testOfflineTaskOffersResumeWithoutClaimingDelivery() async throws {
         let row = task()
+        let home = "/fixture/second home"
         let store = WidgetTasksStore(request: { args in
             if args.first != "update" { return try self.snapshot([row]) }
+            XCTAssertEqual(Array(args.suffix(2)), ["--source-home", home])
             return try JSONEncoder().encode(WidgetTaskUpdate(task: row, receipt: .init(
                 id: row.id, action: "send", from: row.state, state: row.state, revision: row.revision,
                 at: row.updatedTs, saved: false, needsResume: true)))
         })
         defer { store.stop() }
-        store.perform(.send, on: row)
+        store.perform(.send, on: row, sourceHome: home)
         await settled(store)
         XCTAssertEqual(store.resumeRequest?.id, row.id)
+        XCTAssertEqual(store.resumeRequest?.sourceHome, home)
+        for harness in Harness.allCases {
+            let command = try XCTUnwrap(CmuxCommandRunner.resumeCommand(
+                provider: harness.rawValue, sessionId: row.sessionId, sourceHome: home))
+            XCTAssertEqual(Array(command.prefix(2)), ["env", "\(harness.homeOverrideVariable)=\(home)"])
+        }
         XCTAssertNil(store.receipt)
     }
 

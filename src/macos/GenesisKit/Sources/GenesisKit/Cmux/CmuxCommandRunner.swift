@@ -69,13 +69,7 @@ public enum CmuxCommandRunner {
         guard let harness = Harness(rawValue: provider) else { return nil }
         let command = harness == .claude ? ["tools", "claude", "resume", sessionId] : harness.resumeArgs(sessionId: sessionId)
         guard let sourceHome, !sourceHome.isEmpty else { return command }
-        let variable: String
-        switch harness {
-        case .claude: variable = "CLAUDE_CONFIG_DIR"
-        case .codex: variable = "CODEX_HOME"
-        case .grok: variable = "GROK_HOME"
-        }
-        return ["env", "\(variable)=\(sourceHome)"] + command
+        return ["env", "\(harness.homeOverrideVariable)=\(sourceHome)"] + command
     }
 
     /// The `tools <agent>` that owns a session's cmux resolver: `tools codex cmux` and `tools grok cmux` know their own

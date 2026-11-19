@@ -103,6 +103,15 @@ public enum Harness: String, CaseIterable, Sendable {
         }
     }
 
+    /// The environment variable that selects the harness's native home.
+    public var homeOverrideVariable: String {
+        switch self {
+        case .claude: return "CLAUDE_CONFIG_DIR"
+        case .codex: return "CODEX_HOME"
+        case .grok: return "GROK_HOME"
+        }
+    }
+
     /// Argv that resumes a session in the default home (no pinned account).
     public func resumeArgs(sessionId: String) -> [String] {
         switch self {

@@ -18,6 +18,7 @@ import { dirname, join } from "node:path";
 import { harnessDriver, harnessDrivers } from "@genesiscz/utils/ai/providers/harness-index";
 import type { HarnessColor, HarnessDriver } from "@genesiscz/utils/harness/types";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { nativeHomeOverrideVariable } from "@genesiscz/utils/providers/session-paths";
 
 export const HARNESS_SWIFT_PATH = join(
     import.meta.dirname,
@@ -157,6 +158,11 @@ export function renderHarnessSwift(): string {
         "    /// The slash command that ends an interactive session.",
         "    public var exitCommand: String {",
         ...switchOverHarnesses((driver) => swiftString(harnessDriver(driver.id).parts.exit.command)),
+        "    }",
+        "",
+        "    /// The environment variable that selects the harness's native home.",
+        "    public var homeOverrideVariable: String {",
+        ...switchOverHarnesses((driver) => swiftString(nativeHomeOverrideVariable(driver.id))),
         "    }",
         "",
         "    /// Argv that resumes a session in the default home (no pinned account).",
