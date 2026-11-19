@@ -32,8 +32,10 @@ import {
 import { MeetingRule, meetingRuleNames } from "@genesiscz/utils/meetings/rules";
 import { seatsFingerprint } from "@genesiscz/utils/meetings/seats";
 import {
+    idSchema,
     ownerKey,
     readVoiceLibrary,
+    type SampleId,
     sameLine,
     sourceForVoicePrint,
     voicePrintSchema,
@@ -43,6 +45,7 @@ import { heardLineAt } from "@genesiscz/utils/transcribe/apply";
 import type { DictionaryEntry } from "@genesiscz/utils/transcribe/dictionary";
 import { heardIn, TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import { z } from "zod";
 import { prepareFindings } from "./add-findings";
 import { ANSWER_LOG_FILE, type AnswerEvent, appendAnswerEvent, appendAnswerEvents, roundRunning } from "./answer-log";
 import {
@@ -99,6 +102,12 @@ import { publishVoiceChanges, transitionAnsweredVoiceSamples, type VoicePrintCha
 
 const { log } = logger.scoped("meetings-journal");
 const backfilledEntry = journalEntrySchema.pick({ meeting: true, token: true, voices: true });
+const namingReceipt = z.object({
+    meeting: z.string(),
+    project: z.string(),
+    nameSamples: z.array(idSchema).optional(),
+    namedSamples: z.array(idSchema).optional(),
+});
 
 export {
     type Decided,
@@ -2083,11 +2092,53 @@ export class DecisionJournal {
             appendLines(
                 path,
                 Array.from(groups, ([token, voices]) =>
-                    SafeJSON.stringify({ meeting, token, voices }, { jsonl: true })
+                    SafeJSON.stringify(
+                        { meeting, token, voices, project: voices[0]!.project, nameSamples: voices.map((v) => v.id) },
+                        { jsonl: true }
+                    )
                 ),
                 { mode: 0o600 }
             )
         );
+    }
+
+    /** P6 receipt lines carry the naming intent beside the committed print. Older rows have no outstanding pass. */
+    pendingNaming(meeting: string, project: string): SampleId[] {
+        const path = this.backfillPath(meeting);
+        if (!existsSync(path)) {
+            return [];
+        }
+        const ids = new Set<SampleId>();
+        for (const line of readLinesSync(path, { containing: ['"nameSamples"', '"namedSamples"'] })) {
+            const parsed = namingReceipt.safeParse(parseJsonLine(line, path));
+            if (parsed.success && parsed.data.meeting === meeting && parsed.data.project === project) {
+                for (const id of parsed.data.nameSamples ?? []) {
+                    ids.add(id);
+                }
+                for (const id of parsed.data.namedSamples ?? []) {
+                    ids.delete(id);
+                }
+            }
+        }
+        return ids.size
+            ? readVoiceLibrary()
+                  .library.samples.filter(
+                      (sample) => sample.meeting === meeting && sample.project === project && ids.has(sample.id)
+                  )
+                  .map((sample) => sample.id)
+            : [];
+    }
+
+    async finishNaming(meeting: string, project: string, ids: SampleId[]): Promise<void> {
+        const path = this.backfillPath(meeting);
+        await this.options.store.withRecords({
+            ids: [meeting],
+            fn: async () => {
+                appendLines(path, [SafeJSON.stringify({ meeting, project, namedSamples: ids }, { jsonl: true })], {
+                    mode: 0o600,
+                });
+            },
+        });
     }
 
     private backfillPath(meeting: string): string {

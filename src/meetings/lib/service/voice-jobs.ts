@@ -3,6 +3,7 @@ import { JobRegistry } from "@genesiscz/utils/jobs";
 import { logger } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
+import type { SampleId } from "@genesiscz/utils/meetings/voice-library";
 import { DecisionJournal } from "../decision-journal";
 import { recordPeople } from "../listen-answers";
 import { errorText } from "../shared";
@@ -31,10 +32,7 @@ export class MeetingVoiceJobs {
     private readonly runs = new Map<string, Run>();
     private readonly seen = new Map<string, Map<string, string>>();
     private readonly cancelledTokens = new Map<string, Set<string>>();
-    private readonly naming = new Map<
-        string,
-        { timer: ReturnType<typeof setTimeout>; project: string; count: number }
-    >();
+    private readonly naming = new Map<string, { timer: ReturnType<typeof setTimeout> }>();
     private tail: Promise<void> = Promise.resolve();
     private closed = false;
 
@@ -164,6 +162,7 @@ export class MeetingVoiceJobs {
             { project, meeting: record.id, kind, step: "Learning confirmed lines", suppressRetry },
             async (run) => {
                 const job: LearningRun = {
+                    sourceAtEnqueue: record,
                     tokens,
                     signal: run.controller.signal,
                     acquiredBy: kind === "backfill" ? "backfill" : "live",
@@ -195,17 +194,22 @@ export class MeetingVoiceJobs {
                         },
                     });
                 }
-                if (run.row.added && !this.closed) {
+                const journal = new DecisionJournal({ store: this.options.store });
+                const pending =
+                    !this.closed && (run.row.added || kind === "backfill")
+                        ? journal.pendingNaming(record.id, project)
+                        : [];
+                if (pending.length) {
                     const config = await (this.options.config?.() ??
                         new MeetingsConfigStore(this.options.store.storage).read());
-                    this.scheduleNaming(record.id, project, run.row.added, config.meetings.voices.reproposeDelaySec);
+                    this.scheduleNaming(record.id, project, pending, config.meetings.voices.reproposeDelaySec);
                 }
                 return rows;
             }
         );
     }
 
-    private scheduleNaming(meeting: string, project: string, added: number, delaySec: number): void {
+    private scheduleNaming(meeting: string, project: string, ids: SampleId[], delaySec: number): void {
         if (this.closed) {
             return;
         }
@@ -213,7 +217,6 @@ export class MeetingVoiceJobs {
         if (previous) {
             clearTimeout(previous.timer);
         }
-        const count = added + (previous?.project === project ? previous.count : 0);
         const timer = setTimeout(() => {
             void this.tail
                 .then(() => {
@@ -221,7 +224,7 @@ export class MeetingVoiceJobs {
                         return;
                     }
                     this.naming.delete(meeting);
-                    const step = `Naming again with ${count} new samples`;
+                    const step = `Naming again with ${ids.length} new samples`;
                     return this.enqueue({ meeting, project, kind: "answer-samples", step }, async (run) => {
                         if (this.options.store.read(meeting)?.project !== project) {
                             return;
@@ -231,12 +234,13 @@ export class MeetingVoiceJobs {
                             meeting,
                             signal: run.controller.signal,
                         });
+                        await new DecisionJournal({ store: this.options.store }).finishNaming(meeting, project, ids);
                         this.options.named?.(meeting);
                     });
                 })
                 .catch((error: unknown) => log.debug({ error, meeting }, "voice naming job ended"));
         }, delaySec * 1000);
-        this.naming.set(meeting, { timer, count, project });
+        this.naming.set(meeting, { timer });
     }
 
     private update(run: Run, change: Partial<VoiceJob>): void {

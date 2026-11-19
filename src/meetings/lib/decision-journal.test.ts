@@ -69,10 +69,10 @@ import { OpenedMeeting } from "./opened-meeting";
 import { personStays, presenceOf, rosterPresence, stayLeaveSource } from "./person-stays";
 import { rejectFilterIds } from "./reject-filter";
 import { reviewRow } from "./review-rows";
-import { MEETINGS_PROTOCOL, meetingsMethod, voiceJobSchema } from "./service/api";
+import { MEETINGS_PROTOCOL, meetingsMethod } from "./service/api";
 import { InProcessMeetingsClient, SocketMeetingsClient } from "./service/client";
 import { startMeetingsService } from "./service/service";
-import { MeetingVoiceJobs } from "./service/voice-jobs";
+import type { MeetingVoiceJobs } from "./service/voice-jobs";
 import { assignmentReach } from "./speaker-assign";
 import * as voiceLabeler from "./speaker-labels/voice";
 import { correctTranscript } from "./transcript-corrections";
@@ -266,6 +266,7 @@ async function voiceAnswerFixture(
             correctVoiceSample({ kind: "reject", id: receipt.id, reason: "bad-audio" });
         },
         learn: async (token: string) => {
+            const { MeetingVoiceJobs } = await import("./service/voice-jobs");
             const jobs = new MeetingVoiceJobs({ store: fx.store, notify: () => {} });
             try {
                 await jobs.discover(fx.store.read(fx.meeting.id)!, "answer-samples", token);
@@ -300,108 +301,122 @@ describe("speaker answers and their project voice prints", () => {
     });
     afterEach(() => env.testing.set("GENESIS_TOOLS_HOME", previousHome));
 
-    test.each(["partial Undo", "cancel", "project", "owner", "audio", "rejection", "publication failure"] as const)(
-        "P6 commits a two-item confirm before embedding and checks %s at publication",
-        async (interruption) => {
-            const fx = await voiceAnswerFixture(undefined, [
-                speakerRange("i4", 0, {
-                    speaker: "Alice Example",
-                    rules: [MeetingRule.VoiceEmbedding],
-                    evidence: { endSec: 5 },
-                }),
-                speakerRange("i5", 10, {
-                    speaker: "Bob Example",
-                    rules: [MeetingRule.VoiceEmbedding],
-                    evidence: { endSec: 15 },
-                }),
-            ]);
-            const meeting = fx.meeting.id;
-            const events: import("./service/api").VoiceJob[] = [];
-            const jobs = new MeetingVoiceJobs({ store: fx.store, notify: (job) => events.push(job) });
-            const started = Promise.withResolvers<void>();
-            const resume = Promise.withResolvers<void>();
-            const embed = fx.embedLines;
-            fx.embed.mockImplementationOnce(async (input) => {
-                const lines = await embed(input);
-                started.resolve();
-                await resume.promise;
-                return lines;
-            });
-            try {
-                const confirm = await fx.journal.apply({
-                    meeting,
-                    actor: person,
-                    action: { kind: "confirm", items: ["i4", "i5"] },
-                });
-                expect(confirm.entry?.voices).toBeUndefined();
-                expect(fx.embed).not.toHaveBeenCalled();
-                const work = jobs.discover(fx.store.read(meeting)!, "answer-samples", confirm.entry!.token);
-                await started.promise;
-                expect(events.map((job) => job.state)).toContain("queued");
-                expect(events.at(-1)?.state).toBe("running");
-                if (interruption === "partial Undo") {
-                    await fx.journal.revert({ meeting, actor: person, token: confirm.entry!.token, items: ["i4"] });
-                } else if (interruption === "cancel") {
-                    expect(jobs.cancel(events.at(-1)!.id)?.state).toBe("cancelled");
-                    expect(jobs.discover(fx.store.read(meeting)!)).toBeUndefined();
-                } else if (interruption === "project" || interruption === "owner") {
-                    await fx.store.update(meeting, { command: "fixture", change: interruption }, (record) => {
-                        if (interruption === "project") {
-                            record.project = "changed-project";
-                        } else {
-                            const row = record.items.find((item) => item.id === "i4");
-                            if (row?.kind === "speaker-range") {
-                                row.speaker = "Bob Example";
-                            }
-                        }
-                    });
-                } else if (interruption === "audio") {
-                    appendFileSync(join(fx.store.folder(meeting), "voice-fixture.wav"), "different speech");
-                } else if (interruption === "rejection") {
-                    await fx.rejectFirst();
-                } else {
-                    mkdirSync(join(fx.store.folder(meeting), "voice-backfill.ndjson"));
-                }
-                resume.resolve();
-                if (interruption === "cancel" || interruption === "publication failure") {
-                    await expect(work!).rejects.toThrow();
-                    expect(events.at(-1)?.state).toBe(interruption === "cancel" ? "cancelled" : "failed");
-                    expect(readVoiceLibrary().library.samples).toEqual([]);
-                } else {
-                    await work;
-                    const added = interruption === "project" || interruption === "audio" ? 0 : 1;
-                    expect(events.at(-1)).toMatchObject({
-                        state: "done",
-                        added,
-                        skipped: 2 - added,
-                        progress: { done: 2, total: 2 },
-                    });
-                    expect(readVoiceLibrary().library.samples.map((s) => s.question)).toEqual(added ? ["i5"] : []);
-                    if (interruption === "partial Undo") {
-                        jobs.stop();
-                        const store = new MeetingStore(fx.store.storage);
-                        const restarted = new MeetingVoiceJobs({ store, notify: () => {} });
-                        try {
-                            await restarted.discover(store.read(meeting)!);
-                            expect(
-                                new DecisionJournal({ store })
-                                    .read(meeting)
-                                    .find((e) => e.token === confirm.entry!.token)
-                                    ?.voices?.map((v) => v.item)
-                            ).toEqual(["i5"]);
-                            expect(readVoiceLibrary().library.samples).toHaveLength(1);
-                        } finally {
-                            restarted.stop();
+    test.each([
+        "partial Undo",
+        "cancel",
+        "project",
+        "owner",
+        "audio",
+        "source line",
+        "rejection",
+        "publication failure",
+    ] as const)("P6 commits a two-item confirm before embedding and checks %s at publication", async (interruption) => {
+        const fx = await voiceAnswerFixture(undefined, [
+            speakerRange("i4", 0, {
+                speaker: "Alice Example",
+                rules: [MeetingRule.VoiceEmbedding],
+                evidence: { endSec: 5 },
+            }),
+            speakerRange("i5", 10, {
+                speaker: "Bob Example",
+                rules: [MeetingRule.VoiceEmbedding],
+                evidence: { endSec: 15 },
+            }),
+        ]);
+        const meeting = fx.meeting.id;
+        const events: import("./service/api").VoiceJob[] = [];
+        let jobs: MeetingVoiceJobs | undefined;
+        const started = Promise.withResolvers<void>();
+        const resume = Promise.withResolvers<void>();
+        const embed = fx.embedLines;
+        fx.embed.mockImplementationOnce(async (input) => {
+            const lines = await embed(input);
+            started.resolve();
+            await resume.promise;
+            return lines;
+        });
+        const decision = fx.journal.apply({ meeting, actor: person, action: { kind: "confirm", items: ["i4", "i5"] } });
+        try {
+            expect(
+                await Promise.race([
+                    decision.then(() => "decision returned"),
+                    started.promise.then(() => "embedder blocked"),
+                ])
+            ).toBe("decision returned");
+            const confirm = await decision;
+            expect(confirm.entry?.voices).toBeUndefined();
+            expect(fx.embed).not.toHaveBeenCalled();
+            const { MeetingVoiceJobs } = await import("./service/voice-jobs");
+            jobs = new MeetingVoiceJobs({ store: fx.store, notify: (job) => events.push(job) });
+            const work = jobs.discover(fx.store.read(meeting)!, "answer-samples", confirm.entry!.token);
+            await started.promise;
+            expect(events.map((job) => job.state)).toContain("queued");
+            expect(events.at(-1)?.state).toBe("running");
+            if (interruption === "partial Undo") {
+                await fx.journal.revert({ meeting, actor: person, token: confirm.entry!.token, items: ["i4"] });
+            } else if (interruption === "cancel") {
+                expect(jobs.cancel(events.at(-1)!.id)?.state).toBe("cancelled");
+                expect(jobs.discover(fx.store.read(meeting)!)).toBeUndefined();
+            } else if (interruption === "project" || interruption === "owner") {
+                await fx.store.update(meeting, { command: "fixture", change: interruption }, (record) => {
+                    if (interruption === "project") {
+                        record.project = "changed-project";
+                    } else {
+                        const row = record.items.find((item) => item.id === "i4");
+                        if (row?.kind === "speaker-range") {
+                            row.speaker = "Bob Example";
                         }
                     }
-                }
-            } finally {
-                resume.resolve();
-                jobs.stop();
-                fx.restore();
+                });
+            } else if (interruption === "audio") {
+                appendFileSync(join(fx.store.folder(meeting), "voice-fixture.wav"), "different speech");
+            } else if (interruption === "source line") {
+                (await fx.opened.meeting()).transcript[0]!.text = "Replacement line";
+            } else if (interruption === "rejection") {
+                await fx.rejectFirst();
+            } else {
+                mkdirSync(join(fx.store.folder(meeting), "voice-backfill.ndjson"));
             }
+            resume.resolve();
+            if (interruption === "cancel" || interruption === "publication failure") {
+                await expect(work!).rejects.toThrow();
+                expect(events.at(-1)?.state).toBe(interruption === "cancel" ? "cancelled" : "failed");
+                expect(readVoiceLibrary().library.samples).toEqual([]);
+            } else {
+                await work;
+                const added = interruption === "project" || interruption === "audio" ? 0 : 1;
+                expect(events.at(-1)).toMatchObject({
+                    state: "done",
+                    added,
+                    skipped: 2 - added,
+                    progress: { done: 2, total: 2 },
+                });
+                expect(readVoiceLibrary().library.samples.map((s) => s.question)).toEqual(added ? ["i5"] : []);
+                if (interruption === "partial Undo") {
+                    jobs.stop();
+                    const store = new MeetingStore(fx.store.storage);
+                    const restarted = new MeetingVoiceJobs({ store, notify: () => {} });
+                    try {
+                        await restarted.discover(store.read(meeting)!);
+                        expect(
+                            new DecisionJournal({ store })
+                                .read(meeting)
+                                .find((e) => e.token === confirm.entry!.token)
+                                ?.voices?.map((v) => v.item)
+                        ).toEqual(["i5"]);
+                        expect(readVoiceLibrary().library.samples).toHaveLength(1);
+                    } finally {
+                        restarted.stop();
+                    }
+                }
+            }
+        } finally {
+            resume.resolve();
+            await decision;
+            jobs?.stop();
+            fx.restore();
         }
-    );
+    });
 
     test("P6 offline CLI exits before learning and two service starts recover one line exactly once", async () => {
         const fx = await voiceAnswerFixture(
@@ -440,6 +455,7 @@ describe("speaker answers and their project voice prints", () => {
                 actor: { kind: "cli" },
             });
             expect(readVoiceLibrary().library.samples).toEqual([]);
+            const { voiceJobSchema } = await import("./service/api");
             for (const added of [1, 0]) {
                 const ready = Promise.withResolvers<void>();
                 const blocked = Promise.withResolvers<void>();
@@ -470,6 +486,9 @@ describe("speaker answers and their project voice prints", () => {
                 });
                 try {
                     if (added) {
+                        expect(await client.call("voices.jobs", { project: fx.project })).toEqual([
+                            expect.objectContaining({ kind: "backfill" }),
+                        ]);
                         await ready.promise;
                     }
                     const finished = Promise.withResolvers<void>();
@@ -500,6 +519,137 @@ describe("speaker answers and their project voice prints", () => {
         }
     }, 30_000);
 
+    test("P6 stale decision Undo preserves a later human transfer and redo uses the stored sibling", async () => {
+        const fx = await voiceAnswerFixture();
+        const meeting = fx.meeting.id;
+        try {
+            const { entry } = await fx.answer();
+            expect(entry?.voices).toBeUndefined();
+            await fx.learn(entry!.token);
+            const [first, sibling] = readVoiceLibrary().library.samples;
+            correctVoiceSample({ kind: "move", id: first!.id, to: { name: "Bob Example" } });
+            fx.embed.mockClear();
+            fx.embed.mockRejectedValue(new Error("Undo must use the journal receipt"));
+            const journal = new DecisionJournal({ store: new MeetingStore(fx.store.storage) });
+            const undo = await journal.revert({ meeting, token: entry!.token, actor: person });
+            const moved = readVoiceLibrary().library.samples;
+            expect(moved).toEqual([expect.objectContaining({ id: first!.id, owner: { name: "Bob Example" } })]);
+            await journal.revert({ meeting, token: undo.entry!.token, actor: person });
+            expect(readVoiceLibrary().library.samples).toEqual(
+                expect.arrayContaining([moved[0], expect.objectContaining({ id: sibling!.id, owner: sibling!.owner })])
+            );
+            expect(fx.embed).not.toHaveBeenCalled();
+        } finally {
+            fx.restore();
+        }
+    });
+
+    test("P6 a restart finishes pending naming from receipts without embedding or repeating the pass", async () => {
+        const fx = await voiceAnswerFixture();
+        const { MeetingVoiceJobs } = await import("./service/voice-jobs");
+        const named = Promise.withResolvers<void>();
+        const passes: string[] = [];
+        const start = () =>
+            new MeetingVoiceJobs({
+                store: new MeetingStore(fx.store.storage),
+                notify: (row) => {
+                    if (row.progress.step.startsWith("Naming again") && row.state === "done") {
+                        named.resolve();
+                    }
+                },
+                config: async () => meetingsConfigSchema.parse({ meetings: { voices: { reproposeDelaySec: 0 } } }),
+                nameMeeting: async ({ meeting }) => {
+                    passes.push(meeting);
+                    return { meeting, added: 0, warnings: [] };
+                },
+            });
+        const jobs = start();
+        try {
+            const answer = await fx.answer();
+            await fx.learn(answer.entry!.token);
+            fx.embed.mockClear();
+            fx.embed.mockRejectedValue(new Error("stored receipts must suffice"));
+            await jobs.discover(fx.store.read(fx.meeting.id)!);
+            await named.promise;
+            expect(passes).toEqual([fx.meeting.id]);
+            expect(fx.embed).not.toHaveBeenCalled();
+            expect(
+                new DecisionJournal({ store: new MeetingStore(fx.store.storage) }).pendingNaming(
+                    fx.meeting.id,
+                    fx.project
+                )
+            ).toEqual([]);
+            const again = start();
+            try {
+                await again.discover(fx.store.read(fx.meeting.id)!);
+                expect(again.busy).toBe(false);
+            } finally {
+                again.stop();
+            }
+        } finally {
+            jobs.stop();
+            fx.restore();
+        }
+    });
+
+    test("P6 assigning a project starts recovery and socket cancellation fences publication until explicit backfill", async () => {
+        const fx = await voiceAnswerFixture("");
+        const project = "new-rehearsal";
+        const meeting = fx.meeting.id;
+        const code = "project-learning";
+        const dir = mkdtempSync(join(tmpdir(), "voice-project-"));
+        const resume = Promise.withResolvers<void>();
+        const entered = Promise.withResolvers<void>();
+        const start = await startMeetingsService({ dir, code, store: () => fx.store, watch: false, idleMs: 0 });
+        if (start.status !== "started") {
+            throw new Error("Fixture needs its own service");
+        }
+        const client = await SocketMeetingsClient.connect(start.service.entry, {
+            role: "window",
+            protocol: MEETINGS_PROTOCOL,
+            code,
+        });
+        try {
+            const events: import("./service/api").VoiceJob[] = [];
+            const { voiceJobSchema } = await import("./service/api");
+            await client.subscribe({ meeting, project, events: ["voices.job"] }, ({ params }) =>
+                events.push(voiceJobSchema.parse(params))
+            );
+            await client.call("decision.apply", {
+                meeting,
+                action: { kind: "answer", question: "i2", answer: "Alice Example" },
+            });
+            expect(await client.call("voices.jobs", {})).toEqual([]);
+            expect(readVoiceLibrary().library.samples).toEqual([]);
+            // The mocked source handle refers to the original record; the real service opens the new record on each call.
+            fx.opened.record.project = project;
+            fx.embed.mockImplementationOnce(async (input) => {
+                entered.resolve();
+                await resume.promise;
+                return fx.embedLines(input);
+            });
+            await client.call("decision.apply", { meeting, action: { kind: "set", project } });
+            await entered.promise;
+            const [active] = await client.call("voices.jobs", { project });
+            expect(active).toMatchObject({ meeting, kind: "backfill", state: "running" });
+            expect(await client.call("voices.jobs.cancel", { id: active!.id })).toMatchObject({ state: "cancelled" });
+            resume.resolve();
+            const result = await client.call("voice.backfill", { meetings: [meeting] });
+            expect(result).toMatchObject({ added: 2, present: 0 });
+            expect(events.filter((e) => e.id === active!.id).map((e) => e.state)).toEqual(
+                expect.arrayContaining(["queued", "running", "cancelled"])
+            );
+            expect((await client.call("voices.jobs", { project })).map((r) => r.state)).toEqual(["cancelled", "done"]);
+            expect(readVoiceLibrary().library.samples.every((row) => row.project === project)).toBe(true);
+        } finally {
+            resume.resolve();
+            client.close();
+            start.service.stop("test end");
+            await start.service.stopped;
+            fx.restore();
+        }
+    });
+
     test("P6 a queued Undo retires only its item and consecutive publications coalesce one naming pass", async () => {
         const fx = await voiceAnswerFixture(undefined, [
             ...[
@@ -517,12 +667,17 @@ describe("speaker answers and their project voice prints", () => {
         const meeting = fx.meeting.id;
         const named = Promise.withResolvers<void>();
         const events: import("./service/api").VoiceJob[] = [];
+        const { MeetingVoiceJobs } = await import("./service/voice-jobs");
         const jobs = new MeetingVoiceJobs({
             store: fx.store,
-            notify: (row) => events.push(row),
+            notify: (row) => {
+                events.push(row);
+                if (row.state === "done" && row.progress.step.startsWith("Naming again")) {
+                    named.resolve();
+                }
+            },
             config: async () => meetingsConfigSchema.parse({ meetings: { voices: { reproposeDelaySec: 0.02 } } }),
             nameMeeting: async () => {
-                named.resolve();
                 return { meeting, added: 0, warnings: [] };
             },
         });

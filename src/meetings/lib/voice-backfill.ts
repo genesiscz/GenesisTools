@@ -1,6 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { sha256Json } from "@genesiscz/utils/hash";
 import { projectNameSchema } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { voiceRootMeeting } from "@genesiscz/utils/meetings/record";
@@ -14,7 +13,9 @@ import {
     journalVoices,
     prepareVoicePrints,
     type VoicePrintChange,
+    type VoiceSourceChecks,
     type VoiceTarget,
+    voiceLineVersions,
 } from "./voice-samples";
 import type { VoicesAccess } from "./voices";
 
@@ -31,8 +32,6 @@ interface BackfillDecision extends VoiceTarget {
     skipped?: string;
     missing?: number;
     refusals?: Map<string, number>;
-    transcriptVersion?: string;
-    audioCurrent?: () => boolean;
 }
 
 /**
@@ -49,12 +48,14 @@ async function prepareDecisions(
     journal: DecisionJournal,
     record: MeetingRecord,
     dryRun: boolean,
-    job: LearningRun
+    job: LearningRun,
+    checks: VoiceSourceChecks
 ) {
     const owners = new Map(
         record.items.filter((item) => item.status === "confirmed").map((item) => [item.id, item.decision?.token])
     );
     const people = recordPeople(record);
+    const sourceChanged = job.sourceAtEnqueue && !sameRecording(job.sourceAtEnqueue, record);
     const decisions: BackfillDecision[] = [];
     for (const entry of journal.read(record.id).reverse()) {
         if (job.tokens && !job.tokens.has(entry.token)) {
@@ -72,6 +73,10 @@ async function prepareDecisions(
                 decisions.push({ ...target, changes: [], skipped: "confirmation undone or replaced" });
                 continue;
             }
+            if (sourceChanged) {
+                decisions.push({ ...target, changes: [], skipped: "recording or source line changed" });
+                continue;
+            }
             const saved = journalVoices(entry, target.voice.item, record.project);
             decisions.push({ ...target, saved, changes: [...(saved ?? [])] });
         }
@@ -83,7 +88,7 @@ async function prepareDecisions(
             for (const prepared of await prepareVoicePrints(opened, active, {
                 dryRun,
                 signal: job.signal,
-                guardPublication: true,
+                checks,
                 planned: (count) =>
                     job.progress?.({
                         done: 0,
@@ -96,10 +101,6 @@ async function prepareDecisions(
                 const { target, changes } = prepared;
                 target.missing = prepared.missing;
                 target.refusals = prepared.refusals;
-                if (changes.length) {
-                    target.transcriptVersion = prepared.transcriptVersion;
-                    target.audioCurrent = prepared.audioCurrent;
-                }
                 target.changes.push(...changes);
                 if (!changes.length && !target.saved?.length && !target.refusals.size) {
                     target.skipped = "no complete line with usable channel and voice evidence";
@@ -120,6 +121,7 @@ async function prepareDecisions(
 }
 
 export interface LearningRun {
+    sourceAtEnqueue?: MeetingRecord;
     tokens?: ReadonlySet<string>;
     signal?: AbortSignal;
     acquiredBy?: "live" | "backfill";
@@ -149,7 +151,8 @@ export async function learnMeetingVoices(options: {
     const { access, record, project, dryRun, job = {} } = options;
     const journal = new DecisionJournal({ store: access.store });
     job.signal?.throwIfAborted();
-    const decisions = await prepareDecisions(access, journal, record, dryRun, job);
+    const checks: VoiceSourceChecks = new Map();
+    const decisions = await prepareDecisions(access, journal, record, dryRun, job, checks);
     const units = (decision: BackfillDecision) =>
         Math.max(
             1,
@@ -170,12 +173,12 @@ export async function learnMeetingVoices(options: {
         const root = voiceRootMeeting(access.store, current);
         const view = readVoiceLibrary();
         const items = new Map(current.items.map((item) => [item.id, item]));
-        const sameSource = sameRecording(record, current);
+        const sameSource = sameRecording(job.sourceAtEnqueue ?? record, current);
         const versions =
-            decisions.some((d) => d.transcriptVersion) && sameSource && current.project === project
+            checks.size && sameSource && current.project === project
                 ? await OpenedMeeting.of(access.store, current, access.linkedSource?.(current))
                       .meeting()
-                      .then((m) => sha256Json(m.transcript))
+                      .then((m) => voiceLineVersions(m))
                 : undefined;
         job.signal?.throwIfAborted();
         const changes: VoicePrintChange[] = [];
@@ -198,19 +201,21 @@ export async function learnMeetingVoices(options: {
             rows.set(voice.person, row);
             const item = items.get(voice.item);
             const original = entry.changes.find((change) => change.id === voice.item)?.after;
-            const reason =
-                decision.skipped ??
-                (current.project !== project
-                    ? "meeting project changed"
-                    : item?.status !== "confirmed" ||
-                        item.decision?.token !== entry.token ||
-                        !isDeepStrictEqual(item, original)
-                      ? "confirmation undone or replaced"
-                      : !sameSource ||
-                          (decision.transcriptVersion && versions !== decision.transcriptVersion) ||
-                          decision.audioCurrent?.() === false
-                        ? "recording or source line changed"
-                        : undefined);
+            let reason = decision.skipped;
+            if (!reason && current.project !== project) {
+                reason = "meeting project changed";
+            }
+            if (
+                !reason &&
+                (item?.status !== "confirmed" ||
+                    item.decision?.token !== entry.token ||
+                    !isDeepStrictEqual(item, original))
+            ) {
+                reason = "confirmation undone or replaced";
+            }
+            if (!reason && !sameSource) {
+                reason = "recording or source line changed";
+            }
             if (reason) {
                 skip(row, reason, units(decision));
                 continue;
@@ -222,6 +227,11 @@ export async function learnMeetingVoices(options: {
                 skip(row, "no complete line with usable channel and voice evidence", decision.missing);
             }
             for (const change of decision.changes) {
+                const check = checks.get(change);
+                if (check && (!versions || !check(versions))) {
+                    skip(row, "recording or source line changed");
+                    continue;
+                }
                 if (change.owner && !isDeepStrictEqual(meetingVoiceOwner(current, voice.person), change.owner)) {
                     skip(row, "confirmed person's identity changed");
                     continue;

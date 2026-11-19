@@ -4,6 +4,7 @@ import { type FileIdentity, fileIdentity } from "@genesiscz/utils/fs/identity-ca
 import { sha256Json } from "@genesiscz/utils/hash";
 import { voiceRootMeeting } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
+import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import {
     type ConfirmedSampleInput,
     changeVoiceLearning,
@@ -159,6 +160,15 @@ export function answeredVoiceTargets(entry: JournalEntry, people: readonly strin
     return confirmedVoices(entry, people).map((voice) => ({ entry, voice }));
 }
 
+/** Frozen before inference and compared per line at publication, including the next start which can set its end. */
+export function voiceLineVersions(meeting: SourceMeeting, keys = voiceLineKeys(meeting)): Map<string, string> {
+    return new Map(
+        keys.map((key, i) => [key, sha256Json([meeting.transcript[i], meeting.transcript[i + 1]?.startSec ?? null])])
+    );
+}
+
+export type VoiceSourceChecks = Map<VoicePrintChange, (versions: ReadonlyMap<string, string>) => boolean>;
+
 /** A backfill can decode all the confirmed windows of one recording in the same pass. */
 export async function prepareVoicePrints<T extends VoiceTarget>(
     opened: OpenedMeeting,
@@ -167,7 +177,7 @@ export async function prepareVoicePrints<T extends VoiceTarget>(
         dryRun?: boolean;
         signal?: AbortSignal;
         planned?: (count: number) => void;
-        guardPublication?: boolean;
+        checks?: VoiceSourceChecks;
     } = {}
 ) {
     const { dryRun, signal } = options;
@@ -180,50 +190,48 @@ export async function prepareVoicePrints<T extends VoiceTarget>(
     const meeting = await opened.meeting();
     const rootMeeting = voiceRootMeeting(opened.store, opened.record);
     const keys = voiceLineKeys(meeting);
-    const transcriptVersion = sha256Json(meeting.transcript);
+    const versions = options.checks ? voiceLineVersions(meeting, keys) : undefined;
     const lines = lineEvidence(
         meeting.transcript,
         (await opened.evidence()) ?? { segments: [], speaking: [] },
         undefined,
         energy.share
     );
-    const spans: LabelContext["lines"][number][] = lines.flatMap((line) => {
-        const share = line.micShare ?? line.energyMic;
-        if (share === undefined || share === 0.5) {
-            return [];
-        }
-        return [{ index: line.index, fromSec: line.startSec, toSec: line.endSec, seat: share > 0.5 ? "mic" : "call" }];
-    });
     const { library } = readVoiceLibrary();
-    const refusals = targets.map(() => new Map<string, number>());
-    const eligible = targets.map(({ voice, saved }, i) =>
-        spans
-            .filter(
-                (line) =>
-                    line.fromSec >= voice.fromSec &&
-                    line.toSec <= voice.endSec &&
-                    (!voice.seat || voice.seat === line.seat) &&
-                    !saved?.some(
-                        ({ after, source }) =>
-                            (!source?.spanKey || source.lineKey === keys[line.index]) &&
-                            after.fromSec === line.fromSec &&
-                            after.toSec === line.toSec &&
-                            after.seat === line.seat
-                    )
-            )
-            .filter((line) => {
-                const reason = refused(
-                    library,
-                    { rootMeeting, lineKey: keys[line.index]!, recordingKey: "" },
-                    meetingVoiceOwner(opened.record, voice.person)
-                );
-                if (reason) {
-                    const counts = refusals[i]!;
-                    counts.set(reason, (counts.get(reason) ?? 0) + 1);
-                }
-                return !reason;
-            })
-    );
+    const skipped = targets.map(() => new Map<string, number>());
+    const eligible = targets.map(({ voice, saved }, i) => {
+        const owner = meetingVoiceOwner(opened.record, voice.person);
+        return lines.flatMap((line): LabelContext["lines"] => {
+            if (line.startSec < voice.fromSec || line.endSec > voice.endSec || line.endSec <= line.startSec) {
+                return [];
+            }
+            const share = line.micShare ?? line.energyMic;
+            const seat = share === undefined || share === 0.5 ? undefined : share > 0.5 ? "mic" : "call";
+            const lineKey = keys[line.index]!;
+            if (
+                saved?.some(
+                    ({ after, source }) =>
+                        (!source?.spanKey || source.lineKey === lineKey) &&
+                        after.fromSec === line.startSec &&
+                        after.toSec === line.endSec &&
+                        (!seat || after.seat === seat)
+                )
+            ) {
+                return [];
+            }
+            const reason =
+                !seat || (voice.seat && voice.seat !== seat)
+                    ? "no complete line with usable channel and voice evidence"
+                    : refused(library, { rootMeeting, lineKey, recordingKey: "" }, owner);
+            if (reason || !seat) {
+                const counts = skipped[i]!;
+                const why = reason ?? "no complete line with usable channel and voice evidence";
+                counts.set(why, (counts.get(why) ?? 0) + 1);
+                return [];
+            }
+            return [{ index: line.index, fromSec: line.startSec, toSec: line.endSec, seat }];
+        });
+    });
     options.planned?.(
         targets.reduce(
             (sum, target, i) =>
@@ -232,15 +240,15 @@ export async function prepareVoicePrints<T extends VoiceTarget>(
                     1,
                     (target.saved?.length ?? 0) +
                         eligible[i]!.length +
-                        [...refusals[i]!.values()].reduce((sum, n) => sum + n, 0)
+                        [...skipped[i]!.values()].reduce((sum, n) => sum + n, 0)
                 ),
             0
         )
     );
-    const wanted = new Set(eligible.flat().map((line) => line.index));
+    const wanted = new Map(eligible.flat().map((line) => [line.index, line]));
     const embeddings = wanted.size
         ? await embedSeatLines({
-              lines: spans.filter((line) => wanted.has(line.index)),
+              lines: [...wanted.values()].sort((a, b) => a.index - b.index),
               sound: await opened.sound(),
               config: await opened.config(),
               signal,
@@ -261,17 +269,17 @@ export async function prepareVoicePrints<T extends VoiceTarget>(
             project,
             lines,
             hashes,
-            files: options.guardPublication ? files : undefined,
+            files: options.checks ? files : undefined,
+            checks: options.checks,
+            versions,
             keys,
             rootMeeting,
         });
         results.push({
             target,
             changes,
-            transcriptVersion,
-            refusals: refusals[i]!,
+            refusals: skipped[i]!,
             missing: eligible[i]!.length - changes.length,
-            audioCurrent: () => [...files].every(([path, identity]) => isDeepStrictEqual(fileIdentity(path), identity)),
         });
     }
     return results;
@@ -288,6 +296,8 @@ async function printsOf(options: {
     rootMeeting: string;
     hashes: Map<string, string>;
     files?: Map<string, FileIdentity>;
+    checks?: VoiceSourceChecks;
+    versions?: ReadonlyMap<string, string>;
 }): Promise<VoicePrintChange[]> {
     const { project, entry, voice, hashes } = options;
     const changes: VoicePrintChange[] = [];
@@ -327,7 +337,7 @@ async function printsOf(options: {
             confirmedAt: entry.at,
             question: voice.item,
         };
-        changes.push({
+        const change: VoicePrintChange = {
             project,
             owner: options.owner,
             person: voice.person,
@@ -336,7 +346,17 @@ async function printsOf(options: {
             token: entry.token,
             origin: entry.action.kind === "confirm" ? "confirm" : "answer",
             source: sourceForVoicePrint(after, options.rootMeeting, options.keys[line.index]),
-        });
+        };
+        changes.push(change);
+        const identity = options.files?.get(path);
+        const key = options.keys[line.index]!;
+        if (options.checks && identity && options.versions) {
+            const version = options.versions.get(key);
+            options.checks.set(
+                change,
+                (current) => current.get(key) === version && isDeepStrictEqual(fileIdentity(path), identity)
+            );
+        }
     }
 
     return changes;

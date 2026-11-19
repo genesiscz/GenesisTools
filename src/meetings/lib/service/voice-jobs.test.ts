@@ -1,18 +1,18 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
+import { MeetingsConfigStore, meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { MeetingStore, meetingItemSchema } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { readVoiceLibrary } from "@genesiscz/utils/meetings/voice-library";
+import { setConfigValue } from "../config-edit";
 import { DecisionJournal } from "../decision-journal";
 import { OpenedMeeting } from "../opened-meeting";
 import * as voice from "../speaker-labels/voice";
 import type { VoicePrintChange } from "../voice-samples";
-import { MeetingVoiceJobs } from "./voice-jobs";
 
 let previousHome: string;
 beforeEach(() => {
@@ -21,11 +21,14 @@ beforeEach(() => {
 });
 afterEach(() => env.testing.set("GENESIS_TOOLS_HOME", previousHome));
 
-test("P6 naming delay reads the persisted Meetings setting and defaults old configs to ten seconds", () => {
+test("P6 naming delay reads the persisted Meetings setting and defaults old configs to ten seconds", async () => {
     expect(meetingsConfigSchema.parse({}).meetings.voices.reproposeDelaySec).toBe(10);
     expect(
         meetingsConfigSchema.parse({ meetings: { voices: { reproposeDelaySec: 2 } } }).meetings.voices.reproposeDelaySec
     ).toBe(2);
+    const store = new MeetingsConfigStore();
+    await setConfigValue(store, "meetings.voices.reproposeDelaySec", 2);
+    expect((await new MeetingsConfigStore().read()).meetings.voices.reproposeDelaySec).toBe(2);
     expect(meetingsConfigSchema.safeParse({ meetings: { voices: { reproposeDelaySec: -1 } } }).success).toBe(false);
 });
 
@@ -89,6 +92,9 @@ test.each(["before library", "after library", "after journal"] as const)(
                 process.execPath,
                 "-e",
                 `
+            import { existsSync } from "node:fs";
+            import { join } from "node:path";
+            import { atomicWriteIo } from "./src/utils/storage/atomic-file";
             import { DecisionJournal } from "./src/meetings/lib/decision-journal";
             import { MeetingStore } from "./src/utils/meetings/record";
             const { cut, change } = await Bun.stdin.json();
@@ -101,8 +107,16 @@ test.each(["before library", "after library", "after journal"] as const)(
             }
             const store = new MeetingStore();
             await store.withRecords({ ids: [change.after.meeting], fn: async () => {
-                if (cut !== "before library") new StoppingJournal({store})
-                    .publishBackfilledVoices(change.after.meeting, [change], false);
+                if (cut === "before library") {
+                    const write = atomicWriteIo.writeSync;
+                    atomicWriteIo.writeSync = (...args) => {
+                        if (existsSync(join(store.folder(change.after.meeting), "voice-learning-pending.json"))) {
+                            process.kill(process.pid, "SIGKILL");
+                        }
+                        return write(...args);
+                    };
+                }
+                new StoppingJournal({store}).publishBackfilledVoices(change.after.meeting, [change], false);
                 process.kill(process.pid, "SIGKILL");
             } });
         `,
@@ -111,6 +125,8 @@ test.each(["before library", "after library", "after journal"] as const)(
         );
         await child.exited;
         expect(child.signalCode).toBe("SIGKILL");
+        expect(existsSync(join(store.folder(record.id), "voice-learning-pending.json"))).toBe(true);
+        expect(existsSync(join(store.folder(record.id), "voice-backfill.ndjson"))).toBe(cut === "after journal");
         const reopened = new DecisionJournal({ store: new MeetingStore() });
         if (cut === "before library") {
             expect(reopened.read(record.id)[0]?.voices).toBeUndefined();
@@ -164,6 +180,7 @@ test.each(["before library", "after library", "after journal"] as const)(
                 ],
             }));
         });
+        const { MeetingVoiceJobs } = await import("./voice-jobs");
         const jobs = new MeetingVoiceJobs({ store: new MeetingStore(), notify: () => {} });
         try {
             await jobs.discover(new MeetingStore().read(record.id)!);
