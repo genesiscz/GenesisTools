@@ -138,11 +138,23 @@ public final class ToolsServerClient: @unchecked Sendable {
     private let startEvery: TimeInterval
     private let queue = DispatchQueue(label: "dev.foltyn.genesis.tools-server", qos: .userInitiated)
     private let controlWrites = DispatchQueue(label: "dev.foltyn.genesis.tools-server.control", qos: .userInitiated)
-    // `bun scripts/benchmarks/hub/health-latency.ts normal|loaded` against a running hub, 2026-11-18: 100 probes
-    // per condition, p99 3.35 ms at load 18.9, max 3.62 ms, all 200 answered. Give a slow call one probe and the
-    // server time to reply.
-    private static let healthProbeDelay: DispatchTimeInterval = .seconds(5)
-    private static let healthReplyTimeout: DispatchTimeInterval = .seconds(2)
+    /// When a call that is still waiting gets its one health probe, and how long the server has to answer it.
+    package struct HealthTiming: Sendable {
+        package let probeDelay: DispatchTimeInterval
+        package let replyTimeout: DispatchTimeInterval
+
+        package init(probeDelay: DispatchTimeInterval, replyTimeout: DispatchTimeInterval) {
+            self.probeDelay = probeDelay
+            self.replyTimeout = replyTimeout
+        }
+
+        // `bun scripts/benchmarks/hub/health-latency.ts normal|loaded` against a running hub, 2026-11-18: 100
+        // probes per condition, p99 3.35 ms at load 18.9, max 3.62 ms, all 200 answered. Give a slow call one probe
+        // and the server time to reply.
+        package static let production = HealthTiming(probeDelay: .seconds(5), replyTimeout: .seconds(2))
+    }
+
+    private let healthTiming: HealthTiming
     /// Only the read queue handles health replies and their deadlines.
     private var unansweredProbes: Set<Int> = []
     private let lock = NSLock()
@@ -162,13 +174,24 @@ public final class ToolsServerClient: @unchecked Sendable {
     /// connection only, since the next server may have doors this one lacks.
     private var noDoor: [[String]] = []
 
-    public init(
+    public convenience init(
         socketPath: String = ToolsServerClient.defaultSocketPath(),
         startEvery: TimeInterval = 60,
         startServer: (@Sendable () -> Void)? = nil
     ) {
+        self.init(socketPath: socketPath, startEvery: startEvery, healthTiming: .production, startServer: startServer)
+    }
+
+    /// Tests pass a shorter `healthTiming` to run the probe and its deadline without waiting seconds.
+    package init(
+        socketPath: String,
+        startEvery: TimeInterval = 60,
+        healthTiming: HealthTiming,
+        startServer: (@Sendable () -> Void)? = nil
+    ) {
         self.socketPath = socketPath
         self.startEvery = startEvery
+        self.healthTiming = healthTiming
         self.startServer = startServer
     }
 
@@ -303,7 +326,7 @@ public final class ToolsServerClient: @unchecked Sendable {
         }
 
         if onCall != nil, let connection = attempt.connection {
-            queue.asyncAfter(deadline: .now() + Self.healthProbeDelay) { [weak self] in
+            queue.asyncAfter(deadline: .now() + healthTiming.probeDelay) { [weak self] in
                 self?.probeHealth(for: id, on: connection)
             }
         }
@@ -320,7 +343,7 @@ public final class ToolsServerClient: @unchecked Sendable {
         unansweredProbes.insert(probeID)
 
         // Keep reading the original answer and enforcing deadlines even if the socket's write buffer is full.
-        queue.asyncAfter(deadline: .now() + Self.healthReplyTimeout) { [weak self] in
+        queue.asyncAfter(deadline: .now() + healthTiming.replyTimeout) { [weak self] in
             guard let self, self.unansweredProbes.remove(probeID) != nil,
                   let finish = self.lock.withLock({ self.calls.removeValue(forKey: callID) })
             else { return }

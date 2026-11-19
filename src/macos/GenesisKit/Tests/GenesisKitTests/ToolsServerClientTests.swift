@@ -242,6 +242,18 @@ final class ToolsServerClientTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(started), 5)
     }
 
+    /// The probe tests run on a shorter timing; this pins the production thresholds they stand in for.
+    func testTheProductionHealthTimingIsFiveSecondsThenTwo() {
+        XCTAssertEqual(ToolsServerClient.HealthTiming.production.probeDelay, .seconds(5))
+        XCTAssertEqual(ToolsServerClient.HealthTiming.production.replyTimeout, .seconds(2))
+    }
+
+    /// The same order as production (a probe, then a shorter reply deadline), scaled down so no test waits seconds.
+    private static let quickHealth = ToolsServerClient.HealthTiming(
+        probeDelay: .milliseconds(400),
+        replyTimeout: .milliseconds(200)
+    )
+
     func testASilentServerFallsBackAfterOneHealthProbe() async throws {
         let probeTimes = OSAllocatedUnfairLock(initialState: [TimeInterval]())
         let starts = Counter()
@@ -252,7 +264,7 @@ final class ToolsServerClientTests: XCTestCase {
             return []
         }
         defer { server.stop() }
-        let client = ToolsServerClient(socketPath: server.path) { starts.increment() }
+        let client = ToolsServerClient(socketPath: server.path, healthTiming: Self.quickHealth) { starts.increment() }
         let bridge = ToolsBridge(binaryPath: "/bin/echo", server: client)
 
         // Without the probe, the bridge gives the server 20 s of this call's 60 s limit.
@@ -264,8 +276,8 @@ final class ToolsServerClientTests: XCTestCase {
         let probes = probeTimes.withLock { $0 }
         XCTAssertEqual(probes.count, 1)
         let probed = try XCTUnwrap(probes.first)
-        XCTAssertGreaterThanOrEqual(probed - began, 4.9)
-        XCTAssertGreaterThanOrEqual(ended - probed, 1.8)
+        XCTAssertGreaterThanOrEqual(probed - began, 0.35)
+        XCTAssertGreaterThanOrEqual(ended - probed, 0.15)
         XCTAssertTrue(client.isConnected)
         XCTAssertEqual(starts.value, 0)
     }
@@ -294,11 +306,11 @@ final class ToolsServerClientTests: XCTestCase {
             }
         }
         defer { server.stop() }
-        let client = ToolsServerClient(socketPath: server.path)
+        let client = ToolsServerClient(socketPath: server.path, healthTiming: Self.quickHealth)
         let slow = Task.detached { client.callSync(argv: ["slow"], timeout: 20) }
         await fulfillment(of: [health], timeout: 8)
-        // Keep the call pending past the health deadline and even a second five-second probe interval.
-        try await Task.sleep(for: .milliseconds(5500))
+        // Keep the call pending past the health deadline and even a second probe interval.
+        try await Task.sleep(for: .milliseconds(600))
         let release = await client.call(argv: ["release"], timeoutSeconds: 2)
         XCTAssertEqual(release?.exitCode, 0)
         let answer = await slow.value
