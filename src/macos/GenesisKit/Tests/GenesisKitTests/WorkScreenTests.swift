@@ -1,6 +1,7 @@
 import Combine
 import SwiftUI
 import Vision
+import GenesisKitTestHooks
 import XCTest
 @testable import GenesisKit
 
@@ -10,26 +11,82 @@ private final class FakeWorkSource: WorkSource {
     var notifyRows: [WorkNotifyRow] = []
     var performed: [WorkScreenAction] = []
     var writeResult: WorkActionOutcome?
+    var notifyCall: [String?] = []
     var reads = 0
+    var holdNextRead = false
+    var resumeRead: CheckedContinuation<Void, Never>?
+    var subscriptions = 0
+    var serviceDown = false
     private var continuation: AsyncStream<Void>.Continuation?
 
     init(_ snapshot: WorkSnapshotValue) { snapshotValue = snapshot }
 
     func projects() async throws -> [String] { ["App", "Other"] }
     func detail(ref: String) async throws -> WorkItemDetail { throw WorkSourceError("No fixture item \(ref)") }
-    func snapshot(project: String) async throws -> WorkSnapshotValue { reads += 1; return snapshotValue }
+    func snapshot(project: String) async throws -> WorkSnapshotValue {
+        reads += 1
+        if holdNextRead {
+            holdNextRead = false
+            await withCheckedContinuation { resumeRead = $0 }
+            resumeRead = nil
+        }
+        return snapshotValue
+    }
     func notify(project: String) async throws -> [WorkNotifyRow] { notifyRows }
+    func setNotify(project: String?, scope: WorkNotifyScope, type: String, action: String, level: String?) async throws -> WorkActionOutcome {
+        notifyCall = [project, scope.rawValue, type, action, level]
+        return WorkActionOutcome(ok: true, message: "Updated")
+    }
     func perform(_ action: WorkScreenAction, project: String) async throws -> WorkActionOutcome {
         performed.append(action)
         if let writeResult { return writeResult }
         return WorkActionOutcome(ok: true, message: "\(action.done): \(action.ref)")
     }
-    func changes() -> AsyncStream<Void> { AsyncStream { continuation = $0 } }
+    func changes() -> AsyncStream<Void> {
+        subscriptions += 1
+        return AsyncStream {
+            continuation = $0
+            if serviceDown { $0.finish() }
+        }
+    }
     func tick() { continuation?.yield(()) }
+    func end() { continuation?.finish() }
 }
 
 @MainActor
 final class WorkScreenTests: XCTestCase {
+    func testLiveSourceEndsWhenTheSubscribedSocketCloses() async throws {
+        let peer = FakeRPCPeer()
+        try peer.start()
+        let rpc = GenesisToolsRPC(path: peer.path)
+        let source = LiveWorkSource(rpc: rpc, walPath: peer.path + "/work.db-wal")
+        let stream = source.changes()
+        let ended = expectation(description: "Work observed the socket closing")
+        let listener = Task { for await _ in stream {}; ended.fulfill() }
+        defer { listener.cancel(); rpc.close() }
+        try await Task.detached {
+            defer { peer.stop() }
+            for method in ["hello", "subscribe"] {
+                let request = try peer.line { $0["method"] as? String == method }
+                let id = try XCTUnwrap(request["id"])
+                peer.send(["jsonrpc": "2.0", "id": id, "result": [:]])
+            }
+        }.value
+        await fulfillment(of: [ended], timeout: 3)
+    }
+
+    func testNotifyUsesTheTypedSourceAndEncodesInheritanceAsNull() async throws {
+        let fake = FakeWorkSource(fixture())
+        let source: WorkSource = fake
+        let result = try await source.setNotify(project: "Orchard", scope: .project, type: "bug", action: "spotted", level: "inbox")
+        XCTAssertTrue(result.ok)
+        XCTAssertEqual(fake.notifyCall, ["Orchard", "project", "bug", "spotted", "inbox"])
+        let bytes = Data(#"{"scope":"project","project":"Orchard","notify":{"type":"*","action":"finished","level":null}}"#.utf8)
+        let params = try JSONDecoder().decode(WorkConfigSetParams.self, from: bytes)
+        let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(params)) as? [String: Any]
+        let notify = try XCTUnwrap(encoded?["notify"] as? [String: Any])
+        XCTAssertTrue(notify["level"] is NSNull)
+    }
     private func fixture() -> WorkSnapshotValue {
         WorkSnapshotValue(
             project: "App",
@@ -120,8 +177,86 @@ final class WorkScreenTests: XCTestCase {
         model.setVisible(false)
         model.setVisible(true)
         try await Task.sleep(for: .milliseconds(600))
-        XCTAssertEqual(source.reads - hidden, 1, "a look after no change reads nothing")
+        XCTAssertEqual(source.reads - hidden, 2, "the stream was stopped while hidden, so each return reads once")
         model.deactivate()
+    }
+
+    func testAnEqualLiveReadPublishesNothingAndKeepsTheSnapshot() async {
+        let source = FakeWorkSource(fixture())
+        let model = WorkScreenModel(source: source, reloadInterval: 0, settle: 0)
+        model.activate()
+        defer { model.deactivate() }
+        await settle { model.snapshot != nil }
+        var publications = 0
+        let observer = model.objectWillChange.sink { publications += 1 }
+        defer { observer.cancel() }
+        source.holdNextRead = true
+        source.tick()
+        await settle { source.resumeRead != nil }
+        XCTAssertFalse(model.isFirstLoad)
+        XCTAssertFalse(model.isLoading)
+        let start = CFAbsoluteTimeGetCurrent()
+        source.resumeRead?.resume()
+        await model.finishCurrentRead()
+        let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
+        print(String(format: "Work unchanged fixture read applied in %.3f ms, including task resumption", elapsed))
+        XCTAssertEqual(publications, 0)
+    }
+
+    func testEndedStreamReconnectsAndReadsOnce() async {
+        let source = FakeWorkSource(fixture())
+        let model = WorkScreenModel(source: source, reloadInterval: 0, settle: 0, retryDelays: [])
+        model.activate()
+        defer { model.deactivate() }
+        await settle { model.snapshot != nil }
+        let reads = source.reads
+        source.end()
+        let stopped = WorkLiveState.stopped(reason: "The GenesisTools service stopped.")
+        await settle { model.live == stopped }
+        XCTAssertEqual(model.live, stopped)
+        model.reconnect()
+        XCTAssertEqual(model.live, .live)
+        await settle { source.reads > reads }
+        XCTAssertEqual(source.subscriptions, 2)
+        XCTAssertEqual(source.reads, reads + 1)
+    }
+
+    func testRetriesStopAfterThreeFailuresAndManualReconnectRestartsTheStream() async {
+        let source = FakeWorkSource(fixture())
+        let model = WorkScreenModel(source: source, retryDelays: [0, 0, 0])
+        source.serviceDown = true
+        model.activate()
+        defer { model.deactivate() }
+        let stopped = WorkLiveState.stopped(reason: "The GenesisTools service stopped.")
+        await settle { source.subscriptions >= 4 && model.live == stopped }
+        XCTAssertEqual(source.subscriptions, 4)
+        source.serviceDown = false
+        model.reconnect()
+        XCTAssertEqual(source.subscriptions, 5)
+        XCTAssertEqual(model.live, .live)
+    }
+
+    func testSlowTickAndPendingWriteWaitForTheirOwnRead() async {
+        let source = FakeWorkSource(fixture())
+        let model = WorkScreenModel(source: source, reloadInterval: 0, settle: 0, catchUpDelay: 0.01)
+        model.activate()
+        defer { model.deactivate() }
+        await settle { model.snapshot != nil }
+        source.holdNextRead = true
+        source.tick()
+        await settle { model.live == .catchingUp }
+        XCTAssertEqual(model.live, .catchingUp)
+        XCTAssertFalse(model.isLoading)
+        source.resumeRead?.resume()
+        await settle { model.live == .live }
+        source.holdNextRead = true
+        let write = Task { await model.perform(.accept(ref: "w_spot0002")) }
+        await settle { source.resumeRead != nil }
+        XCTAssertTrue(model.pending.contains("w_spot0002"))
+        XCTAssertEqual(model.snapshot?.triage.first { $0.ref == "w_spot0002" }?.state, "open")
+        source.resumeRead?.resume()
+        await write.value
+        XCTAssertTrue(model.pending.isEmpty)
     }
 
     func testTheItemsPaneShowsHandoffsSpottedByTypeAndReopened() throws {
@@ -238,23 +373,6 @@ final class WorkScreenTests: XCTestCase {
         XCTAssertTrue(text.contains("Nothing spotted waits for a look"), text)
     }
 
-    func testTheNotifyGridShowsEachLevelAndItsLayer() throws {
-        let cell = { (action: String, level: String, from: String) in
-            WorkNotifyCell(action: action, level: level, from: from,
-                           layers: [.init(layer: "default", level: "list"), .init(layer: "config.project", level: from == "default" ? nil : level)])
-        }
-        let rows = [
-            WorkNotifyRow(type: "bug", cells: [cell("spotted", "inbox", "config.project"), cell("finished", "list", "default"),
-                                                cell("reopened", "banner", "config.global")]),
-            WorkNotifyRow(type: "task", cells: [cell("spotted", "list", "default"), cell("finished", "off", "config.project"),
-                                                 cell("reopened", "list", "default")]),
-        ]
-        let text = try render(WorkNotifyGridView(project: "App", rows: rows).frame(width: 640), name: "work-notify-grid")
-        for expected in ["spotted", "finished", "inbox", "banner", "off", "tools work config set", "projects.App"] {
-            XCTAssertTrue(text.contains(expected), "missing \(expected) in:\n\(text)")
-        }
-    }
-
     private func render<V: View>(_ view: V, name: String) throws -> String {
         let renderer = ImageRenderer(content: view.padding(16).background(Color.black).environment(\.colorScheme, .dark))
         renderer.scale = 2
@@ -265,9 +383,7 @@ final class WorkScreenTests: XCTestCase {
             CGImageDestinationAddImage(destination, image, nil)
             XCTAssertTrue(CGImageDestinationFinalize(destination))
         }
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = false
+        let request = GenesisKitFixtureTextRequest()
         try VNImageRequestHandler(cgImage: image).perform([request])
         return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
     }

@@ -108,6 +108,13 @@ struct WorkProjectsList: View {
                         WorkProjectRow(name: name, selected: screen.project == name) { openProject(name) }
                             .equatable()
                             .id(name)
+                            .contextMenu {
+                                Button("Read the work again") {
+                                    if screen.project == name, screen.itemRef == nil { screen.reload() }
+                                    else { openProject(name) }
+                                }
+                                .accessibilityIdentifier("work.project.reload.\(name)")
+                            }
                     }
                 }
                 .padding(.horizontal, 6)
@@ -163,14 +170,19 @@ struct WorkMain: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            ForEach(screen.notices.filter { $0.project == screen.project }) { notice in
-                NoticePill(text: notice.outcome.message, isError: !notice.outcome.ok,
-                           fixes: notice.failure.map { [.details($0)] } ?? [], dismiss: { screen.clearNotice(notice.id) })
-                    .padding(.horizontal, 18)
-                    .padding(.top, 8)
+            if screen.pane == .notify, screen.project != nil, screen.itemRef == nil {
+                WorkNotifyPane(screen: screen).id(screen.project)
+            } else {
+                content
+                    .workRowUpdates(screen: screen)
+                    .overlay {
+                        if screen.isFirstLoad && screen.isLoading && screen.project != nil && screen.itemRef == nil {
+                            ProgressView("Reading this project's work").controlSize(.small)
+                        }
+                    }
             }
-            content
         }
+        .noticeStack(screen.noticeStack)
         .hubSurface(.content)
         .onChange(of: screen.snapshot?.project, initial: true) { _, project in
             if project != nil { resetSectionFolds() }
@@ -184,58 +196,7 @@ struct WorkMain: View {
     }
 
     private var header: some View {
-        TitlebarHeader {
-            HStack(spacing: 10) {
-                Group {
-                    Image(systemName: "checklist").foregroundColor(ReviewPalette.renamed)
-                    Text("Work").font(.system(size: 14, weight: .semibold))
-                    Text(verbatim: (screen.itemRef == nil ? screen.project : screen.itemDetail?.item.project) ?? "")
-                        .font(.system(size: 11.5))
-                        .foregroundColor(ReviewPalette.dim)
-                        .lineLimit(1)
-                }
-                .titlebarLabel()
-                if let summary {
-                    // Every count opens what it counts: 47 handoffs push the spotted items far below the fold.
-                    HStack(spacing: 2) {
-                        ForEach(Array(summary.enumerated()), id: \.offset) { index, part in
-                            if index > 0 { Text(verbatim: "·").foregroundColor(ReviewPalette.dim) }
-                            Button {
-                                foldedSections.remove(part.section)
-                                screen.pane = .items
-                                jump = part.section
-                            } label: {
-                                ViewThatFits(in: .horizontal) {
-                                    Text(verbatim: part.text).fixedSize()
-                                    Label(String(part.count), systemImage: part.symbol).fixedSize()
-                                }
-                                    .foregroundColor(ReviewPalette.dim)
-                                    .padding(.horizontal, 3).frame(minHeight: 24).contentShape(Rectangle())
-                            }
-                            .buttonStyle(.genHoverPlain())
-                            .instantTooltip("Show the " + part.section.lowercased() + " section")
-                            .accessibilityLabel("Show \(part.text)")
-                        }
-                    }
-                    .font(.system(size: 11.5))
-                }
-                Spacer()
-                GenSegmentedTabs("Work pane", items: WorkScreenModel.Pane.allCases.map { .init($0, $0.title) },
-                                 selection: $screen.pane, minSegmentWidth: 96)
-                    .frame(width: 220)
-                if screen.isLoading {
-                    ProgressView().controlSize(.small).accessibilityLabel("Loading")
-                }
-                IconButton(systemName: "arrow.clockwise", tooltip: "Read this project's work again") { screen.reload() }
-            }
-        }
-    }
-
-    private var summary: [(text: String, section: String, count: Int, symbol: String)]? {
-        guard screen.itemRef == nil, let snapshot = screen.snapshot else { return nil }
-        return [(Plural.count(snapshot.containers.count, "container"), WorkItemsView.containersTitle, snapshot.containers.count, "tray.full"),
-                (Plural.count(snapshot.spotted.count, "spotted item"), WorkItemsView.spottedTitle, snapshot.spotted.count, "eye"),
-                (Plural.count(snapshot.reopened.count, "reopened item"), WorkItemsView.reopenedTitle, snapshot.reopened.count, "arrow.uturn.backward")]
+        WorkHeader(screen: screen, onJump: { section in foldedSections.remove(section); jump = section })
     }
 
     @ViewBuilder
@@ -324,5 +285,83 @@ struct WorkMain: View {
             }
             }
         }
+    }
+}
+
+/// The title bar reads snapshot values only. A fixed trailing recovery slot keeps the tabs in place when live
+/// updates stop; loading and catching up deliberately have no header indicator.
+struct WorkHeader: View {
+    @ObservedObject var screen: WorkScreenModel
+    /// Opens the Items section a count names; nil leaves the counts unclickable.
+    var onJump: ((String) -> Void)?
+
+    var body: some View {
+        TitlebarHeader {
+            HStack(spacing: 10) {
+                Group {
+                    Image(systemName: "checklist").foregroundColor(ReviewPalette.renamed)
+                    Text("Work").font(.system(size: 14, weight: .semibold))
+                    Text(verbatim: (screen.itemRef == nil ? screen.project : screen.itemDetail?.item.project) ?? "")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(ReviewPalette.dim)
+                        .lineLimit(1)
+                }
+                .titlebarLabel()
+                if let summary {
+                    // Every count opens what it counts: 47 handoffs push the spotted items far below the fold.
+                    HStack(spacing: 2) {
+                        ForEach(Array(summary.enumerated()), id: \.offset) { index, part in
+                            if index > 0 { Text(verbatim: "·").foregroundColor(ReviewPalette.dim) }
+                            Button {
+                                screen.pane = .items
+                                onJump?(part.section)
+                            } label: {
+                                ViewThatFits(in: .horizontal) {
+                                    Text(verbatim: part.text).fixedSize()
+                                    Label(String(part.count), systemImage: part.symbol).fixedSize()
+                                }
+                                    .foregroundColor(ReviewPalette.dim)
+                                    .padding(.horizontal, 3).frame(minHeight: 24).contentShape(Rectangle())
+                            }
+                            .buttonStyle(.genHoverPlain())
+                            .disabled(onJump == nil)
+                            .instantTooltip("Show the " + part.section.lowercased() + " section")
+                            .accessibilityLabel("Show \(part.text)")
+                        }
+                    }
+                    .font(.system(size: 11.5))
+                    .monospacedDigit()
+                }
+                Spacer()
+                GenSegmentedTabs("Work pane", items: WorkScreenModel.Pane.allCases.map { .init($0, $0.title) },
+                                 selection: $screen.pane, minSegmentWidth: 96)
+                    .frame(width: 220)
+                ZStack(alignment: .trailing) {
+                    if case .stopped(let reason) = screen.live {
+                        Button(action: screen.reconnect) {
+                            Label("Not live", systemImage: "arrow.clockwise")
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(ReviewPalette.modified)
+                                .padding(.horizontal, 8)
+                                .frame(minHeight: 24)
+                                .background(ReviewPalette.modified.opacity(0.12), in: Capsule())
+                        }
+                        .buttonStyle(.genHoverPlain())
+                        .instantTooltip("\(reason) Reconnect to follow changes again.")
+                        .accessibilityLabel("Reconnect live updates")
+                        .accessibilityValue("Not live")
+                        .accessibilityIdentifier("work.live.reconnect")
+                    }
+                }
+                .frame(width: 84, height: 24, alignment: .trailing)
+            }
+        }
+    }
+
+    private var summary: [(text: String, section: String, count: Int, symbol: String)]? {
+        guard screen.itemRef == nil, let snapshot = screen.snapshot else { return nil }
+        return [(Plural.count(snapshot.containers.count, "container"), WorkItemsView.containersTitle, snapshot.containers.count, "tray.full"),
+                (Plural.count(snapshot.spotted.count, "spotted item"), WorkItemsView.spottedTitle, snapshot.spotted.count, "eye"),
+                (Plural.count(snapshot.reopened.count, "reopened item"), WorkItemsView.reopenedTitle, snapshot.reopened.count, "arrow.uturn.backward")]
     }
 }

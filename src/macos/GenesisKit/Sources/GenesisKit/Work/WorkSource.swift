@@ -129,17 +129,38 @@ public struct WorkNotifyCell: Identifiable, Equatable, Sendable {
     public struct Layer: Equatable, Sendable {
         public var layer: String
         public var level: String?
-        public init(layer: String, level: String?) { self.layer = layer; self.level = level }
+        public var wildcard: Bool
+        public var rule: WorkNotifyRule?
+        public var fallback: String?
+        public init(layer: String, level: String?, wildcard: Bool = false, rule: WorkNotifyRule? = nil, fallback: String? = nil) {
+            self.layer = layer; self.level = level; self.wildcard = wildcard; self.rule = rule
+            self.fallback = fallback
+        }
     }
 
     public var action: String
     public var level: String
     public var from: String
     public var layers: [Layer]
+    public var minSeverity: String?
+    public var repoPath: String?
+    public var builtInLevel: String
+    public var writable: Bool { from != "config.repo" }
+    /// The strongest rule left when the concrete override at this scope is removed.
+    public func inheriting(_ scope: WorkNotifyScope) -> (level: String, layer: String) {
+        let removed = scope == .project ? "config.project" : "config.global"
+        for entry in layers.reversed() {
+            let value = entry.layer == removed && !entry.wildcard ? entry.fallback : entry.level
+            if let value { return (value, entry.layer) }
+        }
+        return (builtInLevel, "default")
+    }
     public var id: String { action }
 
-    public init(action: String, level: String, from: String, layers: [Layer]) {
+    public init(action: String, level: String, from: String, layers: [Layer],
+                minSeverity: String? = nil, repoPath: String? = nil, builtInLevel: String = "list") {
         self.action = action; self.level = level; self.from = from; self.layers = layers
+        self.minSeverity = minSeverity; self.repoPath = repoPath; self.builtInLevel = builtInLevel
     }
 }
 
@@ -201,7 +222,11 @@ public struct WorkActionOutcome: Equatable, Sendable {
     public var message: String
     /// A connector can complete some pushes before another fails. Preserve the measured outcome on screen.
     public var partial: Bool
-    public init(ok: Bool, message: String, partial: Bool = false) { self.ok = ok; self.message = message; self.partial = partial }
+    /// The rules a notification write changed, so Undo can put them back.
+    public var changes: [WorkNotifyChange]
+    public init(ok: Bool, message: String, partial: Bool = false, changes: [WorkNotifyChange] = []) {
+        self.ok = ok; self.message = message; self.partial = partial; self.changes = changes
+    }
 }
 
 public struct WorkActionNotice: Identifiable {
@@ -228,6 +253,56 @@ public protocol WorkSource: AnyObject {
     func perform(_ action: WorkScreenAction, project: String) async throws -> WorkActionOutcome
     /// A tick for each change of the store, from any writer (the service's `work.changed`, a CLI or MCP write).
     func changes() -> AsyncStream<Void>
+    // MARK: - Notify
+    func setNotify(project: String?, scope: WorkNotifyScope, type: String, action: String, level: String?) async throws -> WorkActionOutcome
+    func restoreNotify(project: String?, scope: WorkNotifyScope, changes: [WorkNotifyChange]) async throws -> WorkActionOutcome
+}
+
+public enum WorkNotifyScope: String, Sendable { case project, global }
+
+/// Raw values at the edited layer. Inheritance encodes as an explicit JSON null in the Undo request.
+public enum WorkNotifyRule: Codable, Equatable, Sendable {
+    case inherit, level(String), threshold(level: String, minSeverity: String)
+    private struct Threshold: Codable { let level: String; let minSeverity: String }
+
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.singleValueContainer()
+        if box.decodeNil() { self = .inherit }
+        else if let level = try? box.decode(String.self) { self = .level(level) }
+        else {
+            let rule = try box.decode(Threshold.self)
+            self = .threshold(level: rule.level, minSeverity: rule.minSeverity)
+        }
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.singleValueContainer()
+        switch self {
+        case .inherit: try box.encodeNil()
+        case .level(let value): try box.encode(value)
+        case .threshold(let value, let severity): try box.encode(Threshold(level: value, minSeverity: severity))
+        }
+    }
+}
+
+public struct WorkNotifyChange: Codable, Equatable, Sendable {
+    public var path: String
+    public var type: String
+    public var action: String
+    public var from: WorkNotifyRule
+    public var to: WorkNotifyRule
+    public init(path: String, type: String, action: String, from: WorkNotifyRule, to: WorkNotifyRule) {
+        self.path = path; self.type = type; self.action = action; self.from = from; self.to = to
+    }
+}
+
+// Read-only sources can still be used by the hub and its static previews.
+public extension WorkSource {
+    func setNotify(project: String?, scope: WorkNotifyScope, type: String, action: String, level: String?) async throws -> WorkActionOutcome {
+        throw WorkSourceError("This source cannot edit notification rules.")
+    }
+    func restoreNotify(project: String?, scope: WorkNotifyScope, changes: [WorkNotifyChange]) async throws -> WorkActionOutcome {
+        throw WorkSourceError("This source cannot restore notification rules.")
+    }
 }
 
 /// The `work` area through the generated client. Each answer is an `ActionOutcome` around the method's reply; it is
@@ -237,9 +312,9 @@ public final class LiveWorkSource: WorkSource {
     private let rpc: GenesisToolsRPC
     private let walPath: String
 
-    public init(rpc: GenesisToolsRPC = .shared,
+    public init(rpc: GenesisToolsRPC? = nil,
                 walPath: String = GenesisToolsHome.path("work/work.db-wal")) {
-        self.rpc = rpc
+        self.rpc = rpc ?? .shared
         self.walPath = walPath
     }
 
@@ -252,8 +327,12 @@ public final class LiveWorkSource: WorkSource {
         let call = WorkTreeParamsCall(project: project)
         async let tree = rpc.work.tree(WorkTreeParams(project: project, call: call))
         async let triage = rpc.work.triage(WorkTriageParams(project: project, call: WorkTriageParamsCall(project: project)))
-        let treeData: TreeData = try reply(await tree)
-        let rows: [WorkTriageValue] = try reply(await triage)
+        return try await assembleSnapshot(project: project, tree: tree, triage: triage)
+    }
+
+    private nonisolated func assembleSnapshot(project: String, tree: WorkTreeResult, triage: WorkTriageResult) async throws -> WorkSnapshotValue {
+        let treeData: TreeData = try reply(tree)
+        let rows: [WorkTriageValue] = try reply(triage)
         return WorkSnapshotValue(project: project, containers: treeData.containers, triage: rows)
     }
 
@@ -279,13 +358,48 @@ public final class LiveWorkSource: WorkSource {
     }
 
     public func notify(project: String) async throws -> [WorkNotifyRow] {
-        let data: ConfigData = try reply(await rpc.work.config(WorkConfigParams(project: project, call: WorkConfigParamsCall(project: project))))
+        let result = try await rpc.work.config(WorkConfigParams(project: project, call: .init(project: project)))
+        return try await notifyRows(from: result)
+    }
+
+    private nonisolated func notifyRows(from result: WorkConfigResult) async throws -> [WorkNotifyRow] {
+        let data: ConfigData = try reply(result)
         return data.rows.map { row in
             WorkNotifyRow(type: row.type, cells: row.notify.map { cell in
-                WorkNotifyCell(action: cell.action, level: cell.resolved.level, from: cell.resolved.from,
-                               layers: cell.resolved.layers.map { .init(layer: $0.layer, level: $0.value) })
+                let data = cell.editor ?? cell.resolved
+                return WorkNotifyCell(action: cell.action, level: data.level, from: data.from,
+                               layers: data.layers.map { .init(layer: $0.layer, level: $0.value,
+                                                                wildcard: $0.wildcard ?? false, rule: $0.rule, fallback: $0.fallback) },
+                               minSeverity: data.minSeverity, repoPath: data.repoPath,
+                               builtInLevel: data.builtInLevel ?? "list")
             })
         }
+    }
+
+    // MARK: - Notify
+    public func setNotify(project: String?, scope: WorkNotifyScope, type: String, action: String,
+                          level: String?) async throws -> WorkActionOutcome {
+        guard let type = WorkConfigSetParamsNotifyType(rawValue: type),
+              let action = WorkConfigSetParamsNotifyAction(rawValue: action) else {
+            throw WorkSourceError("Choose a known work type and change.")
+        }
+        let choice = level.flatMap(WorkConfigSetParamsNotifyLevel.init(rawValue:))
+        guard level == nil || choice != nil else { throw WorkSourceError("Choose a known notification level.") }
+        return try await changeNotify(.init(scope: scope == .global ? .value1 : .value0, project: project,
+                                             notify: .init(type: type, action: action, level: choice), call: .init(project: project)))
+    }
+
+    public func restoreNotify(project: String?, scope: WorkNotifyScope, changes: [WorkNotifyChange]) async throws -> WorkActionOutcome {
+        let restore = try JSONDecoder().decode([WorkConfigSetParamsRestoreItem].self, from: JSONEncoder().encode(changes))
+        return try await changeNotify(.init(scope: scope == .global ? .value1 : .value0, project: project,
+                                             restore: restore, call: .init(project: project)))
+    }
+
+    private func changeNotify(_ params: WorkConfigSetParams) async throws -> WorkActionOutcome {
+        struct Changes: Decodable { var changed: [WorkNotifyChange] }
+        let data: Changes = try reply(await rpc.work.configSet(params))
+        return WorkActionOutcome(ok: true, message: data.changed.isEmpty ? "The rules already match" : "Notification rules updated",
+                                 changes: data.changed)
     }
 
     public func perform(_ action: WorkScreenAction, project: String) async throws -> WorkActionOutcome {
@@ -330,19 +444,22 @@ public final class LiveWorkSource: WorkSource {
     public func changes() -> AsyncStream<Void> {
         let rpc = rpc
         let wal = walPath
+        let directory = (wal as NSString).deletingLastPathComponent
+        let config = (directory as NSString).appendingPathComponent("config.json")
         return AsyncStream { continuation in
             // A write through the service sends `work.changed`; a write of the CLI or the MCP tools only touches the
             // store's WAL file, which every write changes (a write after a checkpoint creates it again).
             let events = Task { @MainActor in
+                // The event stream ends, with an error, when the service connection closes; the screen then reads as stopped.
                 do {
                     for try await _ in rpc.events.workChanged { continuation.yield(()) }
                 } catch {
-                    // The stream ends with the connection error when the service goes; the WAL watcher still sees writes.
                     workSourceLog.notice("work.changed ended: \(error.localizedDescription, privacy: .public)")
                 }
+                continuation.finish()
             }
-            let watcher = DirectoryWatcher(paths: [(wal as NSString).deletingLastPathComponent], latency: 0.3,
-                                           accepts: { $0 == wal }) { _ in continuation.yield(()) }
+            let watcher = DirectoryWatcher(paths: [directory], latency: 0.3,
+                                           accepts: { $0 == wal || $0 == config }) { _ in continuation.yield(()) }
             continuation.onTermination = { _ in
                 events.cancel()
                 watcher.stop()
@@ -386,13 +503,17 @@ public final class LiveWorkSource: WorkSource {
         struct Row: Decodable {
             struct Notify: Decodable {
                 struct Resolved: Decodable {
-                    struct Layer: Decodable { var layer: String; var value: String? }
+                    struct Layer: Decodable { var layer: String; var value: String?; var wildcard: Bool?; var rule: WorkNotifyRule?; var fallback: String? }
                     var level: String
                     var from: String
                     var layers: [Layer]
+                    var minSeverity: String?
+                    var repoPath: String?
+                    var builtInLevel: String?
                 }
                 var action: String
                 var resolved: Resolved
+                var editor: Resolved?
             }
             var type: String
             var notify: [Notify]
@@ -400,11 +521,11 @@ public final class LiveWorkSource: WorkSource {
         var rows: [Row]
     }
 
-    private func decode<D: Decodable, E: Encodable>(_ result: E) throws -> Envelope<D> {
+    private nonisolated func decode<D: Decodable, E: Encodable>(_ result: E) throws -> Envelope<D> {
         try JSONDecoder().decode(Envelope<D>.self, from: JSONEncoder().encode(result))
     }
 
-    private func reply<D: Decodable, E: Encodable>(_ result: E) throws -> D {
+    private nonisolated func reply<D: Decodable, E: Encodable>(_ result: E) throws -> D {
         let outcome: Envelope<D> = try decode(result)
         guard let value = outcome.value else {
             throw WorkSourceError(outcome.skipped.first?.reason ?? "The work service could not answer")

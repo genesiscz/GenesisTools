@@ -1,6 +1,10 @@
 import Foundation
 import SwiftUI
 
+public enum WorkLiveState: Equatable, Sendable {
+    case live, catchingUp, stopped(reason: String)
+}
+
 /// The state of the Work screen of one project. It loads through a `WorkSource` and runs the writes of the rows.
 ///
 /// Every session writes the store (to-do rows, handoffs, spots), and one reload costs about 1.3 s of CPU in the
@@ -15,7 +19,7 @@ public final class WorkScreenModel: ObservableObject {
     }
 
     @Published public private(set) var projects: [String] = []
-    /// The first read of the projects ended, whatever it found: a store with no project settles here.
+    /// The first project read for this activation ended, whatever it found. An empty store settles here.
     @Published public private(set) var projectsLoaded = false
     @Published public var project: String? {
         didSet {
@@ -26,15 +30,19 @@ public final class WorkScreenModel: ObservableObject {
                 itemDetail = nil
                 snapshot = nil
                 notifyRows = []
-                reload()
+                clearProjectEdits()
+                if failure != nil { failure = nil }
+                isFirstLoad = true
+                read()
             }
         }
     }
     @Published public var pane: Pane = .items {
         didSet {
             if pane != oldValue {
+                if failure != nil { failure = nil }
                 if pane == .notify { itemRef = nil; itemDetail = nil }
-                reload()
+                read()
             }
         }
     }
@@ -42,8 +50,14 @@ public final class WorkScreenModel: ObservableObject {
     @Published public private(set) var itemDetail: WorkItemDetail?
     private var adoptingItemProject = false
     @Published public private(set) var snapshot: WorkSnapshotValue?
+    private var confirmedSnapshot: WorkSnapshotValue?
+    private var pendingItemStates: [String: String] = [:]
+    public private(set) var rowAnimation: Bool?
     @Published public private(set) var notifyRows: [WorkNotifyRow] = []
+    @Published public private(set) var notifyLoaded = false
     @Published public private(set) var isLoading = false
+    @Published public private(set) var isFirstLoad = true
+    @Published public private(set) var live: WorkLiveState = .live
     @Published public private(set) var failure: String?
     /// The answer of the last write: ok shows as a fading notice, a refusal stays until the next write.
     @Published public private(set) var notice: WorkActionOutcome?
@@ -52,6 +66,12 @@ public final class WorkScreenModel: ObservableObject {
     }
     /// Items with a write on its way; their row shows it and refuses a second click.
     @Published public private(set) var pending: Set<String> = []
+    @Published public private(set) var notifyPending: [String: String] = [:]
+    @Published public private(set) var notifyCommand: String?
+    public let noticeStack = NoticeStackModel()
+    /// The stacked copy of each item notice, so closing or replacing one closes its card too.
+    private var stackedNotices: [UUID: StackedNotice.ID] = [:]
+    private var notifyGeneration = UUID()
 
     private let source: WorkSource
     private var openingCandidates: [String]?
@@ -60,6 +80,12 @@ public final class WorkScreenModel: ObservableObject {
     /// How long a burst must be quiet before its reload, within `reloadInterval`.
     let settle: TimeInterval
     private var listening: Task<Void, Never>?
+    private var active = false
+    private var wake: NSObjectProtocol?
+    private var retry: Task<Void, Never>?
+    private var retryIndex = 0
+    private let retryDelays: [TimeInterval]
+    private let catchUpDelay: TimeInterval
     private var opening: Task<Void, Never>?
     private var loading: Task<Void, Never>?
     /// The load that owns `loading`; a cancelled older one never clears it.
@@ -73,67 +99,128 @@ public final class WorkScreenModel: ObservableObject {
     /// Reloads that a change of the store started, for tests and the bench.
     private(set) var changeReloads = 0
 
-    public init(source: WorkSource, reloadInterval: TimeInterval = 3, settle: TimeInterval = 0.5) {
+    public init(source: WorkSource, reloadInterval: TimeInterval = 3, settle: TimeInterval = 0.5,
+                retryDelays: [TimeInterval] = [5, 15, 60], catchUpDelay: TimeInterval = 1) {
         self.source = source
         self.reloadInterval = reloadInterval
         self.settle = settle
+        self.retryDelays = retryDelays
+        self.catchUpDelay = catchUpDelay
     }
+
+    // MARK: - Live
 
     /// Whether anyone can see the screen (the hub window is not covered, minimized or hidden). Hidden, a change
     /// waits; shown again, one reload reads what changed meanwhile.
     public func setVisible(_ next: Bool) {
         guard next != visible else { return }
         visible = next
+        guard active else { return }
         if next {
-            if stale || projectsStale { schedule() }
+            reconnect()
         } else {
-            trailing?.cancel()
-            trailing = nil
+            opening?.cancel()
+            stopListening()
+            cancelRead()
         }
     }
 
     /// On entry, open the first matching candidate or the first listed project. Without an opening preference,
     /// keep the current selection. A choice made while the list loads takes precedence.
     public func activate(preferring projects: [String]? = nil) {
-        guard listening == nil else { return }
+        guard !active else { return }
+        active = true
+        if projectsLoaded { projectsLoaded = false }
         openingCandidates = projects
-        let stream = source.changes()
-        listening = Task { [weak self] in
-            for await _ in stream { self?.changed() }
-        }
+        if visible { listen() }
+        wake = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification,
+            object: nil, queue: .main) { [weak self] _ in Task { @MainActor in self?.reconnect() } }
         let previousLoad = loadToken
         opening = Task {
             guard !Task.isCancelled else { return }
             await loadProjects()
-            if !Task.isCancelled && loadToken == previousLoad && itemRef == nil { reload() }
+            if !Task.isCancelled && loadToken == previousLoad && itemRef == nil { read() }
         }
     }
 
     /// The screen left: no more reloads while nobody sees it.
     public func deactivate() {
+        active = false
+        if let wake { NSWorkspace.shared.notificationCenter.removeObserver(wake); self.wake = nil }
         opening?.cancel()
         opening = nil
+        stopListening()
+        cancelRead()
+    }
+
+    private func cancelRead() {
+        loading?.cancel()
+        loading = nil
+        loadToken = UUID()
+        if isLoading { isLoading = false }
+        if live == .catchingUp { live = .live }
+        stale = true
+        projectsStale = true
+    }
+
+    private func stopListening() {
         listening?.cancel()
         listening = nil
         trailing?.cancel()
         trailing = nil
-        loading?.cancel()
-        loading = nil
-        loadToken = UUID()
-        isLoading = false
-        stale = true
+        retry?.cancel()
+        retry = nil
+        retryIndex = 0
+    }
+
+    public func reconnect() {
+        guard active, visible else { return }
+        stopListening()
+        restart()
+    }
+
+    private func restart() {
+        PerfSpans.measure("work.live.reconnect") { listen() }
+        if projectsStale {
+            schedule()
+        } else {
+            read()
+        }
+    }
+
+    private func listen() {
+        if live != .live { live = .live }
+        let stream = source.changes()
+        listening = Task { [weak self] in
+            for await _ in stream {
+                guard !Task.isCancelled else { return }
+                self?.retryIndex = 0
+                self?.changed()
+            }
+            guard !Task.isCancelled, let self else { return }
+            self.listening = nil
+            self.live = .stopped(reason: "The GenesisTools service stopped.")
+            guard self.retryDelays.indices.contains(self.retryIndex) else { return }
+            let delay = self.retryDelays[self.retryIndex]
+            self.retryIndex += 1
+            self.retry = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(delay))
+                guard !Task.isCancelled else { return }
+                self?.restart()
+            }
+        }
     }
 
     public func loadProjects() async {
         do {
             let names = try await source.projects()
             guard !Task.isCancelled else { return }
-            if project == nil && itemRef == nil { failure = nil }
-            projects = names
+            if project == nil && itemRef == nil && failure != nil { failure = nil }
+            if projects != names { projects = names }
             if itemRef != nil {
                 // The item owns its project, even when the default project's list finishes last.
                 openingCandidates = nil
-                projectsLoaded = true
+                if !projectsLoaded { projectsLoaded = true }
                 return
             }
             let candidates = openingCandidates ?? [project].compactMap { $0 }
@@ -147,7 +234,7 @@ public final class WorkScreenModel: ObservableObject {
             guard !Task.isCancelled else { return }
             if itemRef == nil { failure = error.localizedDescription }
         }
-        projectsLoaded = true
+        if !projectsLoaded { projectsLoaded = true }
     }
 
     public func openItem(_ ref: String) {
@@ -167,26 +254,35 @@ public final class WorkScreenModel: ObservableObject {
     }
 
     public func reload() {
-        guard visible, listening != nil else {
-            stale = true
-            return
-        }
+        read(explicit: true)
+    }
+
+    private func read(explicit: Bool = false, change: Bool = false) {
         loading?.cancel()
+        if live == .catchingUp { live = .live }
         let project = project
         let ref = itemRef
         guard project != nil || ref != nil else {
             loading = nil
-            isLoading = false
+            if isLoading { isLoading = false }
             return
         }
         stale = false
         lastReload = Date()
-        isLoading = true
+        let showLoading = explicit || isFirstLoad
+        if isLoading != showLoading { isLoading = showLoading }
         let token = UUID()
         loadToken = token
         let pane = pane
         loading = Task { [weak self] in
             guard let self else { return }
+            let span = PerfSpans.begin("work.live.reload", awaits: true)
+            let slow = change ? Task { [weak self, catchUpDelay] in
+                try? await Task.sleep(for: .seconds(catchUpDelay))
+                guard !Task.isCancelled, let self, self.loadToken == token, self.live == .live else { return }
+                self.live = .catchingUp
+            } : nil
+            defer { slow?.cancel(); span.end() }
             do {
                 if let ref {
                     let detail = try await self.source.detail(ref: ref)
@@ -198,23 +294,38 @@ public final class WorkScreenModel: ObservableObject {
                         self.project = detail.item.project
                     }
                     self.adoptingItemProject = false
-                    self.itemDetail = detail
+                    if self.itemDetail != detail { self.itemDetail = detail }
                 } else if let project, pane == .items {
-                    let next = try await self.source.snapshot(project: project)
+                    let confirmed = try await self.source.snapshot(project: project)
                     guard !Task.isCancelled, self.project == project else { return }
-                    self.snapshot = next
+                    PerfSpans.measure("work.reload") {
+                        self.confirmedSnapshot = confirmed
+                        let next = confirmed.previewing(self.pendingItemStates)
+                        if self.snapshot != next {
+                            PerfMainBusy.measure("work.reload")
+                            self.rowAnimation = self.snapshot.flatMap { previous in
+                                let old = previous.rowRefs, new = next.rowRefs
+                                let count = old.symmetricDifference(new).count
+                                return (1...GenMotion.maxAnimatedRows).contains(count) ? new.count >= old.count : nil
+                            }
+                            self.snapshot = next
+                        }
+                    }
                 } else if let project {
                     let rows = try await self.source.notify(project: project)
                     guard !Task.isCancelled, self.project == project else { return }
-                    self.notifyRows = rows
+                    if self.notifyRows != rows { self.notifyRows = rows }
+                    if !self.notifyLoaded { self.notifyLoaded = true }
                 }
-                self.failure = nil
+                if self.isFirstLoad { self.isFirstLoad = false }
+                if self.failure != nil { self.failure = nil }
             } catch {
                 guard !Task.isCancelled else { return }
-                self.failure = error.localizedDescription
+                if self.failure != error.localizedDescription { self.failure = error.localizedDescription }
             }
             guard self.loadToken == token else { return }
-            self.isLoading = false
+            if self.isLoading { self.isLoading = false }
+            if self.live == .catchingUp { self.live = .live }
             self.loading = nil
             // Changes that came during this reload get one more, by the same rules.
             if self.stale || self.projectsStale { self.schedule() }
@@ -223,20 +334,22 @@ public final class WorkScreenModel: ObservableObject {
 
     /// A change of the store: the screen is stale, and one reload follows by the rules above.
     func changed() {
-        stale = true
-        projectsStale = true
-        schedule()
+        PerfSpans.measure("work.live.tick") {
+            stale = true
+            projectsStale = true
+            schedule()
+        }
     }
 
     /// One reload after the burst settles, no sooner than `reloadInterval` after the last one, never beside a running
     /// one, never while hidden. A burst that keeps going still reloads once per interval.
     private func schedule() {
-        guard visible, listening != nil, trailing == nil, loading == nil else { return }
+        guard active, visible, trailing == nil, loading == nil else { return }
         let wait = max(settle, reloadInterval - Date().timeIntervalSince(lastReload))
         trailing = Task { [weak self] in
             try? await Task.sleep(for: .seconds(wait))
             guard let self, !Task.isCancelled else { return }
-            guard self.visible, self.listening != nil, (self.stale || self.projectsStale), self.loading == nil else {
+            guard self.active, self.visible, self.stale || self.projectsStale, self.loading == nil else {
                 self.trailing = nil
                 return
             }
@@ -248,8 +361,8 @@ public final class WorkScreenModel: ObservableObject {
             }
             guard !Task.isCancelled else { return }
             self.trailing = nil
-            guard self.visible, self.listening != nil else { return }
-            if self.loadToken == previousLoad { self.reload() }
+            guard self.active, self.visible, self.loadToken == previousLoad else { return }
+            self.read(change: true)
         }
     }
 
@@ -266,6 +379,14 @@ public final class WorkScreenModel: ObservableObject {
         let accepting = snapshot?.spotted.contains(where: { $0.ref == action.ref }) == true
         pending.insert(action.ref)
         defer { pending.remove(action.ref) }
+        switch action {
+        case .finish: pendingItemStates[action.ref] = "done"
+        case .drop: pendingItemStates[action.ref] = "dropped"
+        case .accept: pendingItemStates[action.ref] = "open"
+        case .reopen: pendingItemStates[action.ref] = "reopened"
+        default: break
+        }
+        showPendingItemStates()
         let result: WorkActionOutcome
         do {
             result = try await source.perform(action, project: project)
@@ -292,9 +413,22 @@ public final class WorkScreenModel: ObservableObject {
         }
         let failure = result.ok ? nil : FailureReport.unexpected(result.message, outcome: shown.message,
                                                                 action: action.verb.capitalized, area: "work", app: .launch)
+        // One notice per item: a newer outcome for the same item takes the older one's place in the stack.
+        let previous = notices.filter { $0.ref == action.ref && $0.project == project }
+        let replacing = previous.compactMap { stackedNotices[$0.id] }.last
+        for old in previous {
+            if let id = stackedNotices.removeValue(forKey: old.id), id != replacing { noticeStack.dismiss(id) }
+        }
         notices.removeAll { $0.ref == action.ref && $0.project == project }
-        notices.append(WorkActionNotice(project: project, ref: action.ref, outcome: shown, failure: failure))
-        reload()
+        let notice = WorkActionNotice(project: project, ref: action.ref, outcome: shown, failure: failure)
+        notices.append(notice)
+        stackedNotices[notice.id] = result.ok
+            ? noticeStack.push(.init(text: shown.message), replacing: replacing)
+            : noticeStack.push(.init(text: shown.message, tone: .error, actions: failure.map { [.details($0)] } ?? []),
+                               replacing: replacing)
+        pendingItemStates[action.ref] = nil
+        if !result.ok { showPendingItemStates() }
+        await readAfterWrite()
         return result.ok
     }
 
@@ -307,6 +441,163 @@ public final class WorkScreenModel: ObservableObject {
         return nil
     }
 
-    public func clearNotice(_ id: UUID) { notices.removeAll { $0.id == id } }
+    public func clearNotice(_ id: UUID) {
+        if let stacked = stackedNotices.removeValue(forKey: id) { noticeStack.dismiss(stacked) }
+        notices.removeAll { $0.id == id }
+    }
     public func clearNotice() { if let last = notices.last { clearNotice(last.id) } }
+
+    private func showPendingItemStates() {
+        guard let confirmedSnapshot, confirmedSnapshot.project == project, snapshot != nil else { return }
+        let next = confirmedSnapshot.previewing(pendingItemStates)
+        if snapshot != next {
+            rowAnimation = nil
+            snapshot = next
+        }
+    }
+
+    private func readAfterWrite() async {
+        read()
+        await finishCurrentRead()
+    }
+
+    func finishCurrentRead() async {
+        // An explicit read or a navigation may supersede our read while it is in flight.
+        while let current = loading { await current.value }
+    }
+
+    // MARK: - Notify
+
+    private func clearProjectEdits() {
+        notifyGeneration = UUID()
+        if notifyLoaded { notifyLoaded = false }
+        if !notifyPending.isEmpty { notifyPending = [:] }
+        if notifyCommand != nil { notifyCommand = nil }
+        let remaining = pending.filter { !$0.hasPrefix("notify:") }
+        if remaining != pending { pending = remaining }
+    }
+
+    public func setNotify(scope: WorkNotifyScope, type: String, action: String, level: String?) async {
+        guard let project, pane == .notify else { return }
+        if case .stopped = live { return }
+        let layer = scope == .global ? "config.global" : "config.project"
+        var previews: [String: String] = [:]
+        for row in notifyRows where type == "*" || type == row.type {
+            for cell in row.cells where cell.writable && (action == "*" || action == cell.action) {
+                let key = "notify:\(row.type):\(cell.action)"
+                // A project override remains visible when its global default is edited.
+                if scope == .global && ["config.project", "config.repo"].contains(cell.from) {
+                    previews[key] = cell.level
+                } else if let level {
+                    previews[key] = level
+                } else {
+                    previews[key] = cell.inheriting(scope).level
+                }
+            }
+        }
+        let keys = Set(previews.keys).union(["notify:\(type):\(action)"])
+        guard !previews.isEmpty, pending.isDisjoint(with: keys) else { return }
+        pending.formUnion(keys)
+        notifyPending.merge(previews) { _, new in new }
+        let generation = notifyGeneration
+        defer {
+            if notifyGeneration == generation {
+                pending.subtract(keys)
+                notifyPending = notifyPending.filter { !keys.contains($0.key) }
+            }
+        }
+        do {
+            let result = try await source.setNotify(project: project, scope: scope, type: type, action: action, level: level)
+            guard result.ok else { throw WorkSourceError(result.message) }
+            var message = result.message
+            if notifyGeneration == generation {
+                await readAfterWrite()
+                if notifyGeneration == generation, pane == .notify, failure == nil {
+                    if let change = result.changes.last {
+                        notifyCommand = command(for: change, scope: scope, project: project)
+                    }
+                    let conflicts = result.changes.contains { change in
+                        guard let row = notifyRows.first(where: { $0.type == change.type }),
+                              let cell = row.cells.first(where: { $0.action == change.action }) else { return true }
+                        let stored = cell.layers.first { $0.layer == layer && !$0.wildcard }?.rule ?? .inherit
+                        return stored != change.to
+                    }
+                    if conflicts { message = "Changed by another writer" }
+                    else if !result.changes.isEmpty {
+                        let name = type == "*" ? WorkNotifyWords.action(action) : WorkNotifyWords.type(type)
+                        let affected = Plural.count(result.changes.count, type == "*" ? "type" : "rule")
+                        let effect = level == "off" ? "nobody hears about it" : level.map(WorkNotifyWords.level)?.lowercased() ?? "inherited level"
+                        message = "\(name): \(effect) for \(affected)"
+                    }
+                } else if pane == .notify && failure != nil {
+                    message = "Rules saved. The updated rules could not be read."
+                }
+            }
+            let fixes: [StackedNotice.Action] = result.changes.isEmpty ? [] : [
+                .undo { [weak self] id in Task {
+                    await self?.undoNotify(project: project, scope: scope, changes: result.changes, noticeID: id)
+                } }
+            ]
+            noticeStack.push(.init(text: message, actions: fixes))
+        } catch {
+            showNotifyFailure(error, outcome: "The notification rules could not be saved")
+        }
+    }
+
+    private func undoNotify(project: String, scope: WorkNotifyScope, changes: [WorkNotifyChange],
+                            noticeID: StackedNotice.ID) async {
+        do {
+            let result = try await source.restoreNotify(project: project, scope: scope, changes: changes)
+            guard result.ok else { throw WorkSourceError(result.message) }
+            if self.project == project, pane == .notify { await readAfterWrite() }
+            noticeStack.push(.init(text: "Restored the previous notification rules"), replacing: noticeID)
+        } catch {
+            showNotifyFailure(error, outcome: "The previous rules could not be restored", replacing: noticeID)
+        }
+    }
+
+    private func showNotifyFailure(_ error: Error, outcome: String, replacing: StackedNotice.ID? = nil) {
+        let report = FailureReport.unexpected(error.localizedDescription, outcome: outcome, action: "Change notification rules")
+        noticeStack.push(.init(text: outcome, tone: .error, actions: [.details(report)]), replacing: replacing)
+    }
+
+    private func command(for change: WorkNotifyChange, scope: WorkNotifyScope, project: String) -> String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let json = try? String(decoding: encoder.encode(change.to), as: UTF8.self) else { return nil }
+        if scope == .project && project.contains(".") {
+            // A dotted CLI path cannot represent this project. The typed command takes the name as one word.
+            let newLevel: String?
+            switch change.to {
+            case .inherit: newLevel = nil
+            case .level(let value), .threshold(let value, _): newLevel = value
+            }
+            let object: [String: Any] = ["type": change.type, "action": change.action, "level": newLevel as Any]
+            guard let bytes = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else { return nil }
+            return "tools work config-set --scope project --project " + ShellWords.word(project) +
+                " --notify " + ShellWords.quoted(String(decoding: bytes, as: UTF8.self))
+        }
+        return "tools work config set " + ShellWords.word(change.path) + " " + ShellWords.quoted(json)
+    }
+}
+
+private extension WorkSnapshotValue {
+    func previewing(_ states: [String: String]) -> Self {
+        guard !states.isEmpty else { return self }
+        var result = self
+        for i in containers.indices {
+            if let state = states[containers[i].ref] { result.containers[i].state = state }
+            for j in containers[i].members.indices {
+                if let state = states[containers[i].members[j].ref] { result.containers[i].members[j].state = state }
+            }
+        }
+        for i in triage.indices {
+            if let state = states[triage[i].ref] { result.triage[i].state = state }
+        }
+        return result
+    }
+
+    var rowRefs: Set<String> {
+        Set(containers.map(\.ref) + containers.flatMap { $0.members.map(\.ref) } + triage.map(\.ref))
+    }
 }

@@ -10,9 +10,14 @@ import { type Diagnostic, warningDiagnostic } from "@genesiscz/utils/output/repl
 import { type DocumentUpdate, jsonDocument, prettyJson } from "@genesiscz/utils/storage/locked-document";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import type { Item } from "../model/item";
+import { ITEM_TYPES, type ItemType } from "../model/vocab";
 import {
     migrateWorkConfig,
+    NOTIFY_ACTIONS,
     NOTIFY_SURFACES,
+    type NotifyAction,
+    type NotifyLevel,
+    type NotifyRule,
     REPO_WORK_VERSION,
     type RepoWorkSection,
     repoWorkSectionSchema,
@@ -71,12 +76,12 @@ function decodeWith<T>(
     return { value: parsed.data, problems: [] };
 }
 
-function machineDocument(path = workConfigPath()) {
+function machineDocument(path = workConfigPath(), onUnreadable: "preserve" | "refuse" = "preserve") {
     return jsonDocument<unknown>({
         path,
         empty: () => EMPTY_FILE,
         decode: (raw) => raw,
-        onUnreadable: "preserve",
+        onUnreadable,
     });
 }
 
@@ -222,8 +227,8 @@ function setPath(target: Record<string, unknown>, path: string[], value: unknown
     for (const key of path.slice(0, -1)) {
         const next = Object.hasOwn(node, key) ? node[key] : undefined;
 
-        if (typeof next !== "object" || next === null || Array.isArray(next)) {
-            node[key] = {};
+        if (!Object.hasOwn(node, key) || typeof next !== "object" || next === null || Array.isArray(next)) {
+            Object.defineProperty(node, key, { value: {}, enumerable: true, writable: true, configurable: true });
         }
 
         node = node[key] as Record<string, unknown>;
@@ -298,3 +303,146 @@ export async function setWorkConfigValue({
 }
 
 export { prettyJson };
+
+export interface NotifyEdit {
+    type: ItemType | "*";
+    action: NotifyAction | "*";
+    level: NotifyLevel | null;
+}
+
+type RawCell = NotifyRule | null;
+export interface NotifyConfigChange {
+    path: string;
+    type: ItemType;
+    action: NotifyAction;
+    from: RawCell;
+    to: RawCell;
+}
+
+export type NotifyConfigSetResult =
+    | { ok: true; file: string; changed: NotifyConfigChange[] }
+    | { ok: false; code: string; problem: string };
+
+interface NotifyConfigWrite {
+    scope: "project" | "global";
+    project?: string;
+    projectExists?: boolean;
+    configPath?: string;
+    notify?: NotifyEdit;
+    restore?: Omit<NotifyConfigChange, "path">[];
+    lockedCells?: ReadonlySet<string>;
+    dryRun?: boolean;
+}
+
+function sameRule(a: RawCell, b: RawCell): boolean {
+    return (
+        a === b ||
+        (a !== null &&
+            b !== null &&
+            typeof a === "object" &&
+            typeof b === "object" &&
+            a.level === b.level &&
+            a.minSeverity === b.minSeverity)
+    );
+}
+
+function selectedCells(edit: NotifyEdit) {
+    const types = edit.type === "*" ? ITEM_TYPES : [edit.type];
+    const actions = edit.action === "*" ? NOTIFY_ACTIONS : [edit.action];
+    return types.flatMap((type) => actions.map((action) => ({ type, action })));
+}
+
+/** Read, compare and edit every selected cell under the same lock. An Undo is conditional on the saved values. */
+export async function setWorkNotifyConfig(options: NotifyConfigWrite): Promise<NotifyConfigSetResult> {
+    const { scope, project, notify, restore, lockedCells, configPath = workConfigPath() } = options;
+    const refuse = (code: string, problem: string): NotifyConfigSetResult => ({ ok: false, code, problem });
+    if (scope === "project" && !project?.trim()) {
+        return refuse("PROJECT_REQUIRED", "Choose a project for this rule.");
+    }
+    if (notify?.type === "*" && notify.action === "*") {
+        return refuse("TOO_WIDE", "Choose one type or one action.");
+    }
+    if (
+        restore?.length &&
+        !restore.every((cell) => cell.type === restore[0].type) &&
+        !restore.every((cell) => cell.action === restore[0].action)
+    ) {
+        return refuse("TOO_WIDE", "Undo one row or column at a time.");
+    }
+    if ((notify && restore) || (!notify && !restore?.length)) {
+        return refuse("INVALID_EDIT", "Choose one notification change or a set of changes to undo.");
+    }
+    const file = machineDocument(configPath, "refuse");
+    const edit = (raw: unknown): DocumentUpdate<unknown, NotifyConfigSetResult> => {
+        const migrated = migrateWorkConfig(raw);
+        if (!migrated.ok) {
+            return {
+                keep: refuse(
+                    "CONFIG_UNUSABLE",
+                    "newer" in migrated ? "This config uses a newer version." : migrated.problem
+                ),
+            };
+        }
+        const parsed = workConfigFileSchema.safeParse(migrated.raw);
+        if (!parsed.success) {
+            return { keep: refuse("CONFIG_UNUSABLE", "The current rules do not fit the config format.") };
+        }
+        const config = parsed.data;
+        if (scope === "project" && !options.projectExists && !Object.hasOwn(config.projects ?? {}, project!)) {
+            return { keep: refuse("UNKNOWN_PROJECT", "This project has no saved rules or work items.") };
+        }
+        const base = scope === "global" ? ["global", "rules", "notify"] : ["projects", project!, "rules", "notify"];
+        const rules = scope === "global" ? config.global?.rules : config.projects?.[project!]?.rules;
+        const updates = notify
+            ? selectedCells(notify).map((cell) => ({ ...cell, edit: notify, previous: null }))
+            : (restore ?? []).map((previous) => ({
+                  type: previous.type,
+                  action: previous.action,
+                  edit: null,
+                  previous,
+              }));
+        const changed: NotifyConfigChange[] = [];
+        const seen = new Set<string>();
+        for (const { type, action, edit, previous } of updates) {
+            const key = `${type}:${action}`;
+            if (seen.has(key)) {
+                return { keep: refuse("INVALID_EDIT", "A rule appears twice in this change.") };
+            }
+            seen.add(key);
+            // Undoing a removal may now reveal a repository rule. Restore the machine override that
+            // the receipt removed, provided no newer machine override replaced it.
+            if (!previous && lockedCells?.has(key)) {
+                if (updates.length > 1) {
+                    continue;
+                }
+                return { keep: refuse("REPO_RULE_LOCKED", "Change this rule in the repository’s file.") };
+            }
+            const before = rules?.notify?.[type]?.[action] ?? null;
+            let desired: RawCell;
+            if (previous) {
+                if (!sameRule(before, previous.to)) {
+                    return { keep: refuse("RULE_CHANGED", "Another writer changed a rule. Read the rules again.") };
+                }
+                desired = previous.from;
+            } else {
+                desired =
+                    edit.level !== null && before !== null && typeof before === "object"
+                        ? { ...before, level: edit.level }
+                        : edit.level;
+            }
+            if (sameRule(before, desired)) {
+                continue;
+            }
+            const segments = [...base, type, action];
+            setPath(migrated.raw, segments, desired ?? undefined);
+            changed.push({ path: segments.join("."), type, action, from: before, to: desired });
+        }
+        const result: NotifyConfigSetResult = { ok: true, changed, file: configPath };
+        return changed.length && !options.dryRun ? { write: migrated.raw, result } : { keep: result };
+    };
+    if (options.dryRun) {
+        const preview = edit(file.read());
+        return "keep" in preview ? preview.keep : preview.result;
+    }
+    return file.update(edit);
+}

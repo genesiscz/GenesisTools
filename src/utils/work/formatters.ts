@@ -302,6 +302,15 @@ export function workFormatters(view: ViewOptions = {}): { [M in keyof WorkResult
                 return lines;
             },
         }),
+        configSet: defineFormatter<WorkResults["configSet"]>({
+            text: (data) => [
+                ...(data.changed.length === 0 ? ["No notification rules changed."] : []),
+                ...data.changed.map(
+                    (change) => `${change.path}: ${SafeJSON.stringify(change.from)} -> ${SafeJSON.stringify(change.to)}`
+                ),
+                `file ${data.file}`,
+            ],
+        }),
         spot: writeFormatter,
         add: writeFormatter,
         edit: writeFormatter,

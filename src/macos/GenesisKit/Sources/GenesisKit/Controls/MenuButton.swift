@@ -3,7 +3,8 @@ import SwiftUI
 
 /// One entry of a `MenuButton`'s menu.
 public enum MenuButtonItem {
-    case action(String, checked: Bool = false, enabled: Bool = true, run: () -> Void)
+    case action(String, checked: Bool = false, enabled: Bool = true, systemImage: String? = nil,
+                tint: NSColor? = nil, identifier: String? = nil, run: () -> Void)
     case submenu(String, [MenuButtonItem])
     /// A line of text that cannot be picked ("No commits ahead of the base").
     case note(String)
@@ -74,12 +75,20 @@ public enum MenuButtonPresenter {
         menu.autoenablesItems = false
         for item in items {
             switch item {
-            case .action(let title, let checked, let enabled, let run):
+            case .action(let title, let checked, let enabled, let symbol, let tint, let identifier, let run):
                 let entry = NSMenuItem(title: title, action: #selector(MenuButtonTarget.runItem(_:)), keyEquivalent: "")
                 entry.target = MenuButtonTarget.shared
                 entry.representedObject = MenuButtonTarget.Action(run: run)
                 entry.state = checked ? .on : .off
                 entry.isEnabled = enabled
+                if let identifier {
+                    entry.identifier = NSUserInterfaceItemIdentifier(identifier)
+                    entry.setAccessibilityIdentifier(identifier)
+                }
+                if let symbol {
+                    let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+                    entry.image = tint.flatMap { image?.withSymbolConfiguration(.init(paletteColors: [$0])) } ?? image
+                }
                 menu.addItem(entry)
             case .submenu(let title, let children):
                 let entry = NSMenuItem(title: title, action: nil, keyEquivalent: "")
@@ -97,11 +106,11 @@ public enum MenuButtonPresenter {
     }
 
     /// Opens the menu where the click was (from the keyboard or VoiceOver: at the pointer).
-    public static func pop(_ items: [MenuButtonItem], in host: NSWindow? = nil) {
+    public static func pop(_ items: [MenuButtonItem], in host: NSWindow? = nil, at anchor: NSPoint? = nil) {
         let event = NSApp.currentEvent
         guard let window = host ?? event?.window ?? NSApp.keyWindow, let content = window.contentView else { return }
         let clicked = event.map { $0.window === window && [.leftMouseUp, .leftMouseDown].contains($0.type) } ?? false
-        let location = clicked ? event?.locationInWindow ?? .zero : window.mouseLocationOutsideOfEventStream
+        let location = anchor ?? (clicked ? event?.locationInWindow ?? .zero : window.mouseLocationOutsideOfEventStream)
         menu(items).popUp(positioning: nil, at: content.convert(location, from: nil), in: content)
     }
 }

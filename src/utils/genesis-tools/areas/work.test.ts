@@ -122,4 +122,41 @@ describe("the work area (work-items P7)", () => {
         expect(outcome.skipped[0]).toMatchObject({ way: "native", code: "passed" });
         expect(outcome.skipped[0]?.reason).toContain("work door");
     });
+
+    test("configSet emits one change for a person's write and skips previews, no-ops, and service agent writes", async () => {
+        const bus = createAreaEventBus();
+        const events: unknown[] = [];
+        bus.on((event) => events.push(event.payload));
+        const cell = { type: "bug", action: "spotted", level: "inbox" };
+        const params = { scope: "project", project: "Orchard", notify: cell };
+        const session = deps(bus, { agent: false });
+        let calls = 0;
+        registerWorkDoor({
+            call: async (method) => {
+                calls++;
+                return okReply(method, {
+                    file: "config.json",
+                    changed:
+                        calls <= 2
+                            ? [
+                                  {
+                                      path: "projects.Orchard.rules.notify.bug.spotted",
+                                      type: "bug",
+                                      action: "spotted",
+                                      from: null,
+                                      to: "inbox",
+                                  },
+                              ]
+                            : [],
+                });
+            },
+        });
+        await runAreaAction(AREAS, "work.configSet", { ...params, call: { dryRun: true } }, session);
+        await runAreaAction(AREAS, "work.configSet", params, session);
+        await runAreaAction(AREAS, "work.configSet", params, session);
+        const refused = await runAreaAction(AREAS, "work.configSet", params, deps(bus, { agent: true }));
+        expect(refused.status).toBe("unreachable");
+        expect(calls).toBe(3);
+        expect(events).toEqual([{ method: "configSet", items: [] }]);
+    });
 });
