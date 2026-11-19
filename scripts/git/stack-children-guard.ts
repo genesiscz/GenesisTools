@@ -15,7 +15,7 @@
  */
 
 import { env } from "@genesiscz/utils/env";
-import { SafeJSON } from "@genesiscz/utils/json";
+import { isJsonObject, SafeJSON } from "@genesiscz/utils/json";
 import { captureSync } from "@genesiscz/utils/process/capture";
 
 const ZERO = "0000000000000000000000000000000000000000";
@@ -33,13 +33,6 @@ export interface ChildPr {
     headSha: string;
 }
 
-interface GhPrRow {
-    number: number;
-    title: string;
-    headRefName: string;
-    headRefOid: string;
-}
-
 export interface OrphanedChild {
     parent: string;
     child: ChildPr;
@@ -51,6 +44,44 @@ export function parsePrePushLines(text: string): RefUpdate[] {
         .map((line) => line.trim().split(/\s+/))
         .filter((parts) => parts.length === 4)
         .map(([, localSha, remoteRef, remoteSha]) => ({ localSha, remoteRef, remoteSha }));
+}
+
+/**
+ * The open PRs out of `gh pr list --json number,title,headRefName,headRefOid`, or null when the answer is not such a
+ * list. The lookup is best effort: a broken answer means the children were not checked, never a failed push.
+ */
+export function parsePrList(text: string): ChildPr[] | null {
+    let parsed: unknown;
+    try {
+        parsed = SafeJSON.parse(text, { strict: true });
+    } catch {
+        return null;
+    }
+
+    if (!Array.isArray(parsed)) {
+        return null;
+    }
+
+    const list: ChildPr[] = [];
+    for (const row of parsed) {
+        if (!isJsonObject(row)) {
+            return null;
+        }
+
+        const { number, title, headRefName, headRefOid } = row;
+        if (
+            typeof number !== "number" ||
+            typeof title !== "string" ||
+            typeof headRefName !== "string" ||
+            typeof headRefOid !== "string"
+        ) {
+            return null;
+        }
+
+        list.push({ number, title, headRefName, headSha: headRefOid });
+    }
+
+    return list;
 }
 
 export function branchOf(remoteRef: string): string | null {
@@ -154,13 +185,14 @@ async function main(): Promise<number> {
             continue;
         }
 
-        const rows: GhPrRow[] = SafeJSON.parse(listed.out, { strict: true });
-        const list = rows.map((r) => ({
-            number: r.number,
-            title: r.title,
-            headRefName: r.headRefName,
-            headSha: r.headRefOid,
-        }));
+        const list = parsePrList(listed.out);
+        if (!list) {
+            process.stderr.write(
+                `⚠ stack guard: gh did not answer with a PR list for ${parent}; children were not checked\n`
+            );
+            continue;
+        }
+
         for (const child of list) {
             if (!hasCommit(child.headSha)) {
                 run(["git", "fetch", "--quiet", remote, child.headSha]);

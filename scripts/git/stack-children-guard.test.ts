@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { type ChildPr, findOrphanedChildren, parsePrePushLines, type RefUpdate } from "./stack-children-guard";
+import {
+    type ChildPr,
+    findOrphanedChildren,
+    parsePrePushLines,
+    parsePrList,
+    type RefUpdate,
+} from "./stack-children-guard";
 
 // A tiny history: old parent P0, rebuilt parent P1, a child C0 on P0, the child C1 rebuilt on P1.
 const ancestors: Record<string, string[]> = {
@@ -32,5 +38,18 @@ describe("findOrphanedChildren", () => {
     test("pre-push lines parse into updates", () => {
         const text = "refs/heads/parent p1 refs/heads/parent p0\nrefs/heads/child c1 refs/heads/child c0\n";
         expect(parsePrePushLines(text).map((u) => u.remoteRef)).toEqual(["refs/heads/parent", "refs/heads/child"]);
+    });
+});
+
+describe("parsePrList", () => {
+    test("a gh PR list maps headRefOid to the child head", () => {
+        const text = '[{"number":9,"title":"child work","headRefName":"child","headRefOid":"c0"}]';
+        expect(parsePrList(text)).toEqual([child]);
+    });
+
+    test("an answer that is not a PR list is null, so the guard warns instead of throwing", () => {
+        expect(parsePrList("not json")).toBeNull();
+        expect(parsePrList('{"message":"rate limited"}')).toBeNull();
+        expect(parsePrList('[{"number":"9"}]')).toBeNull();
     });
 });
