@@ -383,7 +383,7 @@ struct VoicesPane: View {
                 HStack(spacing: 6) {
                     Button("Confirm") { model.decide([line.id], confirm: true) }
                         .buttonStyle(.kit(.tinted, hue: .done, size: .small))
-                        .instantTooltip("It is \(line.speaker): keep the name and keep this line as a voice sample")
+                        .instantTooltip("Confirm \(line.speaker) by ear. Eligible audio is learned in the background.")
                     Button("Not this person") { model.decide([line.id], confirm: false) }
                         .buttonStyle(.kit(.ghost, size: .small))
                         .instantTooltip("It is not \(line.speaker): remove the name; the voice model will not give this line that name again")

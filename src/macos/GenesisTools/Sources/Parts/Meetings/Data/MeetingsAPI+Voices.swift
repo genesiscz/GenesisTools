@@ -224,6 +224,12 @@ struct VoiceSample: Decodable, Equatable, Hashable, Identifiable {
     /// Its sound is on this Mac and covers its time.
     let available: Bool
 
+    struct Source: Decodable, Hashable {
+        let rootMeeting: String
+        let lineKey: String
+        let recordingKey: String
+    }
+    var source: Source?
     var stableID: String?
     var title: String?
     var project: String?
@@ -233,7 +239,7 @@ struct VoiceSample: Decodable, Equatable, Hashable, Identifiable {
     var transferred: Bool?
 
     private enum CodingKeys: String, CodingKey {
-        case stableID = "id", title, project, owner, origin, acquiredBy, transferred
+        case stableID = "id", title, project, owner, origin, acquiredBy, transferred, source
         case sample, meeting, seat, track, fromSec, toSec, confirmedAt, words, available
     }
     var id: String { stableID ?? "legacy/\(meeting)/\(sample)" }

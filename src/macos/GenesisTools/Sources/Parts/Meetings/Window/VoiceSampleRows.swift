@@ -168,6 +168,7 @@ final class VoiceLibraryModel {
     private(set) var rows: Loadable<VoiceLibraryRows> = .idle
     private(set) var rowsVersion = 0
     var confirmation: Confirmation?
+    private(set) var lastCorrection: StackedNotice?
     var busy = false
     @ObservationIgnored private var read: Task<Void, Never>?
     @ObservationIgnored private var response: MeetingsAPI.VoicesList.Result?
@@ -235,6 +236,17 @@ final class VoiceLibraryModel {
                 guard !Task.isCancelled, self.destination == destination else { return }
                 rows = .failed(asFailure(error), previous: rows.value)
             }
+        }
+    }
+
+    func receive(_ signal: MeetingsServiceSignal) {
+        switch signal {
+        case .resumed:
+            refresh()
+            loadJobs()
+        case .event(.voiceJob(let job)): receive(job)
+        case .event(.peopleChanged): refresh()
+        default: break
         }
     }
 
@@ -353,6 +365,13 @@ final class VoiceLibraryModel {
         }
     }
 
+    /// The last correction stays reversible after its timed notice expires or the reader changes destination.
+    func undoLastCorrection() {
+        guard let notice = lastCorrection, let action = notice.actions.first, let stack = window?.notices else { return }
+        if !stack.contains(notice.id) { stack.push(notice) }
+        if stack.waiting[notice.id] == nil { stack.press(action, of: notice.id) }
+    }
+
     func apply(_ choice: Confirmation) {
         guard !busy, let window, let service = window.service else { return }
         confirmation = nil
@@ -366,13 +385,16 @@ final class VoiceLibraryModel {
                     throw MeetingsCLI.Failure(sentence: "The service returned no correction receipt. Read the library again.", detail: choice.action.title)
                 }
                 let undoRequest = UUID().uuidString
-                window.notices.push(StackedNotice(text: "Voice library updated", detail: choice.action.title, actions: [.undo { [weak self, weak notices = window.notices] notice in
+                let saved = StackedNotice(text: "Voice library updated", detail: choice.action.title, actions: [.undo { [weak self, weak notices = window.notices] notice in
                     notices?.settleUndo(notice, done: "Voice correction undone") {
                         let reply = try await service.call(MeetingsAPI.VoicesUndo.self, .init(token: receipt, requestToken: undoRequest))
                         try reply.require("applied")
+                        if self?.lastCorrection?.id == notice { self?.lastCorrection = nil }
                         self?.refresh()
                     }
-                }]))
+                }])
+                lastCorrection = saved
+                window.notices.push(saved)
             } catch { window.notices.push(.meetingsFailure(error)) }
             refresh()
         }
@@ -404,6 +426,10 @@ struct VoiceSampleRows: View {
                     FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.speakersPage + "#voiceLibrary")
                 }
                 IconButton(systemName: "arrow.clockwise", tooltip: "Read the voice library again") { model.refresh() }
+            }
+            if let last = model.lastCorrection, model.window?.notices.contains(last.id) == false {
+                Button("Undo last voice correction", action: model.undoLastCorrection)
+                    .buttonStyle(.genHoverPlain()).instantTooltip(last.detail ?? "Restore the previous voice sample")
             }
             if model.destination == destination {
                 VoiceJobRows(model: model)
@@ -628,7 +654,7 @@ private struct VoiceClipRow: View {
     }
 
     private func menu(_ id: String, owner: String) -> [MenuButtonItem] {
-        [.action("Move to another person…", run: move),
+        var entries: [MenuButtonItem] = [.action("Move to another person…", run: move),
          .action("Wrong person…") { model.preview(.reject(id: id, person: owner, reason: "wrong-person")) },
          .action("Unusable audio…") { model.preview(.reject(id: id, person: owner, reason: "bad-audio")) },
          .action("Several voices…") { model.preview(.reject(id: id, person: owner, reason: "several-voices")) },
@@ -636,6 +662,15 @@ private struct VoiceClipRow: View {
          .action("Remove sample…") { model.preview(.remove(id: id, person: owner, scope: scope)) },
          .divider,
          .action("Copy sample ID") { Clipboard.copy(id, what: "sample ID") }]
+        if let source = row.sample.source {
+            entries.append(.submenu("Recording source", [
+                .note("Original meeting: \(source.rootMeeting)"),
+                .note("Track: \(row.sample.track)"),
+                .action("Copy recording reference") { Clipboard.copy(source.recordingKey, what: "recording reference") },
+                .action("Copy original line reference") { Clipboard.copy(source.lineKey, what: "line reference") },
+            ]))
+        }
+        return entries
     }
 }
 

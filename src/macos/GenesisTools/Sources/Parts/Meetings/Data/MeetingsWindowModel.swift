@@ -604,13 +604,12 @@ final class MeetingsWindowModel {
 
     /// One signal of the subscription.
     func receive(_ signal: MeetingsServiceSignal) {
+        voiceLibrary.receive(signal)
         switch signal {
         case .event(let event):
             detail?.receive(event)
             receive(event)
         case .resumed:
-            voiceLibrary.refresh()
-            voiceLibrary.loadJobs()
             setLive(true)
             preparePlayingTimeline()
             // Events between the two connections were not heard: what the window shows reads again once.
@@ -646,11 +645,7 @@ final class MeetingsWindowModel {
 
     /// An event the window itself answers: the sidebar's counts, and a notice for a decision someone else made.
     private func receive(_ event: MeetingsEvent) {
-        if case .peopleChanged = event {
-            voiceLibrary.refresh()
-            if place == .contacts { people.load() }
-        }
-        if case .voiceJob(let job) = event { voiceLibrary.receive(job) }
+        if case .peopleChanged = event, place == .contacts { people.load() }
         if Self.changesOverview(event) { scheduleOverviewRefresh(event) }
         guard let entry = event.entry, let meeting = event.meeting, entry.actor.kind != DecisionActor.window.kind else { return }
         noteDecision(entry, meeting: meeting)
