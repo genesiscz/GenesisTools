@@ -41,10 +41,47 @@ public struct RecordingBarActions {
     }
 }
 
+/// Which way the options drawer opens: away from the screen edge the bar sits near, so the first row never moves.
+public enum RecordingBarGrowth: Equatable, Sendable { case down, up }
+
+/// The window's side of the drawer's motion. The view says when a change starts and ends; the panel resizes its
+/// window once per change: at the start of an opening (so the drawer has room) and at the end of a closing (so the
+/// drawer closes inside the window). A bar without a panel (a still) keeps the defaults.
+@MainActor
+final class RecordingBarMotion: ObservableObject {
+    @Published var growth: RecordingBarGrowth = .down
+    /// The way the drawer should open from where the window is now.
+    var decideGrowth: () -> RecordingBarGrowth = { .down }
+    /// Makes the window `height` tall now, the first row where it is.
+    var reserve: (CGFloat) -> Void = { _ in }
+    /// The drawer finished closing: the window takes the content's size.
+    var settle: () -> Void = {}
+    /// A picture of the motion: the drawer revealed this far (0 to 1), still. Nil in use.
+    @Published var stillFraction: CGFloat?
+    /// True from the start of a drawer change until its animation ends; the window never shrinks meanwhile.
+    private(set) var moving = false
+
+    func begin() { moving = true }
+
+    func end() {
+        moving = false
+        settle()
+    }
+}
+
+/// Sizes shared by every cell of the bar, so the cells line up in every phase.
+enum RecordingBarMetrics {
+    static let cell: CGFloat = 32
+    static let radius: CGFloat = 8
+    static let targetWidth: CGFloat = 160
+    static let corner: CGFloat = 15
+}
+
 @MainActor
 public struct RecordingBarView: View {
-    static let width: CGFloat = 520
+    static let width: CGFloat = 704
     @ObservedObject private var model: RecordingBarModel
+    @StateObject private var motion: RecordingBarMotion
     private let actions: RecordingBarActions
     private let defaults: UserDefaults
     private let onPlace: (RecordingPanelPlacement) -> Void
@@ -60,23 +97,30 @@ public struct RecordingBarView: View {
     @State private var marking = false
     @State private var usingMovie = false
     @State private var help: String?
-    @State private var liveMenu: LiveMenu?
+    /// The drawer is in the view tree (it stays while it closes).
+    @State private var drawerMounted = false
+    /// The drawer is revealed; the only value its motion animates.
+    @State private var drawerOpen = false
+    @State private var drawerHeight: CGFloat = 0
+    @State private var headHeight: CGFloat = 0
+    /// Each drawer change gets a number, so a late completion of an interrupted change does nothing.
+    @State private var drawerChange = 0
+    @State private var pendingOpen = false
+    @GenReduceMotion private var reduceMotion
 
     private enum Confirmation: Equatable { case discard, restart }
-
-    /// An AppKit menu gets its own window after capture starts. Keep live choices within the excluded bar.
-    private struct LiveMenu {
-        let title: String
-        let options: [String]
-        let selected: Int?
-        let choose: (Int) -> Void
-        let returnToCompact: Bool
-    }
 
     public init(model: RecordingBarModel, actions: RecordingBarActions, defaults: UserDefaults = .standard,
                 placement: RecordingPanelPlacement = .nearTarget,
                 onPlace: @escaping (RecordingPanelPlacement) -> Void = { _ in }, onDrag: @escaping () -> Void = {}) {
+        self.init(model: model, actions: actions, defaults: defaults, placement: placement, motion: RecordingBarMotion(),
+                  onPlace: onPlace, onDrag: onDrag)
+    }
+
+    init(model: RecordingBarModel, actions: RecordingBarActions, defaults: UserDefaults, placement: RecordingPanelPlacement,
+         motion: RecordingBarMotion, onPlace: @escaping (RecordingPanelPlacement) -> Void, onDrag: @escaping () -> Void) {
         self.model = model
+        _motion = StateObject(wrappedValue: motion)
         self.actions = actions
         self.defaults = defaults
         self.onPlace = onPlace
@@ -84,6 +128,9 @@ public struct RecordingBarView: View {
         _draftThreshold = actions.changeThreshold ?? .constant(0.5)
         _placement = State(initialValue: placement)
         _saved = State(initialValue: RecordingSetup.load(defaults))
+        // A bar that opens expanded (a setting, a picture) shows its drawer from the first frame.
+        _drawerMounted = State(initialValue: model.expanded)
+        _drawerOpen = State(initialValue: model.expanded)
     }
 
     private var setup: RecordingSetup { model.setup }
@@ -101,7 +148,11 @@ public struct RecordingBarView: View {
         return false
     }
     private var follows: Bool { setup.target == .followDisplay || (actions.followsDisplayInUse && setup.target == nil) }
-    private var useInlineMenus: Bool {
+    /// The display a following take records now: the engine's report while live, else the host's guess.
+    private var followedNow: RecordingDisplay? { model.liveDisplay ?? actions.followedDisplay?.wrappedValue }
+    /// While a take may be filmed, a menu would open a window of its own on the recorded screen. The bar's own
+    /// drawer stays inside its excluded window, so the options open there instead.
+    private var optionsInBar: Bool {
         switch model.phase {
         case .setup, .done, .failed: false
         case .countdown, .starting, .recording, .paused, .finishing: true
@@ -117,76 +168,27 @@ public struct RecordingBarView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 3) {
-                RecordingGrip().frame(width: 24, height: 28)
-                    .overlay(RecordingWindowDragArea(dragged: onDrag))
-                target
-                soundControls
-                fpsMenu
-                HStack(spacing: 3) { phaseArea }.frame(width: 146, alignment: .trailing)
-                icon("ellipsis", "More recording options", "expand", value: model.expanded ? "Expanded" : "Collapsed") {
-                    model.expanded.toggle()
-                }
-                icon("xmark", configuring ? "Close setup" : "Hide controls", "hide", action: close)
-            }
-            Text(help ?? sourceSummary).font(.caption).foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityHidden(help != nil)
-            phaseDetails
-            if follows {
-                HStack {
-                    let captured = model.liveDisplay ?? actions.followedDisplay?.wrappedValue
-                    Label(captured.map { live ? "Recording \($0.name)" : $0.name } ?? "Starts on the display in use",
-                          systemImage: live && captured != nil ? "record.circle" : RecordingTarget.followDisplay.symbol)
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("recording.bar.liveDisplay")
-                    Spacer(minLength: 4)
-                    let lockReason = live && captured == nil ? "Waiting for the recorder to report its display." : nil
-                    word("Lock to This Display", "lockDisplay", reason: lockReason ?? reason("target", live: caps.liveTargetSwitch)) {
-                        if let captured { model.apply(.target(captured.target)); return }
-                        guard configuring else { return }
-                        let screens = NSScreen.screens
-                        guard let index = screens.firstIndex(where: { $0.frame.contains(NSEvent.mouseLocation) }) else { return }
-                        model.apply(.target(.display(index: index, name: screens[index].localizedName)))
-                    }
-                }
-            }
-            if let notice = model.notice {
-                VStack(alignment: .leading, spacing: 2) {
-                    InfoStrip(notice.message, tone: .warning).accessibilityIdentifier("recording.bar.notice")
-                    if let take = notice.take, notice.actions.contains(.retryStop) {
-                        HStack {
-                            word("Retry Stop", "retryStop") { model.retryStop(take: take) }
-                            word("Show Controls", "showControls") {
-                                if model.notice?.take == take { model.expanded = true }
-                            }
-                        }
-                    }
-                }
-            }
-            if let detail {
-                HStack {
-                    InfoStrip(detail)
-                    word("Dismiss", "dismissDetail") { self.detail = nil }
-                }
-            }
-            if model.expanded {
-                Divider()
-                if let liveMenu { menuRow(liveMenu) }
-                videoOptions
-                deviceOptions
-            }
+        let growth = motion.growth
+        VStack(alignment: .leading, spacing: 0) {
+            if growth == .up { drawer }
+            head.onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { headHeight = $0 }
+            if growth == .down { drawer }
         }
-        .font(.system(size: 12))
-        .padding(.horizontal, 8).padding(.vertical, 6)
         .frame(width: Self.width, alignment: .leading)
-        .nativeGlassSurface(radius: 12)
+        .background {
+            RoundedRectangle(cornerRadius: RecordingBarMetrics.corner, style: .continuous)
+                .fill(Color(white: 0.085).opacity(0.94))
+                .overlay(RoundedRectangle(cornerRadius: RecordingBarMetrics.corner, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.11), lineWidth: 1))
+        }
+        .clipShape(RoundedRectangle(cornerRadius: RecordingBarMetrics.corner, style: .continuous))
+        .kitLook(.aurora)
         .environment(\.colorScheme, .dark)
+        .font(.system(size: 12))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Recording controls")
         .onPreferenceChange(RecordingBarHelp.self) { help = $0 }
-        .onChange(of: model.expanded) { _, expanded in if !expanded { liveMenu = nil } }
+        .onChange(of: model.expanded) { _, expanded in setDrawer(open: expanded) }
         .onAppear { model.refreshAudioDevices() }
         .onChange(of: model.audioInputs, initial: true) { _, devices in
             inputNames = Dictionary(devices.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
@@ -202,7 +204,6 @@ public struct RecordingBarView: View {
         .onChange(of: model.phase) { old, new in
             confirmation = nil
             detail = nil
-            liveMenu = nil
             switch new {
             case .recording:
                 if case .paused = old { GenAnnounce.post("Recording resumed") } else { GenAnnounce.post("Recording started") }
@@ -214,15 +215,124 @@ public struct RecordingBarView: View {
         }
     }
 
+    // MARK: The first rows
+
+    private var head: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
+                RecordingGrip().frame(width: 14, height: RecordingBarMetrics.cell)
+                    .overlay(RecordingWindowDragArea(dragged: onDrag))
+                cell("xmark", configuring ? "Close setup" : "Hide controls", "hide", action: close)
+                separator
+                target
+                separator
+                soundControls
+                separator
+                fpsCell
+                optionsCell
+                Spacer(minLength: 8)
+                phaseArea
+            }
+            .frame(height: RecordingBarMetrics.cell)
+            statusLine
+            notes
+        }
+        .padding(.horizontal, 8).padding(.top, 7).padding(.bottom, 8)
+    }
+
+    private var separator: some View {
+        Rectangle().fill(Color.white.opacity(0.12)).frame(width: 1, height: 18).padding(.horizontal, 2)
+            .accessibilityHidden(true)
+    }
+
+    private var statusLine: some View {
+        HStack(spacing: 8) {
+            Text(help ?? statusSummary).font(.system(size: 11)).foregroundStyle(.white.opacity(0.62))
+                .lineLimit(1).truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityHidden(help != nil)
+            if follows { lockToDisplay }
+        }
+        .frame(height: 16)
+        .padding(.leading, 4)
+    }
+
+    @ViewBuilder private var lockToDisplay: some View {
+        let captured = followedNow
+        let lockReason = live && captured == nil ? "Waiting for the recorder to report its display." : nil
+        Button {
+            if let captured { model.apply(.target(captured.target)); return }
+            guard configuring else { return }
+            let screens = NSScreen.screens
+            guard let index = screens.firstIndex(where: { $0.frame.contains(NSEvent.mouseLocation) }) else { return }
+            model.apply(.target(.display(index: index, name: screens[index].localizedName)))
+        } label: {
+            HStack(spacing: 4) {
+                KitButtonGlyph("lock")
+                Text("Lock to this display")
+            }
+        }
+        .buttonStyle(KitButtonStyle(kind: .plain, size: .small))
+        .fixedSize()
+        .barControl("lockDisplay", label: "Lock to this display", reason: lockReason ?? reason("target", live: caps.liveTargetSwitch))
+    }
+
+    /// Facts the cells do not show: what is recorded in full, and when a change applies.
+    private var statusSummary: String {
+        let scope = configuring ? "Next recording" : "This take"
+        let what: String
+        if follows {
+            what = followedNow.map { live ? "Recording \($0.name)" : "\($0.name), the display in use" }
+                ?? "Starts on the display in use"
+        } else if let target = setup.target {
+            what = target.title
+        } else {
+            what = "Choose what to record"
+        }
+        let mic = setup.microphone.enabled ? (setup.microphone.muted ? "microphone muted" : "microphone") : nil
+        let system = setup.systemAudio.enabled ? (setup.systemAudio.muted ? "system audio muted" : "system audio") : nil
+        let sound = [mic, system].compactMap { $0 }.joined(separator: " and ")
+        return "\(scope) · \(what) · " + (sound.isEmpty ? "No sound" : sound.prefix(1).uppercased() + sound.dropFirst())
+    }
+
+    @ViewBuilder private var notes: some View {
+        if let notice = model.notice {
+            VStack(alignment: .leading, spacing: 4) {
+                InfoStrip(notice.message, tone: .warning).accessibilityIdentifier("recording.bar.notice")
+                if let take = notice.take, notice.actions.contains(.retryStop) {
+                    HStack(spacing: 6) {
+                        word("Retry stop", "retryStop") { model.retryStop(take: take) }
+                        word("Show controls", "showControls") {
+                            if model.notice?.take == take { model.expanded = true }
+                        }
+                    }
+                }
+            }
+        }
+        if let detail {
+            HStack(spacing: 8) {
+                InfoStrip(detail)
+                word("Dismiss", "dismissDetail") { self.detail = nil }
+            }
+        }
+        phaseDetails
+    }
+
+    // MARK: Row one
+
     private var target: some View {
         let title = setup.target?.title ?? (follows ? RecordingTarget.followDisplay.title : "Choose target")
         return Button { pick(nil) } label: {
-            HStack(spacing: 4) {
-                Image(systemName: setup.target?.symbol ?? "display")
-                Text(title).lineLimit(1).truncationMode(.middle)
-            }.frame(minWidth: 28, maxWidth: .infinity, minHeight: 26, alignment: .leading)
+            HStack(spacing: 6) {
+                Image(systemName: setup.target?.symbol ?? "display").font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.75))
+                Text(title).lineLimit(1).truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold)).foregroundStyle(.white.opacity(0.5))
+            }
+            .padding(.horizontal, 9)
         }
-        .buttonStyle(.genHoverRow())
+        .buttonStyle(RecordingBarCellStyle(kind: .soft, width: RecordingBarMetrics.targetWidth))
         .barControl("target", label: "Choose what to record", value: title,
                     reason: reason("target", live: caps.liveTargetSwitch), scope: live ? "This take" : nil)
     }
@@ -236,46 +346,28 @@ public struct RecordingBarView: View {
         enabled ? (muted ? "Muted" : "On") : "Off"
     }
 
-    private var sourceSummary: String {
-        let scope = configuring ? "Next recording" : "This take"
-        let mic = soundState(setup.microphone.enabled, setup.microphone.muted).lowercased()
-        let system = soundState(setup.systemAudio.enabled, setup.systemAudio.muted).lowercased()
-        return "\(scope) · Microphone \(mic) · System audio \(system)"
-    }
-
     @ViewBuilder private var soundControls: some View {
         let mic = setup.microphone
         let system = setup.systemAudio
         let micReason = reason("microphone", live: caps.liveMicrophoneMute && mic.enabled,
-                               fallback: "Enable the microphone before recording.")
+                               fallback: "Turn the microphone on before recording.")
         let systemReason = reason("systemAudio", live: caps.liveSystemAudioMute && system.enabled,
-                                  fallback: "Enable system audio before recording.")
-        icon(mic.enabled ? (mic.muted ? "mic.slash.fill" : "mic.fill") : "mic", "Microphone", "microphone",
-             value: soundState(mic.enabled, mic.muted), reason: micReason, scope: scope(micReason)) {
-            var next = mic
-            if live { next.muted.toggle() } else {
-                next.enabled.toggle()
-                next.muted = false
+                                  fallback: "Turn system audio on before recording.")
+        HStack(spacing: 0) {
+            sourceCell(on: mic.enabled, muted: mic.muted, symbol: mic.enabled ? (mic.muted ? "mic.slash.fill" : "mic.fill") : "mic.slash",
+                       label: "Microphone", id: "microphone", reason: micReason) {
+                var next = mic
+                if live { next.muted.toggle() } else {
+                    next.enabled.toggle()
+                    next.muted = false
+                }
+                model.apply(.microphone(next))
             }
-            model.apply(.microphone(next))
+            micMenu
         }
-        if useInlineMenus {
-            icon("chevron.down", "Choose microphone", "micMenu", reason: deviceReason, scope: scope(deviceReason)) {
-                let inputs = model.audioInputs
-                let ids = [nil as String?] + inputs.map { Optional($0.id) }
-                showMenu("Microphone", options: ["System default"] + inputs.map(\.name),
-                         selected: ids.firstIndex(of: setup.microphone.deviceID)) { selectInput(ids[$0]) }
-            }
-        } else {
-            Menu { inputChoices } label: {
-                Image(systemName: "chevron.down").font(.caption).frame(width: 24, height: 26)
-            }
-            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-            .barControl("micMenu", label: "Choose microphone", reason: deviceReason, scope: scope(deviceReason))
-        }
-        icon(system.enabled ? (system.muted ? "speaker.slash.fill" : "speaker.wave.2.fill") : "speaker.slash",
-             "System audio", "systemAudio", value: soundState(system.enabled, system.muted),
-             reason: systemReason, scope: scope(systemReason)) {
+        sourceCell(on: system.enabled, muted: system.muted,
+                   symbol: system.enabled ? (system.muted ? "speaker.slash.fill" : "speaker.wave.2.fill") : "speaker.slash",
+                   label: "System audio", id: "systemAudio", reason: systemReason) {
             var next = system
             if live { next.muted.toggle() } else {
                 next.enabled.toggle()
@@ -284,46 +376,170 @@ public struct RecordingBarView: View {
             model.apply(.systemAudio(next))
         }
         let cameraReason = reason("camera", live: caps.liveCamera)
-        icon(setup.camera.enabled ? "video.fill" : "video.slash", "Camera", "camera",
-             value: setup.camera.enabled ? "On" : "Off", reason: cameraReason, scope: scope(cameraReason)) {
+        sourceCell(on: setup.camera.enabled, muted: false, symbol: setup.camera.enabled ? "video.fill" : "video.slash",
+                   label: "Camera", id: "camera", reason: cameraReason) {
             var next = setup.camera
             next.enabled.toggle()
             model.apply(.camera(next))
         }
     }
 
-    private var fpsMenu: some View {
-        let why = reason("frameRate", live: caps.liveFrameRate)
-        return choice("Frame rate", "frameRate", value: setup.frameRate, values: [15, 24, 30, 60],
-                      title: { "\($0) fps" }, reason: why, scope: scope(why), compact: true) {
-            model.apply(.frameRate($0, still: setup.stillFrameRate))
+    /// A source the take records: its glyph, and a check mark under it while it is on. Muted shows the slashed glyph
+    /// in the warning colour and no check; off shows the slashed glyph dimmed.
+    private func sourceCell(on: Bool, muted: Bool, symbol: String, label: String, id: String, reason: String?,
+                            action: @escaping () -> Void) -> some View {
+        let checked = on && !muted
+        return Button(action: action) {
+            VStack(spacing: 1) {
+                Image(systemName: symbol).font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(muted ? KitHue.care.ink : (on ? Color.white : Color.white.opacity(0.5)))
+                    .frame(height: 15)
+                Image(systemName: "checkmark").font(.system(size: 7, weight: .heavy))
+                    .foregroundStyle(.white.opacity(0.9)).opacity(checked ? 1 : 0)
+            }
+        }
+        .buttonStyle(RecordingBarCellStyle(kind: on ? .soft : .plain, width: RecordingBarMetrics.cell))
+        .barControl(id, label: label, value: soundState(on, muted), reason: reason, scope: scope(reason))
+    }
+
+    @ViewBuilder private var micMenu: some View {
+        let chevron = Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold))
+            .foregroundStyle(.white.opacity(deviceReason == nil ? 0.6 : 0.3))
+        if optionsInBar {
+            Button { openDrawer() } label: { chevron }
+                .buttonStyle(RecordingBarCellStyle(kind: .plain, width: 16))
+                .barControl("micMenu", label: "Choose microphone", reason: deviceReason, scope: scope(deviceReason))
+        } else {
+            MenuButton(style: RecordingBarCellStyle(kind: .plain, width: 16), items: { microphoneItems }) { chevron }
+                .barControl("micMenu", label: "Choose microphone", reason: deviceReason, scope: scope(deviceReason))
         }
     }
 
+    private var microphoneItems: [MenuButtonItem] {
+        var items: [MenuButtonItem] = [.action("System default", checked: setup.microphone.deviceID == nil) { selectInput(nil) }]
+        items += model.audioInputs.map { input in
+            .action(input.name, checked: input.id == setup.microphone.deviceID) { selectInput(input.id) }
+        }
+        if configuring {
+            items.append(.divider)
+            items.append(.action("Start muted", checked: setup.microphone.muted, enabled: setup.microphone.enabled) {
+                var next = setup.microphone
+                next.muted.toggle()
+                model.apply(.microphone(next))
+            })
+            items.append(.action(setup.microphone.enabled ? "Don’t record the microphone" : "Record the microphone") {
+                var next = setup.microphone
+                next.enabled.toggle()
+                next.muted = false
+                model.apply(.microphone(next))
+            })
+        }
+        return items
+    }
+
+    @ViewBuilder private var fpsCell: some View {
+        let why = reason("frameRate", live: caps.liveFrameRate)
+        let label = HStack(spacing: 4) {
+            Text("\(setup.frameRate) fps").monospacedDigit()
+            Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.white.opacity(0.5))
+        }
+        if optionsInBar {
+            Button { openDrawer() } label: { label }
+                .buttonStyle(RecordingBarCellStyle(kind: .plain, width: 64))
+                .barControl("frameRate", label: "Frame rate", value: "\(setup.frameRate) fps", reason: why, scope: scope(why))
+        } else {
+            MenuButton(style: RecordingBarCellStyle(kind: .plain, width: 64), items: {
+                [15, 24, 30, 60].map { rate in
+                    .action("\(rate) fps", checked: rate == setup.frameRate) { model.apply(.frameRate(rate, still: setup.stillFrameRate)) }
+                }
+            }) { label }
+            .barControl("frameRate", label: "Frame rate", value: "\(setup.frameRate) fps", reason: why, scope: scope(why))
+        }
+    }
+
+    /// "Options": a menu while nothing records, the bar's own drawer while a take may be filmed.
+    @ViewBuilder private var optionsCell: some View {
+        let label = HStack(spacing: 3) {
+            Image(systemName: "slider.horizontal.3").font(.system(size: 12, weight: .medium))
+            Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.white.opacity(0.5))
+                .rotationEffect(.degrees(model.expanded ? 180 : 0))
+        }
+        let value = model.expanded ? "Expanded" : "Collapsed"
+        if optionsInBar || model.expanded {
+            Button { model.expanded.toggle() } label: { label }
+                .buttonStyle(RecordingBarCellStyle(kind: model.expanded ? .soft : .plain, width: 40))
+                .barControl("expand", label: "More recording options", value: value)
+        } else {
+            MenuButton(style: RecordingBarCellStyle(kind: .plain, width: 40), items: { optionItems }) { label }
+                .barControl("expand", label: "More recording options", value: value)
+        }
+    }
+
+    // MARK: The phase area
+
     @ViewBuilder private var phaseArea: some View {
+        HStack(spacing: 4) {
+            if let confirmation {
+                Text(confirmation == .discard ? "Discard this take?" : "Start this take again?")
+                    .foregroundStyle(.white.opacity(0.85)).lineLimit(1).fixedSize()
+                word("Keep", "keep") { self.confirmation = nil }
+                Button(confirmation == .discard ? "Discard" : "Restart") { run(confirmation) }
+                    .buttonStyle(KitButtonStyle(kind: .primary, hue: .danger, size: .small)).fixedSize()
+                    .barControl("confirm", label: confirmation == .discard ? "Discard" : "Restart")
+            } else {
+                phaseControls
+            }
+        }
+    }
+
+    @ViewBuilder private var phaseControls: some View {
         switch model.phase {
         case .setup:
-            word("Record", "record", prominent: true, reason: setup.target == nil && !follows ? "Choose a recording target first." : nil,
-                 action: model.record)
+            Button(action: model.record) {
+                HStack(spacing: 6) {
+                    RecordDot()
+                    Text("Record")
+                }
+            }
+            .buttonStyle(KitButtonStyle(kind: .primary, hue: .danger, size: .large, minWidth: 104))
+            .fixedSize()
+            .barControl("record", label: "Record", reason: setup.target == nil && !follows ? "Choose a recording target first." : nil)
         case let .countdown(seconds):
-            Text("\(seconds) s").monospacedDigit().barStatus("recording.bar.countdown")
+            HStack(spacing: 6) {
+                Text("\(seconds)").font(.system(size: 13, weight: .semibold, design: .rounded)).monospacedDigit()
+                    .frame(width: 22, height: 22)
+                    .overlay(Circle().strokeBorder(KitHue.danger.ink, lineWidth: 1.5))
+                Text("Get ready").foregroundStyle(.white.opacity(0.7))
+            }
+            .accessibilityElement(children: .ignore).accessibilityLabel("Recording starts in \(seconds) s")
+            .barStatus("recording.bar.countdown")
             word("Cancel", "cancel", action: model.discard)
         case let .starting(take):
-            Text(waitingTake == take ? "Still waiting" : "Starting…").barStatus("recording.bar.starting")
+            HStack(spacing: 6) {
+                SpinningArc(color: .white.opacity(0.7), lineWidth: 1.6).frame(width: 12, height: 12)
+                Text(waitingTake == take ? "Still waiting" : "Starting…").foregroundStyle(.white.opacity(0.75))
+            }
+            .barStatus("recording.bar.starting")
             word("Cancel", "cancel", action: model.discard)
         case .recording:
-            clock(paused: false)
-            icon("pause.fill", "Pause", "pause", action: model.pause)
-            stop
+            stopRing(paused: false)
+            hairline
+            cell("pause.fill", "Pause", "pause", action: model.pause)
+            takeCells
         case let .paused(_, byUser):
-            clock(paused: true)
-            icon("play.fill", "Resume", "resume", reason: byUser ? nil : "Finish choosing a target to resume.", action: model.resume)
-            stop
+            stopRing(paused: true)
+            hairline
+            cell("play.fill", "Resume", "resume", kind: .tinted, hue: .play,
+                 reason: byUser ? nil : "Finish choosing a target to resume.", action: model.resume)
+            takeCells
         case .finishing:
-            Text("Saving…").barStatus("recording.bar.finishing")
+            HStack(spacing: 6) {
+                SpinningArc(color: .white.opacity(0.7), lineWidth: 1.6).frame(width: 12, height: 12)
+                Text("Saving…").foregroundStyle(.white.opacity(0.75))
+            }
+            .barStatus("recording.bar.finishing")
         case let .done(url):
-            word(actions.useTitle, "use", prominent: true,
-                 reason: url == nil ? "The recorder returned no movie." : usingMovie ? "Opening the movie…" : nil) {
+            Button {
                 guard let url, !usingMovie else { return }
                 usingMovie = true
                 Task { @MainActor in
@@ -331,36 +547,64 @@ public struct RecordingBarView: View {
                     do { try await actions.useMovie(url) }
                     catch { if model.phase == .done(url) { detail = error.localizedDescription } }
                 }
-            }
+            } label: { Text(actions.useTitle) }
+            .buttonStyle(KitButtonStyle(kind: .primary, hue: .play, size: .large, minWidth: 104))
+            .fixedSize()
+            .barControl("use", label: actions.useTitle,
+                        reason: url == nil ? "The recorder returned no movie." : usingMovie ? "Opening the movie…" : nil)
         case .failed:
-            Label("Failed", systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+            Label("Failed", systemImage: "exclamationmark.triangle.fill").foregroundStyle(KitHue.danger.ink)
+                .labelStyle(.titleAndIcon)
         }
     }
 
-    private var stop: some View { icon("stop.fill", "Stop", "stop", action: model.stop) }
+    /// Restart and discard sit beside pause, as in the running bars of other recorders; both ask once in the bar.
+    @ViewBuilder private var takeCells: some View {
+        hairline
+        cell("arrow.counterclockwise", "Restart", "restart") { confirm(.restart) }
+        hairline
+        cell("trash", "Discard", "discard") { confirm(.discard) }
+    }
 
-    private func clock(paused: Bool) -> some View {
+    /// The thin line between the running controls (CleanShot's running bar).
+    private var hairline: some View {
+        Rectangle().fill(Color.white.opacity(0.1)).frame(width: 1, height: RecordingBarMetrics.cell).accessibilityHidden(true)
+    }
+
+    /// The stop control: a red ring around a square, and the take's time beside it. A click stops the take.
+    private func stopRing(paused: Bool) -> some View {
         let time = RecordingClock.format(model.elapsedMs)
-        return HStack(spacing: 4) {
-            Image(systemName: paused ? "pause.circle" : "record.circle.fill").foregroundStyle(paused ? Color.secondary : .red)
-            Text(time).monospacedDigit()
+        return Button(action: model.stop) {
+            HStack(spacing: 6) {
+                ZStack {
+                    Circle().strokeBorder(KitHue.danger.ink, lineWidth: 1.8)
+                    RoundedRectangle(cornerRadius: 1.5).fill(KitHue.danger.ink).frame(width: 7, height: 7)
+                }
+                .frame(width: 18, height: 18)
+                Text(time).font(.system(size: 13, weight: .semibold)).monospacedDigit()
+                    .foregroundStyle(paused ? KitHue.care.ink : KitHue.danger.ink)
+            }
+            .padding(.horizontal, 8)
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(paused ? "Paused" : "Recording").accessibilityValue(time)
-        .barStatus("recording.bar.clock")
+        .buttonStyle(RecordingBarCellStyle(kind: .plain, width: nil))
+        .fixedSize()
+        .barControl("stop", label: "Stop", value: (paused ? "Paused, " : "Recording, ") + time)
+        // A button style keeps its label's preferences, and a probe replaces the ones inside it: the clock's probe
+        // rides beside the button's.
+        .overlay { Color.clear.allowsHitTesting(false).barStatus("recording.bar.clock", label: paused ? "Paused" : "Recording") }
     }
 
     @ViewBuilder private var phaseDetails: some View {
         switch model.phase {
         case let .done(url):
-            HStack {
+            HStack(spacing: 6) {
                 word("Show in Finder", "finder", reason: url == nil ? "The recorder returned no movie." : nil) {
                     if let url { PathOpener.reveal(url.path) }
                 }
                 newRecording
             }
         case let .failed(message):
-            HStack {
+            HStack(spacing: 8) {
                 InfoStrip(message, tone: .error).accessibilityElement(children: .combine)
                     .barStatus("recording.bar.failed", label: message)
                 newRecording
@@ -371,57 +615,86 @@ public struct RecordingBarView: View {
 
     private var newRecording: some View { word("New recording", "newRecording", action: model.newRecording) }
 
-    private var videoOptions: some View {
-        HStack(spacing: 7) {
-            let qualityReason = reason("quality", live: false)
-            choice("Quality", "quality", value: setup.quality, values: RecordingQuality.allCases,
-                   title: { $0.rawValue.capitalized }, reason: qualityReason, scope: scope(qualityReason)) { model.apply(.quality($0)) }
-            let rateReason = reason("frameRate", live: caps.liveFrameRate)
-            choice("While still", "stillFrameRate", value: setup.stillFrameRate, values: [0, 0.5, 1, 2, 5],
-                   title: { $0 == 0 ? "Same" : "\($0.formatted()) fps" }, reason: rateReason, scope: scope(rateReason)) {
-                model.apply(.frameRate(setup.frameRate, still: $0))
-            }
-            let thresholdReason = setup.stillFrameRate == 0 || setup.stillFrameRate == Double(setup.frameRate)
-                ? "The active and still frame rates are the same."
-                : (actions.changeThreshold == nil ? "This recorder has no change threshold." : reason("threshold", live: false))
-            choice("Change needed", "threshold", value: draftThreshold,
-                   values: [0.5, 1, 2.5, 5], title: { "\($0.formatted())%" },
-                   reason: thresholdReason, scope: scope(thresholdReason)) { draftThreshold = $0 }
-            let countdownReason = reason("countdown", live: false)
-            choice("Countdown", "countdownSeconds", value: setup.countdownSeconds ?? 0, values: Array(0...10),
-                   title: { $0 == 0 ? "Off" : "\($0) s" }, reason: countdownReason, scope: scope(countdownReason)) {
-                model.setup.countdownSeconds = $0 == 0 ? nil : $0
-            }
-            let cursorReason = reason("drawsCursor", live: false)
-            choice("Cursor", "drawsCursor", value: setup.drawsCursor, values: [true, false], title: { $0 ? "On" : "Off" },
-                   reason: cursorReason, scope: scope(cursorReason)) { model.apply(.drawsCursor($0)) }
-            Spacer(minLength: 0)
-            choice("Placement", "placement", value: placement, values: RecordingPanelPlacement.allCases,
-                   title: { $0.title }, scope: nil) {
-                placement = $0
-                onPlace($0)
-            }
-        }
-    }
+    // MARK: Options: one list, drawn as a menu or as the drawer
 
     private var deviceReason: String? { reason("microphoneDevice", live: caps.liveMicrophoneDevice && setup.microphone.enabled) }
 
-    @ViewBuilder private var inputChoices: some View {
-        Button("System default") { selectInput(nil) }
-        ForEach(model.audioInputs) { input in
-            Button { selectInput(input.id) } label: {
-                if input.id == setup.microphone.deviceID { Label(input.name, systemImage: "checkmark") }
-                else { Text(input.name) }
-            }
+    private var stillReason: String? { reason("frameRate", live: caps.liveFrameRate) }
+
+    private var thresholdReason: String? {
+        setup.stillFrameRate == 0 || setup.stillFrameRate == Double(setup.frameRate)
+            ? "The active and still frame rates are the same."
+            : (actions.changeThreshold == nil ? "This recorder has no change threshold." : reason("threshold", live: false))
+    }
+
+    private var cameraOptionReason: String? {
+        !setup.camera.enabled ? "Turn on the camera first." : reason("camera", live: caps.liveCamera)
+    }
+
+    private var displaysReason: String? {
+        reason("displays", live: caps.liveDisplaysAddRemove)
+            ?? (caps.targets.contains(.displays) ? nil : "This recorder captures one display at a time.")
+    }
+
+    private static let stillRates: [Double] = [0, 0.5, 1, 2, 5]
+    private static let thresholds: [Double] = [0.5, 1, 2.5, 5]
+    private static func stillTitle(_ rate: Double) -> String { rate == 0 ? "Same" : "\(number(rate)) fps" }
+    /// "0.5", "2.5": one English form, not the system region's ("0,5" on a Czech Mac).
+    private static func number(_ value: Double) -> String { String(format: "%g", value) }
+
+    private func choiceItems<Value: Hashable>(_ values: [Value], current: Value, title: (Value) -> String, reason: String?,
+                                              select: @escaping (Value) -> Void) -> [MenuButtonItem] {
+        var items: [MenuButtonItem] = reason.map { [.note($0)] } ?? []
+        items += values.map { value in .action(title(value), checked: value == current, enabled: reason == nil) { select(value) } }
+        return items
+    }
+
+    /// The setup menu: the macOS screenshot toolbar's "Options" menu, with this recorder's choices.
+    private var optionItems: [MenuButtonItem] {
+        var items: [MenuButtonItem] = [
+            .submenu("Quality", choiceItems(RecordingQuality.allCases, current: setup.quality, title: { $0.rawValue.capitalized },
+                                            reason: nil) { model.apply(.quality($0)) }),
+            .submenu("While still", choiceItems(Self.stillRates, current: setup.stillFrameRate, title: Self.stillTitle,
+                                                reason: stillReason) { model.apply(.frameRate(setup.frameRate, still: $0)) }),
+            .submenu("Change needed", choiceItems(Self.thresholds, current: draftThreshold, title: { "\(Self.number($0))%" },
+                                                  reason: thresholdReason) { draftThreshold = $0 }),
+            .submenu("Countdown", choiceItems(Array(0...10), current: setup.countdownSeconds ?? 0,
+                                              title: { $0 == 0 ? "Off" : "\($0) s" }, reason: nil) {
+                model.setup.countdownSeconds = $0 == 0 ? nil : $0
+            }),
+            .action("Show the pointer", checked: setup.drawsCursor) { model.apply(.drawsCursor(!setup.drawsCursor)) },
+            .divider,
+            .submenu("Camera size", choiceItems([140, 200, 260], current: setup.camera.size, title: { "\($0) pt" },
+                                                reason: cameraOptionReason) { size in
+                var next = setup.camera
+                next.size = size
+                model.apply(.camera(next))
+            }),
+            .submenu("Camera shape", choiceItems(["circle", "rounded", "square"], current: setup.camera.shape,
+                                                 title: { $0.capitalized }, reason: cameraOptionReason) { shape in
+                var next = setup.camera
+                next.shape = shape
+                model.apply(.camera(next))
+            }),
+            .divider,
+            .submenu("Microphone", microphoneItems),
+            .note("System output: \(outputName ?? "System default")"),
+            .divider,
+            .submenu("Bar placement", choiceItems(RecordingPanelPlacement.allCases, current: placement, title: { $0.title },
+                                                  reason: nil) { place($0) }),
+            .action("Record several displays…", enabled: displaysReason == nil) { pick(.displays) },
+        ]
+        if configuring {
+            items.append(.divider)
+            items.append(.action("Save as defaults", enabled: changedSources != nil || setup != saved) { saveDefaults() })
+            if let changes = changedSources { items.append(.note(changes)) }
         }
-        if configuring && setup.microphone.enabled {
-            Divider()
-            Button(setup.microphone.muted ? "Unmute microphone" : "Start muted") {
-                var next = setup.microphone
-                next.muted.toggle()
-                model.apply(.microphone(next))
-            }
-        }
+        return items
+    }
+
+    private func place(_ newValue: RecordingPanelPlacement) {
+        placement = newValue
+        onPlace(newValue)
     }
 
     private func selectInput(_ id: String?) {
@@ -430,68 +703,14 @@ public struct RecordingBarView: View {
         model.apply(.microphone(next))
     }
 
-    private var deviceOptions: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                let cameraReason = !setup.camera.enabled ? "Turn on the camera first." : reason("camera", live: caps.liveCamera)
-                choice("Camera size", "cameraSize", value: setup.camera.size, values: [140, 200, 260],
-                       title: { "\($0) pt" }, reason: cameraReason, scope: scope(cameraReason)) {
-                    var next = setup.camera
-                    next.size = $0
-                    model.apply(.camera(next))
-                }
-                choice("Shape", "cameraShape", value: setup.camera.shape, values: ["circle", "rounded", "square"],
-                       title: { $0.capitalized }, reason: cameraReason, scope: scope(cameraReason)) {
-                    var next = setup.camera
-                    next.shape = $0
-                    model.apply(.camera(next))
-                }
-                VStack(alignment: .leading) {
-                    Text("System output").font(.caption).foregroundStyle(.secondary)
-                    Text(outputName ?? "System default").lineLimit(1).truncationMode(.middle)
-                }.accessibilityElement(children: .combine)
-                Spacer(minLength: 0)
-                let displaysReason = reason("displays", live: caps.liveDisplaysAddRemove)
-                    ?? (caps.targets.contains(.displays) ? nil : "This recorder captures one display at a time.")
-                word("Displays…", "displays", reason: displaysReason) { pick(.displays) }
-            }
-            HStack(spacing: 6) {
-                Text("Microphone").font(.caption).foregroundStyle(.secondary)
-                ScrollView(.horizontal) {
-                    HStack(spacing: 4) {
-                        inputButton(nil, title: "System default")
-                        ForEach(model.audioInputs) { input in inputButton(input.id, title: input.name) }
-                    }
-                }.frame(height: 26)
-                if configuring { saveDefaults }
-                if live { takeOptions }
-            }
+    private func saveDefaults() {
+        model.saveAsDefaults()
+        saved = setup
+        if let threshold = actions.threshold {
+            defaults.set(draftThreshold, forKey: "recorder.capture.threshold")
+            threshold.opening = draftThreshold
         }
-    }
-
-    private func inputButton(_ id: String?, title: String) -> some View {
-        Button { selectInput(id) } label: {
-            Label(title, systemImage: (setup.microphone.deviceID == id) ? "checkmark.circle.fill" : "circle")
-                .lineLimit(1).frame(minWidth: 24, minHeight: 24)
-        }
-        .buttonStyle(.genHoverRow()).fixedSize()
-        .barControl("input.\(id ?? "default")", label: title, value: setup.microphone.deviceID == id ? "Selected" : "",
-                    reason: deviceReason, scope: scope(deviceReason))
-    }
-
-    private var saveDefaults: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            word("Save as Defaults", "saveDefaults") {
-                model.saveAsDefaults()
-                saved = setup
-                if let threshold = actions.threshold {
-                    defaults.set(draftThreshold, forKey: "recorder.capture.threshold")
-                    threshold.opening = draftThreshold
-                }
-                detail = "Saved recording defaults."
-            }
-            if let changes = changedSources { Text(changes).font(.caption).foregroundStyle(.secondary) }
-        }
+        detail = "Saved recording defaults."
     }
 
     private var changedSources: String? {
@@ -510,31 +729,273 @@ public struct RecordingBarView: View {
         return changes.isEmpty ? nil : changes.joined(separator: " · ")
     }
 
-    @ViewBuilder private var takeOptions: some View {
-        if let confirmation {
-            Text(confirmation == .discard ? "Discard this take?" : "Replace this take?")
-            word("Keep", "keep") { self.confirmation = nil }
-            word(confirmation == .discard ? "Discard" : "Restart", "confirm") { run(confirmation) }
-        } else {
-            let phase = model.phase
-            word("Add marker", "marker", reason: !recording ? "Resume recording to add a marker."
-                 : actions.addMarker == nil ? "This recorder does not support markers." : marking ? "Adding marker…" : nil) {
-                guard let add = actions.addMarker, !marking else { return }
-                marking = true
-                Task { @MainActor in
-                    defer { marking = false }
-                    do {
-                        try await add()
-                        if model.phase == phase { detail = "Marker added." }
-                    } catch {
-                        if model.phase == phase { detail = error.localizedDescription }
-                    }
-                }
+    // MARK: The drawer
+
+    private func openDrawer() {
+        if !model.expanded { model.expanded = true }
+    }
+
+    /// Opens or closes the drawer in one motion. Opening: the drawer is laid out at its full height first, the window
+    /// grows once, then the clip reveals it. Closing: the clip closes over it, then the drawer leaves and the window
+    /// shrinks once. Under Reduce Motion both are instant.
+    private func setDrawer(open: Bool) {
+        drawerChange += 1
+        let change = drawerChange
+        if open {
+            if !drawerMounted { motion.growth = motion.decideGrowth() }
+            motion.begin()
+            if drawerMounted && drawerHeight > 0 {
+                reveal(change)
+            } else {
+                pendingOpen = true
+                drawerMounted = true
             }
-            word("Restart", "restart") { confirm(.restart) }
-            word("Discard", "discard") { confirm(.discard) }
+        } else {
+            pendingOpen = false
+            motion.begin()
+            let finish = {
+                guard change == drawerChange else { return }
+                drawerMounted = false
+                motion.end()
+            }
+            if let animation = GenMotion.animation(expanding: false, reduceMotion: reduceMotion) {
+                withAnimation(animation, completionCriteria: .logicallyComplete) { drawerOpen = false } completion: { finish() }
+            } else {
+                drawerOpen = false
+                finish()
+            }
         }
     }
+
+    private func reveal(_ change: Int) {
+        motion.reserve(headHeight + drawerHeight)
+        let finish = {
+            guard change == drawerChange else { return }
+            motion.end()
+        }
+        if let animation = GenMotion.animation(expanding: true, reduceMotion: reduceMotion) {
+            withAnimation(animation, completionCriteria: .logicallyComplete) { drawerOpen = true } completion: { finish() }
+        } else {
+            drawerOpen = true
+            finish()
+        }
+    }
+
+    @ViewBuilder private var drawer: some View {
+        if drawerMounted {
+            let growth = motion.growth
+            drawerContent
+                .fixedSize(horizontal: false, vertical: true)
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { height in
+                    drawerHeight = height
+                    if pendingOpen, height > 0 {
+                        pendingOpen = false
+                        // Not inside the layout that measured it: the window resize lays the content out again.
+                        let change = drawerChange
+                        DispatchQueue.main.async { reveal(change) }
+                    }
+                }
+                .frame(height: motion.stillFraction.map { $0 * drawerHeight } ?? (drawerOpen ? drawerHeight : 0),
+                       alignment: growth == .down ? .top : .bottom)
+                .clipped()
+                .opacity(motion.stillFraction.map { min(1, $0 * 1.6) } ?? (drawerOpen ? 1 : 0))
+                .accessibilityHidden(!drawerOpen)
+        }
+    }
+
+    private var drawerContent: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            if motion.growth == .down { Rectangle().fill(Color.white.opacity(0.1)).frame(height: 1).padding(.bottom, 1) }
+            if configuring || !live { setupRows } else { liveRows }
+            if live {
+                Text("Quality, countdown, the pointer and the camera apply when you set up the next recording.")
+                    .font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
+                    .padding(.leading, 12 + Self.labelWidth + 10)
+            }
+            if motion.growth == .up { Rectangle().fill(Color.white.opacity(0.1)).frame(height: 1).padding(.top, 1) }
+        }
+        .padding(motion.growth == .down ? .bottom : .top, 10)
+        .frame(width: Self.width, alignment: .leading)
+    }
+
+    /// The drawer's two columns: a label of one width, then its control, so every label and control lines up.
+    private static let labelWidth: CGFloat = 92
+    private static let pairWidth: CGFloat = 334
+
+    private func pair(_ label: String, wide: Bool = false, @ViewBuilder _ control: () -> some View) -> some View {
+        HStack(spacing: 10) {
+            Text(label).font(.system(size: 11, weight: .medium)).foregroundStyle(.white.opacity(0.6))
+                .lineLimit(1).frame(width: Self.labelWidth, alignment: .trailing)
+            control()
+        }
+        .frame(width: wide ? nil : Self.pairWidth, alignment: .leading)
+    }
+
+    private func row(@ViewBuilder _ content: () -> some View) -> some View {
+        HStack(spacing: 8) { content() }.padding(.leading, 12)
+    }
+
+    @ViewBuilder private var setupRows: some View {
+        row {
+            pair("Quality") {
+                segmented("Quality", "quality", values: RecordingQuality.allCases, current: setup.quality,
+                          title: { $0.rawValue.capitalized }, reason: nil) { model.apply(.quality($0)) }
+            }
+            pair("Pointer") {
+                segmented("Pointer", "drawsCursor", values: [true, false], current: setup.drawsCursor,
+                          title: { $0 ? "Shown" : "Hidden" }, reason: nil) { model.apply(.drawsCursor($0)) }
+            }
+        }
+        row {
+            pair("While still") { stillChoice }
+            pair("Change needed") {
+                segmented("Change needed", "threshold", values: Self.thresholds, current: draftThreshold,
+                          title: { "\(Self.number($0))%" }, reason: thresholdReason) { draftThreshold = $0 }
+            }
+        }
+        row {
+            if setup.camera.enabled {
+                pair("Camera") {
+                    segmented("Camera size", "cameraSize", values: [140, 200, 260], current: setup.camera.size,
+                              title: { "\($0) pt" }, reason: cameraOptionReason) { size in
+                        var next = setup.camera
+                        next.size = size
+                        model.apply(.camera(next))
+                    }
+                }
+                pair("Shape") {
+                    segmented("Shape", "cameraShape", values: ["circle", "rounded", "square"], current: setup.camera.shape,
+                              title: { $0.capitalized }, reason: cameraOptionReason) { shape in
+                        var next = setup.camera
+                        next.shape = shape
+                        model.apply(.camera(next))
+                    }
+                }
+            } else {
+                pair("Camera") {
+                    Text("Off. Turn it on in the bar to set its size and shape.")
+                        .font(.system(size: 11)).foregroundStyle(.white.opacity(0.55)).fixedSize()
+                }
+            }
+        }
+        row {
+            pair("Countdown") {
+                KitNumberField("Countdown", value: Binding(get: { setup.countdownSeconds ?? 0 },
+                                                           set: { model.setup.countdownSeconds = $0 == 0 ? nil : $0 }),
+                               in: 0...10, suffix: .text("s"), size: .small, identifier: "recording.bar.countdownSeconds")
+                    .fixedSize()
+            }
+        }
+        row {
+            pair("Microphone", wide: true) { microphoneRow }
+        }
+        row {
+            pair("Bar placement", wide: true) { placementChoice }
+        }
+        row {
+            Color.clear.frame(width: Self.labelWidth, height: 1)
+            word("Record several displays…", "displays", reason: displaysReason) { pick(.displays) }
+            if configuring {
+                word("Save as defaults", "saveDefaults") { saveDefaults() }
+                if let changes = changedSources {
+                    Text(changes).font(.system(size: 11)).foregroundStyle(.white.opacity(0.55)).lineLimit(1)
+                }
+            }
+        }
+    }
+
+    private var stillChoice: some View {
+        segmented("While still", "stillFrameRate", values: Self.stillRates, current: setup.stillFrameRate,
+                  title: { $0 == 0 ? "Same" : Self.number($0) }, reason: stillReason) {
+            model.apply(.frameRate(setup.frameRate, still: $0))
+        }
+    }
+
+    @ViewBuilder private var liveRows: some View {
+        row {
+            pair("Frame rate") {
+                segmented("Frame rate", "liveFrameRate", values: [15, 24, 30, 60], current: setup.frameRate,
+                          title: { "\($0) fps" }, reason: reason("frameRate", live: caps.liveFrameRate)) {
+                    model.apply(.frameRate($0, still: setup.stillFrameRate))
+                }
+            }
+            pair("While still") { stillChoice }
+        }
+        row {
+            pair("Microphone", wide: true) { microphoneRow }
+        }
+        row {
+            pair("Bar placement", wide: true) { placementChoice }
+        }
+        row {
+            pair("This take", wide: true) {
+                HStack(spacing: 6) {
+                    word("Add marker", "marker", reason: !recording ? "Resume recording to add a marker."
+                         : actions.addMarker == nil ? "This recorder does not support markers." : marking ? "Adding marker…" : nil) {
+                        addMarker()
+                    }
+                    word("Record several displays…", "displays", reason: displaysReason) { pick(.displays) }
+                }
+            }
+        }
+    }
+
+    private func addMarker() {
+        guard let add = actions.addMarker, !marking else { return }
+        let phase = model.phase
+        marking = true
+        Task { @MainActor in
+            defer { marking = false }
+            do {
+                try await add()
+                if model.phase == phase { detail = "Marker added." }
+            } catch {
+                if model.phase == phase { detail = error.localizedDescription }
+            }
+        }
+    }
+
+    private var placementChoice: some View {
+        segmented("Bar placement", "placement", values: RecordingPanelPlacement.allCases, current: placement,
+                  title: { $0.shortTitle }, reason: nil, scope: false) { place($0) }
+    }
+
+    private var microphoneRow: some View {
+        HStack(spacing: 4) {
+            inputButton(nil, title: "System default")
+            ForEach(model.audioInputs) { input in inputButton(input.id, title: input.name) }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func inputButton(_ id: String?, title: String) -> some View {
+        let selected = setup.microphone.deviceID == id
+        return Button { selectInput(id) } label: {
+            HStack(spacing: 5) {
+                KitButtonGlyph(selected ? "checkmark" : "mic")
+                Text(title).lineLimit(1)
+            }
+        }
+        .buttonStyle(KitButtonStyle(kind: selected ? .tinted : .ghost, hue: selected ? .play : .neutral, size: .small))
+        .fixedSize()
+        .barControl("input.\(id ?? "default")", label: title, value: selected ? "Selected" : "",
+                    reason: deviceReason, scope: scope(deviceReason))
+    }
+
+    private func segmented<Value: Hashable>(_ label: String, _ id: String, values: [Value], current: Value,
+                                            title: @escaping (Value) -> String, reason: String?, scope showsScope: Bool = true,
+                                            select: @escaping (Value) -> Void) -> some View {
+        let items = values.indices.map { GenSegmentedTabs<Int>.Item($0, title(values[$0])) }
+        let selection = Binding<Int>(get: { values.firstIndex(of: current) ?? -1 },
+                                     set: { if values.indices.contains($0) { select(values[$0]) } })
+        return GenSegmentedTabs(label, items: items, selection: selection, minSegmentWidth: 30, size: .small)
+            .fixedSize()
+            .opacity(reason == nil ? 1 : 0.5)
+            .accessibilityElement(children: .contain)
+            .barControl(id, label: label, value: title(current), reason: reason, scope: showsScope ? scope(reason) : nil)
+    }
+
+    // MARK: Small parts
 
     private func confirm(_ action: Confirmation) {
         if defaults.object(forKey: RecordingSettings.Key.confirmsDiscard) as? Bool ?? true { confirmation = action }
@@ -553,88 +1014,97 @@ public struct RecordingBarView: View {
 
     private func scope(_ reason: String?) -> String? { live ? (reason == nil ? "This take" : "Next recording") : nil }
 
-    private func icon(_ symbol: String, _ label: String, _ id: String, value: String = "", reason: String? = nil,
-                      scope: String? = nil, action: @escaping () -> Void) -> some View {
+    /// A glyph in a cell of the bar's size.
+    private func cell(_ symbol: String, _ label: String, _ id: String, value: String = "", kind: KitButtonKind = .plain,
+                      hue: KitHue = .neutral, reason: String? = nil, scope: String? = nil,
+                      action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: symbol).frame(width: 24, height: 26).contentShape(Rectangle())
+            Image(systemName: symbol).font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(hue == .neutral ? Color.white.opacity(0.85) : hue.ink)
         }
-        .buttonStyle(.genHover(padding: EdgeInsets()))
+        .buttonStyle(RecordingBarCellStyle(kind: kind, hue: hue, width: RecordingBarMetrics.cell))
         .barControl(id, label: label, value: value, reason: reason, scope: scope)
     }
 
-    private func word(_ label: String, _ id: String, prominent: Bool = false, reason: String? = nil,
-                      action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(label).fontWeight(prominent ? .semibold : .regular).lineLimit(1)
-                .padding(.horizontal, 5).frame(minWidth: 24, minHeight: 26)
-                .background(prominent ? Color.accentColor.opacity(0.25) : .clear, in: RoundedRectangle(cornerRadius: 5))
-        }
-        .fixedSize().buttonStyle(.genHoverRow())
-        .barControl(id, label: label, reason: reason)
+    /// A text action of the bar's notes and drawer.
+    private func word(_ label: String, _ id: String, reason: String? = nil, action: @escaping () -> Void) -> some View {
+        Button(action: action) { Text(label) }
+            .buttonStyle(KitButtonStyle(kind: .ghost, size: .small))
+            .fixedSize()
+            .barControl(id, label: label, reason: reason)
+    }
+}
+
+/// The white disc of a record button: the sign every recorder uses for "start".
+private struct RecordDot: View {
+    var body: some View {
+        Circle().fill(Color.white).frame(width: 9, height: 9)
+            .overlay(Circle().strokeBorder(Color.white.opacity(0.45), lineWidth: 2).padding(-3))
+            .padding(3)
+            .accessibilityHidden(true)
+    }
+}
+
+/// A cell of the bar: the look's quiet surface (`soft` for a source that is on, `plain` otherwise), one height for
+/// every cell, a hover and a pressed fill inside the cell's own frame, never over its neighbours.
+struct RecordingBarCellStyle: ButtonStyle {
+    var kind: KitButtonKind = .plain
+    var hue: KitHue = .neutral
+    /// Nil: as wide as the label.
+    var width: CGFloat?
+
+    func makeBody(configuration: Configuration) -> some View {
+        RecordingBarCellBody(configuration: configuration, style: self)
+    }
+}
+
+private struct RecordingBarCellBody: View {
+    let configuration: ButtonStyleConfiguration
+    let style: RecordingBarCellStyle
+    @State private var hovering = false
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.kitLook) private var look
+    @Environment(\.kitForcedInteraction) private var forced
+    @GenReduceMotion private var reduceMotion
+
+    private var state: KitInteraction {
+        guard isEnabled else { return .rest }
+        if configuration.isPressed || forced == .pressed { return .pressed }
+        return hovering || forced == .hover ? .hover : .rest
     }
 
-    private func showMenu(_ title: String, options: [String], selected: Int?, choose: @escaping (Int) -> Void) {
-        let returnToCompact = liveMenu?.returnToCompact ?? !model.expanded
-        liveMenu = LiveMenu(title: title, options: options, selected: selected, choose: choose, returnToCompact: returnToCompact)
-        model.expanded = true
-    }
-
-    private func closeMenu(_ menu: LiveMenu) {
-        liveMenu = nil
-        if menu.returnToCompact { model.expanded = false }
-    }
-
-    private func menuRow(_ menu: LiveMenu) -> some View {
-        HStack {
-            Text(menu.title)
-            ScrollView(.horizontal) {
-                HStack(spacing: 5) {
-                    ForEach(menu.options.indices, id: \.self) { index in
-                        Button {
-                            closeMenu(menu)
-                            menu.choose(index)
-                        } label: {
-                            Label(menu.options[index], systemImage: index == menu.selected ? "checkmark.circle.fill" : "circle")
-                                .frame(minWidth: 24, minHeight: 24)
-                        }.buttonStyle(.genHoverRow()).fixedSize()
-                    }
-                }
-            }.frame(height: 26)
-            word("Close", "closeMenu") { closeMenu(menu) }
-        }
-    }
-
-    @ViewBuilder private func choice<Value: Hashable>(_ label: String, _ id: String, value: Value, values: [Value],
-                                         title: @escaping (Value) -> String, reason: String? = nil, scope: String?,
-                                         compact: Bool = false, select: @escaping (Value) -> Void) -> some View {
-        let face = VStack(alignment: .leading, spacing: 1) {
-            if !compact { Text(label).font(.caption).foregroundStyle(.secondary) }
-            HStack(spacing: 3) {
-                Text(title(value)).lineLimit(1)
-                Image(systemName: "chevron.down").font(.caption2)
+    var body: some View {
+        let state = state
+        let surface = look.surface(style.kind.role, state, hue: style.hue)
+        configuration.label
+            .foregroundStyle(.white)
+            .frame(width: style.width, height: RecordingBarMetrics.cell)
+            .background(KitSurfaceBackground(surface, radius: RecordingBarMetrics.radius))
+            .scaleEffect(reduceMotion ? 1 : (state == .pressed ? 0.96 : 1))
+            .opacity(isEnabled ? 1 : 0.38)
+            .contentShape(RoundedRectangle(cornerRadius: RecordingBarMetrics.radius, style: .continuous))
+            .pointerCursor(isEnabled)
+            .onHover { inside in
+                let next = isEnabled && inside
+                guard next != hovering else { return }
+                withAnimation(reduceMotion ? nil : KitTheme.quick) { hovering = next }
             }
-            if !compact, let scope { Text(scope).font(.caption).foregroundStyle(.secondary) }
-        }.frame(minWidth: 24, minHeight: 26)
-        Group {
-            if useInlineMenus {
-                Button {
-                    showMenu(label, options: values.map(title), selected: values.firstIndex(of: value)) { select(values[$0]) }
-                } label: { face }
-                .buttonStyle(.genHoverRow())
-            } else {
-                Menu {
-                    ForEach(values, id: \.self) { option in
-                        Button { select(option) } label: {
-                            if value == option { Label(title(option), systemImage: "checkmark") }
-                            else { Text(title(option)) }
-                        }
-                    }
-                } label: { face }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden)
-            }
+            .onChange(of: isEnabled) { _, enabled in if !enabled { hovering = false } }
+            .onDisappear { hovering = false }
+            .animation(reduceMotion ? nil : KitTheme.quick, value: configuration.isPressed)
+    }
+}
+
+private extension RecordingPanelPlacement {
+    /// The words of a segment in the bar's drawer.
+    var shortTitle: String {
+        switch self {
+        case .nearTarget: "Near"
+        case .topLeft: "Top left"
+        case .topRight: "Top right"
+        case .bottomLeft: "Bottom left"
+        case .bottomRight: "Bottom right"
         }
-        .fixedSize()
-        .barControl(id, label: label, value: title(value), reason: reason, scope: scope)
     }
 }
 
@@ -706,7 +1176,7 @@ struct RecordingBarProbe: ViewModifier {
     }
 }
 
-/// The tooltip occupies the bar's source-summary line. A separate tooltip window would enter a display recording.
+/// The tooltip occupies the bar's status line. A separate tooltip window would enter a display recording.
 private enum RecordingBarHelp: PreferenceKey {
     static var defaultValue: String? { nil }
     static func reduce(value: inout String?, nextValue: () -> String?) {

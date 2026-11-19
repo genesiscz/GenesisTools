@@ -113,8 +113,10 @@ final class RecordingBarViewTests: XCTestCase {
     private let phaseControls = ["record", "countdown", "cancel", "starting", "clock", "pause", "resume", "stop",
                                  "finishing", "use", "finder", "newRecording", "failed"]
     private let expandedControls = ["quality", "stillFrameRate", "threshold", "placement"]
+    /// While a take runs the drawer holds what applies to it; the setup-only choices wait for the next recording.
+    private let liveExpandedControls = ["stillFrameRate", "placement"]
 
-    private func fixture(countdown: Int? = nil) throws -> Fixture {
+    private func fixture(countdown: Int? = nil, expanded: Bool = false) throws -> Fixture {
         _ = NSApplication.shared
         let engine = Engine()
         let setup = RecordingSetup(target: .display(index: 0, name: "Studio"), countdownSeconds: countdown)
@@ -122,7 +124,7 @@ final class RecordingBarViewTests: XCTestCase {
         let defaults = UserDefaults(suiteName: name)!
         let model = RecordingBarModel(engine: engine, setup: setup, defaults: defaults,
                                       countdownTick: { try? await Task.sleep(for: .seconds(1)) })
-        model.expanded = false
+        model.expanded = expanded
         let panel = RecordingBarPanel(model: model, actions: RecordingBarActions(chooseTarget: { _ in }, useMovie: { _ in }),
                                       defaults: defaults)
         addTeardownBlock { @MainActor in
@@ -139,7 +141,7 @@ final class RecordingBarViewTests: XCTestCase {
         guard let directory = ProcessInfo.processInfo.environment["RECORDING_SNAPSHOT_DIR"] else { return }
         let window = f.panel.window
         window.contentView?.layoutSubtreeIfNeeded()
-        XCTAssertEqual(window.frame.width, 520, accuracy: 1)
+        XCTAssertEqual(window.frame.width, RecordingBarView.width, accuracy: 1)
         // Only this transparent fixture window can be sampled. The production bar remains capture-excluded.
         let sharing = window.sharingType
         defer { window.sharingType = sharing }
@@ -158,7 +160,7 @@ final class RecordingBarViewTests: XCTestCase {
                            line: UInt = #line) async throws {
         let expected = firstRow + phaseIDs
         try await f.host.wait(for: expected, file: file, line: line)
-        XCTAssertEqual(f.panel.window.frame.width, 520, accuracy: 1, file: file, line: line)
+        XCTAssertEqual(f.panel.window.frame.width, RecordingBarView.width, accuracy: 1, file: file, line: line)
         XCTAssertEqual(Set(f.host.controls.keys), Set(expected.map { "recording.bar.\($0)" }), file: file, line: line)
     }
 
@@ -268,23 +270,31 @@ final class RecordingBarViewTests: XCTestCase {
         XCTAssertTrue(camera.hint.contains(reason), camera.hint)
     }
 
-    func testExpansionButtonChangesTheModelAndGrowsTheSameWindow() async throws {
-        let f = try fixture()
-        try await assertBar(f, shows: ["record"])
-        let height = f.panel.window.frame.height
-        let growth = expectation(description: "Expanded controls fit inside the panel")
-        let resize = NotificationCenter.default.publisher(for: NSWindow.didResizeNotification, object: f.panel.window)
-            .first(where: { _ in f.panel.window.frame.height > height }).sink { _ in growth.fulfill() }
-        defer { resize.cancel() }
-        try await f.host.press("expand")
-        await fulfillment(of: [growth], timeout: 3)
-        XCTAssertTrue(f.model.expanded)
+    func testExpandedSetupShowsEveryOptionAndExplainsADisabledOne() async throws {
+        let f = try fixture(expanded: true)
         try await assertBar(f, shows: ["record"] + expandedControls)
         let threshold = try XCTUnwrap(f.host.controls["recording.bar.threshold"])
         XCTAssertFalse(threshold.isEnabled)
         XCTAssertEqual(threshold.label, "Change needed")
         XCTAssertTrue(threshold.hint.contains("active and still frame rates are the same"), threshold.hint)
         try await snapshot(f, "setup-expanded")
+    }
+
+    func testOptionsOpenTheDrawerWhileRecordingAndGrowTheSameWindow() async throws {
+        let f = try fixture()
+        await firstFrame(f)
+        try await assertBar(f, shows: ["clock", "pause", "stop"])
+        let height = f.panel.window.frame.height
+        let growth = expectation(description: "The drawer fits inside the panel")
+        let resize = NotificationCenter.default.publisher(for: NSWindow.didResizeNotification, object: f.panel.window)
+            .first(where: { _ in f.panel.window.frame.height > height }).sink { _ in growth.fulfill() }
+        defer { resize.cancel() }
+        try await f.host.press("expand")
+        await fulfillment(of: [growth], timeout: 3)
+        XCTAssertTrue(f.model.expanded)
+        try await assertBar(f, shows: ["clock", "pause", "stop"] + liveExpandedControls)
+        XCTAssertNil(f.host.controls["recording.bar.quality"], "a choice for the next recording waits for its setup")
+        try await snapshot(f, "recording-expanded")
         let collapsed = expectation(description: "Original panel height restored")
         let shrink = NotificationCenter.default.publisher(for: NSWindow.didResizeNotification, object: f.panel.window)
             .first(where: { _ in abs(f.panel.window.frame.height - height) < 1 }).sink { _ in collapsed.fulfill() }
@@ -292,7 +302,76 @@ final class RecordingBarViewTests: XCTestCase {
         try await f.host.press("expand")
         await fulfillment(of: [collapsed], timeout: 3)
         XCTAssertFalse(f.model.expanded)
-        try await assertBar(f, shows: ["record"])
+        try await assertBar(f, shows: ["clock", "pause", "stop"])
+    }
+
+    /// The owner saw the first row jump while "…" opened and closed the extra rows. Samples the first row's place on
+    /// the screen through a real expand and collapse: it must hold still, and the window resizes once per change.
+    func testExpansionKeepsTheFirstRowStillAndResizesTheWindowOncePerChange() async throws {
+        let f = try fixture()
+        await firstFrame(f)
+        try await assertBar(f, shows: ["clock", "pause", "stop"])
+        // Drawn (an alpha-0 window skips the animation) but still below the desktop, so never on screen.
+        f.panel.window.alphaValue = 0.01
+        let window = f.panel.window
+        func firstRowTop() throws -> CGFloat {
+            let frame = try XCTUnwrap(FrameProbe.frames["recording.bar.target"])
+            return window.frame.maxY - frame.minY
+        }
+        var resizes = 0
+        let counter = NotificationCenter.default.publisher(for: NSWindow.didResizeNotification, object: window)
+            .sink { _ in resizes += 1 }
+        defer { counter.cancel() }
+        for expanding in [true, false] {
+            let start = try firstRowTop()
+            let height = window.frame.height
+            resizes = 0
+            var drift: CGFloat = 0
+            try await f.host.press("expand")
+            let deadline = ContinuousClock.now + .milliseconds(700)
+            while ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(8))
+                window.contentView?.layoutSubtreeIfNeeded()
+                drift = max(drift, abs(try firstRowTop() - start))
+            }
+            XCTAssertEqual(f.model.expanded, expanding)
+            XCTAssertLessThanOrEqual(drift, 1, "the first row moved \(drift) pt while the bar \(expanding ? "opened" : "closed")")
+            XCTAssertEqual(resizes, 1, "one window resize per change, \(expanding ? "at the start" : "at the end")")
+            if expanding { XCTAssertGreaterThan(window.frame.height, height + 40) } else { XCTAssertLessThan(window.frame.height, height - 40) }
+        }
+    }
+
+    /// Pictures of the drawer's motion for review: the real panel at the points of the GenMotion curve a 60 Hz
+    /// display shows (0, 17, 33, 67, 117 and 240 ms of the opening). Writes only with RECORDING_SNAPSHOT_DIR set.
+    func testDrawerMotionFramesForReview() async throws {
+        guard ProcessInfo.processInfo.environment["RECORDING_SNAPSHOT_DIR"] != nil else { return }
+        let f = try fixture()
+        await firstFrame(f)
+        try await f.host.press("expand")
+        try await f.host.wait(for: liveExpandedControls)
+        try await Task.sleep(for: .milliseconds(400))
+        for ms in [0, 17, 33, 67, 117, 240] {
+            f.panel.motion.stillFraction = Self.curveProgress(Double(ms) / (GenMotion.expandDuration * 1000))
+            try await Task.sleep(for: .milliseconds(150))
+            try await snapshot(f, String(format: "motion-open-%03d", ms))
+        }
+        f.panel.motion.stillFraction = nil
+    }
+
+    /// The GenMotion curve's progress at a fraction of its time (the cubic Bézier solved for x).
+    static func curveProgress(_ time: Double) -> CGFloat {
+        let (x1, y1, x2, y2) = (Double(GenMotion.curve.0), Double(GenMotion.curve.1), Double(GenMotion.curve.2),
+                                Double(GenMotion.curve.3))
+        func bezier(_ s: Double, _ a: Double, _ b: Double) -> Double {
+            3 * a * s * (1 - s) * (1 - s) + 3 * b * s * s * (1 - s) + s * s * s
+        }
+        var low = 0.0
+        var high = 1.0
+        for _ in 0..<40 {
+            let mid = (low + high) / 2
+            if bezier(mid, x1, x2) < time { low = mid } else { high = mid }
+        }
+        return CGFloat(bezier((low + high) / 2, y1, y2))
     }
 
     func testSpaceInRecordingPausesTheEngineOnce() async throws {

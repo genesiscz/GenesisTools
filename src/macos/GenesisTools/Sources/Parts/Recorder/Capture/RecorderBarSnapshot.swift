@@ -71,9 +71,10 @@ struct RecorderBarSnapshot {
     func view() async -> some View {
         let model = await makeModel()
         let defaults = UserDefaults(suiteName: "recorder.snapshot.\(UUID().uuidString)")!
-        return HStack(alignment: .bottom, spacing: 12) {
-            VStack(spacing: 4) {
-                RecordingBarView(model: model, actions: actions, defaults: defaults)
+        // The bar on top, what it opens under it: the picker beside the window it outlines, or the area drag.
+        return VStack(spacing: 8) {
+            RecordingBarView(model: model, actions: actions, defaults: defaults)
+            HStack(alignment: .top, spacing: 12) {
                 if state == .picker || state == .pickerDisplays {
                     // Highlight the same row a hover selects, independently of the target set in the bar.
                     let initial = state == .pickerDisplays ? RecordingTarget.followDisplay
@@ -81,10 +82,10 @@ struct RecorderBarSnapshot {
                     RecordingTargetPicker(load: .loaded(Self.targets), initial: initial,
                                           onChoose: { _ in }, onCancel: {}, capabilities: model.capabilities,
                                           overlays: RecordingPickerOverlays(screens: []))
+                    if !legacyPicker { SnapshotDocument(area: false) }
                 }
                 if state == .area { SnapshotDocument(area: true) }
             }
-            if state == .picker && !legacyPicker { SnapshotDocument(area: false) }
         }.defaultAppStorage(defaults).allowsHitTesting(false)
     }
 
