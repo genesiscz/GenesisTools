@@ -31,6 +31,7 @@ import {
     type QuestionItem,
     questionView,
     questionWarnings,
+    siblingChoices,
     wordQuestions,
 } from "./questions";
 import { sineToneSound } from "./tone-sound";
@@ -430,6 +431,18 @@ describe("listen session", () => {
         });
         expect(fx.item("i4")).toMatchObject({ status: "suggested", choices: [] });
         expect(fx.item("i4")?.evidence).not.toHaveProperty("derivedFrom");
+    });
+
+    test("a derived spelling keeps the rest of the heard word when lowercasing changes the stem's length", async () => {
+        const word = (heard: string) => ({ about: "term", group: "words", heard, choices: [] });
+        const fx = await fixture([question("i1", word("İz")), question("i2", word("İz-fe"))]);
+        const record = fx.read();
+        const answered = record.items.find(
+            (item): item is QuestionItem => item.id === "i1" && item.kind === "question"
+        );
+
+        siblingChoices(record, answered!, "Sorb");
+        expect(record.items.find((item) => item.id === "i2")).toMatchObject({ choices: ["Sorb-fe"] });
     });
 
     test("word questions ask once per heard form, and a form a question asks already is not asked again", async () => {
