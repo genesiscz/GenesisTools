@@ -91,8 +91,21 @@ function todoOf(item: Item, meta: PointerMeta): Todo | null {
                   ? "blocked"
                   : "in-progress"
               : "todo";
+    const schedule = item.fields.remind ?? [];
+    const start =
+        schedule[0]?.label === "start" && (copy.at !== undefined || copy.reminders[0]?.label !== "start")
+            ? schedule[0]
+            : undefined;
+    const available = [...copy.reminders];
+    const reminders = (start ? schedule.slice(1) : schedule).map((reminder) => {
+        const index = available.findIndex(({ at, label }) => at === reminder.at && label === reminder.label);
+        return index < 0 ? reminder : available.splice(index, 1)[0];
+    });
+
     return {
         ...copy,
+        at: start?.at,
+        reminders,
         title: item.title,
         ...(item.body !== undefined ? { description: item.body } : { description: undefined }),
         priority: item.severity ?? copy.priority,
