@@ -111,6 +111,8 @@ function localQuery(query: string, options: SearchCommandOptions) {
 }
 
 type CachedHit = Omit<SearchResult, "url" | "source"> & { id: number; body: string };
+const MAX_LOCAL_CANDIDATES = 512;
+const MAX_CACHED_BODY_CHARS = 16_384;
 
 export async function searchCachedIssues(
     query: string,
@@ -141,11 +143,12 @@ export async function searchCachedIssues(
         }
         issues = cache
             .query<CachedHit, Array<string | number>>(`
-            SELECT i.id, i.number, i.type, i.title, COALESCE(i.body,'') AS body, i.state, i.author,
+            SELECT i.id, i.number, i.type, i.title, substr(COALESCE(i.body,''), 1, ${MAX_CACHED_BODY_CHARS}) AS body, i.state, i.author,
                    i.created_at AS createdAt, i.updated_at AS updatedAt, r.owner || '/' || r.name AS repo,
                    ${columns.has("comment_total") ? "i.comment_total" : "NULL"} AS comments,
                    ${columns.has("reaction_total") ? "i.reaction_total" : "NULL"} AS reactions
             FROM issues i JOIN repos r ON r.id = i.repo_id WHERE ${where} ORDER BY r.owner, r.name, i.number
+            LIMIT ${MAX_LOCAL_CANDIDATES + 1}
         `)
             .all(...params);
     } finally {
@@ -153,6 +156,11 @@ export async function searchCachedIssues(
     }
     if (!issues.length) {
         return [];
+    }
+    if (issues.length > MAX_LOCAL_CANDIDATES) {
+        throw new Error(
+            `Local search matches over ${MAX_LOCAL_CANDIDATES} cached issues and PRs. Narrow it with --repo, --type, --state or reaction filters.`
+        );
     }
     if (!(await embedder.isAvailable())) {
         throw new Error("Local semantic and hybrid search require DarwinKit's on-device sentence embeddings on macOS.");
