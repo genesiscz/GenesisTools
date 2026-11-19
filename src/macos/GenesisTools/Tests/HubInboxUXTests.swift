@@ -61,6 +61,50 @@ final class HubInboxUXTests: XCTestCase {
         XCTAssertEqual(other.texts["question"], "Another answer")
     }
 
+    @MainActor
+    func testHidingAFormDuringAnImageImportKeepsItsDraftAndBlocksEarlySubmission() throws {
+        let inbox = HubInboxModel()
+        let form = try Self.decision(#"{"kind":"form","title":"Pick a sample","questions":[]}"#)
+        let session = Self.session("orchard", items: [form])
+        inbox.received(InboxEnvelope(sessions: [session], elapsedMs: nil))
+        let draft = inbox.formDraft(for: form.id)
+        draft.texts["sample"] = "The small basket"
+        XCTAssertTrue(draft.reserveImage(for: "sample"))
+        XCTAssertTrue(draft.importingImages)
+        inbox.answerForm(form, choices: [:], texts: draft.texts)
+        XCTAssertFalse(inbox.sending.contains(form.id), "The image has not finished staging.")
+        inbox.received(InboxEnvelope(sessions: [], elapsedMs: nil))
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let bytes = Data([1, 2, 3])
+        try bytes.write(to: file)
+        let image = QaAttachedImage(path: file.path, thumbnail: NSImage(size: .init(width: 2, height: 2)))
+        defer { draft.removeImage(image, for: "sample") }
+        draft.finishImage(.staged(image), for: "sample")
+        inbox.received(InboxEnvelope(sessions: [session], elapsedMs: nil))
+        let restored = inbox.formDraft(for: form.id)
+        XCTAssertFalse(restored.importingImages)
+        XCTAssertEqual(restored.texts["sample"], "The small basket")
+        let path = try XCTUnwrap(restored.images["sample"]?.first?.path)
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path)), bytes)
+    }
+
+    @MainActor
+    func testHeldDismissalRejectsAnOptionOrSendUntilUndo() throws {
+        let item = try Self.setDecision(draftOption: "a")
+        let session = Self.session("orchard", items: [item])
+        let inbox = HubInboxModel()
+        inbox.dismiss(item, in: session)
+        defer { inbox.undoDismiss(item) }
+        inbox.choose(item, in: session, letter: "b", note: nil, shift: false, command: false)
+        inbox.sendStaged([item.id], in: session)
+        XCTAssertTrue(inbox.staging.held.contains(item.id))
+        XCTAssertTrue(inbox.staging.writing.isEmpty)
+        XCTAssertTrue(inbox.sendingSessions.isEmpty)
+        XCTAssertEqual(inbox.letters(item), "a")
+        inbox.undoDismiss(item)
+        XCTAssertEqual(inbox.sendableIDs(session), [item.id])
+    }
+
     /// P4: the Decisions pane's caption follows the Decision click setting, and its empty text says what is empty.
     func testTheDecisionsPaneSaysWhatAClickDoesAndWhatIsEmpty() {
         XCTAssertEqual(DecisionsView.caption(stages: true).text, "A click stages an option · Send delivers")

@@ -489,9 +489,8 @@ final class HubInboxModel: ObservableObject {
     private var noteAcknowledgements: [String: Int] = [:]
     /// A newly built lazy card restores an unsaved note before falling back to the ledger.
     func noteForCard(_ item: InboxItem) -> String { noteTexts[item.id] ?? item.draft ?? "" }
-    /// Images attached to a question form and not sent yet, by form id, then question id. Here, not in the lazy card:
-    /// a card scrolled out of view deleted them (F11). Dropped with their files once the form is no longer listed.
-    fileprivate var formImages: [String: [String: [QaAttachedImage]]] = [:]
+    /// A hidden kind, a shorter page or a mode switch can temporarily remove a still-open form.
+    /// Only confirmed submission releases its answers and staged files.
     private var formDrafts: [String: InboxFormDraft] = [:]
 
     func formDraft(for id: String) -> InboxFormDraft {
@@ -563,18 +562,7 @@ final class HubInboxModel: ObservableObject {
                     }
                     switch result {
                     case .success(let envelope):
-                        // A pick the load shows is confirmed; one no load showed in time gives way to the store.
-                        // The engine publishes only a change, so an unchanged load redraws nothing for it.
-                        self.staging.reconcile(Self.stagingRows(envelope.sessions))
-                        // An unchanged Inbox (the usual reload on a mode switch) redraws nothing.
-                        if self.sessions != envelope.sessions {
-                            HubMainBusy.measure("inbox.render")
-                            self.sessions = envelope.sessions
-                        }
-                        if self.error != nil { self.error = nil }
-                        self.loadedAt = Date()
-                        self.pruneFormImages()
-                        self.applyReveal()
+                        self.received(envelope)
                     case .failure(let failure):
                         FailureReport.toolsCall(failure, outcome: "The waiting sessions did not load", action: "Read the Inbox",
                                                 call: ledger.failed, argv: ["question", "inbox", "--json"],
@@ -585,6 +573,17 @@ final class HubInboxModel: ObservableObject {
                 }
             }
         }
+    }
+
+    func received(_ envelope: InboxEnvelope) {
+        staging.reconcile(Self.stagingRows(envelope.sessions))
+        if sessions != envelope.sessions {
+            HubMainBusy.measure("inbox.render")
+            sessions = envelope.sessions
+        }
+        if error != nil { error = nil }
+        loadedAt = Date()
+        applyReveal()
     }
 
     private func finishLoad() {
@@ -674,16 +673,6 @@ final class HubInboxModel: ObservableObject {
         noteFocusCount += 1
     }
 
-    /// Form images whose form is no longer listed (answered, withdrawn, gone) are deleted with their files.
-    private func pruneFormImages() {
-        let listed = Set(sessions.flatMap { $0.items.filter(\.isForm).map(\.id) })
-        formDrafts = formDrafts.filter { listed.contains($0.key) || sending.contains($0.key) }
-        for (formId, images) in formImages where !listed.contains(formId) && !sending.contains(formId) {
-            images.values.flatMap { $0 }.forEach { QaAttachedImage.remove($0.path) }
-            formImages[formId] = nil
-        }
-    }
-
     /// Says what became of a decision a banner or a link asked for that the Inbox no longer lists: its state and the
     /// answer it took, read from the session's decisions (`tools question inbox --session <id> --json`).
     private func explainNotWaiting(_ id: String, _ target: RevealTarget) {
@@ -728,7 +717,7 @@ final class HubInboxModel: ObservableObject {
     /// `""` to clear the pick); `text` is the note, nil to keep the stored one. `then` runs once the write landed (a
     /// send at once). The item's revision goes along, so a pick on text the agent has since changed is refused.
     func draft(_ item: InboxItem, in session: InboxSession, option: String?, text: String?, then: (() -> Void)? = nil) {
-        guard let address = Self.address(item, in: session) else { return }
+        guard !staging.held.contains(item.id), let address = Self.address(item, in: session) else { return }
         writeErrors[item.id] = nil
         writeErrorDetails[item.id] = nil
         staging.stage(address, option: option, note: text, then: then)
@@ -817,6 +806,7 @@ final class HubInboxModel: ObservableObject {
     /// `note`: the card's note when the user changed it since it was saved, else nil, so a click never writes back a
     /// stale copy over a note staged in the widget or the session's sidebar.
     func choose(_ item: InboxItem, in session: InboxSession, letter: String, note: String?, shift: Bool, command: Bool) {
+        guard !staging.held.contains(item.id) else { return }
         if item.answerRoute == .dialog {
             keyCardID = item.id
             answerDialog(item, letter: letter)
@@ -844,6 +834,7 @@ final class HubInboxModel: ObservableObject {
     /// nothing to stage or send: an input hint, drawn quiet and gone on the next key, never as an error (P12).
     @discardableResult
     func submitNote(_ item: InboxItem, in session: InboxSession, note: String, command: Bool) -> String? {
+        guard !staging.held.contains(item.id) else { return "Undo the dismissal to answer." }
         if item.answerRoute == .dialog { return "This dialog takes an option: pick one." }
         let stages = DecisionAnswering.returnStages(freshPreferences(), command: command)
         if let hint = Self.emptyNoteHint(note: note, stored: item.draft, letters: letters(item), stages: stages) {
@@ -1060,6 +1051,7 @@ final class HubInboxModel: ObservableObject {
     /// `send-staged` action: one message per session), or sends answered ones again (`resend-answers`, Send again).
     /// The result reads as the widget's note: delivered, waiting for the session's next prompt, or failed.
     func sendStaged(_ ids: [String], in session: InboxSession, action: DecisionAnswering.SendAction = .sendStaged) {
+        let ids = ids.filter { !staging.held.contains($0) }
         guard let sessionId = session.sessionId, !ids.isEmpty else { return }
         guard !sendingSessions.contains(sessionId) else {
             // A send at once while another send of the session runs: it goes next, never silently nowhere.
@@ -1171,6 +1163,7 @@ final class HubInboxModel: ObservableObject {
         imagePaths: [String: [String]] = [:]
     ) {
         guard
+            formDrafts[item.id]?.importingImages != true,
             let args = Self.formAnswerArgs(
                 formId: item.id,
                 questions: item.questions ?? [],
@@ -1306,7 +1299,6 @@ final class HubInboxModel: ObservableObject {
                     GenAnnounce.post(delivery.summary)
                     if !delivery.isError {
                         // The answering process read the images; the form leaves the list on this load.
-                        self.formImages[item.id] = nil
                         self.formDrafts[item.id] = nil
                         self.load()
                     }
@@ -2247,7 +2239,7 @@ struct InboxDecisionCard: View, Equatable {
     /// card's content below); the body's own two decisions (the note field, the option buttons) read it here.
     private var live: Bool { hovering || state.keyCard || noteFocused || noteOpen }
     private var sessionSending: Bool { state.sessionSending }
-    private var pickable: Bool { item.isOpen && session.sessionId != nil }
+    private var pickable: Bool { item.isOpen && session.sessionId != nil && !state.heldDismiss }
     private var letters: String { state.letters }
     /// A pick or a note is staged and not sent: blue on the option, the card, its header and the sidebar (F2).
     private var staged: Bool {
@@ -2321,7 +2313,7 @@ struct InboxDecisionCard: View, Equatable {
             if !item.isOpen, let answer = item.answerBeyondPick {
                 answerBlock(answer)
             }
-            if item.isOpen && item.answerRoute != .dialog {
+            if item.isOpen && !state.heldDismiss && item.answerRoute != .dialog {
                 noteField
             }
             footerRow
@@ -2766,7 +2758,7 @@ struct InboxDecisionCard: View, Equatable {
     /// "Pick the recommended a + b + c" under the options of an open decision that takes any set of them, while the
     /// ticked set is not that one already. Nothing is sent; the card's Send does that.
     @ViewBuilder private var recommendedPick: some View {
-        if item.isOpen, pickable, item.takesSeveral,
+        if pickable, item.takesSeveral,
            let set = DecisionAnswering.recommendedSet(item.recommended, count: item.choices?.count ?? 0),
            set != letters {
             LiveButton(tooltip: "Ticks exactly the options the agent recommends. Nothing is sent until you press Send.",
@@ -3064,7 +3056,7 @@ struct InboxResumeSheet: View {
 /// else (several questions, multiple choice, free text) is staged and sent with Submit.
 /// One image attached to a QA answer: written to a private temp file as soon as it is pasted or
 /// picked, so it can be sent as `--image itemId=path` without ever crossing argv as base64.
-private struct QaAttachedImage: Identifiable {
+struct QaAttachedImage: Identifiable {
     let id = UUID()
     let path: String
     let thumbnail: NSImage
@@ -3088,13 +3080,13 @@ private struct QaAttachedImage: Identifiable {
         }
 
         guard png.count <= QaFormFields.maxImageBytes else {
-            return .failed("That image is too large; the server keeps up to about 1.5 MB per image.")
+            return .failed("Choose an image smaller than 1.5 MB.")
         }
 
         let url = directory.appendingPathComponent("\(UUID().uuidString).png")
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            sweepStale()
+            _ = sweepPreviousImages
             try png.write(to: url)
         } catch {
             return .failed("Could not save that image: \(error.localizedDescription)")
@@ -3111,7 +3103,9 @@ private struct QaAttachedImage: Identifiable {
         }
     }
 
-    private static func sweepStale(now: Date = Date()) {
+    // Run once before staging the first picture. An old file can still belong to a draft in this hub.
+    private static let sweepPreviousImages: Void = {
+        let now = Date()
         let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
         for file in files where file.pathExtension == "png" {
             let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? now
@@ -3119,7 +3113,7 @@ private struct QaAttachedImage: Identifiable {
                 remove(file.path)
             }
         }
-    }
+    }()
 }
 
 /// Drafts belong to a form, so navigating, scrolling or changing layouts cannot discard or cross-send them.
@@ -3128,6 +3122,34 @@ final class InboxFormDraft {
     var picked: [String: Set<String>] = [:]
     var texts: [String: String] = [:]
     var fileTagsText: [String: String] = [:]
+    private(set) var images: [String: [QaAttachedImage]] = [:]
+    var fieldError: [String: String] = [:]
+    private var pending: [String: Int] = [:]
+    var importingImages: Bool { !pending.isEmpty }
+
+    func reserveImage(for id: String) -> Bool {
+        guard images[id, default: []].count + pending[id, default: 0] < QaFormFields.maxImagesPerAnswer else {
+            fieldError[id] = "Only \(QaFormFields.maxImagesPerAnswer) images fit. Remove one to add another."
+            return false
+        }
+        if pending[id] == nil { fieldError[id] = nil }
+        pending[id, default: 0] += 1
+        return true
+    }
+
+    func removeImage(_ image: QaAttachedImage, for id: String) {
+        QaAttachedImage.remove(image.path)
+        images[id]?.removeAll { $0.id == image.id }
+    }
+
+    func finishImage(_ outcome: QaAttachedImage.Outcome, for id: String) {
+        let remaining = pending[id, default: 1] - 1
+        pending[id] = remaining > 0 ? remaining : nil
+        switch outcome {
+        case .failed(let message): fieldError[id] = message
+        case .staged(let image): images[id, default: []].append(image)
+        }
+    }
 }
 
 struct InboxFormCard: View {
@@ -3146,8 +3168,7 @@ struct InboxFormCard: View {
         get { draft.fileTagsText }
         nonmutating set { draft.fileTagsText = newValue }
     }
-    @State private var attachedImages: [String: [QaAttachedImage]] = [:]
-    @State private var fieldError: [String: String] = [:]
+    private var attachedImages: [String: [QaAttachedImage]] { draft.images }
 
     private var questions: [InboxQuestion] { item.questions ?? [] }
     private var sending: Bool { inbox.sending.contains(item.id) }
@@ -3179,6 +3200,7 @@ struct InboxFormCard: View {
     }
 
     private func submit() {
+        guard complete, !sending, !draft.importingImages else { return }
         let fileTagsByItem = Dictionary(uniqueKeysWithValues: questions.compactMap { question -> (String, [String])? in
             let tags = fileTags(for: question.itemId)
             return tags.isEmpty ? nil : (question.itemId, tags)
@@ -3187,13 +3209,6 @@ struct InboxFormCard: View {
             images.isEmpty ? nil : (itemId, images.map(\.path))
         })
         inbox.answerForm(item, choices: picked, texts: texts, fileTags: fileTagsByItem, imagePaths: imagePathsByItem)
-    }
-
-    /// The form's attached images live in the model, not in this lazy card: a card scrolled out of view deleted them
-    /// (F11). The model drops them with their files once the form is answered or no longer listed.
-    private func setImages(_ images: [QaAttachedImage], for itemId: String) {
-        attachedImages[itemId] = images
-        inbox.formImages[item.id, default: [:]][itemId] = images
     }
 
     var body: some View {
@@ -3215,7 +3230,7 @@ struct InboxFormCard: View {
                     FindText(inlineMarkdown(question.prompt), field: "q:\(question.itemId)")
                         .font(.system(size: 12.5))
                         .textSelection(.enabled)
-                    HStack(spacing: 6) {
+                    WrapLayout(spacing: 6, lineSpacing: 6) {
                         ForEach(question.choices, id: \.id) { choice in
                             choiceChip(question, choice)
                         }
@@ -3232,15 +3247,15 @@ struct InboxFormCard: View {
                     if question.imagePaste {
                         imageAttachField(question)
                     }
-                    if let error = fieldError[question.itemId] {
+                    if let error = draft.fieldError[question.itemId] {
                         Text(error).font(.system(size: 11)).foregroundColor(ReviewPalette.removed)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                }
+                }.disabled(sending)
             }
             HStack(spacing: 8) {
-                if sending {
-                    ProgressView().controlSize(.small)
+                if draft.importingImages || sending {
+                    ProgressView(draft.importingImages ? "Adding images…" : "Sending answer…").controlSize(.small)
                 } else if let delivery = inbox.deliveries[item.id] {
                     InboxDeliveryLine(delivery: delivery)
                 }
@@ -3253,7 +3268,7 @@ struct InboxFormCard: View {
                     }
                     .buttonStyle(.genPrimary())
                     .fixedSize()
-                    .disabled(!complete || sending)
+                    .disabled(!complete || sending || draft.importingImages)
                     .instantTooltip(complete ? "Answer the form; the agent waiting on it continues" : "Every required question needs an answer first")
                 }
             }
@@ -3262,10 +3277,6 @@ struct InboxFormCard: View {
         .background(RoundedRectangle(cornerRadius: 11).fill(Color.white.opacity(0.045)))
         .overlay(RoundedRectangle(cornerRadius: 11).stroke(ReviewPalette.renamed.opacity(0.3)))
         .findRow(item.id, cornerRadius: 11)
-        .onAppear {
-            // A card built again (scrolled back into view) gets its images back.
-            if let kept = inbox.formImages[item.id] { attachedImages = kept }
-        }
     }
 
     private func choiceChip(_ question: InboxQuestion, _ choice: InboxChoice) -> some View {
@@ -3331,10 +3342,10 @@ struct InboxFormCard: View {
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
             guard let relative = QaFormFields.relativeFileTag(url.path, cwd: cwd) else {
-                fieldError[question.itemId] = "That file is outside the form's folder (\(cwd))."
+                draft.fieldError[question.itemId] = "Choose a file inside the form’s folder (\(cwd))."
                 return
             }
-            fieldError[question.itemId] = nil
+            draft.fieldError[question.itemId] = nil
             let existing = fileTagsText[question.itemId] ?? ""
             let token = QaFormFields.fileTagToken(relative)
             fileTagsText[question.itemId] = existing.trimmed.isEmpty ? token : existing + " " + token
@@ -3356,18 +3367,9 @@ struct InboxFormCard: View {
                                 .aspectRatio(contentMode: .fill)
                                 .frame(width: 40, height: 40)
                                 .clipShape(RoundedRectangle(cornerRadius: 5))
-                            Button {
-                                removeImage(itemId: itemId, id: image.id)
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(.white)
-                                    .background(Circle().fill(Color.black.opacity(0.6)))
-                            }
-                            .buttonStyle(.genHoverPlain())
-                            .offset(x: 4, y: -4)
-                            .instantTooltip("Remove this image")
-                            .accessibilityLabel(Text("Remove image"))
+                            IconButton(systemName: "xmark.circle.fill", tooltip: "Remove this image", size: 12, tint: .white) {
+                                draft.removeImage(image, for: itemId)
+                            }.background(.black.opacity(0.6), in: Circle()).accessibilityLabel("Remove image")
                         }
                     }
                 }
@@ -3384,10 +3386,11 @@ struct InboxFormCard: View {
         .padding(6)
         .background(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.12), style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
         .onPasteCommand(of: [.image]) { providers in
-            for provider in providers {
+            for provider in providers where !sending && draft.reserveImage(for: itemId) {
+                let owner = draft
                 _ = provider.loadObject(ofClass: NSImage.self) { image, _ in
-                    guard let image = image as? NSImage else { return }
-                    DispatchQueue.main.async { attachImage(itemId: itemId) { image } }
+                    let outcome = QaAttachedImage.stage(image as? NSImage)
+                    DispatchQueue.main.async { owner.finishImage(outcome, for: itemId) }
                 }
             }
         }
@@ -3404,47 +3407,17 @@ struct InboxFormCard: View {
         panel.begin { response in
             guard response == .OK else { return }
             for url in panel.urls {
-                attachImage(itemId: itemId) { NSImage(contentsOf: url) }
-            }
-        }
-    }
-
-    /// Loads, converts, size-checks and writes the image on a background queue, so a large screenshot
-    /// never stalls the hub, then adds it on the main queue against the latest count.
-    private func attachImage(itemId: String, load: @escaping () -> NSImage?) {
-        guard (attachedImages[itemId] ?? []).count < QaFormFields.maxImagesPerAnswer else {
-            fieldError[itemId] = "Only \(QaFormFields.maxImagesPerAnswer) images per answer; remove one first."
-            return
-        }
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            let outcome = QaAttachedImage.stage(load())
-            DispatchQueue.main.async {
-                switch outcome {
-                case .failed(let message):
-                    fieldError[itemId] = message
-                case .staged(let image):
-                    let current = attachedImages[itemId] ?? []
-                    guard current.count < QaFormFields.maxImagesPerAnswer else {
-                        QaAttachedImage.remove(image.path)
-                        fieldError[itemId] = "Only \(QaFormFields.maxImagesPerAnswer) images per answer; remove one first."
-                        return
-                    }
-                    fieldError[itemId] = nil
-                    setImages(current + [image], for: itemId)
+                guard !sending, draft.reserveImage(for: itemId) else { continue }
+                let owner = draft
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let outcome = QaAttachedImage.stage(NSImage(contentsOf: url))
+                    DispatchQueue.main.async { owner.finishImage(outcome, for: itemId) }
                 }
             }
         }
     }
 
-    private func removeImage(itemId: String, id: UUID) {
-        guard var list = attachedImages[itemId] else { return }
-        if let index = list.firstIndex(where: { $0.id == id }) {
-            QaAttachedImage.remove(list[index].path)
-            list.remove(at: index)
-        }
-        setImages(list, for: itemId)
-    }
+
 }
 
 /// Bold, code and links in a prompt; anything that is not valid markdown stays plain text.
