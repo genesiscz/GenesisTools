@@ -169,7 +169,11 @@ extension MeetingsAPI {
             let confidence: Double
             var id: String { name }
         }
-        struct Suggestion: Decodable, Equatable { let seats: MeetingSeats; let people: [Person] }
+        struct Suggestion: Decodable, Equatable {
+            let seats: MeetingSeats
+            let people: [Person]
+            var deviceOffers: [RoomDeviceOffer]?
+        }
         struct Result: Decodable, Equatable { let meeting: String; let current: MeetingSeats?; let suggestion: Suggestion }
     }
 }

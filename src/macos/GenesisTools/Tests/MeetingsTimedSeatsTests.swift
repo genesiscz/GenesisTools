@@ -4,6 +4,24 @@ import XCTest
 
 @MainActor
 final class MeetingsTimedSeatsTests: XCTestCase {
+    func testSeatOfferKeepsTheQuestionAndEvidenceForEitherAnswer() throws {
+        let json = #"""
+        {"meeting":"review","current":null,"suggestion":{"seats":{},"people":[],"deviceOffers":[{
+          "account":"Boardroom PC","group":"self","meetings":["planning","review"],"question":"Is this the shared microphone?"
+        }]}}
+        """#
+        let result = try JSONDecoder().decode(MeetingsAPI.SeatsSuggest.Result.self, from: Data(json.utf8))
+        let offer = try XCTUnwrap(result.suggestion.deviceOffers?.first)
+        XCTAssertEqual(offer.question, "Is this the shared microphone?")
+        for yes in [true, false] {
+            let params = RoomDeviceChange.answer(offer, meeting: result.meeting, yes: yes).params
+            XCTAssertEqual(try MeetingsService.paramsObject(params) as NSDictionary, [
+                "action": "answer", "account": "Boardroom PC", "group": "self",
+                "meetings": ["planning", "review"], "meeting": "review", "yes": yes,
+            ] as NSDictionary)
+        }
+    }
+
     func testSeatSuggestionFromBeforeDeviceOffersStillDecodes() throws {
         let json = #"{"meeting":"planning","current":null,"suggestion":{"seats":{"room":["Boardroom PC"]},"people":[]}}"#
         let result = try JSONDecoder().decode(MeetingsAPI.SeatsSuggest.Result.self, from: Data(json.utf8))
