@@ -15,12 +15,11 @@ adapters of its ports.
 - Ids: a new item is `w_` plus 8 characters. A task born in a handoff keeps `h_x:t5` for good. Every command takes
   an id or `<handoff>:<slot>`.
 
-## Shadow mode (until the switch)
+## Handoff storage
 
-The old handoff log stays the writer of a handoff's tasks, ticks, claims and text. The old executor calls
-`ingestLegacyHandoff` after each event it appends, so the store follows it. A `finish`, `drop`, `reopen`, `comment`
-or title edit of a handoff member goes through the old log, and the hook brings it back. Types, severity, parents,
-references, pointers and spotted items are written to the store directly.
+The work database is authoritative for handoff rows and events. The handoff executor folds tasks, ticks, claims and
+text into that database. It copies new events to the legacy JSONL log for rollback. Work sends member actions through
+the same executor. Types, severity, parents, references, pointers and spotted items are written directly to Work.
 
 After a change of the hook, restart the long-running processes (the hosted MCP child, the dev-dashboard server, the
 hub server, `tools handoff watch`), then:
@@ -61,7 +60,7 @@ to stderr.
 ## One method table, four doors
 
 `workApi` (`src/utils/work/api.ts`) lists every method once. `toCliCommands` makes the commands above from it, the
-MCP group `work` (opt-in for now, `src/work/mcp/genesis-tools.ts`) serves `work_context`, `work_list`, `work_show`,
+MCP group `work` (enabled by default, `src/work/mcp/genesis-tools.ts`) serves `work_context`, `work_list`, `work_show`,
 `work_spot`, `work_reopen` and `work_write { method, params }`, and the node REPL toolset `work` answers
 `await work.list({ project: "GenesisTools" })` with the reply object. Each method has a formatter in
 `src/utils/work/formatters.ts`; a method without one does not compile.
