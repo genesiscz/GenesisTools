@@ -66,6 +66,17 @@ export function attendanceWarning(record: MeetingRecord): string | undefined {
     return attendanceDetail(record) === undefined ? undefined : attendanceSentence(record.platform);
 }
 
+/** Why an `--attendance-id` cannot be used with this `--attendance`, before anything loads; undefined when it can. */
+export function attendanceIdRefusal(spec: string | undefined, attendanceId: string | undefined): string | undefined {
+    const selectedId = attendanceId?.trim();
+
+    if (selectedId !== undefined && (!spec || selectedId.length === 0)) {
+        return "--attendance-id requires --attendance <platform> and a nonempty id.";
+    }
+
+    return undefined;
+}
+
 /**
  * One meeting, opened once: its record and, read lazily and once, the linked source's meeting, the evidence (filtered
  * by the platform), the call timeline with presence, the calibrated energy share, the silent call stretches, the
@@ -187,9 +198,10 @@ export class OpenedMeeting {
      */
     async presence(spec?: string, attendanceId?: string): Promise<Presence[] | undefined> {
         const selectedId = attendanceId?.trim();
+        const refusal = attendanceIdRefusal(spec, attendanceId);
 
-        if (selectedId !== undefined && (!spec || selectedId.length === 0)) {
-            throw new Error("--attendance-id requires --attendance <platform> and a nonempty id.");
+        if (refusal) {
+            throw new Error(refusal);
         }
 
         if (spec) {
