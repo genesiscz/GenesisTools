@@ -1,7 +1,9 @@
 import { decisionFindArgv } from "@app/claude/lib/cmux/transcript-find";
+import { untilAborted } from "@genesiscz/utils/async";
 import { CODE_CHANGED_EXIT, onLoadedCodeChange } from "@genesiscz/utils/bun/loaded-modules";
 import { execToolInteractive, runTool } from "@genesiscz/utils/cli";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
+import { writeStdoutStrict } from "@genesiscz/utils/cli/stdout";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { runningWidgetRoot } from "@genesiscz/utils/macos/native-inbox";
@@ -246,7 +248,7 @@ widget
                         root: command.optsWithGlobals().stateRoot,
                         selectedKey: options.selected,
                         signal: owner.signal,
-                        emit: (snapshot, serialized) => {
+                        emit: async (snapshot, serialized) => {
                             // Only an opted-in reader can carry the last roster across lines of this stream.
                             const line =
                                 reuseSessions && sentSessions && Bun.deepEquals(sentSessions, snapshot.sessions)
@@ -255,7 +257,13 @@ widget
                                           { strict: true }
                                       )
                                     : serialized;
-                            out.print(`${line}\n`);
+                            try {
+                                owner.signal.throwIfAborted();
+                                await untilAborted(writeStdoutStrict(`${line}\n`), owner.signal);
+                            } catch (error) {
+                                owner.abort(error);
+                                throw error;
+                            }
                             if (reuseSessions) {
                                 sentSessions = snapshot.sessions;
                             }
