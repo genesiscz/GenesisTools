@@ -1,10 +1,6 @@
 import { type SpawnSyncReturns, spawnSync } from "node:child_process";
-import {
-    parseStatusPorcelainV2Z,
-    STATUS_PORCELAIN_ARGS,
-    type StatusEntry,
-    type StatusSummary,
-} from "@genesiscz/utils/git/porcelain";
+import { hookStatusArgs } from "@genesiscz/utils/git/hook-status";
+import { parseStatusPorcelainV2Z, type StatusEntry, type StatusSummary } from "@genesiscz/utils/git/porcelain";
 import { hookDiag } from "./log";
 
 /** Big enough for a `git diff HEAD` of a large file; a breach is reported, never swallowed. */
@@ -79,19 +75,11 @@ export function gitOut(root: string, args: string[], options: { quiet?: boolean 
  * clone at a load average of about 30, median of 9 interleaved runs: 151 to 163 ms of CPU
  * (45 ms wall) with the threads, 49 ms (50 ms wall) without. The threads contend in the kernel:
  * a single-threaded `git ls-files --deleted` stats the same files in 19 ms.
+ *
+ * The argument list is `hookStatusArgs`, shared with the status service, so the two can never read differently.
  */
 export function statusOf(root: string, options: { trackedOnly?: boolean } = {}): StatusSummary {
-    return parseStatusPorcelainV2Z(
-        gitOut(root, [
-            "-c",
-            "core.preloadIndex=false",
-            ...STATUS_PORCELAIN_ARGS,
-            "--no-renames",
-            // Post needs the HEAD oid, but neither hook uses upstream commit counts.
-            "--no-ahead-behind",
-            ...(options.trackedOnly ? ["--untracked-files=no"] : []),
-        ])
-    );
+    return parseStatusPorcelainV2Z(gitOut(root, hookStatusArgs({ trackedOnly: options.trackedOnly })));
 }
 
 export function statusEntries(root: string, options: { trackedOnly?: boolean } = {}): StatusEntry[] {
