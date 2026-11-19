@@ -899,6 +899,8 @@ export async function widgetSnapshot({
             rosterUnread.filter((row) => (row.tag === "message") === message).map((row) => row.ts),
             inboxWindow
         ).recentAfterClear;
+    const recentAnswers = rosterRecent(false);
+    const recentMessages = rosterRecent(true);
     const inboxData: WidgetInboxData = inboxSource
         ? await read("inbox metadata", () => inboxSource(inboxWindow), {
               answers: [],
@@ -920,7 +922,7 @@ export async function widgetSnapshot({
                   messageText: row.tag === "message" ? row.answerMd : undefined,
                   sender: row.agentLabel?.trim() || row.source,
                   ...inboxWindowCounts([row.ts], inboxWindow),
-                  recentAfterClearTotal: rosterRecent(row.tag === "message"),
+                  recentAfterClearTotal: row.tag === "message" ? recentMessages : recentAnswers,
               })),
               complete: false,
               truncated: true,

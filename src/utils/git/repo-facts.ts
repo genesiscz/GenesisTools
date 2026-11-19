@@ -29,7 +29,8 @@ export interface RepoFacts {
 const log = logger.child({ component: "review/repo" });
 const GIT_TIMEOUT_MS = 10_000;
 const GIT_BACKOFF_MS = 30_000;
-const gitFailures = new Map<string, { until: number; message: string }>();
+const MAX_BACKOFF_CHECKOUTS = 256;
+const gitFailures = new Map<string, { until: number; message: string; expiry: ReturnType<typeof setTimeout> }>();
 
 function checkoutGit(path: string, signal?: AbortSignal): Pick<Executor, "exec"> {
     const key = resolve(path);
@@ -54,13 +55,17 @@ function checkoutGit(path: string, signal?: AbortSignal): Pick<Executor, "exec">
                 signal?.throwIfAborted();
                 const message = `${path}: ${error instanceof Error ? error.message : String(error)}`;
                 const now = Date.now();
-                for (const [folder, previous] of gitFailures) {
-                    if (previous.until <= now) {
-                        gitFailures.delete(folder);
+                clearTimeout(gitFailures.get(key)?.expiry);
+                gitFailures.delete(key);
+                const expiry = setTimeout(() => gitFailures.delete(key), GIT_BACKOFF_MS).unref();
+                gitFailures.set(key, { message, until: now + GIT_BACKOFF_MS, expiry });
+                if (gitFailures.size > MAX_BACKOFF_CHECKOUTS) {
+                    const oldest = gitFailures.keys().next();
+                    if (!oldest.done) {
+                        clearTimeout(gitFailures.get(oldest.value)?.expiry);
+                        gitFailures.delete(oldest.value);
                     }
                 }
-
-                gitFailures.set(key, { message, until: now + GIT_BACKOFF_MS });
                 throw new Error(message, { cause: error });
             }
         },
