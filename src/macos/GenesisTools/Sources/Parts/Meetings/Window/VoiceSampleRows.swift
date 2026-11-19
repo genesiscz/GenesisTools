@@ -441,6 +441,10 @@ struct VoiceSampleRows: View {
             }
             if model.destination == destination, let failure = model.rows.failure {
                 FailureInline(failure.report(outcome: "Voice samples did not load", action: "Read voice samples"), form: .compact) { model.refresh() }
+                // A failed refresh keeps the last read's samples below, and says they are old (eve t105).
+                if let note = VoicesPane.staleNote(model.rows) {
+                    Text(note).font(.system(size: 11)).foregroundStyle(.secondary).padding(.bottom, 4)
+                }
             }
             if model.destination == destination, let rows = model.rows.value {
                 ForEach(rows.conflicts, id: \.file) { conflict in
