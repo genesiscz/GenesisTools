@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import {
     executeHandoffActions,
     getHandoff,
@@ -6,6 +7,7 @@ import {
     type PostHandoffResponse,
     postHandoff,
 } from "@app/handoff/executor";
+import { foldEvents, openHandoffModel } from "@app/handoff/read-model";
 import { byFor, freshEnv } from "@app/handoff/test-utils";
 import type { PlannedLink } from "@genesiscz/utils/browser-router/links";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -44,6 +46,43 @@ describe("handoff_post run link", () => {
 });
 
 describe("work store handoff reads", () => {
+    test("get and list can read a handoff that has never been mirrored", async () => {
+        const store = freshEnv();
+        const by = byFor("session-poster");
+        const deps = store.depsFor(by);
+        const id = "h_workonly";
+        const db = openHandoffModel(store.dbPath);
+        try {
+            db.transaction(() =>
+                foldEvents(
+                    db,
+                    [
+                        {
+                            ev: "post",
+                            uid: "work-only-post",
+                            ts: "2026-01-01T00:00:00.000Z",
+                            id,
+                            editId: "fixture",
+                            title: "Work-only handoff",
+                            tasks: [{ text: "Read" }],
+                            by,
+                        },
+                    ],
+                    store.base
+                )
+            )();
+        } finally {
+            db.close();
+        }
+
+        expect(existsSync(store.base)).toBe(false);
+        const get = SafeJSON.parse(await handleHandoffGet({ id }, deps));
+        expect(get).toHaveProperty("handoff.id", id);
+        const list = SafeJSON.parse<{ handoffs: { id: string }[] }>(await handleHandoffList({}, deps));
+        expect(list.handoffs.map((handoff) => handoff.id)).toEqual([id]);
+        expect(existsSync(store.base)).toBe(false);
+    });
+
     test("get matches the legacy response for every section and caller", async () => {
         const store = freshEnv();
         const poster = store.depsFor(byFor("session-poster"));

@@ -26,6 +26,7 @@ export interface LegacyBy {
 }
 
 export interface LegacyTaskInput {
+    id?: string;
     text: string;
     acceptanceCriteria?: string;
     /** The id of an existing work item this task is a copy of (`handoff --from`, `add --under`). */
@@ -175,6 +176,9 @@ class Ingest {
             ...(this.handoff.description !== undefined ? { body: this.handoff.description } : {}),
         };
         this.write({ ts, item: this.handoffId, actor, kind: "created", payload, origin: { via: "legacy", uid } });
+    }
+
+    refreshMeta(): void {
         this.db.run(
             "INSERT INTO handoff_meta (id, name, target) VALUES (?, ?, ?) ON CONFLICT (id) DO UPDATE SET name = excluded.name, target = excluded.target",
             [
@@ -260,18 +264,36 @@ class Ingest {
         switch (event.ev) {
             case "post":
             case "add_tasks": {
-                const inputs = (event.tasks ?? []).filter(
-                    (t) => typeof t.text === "string" && t.text.trim().length > 0
-                );
-                const assigned = outcome?.assignedTaskIds ?? [];
-
-                inputs.forEach((input, index) => {
-                    const slot = assigned[index];
-
-                    if (slot !== undefined) {
-                        this.addMember(slot, { ...input, text: input.text.trim() }, actor, event.ts, event.uid);
+                let assignment = 0;
+                let nextSlot = 1;
+                for (const input of event.tasks ?? []) {
+                    const text = typeof input.text === "string" ? input.text.trim() : "";
+                    if (text.length === 0) {
+                        continue;
                     }
-                });
+
+                    const explicit = input.id?.trim();
+                    const occupied = explicit ? this.memberOf(explicit) !== null : false;
+                    if (occupied && event.ev === "add_tasks") {
+                        continue;
+                    }
+
+                    let slot = outcome?.assignedTaskIds?.[assignment++];
+                    if (slot === undefined) {
+                        if (explicit && !occupied) {
+                            slot = explicit;
+                        } else {
+                            while (this.memberOf(`t${nextSlot}`) !== null) {
+                                nextSlot++;
+                            }
+                            slot = `t${nextSlot}`;
+                        }
+                        if (!this.handoff.tasks.some((task) => task.id === slot)) {
+                            continue;
+                        }
+                    }
+                    this.addMember(slot, { ...input, text }, actor, event.ts, event.uid);
+                }
                 break;
             }
             case "claim":
@@ -491,6 +513,7 @@ export function ingestLegacyHandoff(db: Database, handoff: LegacyHandoff, events
         const ingest = new Ingest(db, handoff);
         let lastUid = `snapshot:${handoff.id}`;
         let lastTs = handoff.createdTs;
+        let changed = selectItem(db, handoff.id) === null;
 
         for (const ref of events) {
             if (ref.event.id !== handoff.id || seen(db, ref.event.uid)) {
@@ -503,12 +526,18 @@ export function ingestLegacyHandoff(db: Database, handoff: LegacyHandoff, events
                 handoff.id,
                 ref.event.ts,
             ]);
-            lastUid = ref.event.uid;
-            lastTs = ref.event.ts;
+            if (ref.outcome?.applied !== false) {
+                changed = true;
+                lastUid = ref.event.uid;
+                lastTs = ref.event.ts;
+            }
         }
 
-        ingest.ensureHandoffItem(legacyActor(handoff.postedByContext), handoff.createdTs, lastUid);
-        ingest.reconcile(lastUid, lastTs);
+        if (changed) {
+            ingest.ensureHandoffItem(legacyActor(handoff.postedByContext), handoff.createdTs, lastUid);
+            ingest.refreshMeta();
+            ingest.reconcile(lastUid, lastTs);
+        }
 
         if (own) {
             db.run("COMMIT");
