@@ -254,6 +254,39 @@ final class HubWorkTests: XCTestCase {
         XCTAssertEqual(asked.target.place, HubNavEntry(mode: .work, selection: "Quiet"))
         XCTAssertEqual(hub.work.screen.project, "Quiet")
         XCTAssertEqual(HubPlace.resumed(["--resume"], place: HubPlace(entry: hub.navEntry, tab: .transcript)), projectLink)
+        XCTAssertTrue(hub.navRequestMatches(asked))
+        hub.work.screen.pane = .notify
+        XCTAssertFalse(hub.navRequestMatches(asked))
+    }
+
+    func testWorkProjectLinkWinsOverTheDefaultOnColdEntry() async throws {
+        HubDefaults.isolate()
+        HubDefaults.store.set(HubWorkOpeningProject.firstInList.rawValue, forKey: HubWorkOpeningProject.key)
+        let source = FakeWorkSource()
+        let hub = HubModel(wantedSession: nil, tab: .transcript, workSource: source)
+        defer { hub.work.deactivate() }
+        XCTAssertNotEqual(hub.mode, .work)
+        XCTAssertFalse(hub.work.screen.projectsLoaded)
+        let link = try XCTUnwrap(HubRequest.arguments(fromLink: "genesis-tools://hub?work-project=Quiet"))
+        XCTAssertTrue(hub.apply(HubRequest(link)))
+        try await waitFor("the linked project's first load") {
+            hub.work.screen.projectsLoaded && hub.work.screen.snapshot != nil && !hub.work.screen.isFirstLoad
+        }
+        XCTAssertEqual(hub.work.screen.projects.first, "App")
+        XCTAssertEqual(hub.work.screen.project, "Quiet")
+        XCTAssertEqual(hub.work.screen.snapshot?.project, "Quiet")
+        XCTAssertEqual(hub.work.screen.pane, .items)
+    }
+
+    func testWorkCountRequiresItsOwnSectionToMatchTheFilter() async throws {
+        let source = FakeWorkSource()
+        let snapshot = try await source.snapshot(project: "App")
+        let filter = WorkFilter(text: "no matching fixture")
+        let empty = WorkItemsProjection(snapshot: snapshot, filter: filter)
+        XCTAssertTrue(empty.isEmpty)
+        XCTAssertFalse(WorkMain.hasCountTarget(WorkItemsView.spottedTitle, filter: filter, rows: empty))
+        let unfiltered = WorkItemsProjection(snapshot: snapshot)
+        XCTAssertTrue(WorkMain.hasCountTarget(WorkItemsView.spottedTitle, filter: .default, rows: unfiltered))
     }
 
     /// A launch with `--mode work` settles on the Work screen's first load (the snapshot waits for it).

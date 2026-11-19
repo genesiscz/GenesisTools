@@ -83,6 +83,7 @@ struct HubRequest {
     var worktree: String?
     /// --work <ref> opens one task or handoff in Work.
     var workItem: String?
+    /// --work-project <name> opens the named project's Items pane.
     var workProject: String?
     /// Inbox mode: opens the resume dialog (`--inbox-resume <id>`) or the session info popover
     /// (`--inbox-info <id>`) for this session (id or prefix) once the list has loaded; for snapshots.
@@ -1118,7 +1119,9 @@ final class HubModel {
     @MainActor
     func navRequestMatches(_ asked: HubNavRequest) -> Bool {
         if let ref = asked.workItem { return mode == .work && work.screen.itemRef == ref }
-        if let project = asked.workProject { return mode == .work && work.screen.itemRef == nil && work.screen.project == project }
+        if let project = asked.workProject {
+            return mode == .work && work.screen.itemRef == nil && work.screen.project == project && work.screen.pane == .items
+        }
         if let pr = asked.pr {
             return mode == .prs && prs.selected.map(pr.matches) == true
         }

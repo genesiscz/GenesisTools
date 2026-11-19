@@ -167,7 +167,11 @@ struct WorkMain: View {
     @StateObject private var drafts = WorkItemInspectorDrafts()
     @ObservedObject var screen: WorkScreenModel
     /// A section a title bar count asked for; the Items scroll view brings its header to the top.
-    @State private var jump: String?
+    private struct SectionJump: Equatable {
+        let id = UUID()
+        let section: String
+    }
+    @State private var jump: SectionJump?
     @State private var foldedSections: Set<String> = []
     @AppStorage(HubWorkSections.foldLongListsKey, store: HubDefaults.store) private var foldLongLists = true
 
@@ -221,11 +225,22 @@ struct WorkMain: View {
 
     private var header: some View {
         WorkHeader(screen: screen, onJump: { section in
-            // A count opens what it counts: a state filter that hides the open sections gives way to it.
-            if !WorkItemsView.showsOpenSections(screen.filter) { screen.filter = .default }
+            if screen.filter.isActive, !Self.hasCountTarget(section, filter: screen.filter, rows: screen.results) {
+                screen.filter = .default
+            }
             foldedSections.remove(section)
-            jump = section
+            jump = SectionJump(section: section)
         })
+    }
+
+    static func hasCountTarget(_ section: String, filter: WorkFilter, rows: WorkItemsProjection?) -> Bool {
+        guard WorkItemsView.showsOpenSections(filter), let rows else { return false }
+        switch section {
+        case WorkItemsView.containersTitle: return !rows.containers.isEmpty
+        case WorkItemsView.spottedTitle: return !rows.spotted.isEmpty
+        case WorkItemsView.reopenedTitle: return !rows.reopened.isEmpty
+        default: return false
+        }
     }
 
     private var inspector: some View {
@@ -371,12 +386,16 @@ struct WorkMain: View {
                         }
                     }
                     // initial: a count clicked on the Notify pane switches to this list and sets the jump in one step.
-                    .onChange(of: jump, initial: true) { _, section in
-                        guard let section else { return }
-                        GenMotion.perform(expanding: true, reduceMotion: reduceMotion) {
-                            reader.scrollTo(WorkItemsView.sectionID(section), anchor: .top)
+                    .onChange(of: jump, initial: true) { _, request in
+                        guard let request else { return }
+                        DispatchQueue.main.async {
+                            guard jump == request, screen.pane == .items, screen.itemRef == nil else { return }
+                            foldedSections.remove(request.section)
+                            GenMotion.perform(expanding: true, reduceMotion: reduceMotion) {
+                                reader.scrollTo(WorkItemsView.sectionID(request.section), anchor: .top)
+                            }
+                            jump = nil
                         }
-                        jump = nil
                     }
                 }
             } else if screen.project == nil, screen.selection == nil {
