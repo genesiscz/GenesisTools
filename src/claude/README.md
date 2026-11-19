@@ -315,6 +315,9 @@ A minted token asks for `user:inference user:profile` and keeps the scopes the s
 `CLAUDE_CODE_OAUTH_SCOPES`. Without that variable Claude Code treats the token as inference-only, cannot read the
 organization policy, and refuses Code Mode ("couldn't read your organization's settings or policy"). A pasted
 `claude setup-token` token has only `user:inference`, so Code Mode needs a token minted again with `--setup-token`.
+Such a launch also leaves out `CLAUDE_CODE_SUBSCRIPTION_TYPE`: with a plan name Claude Code treats the login as a
+personal plan and skips the policy fetch, so Code Mode still refused (2.1.328). The session then shows its plan as
+"Claude API" and `/usage` shows the API cost view; a 1M model switch still works.
 
 - **`usage`** opens a TUI over every account. `--account <name...>` (alias `-f/--filter`) limits it, `--range`
   takes `60m`, `6h`, `24h` or `7d`, `--json` prints the data (`--scored` adds the ranking the picker uses),
