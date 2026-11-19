@@ -107,6 +107,9 @@ export function listItems(db: Database, query: ListQuery): ListResult {
     const filter: ListFilter = { ...query };
     let slots = new Map<string, string>();
 
+    if (query.after !== undefined && selectItem(db, query.after) === null) {
+        return { ok: false, missing: query.after };
+    }
     if (query.under !== undefined) {
         const under = idsUnder(db, query.under);
 

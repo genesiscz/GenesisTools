@@ -277,11 +277,10 @@ names in the store code before you write the decoder, and write any kind you add
 1. The detail reads `work.show` once per selection and keeps the last 20 details in memory, refreshed when the store
    changes and the item is on screen. Ruled out: one `work.show` per visible row, because a project has 50 to 100
    open items and the reader looks at one.
-2. Text search runs in Swift over rows the screen has. The open rows come from the snapshot it already reads; done
-   and dropped rows come from ONE `work.list` call for the project (`fields: ref,state,type,severity,worker,title,
-   project,slot`, `limit: 5000`), made only while the filter needs them. Ruled out: a `query` parameter on
-   `work.list`, because it needs a TS change, a regenerated client and a store index for a list that fits in memory
-   (5,000 short rows).
+2. Text search runs in Swift. Open rows come from the snapshot. When a filter needs the project index, read
+   `work.list` with `fields: ref,state,type,severity,worker,title,project,slot` and `limit: 5000` per page.
+   With each full page, pass its final ref as `after`. A short page completes the index, including done and
+   dropped rows. Display the archive newest first across all pages.
 3. The matcher folds case and diacritics (`folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)`)
    and splits on whitespace and punctuation. It is a pure function with unit tests; no view calls `localizedCase...`.
 4. `fields` values decode as text: a string stays, a number or a bool is printed, an object or array is compact
@@ -413,8 +412,8 @@ file that holds the hub's other General rows (find it with `rg -n 'NativeSetting
 2. The selected row scrolls into view with `ScrollViewReader` (`anchor: nil`, so it moves only when off screen),
    with no animation under Reduce Motion (`@GenReduceMotion`).
 3. The route writes `work=<ref>` on selection, so the hub's back and forward history steps through items. A route
-   to a ref outside the filter clears the filter's text and states so the row is visible, and says so in the find bar
-   ("Filter cleared to show w_x").
+   to a ref outside the filter resets the text and every facet. It selects the item's state when needed to show
+   the row and says so in the find bar ("Filter cleared to show w_x").
 4. The setting `workDetailPlacement` follows the rule in `.claude/rules/opinionated-settings.md` (default "beside").
 **Done when:** `WorkFindTests` cover `moveSelection` over a filtered list (skips hidden rows, stops at the ends) and
 the route clearing a filter; `HubWorkTests` covers the "replace" placement showing the back button; the hub settings

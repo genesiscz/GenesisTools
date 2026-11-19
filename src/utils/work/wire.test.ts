@@ -4,7 +4,7 @@ import { workMethods } from "./api";
 import { originFor, type Pairing } from "./connectors/types";
 import { callWork, type WorkSession } from "./handlers";
 import { mirrorSessionTodos } from "./legacy/session-todos";
-import type { Actor } from "./model/item";
+import { type Actor, asItemId } from "./model/item";
 import { resolveWorkRules } from "./rules/resolve";
 import { type WorkContext, write } from "./service";
 import { applyChange } from "./store/apply";
@@ -66,6 +66,48 @@ function recordPairing(
 }
 
 describe("the wire schemas of the read methods match what the handlers return", () => {
+    test("list pages across the 5000-row boundary with stable ordering for tied timestamps", async () => {
+        const db = openWorkDb(":memory:");
+        try {
+            const fixture = ctx(db);
+            db.transaction(() => {
+                for (let i = 0; i <= 5000; i++) {
+                    applyChange(db, {
+                        v: 1,
+                        item: asItemId(`w_${String(i).padStart(8, "0")}`),
+                        actor: fixture.actor,
+                        ts: "2026-11-19T06:00:00.000Z",
+                        origin: { via: "local" },
+                        kind: "created",
+                        payload: {
+                            type: "task",
+                            state: "done",
+                            project: "App",
+                            title: "Closed fixture",
+                            tags: [],
+                            fields: {},
+                        },
+                    });
+                }
+            })();
+            const session: WorkSession = {
+                ctx: fixture,
+                call: {},
+                alive: async () => null,
+                context: async () => {
+                    throw new Error("Unexpected request for context");
+                },
+            };
+            const params = { project: "App", fields: ["ref"], limit: 5000 };
+            const first = data<{ ref: string }[]>(await callWork("list", params, session));
+            expect(first).toHaveLength(5000);
+            expect(data(await callWork("list", { ...params, after: first.at(-1)?.ref }, session))).toEqual([
+                { ref: "w_00005000" },
+            ]);
+        } finally {
+            db.close();
+        }
+    });
     test("show resolves old session-task IDs through the Work door before and after import", async () => {
         const db = openWorkDb(":memory:");
         try {

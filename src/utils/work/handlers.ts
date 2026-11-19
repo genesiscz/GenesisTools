@@ -304,6 +304,14 @@ function rulesForConfig(session: WorkSession, project: string): Promise<LoadedRu
 
 export const workHandlers: WorkHandlers = {
     async list(p, session) {
+        if (p.after !== undefined && p.under !== undefined) {
+            return failReply("list", [
+                errorDiagnostic(
+                    "INCOMPATIBLE_FILTERS",
+                    "Page by creation order without the slot-ordered under filter."
+                ),
+            ]);
+        }
         const workerSession = p.worker === "me" ? (session.ctx.actor.sessionId ?? "-") : p.worker;
         const result = listItems(
             session.ctx.db,
@@ -317,6 +325,7 @@ export const workHandlers: WorkHandlers = {
                 tag: p.tag,
                 workerSession,
                 limit: p.limit,
+                after: p.after,
             })
         );
 

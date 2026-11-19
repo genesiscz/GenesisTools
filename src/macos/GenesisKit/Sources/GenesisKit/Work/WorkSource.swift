@@ -337,10 +337,28 @@ public final class LiveWorkSource: WorkSource {
         let span = PerfSpans.begin("work.index.load", awaits: true)
         defer { span.end() }
         let fields = ["ref", "state", "type", "severity", "worker", "title", "project", "slot"]
-        let rows: [WorkRowValue] = try reply(await rpc.work.list(.init(project: project, fields: fields, limit: 5000,
-                                                                       call: .init(project: project))))
-        // work.list orders by ascending creation time. The archive reads from newest to oldest.
+        let rows: [WorkRowValue] = try await listRows(project: project, fields: fields, ref: { $0.ref })
+        // The archive reads from newest to oldest.
         return Array(rows.reversed())
+    }
+
+    private func listRows<Row: Decodable>(project: String? = nil, fields: [String],
+                                          ref: (Row) -> String?) async throws -> [Row] {
+        let limit = 5000
+        let call = project.map { WorkListParamsCall(project: $0) }
+        var rows: [Row] = []
+        var after: String?
+        repeat {
+            try Task.checkCancellation()
+            let page: [Row] = try reply(await rpc.work.list(.init(project: project, fields: fields, limit: limit,
+                                                                  after: after, call: call)))
+            rows.append(contentsOf: page)
+            if page.count < limit { return rows }
+            guard let last = page.last.flatMap(ref), last != after else {
+                throw WorkSourceError("The Work service could not advance the index past the last item.")
+            }
+            after = last
+        } while true
     }
 
     public func notify(project: String) async throws -> [WorkNotifyRow] {
