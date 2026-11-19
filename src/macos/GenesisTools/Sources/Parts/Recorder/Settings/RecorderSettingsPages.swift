@@ -35,6 +35,7 @@ private struct RecorderRecordingSettings: View {
     var body: some View {
         VStack(spacing: 18) {
             recordingCard
+            barCard
             movieCard
             cameraCard
             shortcutsCard
@@ -94,6 +95,16 @@ private struct RecorderRecordingSettings: View {
                     NativeSettingsOption(CapturePickerFocusLoss.close, "Close", detail: "It closes as a cancel."),
                 ],
                 selection: model.choice(CapturePickerFocusLoss.key, CapturePickerFocusLoss.stayOpen), minSegmentWidth: 80)
+        }
+    }
+
+    private var barCard: some View {
+        NativeSettingsCard("Recording bar", subtitle: "The bar that floats beside a recording. A change applies the next time it opens.") {
+            NativeSettingsSegmented(
+                "Look", detail: "Dark is the default. Glass keeps the bar's earlier look.",
+                identifier: "recorder.settings.barLook",
+                options: RecordingBarLook.allCases.map { NativeSettingsOption($0, $0.title, detail: $0.detail) },
+                selection: model.choice(RecordingBarLook.key, RecordingBarLook.dark), minSegmentWidth: 80)
         }
     }
 

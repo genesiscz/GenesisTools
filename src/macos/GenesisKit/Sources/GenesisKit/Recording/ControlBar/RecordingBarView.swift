@@ -77,6 +77,60 @@ enum RecordingBarMetrics {
     static let corner: CGFloat = 15
 }
 
+/// How the recording bar looks: its surface and the style of its controls. The layout is the same in both. A setting
+/// (Settings → Recorder → Recording bar), stored under `recorder.bar.look` and read when the bar opens.
+public enum RecordingBarLook: String, CaseIterable, Identifiable, Sendable {
+    /// Near-black like CleanShot X's recording bar, with the kit's aurora controls. The default since 2026-11-19.
+    case dark
+    /// The look before 2026-11-19: the system glass surface and the app's own control look.
+    case glass
+
+    public static let key = "recorder.bar.look"
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .dark: return "Dark"
+        case .glass: return "Glass"
+        }
+    }
+
+    public var detail: String {
+        switch self {
+        case .dark: return "Near-black, like the CleanShot X recording bar."
+        case .glass: return "The system glass of the earlier bar."
+        }
+    }
+
+    public static func load(_ defaults: UserDefaults) -> RecordingBarLook {
+        defaults.string(forKey: key).flatMap(Self.init(rawValue:)) ?? .dark
+    }
+}
+
+/// The bar's backdrop for each look. Only the backdrop and the kit look of the controls change.
+private struct RecordingBarSurface: ViewModifier {
+    let look: RecordingBarLook
+
+    @ViewBuilder func body(content: Content) -> some View {
+        switch look {
+        case .dark:
+            let shape = RoundedRectangle(cornerRadius: RecordingBarMetrics.corner, style: .continuous)
+            content
+                .background {
+                    shape.fill(Color(white: 0.085).opacity(0.94))
+                        .overlay(shape.strokeBorder(Color.white.opacity(0.11), lineWidth: 1))
+                }
+                .clipShape(shape)
+                .kitLook(.aurora)
+        case .glass:
+            content
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .nativeGlassSurface(radius: 12)
+        }
+    }
+}
+
 @MainActor
 public struct RecordingBarView: View {
     static let width: CGFloat = 704
@@ -84,6 +138,7 @@ public struct RecordingBarView: View {
     @StateObject private var motion: RecordingBarMotion
     private let actions: RecordingBarActions
     private let defaults: UserDefaults
+    private let barLook: RecordingBarLook
     private let onPlace: (RecordingPanelPlacement) -> Void
     private let onDrag: () -> Void
     @Binding private var draftThreshold: Double
@@ -111,18 +166,20 @@ public struct RecordingBarView: View {
     private enum Confirmation: Equatable { case discard, restart }
 
     public init(model: RecordingBarModel, actions: RecordingBarActions, defaults: UserDefaults = .standard,
-                placement: RecordingPanelPlacement = .nearTarget,
+                placement: RecordingPanelPlacement = .nearTarget, look: RecordingBarLook = .dark,
                 onPlace: @escaping (RecordingPanelPlacement) -> Void = { _ in }, onDrag: @escaping () -> Void = {}) {
-        self.init(model: model, actions: actions, defaults: defaults, placement: placement, motion: RecordingBarMotion(),
-                  onPlace: onPlace, onDrag: onDrag)
+        self.init(model: model, actions: actions, defaults: defaults, placement: placement, look: look,
+                  motion: RecordingBarMotion(), onPlace: onPlace, onDrag: onDrag)
     }
 
     init(model: RecordingBarModel, actions: RecordingBarActions, defaults: UserDefaults, placement: RecordingPanelPlacement,
-         motion: RecordingBarMotion, onPlace: @escaping (RecordingPanelPlacement) -> Void, onDrag: @escaping () -> Void) {
+         look: RecordingBarLook, motion: RecordingBarMotion, onPlace: @escaping (RecordingPanelPlacement) -> Void,
+         onDrag: @escaping () -> Void) {
         self.model = model
         _motion = StateObject(wrappedValue: motion)
         self.actions = actions
         self.defaults = defaults
+        barLook = look
         self.onPlace = onPlace
         self.onDrag = onDrag
         _draftThreshold = actions.changeThreshold ?? .constant(0.5)
@@ -175,14 +232,7 @@ public struct RecordingBarView: View {
             if growth == .down { drawer }
         }
         .frame(width: Self.width, alignment: .leading)
-        .background {
-            RoundedRectangle(cornerRadius: RecordingBarMetrics.corner, style: .continuous)
-                .fill(Color(white: 0.085).opacity(0.94))
-                .overlay(RoundedRectangle(cornerRadius: RecordingBarMetrics.corner, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.11), lineWidth: 1))
-        }
-        .clipShape(RoundedRectangle(cornerRadius: RecordingBarMetrics.corner, style: .continuous))
-        .kitLook(.aurora)
+        .modifier(RecordingBarSurface(look: barLook))
         .environment(\.colorScheme, .dark)
         .font(.system(size: 12))
         .accessibilityElement(children: .contain)
@@ -485,6 +535,8 @@ public struct RecordingBarView: View {
                 word("Keep", "keep") { self.confirmation = nil }
                 Button(confirmation == .discard ? "Discard" : "Restart") { run(confirmation) }
                     .buttonStyle(KitButtonStyle(kind: .primary, hue: .danger, size: .small)).fixedSize()
+                    // Red in both bar looks: the classic kit look draws every filled button blue.
+                    .kitLook(.aurora)
                     .barControl("confirm", label: confirmation == .discard ? "Discard" : "Restart")
             } else {
                 phaseControls
@@ -502,6 +554,8 @@ public struct RecordingBarView: View {
                 }
             }
             .buttonStyle(KitButtonStyle(kind: .primary, hue: .danger, size: .large, minWidth: 104))
+            // Red in both bar looks: the record affordance is a fix, not a look choice.
+            .kitLook(.aurora)
             .fixedSize()
             .barControl("record", label: "Record", reason: setup.target == nil && !follows ? "Choose a recording target first." : nil)
         case let .countdown(seconds):

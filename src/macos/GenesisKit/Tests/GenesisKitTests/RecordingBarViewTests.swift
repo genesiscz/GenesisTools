@@ -116,12 +116,13 @@ final class RecordingBarViewTests: XCTestCase {
     /// While a take runs the drawer holds what applies to it; the setup-only choices wait for the next recording.
     private let liveExpandedControls = ["stillFrameRate", "placement"]
 
-    private func fixture(countdown: Int? = nil, expanded: Bool = false) throws -> Fixture {
+    private func fixture(countdown: Int? = nil, expanded: Bool = false, look: String? = nil) throws -> Fixture {
         _ = NSApplication.shared
         let engine = Engine()
         let setup = RecordingSetup(target: .display(index: 0, name: "Studio"), countdownSeconds: countdown)
         let name = "test.recording.bar.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: name)!
+        if let look { defaults.set(look, forKey: RecordingBarLook.key) }
         let model = RecordingBarModel(engine: engine, setup: setup, defaults: defaults,
                                       countdownTick: { try? await Task.sleep(for: .seconds(1)) })
         model.expanded = expanded
@@ -187,6 +188,19 @@ final class RecordingBarViewTests: XCTestCase {
         XCTAssertGreaterThan(f.panel.windowID, 0)
         XCTAssertTrue(f.model.excludeWindowIDs.contains(f.panel.windowID))
         try await snapshot(f, "setup")
+    }
+
+    /// The redesigned look is the default; the earlier glass look stays one setting away (Settings → Recorder).
+    func testTheLookSettingKeepsTheGlassLookAsAnOption() async throws {
+        XCTAssertEqual(try fixture().panel.look, .dark)
+        XCTAssertEqual(try fixture(look: "neon").panel.look, .dark)
+        let f = try fixture(look: RecordingBarLook.glass.rawValue)
+        XCTAssertEqual(f.panel.look, .glass)
+        try await assertBar(f, shows: ["record"])
+        try await snapshot(f, "setup-glass")
+        await firstFrame(f)
+        try await assertBar(f, shows: ["clock", "pause", "stop"])
+        try await snapshot(f, "recording-glass")
     }
 
     func testCountdownKeepsTheFirstRowAndOffersCancel() async throws {

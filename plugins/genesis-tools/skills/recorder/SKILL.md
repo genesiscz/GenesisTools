@@ -116,6 +116,7 @@ The CLI commands are `tools recorder edit last` and `tools recorder reveal last`
 | `recorder.picker.frontChosenWindow` | `true` | Bring a selected background window forward. |
 | `recorder.picker.focusLoss` | `stayOpen` | Use `close` to close the picker when it loses focus. |
 | `recorder.bar.placement` | `nearTarget` | Use the saved placement from `recording.panelPlacement` if the bar has no setting. |
+| `recorder.bar.look` | `dark` | Use `glass` for the bar's earlier look: the system glass and the app's own control style (Settings → Recorder → Recording bar). |
 | `recorder.bar.expandedByDefault` | `false` | Start with the extra rows closed. |
 | `recorder.bar.startWaitSeconds` | `5` | Show “Still waiting” after this many seconds without a first frame. |
 | `recorder.bar.noticeSeconds` | `4` | Clear a temporary notice after this many seconds. A Stop failure keeps its retry action. |

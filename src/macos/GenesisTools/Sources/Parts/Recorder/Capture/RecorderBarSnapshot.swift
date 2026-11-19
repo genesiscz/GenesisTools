@@ -73,7 +73,7 @@ struct RecorderBarSnapshot {
         let defaults = UserDefaults(suiteName: "recorder.snapshot.\(UUID().uuidString)")!
         // The bar on top, what it opens under it: the picker beside the window it outlines, or the area drag.
         return VStack(spacing: 8) {
-            RecordingBarView(model: model, actions: actions, defaults: defaults)
+            RecordingBarView(model: model, actions: actions, defaults: defaults, look: RecordingBarLook.load(defaults))
             HStack(alignment: .top, spacing: 12) {
                 if state == .picker || state == .pickerDisplays {
                     // Highlight the same row a hover selects, independently of the target set in the bar.
