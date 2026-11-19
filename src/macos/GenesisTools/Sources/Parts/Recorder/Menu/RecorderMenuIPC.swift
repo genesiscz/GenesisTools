@@ -48,6 +48,7 @@ enum RecorderMenuIPC {
     static func listen(key: String = recorderAddressKey,
                        _ handle: @escaping @MainActor @Sendable (RecorderMenu.Command) -> Void) -> DispatchSourceRead? {
         guard let path = socketPath(key: key, pid: getpid()) else { return nil }
+        // lint-rules-ignore: a one-byte command socket that authenticates the peer's code signature; JSONRPCSocketClient only dials JSON-RPC
         let listener = socket(AF_UNIX, SOCK_STREAM, 0)
         guard listener >= 0 else { return nil }
         // A killed process can leave the socket file behind. Only this pid binds this pathname.
@@ -86,6 +87,7 @@ enum RecorderMenuIPC {
 
     static func deliver(_ command: RecorderMenu.Command, to pid: pid_t, key: String = recorderAddressKey) -> Delivery {
         guard let path = socketPath(key: key, pid: pid) else { return .refused }
+        // lint-rules-ignore: a one-byte command socket that authenticates the peer's code signature; JSONRPCSocketClient only dials JSON-RPC
         let peer = socket(AF_UNIX, SOCK_STREAM, 0)
         guard peer >= 0 else { return .refused }
         defer { close(peer) }
