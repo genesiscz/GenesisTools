@@ -21,7 +21,11 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         let lines: [(start: Double?, end: Double?)] = [(start: 0, end: 30), (start: 30, end: 40), (start: 40, end: 52)]
         XCTAssertEqual(Range.near(lines, position: 41), Range(from: 40, to: 60, source: "from the line at the heard spot"))
         XCTAssertEqual(Range.near(lines, position: 0).from, 30, "a line longer than 20 s is skipped")
-        XCTAssertEqual(Range.near(lines, position: 500).from, 30, "past the end: the first short line")
+        XCTAssertEqual(Range.near(lines, position: 500), Range(from: 32, to: 52, source: "the 20 s at the heard spot"),
+                       "past the end: the last 20 s of the transcript, never the first short line")
+        let longLast: [(start: Double?, end: Double?)] = [(start: 0, end: 10), (start: 10, end: 100)]
+        XCTAssertEqual(Range.near(longLast, position: 50), Range(from: 50, to: 70, source: "the 20 s at the heard spot"),
+                       "a long last line plays: the range starts at the heard spot, not at the meeting's start")
 
         typealias Transcript = MeetingsPreferences.Transcript
         XCTAssertEqual(Transcript.timingLanguageCode(.meeting, meeting: "cs"), "cs")

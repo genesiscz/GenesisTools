@@ -354,7 +354,8 @@ struct TranscriptBlocksPane: View {
         }
     }
 
-    /// The range comes from the selected lines; with none, from the first short line at or after the heard spot.
+    /// The range comes from the selected lines; with none, from the first short line at or after the heard spot, or the
+    /// 20 s at the heard spot when no short line follows it.
     private func openTimings() {
         let selected = selectedLines.map { (start: $0.startSec, end: $0.endSec) }
         timing = WordTimingOptions.Range.of(selected: selected)
@@ -867,16 +868,18 @@ struct WordTimingOptions: View {
             return Range(from: from, to: to, source: "the \(Plural.count(lines.count, "selected line"))\(cut)")
         }
 
-        /// The first line of 20 s or less that ends after `position` (else the first such line), and 20 s from its start.
+        /// The first line of 20 s or less that ends after `position`, and 20 s from its start. When no such line follows
+        /// the heard spot (a long last line plays, or the playhead is past the end), the 20 s from the heard spot, moved
+        /// back so they end at the last timed line: never the first short line of the meeting (eve t90).
         static func near<Lines: Sequence>(_ lines: Lines, position: Double) -> Range where Lines.Element == (start: Double?, end: Double?) {
-            var first: Double?
+            var lastEnd: Double?
             for line in lines {
+                if let edge = line.end ?? line.start { lastEnd = max(lastEnd ?? edge, edge) }
                 guard let start = line.start, let end = line.end, end > start, end - start <= longest else { continue }
-                if first == nil { first = start }
                 if end > position { return Range(from: start, to: start + longest, source: "from the line at the heard spot") }
             }
-            let from = first ?? position
-            return Range(from: from, to: from + longest, source: "from the line at the heard spot")
+            let from = max(0, min(position, (lastEnd ?? position) - longest))
+            return Range(from: from, to: from + longest, source: "the 20 s at the heard spot")
         }
     }
 
