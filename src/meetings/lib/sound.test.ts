@@ -20,6 +20,7 @@ import { Storage } from "@genesiscz/utils/storage/storage";
 import { MeetingRun } from "./meeting-run";
 import { runRecorder } from "./recorder";
 import { meetingLiveId } from "./recorder-shared";
+import * as soundModule from "./sound";
 import { type AudioRow, meetingSound, readAudioRows, type SoundInputs } from "./sound";
 import { alignPiece, alignReferenceFromSec } from "./sound-align";
 
@@ -186,6 +187,30 @@ test("a stalled sound recovery ends the stop at its deadline and keeps .piece/ f
     } finally {
         salvage.mockRestore();
     }
+});
+
+test("a salvaged track whose row cannot be written goes back to the piece folder for the next pass", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "salvage-row-fails-"));
+    const piece = join(folder, ".piece");
+    mkdirSync(piece, { recursive: true });
+    writeFileSync(join(piece, "audio-mic.m4a"), "invented sound");
+    const run: MeetingRun = Object.assign(Object.create(MeetingRun.prototype), {
+        folder,
+        meetingId: "fixture",
+        notes: [],
+    });
+    const append = spyOn(soundModule, "appendAudioRow").mockImplementation(() => {
+        throw new Error("disk full");
+    });
+    try {
+        await expect(run.salvageTracks(piece)).rejects.toThrow("disk full");
+        expect(existsSync(join(piece, "audio-mic.m4a"))).toBe(true);
+        expect(readdirSync(join(folder, "audio"))).toEqual([]);
+    } finally {
+        append.mockRestore();
+    }
+    expect(await run.salvageTracks(piece)).toBe(1);
+    expect(readAudioRows(folder)).toEqual([expect.objectContaining({ source: "mic", kept: "salvaged" })]);
 });
 
 let recorded: ReturnType<typeof recordWithoutMicrophone> | undefined;

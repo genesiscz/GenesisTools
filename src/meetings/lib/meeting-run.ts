@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import {
     defaultOcrLanguages,
     errorText,
@@ -31,12 +31,38 @@ import { appendFrameIndex, readFrameIndex } from "./frame-index";
 import { LiveOcrSettings, meetingOcrSettings, OCR_SETTINGS_FILE } from "./ocr-worker";
 import { type RecorderStateFile, RecordingRecord } from "./recorder-adapters";
 import { meetingMovieZeroMs } from "./recording-manifest";
-import { AUDIO_FOLDER, appendAudioRow } from "./sound";
+import { AUDIO_FOLDER, type AudioRow, appendAudioRow } from "./sound";
 import { meetingSource, sourceRefOf } from "./sources";
 import { RETRY_AFTER_MS, readAuto } from "./watch-auto";
 
 /** How ax-tool names a capture's sound file. */
 const SALVAGED_TRACK = /^audio-(?:\d+-)?(mic|system)\.m4a$/;
+
+/**
+ * Moves a sound file into the meeting's `audio/` and lists it in `audio.jsonl`. When the row cannot be written, the
+ * file goes back where it was, so the next pass (salvage reads `.piece/`) finds it again instead of an unlisted file.
+ */
+function moveAndIndex(options: { from: string; folder: string; name: string; row?: AudioRow }): void {
+    const { from, folder, name, row } = options;
+    const to = join(folder, AUDIO_FOLDER, name);
+    mkdirSync(dirname(to), { recursive: true });
+    renameSync(from, to);
+    if (!row) {
+        return;
+    }
+
+    try {
+        appendAudioRow(folder, row);
+    } catch (error) {
+        try {
+            renameSync(to, from);
+        } catch (back) {
+            log.error({ error: back, from: to, to: from }, "a sound file whose row failed could not move back");
+        }
+
+        throw error;
+    }
+}
 
 /**
  * One run of the meetings recorder: the meeting's folder and record, its spans, the recorder state file and the
@@ -252,8 +278,6 @@ export class MeetingRun {
      * wall time of the file's second 0, when the engine reported where the track started.
      */
     keepTracks(result: CaptureResult, target: PieceTarget): void {
-        const audioDir = join(this.folder, AUDIO_FOLDER);
-
         for (const track of result.tracks ?? []) {
             for (const warning of track.warnings ?? []) {
                 log.warn({ display: target.label, source: track.source, warning }, "a sound track had a problem");
@@ -266,18 +290,21 @@ export class MeetingRun {
 
             const at = new Date(result.startedAtMs);
             const name = frameName(at, target.displayId).replace(/\.jpg$/, `-${track.source}.m4a`);
-            mkdirSync(audioDir, { recursive: true });
-            renameSync(track.path, join(audioDir, name));
-            appendAudioRow(this.folder, {
-                file: `${AUDIO_FOLDER}/${name}`,
-                source: track.source,
-                at: at.toISOString(),
-                durationMs: track.durationMs,
-                mutedSpans: track.mutedSpans,
-                ...(track.lostSpans !== undefined ? { lostSpans: track.lostSpans } : {}),
-                ...(track.startOffsetMs !== undefined
-                    ? { zeroAt: new Date(result.startedAtMs + track.startOffsetMs).toISOString() }
-                    : {}),
+            moveAndIndex({
+                from: track.path,
+                folder: this.folder,
+                name,
+                row: {
+                    file: `${AUDIO_FOLDER}/${name}`,
+                    source: track.source,
+                    at: at.toISOString(),
+                    durationMs: track.durationMs,
+                    mutedSpans: track.mutedSpans,
+                    ...(track.lostSpans !== undefined ? { lostSpans: track.lostSpans } : {}),
+                    ...(track.startOffsetMs !== undefined
+                        ? { zeroAt: new Date(result.startedAtMs + track.startOffsetMs).toISOString() }
+                        : {}),
+                },
             });
             this.audioFiles += 1;
         }
@@ -331,19 +358,12 @@ export class MeetingRun {
                 name = `${stem}-salvaged-${copy}.m4a`;
             }
 
-            mkdirSync(audioDir, { recursive: true });
-            renameSync(path, join(audioDir, name));
+            const row: AudioRow | undefined =
+                source === "mic" || source === "system"
+                    ? { file: `${AUDIO_FOLDER}/${name}`, source, ...timing, mutedSpans: [], kept: "salvaged" }
+                    : undefined;
+            moveAndIndex({ from: path, folder: this.folder, name, ...(row ? { row } : {}) });
             kept += 1;
-
-            if (source === "mic" || source === "system") {
-                appendAudioRow(this.folder, {
-                    file: `${AUDIO_FOLDER}/${name}`,
-                    source,
-                    ...timing,
-                    mutedSpans: [],
-                    kept: "salvaged",
-                });
-            }
 
             log.warn({ meeting: this.meetingId, from: path, to: name }, "kept a sound file a capture left behind");
         }
