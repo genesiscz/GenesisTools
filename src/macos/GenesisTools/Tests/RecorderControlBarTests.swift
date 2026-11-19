@@ -96,7 +96,7 @@ final class RecorderControlBarTests: XCTestCase {
         host.dismiss()
         host.show(focus: false)
         XCTAssertTrue(host.bar === bar)
-        XCTAssertNil(bar.setup.target)
+        XCTAssertEqual(bar.setup.target, .followDisplay, "the reopened draft starts over on the unsaved default target")
     }
 
     func testRecordStartsOnceWithThisDraftAndTheBarPickerOverlayAndCameraExclusions() async throws {
