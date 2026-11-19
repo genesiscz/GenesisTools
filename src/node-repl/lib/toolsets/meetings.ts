@@ -48,6 +48,7 @@ import {
     lines,
     list,
     type look,
+    type measure,
     meetingsToolsetApi,
     overview,
     prepareListen,
@@ -241,6 +242,10 @@ export class MeetingsToolset extends ReplToolset {
                 },
                 open: (refText: string) => this.meeting(store, ref.parse({ ref: refText }).ref),
                 look: async (input: z.input<typeof look.params>) => lookMeeting(store, input),
+                measure: async ({ meeting }: z.input<typeof measure.params>) => {
+                    const { measureRoomCallMeeting } = await import("@app/meetings/lib/room-call-metrics");
+                    return measureRoomCallMeeting({ meeting, store });
+                },
                 overview: async (input: z.input<typeof overview.params> = {}) => {
                     const { days } = overview.params.parse(input);
                     return meetingsOverview({

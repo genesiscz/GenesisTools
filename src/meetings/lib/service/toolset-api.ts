@@ -95,6 +95,14 @@ export const look = defineMethod({
     effect: "read",
     doc: `Read the transcript lines, speaker and voice evidence, attendance stays, open questions, items and screen text changes within inclusive transcript times (seconds, MM:SS or H:MM:SS). Same result as ${toolCommand("meetings", "look")} <meeting> --from <time> --to <time> --json.`,
 });
+export const measure = defineMethod({
+    name: "measure",
+    params: z.strictObject({ meeting: ref.shape.ref }),
+    result: z.unknown(),
+    resultName: "RoomCallReport",
+    effect: "read",
+    doc: "Return the held-out room/call report with baseline and candidate speaker counts, per-line outcomes, cohort changes and quality targets. Read reference.json, holdout.json, baseline.json and candidate.json from the room-call/ folder beside the meeting record. CLI: bun scripts/benchmarks/meetings/room-call.ts --reference <dir>/reference.json --holdout <dir>/holdout.json --baseline <dir>/baseline.json --candidate <dir>/candidate.json --out <new-file>.",
+});
 export const info = defineMethod({
     name: "info",
     params: z.object({}),
@@ -846,6 +854,7 @@ export const meetingsToolsetApi = defineApi({
         levels,
         open,
         look,
+        measure,
         overview,
         projectsLabels,
         projectsPair,

@@ -321,3 +321,15 @@ every match to be on the same side.
 Set `global.capture.recorders.native.audio.mode` to `session` for continuous sound in 60-second files; the default
 `pieces` records the sound inside the screen pieces, with up to 5 seconds missing every 30 seconds, and `record status`
 explains a fall back.
+
+## Measure room and call attribution
+
+For a meeting with a frozen comparison, `await meetings.measure({ meeting })` returns the baseline and candidate
+results, including which held-out lines gained or lost a correct name and whether the room and remote targets passed.
+It reads four files from the `room-call/` folder beside the meeting record. To write the same report from the
+checkout root, set `bundle` to that folder and `report` to a new output path.
+
+```sh
+bun scripts/benchmarks/meetings/room-call.ts --reference "$bundle/reference.json" --holdout "$bundle/holdout.json" \
+  --baseline "$bundle/baseline.json" --candidate "$bundle/candidate.json" --out "$report"
+```
