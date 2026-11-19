@@ -196,7 +196,12 @@ export function pickCurrent(facts: readonly ContextFact[]): ContextReport {
     const byPath = new Map<string, ContextFact[]>();
 
     for (const fact of facts) {
-        byPath.set(fact.path, [...(byPath.get(fact.path) ?? []), fact]);
+        const bucket = byPath.get(fact.path);
+        if (bucket === undefined) {
+            byPath.set(fact.path, [fact]);
+        } else {
+            bucket.push(fact);
+        }
     }
 
     const current: Record<string, ContextFact> = {};
@@ -204,12 +209,12 @@ export function pickCurrent(facts: readonly ContextFact[]): ContextReport {
 
     for (const [path, list] of byPath) {
         const sorted = [...list].sort((a, b) => RANK[a.how.method] - RANK[b.how.method]);
-        const best = sorted[0];
-        const sameRank = sorted.filter((f) => RANK[f.how.method] === RANK[best.how.method]);
+        const first = sorted[0];
+        const sameRank = sorted.filter((f) => RANK[f.how.method] === RANK[first.how.method]);
         const distinct = new Set(sameRank.map((f) => f.value));
-        const usable = best.how.method !== "inferred" || (best.how.strength === "strong" && distinct.size === 1);
+        const best = first.how.method === "inferred" ? sameRank.find((f) => f.how.strength === "strong") : first;
 
-        if (usable && distinct.size === 1) {
+        if (best !== undefined && distinct.size === 1) {
             current[path] = best;
             candidates.push(...sorted.filter((f) => f !== best && f.value !== best.value));
         } else {
