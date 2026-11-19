@@ -225,8 +225,9 @@ export function mirrorSessionTodos(
                         set.body = row.prompt;
                     }
 
-                    if (item.project !== actor.project) {
-                        set.project = actor.project;
+                    const project = projectOf(row);
+                    if (item.project !== project) {
+                        set.project = project;
                     }
 
                     if (Object.keys(set).length > 0) {
