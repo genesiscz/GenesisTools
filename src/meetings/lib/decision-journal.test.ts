@@ -418,6 +418,77 @@ describe("speaker answers and their project voice prints", () => {
         }
     });
 
+    test("P6 service returns a human confirm while its embedder is blocked and serves partial Undo on the same connection", async () => {
+        const fx = await voiceAnswerFixture(undefined, [
+            speakerRange("i4", 0, {
+                speaker: "Alice Example",
+                rules: [MeetingRule.VoiceEmbedding],
+                evidence: { endSec: 5 },
+            }),
+            speakerRange("i5", 10, {
+                speaker: "Bob Example",
+                rules: [MeetingRule.VoiceEmbedding],
+                evidence: { endSec: 15 },
+            }),
+        ]);
+        const meeting = fx.meeting.id;
+        const code = "human-job";
+        const dir = mkdtempSync(join(tmpdir(), "voice-confirm-"));
+        const entered = Promise.withResolvers<void>();
+        const resume = Promise.withResolvers<void>();
+        fx.embed.mockImplementationOnce(async (input) => {
+            entered.resolve();
+            await resume.promise;
+            return fx.embedLines(input);
+        });
+        const start = await startMeetingsService({ dir, code, store: () => fx.store, watch: false, idleMs: 0 });
+        if (start.status !== "started") {
+            throw new Error("Fixture needs a fresh service");
+        }
+        const client = await SocketMeetingsClient.connect(start.service.entry, {
+            role: "window",
+            protocol: MEETINGS_PROTOCOL,
+            code,
+        });
+        try {
+            const finished = Promise.withResolvers<import("./service/api").VoiceJob>();
+            const { voiceJobSchema } = await import("./service/api");
+            await client.subscribe({ meeting, events: ["voices.job"] }, (event) => {
+                const job = voiceJobSchema.parse(event.params);
+                if (job.state === "done" || job.state === "failed") {
+                    finished.resolve(job);
+                }
+            });
+            const confirm = await client.call(
+                "decision.apply",
+                { meeting, action: { kind: "confirm", items: ["i4", "i5"] } },
+                { timeoutMs: 2500 }
+            );
+            expect(confirm.entry?.voices).toBeUndefined();
+            await entered.promise;
+            expect(await client.call("voices.jobs", { project: fx.project })).toEqual([
+                expect.objectContaining({
+                    meeting,
+                    kind: "answer-samples",
+                    state: "running",
+                    progress: expect.objectContaining({ done: 0, total: 2 }),
+                }),
+            ]);
+            await client.call("decision.revert", { meeting, token: confirm.entry!.token, items: ["i4"] });
+            resume.resolve();
+            expect(await finished.promise).toMatchObject({ added: 1, skipped: 1, state: "done" });
+            expect(readVoiceLibrary().library.samples).toEqual([
+                expect.objectContaining({ question: "i5", acquiredBy: "live" }),
+            ]);
+        } finally {
+            resume.resolve();
+            client.close();
+            start.service.stop("test end");
+            await start.service.stopped;
+            fx.restore();
+        }
+    });
+
     test("P6 offline CLI exits before learning and two service starts recover one line exactly once", async () => {
         const fx = await voiceAnswerFixture(
             undefined,
