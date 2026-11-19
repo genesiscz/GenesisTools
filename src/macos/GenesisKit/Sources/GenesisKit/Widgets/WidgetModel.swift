@@ -1663,6 +1663,13 @@ public final class WidgetModel: ObservableObject {
     }
 
     /// Opens `item` in its session's inbox, unfolded; with `surface`, the panel opens there too.
+    public func openSessionInbox(_ session: WidgetSession, on surface: WidgetSurfaceID? = nil) {
+        listOrigin = .overview
+        select(session.key)
+        section = "Inbox"
+        if let surface { openModule("agents", on: surface) }
+    }
+
     public func openInboxItem(_ item: WidgetInboxItem, on surface: WidgetSurfaceID? = nil) {
         guard !stopping else { return }
         listOrigin = .overview

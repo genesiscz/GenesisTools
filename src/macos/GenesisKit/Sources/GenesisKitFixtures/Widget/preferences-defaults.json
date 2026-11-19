@@ -63,6 +63,7 @@
     "sendCloseSeconds": 2.5,
     "inboxGrouping": "feed",
     "inboxFeedRuns": "session",
+    "inboxFeedHeaders": "groups",
     "inboxFilter": "all",
     "overviewFilter": "all",
     "overviewSummary": true,

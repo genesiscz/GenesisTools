@@ -25,10 +25,13 @@ final class WidgetInboxFeedTests: XCTestCase {
         ]
     }
 
-    private func makeModel(order: String = "feed", view: String = "sessions") throws -> WidgetModel {
+    private func makeModel(order: String = "feed", view: String = "sessions", headers: String = "groups",
+                           runs: String = "session") throws -> WidgetModel {
         var prefs = WidgetPreferences.hubDefaults
         prefs.inboxGrouping = order
         prefs.previewView = view
+        prefs.inboxFeedHeaders = headers
+        prefs.inboxFeedRuns = runs
         prefs.previewFilter = "active"
         return try WidgetInboxRender.model(sessions: [alpha, beta, gamma], items: items, preferences: prefs)
     }
@@ -53,6 +56,8 @@ final class WidgetInboxFeedTests: XCTestCase {
         let headers = runs.map { WidgetFeedRunHeader(run: $0, model: model) }
         XCTAssertEqual(headers.map(\.counts), ["", "2 items", "2 items · 2 waiting"])
         XCTAssertEqual(headers.first?.inboxTooltip, "Open the whole inbox of Alpha")
+        XCTAssertNil(headers[1].openInbox, "The project covers two different session inboxes")
+        XCTAssertNil(headers[1].provider)
     }
 
     func testExternalMessagesUseTheirSenderAndEqualTimesUseTheItemID() {
@@ -78,7 +83,7 @@ final class WidgetInboxFeedTests: XCTestCase {
         XCTAssertEqual(WidgetFeedReadingPlace.split(fresh, at: nil).runs.first?.items.first, arrival)
     }
 
-    func testTheOverviewDrawsTheFourHeadersAndTheirItemsInOrder() throws {
+    func testTheOverviewShowsSingletonSourcesInTheirRowsAndGroupedItemsUnderOneHeader() throws {
         let size = CGSize(width: 460, height: 640)
         for order in ["session", "feed"] {
             let model = try makeModel(order: order)
@@ -88,10 +93,19 @@ final class WidgetInboxFeedTests: XCTestCase {
             if order == "session" {
                 XCTAssertTrue(lines.joined().contains("Alpha"), lines.description)
             } else {
-                assertOrder(["Orchard", "Pick a basket", "Meadow", "Delivery note", "Meadow", "Sort the crates",
+                assertOrder(["Pick a basket", "Orchard", "Delivery note", "Meadow", "Sort the crates", "Meadow",
                              "Orchard", "Choose a shelf", "Choose a label"], in: lines)
             }
         }
+    }
+
+    func testEveryHeaderAndMixedProjectRowsKeepTheirSessionNames() throws {
+        let model = try makeModel(headers: "all", runs: "project")
+        defer { model.stop() }
+        let list = WidgetInboxOverview(model: model, viewport: { content in AnyView(ScrollView { content }) })
+        let lines = try WidgetInboxRender.draw(list, size: .init(width: 460, height: 640), name: "feed-project")
+        assertOrder(["Orchard", "Pick a basket", "Meadow", "2 sessions", "Delivery note", "Beta",
+                     "Sort the crates", "Gamma", "Orchard", "Choose a shelf", "Choose a label"], in: lines)
     }
 
     func testHoverSegmentsKeepTheSessionFilterWhenItemsIsSelected() throws {
@@ -117,7 +131,7 @@ final class WidgetInboxFeedTests: XCTestCase {
         XCTAssertEqual(model.previewFilter, "active")
     }
 
-    func testTheHoverListDrawsSessionRowsOrFourFeedHeadersAndKeepsItsFooter() throws {
+    func testTheHoverListDrawsSessionRowsOrCompactFeedItemsAndKeepsItsFooter() throws {
         let size = CGSize(width: 480, height: 480)
         let surface = WidgetSurfaceID(edge: .right)
         let roster = try makeModel()
@@ -142,7 +156,7 @@ final class WidgetInboxFeedTests: XCTestCase {
             }
         }
         XCTAssertTrue(top.joined(separator: " ").contains("Items"), top.description)
-        assertOrder(["Orchard", "Pick a basket", "Meadow", "Delivery note", "Meadow", "Sort the crates",
+        assertOrder(["Pick a basket", "Orchard", "Delivery note", "Meadow", "Sort the crates", "Meadow",
                      "Orchard", "Choose a shelf", "Choose a label"], in: top + bottom)
         let text = (top + bottom).joined(separator: " ")
         XCTAssertFalse(text.localizedCaseInsensitiveContains("Working"), text)

@@ -4,6 +4,35 @@ struct WidgetFeedRun: Equatable, Identifiable {
     let id: String
     let runKey: String
     var items: [WidgetInboxItem]
+
+    var spansSessions: Bool {
+        guard let first = items.first, first.message?.origin == nil else { return false }
+        return items.dropFirst().contains { $0.key != first.key }
+    }
+}
+
+/// Both feed hosts put a lone item's source in the row. A project shared by several sessions
+/// names the project above the rows and leaves each row to identify its own session.
+struct WidgetFeedSection<Row: View>: View {
+    let run: WidgetFeedRun
+    let model: WidgetModel
+    var surface: WidgetSurfaceID?
+    let first: Bool
+    @ViewBuilder let row: (WidgetInboxItem, WidgetInboxRowContext) -> Row
+
+    var body: some View {
+        if run.items.count == 1, model.preferences.inboxFeedHeaders != "all", let item = run.items.first {
+            row(item, .inlineSource)
+        } else {
+            let context: WidgetInboxRowContext = run.spansSessions ? .projectHeader : .sessionHeader
+            Section {
+                ForEach(run.items, id: \.id) { row($0, context) }
+            } header: {
+                WidgetFeedRunHeader(run: run, model: model, surface: surface).equatable()
+                    .padding(.top, first ? 0 : 6)
+            }
+        }
+    }
 }
 
 enum WidgetInboxFeed {
@@ -69,7 +98,7 @@ struct WidgetFeedRunHeader: View, Equatable {
         let first = run.items.first
         let external = first?.message?.origin
         let session = external == nil ? first.flatMap { model.session(forKey: $0.key) } : nil
-        provider = session?.target.provider
+        provider = run.spansSessions ? nil : session?.target.provider
         let project = session?.project ?? ""
         title = external ?? (project.isEmpty ? session?.title ?? "Unknown session" : project)
         let sessions = Set(run.items.map(\.key)).count
@@ -83,11 +112,9 @@ struct WidgetFeedRunHeader: View, Equatable {
         counts = run.items.count < 2 ? "" : [Plural.count(run.items.count, "item"), count > 0 ? WidgetWords.waitingShort(count) : nil]
             .compactMap { $0 }.joined(separator: " · ")
         inboxTooltip = "Open the whole inbox of " + (session?.title ?? "this session")
-        if let session {
+        if let session, !run.spansSessions {
             openInbox = {
-                model.select(session.key)
-                model.section = "Inbox"
-                if let surface { model.openModule("agents", on: surface) }
+                model.openSessionInbox(session, on: surface)
             }
         } else {
             openInbox = nil

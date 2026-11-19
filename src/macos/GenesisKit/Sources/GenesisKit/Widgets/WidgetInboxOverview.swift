@@ -220,23 +220,20 @@ struct WidgetInboxOverview: View {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     if feed {
                         ForEach(runs) { run in
-                            Section {
-                                ForEach(run.items, id: \.id) { item in row(item) }
-                            } header: {
-                                WidgetFeedRunHeader(run: run, model: model).equatable()
-                                    .padding(.top, run.id == runs.first?.id ? 0 : 8)
+                            WidgetFeedSection(run: run, model: model, first: run.id == runs.first?.id) { item, context in
+                                row(item, context: context)
                             }
                         }
                     } else if grouped {
                         ForEach(Self.groups(items), id: \.key) { group in
                             Section {
-                                ForEach(group.items, id: \.id) { item in row(item) }
+                                ForEach(group.items, id: \.id) { item in row(item, context: .sessionHeader) }
                             } header: {
                                 header(group.key, items: group.items)
                             }
                         }
                     } else {
-                        ForEach(items, id: \.id) { item in row(item) }
+                        ForEach(items, id: \.id) { item in row(item, context: .list) }
                     }
                 }
                 if model.inbox.truncated {
@@ -299,19 +296,20 @@ struct WidgetInboxOverview: View {
             }
             Text(items.first?.message?.origin ?? session?.title ?? "Unknown session")
                 .font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
-            Text([Plural.count(items.count, "item"), waiting > 0 ? WidgetWords.waitingShort(waiting) : nil]
-                .compactMap { $0 }.joined(separator: " · "))
-                .font(.system(size: 10)).foregroundStyle(waiting > 0 ? Color.orange : .secondary)
+            if items.count > 1 {
+                Text([Plural.count(items.count, "item"), waiting > 0 ? WidgetWords.waitingShort(waiting) : nil]
+                    .compactMap { $0 }.joined(separator: " · "))
+                    .font(.system(size: 11)).foregroundStyle(waiting > 0 ? Color.orange : .secondary)
+            }
             Spacer(minLength: 0)
             if let session {
-                Button("Whole inbox") {
-                    model.select(session.key)
-                    model.section = "Inbox"
-                }.buttonStyle(.genHoverPlain()).font(.system(size: 10.5))
+                IconButton(systemName: "tray", tooltip: "Open the whole inbox of " + session.title, size: 11) {
+                    model.openSessionInbox(session)
+                }
             }
         }
         .padding(.top, 6).padding(.horizontal, 2)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
     }
 
     private static func summary(_ items: [WidgetInboxItem]) -> String {
@@ -327,10 +325,10 @@ struct WidgetInboxOverview: View {
         GenMotion.perform(expanding: opening, reduceMotion: reduceMotion) { openID = opening ? item.id : nil }
     }
 
-    private func row(_ item: WidgetInboxItem) -> some View {
+    private func row(_ item: WidgetInboxItem, context: WidgetInboxRowContext) -> some View {
         let open = openID == item.id
         let focused = focusID == item.id
-        return WidgetInboxEntry(model: model, item: item, open: open, focused: focused, grouped: grouped || feed,
+        return WidgetInboxEntry(model: model, item: item, open: open, focused: focused, context: context,
                                 focusedOption: focusedOption, toggle: { toggle(item) })
             .onGeometryChange(for: Bool.self, of: { geometry in
                 guard open, let viewport = geometry.bounds(of: .scrollView) else { return false }
@@ -373,16 +371,15 @@ struct WidgetInboxOverviewRow: View, Equatable {
     let open: Bool
     /// The keyboard's row.
     let focused: Bool
-    /// Under its session header: the row does not repeat the session.
-    let grouped: Bool
-    let sessionTitle: String?
+    /// Only the source information that the enclosing group has not already identified.
+    let source: String?
     /// The staged pick or note of a waiting decision with where its send is, read from the model by the parent.
     let stagedLine: WidgetStageLine?
     let toggle: () -> Void
 
     static func == (a: WidgetInboxOverviewRow, b: WidgetInboxOverviewRow) -> Bool {
-        a.item == b.item && a.open == b.open && a.focused == b.focused && a.grouped == b.grouped
-            && a.sessionTitle == b.sessionTitle && a.stagedLine == b.stagedLine
+        a.item == b.item && a.open == b.open && a.focused == b.focused
+            && a.source == b.source && a.stagedLine == b.stagedLine
     }
 
     var body: some View {
@@ -414,14 +411,17 @@ struct WidgetInboxOverviewRow: View, Equatable {
                     stagedLine
                 }
                 HStack(spacing: 4) {
-                    Text(waiting || !item.needsAnswer ? WidgetInboxOverview.kindLabel(item) : "Decision")
-                    Text("·")
-                    // Under its session header the row does not repeat the session.
-                    if !grouped {
-                        Text(sessionTitle ?? "Unknown session").lineLimit(1)
+                    if let source {
+                        Text(source).lineLimit(1).truncationMode(.middle).help(source)
                         Text("·")
                     }
-                    LiveAgo(date: Date(timeIntervalSince1970: item.at / 1000), style: .brief)
+                    // A decision on its way reads "Decision", no longer its waiting label.
+                    let kind = waiting || !item.needsAnswer ? WidgetInboxOverview.kindLabel(item) : "Decision"
+                    if WidgetInboxOverview.title(item) != kind {
+                        Text(kind).lineLimit(1)
+                        Text("·")
+                    }
+                    LiveAgo(date: Date(timeIntervalSince1970: item.at / 1000), style: .spelled).fixedSize()
                 }.font(.system(size: 11)).foregroundStyle(waiting ? Color.orange : SessionPalette.secondary)
             }
             Spacer(minLength: 4)

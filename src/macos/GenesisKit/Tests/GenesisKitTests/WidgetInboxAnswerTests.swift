@@ -90,6 +90,8 @@ final class WidgetInboxAnswerTests: XCTestCase {
         XCTAssertTrue(after.contains("Answer"), after.description)
         XCTAssertTrue(after.joined().contains("The pears are ready"), after.description)
         XCTAssertTrue(after.joined().contains("2 earlier answers"), after.description)
+        XCTAssertEqual(after.filter { $0 == "Alpha" }.count, 1, after.description)
+        XCTAssertFalse(after.contains("Whole inbox"), "The group header already opens Alpha's whole inbox.")
         XCTAssertFalse(after.contains("Question"), after.description)
     }
 

@@ -1,12 +1,16 @@
 import SwiftUI
 
+enum WidgetInboxRowContext {
+    case inlineSource, sessionHeader, projectHeader, list
+}
+
 /// The same item opens in the overview and in the hover list. The parent owns selection and keyboard focus.
 struct WidgetInboxEntry: View {
     @ObservedObject var model: WidgetModel
     let item: WidgetInboxItem
     let open: Bool
     let focused: Bool
-    let grouped: Bool
+    let context: WidgetInboxRowContext
     var compact = false
     var focusedOption: String?
     var surface: WidgetSurfaceID?
@@ -16,11 +20,12 @@ struct WidgetInboxEntry: View {
         let session = item.message?.origin == nil ? model.session(forKey: item.key) : nil
         VStack(alignment: .leading, spacing: 0) {
             WidgetInboxOverviewRow(
-                item: item, open: open, focused: focused, grouped: grouped,
-                sessionTitle: item.message?.origin ?? session?.title, stagedLine: stagedLine(item), toggle: toggle)
+                item: item, open: open, focused: focused,
+                source: sourceLabel(session), stagedLine: stagedLine(item), toggle: toggle)
                 .equatable()
             if open {
                 WidgetInboxEntryDetail(model: model, item: item, session: session, compact: compact,
+                                       context: context,
                                        focusedOption: focusedOption, focusRow: focused, surface: surface)
                     .padding(.horizontal, 12).padding(.top, 2).padding(.bottom, 12)
                     .transition(.genReveal)
@@ -34,6 +39,18 @@ struct WidgetInboxEntry: View {
         .overlay(RoundedRectangle(cornerRadius: 11)
             .strokeBorder(focused ? Color(nsColor: .keyboardFocusIndicatorColor) : .clear, lineWidth: 2))
         .id(item.id)
+    }
+
+    private func sourceLabel(_ session: WidgetSession?) -> String? {
+        if context == .sessionHeader { return nil }
+        if let sender = item.message?.origin { return sender }
+        guard let session else { return "Unknown session" }
+        let title = WidgetInboxOverview.title(item)
+        var parts: [String] = []
+        if context == .inlineSource, !session.project.isEmpty, session.project != title,
+           session.project != session.title { parts.append(session.project) }
+        if !session.title.isEmpty, session.title != title { parts.append(session.title) }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     private func stagedLine(_ item: WidgetInboxItem) -> WidgetStageLine? {
@@ -50,6 +67,7 @@ struct WidgetInboxEntryDetail: View {
     let item: WidgetInboxItem
     let session: WidgetSession?
     let compact: Bool
+    let context: WidgetInboxRowContext
     var focusedOption: String?
     var focusRow = false
     var surface: WidgetSurfaceID?
@@ -120,21 +138,23 @@ struct WidgetInboxEntryDetail: View {
                 HStack(spacing: 8) {
                     AIProviderGlyph(meta: AIProviders.meta(for: session.target.provider), size: 18)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(session.title).font(.system(size: 11.5, weight: .medium)).lineLimit(1)
-                        Text([session.project, session.visualStatus.label, String(session.target.sessionId.prefix(8))]
+                        Text([context == .list || context == .sessionHeader ? session.project : "",
+                              session.visualStatus.label, String(session.target.sessionId.prefix(8))]
                             .filter { !$0.isEmpty }.joined(separator: " · "))
-                            .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                            .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                     }
                 }
             }
             HStack(spacing: 8) {
-                if item.message?.origin == nil {
+                if session != nil {
                     Button(item.needsAnswer ? "Answer in its session" : "Open in its session") { model.openInboxItem(item, on: surface) }
                         .buttonStyle(.genHover(accent: item.needsAnswer ? .orange : KitTheme.accent))
                         .accessibilityIdentifier("widget.overview.open." + item.id)
                 }
                 if let session {
-                    Button("Whole inbox") { wholeInbox(session) }.buttonStyle(.genHover())
+                    if context != .sessionHeader {
+                        Button("Whole inbox") { model.openSessionInbox(session, on: surface) }.buttonStyle(.genHover())
+                    }
                     Spacer(minLength: 0)
                     WidgetCmuxButton(model: model, session: session, size: 12)
                 }
@@ -142,20 +162,15 @@ struct WidgetInboxEntryDetail: View {
         }
     }
 
-    private func wholeInbox(_ session: WidgetSession) {
-        model.select(session.key)
-        model.section = "Inbox"
-        if let surface { model.openModule("agents", on: surface) }
-    }
-
     private func earlierAnswers(_ count: Int) -> some View {
-        GenDisclosure(Plural.count(count, "earlier answer"), isExpanded: $earlierOpen,
-                      identifier: "widget.overview.earlier." + item.id) {
+        let title = Plural.count(count, "earlier answer")
+        return GenDisclosure(isExpanded: $earlierOpen, minHeight: 22,
+                      identifier: "widget.overview.earlier." + item.id, accessibilityTitle: title) {
             VStack(alignment: .leading, spacing: 8) {
                 if let entries {
                     ForEach(entries) { entry in
                         VStack(alignment: .leading, spacing: 3) {
-                            LiveAgo(date: Date(timeIntervalSince1970: entry.at / 1000), style: .brief)
+                            LiveAgo(date: Date(timeIntervalSince1970: entry.at / 1000), style: .spelled)
                                 .font(.caption2).foregroundStyle(.secondary)
                             WidgetReceiptBlock(question: entry.question, preview: entry.text, more: entry.more == true,
                                                headTitle: nil, label: "Answer", clamp: 4, imageHeight: 56,
@@ -165,11 +180,9 @@ struct WidgetInboxEntryDetail: View {
                     }
                     if entries.isEmpty {
                         Text("No earlier unread answers remain.").font(.caption).foregroundStyle(.secondary)
-                    } else if entries.count == 5, count > entries.count, let session {
-                        HStack {
-                            Text("And \(count - entries.count) more in its session")
-                            Button("Whole inbox") { wholeInbox(session) }.buttonStyle(.genHoverPlain())
-                        }.font(.caption)
+                    } else if entries.count == 5, count > entries.count, session != nil {
+                        Text(Plural.count(count - entries.count, "more answer") + " in the session inbox")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                 } else if let groupFailure {
                     Text("Earlier answers could not be read: \(groupFailure)").font(.caption).foregroundStyle(.secondary)
@@ -183,6 +196,8 @@ struct WidgetInboxEntryDetail: View {
                 do { entries = try await model.answerGroup(for: item) }
                 catch { if !Task.isCancelled { groupFailure = error.localizedDescription } }
             }
+        } label: {
+            Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
         }
     }
 }
