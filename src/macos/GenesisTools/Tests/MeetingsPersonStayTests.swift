@@ -271,7 +271,7 @@ final class MeetingsPersonStayTests: XCTestCase {
         let files = try XCTUnwrap(FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil))
             .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
         XCTAssertGreaterThan(files.count, 20, "the scan reads the part's sources")
-        let dropped = try NSRegularExpression(pattern: #"\.undo \{ (\[[^\]]*\] )?_ in"#)
+        let dropped = try NSRegularExpression(pattern: #"\.undo\s*\{\s*(\[[^\]]*\]\s*)?_\s+in\b"#)
         var found: [String] = []
         for file in files {
             let text = try String(contentsOf: file, encoding: .utf8)
@@ -281,9 +281,12 @@ final class MeetingsPersonStayTests: XCTestCase {
             }
         }
         XCTAssertEqual(found, [], "an Undo that drops its notice's id leaves the notice on Undoing…")
-        let control = ".undo { [weak self] _ in self?.undo() }"
-        XCTAssertEqual(dropped.numberOfMatches(in: control, range: NSRange(control.startIndex..., in: control)), 1,
-                       "the pattern finds the defect")
+        func matches(_ text: String) -> Int { dropped.numberOfMatches(in: text, range: NSRange(text.startIndex..., in: text)) }
+        XCTAssertEqual(matches(".undo { [weak self] _ in self?.undo() }"), 1, "the pattern finds the defect")
+        XCTAssertEqual(matches(".undo {\n    _ in\n    self.undo()\n}"), 1, "the pattern finds the defect across lines")
+        XCTAssertEqual(matches(".undo{[weak self]\n  _ in self?.undo() }"), 1, "the pattern finds the defect without spaces")
+        XCTAssertEqual(matches(".undo { [weak self] id in self?.undo(id) }"), 0, "a closure that keeps the id passes")
+        XCTAssertEqual(matches(".undo {\n    id in\n    self.undo(id)\n}"), 0, "a multiline closure that keeps the id passes")
     }
 
     func testTheEditorAsksForClockTimesAndKeepsRemoveApart() throws {
