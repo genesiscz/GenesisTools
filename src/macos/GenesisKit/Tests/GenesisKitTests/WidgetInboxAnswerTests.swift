@@ -195,11 +195,17 @@ final class WidgetInboxAnswerTests: XCTestCase {
     }
 
     private static func hasMagentaPixels(_ host: NSView) -> Bool {
-        guard let shot = HostedShot.bitmap(host) else { return false }
-        for y in stride(from: 0, to: shot.pixelsHigh, by: 8) {
-            for x in stride(from: 0, to: shot.pixelsWide, by: 8) {
-                if let pixel = shot.colorAt(x: x, y: y)?.usingColorSpace(.sRGB),
-                   min(pixel.redComponent, pixel.blueComponent) - pixel.greenComponent > 0.6 { return true }
+        guard let image = HostedShot.bitmap(host)?.cgImage,
+              let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: image.width, height: image.height,
+                                      bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue),
+              let bytes = context.data?.assumingMemoryBound(to: UInt8.self) else { return false }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: CGFloat(image.width), height: CGFloat(image.height)))
+        for y in stride(from: 0, to: image.height, by: 8) {
+            for x in stride(from: 0, to: image.width, by: 8) {
+                let pixel = y * context.bytesPerRow + x * 4
+                if bytes[pixel] > 180, bytes[pixel + 1] < 100, bytes[pixel + 2] > 180 { return true }
             }
         }
         return false
