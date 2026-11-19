@@ -38,7 +38,7 @@ private struct WorkRemovalPictureView: View {
         if let snapshot = screen.snapshot {
             // This is the same modifier as WorkMain. No second withAnimation/transition implementation.
             // One persistent WorkItemsView identity also preserves the container's own @State expansion.
-            WorkItemsView(snapshot: snapshot, pending: screen.pending, expandAll: snapshot.triage.count == 2) { _ in }
+            WorkItemsView(snapshot: snapshot, pending: screen.pending, expandAll: snapshot.triage.count == 2) { _ in false }
                 .workRowUpdates(screen: screen)
                 .padding(16)
         }

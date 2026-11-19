@@ -246,7 +246,7 @@ final class WorkScreenTests: XCTestCase {
         XCTAssertEqual(model.live, .live)
     }
 
-    func testSlowTickAndPendingWriteWaitForTheirOwnRead() async {
+    func testSlowTickAndWriteAcknowledgmentWhileTheRefreshIsStillRunning() async {
         let source = FakeWorkSource(fixture())
         let model = WorkScreenModel(source: source, reloadInterval: 0, settle: 0, catchUpDelay: 0.01)
         model.activate()
@@ -260,17 +260,38 @@ final class WorkScreenTests: XCTestCase {
         source.resumeRead?.resume()
         await settle { model.live == .live }
         source.holdNextRead = true
-        let write = Task { await model.perform(.accept(ref: "w_spot0002")) }
+        let acknowledged = expectation(description: "Write acknowledged during the held refresh")
+        let write = Task {
+            let saved = await model.write(.accept(ref: "w_spot0002"))
+            XCTAssertTrue(saved)
+            acknowledged.fulfill()
+        }
         await settle { source.resumeRead != nil }
-        XCTAssertTrue(model.pending.contains("w_spot0002"))
+        await fulfillment(of: [acknowledged], timeout: 1)
+        XCTAssertNotNil(source.resumeRead)
+        XCTAssertTrue(model.pending.isEmpty)
         XCTAssertEqual(model.snapshot?.triage.first { $0.ref == "w_spot0002" }?.state, "open")
         source.resumeRead?.resume()
         await write.value
-        XCTAssertTrue(model.pending.isEmpty)
+        await model.finishCurrentRead()
+    }
+
+    func testWorkNoticeHistoryEvictsBothCopiesOfTheOldestOutcome() async {
+        let model = WorkScreenModel(source: FakeWorkSource(fixture()))
+        model.project = "App"
+        for index in 0..<9 {
+            _ = await model.write(.accept(ref: "w_fixture\(index)"))
+        }
+        XCTAssertEqual(model.notices.count, 8)
+        XCTAssertEqual(model.notices.first?.ref, "w_fixture1")
+        XCTAssertEqual(model.noticeStack.notices.count, 8)
+        model.clearNotice()
+        XCTAssertEqual(model.notices.last?.ref, "w_fixture7")
+        XCTAssertEqual(model.noticeStack.notices.count, 7)
     }
 
     func testTheItemsPaneShowsHandoffsSpottedByTypeAndReopened() throws {
-        let view = WorkItemsView(snapshot: fixture(), pending: [], expandAll: true) { _ in }
+        let view = WorkItemsView(snapshot: fixture(), pending: [], expandAll: true) { _ in false }
             .frame(width: 760)
         let text = try render(view, name: "work-items")
         for expected in ["Handoffs and epics", "Build the work items", "2 of 3 open", "The hub's Work screen",
@@ -330,7 +351,7 @@ final class WorkScreenTests: XCTestCase {
     }
 
     func testFoldingAHandoffKeepsItsOwnPairingVisible() throws {
-        let text = try render(WorkItemsView(snapshot: fixture(), pending: []) { _ in }.frame(width: 600),
+        let text = try render(WorkItemsView(snapshot: fixture(), pending: []) { _ in false }.frame(width: 600),
                               name: "work-items-folded")
         XCTAssertTrue(text.contains("PLAN-12"), text)
         XCTAssertFalse(text.contains("TASK-42"), text)
@@ -356,7 +377,7 @@ final class WorkScreenTests: XCTestCase {
         }
         XCTAssertTrue(HubWorkSections.startsFolded(crowded, preference: true))
         XCTAssertFalse(HubWorkSections.startsFolded(crowded, preference: false))
-        let text = try render(WorkItemsView(snapshot: crowded, pending: [], foldedSections: .constant([WorkItemsView.containersTitle])) { _ in }
+        let text = try render(WorkItemsView(snapshot: crowded, pending: [], foldedSections: .constant([WorkItemsView.containersTitle])) { _ in false }
             .frame(width: 600), name: "work-items-triage-first")
         XCTAssertFalse(text.contains("Group 47"), text)
         XCTAssertTrue(text.contains("The widget counts lag a write"), text)
@@ -378,7 +399,7 @@ final class WorkScreenTests: XCTestCase {
 
     func testAnEmptyProjectSaysSoInEachSection() throws {
         let empty = WorkSnapshotValue(project: "Quiet", containers: [], triage: [])
-        let text = try render(WorkItemsView(snapshot: empty, pending: []) { _ in }.frame(width: 600), name: "work-items-empty")
+        let text = try render(WorkItemsView(snapshot: empty, pending: []) { _ in false }.frame(width: 600), name: "work-items-empty")
         XCTAssertTrue(text.contains("No open handoff or epic in Quiet"), text)
         XCTAssertTrue(text.contains("Nothing spotted waits for a look"), text)
     }

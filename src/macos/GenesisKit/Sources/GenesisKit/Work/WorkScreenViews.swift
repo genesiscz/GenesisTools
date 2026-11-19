@@ -62,11 +62,12 @@ public struct WorkItemsView: View {
     @State private var localDrafts: WorkItemInspectorDrafts
     private let drafts: WorkItemInspectorDrafts?
 
+    /// Reason actions clear their draft only when `perform` acknowledges the write.
     public init(snapshot: WorkSnapshotValue, pending: Set<String>, expandAll: Bool = false,
                 foldedSections: Binding<Set<String>>? = nil, drafts: WorkItemInspectorDrafts? = nil,
-                perform: @escaping (WorkScreenAction) -> Void) {
+                perform: @escaping @MainActor (WorkScreenAction) async -> Bool) {
         self.snapshot = snapshot; self.pending = pending
-        self.perform = { action in perform(action); return Task { true } }
+        self.perform = { action in Task { await perform(action) } }
         projection = nil; filter = .default; selection = nil
         indexLoading = false; indexFailure = nil
         select = { _ in }; toggleExpansion = nil; showMore = {}; clearFilters = {}; retryIndex = {}
@@ -441,6 +442,7 @@ public struct WorkItemsView: View {
                 }
                 if state != "dropped" && state != "done" {
                     if !handoffs(excluding: ref).isEmpty {
+                        let handoffAction = accept ? "Accept and add to handoff" : "Add to handoff"
                         MenuButton(items: {
                             let choices = handoffs(excluding: ref)
                             let byTitle = Dictionary(grouping: choices, by: \.title)
@@ -449,12 +451,12 @@ public struct WorkItemsView: View {
                                 return .action(label) { _ = perform(.addMember(ref: ref, handoff: handoff.ref)) }
                             }
                         }) {
-                            Label(accept ? "Accept and add to handoff" : "Add to handoff", systemImage: "tray.and.arrow.down")
+                            Label(handoffAction, systemImage: "tray.and.arrow.down")
                                 .font(.system(size: 11)).padding(.horizontal, 5).frame(minHeight: 22)
                         }
                         .instantTooltip("Add to a handoff as one of its tasks")
-                        .accessibilityLabel("Add to a handoff")
-                        .accessibilityHint(accept ? "Also accepts the spotted item" : "Choose the handoff")
+                        .accessibilityLabel(Text(verbatim: handoffAction))
+                        .accessibilityHint("Choose the handoff")
                         .disabled(pending.contains(ref))
                     }
                     reasonButton(.drop, ref: ref, title: title)

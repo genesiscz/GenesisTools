@@ -225,7 +225,7 @@ public enum WorkScreenAction: Equatable, Sendable {
     }
 }
 
-/// The answer of a write: ok, or the first reason it did not happen.
+/// A write's outcome. A partial sync can push some pairings even when `ok` is false.
 public struct WorkActionOutcome: Equatable, Sendable {
     public var ok: Bool
     public var message: String

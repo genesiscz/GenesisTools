@@ -77,7 +77,7 @@ public final class WorkScreenModel: ObservableObject {
     @Published public private(set) var isFirstLoad = true
     @Published public private(set) var live: WorkLiveState = .live
     @Published public private(set) var failure: String?
-    /// The answer of the last write: ok shows as a fading notice, a refusal stays until the next write.
+    /// The newest retained outcome. Dismissing it may reveal an older outcome.
     @Published public private(set) var notice: WorkActionOutcome?
     @Published public private(set) var notices: [WorkActionNotice] = [] {
         didSet { notice = notices.last?.outcome }
@@ -87,6 +87,7 @@ public final class WorkScreenModel: ObservableObject {
     @Published public private(set) var notifyPending: [String: String] = [:]
     @Published public private(set) var notifyCommand: String?
     public let noticeStack = NoticeStackModel()
+    private static let retainedItemNoticeLimit = 8
     /// The stacked copy of each item notice, so closing or replacing one closes its card too.
     private var stackedNotices: [UUID: StackedNotice.ID] = [:]
     private var notifyGeneration = UUID()
@@ -566,6 +567,7 @@ public final class WorkScreenModel: ObservableObject {
                     }
                     self.adoptingItemProject = false
                     if self.itemDetail != detail { self.itemDetail = detail }
+                    else if self.companionReadNeeded { self.readListBesideDetail() }
                 } else if let project, pane == .items {
                     let confirmed = try await self.source.snapshot(project: project)
                     guard !Task.isCancelled, self.project == project else { return }
@@ -709,10 +711,20 @@ public final class WorkScreenModel: ObservableObject {
             ? noticeStack.push(.init(text: shown.message), replacing: replacing)
             : noticeStack.push(.init(text: shown.message, tone: .error, actions: failure.map { [.details($0)] } ?? []),
                                replacing: replacing)
-        pendingItemStates[action.ref] = nil
+        if notices.count > Self.retainedItemNoticeLimit, let oldest = notices.first {
+            clearNotice(oldest.id)
+        }
+        if let state = pendingItemStates.removeValue(forKey: action.ref), result.ok,
+           let confirmedSnapshot, confirmedSnapshot.project == project {
+            // Another write can preview its state before this read completes. Keep the acknowledged state in that
+            // preview until a newer service snapshot arrives.
+            self.confirmedSnapshot = confirmedSnapshot.previewing([action.ref: state])
+        }
         if !result.ok { showPendingItemStates() }
         invalidateFindReads()
-        await readAfterWrite()
+        listTask?.cancel()
+        // The live source bounds each RPC and CLI read. Navigation may replace this read without delaying the editor.
+        read()
         return result.ok
     }
 
@@ -742,14 +754,8 @@ public final class WorkScreenModel: ObservableObject {
         }
     }
 
-    private func readAfterWrite() async {
-        read()
-        await finishCurrentRead()
-    }
-
     func finishCurrentRead() async {
-        // An explicit read or a navigation may supersede our read while it is in flight.
-        while let current = loading { await current.value }
+        await loading?.value
     }
 
     // MARK: - Notify
