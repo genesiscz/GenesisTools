@@ -14,7 +14,7 @@ final class HubWorkModel: ObservableObject {
     /// launch with `--mode work` settles there, as the Timeline and Inbox modes settle on their first load.
     var onLoaded: (() -> Void)? { didSet { watchFirstLoad() } }
     private var loadWatch: AnyCancellable?
-    var preferredOpeningProject: String?
+    private var requestedProject: String?
 
     init(source: WorkSource? = nil, defaults: UserDefaults = HubDefaults.store) {
         self.defaults = defaults
@@ -42,9 +42,14 @@ final class HubWorkModel: ObservableObject {
         case .firstInList:
             candidates = []
         }
-        let preferred = preferredOpeningProject
-        preferredOpeningProject = nil
-        screen.activate(preferring: [preferred].compactMap { $0 } + candidates)
+        screen.activate(preferring: requestedProject.map { [$0] } ?? candidates)
+        requestedProject = nil
+    }
+
+    func openLinkedProject(_ name: String) {
+        requestedProject = name
+        openProject(name)
+        screen.pane = .items
     }
 
     func openProject(_ name: String) {
@@ -67,7 +72,7 @@ final class HubWorkModel: ObservableObject {
                 done?()
             }
     }
-    func deactivate() { screen.deactivate() }
+    func deactivate() { requestedProject = nil; screen.deactivate() }
 }
 
 /// The Work mode's answers to the hub (Hub/HubModeModel.swift).
@@ -83,27 +88,34 @@ struct WorkProjectsList: View {
     @ObservedObject var screen: WorkScreenModel
     let filter: String
     let openProject: (String) -> Void
+    var clearFilter: (() -> Void)?
+    @FocusState private var focused: Bool
 
     var body: some View {
         let words = filter.lowercased().split(whereSeparator: \.isWhitespace)
         let shown = screen.projects.filter { name in words.allSatisfy { name.lowercased().contains($0) } }
-        ScrollView {
-            VStack(alignment: .leading, spacing: 2) {
-                if screen.projects.isEmpty {
-                    Text(screen.projectsLoaded ? "No projects" : "Reading the projects…")
-                        .font(.system(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 10)
-                } else if shown.isEmpty {
-                    Text("No project matches “\(filter.trimmingCharacters(in: .whitespaces))”")
-                        .font(.system(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 10)
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    if screen.projects.isEmpty {
+                        Text(screen.failure != nil ? "Projects unavailable" : screen.projectsLoaded ? "No projects with work items" : "Reading the projects…")
+                            .font(.system(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 10)
+                    } else if shown.isEmpty {
+                        EmptyState(text: "No matching projects", detail: filter.trimmingCharacters(in: .whitespacesAndNewlines),
+                                   actionTitle: clearFilter == nil ? nil : "Clear filter", action: clearFilter)
+                    }
+                    ForEach(shown, id: \.self) { name in
+                        WorkProjectRow(name: name, selected: screen.project == name) { openProject(name) }
+                            .equatable()
+                            .id(name)
+                    }
                 }
-                ForEach(shown, id: \.self) { name in
-                    WorkProjectRow(name: name, selected: screen.project == name) { openProject(name) }
-                        .equatable()
-                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 8)
+                .genScrollBars()
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 8)
-            .genScrollBars()
+            .modifier(SidebarArrowKeys(ids: { shown }, selection: { screen.project }, select: openProject,
+                                         proxy: proxy, focused: $focused, focusOnClick: true))
         }
     }
 }
@@ -143,6 +155,8 @@ struct WorkMain: View {
     @ObservedObject var screen: WorkScreenModel
     /// A section a title bar count asked for; the Items scroll view brings its header to the top.
     @State private var jump: String?
+    @State private var foldedSections: Set<String> = []
+    @AppStorage(HubWorkSections.foldLongListsKey, store: HubDefaults.store) private var foldLongLists = true
     @GenReduceMotion private var reduceMotion
 
     var body: some View {
@@ -156,6 +170,15 @@ struct WorkMain: View {
             content
         }
         .hubSurface(.content)
+        .onChange(of: screen.snapshot?.project, initial: true) { _, project in
+            if project != nil { resetSectionFolds() }
+        }
+        .onChange(of: foldLongLists) { _, _ in resetSectionFolds() }
+    }
+
+    private func resetSectionFolds() {
+        guard let snapshot = screen.snapshot else { return }
+        foldedSections = HubWorkSections.startsFolded(snapshot, preference: foldLongLists) ? [WorkItemsView.containersTitle] : []
     }
 
     private var header: some View {
@@ -175,11 +198,21 @@ struct WorkMain: View {
                     HStack(spacing: 2) {
                         ForEach(Array(summary.enumerated()), id: \.offset) { index, part in
                             if index > 0 { Text(verbatim: "·").foregroundColor(ReviewPalette.dim) }
-                            Button { screen.pane = .items; jump = part.section } label: {
-                                Text(verbatim: part.text).foregroundColor(ReviewPalette.dim).lineLimit(1)
+                            Button {
+                                foldedSections.remove(part.section)
+                                screen.pane = .items
+                                jump = part.section
+                            } label: {
+                                ViewThatFits(in: .horizontal) {
+                                    Text(verbatim: part.text).fixedSize()
+                                    Label(String(part.count), systemImage: part.symbol).fixedSize()
+                                }
+                                    .foregroundColor(ReviewPalette.dim)
+                                    .padding(.horizontal, 3).frame(minHeight: 24).contentShape(Rectangle())
                             }
                             .buttonStyle(.genHoverPlain())
                             .instantTooltip("Show the " + part.section.lowercased() + " section")
+                            .accessibilityLabel("Show \(part.text)")
                         }
                     }
                     .font(.system(size: 11.5))
@@ -196,11 +229,11 @@ struct WorkMain: View {
         }
     }
 
-    private var summary: [(text: String, section: String)]? {
+    private var summary: [(text: String, section: String, count: Int, symbol: String)]? {
         guard screen.itemRef == nil, let snapshot = screen.snapshot else { return nil }
-        return [(Plural.count(snapshot.containers.count, "container"), WorkItemsView.containersTitle),
-                (Plural.count(snapshot.spotted.count, "spotted item"), WorkItemsView.spottedTitle),
-                (Plural.count(snapshot.reopened.count, "reopened item"), WorkItemsView.reopenedTitle)]
+        return [(Plural.count(snapshot.containers.count, "container"), WorkItemsView.containersTitle, snapshot.containers.count, "tray.full"),
+                (Plural.count(snapshot.spotted.count, "spotted item"), WorkItemsView.spottedTitle, snapshot.spotted.count, "eye"),
+                (Plural.count(snapshot.reopened.count, "reopened item"), WorkItemsView.reopenedTitle, snapshot.reopened.count, "arrow.uturn.backward")]
     }
 
     @ViewBuilder
@@ -248,12 +281,16 @@ struct WorkMain: View {
             }
             .padding(18)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else if let failure = screen.failure, screen.project == nil {
+            FailureInline(.unexpected(failure, outcome: "The projects did not load", action: "Read the Work projects"),
+                          form: .pane) { Task { await screen.loadProjects() } }
         } else if let failure = screen.failure, screen.snapshot == nil {
             FailureInline(.unexpected(failure, outcome: "The work items did not load", action: "Read the work items"),
                           form: .pane) { screen.reload() }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if screen.project == nil {
-            EmptyState(symbol: "checklist", text: "Pick a project", detail: "The projects with work items are on the left.")
+            EmptyState(symbol: "checklist", text: screen.projectsLoaded ? "No projects with work items" : "Reading projects…",
+                       detail: screen.projectsLoaded ? "Projects appear here when they have a work item." : nil)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ScrollViewReader { proxy in
@@ -262,7 +299,7 @@ struct WorkMain: View {
                     switch screen.pane {
                     case .items:
                         if let snapshot = screen.snapshot {
-                            WorkItemsView(snapshot: snapshot, pending: screen.pending) { action in
+                            WorkItemsView(snapshot: snapshot, pending: screen.pending, foldedSections: $foldedSections) { action in
                                 Task { await screen.perform(action) }
                             }
                         }

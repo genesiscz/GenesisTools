@@ -75,6 +75,13 @@ public struct WorkContainerValue: Identifiable, Equatable, Sendable, Decodable {
         self.ref = ref; self.type = type; self.state = state; self.title = title
         self.open = open; self.total = total; self.members = members; self.pairings = pairings
     }
+
+    var progressLabel: String {
+        guard total > 0 else { return "No tasks" }
+        guard open == 0 else { return "\(open) of \(total) open" }
+        let allDone = members.count == total && members.allSatisfy { $0.state == "done" }
+        return "\(Plural.count(total, "task")) \(allDone ? "done" : "closed")"
+    }
 }
 
 /// An item that waits for a look: spotted, or reopened with nobody working on it.

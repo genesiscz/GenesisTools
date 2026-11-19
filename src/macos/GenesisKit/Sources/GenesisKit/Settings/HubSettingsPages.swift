@@ -115,6 +115,7 @@ private struct HubAppearanceSettings: View {
 @MainActor
 struct HubWorkOpeningProjectPicker: View {
     @AppStorage(HubWorkOpeningProject.key) private var choice: HubWorkOpeningProject = .recentSession
+    @AppStorage(HubWorkSections.foldLongListsKey) private var foldLongLists = true
 
     var body: some View {
         NativeSettingsPicker(
@@ -126,6 +127,8 @@ struct HubWorkOpeningProjectPicker: View {
                 NativeSettingsOption(.firstInList, "First in the list"),
             ],
             selection: $choice, width: 245)
+        NativeSettingsToggle("Fold long handoff lists", detail: "When more than ten handoffs and epics precede items needing attention, start with the group folded.",
+                             identifier: HubWorkSections.foldLongListsKey, isOn: $foldLongLists)
     }
 }
 

@@ -23,7 +23,7 @@ struct HubNavTarget: Codable, Hashable, Sendable {
     private(set) var fields: [String: String]
 
     /// The keys a place keeps, in the order `arguments` writes them.
-    static let keys = ["mode", "selection", "session", "agent", "pr", "reveal", "repo", "commit", "tab", "worktree", "work"]
+    static let keys = ["mode", "selection", "session", "agent", "pr", "reveal", "repo", "commit", "tab", "worktree", "work", "work-project"]
 
     init(_ fields: [String: String]) {
         self.fields = fields.filter { Self.keys.contains($0.key) && !$0.value.isEmpty }
@@ -93,6 +93,7 @@ struct HubNavRequest {
     var worktree: String?
     var workItem: String?
     var mode: HubMode?
+    var workProject: String?
     var reveal: String?
     var tab: HubTab?
     /// A history entry being shown again: its own entry takes the shown place's form instead of a new entry.
@@ -115,6 +116,7 @@ struct HubNavRequest {
         agent = request.agent
         worktree = request.worktree
         workItem = request.workItem
+        workProject = request.workProject
         mode = request.mode
         reveal = request.reveal
         tab = request.tab
@@ -138,6 +140,7 @@ struct HubNavRequest {
         fields["repo"] = repo
         fields["worktree"] = worktree
         fields["work"] = workItem
+        fields["work-project"] = workProject
         fields["reveal"] = reveal
         fields["tab"] = tab?.rawValue
         return HubNavTarget(fields)
@@ -155,6 +158,7 @@ struct HubNavRequest {
         if let worktree { return "worktree " + (worktree as NSString).lastPathComponent }
         if let agent { return "agent \(agent)" }
         if let workItem { return "Work: \(workItem)" }
+        if let workProject { return "Work: \(workProject)" }
         if let session { return "session \(session.prefix(8))" }
         return mode?.title ?? "Hub"
     }

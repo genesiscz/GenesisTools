@@ -18,6 +18,14 @@ public enum HubWorkOpeningProject: String, Sendable {
     public static func stored(_ raw: String?) -> Self { raw.flatMap(Self.init(rawValue:)) ?? .recentSession }
 }
 
+public enum HubWorkSections {
+    public static let foldLongListsKey = "hub.work.foldLongLists"
+
+    public static func startsFolded(_ snapshot: WorkSnapshotValue, preference: Bool) -> Bool {
+        preference && snapshot.containers.count > 10 && (!snapshot.spotted.isEmpty || !snapshot.reopened.isEmpty)
+    }
+}
+
 /// When a PR row shows its CI icon. The readiness word ("ready", "2 open", "checks failed") is the row's status; the
 /// CI icon beside it repeated a red mark on nearly every row of a project whose checks usually fail (hub UX C9).
 public enum HubPRRowCI: String, CaseIterable, Identifiable, Sendable {

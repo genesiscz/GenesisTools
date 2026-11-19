@@ -175,7 +175,12 @@ final class HubWorkTests: XCTestCase {
         XCTAssertTrue(text.contains("The archive contains the receipt"), text)
         XCTAssertEqual(HubPlace(entry: hub.navEntry, tab: .transcript).arguments, ["--work", ref])
         XCTAssertTrue(hub.apply(HubRequest(["--mode", "work"])))
-        XCTAssertEqual(HubPlace(entry: hub.navEntry, tab: .transcript).arguments, ["--mode", "work"])
+        XCTAssertNil(hub.work.screen.itemRef)
+        XCTAssertEqual(HubPlace(entry: hub.navEntry, tab: .transcript).arguments, ["--work-project", "App"])
+        let projectLink = try XCTUnwrap(HubRequest.arguments(fromLink: "genesis-tools://hub?work-project=Quiet"))
+        XCTAssertTrue(hub.apply(HubRequest(projectLink)))
+        XCTAssertEqual(hub.work.screen.project, "Quiet")
+        XCTAssertEqual(HubPlace.resumed(["--resume"], place: HubPlace(entry: hub.navEntry, tab: .transcript)), projectLink)
     }
 
     /// A launch with `--mode work` settles on the Work screen's first load (the snapshot waits for it).

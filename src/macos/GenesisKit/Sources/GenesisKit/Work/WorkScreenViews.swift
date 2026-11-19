@@ -36,15 +36,20 @@ public struct WorkItemsView: View {
     private let openHandoffs: [WorkContainerValue]
     private let handoffsByMember: [String: Set<String>]
     @State private var expanded: Set<String> = []
+    @State private var localFolded: Set<String> = []
+    private var foldedSections: Binding<Set<String>>?
 
     public init(snapshot: WorkSnapshotValue, pending: Set<String>, expandAll: Bool = false,
+                foldedSections: Binding<Set<String>>? = nil,
                 perform: @escaping (WorkScreenAction) -> Void) {
         self.snapshot = snapshot
         self.pending = pending
         self.perform = perform
+        self.foldedSections = foldedSections
         openHandoffs = snapshot.openHandoffs
         var index: [String: Set<String>] = [:]
         for handoff in openHandoffs {
+            index[handoff.ref, default: []].insert(handoff.ref)
             for member in handoff.members {
                 index[member.ref, default: []].insert(handoff.ref)
             }
@@ -93,20 +98,21 @@ public struct WorkItemsView: View {
     @ViewBuilder
     private func section<Content: View>(_ title: String, count: Int, empty: String,
                                          @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 7) {
-                Text(title).font(.system(size: 13, weight: .semibold))
-                CountBadge(count, tooltip: Plural.count(count, "item"))
-                Spacer()
-            }
-            .padding(.bottom, 4)
-            .id(WorkItemsView.sectionID(title))
+        let folded = foldedSections ?? $localFolded
+        let isExpanded = Binding(get: { !folded.wrappedValue.contains(title) }, set: { show in
+            if show { folded.wrappedValue.remove(title) } else { folded.wrappedValue.insert(title) }
+        })
+        GenDisclosure(isExpanded: isExpanded, identifier: Self.sectionID(title), accessibilityTitle: title) {
             if count == 0 {
                 Text(empty).font(.system(size: 12)).foregroundStyle(KitPalette.faint)
             } else {
-                content()
+                LazyVStack(alignment: .leading, spacing: 4) { content() }
             }
+        } label: {
+            Text(title).font(.system(size: 13, weight: .semibold))
+            CountBadge(count, tooltip: Plural.count(count, "item"))
         }
+        .id(Self.sectionID(title))
     }
 
     private func containerRow(_ container: WorkContainerValue) -> some View {
@@ -118,6 +124,10 @@ public struct WorkItemsView: View {
                           accessibilityTitle: container.title) {
                 VStack(alignment: .leading, spacing: 2) {
                     links
+                    if container.members.isEmpty {
+                        Text("No tasks in this \(container.type == "epic" ? "epic" : "handoff")")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     ForEach(container.members) { member in
                         memberRow(member)
                     }
@@ -127,14 +137,14 @@ public struct WorkItemsView: View {
                 HStack(spacing: 8) {
                     Image(systemName: container.type == "epic" ? "square.stack.3d.up" : "tray.full")
                         .foregroundStyle(KitPalette.dim)
-                    Text(container.title).font(.system(size: 12.5, weight: .medium)).lineLimit(1)
-                    Text(verbatim: container.ref).font(.system(size: 10.5, design: .monospaced))
-                        .foregroundStyle(KitPalette.faint)
-                    Spacer()
-                    Text(verbatim: "\(container.open) of \(container.total) open")
+                    Text(container.title).font(.system(size: 12.5, weight: .medium)).lineLimit(2)
+                    Spacer(minLength: 4)
+                    Text(verbatim: container.progressLabel)
                         .font(.system(size: 11)).foregroundStyle(KitPalette.dim)
+                        .fixedSize(horizontal: true, vertical: false)
                 }
             }
+            .contextMenu { copyReference(container.ref) }
             // Pairing buttons stay outside the disclosure button and are usable even when the members are folded.
             if !open.wrappedValue {
                 links.padding(.leading, 24)
@@ -146,17 +156,17 @@ public struct WorkItemsView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 stateGlyph(row.state)
-                Text(row.title).font(.system(size: 12)).lineLimit(1)
+                Text(row.title).font(.system(size: 12)).lineLimit(3)
                     .foregroundStyle(row.isOpen ? KitPalette.text : KitPalette.dim)
-                Text(verbatim: row.slot ?? row.ref).font(.system(size: 10.5, design: .monospaced))
-                    .foregroundStyle(KitPalette.faint)
-                Spacer()
+                Spacer(minLength: 4)
                 if let worker = row.worker {
                     Text(worker).font(.system(size: 10.5)).foregroundStyle(KitPalette.faint).lineLimit(1)
                 }
-                actions(ref: row.ref, state: row.state, accept: false)
             }
+            .contextMenu { copyReference(row.ref) }
             .frame(minHeight: 26)
+            actions(ref: row.ref, state: row.state, accept: row.state == "spotted")
+                .padding(.leading, 24)
             pairingRows(ref: row.ref, pairings: row.pairings, project: row.project).padding(.leading, 24)
         }
         .accessibilityElement(children: .contain)
@@ -166,22 +176,21 @@ public struct WorkItemsView: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 8) {
                 stateGlyph(row.state)
-                Text(row.title).font(.system(size: 12)).lineLimit(1)
+                Text(row.title).font(.system(size: 12)).lineLimit(3)
                 if let severity = row.severity {
-                    Badge(severity, color: severity == "critical" || severity == "high" ? KitPalette.removed : KitPalette.dim,
+                    Badge(severity.capitalized, color: severity == "critical" || severity == "high" ? KitPalette.removed : KitPalette.dim,
                           look: .tone)
                 }
-                Text(verbatim: row.ref).font(.system(size: 10.5, design: .monospaced))
-                    .foregroundStyle(KitPalette.faint)
-                Spacer()
-                actions(ref: row.ref, state: row.state, accept: accept)
+                Spacer(minLength: 4)
             }
+            .contextMenu { copyReference(row.ref) }
             pairingRows(ref: row.ref, pairings: row.pairings).padding(.leading, 24)
-            let detail = [row.where, row.why].compactMap { $0 }.joined(separator: " · ")
+            let detail = [row.userSees, row.why, row.where].compactMap { $0 }.joined(separator: " · ")
             if !detail.isEmpty {
                 Text(detail).font(.system(size: 11)).foregroundStyle(KitPalette.dim).lineLimit(2)
                     .padding(.leading, 24)
             }
+            actions(ref: row.ref, state: row.state, accept: accept).padding(.leading, 24)
         }
         .padding(.vertical, 3)
         .accessibilityElement(children: .contain)
@@ -191,8 +200,12 @@ public struct WorkItemsView: View {
         Image(systemName: WorkStateLook.symbol(state))
             .foregroundStyle(WorkStateLook.color(state))
             .frame(width: 16)
-            .instantTooltip(state)
+            .instantTooltip(state.capitalized)
             .accessibilityLabel(state)
+    }
+
+    private func copyReference(_ ref: String) -> some View {
+        Button("Copy item ID") { Clipboard.copy(ref, what: "Item ID") }
     }
 
     @ViewBuilder

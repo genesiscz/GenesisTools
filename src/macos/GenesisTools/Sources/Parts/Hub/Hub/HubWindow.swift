@@ -49,7 +49,6 @@ struct HubRequest {
     var repo: String?
     var tab: HubTab?
     var mode: HubMode?
-    var workProject: String?
     var panes: [HubTab]?
     var width: CGFloat?
     var height: CGFloat?
@@ -84,6 +83,7 @@ struct HubRequest {
     var worktree: String?
     /// --work <ref> opens one task or handoff in Work.
     var workItem: String?
+    var workProject: String?
     /// Inbox mode: opens the resume dialog (`--inbox-resume <id>`) or the session info popover
     /// (`--inbox-info <id>`) for this session (id or prefix) once the list has loaded; for snapshots.
     var inboxResume: String?
@@ -141,7 +141,6 @@ struct HubRequest {
         if let mode { return mode }
         if agent != nil { return .agents }
         if opensUsage { return .usage }
-        if workProject != nil { return .work }
         if pr != nil { return .prs }
         if commit != nil || worktree != nil { return .worktrees }
         return inboxItem != nil ? .inbox : .sessions
@@ -172,7 +171,6 @@ struct HubRequest {
             case "--bench": benchPath = value; index += 1
             case "--session": session = value; index += 1
             case "--agent": agent = value; index += 1
-            case "--work-project": workProject = value; index += 1
             case "--pr": pr = value.flatMap(HubPRRef.init); index += 1
             case "--reveal": reveal = value; index += 1
             case "--commit": commit = value; index += 1
@@ -218,6 +216,11 @@ struct HubRequest {
             case "--widget-cwd": widgetCwd = value; index += 1
             case "--widget-provider": widgetProvider = value; index += 1
             case "--worktree": worktree = value; index += 1
+            case "--work-project":
+                mode = .work
+                workProject = Self.optionalText(value)
+                if workProject?.isEmpty != false { workProject = nil; problems.append("--work-project needs a project") }
+                index += 1
             case "--work":
                 mode = .work
                 workItem = Self.optionalText(value)
@@ -337,7 +340,6 @@ package func runHub(_ args: [String]) -> Never {
     }
     model.applyOverlays(request)
     MainActor.assumeIsolated {
-        model.work.preferredOpeningProject = request.workProject
         if let agent = request.agent {
             model.agents.request(parent: request.session, child: agent)
         } else if mode == .agents, let session = request.session {
@@ -1110,6 +1112,7 @@ final class HubModel {
     @MainActor
     func navRequestMatches(_ asked: HubNavRequest) -> Bool {
         if let ref = asked.workItem { return mode == .work && work.screen.itemRef == ref }
+        if let project = asked.workProject { return mode == .work && work.screen.itemRef == nil && work.screen.project == project }
         if let pr = asked.pr {
             return mode == .prs && prs.selected.map(pr.matches) == true
         }
@@ -2077,6 +2080,7 @@ final class HubModel {
         if request.mode == .work {
             MainActor.assumeIsolated {
                 if let ref = request.workItem { work.screen.openItem(ref) }
+                else if let project = request.workProject { work.openLinkedProject(project) }
                 else {
                     work.screen.closeItem()
                     work.screen.pane = .items
@@ -2196,9 +2200,6 @@ final class HubModel {
             setMode(.sessions)
             pendingSession = wanted
             loadSessions()
-        } else if let project = request.workProject {
-            setMode(.work)
-            MainActor.assumeIsolated { work.openProject(project) }
         } else if let mode = request.mode {
             setMode(mode)
         } else if request.inboxItem != nil {
@@ -3053,7 +3054,8 @@ private struct SessionListView: View {
                 default: UsageListView(usage: model.usage, filter: model.filter)
                 }
             case .work:
-                WorkProjectsList(screen: model.work.screen, filter: model.filter, openProject: model.work.openProject)
+                WorkProjectsList(screen: model.work.screen, filter: model.filter, openProject: model.work.openProject,
+                                 clearFilter: { model.filter = "" })
             case .agents:
                 AgentsListView(model: model, agents: model.agents)
             case .sessions:
