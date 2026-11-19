@@ -132,8 +132,8 @@ export function withStartOptions(command: Command): Command {
             "the movie's size and bit rate: standard (the native size, the default), high (twice the bit rate) or small (half the width, height and bit rate)"
         )
         .option(
-            "--display <index>",
-            "record only this display (NSScreen order); by default the recording follows the pointer and the focus to whichever screen is in use"
+            "--display <index|follow>",
+            "record only this display (NSScreen order), or `follow`: the display in use, following the pointer and the focus to another screen (the default when no target is named)"
         )
         .option("--window <ids>", "record these windows (CG window ids, comma separated)")
         .option("--app <name>", "record this app's windows (name, bundle id or pid)")
@@ -251,6 +251,9 @@ export function countdownSecondsOf(raw: string | boolean | undefined): number | 
     return raw === true ? DEFAULT_COUNTDOWN_SECONDS : bounded(raw, "--countdown", START_LIMITS.countdown);
 }
 
+/** `--display follow`: the take follows the pointer and the focus from display to display. */
+export const FOLLOW_DISPLAY = "follow";
+
 /** The target the flags name, in this order: an area, windows, an app, a display; undefined when they name none. */
 const TARGET_FLAGS = ["display", "window", "app", "region"] as const;
 
@@ -273,6 +276,11 @@ function namedTarget(flags: StartFlags): RecordingTarget | undefined {
 
     if (flags.app) {
         return { kind: "app", app: flags.app };
+    }
+
+    if (flags.display !== undefined && flags.display.trim().toLowerCase() === FOLLOW_DISPLAY) {
+        // The start display is the pointer's; the index only names the display a following take begins on.
+        return { kind: "display", screenIndex: 0, follow: true };
     }
 
     if (flags.display !== undefined) {
@@ -587,7 +595,8 @@ export const recordOptionsSchema = z
         systemAudioScope: z.enum(CAPTURE_SYSTEM_AUDIO_SCOPES).optional(),
         title: z.string().optional(),
         maxSeconds: limited(START_LIMITS.maxSeconds).optional(),
-        display: limited(START_LIMITS.display).optional(),
+        /** A display index, or "follow": the display in use, following the pointer and the focus (the default). */
+        display: z.union([limited(START_LIMITS.display), z.literal(FOLLOW_DISPLAY)]).optional(),
         app: z.string().optional(),
         window: z.array(z.number().int().positive()).optional(),
         /** "x,y,width,height" in screen points from the top-left corner, as --region takes it. */

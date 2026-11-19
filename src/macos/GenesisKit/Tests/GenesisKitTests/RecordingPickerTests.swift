@@ -58,6 +58,25 @@ final class RecordingPickerTests: XCTestCase {
                      "the dimmer alone under the pointer offers nothing")
     }
 
+    func testTheDisplaysTabOffersFollowDisplayFirstWhenTheEngineCanFollow() {
+        let targets = RecordingTargets(windows: [], apps: [], displays: [display, side])
+        let offered = RecordingPickerRow.rows(targets, tab: .displays, query: "", offersFollow: true)
+        XCTAssertEqual(offered.map(\.id), ["display-follow", "display-0", "display-1"])
+        XCTAssertEqual(offered.first?.target, .followDisplay)
+        XCTAssertEqual(RecordingPickerRow.rows(targets, tab: .displays, query: "").map(\.id), ["display-0", "display-1"])
+        XCTAssertEqual(RecordingPickerRow.rows(targets, tab: .displays, query: "follow", offersFollow: true).map(\.id),
+                       ["display-follow"])
+        XCTAssertEqual(RecordingPickerRow.rows(targets, tab: .displays, query: "side", offersFollow: true).map(\.id),
+                       ["display-1"])
+        // The outline marks the display a following take starts on: the one under the pointer.
+        let screens = [CGRect(x: 0, y: 0, width: 900, height: 700), CGRect(x: 900, y: 0, width: 700, height: 500)]
+        XCTAssertEqual(RecordingPickerGeometry.rects(.followDisplay, windows: [], screens: screens, pointer: CGPoint(x: 1000, y: 10)),
+                       [screens[1].insetBy(dx: 6, dy: 6)])
+        XCTAssertEqual(RecordingPickerGeometry.rects(.followDisplay, windows: [], screens: screens),
+                       [screens[0].insetBy(dx: 6, dy: 6)])
+        XCTAssertTrue(WidgetSessionEngine.movieCapabilities.targets.contains(.follow))
+    }
+
     func testTabsAndPhysicalChords() {
         let tabs = RecordingPickerTab.allCases
         XCTAssertEqual(tabs.map(\.rawValue), ["windows", "apps", "displays", "area", "click"])

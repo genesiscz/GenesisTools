@@ -24,6 +24,7 @@ import {
     otherRecordingsWarning,
     parseStartFlags,
     readStartArgs,
+    recordOptionsSchema,
     refuseMissingWindowOrApp,
     refuseTargetOffScreen,
     startArgsOf,
@@ -605,6 +606,20 @@ describe("a window or app movie", () => {
         expect(leftover).toEqual({ code: "camera-leftover", message: "the uncut original stays" });
         await rm(folder, { recursive: true, force: true });
         await rm(empty, { recursive: true, force: true });
+    });
+
+    it("--display follow names the following take, and a display index locks one display", () => {
+        expect(parseStartFlags({ display: "follow" }).target).toEqual({
+            kind: "display",
+            screenIndex: 0,
+            follow: true,
+        });
+        expect(parseStartFlags({ display: " Follow " }).target).toMatchObject({ follow: true });
+        expect(parseStartFlags({ display: "1" }).target).toEqual({ kind: "display", screenIndex: 1 });
+        expect(() => parseStartFlags({ display: "left" })).toThrow(/--display/);
+        expect(recordOptionsSchema.parse({ display: "follow" })).toEqual({ display: "follow" });
+        expect(startArgsOf({ display: "follow" })).toEqual(["--display", "follow"]);
+        expect(() => recordOptionsSchema.parse({ display: "left" })).toThrow();
     });
 
     it("two target flags are refused, naming both, instead of one silently winning", () => {
