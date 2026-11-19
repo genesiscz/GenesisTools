@@ -441,7 +441,7 @@ async function walkRoots(options: WalkSourceRootsOptions): Promise<WalkSourceRoo
                 if (!options.includeFile || options.includeFile(file)) {
                     if (options.mtimeFrom !== undefined) {
                         try {
-                            if (statSync(path).mtimeMs < options.mtimeFrom) {
+                            if ((await stat(path)).mtimeMs < options.mtimeFrom) {
                                 continue;
                             }
                         } catch (error) {
