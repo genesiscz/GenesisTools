@@ -325,7 +325,6 @@ public final class WidgetTasksStore: ObservableObject {
         let details = details.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !stopped, mutations[task.id] == nil, task.editable, !title.isEmpty else { return }
         var args = ["edit", task.id, "--json", "--title", title]
-        if draft.owner == "agent" { args += ["--for", "agent"] }
         if !details.isEmpty { args += ["--details", details] }
         args += ["--revision", String(task.revision), "--state", task.state, "--updated-at", task.updatedTs,
                  "--session", task.sessionId, "--provider", task.provider]
