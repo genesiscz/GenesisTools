@@ -29,7 +29,8 @@ struct MeetingsVoiceCompute: Equatable {
         if case .number(let score) = voice.at(["outlierBelow"]), (-1...1).contains(score) { outlierBelow = score }
         let block = raw?.at(Self.path) ?? .null
         if case .string(let text) = block.at(["priority"]), let read = Priority(rawValue: text) { priority = read }
-        if case .number(let count) = block.at(["workers"]), count >= 1 { workers = min(Self.maxWorkers, Int(count)) }
+        // Clamped as a Double first: `Int(_:)` traps on a hand-written 1e300 in the config.
+        if case .number(let count) = block.at(["workers"]), count >= 1 { workers = Int(min(Double(Self.maxWorkers), count)) }
     }
 
     /// What `auto` means on this Mac now, as the engine counts it: the Meetings service's `voices.workers` (the idle

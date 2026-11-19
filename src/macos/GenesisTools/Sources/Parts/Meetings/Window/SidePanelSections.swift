@@ -234,7 +234,8 @@ enum SidePanelWords {
     /// A number with the unit its key names: "1.25×", "30 s", "300 ms", or a count.
     static func number(_ value: Double, key: String) -> String {
         if value == 0, let zero = zeroTitles[key] { return zero }
-        let text = value == value.rounded() ? String(Int(value)) : String(format: "%g", value)
+        // A whole number past Int's range (a hand-written 1e300 in the config) prints as %g: `Int(_:)` would trap.
+        let text = value == value.rounded() && abs(value) < 1e15 ? String(Int(value)) : String(format: "%g", value)
         if key.hasSuffix("speed") { return "\(text)×" }
         if key.hasSuffix("Height") || key.hasSuffix(".height") { return "\(text) pt" }
         if key.hasSuffix("Ms") { return "\(text) ms" }
