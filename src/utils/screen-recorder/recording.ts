@@ -942,6 +942,7 @@ export class FrameRecording<S = unknown> extends RecorderControl {
 
         let session: AudioSession | undefined;
         let retired = false;
+        let startupFailureAt: number | undefined;
 
         try {
             session = await recorder.startAudioSession({
@@ -973,6 +974,7 @@ export class FrameRecording<S = unknown> extends RecorderControl {
                     // A retired writer can still deliver its final files. A failure during startup rejects the start.
                     retired = true;
                     if (!session) {
+                        startupFailureAt = Date.now();
                         return;
                     }
 
@@ -1000,6 +1002,7 @@ export class FrameRecording<S = unknown> extends RecorderControl {
                 this.sound = { ...this.sound, sources: [...session.sources] };
             }
         } catch (error) {
+            const atMs = startupFailureAt ?? Date.now();
             retired = true;
             await session
                 ?.stop()
@@ -1009,7 +1012,7 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             }
 
             log.warn({ error }, "the continuous sound session did not start");
-            hooks.onAudioChange?.({ kind: "failure", atMs: Date.now(), reason: errorText(error) });
+            hooks.onAudioChange?.({ kind: "failure", atMs, reason: errorText(error) });
             this.fallBackSound(errorText(error));
             return;
         }

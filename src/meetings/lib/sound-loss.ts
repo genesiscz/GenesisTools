@@ -44,13 +44,16 @@ export function markMeetingSoundLoss(options: {
     folder: string;
     files: ReadonlySet<string>;
     interruptedFrom?: number;
+    /** Recover the earlier requested-stop run in its own time window. */
+    deferredFrom?: number;
     spans: readonly RecordingSpan[];
     changes: readonly AudioCaptureChange[];
     sources: readonly AudioSource[];
     stoppedMs: number;
 }): void {
-    const { files, changes, interruptedFrom, stoppedMs } = options;
-    if (!files.size && interruptedFrom === undefined && !changes.some((change) => change.kind === "failure")) {
+    const { files, changes, interruptedFrom, deferredFrom, stoppedMs } = options;
+    const recoverFrom = deferredFrom ?? interruptedFrom;
+    if (!files.size && recoverFrom === undefined && !changes.some((change) => change.kind === "failure")) {
         return;
     }
     const index = join(options.folder, AUDIO_INDEX);
@@ -79,7 +82,8 @@ export function markMeetingSoundLoss(options: {
         const end = from + row.durationMs;
         if (
             !Number.isFinite(end) ||
-            (!files.has(row.file) && (interruptedFrom === undefined || end <= interruptedFrom))
+            (deferredFrom !== undefined && from >= stoppedMs) ||
+            (!files.has(row.file) && (recoverFrom === undefined || end <= recoverFrom))
         ) {
             return [];
         }
@@ -99,7 +103,7 @@ export function markMeetingSoundLoss(options: {
         for (const change of changes) {
             if (change.kind === "mute" && change.source === source) {
                 if (change.muted) {
-                    muted = change.atMs;
+                    muted ??= change.atMs;
                 } else if (muted !== undefined) {
                     excluded.push([muted, change.atMs]);
                     muted = undefined;
@@ -162,7 +166,7 @@ export function markMeetingSoundLoss(options: {
             }
             if (previous && !uncertain && from > previous.end) {
                 const reason =
-                    !files.has(previous.row.file) && files.has(row.file)
+                    interruptedFrom !== undefined && !files.has(previous.row.file) && files.has(row.file)
                         ? "recorder interrupted"
                         : previous.row.kept === undefined && row.kept === undefined
                           ? "screen piece restarted"

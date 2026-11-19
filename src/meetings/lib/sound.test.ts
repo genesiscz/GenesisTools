@@ -1,11 +1,13 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
+import * as audioSession from "@genesiscz/utils/screen-recorder/audio-session";
+import type { AudioSource } from "@genesiscz/utils/screen-recorder/control";
 import { callRecorder } from "@genesiscz/utils/screen-recorder/live";
 import { NativeFrameRecorder } from "@genesiscz/utils/screen-recorder/native";
 import {
@@ -23,6 +25,7 @@ import { meetingLiveId } from "./recorder-shared";
 import * as soundModule from "./sound";
 import { type AudioRow, meetingSound, readAudioRows, type SoundInputs } from "./sound";
 import { alignPiece, alignReferenceFromSec } from "./sound-align";
+import * as soundLoss from "./sound-loss";
 
 const display: DisplayInfo = {
     id: 1,
@@ -183,13 +186,168 @@ test("a stalled sound recovery ends the stop at its deadline and keeps .piece/ f
         });
         expect(calls).toBeGreaterThan(1);
         expect(state.warning).toContain("sound recovery did not finish within 0.2s");
-        expect(existsSync(join(folder, ".piece"))).toBe(true);
+        expect(state.stopReason).toBe("requested");
+        const events = readFileSync(join(folder, ".piece", "sound-events.jsonl"), "utf8")
+            .trim()
+            .split("\n")
+            .map((line) => audioSession.audioCaptureChangeSchema.parse(SafeJSON.parse(line, { strict: true })));
+        const stops = events.filter((change) => change.kind === "stop");
+        expect(stops).toHaveLength(1);
+        expect(stops[0].atMs).toBeLessThan(Date.parse(store.read(created.id)!.recording!.stoppedAt!));
     } finally {
         salvage.mockRestore();
     }
 });
 
-test("a salvaged track whose row cannot be written goes back to the piece folder for the next pass", async () => {
+test.each(["requested", "paused"] as const)(
+    "a timed-out requested stop after %s preserves loss accounting across retries",
+    async (lastSpanReason) => {
+        const store = new MeetingStore(new Storage(`meetings-deferred-sound-${lastSpanReason}`));
+        const zero = firstFrameMs - 60_000;
+        const at = (ms: number) => new Date(zero + ms).toISOString();
+        const meeting = await store.create(
+            {
+                title: "Deferred sound",
+                start: at(-30_000),
+                createdBy: "record",
+                recording: {
+                    startedAt: at(-20_000),
+                    stoppedAt: at(12_000),
+                    status: "stopped",
+                    stopReason: "requested",
+                    frames: 0,
+                    bytes: 0,
+                    audio: { sources: ["system"], files: 1 },
+                    spans: [
+                        { from: at(-20_000), to: at(-15_000), stopReason: lastSpanReason },
+                        {
+                            from: at(0),
+                            to: at(lastSpanReason === "paused" ? 4250 : 12_000),
+                            stopReason: lastSpanReason,
+                        },
+                    ],
+                },
+            },
+            { command: "test", change: "previous requested stop" }
+        );
+        const folder = store.folder(meeting.id);
+        const piece = join(folder, ".piece");
+        const journal = join(piece, "sound-events.jsonl");
+        const pending = join(piece, "audio-system.m4a");
+        mkdirSync(piece, { recursive: true });
+        mkdirSync(join(folder, "audio"));
+        writeFileSync(pending, "unrecovered audio");
+        for (const [name, start] of [
+            ["earlier", -20_000],
+            ["indexed", 0],
+        ] as const) {
+            const file = `audio/${name}.m4a`;
+            writeFileSync(join(folder, file), "already indexed sound");
+            soundModule.appendAudioRow(folder, {
+                file,
+                source: "system",
+                at: at(start),
+                durationMs: 1000,
+                mutedSpans: [],
+            });
+        }
+
+        const oldEvents = [
+            { kind: "failure", atMs: zero + 1000, reason: "first writer failed" },
+            { kind: "failure", atMs: zero + 4000, reason: "last writer failed" },
+            { kind: "stop", atMs: zero + 4500, ...(lastSpanReason === "paused" ? { fromMs: zero } : {}) },
+        ]
+            .map((change) => `${SafeJSON.stringify(change)}\n`)
+            .join("");
+        writeFileSync(journal, oldEvents);
+
+        const liveDir = mkdtempSync(join(tmpdir(), "deferred-sound-"));
+        const record = (sources: AudioSource[]) =>
+            runRecorder({
+                store,
+                meetingId: meeting.id,
+                capture: meetingsConfigSchema.parse({}).global.capture,
+                audio: sources,
+                deps: {
+                    recorder: new GrantRecorder(() => {
+                        void callRecorder({ id: meetingLiveId(meeting.id), method: "stop", dir: liveDir }).catch(
+                            () => undefined
+                        );
+                    }),
+                    toJpeg: async (_png, jpg) => {
+                        await Bun.write(jpg, "jpeg");
+                    },
+                    startOcr: () => undefined,
+                    notify: async () => undefined,
+                    liveDir,
+                    pieceSec: 1,
+                    failurePauseMs: 0,
+                },
+            });
+        const clock = spyOn(audioSession, "salvagedAudioTiming").mockResolvedValue({ at: at(3000), durationMs: 1000 });
+        const indexing = spyOn(soundLoss, "markMeetingSoundLoss").mockImplementationOnce(() => {
+            throw new Error("loss index is unwritable");
+        });
+        try {
+            await expect(record(["mic"])).rejects.toThrow("loss index is unwritable");
+            expect(indexing).toHaveBeenCalledTimes(1);
+            expect(readFileSync(journal, "utf8")).toBe(oldEvents);
+            expect(store.read(meeting.id)?.recording?.audio).toMatchObject({ sources: ["system"] });
+            expect(readAudioRows(folder).find((row) => row.kept === "salvaged")).toBeDefined();
+        } finally {
+            indexing.mockRestore();
+            clock.mockRestore();
+        }
+
+        expect((await record(["system"])).stopReason).toBe("requested");
+        const rows = readAudioRows(folder);
+        expect(rows.find((row) => row.file === "audio/earlier.m4a")?.lostSpans).toBeUndefined();
+        expect(rows.find((row) => row.file === "audio/indexed.m4a")).toMatchObject({
+            lostSpans: [[1000, 3000]],
+            lostSpanReasons: ["first writer failed"],
+        });
+        expect(rows.find((row) => row.kept === "salvaged")).toMatchObject({
+            lostSpans: [[1000, lastSpanReason === "paused" ? 1250 : 1500]],
+            lostSpanReasons: ["last writer failed"],
+        });
+        expect(rows).toHaveLength(4);
+        expect(existsSync(piece)).toBe(false);
+    }
+);
+
+test("duplicate mute events keep the first boundary until unmuted", () => {
+    const folder = mkdtempSync(join(tmpdir(), "sound-muted-gap-"));
+    const zero = firstFrameMs;
+    const files = new Set<string>();
+    mkdirSync(join(folder, "audio"));
+    for (const start of [0, 4000, 7000]) {
+        const file = `audio/mic-${start}.m4a`;
+        files.add(file);
+        writeFileSync(join(folder, file), "sound");
+        soundModule.appendAudioRow(folder, {
+            file,
+            source: "mic",
+            at: new Date(zero + start).toISOString(),
+            durationMs: 1000,
+            mutedSpans: [],
+        });
+    }
+    soundLoss.markMeetingSoundLoss({
+        folder,
+        files,
+        spans: [],
+        stoppedMs: zero + 8000,
+        sources: ["mic"],
+        changes: [
+            { kind: "mute", source: "mic", muted: true, atMs: zero + 1000 },
+            { kind: "mute", source: "mic", muted: true, atMs: zero + 2000 },
+            { kind: "mute", source: "mic", muted: false, atMs: zero + 4000 },
+        ],
+    });
+    expect(readAudioRows(folder).map((row) => row.lostSpans ?? [])).toEqual([[], [[1000, 3000]], []]);
+});
+
+test("a failed or cancelled salvage leaves its track in the piece folder for the next pass", async () => {
     const folder = mkdtempSync(join(tmpdir(), "salvage-row-fails-"));
     const piece = join(folder, ".piece");
     mkdirSync(piece, { recursive: true });
@@ -210,6 +368,20 @@ test("a salvaged track whose row cannot be written goes back to the piece folder
     } finally {
         append.mockRestore();
     }
+
+    const expired = new AbortController();
+    const timing = spyOn(audioSession, "salvagedAudioTiming").mockImplementationOnce(async () => {
+        expired.abort(new Error("shutdown recovery deadline"));
+        return { at: new Date(firstFrameMs).toISOString(), durationMs: 1000 };
+    });
+    try {
+        await expect(run.salvageTracks(piece, expired.signal)).rejects.toThrow("shutdown recovery deadline");
+        expect(existsSync(join(piece, "audio-mic.m4a"))).toBe(true);
+        expect(readAudioRows(folder)).toEqual([]);
+    } finally {
+        timing.mockRestore();
+    }
+
     expect(await run.salvageTracks(piece)).toBe(1);
     expect(readAudioRows(folder)).toEqual([expect.objectContaining({ source: "mic", kept: "salvaged" })]);
 });
