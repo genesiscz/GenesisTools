@@ -659,7 +659,7 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
     private static func titles(_ items: [MenuButtonItem]) -> [String] {
         items.flatMap { item -> [String] in
             switch item {
-            case .action(let title, _, _, _): return [title]
+            case .action(let title, _, _, _, _, _, _): return [title]
             case .submenu(let title, let inner): return titles(inner).map { "\(title) ▸ \($0)" }
             case .note(let text): return ["(\(text))"]
             case .divider: return ["—"]
@@ -669,7 +669,7 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
 
     /// Runs the action entry with `title`, as a click on it does.
     private static func run(_ title: String, in items: [MenuButtonItem]) {
-        for case .action(let name, _, _, let action) in items where name == title { action() }
+        for case .action(let name, _, _, _, _, _, let action) in items where name == title { action() }
     }
 
     func testRulerMarksUseARoundStep() {
