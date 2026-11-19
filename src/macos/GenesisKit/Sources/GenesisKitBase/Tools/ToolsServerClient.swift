@@ -10,7 +10,8 @@ private let serverLog = Logger(subsystem: "dev.foltyn.genesis", category: "tools
 /// same argv as a process. So this type only ever makes a call cheaper, never different.
 ///
 /// One connection, opened on first use and again after a drop. Reads are event-driven (a dispatch source on the
-/// socket); nothing polls. When the socket does not answer, `startServer` runs, at most once per `startEvery`.
+/// socket); nothing polls. A failed connect requests a start, at most once per `startEvery`. A missed health
+/// probe on an open connection sends only its waiting call to the process fallback.
 public final class ToolsServerClient: @unchecked Sendable {
     public struct End: Sendable {
         public let exit: Int32
@@ -136,6 +137,13 @@ public final class ToolsServerClient: @unchecked Sendable {
     private let startServer: (@Sendable () -> Void)?
     private let startEvery: TimeInterval
     private let queue = DispatchQueue(label: "dev.foltyn.genesis.tools-server", qos: .userInitiated)
+    private let controlWrites = DispatchQueue(label: "dev.foltyn.genesis.tools-server.control", qos: .userInitiated)
+    // scripts/benchmarks/hub/health-latency.ts, 2026-11-18: 100 probes per condition, p99 3.35 ms
+    // at load 18.9, max 3.62 ms, all 200 answered. Give a slow call one probe and the server time to reply.
+    private static let healthProbeDelay: DispatchTimeInterval = .seconds(5)
+    private static let healthReplyTimeout: DispatchTimeInterval = .seconds(2)
+    /// Only the read queue handles health replies and their deadlines.
+    private var unansweredProbes: Set<Int> = []
     private let lock = NSLock()
     private let writeLock = NSLock()
     private var fd: Int32 = -1
@@ -293,7 +301,38 @@ public final class ToolsServerClient: @unchecked Sendable {
             return nil
         }
 
+        if onCall != nil, let connection = attempt.connection {
+            queue.asyncAfter(deadline: .now() + Self.healthProbeDelay) { [weak self] in
+                self?.probeHealth(for: id, on: connection)
+            }
+        }
         return id
+    }
+
+    private func probeHealth(for callID: Int, on connection: Int) {
+        let probeID: Int? = lock.withLock {
+            guard generation == connection, calls[callID] != nil else { return nil }
+            defer { nextId += 1 }
+            return nextId
+        }
+        guard let probeID else { return }
+        unansweredProbes.insert(probeID)
+
+        // Keep reading the original answer and enforcing deadlines even if the socket's write buffer is full.
+        queue.asyncAfter(deadline: .now() + Self.healthReplyTimeout) { [weak self] in
+            guard let self, self.unansweredProbes.remove(probeID) != nil,
+                  let finish = self.lock.withLock({ self.calls.removeValue(forKey: callID) })
+            else { return }
+
+            self.controlWrites.async {
+                _ = self.writeOnce(["op": "cancel", "id": callID], on: connection)
+            }
+            serverLog.info("no health answer for call \(callID); falling back")
+            finish(nil)
+        }
+        controlWrites.async {
+            _ = self.writeOnce(["op": "health", "id": probeID], on: connection, whilePending: callID)
+        }
     }
 
     private func connectIfNeeded() -> Bool {
@@ -369,7 +408,8 @@ public final class ToolsServerClient: @unchecked Sendable {
     }
 
     /// One message on the current connection, and that connection's generation (nil when there was none).
-    private func writeOnce(_ message: [String: Any]) -> (written: Bool, connection: Int?) {
+    private func writeOnce(_ message: [String: Any], on expected: Int? = nil, whilePending callID: Int? = nil)
+        -> (written: Bool, connection: Int?) {
         guard var data = try? JSONSerialization.data(withJSONObject: message) else { return (false, nil) }
 
         data.append(0x0A)
@@ -379,7 +419,11 @@ public final class ToolsServerClient: @unchecked Sendable {
         // One writer at a time, so two requests never interleave on the socket. The descriptor is read
         // inside the writers' lock, which its close also takes: it cannot be closed or reused mid-write.
         let written: Bool = writeLock.withLock {
-            (socketFd, connection) = lock.withLock { (fd, fd >= 0 ? generation : nil) }
+            (socketFd, connection) = lock.withLock {
+                guard fd >= 0, expected == nil || expected == generation else { return (-1, nil) }
+                if let callID, calls[callID] == nil { return (-1, nil) }
+                return (fd, generation)
+            }
             guard socketFd >= 0 else { return false }
 
             return data.withUnsafeBytes { raw -> Bool in
@@ -388,6 +432,8 @@ public final class ToolsServerClient: @unchecked Sendable {
                     let count = Darwin.write(socketFd, raw.baseAddress! + offset, raw.count - offset)
                     if count < 0 {
                         if errno == EINTR { continue }
+                        // A partial JSON line would corrupt the next request, even for a best-effort control write.
+                        if offset > 0 { shutdown(socketFd, SHUT_RDWR) }
                         return false
                     }
 
@@ -427,6 +473,11 @@ public final class ToolsServerClient: @unchecked Sendable {
               let id = object["id"] as? Int
         else {
             serverLog.error("unreadable server line (\(line.count) bytes)")
+            return
+        }
+
+        if object["health"] is [String: Any], object["ok"] as? Bool == true {
+            unansweredProbes.remove(id)
             return
         }
 
