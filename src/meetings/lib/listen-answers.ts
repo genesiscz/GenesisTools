@@ -14,42 +14,68 @@ export interface DecidedLine {
 
 /** The source lines an item changes. Ranges keep the correction engine's inclusive end and label filter. */
 export function itemLines(item: MeetingItem, transcript: TranscriptLines): DecidedLine[] {
-    return transcript.entries.flatMap((entry, index) => {
-        const at = entry.startSec;
-        let matches = false;
+    const matches = lineMatcher(item, transcript);
 
-        if (item.kind === "speaker-range" || item.kind === "label") {
-            matches = at !== undefined && at >= item.fromSec && at <= item.toSec && entry.speaker === item.label;
-        } else if (item.kind === "term") {
-            const pattern = termFixPattern({ ...item, replacement: item.proposed ?? item.heard });
-            const local = item.scope === "line" || item.quote !== undefined || item.meaning !== undefined;
-            const anchorLine = item.evidence?.transcriptLine;
-            const anchors =
-                item.reach?.lines ??
-                (local && item.atSec !== undefined
-                    ? [
-                          {
-                              atSec: item.atSec,
-                              ...(typeof anchorLine === "number" ? { line: anchorLine } : {}),
-                          },
-                      ]
-                    : undefined);
-            const targets = anchors?.map((anchor) => heardLineAt(transcript, anchor, pattern));
-            matches =
-                pattern.test(entry.text) &&
-                (targets === undefined ||
-                    (targets.every((target) => target.kind === "found") &&
-                        targets.some((target) => target.kind === "found" && target.index === index)));
-        } else if (item.kind === "join") {
-            matches = at === item.atSec;
-        } else if (at !== undefined) {
-            matches = at >= item.fromSec && (at < item.toSec || at === item.fromSec);
-        }
+    return transcript.entries.flatMap((entry, index) =>
+        matches(entry, index) && entry.text.trim()
+            ? [
+                  {
+                      index,
+                      startSec: entry.startSec,
+                      endSec: transcript.end(index),
+                      speaker: entry.speaker,
+                      text: entry.text,
+                  },
+              ]
+            : []
+    );
+}
 
-        return matches && entry.text.trim()
-            ? [{ index, startSec: at, endSec: transcript.end(index), speaker: entry.speaker, text: entry.text }]
-            : [];
-    });
+/**
+ * Whether a source line belongs to `item`. A term's pattern and anchors depend on the item only, so they are resolved
+ * once here and not again for every line; every anchor must still resolve, and the line must be one of them.
+ */
+function lineMatcher(
+    item: MeetingItem,
+    transcript: TranscriptLines
+): (entry: TranscriptLines["entries"][number], index: number) => boolean {
+    if (item.kind === "speaker-range" || item.kind === "label") {
+        return (entry) =>
+            entry.startSec !== undefined &&
+            entry.startSec >= item.fromSec &&
+            entry.startSec <= item.toSec &&
+            entry.speaker === item.label;
+    }
+
+    if (item.kind === "term") {
+        const found = termFixPattern({ ...item, replacement: item.proposed ?? item.heard });
+        // One test per line: a global pattern would carry its position from one line to the next.
+        const pattern = new RegExp(found.source, found.flags.replace("g", ""));
+        const local = item.scope === "line" || item.quote !== undefined || item.meaning !== undefined;
+        const anchorLine = item.evidence?.transcriptLine;
+        const anchors =
+            item.reach?.lines ??
+            (local && item.atSec !== undefined
+                ? [{ atSec: item.atSec, ...(typeof anchorLine === "number" ? { line: anchorLine } : {}) }]
+                : undefined);
+        const targets = anchors?.map((anchor) => heardLineAt(transcript, anchor, found));
+        const lines =
+            targets === undefined
+                ? undefined
+                : targets.every((target) => target.kind === "found")
+                  ? new Set(targets.flatMap((target) => (target.kind === "found" ? [target.index] : [])))
+                  : new Set<number>();
+        return (entry, index) => (lines === undefined || lines.has(index)) && pattern.test(entry.text);
+    }
+
+    if (item.kind === "join") {
+        return (entry) => entry.startSec === item.atSec;
+    }
+
+    return (entry) =>
+        entry.startSec !== undefined &&
+        entry.startSec >= item.fromSec &&
+        (entry.startSec < item.toSec || entry.startSec === item.fromSec);
 }
 
 /** A question decides its targets wherever they are, or its own half-open span when it has no targets. */
