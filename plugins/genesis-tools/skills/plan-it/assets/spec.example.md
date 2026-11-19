@@ -37,6 +37,9 @@ export interface ExportResult {
     skippedPrivate: number;
 }
 export function exportNotes(options: ExportOptions): ExportResult;
+
+// src/notes/lib/private-filter.ts (new)
+export function isPrivateNote(note: Note): boolean;
 ```
 
 - Command line: `tools notes export <project> [--private] [--out <file>]`. It prints the path and the two counts.
@@ -52,7 +55,7 @@ for D3.
 ### P1: the export library and the command
 
 **Owner files:** `src/notes/lib/export.ts` (new), `src/notes/commands/export.ts` (new), `src/notes/lib/export.test.ts` (new)
-**Needs:** nothing
+**Needs:** P2 (interface)
 **Handoff:** closes t1 of `h_ab12cd34`
 **Decisions:**
 1. The library returns the result; only the command prints. Ruled out: printing in the library, because the hub
@@ -73,7 +76,7 @@ a file that holds every public note of the project `demo`.
 **Needs:** P1 (interface)
 **Handoff:** closes t2 of `h_ab12cd34`
 **Decisions:**
-1. A note is private when its front matter says so. The filter is one pure function that P1 calls. Ruled out: a
+1. A note is private when its front matter says so. The filter is one pure function, `isPrivateNote`, that P1 calls. Ruled out: a
    flag in the store, because the store has no migration planned.
 **Done when:** `bun run test src/notes/lib/private-filter.test.ts` passes: a private note is absent without
 `--private` and present with it, and `skippedPrivate` counts it.

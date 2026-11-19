@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { checkSpec, rootOf } from "./spec-check.ts";
+import { checkSpec, main, rootOf } from "./spec-check.ts";
 
 const examplePath = resolve(import.meta.dir, "../assets/spec.example.md");
 const example = readFileSync(examplePath, "utf8");
@@ -47,7 +47,7 @@ describe("spec-check", () => {
     });
 
     test("packages that need each other built are a circle", () => {
-        const text = change("**Needs:** nothing", "**Needs:** P2 (built)").replace(
+        const text = change("**Needs:** P2 (interface)", "**Needs:** P2 (built)").replace(
             "**Needs:** P1 (interface)",
             "**Needs:** P1 (built)"
         );
@@ -73,7 +73,85 @@ describe("spec-check", () => {
         );
 
         expect(gate[0]).toContain("a number from a hand-reference cannot be a gate");
-        expect(bare.length).toBe(2);
+        expect(bare.length).toBe(3);
+        expect(bare.some((e) => e.includes('needs "source:"'))).toBe(true);
+        expect(bare.some((e) => e.includes('needs "way:"'))).toBe(true);
+        expect(bare.some((e) => e.includes('needs "if not:"'))).toBe(true);
+    });
+
+    test("a target with only one of way and if not, or an empty label, is an error", () => {
+        const target = (rest: string) =>
+            errorsOf(
+                change(
+                    "way: one read of the index, no read per note; source: tool; if not: write\n  the measured time into Progress and go on.",
+                    rest
+                )
+            );
+
+        expect(target("source: tool; if not: write it down")).toEqual([expect.stringContaining('needs "way:"')]);
+        expect(target("way: one read; source: tool")).toEqual([expect.stringContaining('needs "if not:"')]);
+        expect(target("way:; source: tool; if not: write it down")).toEqual([expect.stringContaining('needs "way:"')]);
+        expect(target("way: one read; source: tool; if not:")).toEqual([expect.stringContaining('needs "if not:"')]);
+    });
+
+    test("a Needs field that wraps onto a second line is read whole", () => {
+        const report = checkSpec(
+            change(
+                "**Needs:** P1 (built), external: the actions service (built)",
+                "**Needs:** P1 (built),\nexternal: the actions service (built)"
+            ),
+            { root }
+        );
+
+        expect(report.findings).toEqual([]);
+        expect(report.waiting.at(-1)?.on).toContain("external: the actions service (built)");
+    });
+
+    test("a package id defined twice is an error", () => {
+        const errors = errorsOf(change("### P2: private notes", "### P1: private notes"));
+
+        expect(errors.some((e) => e.includes("the package id P1 is already defined"))).toBe(true);
+    });
+
+    test("a package behind a circle is named as blocked, not as a member", () => {
+        const text = change("**Needs:** P2 (interface)", "**Needs:** P2 (built)")
+            .replace("**Needs:** P1 (interface)", "**Needs:** P1 (built)")
+            .replace("**Needs:** P1 (built), external: the actions service (built)", "**Needs:** P2 (built)")
+            .replace("blocks P3", "blocks nothing");
+        const errors = errorsOf(text);
+
+        expect(errors.filter((e) => e.includes("form a circle")).length).toBe(2);
+        expect(errors.some((e) => e.startsWith("P3:") && e.includes("waits on a circle it is not part of"))).toBe(true);
+    });
+
+    test("a blank header value, a longer handoff id and an unknown blocked package are errors", () => {
+        expect(
+            errorsOf(
+                change(
+                    "**Status:** 2026-11-17 19:40, ready for an executor. One decision is open (D3).",
+                    "**Status:**   "
+                )
+            ).some((e) => e.includes('"**Status:**"'))
+        ).toBe(true);
+        expect(
+            errorsOf(
+                example.replace(/(## Sources[\s\S]*?)## Interface freeze/, (m) =>
+                    m.replaceAll("h_ab12cd34", "h_ab12cd345")
+                )
+            )[0]
+        ).toContain("names the handoff h_ab12cd34,");
+        expect(errorsOf(change("blocks P3", "blocks P33"))).toContain("D3: blocks P33, and no package has that id");
+    });
+
+    test("a shorter fence inside a longer fence does not close it", () => {
+        const text = `${example}\n## Extra\n\n\`\`\`\`md\n\`\`\`\nTODO\n\`\`\`\`\n`;
+
+        expect(errorsOf(text).some((e) => e.includes("a placeholder"))).toBe(false);
+    });
+
+    test("a flag with no value is a usage error", () => {
+        expect(main([examplePath, "--max-lines"])).toBe(2);
+        expect(main([examplePath, "--root"])).toBe(2);
     });
 
     test("a path that does not exist is an error unless its line says (new)", () => {

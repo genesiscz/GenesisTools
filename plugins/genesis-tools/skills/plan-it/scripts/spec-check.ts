@@ -61,18 +61,29 @@ type Line = { n: number; text: string; fenced: boolean; section: string | null }
 
 function readLines(text: string): Line[] {
     const out: Line[] = [];
-    let fenced = false;
+    let open: { char: string; size: number } | null = null;
     let section: string | null = null;
     text.split("\n").forEach((raw, i) => {
-        const isFence = /^\s*(```|~~~)/.test(raw);
+        const fence = /^\s*(`{3,}|~{3,})(.*)$/.exec(raw);
+        const closes =
+            open !== null &&
+            fence !== null &&
+            fence[1][0] === open.char &&
+            fence[1].length >= open.size &&
+            !fence[2].trim();
+        const opens = open === null && fence !== null;
+        const isFence = closes || opens;
+        const fenced = open !== null;
         const heading = !fenced && !isFence ? /^## (.+?)\s*$/.exec(raw) : null;
         if (heading) {
             section = SECTIONS.find((s) => heading[1].toLowerCase().startsWith(s.toLowerCase())) ?? heading[1];
         }
 
         out.push({ n: i + 1, text: raw, fenced: fenced || isFence, section });
-        if (isFence) {
-            fenced = !fenced;
+        if (opens && fence) {
+            open = { char: fence[1][0], size: fence[1].length };
+        } else if (closes) {
+            open = null;
         }
     });
     return out;
@@ -118,6 +129,16 @@ function parsePackages(lines: Line[], findings: Finding[]): Package[] {
 
         const head = !l.fenced ? /^### (P\d+[A-Za-z]?)[:.]\s*(.+?)\s*$/.exec(l.text) : null;
         if (head) {
+            const first = packages.find((p) => p.id === head[1]);
+            if (first) {
+                findings.push({
+                    level: "error",
+                    line: l.n,
+                    where: head[1],
+                    message: `the package id ${head[1]} is already defined at line ${first.line}. Give each package its own id`,
+                });
+            }
+
             current = { id: head[1], title: head[2], line: l.n, fields: {}, needs: [] };
             packages.push(current);
             field = null;
@@ -151,7 +172,7 @@ function parsePackages(lines: Line[], findings: Finding[]): Package[] {
 
         const needs = p.fields.Needs;
         if (needs) {
-            const parsed = parseNeeds(needs.text.split("\n")[0]);
+            const parsed = parseNeeds(needs.text.replace(/\s+/g, " ").trim());
             p.needs = parsed.needs;
             for (const item of parsed.bad) {
                 findings.push({
@@ -220,13 +241,33 @@ function orderPackages(
     while (left.length) {
         const wave = left.filter((p) => builtNeeds(p).every((n) => done.has(n.name)));
         if (!wave.length) {
+            const stuck = new Map(left.map((p) => [p.id, builtNeeds(p).filter((n) => !done.has(n.name))]));
+            const reaches = (from: string, target: string, seen = new Set<string>()): boolean => {
+                for (const n of stuck.get(from) ?? []) {
+                    if (n.name === target) {
+                        return true;
+                    }
+
+                    if (!seen.has(n.name)) {
+                        seen.add(n.name);
+                        if (reaches(n.name, target, seen)) {
+                            return true;
+                        }
+                    }
+                }
+
+                return false;
+            };
+            const members = new Set(left.filter((p) => reaches(p.id, p.id)).map((p) => p.id));
             for (const p of left) {
-                const on = builtNeeds(p).filter((n) => !done.has(n.name));
+                const on = (stuck.get(p.id) ?? []).map((n) => n.name).join(", ");
                 findings.push({
                     level: "error",
                     line: p.line,
                     where: p.id,
-                    message: `its needs form a circle (${on.map((n) => n.name).join(", ")}): no package of the circle can start`,
+                    message: members.has(p.id)
+                        ? `its needs form a circle (${on}): no package of the circle can start`
+                        : `waits on a circle it is not part of (${on}). Fix the circle first`,
                 });
             }
 
@@ -285,13 +326,22 @@ function checkTargets(p: Package, findings: Finding[]): void {
             });
         }
 
-        if (!/\bway:/i.test(bullet) && !/\bif not:/i.test(bullet)) {
+        if (!/\bway:\s*[^\s;]/i.test(bullet)) {
             findings.push({
                 level: "error",
                 line: targets.line,
                 where,
                 message:
-                    'needs "way:" (how it could be reached) or "if not:" (what to write down). A bare number is an order nobody can check',
+                    'needs "way:" with text after it (how it could be reached). A bare number is an order nobody can check',
+            });
+        }
+
+        if (!/\bif not:\s*[^\s;]/i.test(bullet)) {
+            findings.push({
+                level: "error",
+                line: targets.line,
+                where,
+                message: 'needs "if not:" with text after it (what to write down when it cannot be reached)',
             });
         }
     });
@@ -349,7 +399,7 @@ export function checkSpec(text: string, opts: CheckOptions): SpecReport {
     const firstSection = lines.find((l) => l.section !== null)?.n ?? lines.length + 1;
     const head = lines.filter((l) => l.n < firstSection);
     for (const name of HEAD_FIELDS) {
-        if (!head.some((l) => l.text.startsWith(`**${name}:**`) && l.text.length > name.length + 6)) {
+        if (!head.some((l) => l.text.startsWith(`**${name}:**`) && l.text.slice(name.length + 5).trim())) {
             add("error", 1, "head", `the line "**${name}:**" is missing or empty`);
         }
     }
@@ -376,17 +426,20 @@ export function checkSpec(text: string, opts: CheckOptions): SpecReport {
         add("error", 1, "Packages", 'no package found. A package starts with "### P1: <name>"');
     }
 
-    const sources = lines
-        .filter((l) => l.section === "Sources")
-        .map((l) => l.text)
-        .join("\n");
+    const sourceIds = new Set(
+        lines
+            .filter((l) => l.section === "Sources")
+            .map((l) => l.text)
+            .join("\n")
+            .match(/\bh_[a-z0-9]+\b/g) ?? []
+    );
     for (const p of packages) {
         checkTargets(p, findings);
         const body = Object.values(p.fields)
             .map((f) => f.text)
             .join("\n");
         for (const id of new Set(body.match(/\bh_[a-z0-9]{8}\b/g) ?? [])) {
-            if (!sources.includes(id)) {
+            if (!sourceIds.has(id)) {
                 add(
                     "error",
                     p.line,
@@ -430,6 +483,10 @@ export function checkSpec(text: string, opts: CheckOptions): SpecReport {
             }
 
             for (const id of /blocks nothing/.test(d[3]) ? [] : ids) {
+                if (!packages.some((p) => p.id === id)) {
+                    add("error", l.n, d[1], `blocks ${id}, and no package has that id`);
+                }
+
                 blocked.set(id, [...(blocked.get(id) ?? []), `the open decision ${d[1]}`]);
             }
         }
@@ -522,6 +579,7 @@ Exit code 1 when the spec has an error, 2 on a usage error.`;
 
 export function main(argv: string[]): number {
     const args = [...argv];
+    const missing: string[] = [];
     const flag = (name: string) => {
         const i = args.indexOf(name);
         if (i < 0) {
@@ -534,6 +592,13 @@ export function main(argv: string[]): number {
     const value = (name: string) => {
         const i = args.indexOf(name);
         if (i < 0) {
+            return undefined;
+        }
+
+        const next = args[i + 1];
+        if (next === undefined || next.startsWith("--")) {
+            args.splice(i, 1);
+            missing.push(name);
             return undefined;
         }
 
@@ -551,7 +616,7 @@ export function main(argv: string[]): number {
     const maxText = value("--max-lines");
     const maxLines = maxText === undefined ? undefined : Number(maxText);
     const [path] = args;
-    if (!path || args.length > 1 || (maxLines !== undefined && !(maxLines > 0))) {
+    if (!path || missing.length || args.length > 1 || (maxLines !== undefined && !(maxLines > 0))) {
         console.error(HELP);
         return 2;
     }
