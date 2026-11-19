@@ -249,8 +249,13 @@ export function identifiedDepartures(options: DepartureEvidence): IdentifiedDepa
             present
                 ?.filter((stay) => stay.leftAtExact !== false && Math.abs(stay.toSec - atSec) <= 15)
                 .map((stay) => stay.name) ?? [];
+        // Only the call seat can name a remote leaver, as in matchedCallVoices: a mic-seat match is someone in the room.
         const voice = options.labels?.find(
-            (label) => label.labeler === "voice" && label.index === line.index && label.reason === "named"
+            (label) =>
+                label.seat === "call" &&
+                label.labeler === "voice" &&
+                label.index === line.index &&
+                label.reason === "named"
         );
         const matched =
             voice?.person ??
