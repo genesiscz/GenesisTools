@@ -572,14 +572,13 @@ async function widgetResult(node: AgentNode): Promise<string> {
         // The last reply of a transcript too large to parse whole, from its tail, through the turn parser of its
         // harness (`TranscriptParser.fromLines`), so a large file shows the reply a small one does.
         const resolved = await resolveTranscript(node.filePath, {}, node.harness);
-        text = (await lastAssistantTextOf(resolved, size)).slice(0, 32_000);
+        text = await lastAssistantTextOf(resolved, size);
     } else {
         const resolved = await resolveTranscript(node.filePath, {}, node.harness);
         const envelope = await transcriptEnvelope(resolved, { limit: 20 });
-        text =
-            envelope.turns.findLast((turn) => turn.role === "assistant" && turn.text.trim())?.text.slice(0, 32_000) ??
-            "";
+        text = envelope.turns.findLast((turn) => turn.role === "assistant" && turn.text.trim())?.text ?? "";
     }
+    text = sliceWhole(text, 32_000);
     if (resultCache.size >= 100) {
         resultCache.clear();
     }
@@ -830,7 +829,7 @@ export function decisionSummary(row: DecisionRecord): { summary?: string } {
         return { summary: prompt };
     }
 
-    const cut = prompt.slice(0, SUMMARY_LIMIT);
+    const cut = sliceWhole(prompt, SUMMARY_LIMIT);
     const space = cut.lastIndexOf(" ");
     return { summary: `${(space > SUMMARY_LIMIT / 2 ? cut.slice(0, space) : cut).trimEnd()}…` };
 }
@@ -1554,7 +1553,7 @@ export async function widgetSnapshot({
             ...decisionTitle(row),
             options: decisionOptionLabels(row.prompt, row.options),
             ...(row.option ? { option: row.option } : {}),
-            ...(answer ? { answer: answer.slice(0, 300) } : {}),
+            ...(answer ? { answer: sliceWhole(answer, 300) } : {}),
             answeredVia: via,
         });
     }
