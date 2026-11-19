@@ -1,5 +1,8 @@
 import Foundation
 import GenesisKitBase
+import os
+
+private let workSourceLog = Logger(subsystem: "genesiskit", category: "work.source")
 
 // The hub's Work screen (work-items P8): the open handoffs of a project with their tasks, the spotted items, the items
 // reopened with nobody working on them, and who hears about each kind of change. The data comes from the `work` area of
@@ -301,7 +304,12 @@ public final class LiveWorkSource: WorkSource {
             // A write through the service sends `work.changed`; a write of the CLI or the MCP tools only touches the
             // store's WAL file, which every write changes (a write after a checkpoint creates it again).
             let events = Task { @MainActor in
-                for await _ in rpc.events.workChanged { continuation.yield(()) }
+                do {
+                    for try await _ in rpc.events.workChanged { continuation.yield(()) }
+                } catch {
+                    // The stream ends with the connection error when the service goes; the WAL watcher still sees writes.
+                    workSourceLog.notice("work.changed ended: \(error.localizedDescription, privacy: .public)")
+                }
             }
             let watcher = DirectoryWatcher(paths: [(wal as NSString).deletingLastPathComponent], latency: 0.3,
                                            accepts: { $0 == wal }) { _ in continuation.yield(()) }
