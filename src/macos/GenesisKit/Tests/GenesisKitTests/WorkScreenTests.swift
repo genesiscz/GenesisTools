@@ -168,7 +168,7 @@ final class WorkScreenTests: XCTestCase {
                                                  cell("reopened", "list", "default")]),
         ]
         let text = try render(WorkNotifyGridView(project: "App", rows: rows).frame(width: 640), name: "work-notify-grid")
-        for expected in ["spotted", "finished", "inbox", "banner", "off", "tools work config set projects.App"] {
+        for expected in ["spotted", "finished", "inbox", "banner", "off", "tools work config set", "projects.App"] {
             XCTAssertTrue(text.contains(expected), "missing \(expected) in:\n\(text)")
         }
     }

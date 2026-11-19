@@ -362,7 +362,8 @@ public struct WorkNotifyGridView: View {
             }
             HStack(spacing: 6) {
                 Image(systemName: "terminal").foregroundStyle(KitPalette.faint)
-                Text(verbatim: "tools work config set projects.\(project).rules.notify.<type>.<action> '\"inbox\"'")
+                let path = FailureReport.shellQuoted("projects.\(project).rules.notify.<type>.<action>")
+                Text(verbatim: "tools work config set \(path) '\"inbox\"'")
                     .font(.system(size: 11, design: .monospaced)).foregroundStyle(KitPalette.dim)
                     .textSelection(.enabled)
             }
