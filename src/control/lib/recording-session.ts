@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { recorderSettingsSchema } from "@genesiscz/utils/screen-recorder/control";
 import type { RecordingSpan } from "@genesiscz/utils/screen-recorder/library";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
@@ -39,13 +40,20 @@ const MARK_WAIT_MS = 15_000;
 export const recordingCommandSchema = z.discriminatedUnion("cmd", [
     z.object({ cmd: z.literal("pause") }),
     z.object({ cmd: z.literal("resume") }),
-    z.object({ cmd: z.literal("restart") }),
+    z.object({ cmd: z.literal("restart"), target: recordingTargetSchema.optional() }),
     z.object({ cmd: z.literal("stop") }),
     z.object({ cmd: z.literal("discard") }),
     z.object({ cmd: z.literal("switch"), target: recordingTargetSchema }),
+    z.object({
+        cmd: z.literal("rates"),
+        activeFps: recorderSettingsSchema.shape.activeFps,
+        idleFps: z.union([z.literal(0), recorderSettingsSchema.shape.idleFps]),
+        threshold: recorderSettingsSchema.shape.threshold.optional(),
+    }),
 ]);
 
 export type RecordingCommand = z.infer<typeof recordingCommandSchema>;
+type LifecycleCommand = Exclude<RecordingCommand, { cmd: "rates" }>;
 
 /** One stdin line as a session command, or the reason it is not one. */
 export function parseRecordingCommand(line: string): RecordingCommand | { error: string } {
@@ -73,11 +81,13 @@ export type RecordingSessionEvent =
           state: RecordingState;
           reason: RecordingStateReason;
           target: RecordingTarget;
+          display?: SegmentStart["display"];
           elapsedMs: number;
           segments: number;
           limitMs: number;
       }
     | { event: "elapsed"; elapsedMs: number; limitMs: number }
+    | ({ event: "rates" } & MovieRates)
     | {
           event: "segment";
           index: number;
@@ -137,6 +147,7 @@ export interface SegmentResult {
 /** When a run's first frame was captured (epoch ms), as the recorder measured it: the movie's time 0. */
 export interface SegmentStart {
     firstFrameAt: number;
+    display?: { id: number; name: string };
 }
 
 /**
@@ -154,6 +165,7 @@ export interface SegmentRecorder {
         maxSeconds: number;
         signal: AbortSignal;
         onRecording: (start?: SegmentStart) => void;
+        onDisplayChanged?: (display: NonNullable<SegmentStart["display"]>) => void;
         /** The recorder needs a slow step before it can start (a compile after an update). */
         onPreparing?: () => void;
     }): Promise<SegmentResult>;
@@ -234,6 +246,7 @@ export function recordingsDir(...segments: string[]): string {
  * deadline is followed by the next one at once. Commands run one at a time, in arrival order.
  */
 export class RecordingSession {
+    private capturedDisplay?: SegmentStart["display"];
     private state: RecordingState | "ended" = "paused";
     private target: RecordingTarget;
     private readonly segments: FinishedSegment[] = [];
@@ -315,7 +328,7 @@ export class RecordingSession {
         });
     }
 
-    command(command: RecordingCommand): Promise<void> {
+    command(command: LifecycleCommand): Promise<void> {
         return this.enqueue(() => this.apply(command));
     }
 
@@ -329,11 +342,24 @@ export class RecordingSession {
      * next starts with the new ones at once (`restart`: a short gap while it arms); while paused the next segment
      * takes them (`next-piece`). Rates equal to the current ones change nothing (`live`).
      */
-    retune(rates: MovieRates): Promise<"live" | "restart" | "next-piece"> {
-        let applied: "live" | "restart" | "next-piece" = "live";
+    retune(
+        merge: (current: MovieRates) => MovieRates
+    ): Promise<{ rates: MovieRates; applied: "live" | "restart" | "next-piece" }> {
+        let result: { rates: MovieRates; applied: "live" | "restart" | "next-piece" } | undefined;
         return this.enqueue(async () => {
-            applied = await this.applyRates(rates);
-        }).then(() => applied);
+            if (!this.rates) {
+                throw new Error("This session has no recording rates.");
+            }
+
+            const rates = merge(this.rates);
+            result = { rates, applied: await this.applyRates(rates) };
+        }).then(() => {
+            if (!result) {
+                throw new Error("The recording no longer accepts rate changes.");
+            }
+
+            return result;
+        });
     }
 
     private async applyRates(rates: MovieRates): Promise<"live" | "restart" | "next-piece"> {
@@ -435,7 +461,7 @@ export class RecordingSession {
         return next;
     }
 
-    private async apply(command: RecordingCommand): Promise<void> {
+    private async apply(command: LifecycleCommand): Promise<void> {
         log.debug({ command: command.cmd, state: this.state, segments: this.segments.length }, "recording command");
         if (this.state === "finishing") {
             this.options.emit({ event: "error", message: "The recording is already being saved.", fatal: false });
@@ -466,6 +492,7 @@ export class RecordingSession {
                 await this.deleteSegments();
                 this.recordedMs = 0;
                 this.movieMs = 0;
+                this.target = command.target ?? this.target;
                 this.beginSegment("user");
                 return;
             case "stop":
@@ -504,6 +531,7 @@ export class RecordingSession {
     }
 
     private beginSegment(reason: RecordingStateReason): void {
+        this.capturedDisplay = undefined;
         this.counter += 1;
         const index = this.counter;
         const path = join(this.options.directory, `segment-${String(index).padStart(3, "0")}.mp4`);
@@ -539,6 +567,16 @@ export class RecordingSession {
                 maxSeconds,
                 signal: controller.signal,
                 onRecording: (start) => this.markRecording(run, start),
+                onDisplayChanged: (display) => {
+                    if (this.current !== run || run.stopping || this.state !== "recording") {
+                        return;
+                    }
+                    if (this.capturedDisplay?.id === display.id && this.capturedDisplay.name === display.name) {
+                        return;
+                    }
+                    this.capturedDisplay = display;
+                    this.setState("recording", run.reason);
+                },
                 onPreparing: () => {
                     run.preparing = true;
                     this.options.emit({ event: "preparing", message: PREPARING_MESSAGE });
@@ -574,6 +612,7 @@ export class RecordingSession {
 
         const now = this.now();
         run.startedAt = Math.min(now, Math.max(run.requestedAt, start?.firstFrameAt ?? now));
+        this.capturedDisplay = start?.display;
         run.settleFramed();
         clearTimeout(run.slowStart);
         log.debug({ index: run.index }, "recording segment started");
@@ -829,6 +868,7 @@ export class RecordingSession {
             reason,
             target: this.target,
             elapsedMs: this.elapsedMs(),
+            ...(this.capturedDisplay ? { display: this.capturedDisplay } : {}),
             segments: this.segments.length,
             limitMs: this.limitMs,
         });

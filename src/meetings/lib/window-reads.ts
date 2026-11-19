@@ -277,6 +277,7 @@ export async function rowsRead(options: {
     // Loaded here: the row builder reads the decision journal's actor words, which no other window read needs.
     const { reviewRows } = await import("./review-rows");
     const rows = reviewRows(record, {
+        devices: opened.roomDevices,
         ...(transcript ? { transcript } : {}),
         minPriority,
         ...(options.lowPriority ? { lowPriority: options.lowPriority } : {}),

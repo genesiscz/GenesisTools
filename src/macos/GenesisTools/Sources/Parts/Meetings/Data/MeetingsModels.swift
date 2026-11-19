@@ -220,6 +220,10 @@ struct MeetingRecordView: Decodable, Equatable {
             let lines: [String: Match]
         }
         var voice: Voice?
+        /// How the sound's two channels hold the voices (`calibrateChannels`, src/utils/meetings/energy.ts):
+        /// "left-mic" or "right-mic", or "unknown" when the channels do not separate them.
+        struct Channels: Decodable, Equatable { var layout: String? }
+        var channels: Channels?
     }
     var evidence: Evidence? = nil
     struct Stay: Decodable, Equatable { var name: String; var fromSec: Double; var toSec: Double }
@@ -551,6 +555,12 @@ struct MeetingsSettings: Decodable, Equatable {
             let retentionDays: Int
             /// `failing-and-recovered`, `failing` or `off`; absent in a config written before the key.
             let failureNotices: String?
+            var soundWithoutScreen: Bool?
+            struct Levels: Decodable, Equatable {
+                let enabled: Bool
+                let intervalSec: Int
+            }
+            var levels: Levels?
         }
         struct Assign: Decodable, Equatable {
             let ask: Bool
@@ -587,6 +597,7 @@ struct MeetingsSettings: Decodable, Equatable {
         struct AutoRecord: Decodable, Equatable {
             let enabled: Bool
             let notify: Bool
+            var permissionCard: Bool?
         }
         let match: [String: Folders]
         let autoRecord: AutoRecord
@@ -879,6 +890,45 @@ enum MeetingsFormat {
 }
 
 struct MeetingSeats: Codable, Equatable, Hashable {
+    /// Keep the representation of a whole-meeting string when another row changes.
+    struct Room: Codable, Equatable, Hashable {
+        var name: String
+        var fromSec: Double?
+        var toSec: Double?
+        private var wasString: Bool
+
+        init(_ name: String) {
+            self.name = name
+            wasString = true
+        }
+
+        enum CodingKeys: String, CodingKey { case name, fromSec, toSec }
+
+        init(from decoder: Decoder) throws {
+            if let value = try? decoder.singleValueContainer().decode(String.self) {
+                self.init(value)
+            } else {
+                let row = try decoder.container(keyedBy: CodingKeys.self)
+                self.init(try row.decode(String.self, forKey: .name))
+                fromSec = try row.decodeIfPresent(Double.self, forKey: .fromSec)
+                toSec = try row.decodeIfPresent(Double.self, forKey: .toSec)
+                wasString = false
+            }
+        }
+
+        func encode(to encoder: Encoder) throws {
+            if wasString && fromSec == nil && toSec == nil {
+                var value = encoder.singleValueContainer()
+                try value.encode(name)
+            } else {
+                var row = encoder.container(keyedBy: CodingKeys.self)
+                try row.encode(name, forKey: .name)
+                try row.encodeIfPresent(fromSec, forKey: .fromSec)
+                try row.encodeIfPresent(toSec, forKey: .toSec)
+            }
+        }
+    }
+
     struct Remote: Codable, Equatable, Hashable {
         var name: String = ""
         var label: String? = nil
@@ -891,9 +941,80 @@ struct MeetingSeats: Codable, Equatable, Hashable {
         var people: [String] = []
         var deviceId: String? = nil
     }
-    var room: [String] = []
-    var remote: [Remote] = []
-    var microphones: [Microphone]? = nil
+    var roomRows: [Room]
+    var remote: [Remote]
+    var microphones: [Microphone]?
+
+    enum CodingKeys: String, CodingKey { case roomRows = "room", remote, microphones }
+
+    init(room: [String] = [], remote: [Remote] = [], microphones: [Microphone]? = nil) {
+        self.roomRows = room.map(Room.init)
+        self.remote = remote
+        self.microphones = microphones
+    }
+
+    init(from decoder: Decoder) throws {
+        let rows = try decoder.container(keyedBy: CodingKeys.self)
+        roomRows = try rows.decodeIfPresent([Room].self, forKey: .roomRows) ?? []
+        remote = try rows.decodeIfPresent([Remote].self, forKey: .remote) ?? []
+        microphones = try rows.decodeIfPresent([Microphone].self, forKey: .microphones)
+        if let problem = intervalProblem(allowEmptyRemote: true) {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: problem))
+        }
+    }
+
+    func intervalProblem(allowEmptyRemote: Bool = false) -> String? {
+        var intervals: [String: [(start: Double, end: Double)]] = [:]
+        func check(_ name: String, _ from: Double?, _ to: Double?, allowEmpty: Bool) -> String? {
+            let start = from ?? 0
+            let end = to ?? .infinity
+            guard start.isFinite, start >= 0, to?.isFinite != false, end >= start else {
+                return "\(name): Enter finite, nonnegative seat times with the leave after the join."
+            }
+            if end == start { return allowEmpty ? nil : "\(name): Enter a leave time after the join." }
+            let key = PeopleText.personKey(name)
+            if intervals[key]?.contains(where: { $0.start < end && start < $0.end }) == true {
+                return "\(name): Two seat intervals overlap."
+            }
+            intervals[key, default: []].append((start, end))
+            return nil
+        }
+        for row in roomRows {
+            if let issue = check(row.name, row.fromSec, row.toSec, allowEmpty: false) { return issue }
+        }
+        for row in remote {
+            if let issue = check(row.name, row.fromSec, row.toSec, allowEmpty: allowEmptyRemote) { return issue }
+        }
+        return nil
+    }
+
+    /// Name-only callers edit membership. Retain all intervals of each name they keep.
+    var room: [String] {
+        get { Self.names(roomRows.map(\.name)) }
+        set {
+            let existing = Dictionary(grouping: roomRows, by: { PeopleText.personKey($0.name) })
+            roomRows = Self.names(newValue).flatMap { existing[PeopleText.personKey($0)] ?? [Room($0)] }
+        }
+    }
+
+    static func names(_ names: [String]) -> [String] {
+        var seen = Set<String>()
+        return names.filter { seen.insert(PeopleText.personKey($0)).inserted }
+    }
+}
+
+extension MeetingSeats.Remote {
+    init(from decoder: Decoder) throws {
+        if let name = try? decoder.singleValueContainer().decode(String.self) {
+            self.init(name: name)
+        } else {
+            let row = try decoder.container(keyedBy: CodingKeys.self)
+            self.init(name: try row.decode(String.self, forKey: .name),
+                      label: try row.decodeIfPresent(String.self, forKey: .label),
+                      fromSec: try row.decodeIfPresent(Double.self, forKey: .fromSec),
+                      toSec: try row.decodeIfPresent(Double.self, forKey: .toSec))
+        }
+    }
 }
 
 /// One saved engine threshold for the transcript and both settings surfaces. No window copy is written.

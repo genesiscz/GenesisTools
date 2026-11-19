@@ -1,27 +1,12 @@
 import { ui } from "@genesiscz/utils/cli/ui";
-import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
-import { claimPidFile, clearPidFile, inspectPidFile } from "@genesiscz/utils/process/pidfile";
+import { localTime } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
 import { fail, resolveEnum } from "../lib/shared";
-import { watchLoop, watchOnce } from "../lib/watch";
-import { ensureWatcher, watcherPidPath } from "../lib/watcher";
+import { watchOnce } from "../lib/watch";
+import { recordingAutostart, runWatcher } from "../lib/watcher";
 
-/**
- * Claims the watcher's pidfile: a dead or foreign owner is taken over, a live one is refused. An empty file follows the
- * shared claim's one rule (`EMPTY_HOLDER_GRACE_MS` in pidfile.ts), so one a SIGKILL left behind no longer blocks.
- */
-export async function claimWatcher(store: MeetingStore): Promise<void> {
-    const file = watcherPidPath(store);
-    const claim = await claimPidFile(file, {
-        reclaimable: (state) => state.status === "dead" || state.status === "foreign",
-    });
-
-    if (claim.status !== "claimed") {
-        const owner = claim.status === "held" && "pid" in claim.state ? ` (pid ${claim.state.pid})` : "";
-        throw new Error(`another meetings watcher holds ${file}${owner}`);
-    }
-}
+export { claimWatcher } from "../lib/watcher";
 
 async function watch(opts: { once?: boolean }): Promise<void> {
     const store = new MeetingStore();
@@ -32,13 +17,7 @@ async function watch(opts: { once?: boolean }): Promise<void> {
             return;
         }
 
-        await claimWatcher(store);
-
-        try {
-            await watchLoop(store);
-        } finally {
-            clearPidFile(watcherPidPath(store));
-        }
+        await runWatcher(store);
     } catch (err) {
         fail(err);
     }
@@ -54,28 +33,21 @@ async function autostart(mode: string | undefined): Promise<void> {
         flag: "<mode>",
         subcommand: ["autostart"],
     });
-    const store = new MeetingsConfigStore();
 
     if (!picked) {
         return;
     }
 
     try {
-        if (picked !== "status") {
-            await store.setAutoRecord(picked === "on");
-        }
-
-        const config = await store.read();
-        const running = inspectPidFile(watcherPidPath(new MeetingStore())).status === "live";
-        const enabled = config.sources.wisprflow.autoRecord.enabled;
-
-        if (enabled && !running && picked === "on") {
-            await ensureWatcher();
-        }
-
+        const { enabled, running, lastFailure } = await recordingAutostart(picked);
         ui.ok(
-            `Recording starts with Wispr Flow: ${enabled ? "on" : "off"}. Watcher: ${enabled && (running || picked === "on") ? "running" : "not running"}.`
+            `Recording starts with Wispr Flow: ${enabled ? "on" : "off"}. Watcher: ${running ? "running" : "not running"}.`
         );
+        if (lastFailure) {
+            ui.warn(
+                `Last recording failure at ${localTime(lastFailure.at)} · ${lastFailure.meeting}: ${lastFailure.problem}\nRun: ${lastFailure.fix}\nNotification delivery: ${lastFailure.confirmed ? "confirmed" : "unconfirmed"}.`
+            );
+        }
     } catch (err) {
         fail(err);
     }

@@ -9,3 +9,4 @@ export * from "./types";
 export * from "./worktree";
 export * from "./worktree-backup";
 export * from "./worktree-renames";
+export * from "./worktrees";

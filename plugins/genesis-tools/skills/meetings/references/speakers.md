@@ -25,9 +25,11 @@ wisprflow:<id>` (or `link`): the record, with the transcript, the people, the ca
 
 - **Three-pass (default):** `tools meetings evidence <meeting> --raw` gives the facts per line with no weights. Apply
   the tiers below and the content rules yourself, and store each finding with `tools meetings items add --kind
-  speaker-range ... --confidence <0..1> --reason "<the tiers and rules it rests on>"`. Store every line you can
-  attribute, interjections too ("Hm." under the label of a person who has left): they render with the right name.
-  Only the questions skip them.
+  speaker-range ... --confidence <0..1> --reason "<what the tiers and rules showed, in plain words>"`. The person
+  who reviews the meeting reads the reason on the row: write it in the meeting's language, and name no field
+  (`meeting.indicatorGaps`), rule id (`RA`) or labeler code (`seat-of-one`); `items add` refuses a reason that does.
+  Store every line you can attribute, interjections too ("Hm." under the label of a person who has left): they render
+  with the right name. Only the questions skip them.
 - **Automatic:** `tools meetings suggest <meeting> --rules evidence --attendance <platform>` applies the tiers and
   writes scored suggestion items. `tools meetings evidence <meeting>` shows why an item scored as it did.
 
@@ -123,6 +125,26 @@ For project voice naming, follow the seats and voices step in pass 1 of the skil
 `voice` field of raw evidence. When exactly one person on the seat has no sample, the voice pass can propose them
 by exclusion. The person must be present throughout the line. The voice must sound different from every enrolled
 seat-mate there, and the proposed lines must form one voice. Listen to confirm the name.
+
+### When a library sample sounds wrong
+
+Use the [voice sample commands](../SKILL.md#review-a-learned-voice-sample) to trace a name back to its recording.
+The global view shows a person's samples across projects. A project view limits the samples to that project, and a
+meeting view limits them to that recording's meeting ID. The row includes the words, seat, track, start and end
+seconds, how the sample was confirmed and how it entered the library. A temporary sample used to score a line in
+this pass has no editable library ID.
+
+Quality compares independent clips from the same seat, track, model and embedding dimension. Each clip needs at
+least two other independent clips for its similarity score. Overlapping copies of the same source cannot supply
+an independent comparison. The JSON result can also name the most similar compatible clip from another owner.
+Play both IDs if that helps the listener distinguish the speakers. A missing score supplies no basis for rejection.
+
+For example, suppose a sample under Mica Vale sounds unlike the other clips. If the owner hears Lark Fen speaking
+alone, move the sample to Lark. If the owner can rule out Mica but cannot name the speaker, reject it as
+`wrong-person`. If both voices overlap, choose `several-voices`. For an unusable recording choose `bad-audio`.
+If the owner just wants to forget this example, removal leaves the source eligible for later backfill.
+Keep the applied receipt to undo that decision. A library correction can retire affected voice suggestions while
+preserving human-confirmed transcript decisions.
 
 ## Inputs the agent still gathers
 

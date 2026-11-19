@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
-import { fileURLToPath } from "node:url";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
+import { genesisToolsSourceRoot as meetingsSourceRoot } from "@genesiscz/utils/genesis-tools/service/clients";
 import { TONE_PRESET_NAMES, toneSoundSettingSchema } from "@genesiscz/utils/meetings/config";
 import { MEETINGS_CONFLICT_CODES, MEETINGS_STATE_CODES } from "@genesiscz/utils/meetings/conflict";
 import { echoMetricSchema } from "@genesiscz/utils/meetings/echo";
-import { pairedBySchema } from "@genesiscz/utils/meetings/people";
+import { pairedBySchema, roomDeviceOfferSchema, roomDeviceSchema } from "@genesiscz/utils/meetings/people";
 import {
     type KnownPeople,
     type KnownPerson,
@@ -14,8 +14,14 @@ import {
     PERSON_SOURCE_KINDS,
 } from "@genesiscz/utils/meetings/people-directory";
 import { meetingContextSchema, meetingRecordSchema, speakerAssignmentSchema } from "@genesiscz/utils/meetings/record";
-import { meetingSeatsSchema } from "@genesiscz/utils/meetings/seats";
+import {
+    meetingSeatsSchema,
+    remoteSeatSchema,
+    roomSeatSchema,
+    storedMeetingSeatsSchema,
+} from "@genesiscz/utils/meetings/seats";
 import { lineVoiceSchema } from "@genesiscz/utils/meetings/voice-features";
+import { idSchema, ownerSchema, sourceSchema } from "@genesiscz/utils/meetings/voice-library";
 import {
     alignedWordSchema,
     wordTimingGenerateResultSchema,
@@ -53,6 +59,8 @@ import type { MeetingsOverview } from "../overview";
 import { reviewRowSchema, reviewRowsPatchSchema, reviewRowsSchema } from "../review-row-schema";
 import { TRACK_KINDS } from "../sound";
 import { sourceAudioPlanSchema } from "../source-audio-discovery";
+import { thresholdsResultSchema, thresholdValuesSchema } from "../threshold-schema";
+import { learntVoiceSchema } from "../voice-quality";
 import { wordTimingModelIdSchema } from "../word-timing-worker";
 
 /**
@@ -326,6 +334,8 @@ export const decisionReachSchema = z.object({
     lines: z.number().int().nonnegative().optional(),
     spelling: z
         .object({
+            heard: z.string(),
+            proposed: z.string(),
             occurrences: z.array(
                 z.object({
                     line: z.number().int().nonnegative(),
@@ -334,6 +344,10 @@ export const decisionReachSchema = z.object({
                     text: z.string(),
                     selected: z.boolean(),
                     primary: z.boolean(),
+                    /** Where the line says the heard words: UTF-16 offsets into `text`. */
+                    ranges: z.array(
+                        z.object({ location: z.number().int().nonnegative(), length: z.number().int().positive() })
+                    ),
                 })
             ),
             dictionary: z.boolean(),
@@ -926,8 +940,12 @@ const meetingRows = defineMethod({
         })
         .strict(),
     result: reviewRowsSchema.extend({
-        /** Why the meeting's attendance could not be read; absent when it was read or never tried. */
+        /**
+         * A failed attendance lookup in one short sentence; its full text with the fixing commands is the detail. Both
+         * are absent when the attendance was read or never tried.
+         */
         attendanceWarning: z.string().optional(),
+        attendanceDetail: z.string().optional(),
         /** One entry per source line; absent when the transcript is unreadable or nothing was measured. */
         lineEvidence: z.array(windowLineEvidenceSchema).optional(),
         /** The decided lines and impact of each question row; absent without a readable transcript or questions. */
@@ -1138,6 +1156,37 @@ const peopleAdd = defineMethod({
     }),
     resultName: "{ person, entry, added, shown }",
     doc: "Adds a person by hand to the people book (the picker's \"Add 'X' as new speaker\", `people add`). A person the book has gains the email and note instead.",
+    effect: "reversible",
+});
+
+export const peopleDevices = defineMethod({
+    name: "people.devices.list",
+    params: z.object({ offers: z.boolean().optional(), meeting: meetingRef.optional() }).strict(),
+    result: z.object({ devices: z.array(roomDeviceSchema), offers: z.array(roomDeviceOfferSchema) }),
+    doc: "Return confirmed room devices. Request offers for their supporting meetings, optionally scoped to one meeting.",
+    effect: "read",
+});
+
+export const decideRoomDevice = defineMethod({
+    name: "people.devices.decide",
+    params: z.discriminatedUnion("action", [
+        roomDeviceSchema.extend({ action: z.literal("map"), reverses: z.uuid().optional() }).strict(),
+        z.object({ action: z.literal("undo"), account: roomDeviceSchema.shape.account, reverses: z.uuid() }).strict(),
+        roomDeviceSchema
+            .pick({ account: true })
+            .extend({ action: z.literal("unmap") })
+            .strict(),
+        roomDeviceOfferSchema
+            .omit({ question: true, titles: true })
+            .extend({
+                action: z.literal("answer"),
+                meeting: meetingRef.optional(),
+                yes: z.boolean(),
+            })
+            .strict(),
+    ]),
+    result: z.object({ changed: z.boolean(), device: roomDeviceSchema.nullable(), token: z.uuid().optional() }),
+    doc: "Record the owner's map, unmap or yes/no answer in the people book. Answers name the offer's group and supporting meetings. Undo reverses the current decision token.",
     effect: "reversible",
 });
 
@@ -1430,15 +1479,21 @@ const dictionaryTest = defineMethod({
     effect: "read",
 });
 
-const seatNames = z.array(z.string().trim().min(1)).optional();
 const meetingSeatsSuggest = defineMethod({
     name: "meeting.seats.suggest",
-    params: z.object({ meeting: meetingRef, room: seatNames, remote: seatNames }).strict(),
+    params: z
+        .object({
+            meeting: meetingRef,
+            room: z.array(roomSeatSchema).optional(),
+            remote: z.array(z.union([z.string().trim().min(1), remoteSeatSchema])).optional(),
+        })
+        .strict(),
     result: z.object({
         meeting: z.string(),
-        current: meetingSeatsSchema.nullable(),
+        current: storedMeetingSeatsSchema.nullable(),
         suggestion: z.object({
             seats: meetingSeatsSchema,
+            deviceOffers: z.array(roomDeviceOfferSchema).optional(),
             people: z.array(
                 z.object({
                     name: z.string(),
@@ -1449,16 +1504,29 @@ const meetingSeatsSuggest = defineMethod({
             ),
         }),
     }),
-    resultName: "{ meeting, current, suggestion: { seats, people } }",
-    doc: "Preview room and remote seats from decided speakers, channel energy and call attendance. Optional room and remote names override the preview. Unsure people have reasons and no seat.",
+    resultName: "{ meeting, current, suggestion: { seats, people, deviceOffers? } }",
+    doc: "Preview room and remote seats from decided speakers, channel energy and call attendance. Override a person by name or supply their room and remote stays. Unsure people have reasons.",
+    effect: "read",
+});
+
+const meetingThresholdsPreview = defineMethod({
+    name: "meeting.thresholds.preview",
+    params: z.object({ meeting: meetingRef.optional(), values: thresholdValuesSchema }).strict(),
+    result: thresholdsResultSchema,
+    resultName: "{ thresholds, changes, counts, warnings }",
+    doc: "Read the global settings and effective thresholds. With a meeting and draft values, compare its automatic proposals and transcript on in-memory copies.",
     effect: "read",
 });
 
 const meetingSuggest = defineMethod({
     name: "meeting.suggest",
     params: z.object({ meeting: meetingRef, attendance: z.string().optional() }).strict(),
-    result: z.object({ added: z.number().int().nonnegative(), warnings: z.array(z.string()) }),
-    resultName: "{ added, warnings }",
+    result: z.object({
+        added: z.number().int().nonnegative(),
+        warnings: z.array(z.string()),
+        deviceOffers: z.array(roomDeviceOfferSchema).optional(),
+    }),
+    resultName: "{ added, warnings, deviceOffers? }",
     doc: "Run the normal suggestion rules and return recoverable attendance and word-check warnings to the window.",
     effect: "reversible",
 });
@@ -1529,7 +1597,27 @@ export const meetingVoice = defineMethod({
     effect: "read",
 });
 
+const voiceScopeSchema = z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("all") }).strict(),
+    z.object({ kind: z.literal("project"), project: z.string().min(1) }).strict(),
+    z.object({ kind: z.literal("meeting"), meeting: meetingRef }).strict(),
+]);
+const voiceBrowseSchema = z
+    .object({
+        project: z.string().min(1).optional(),
+        scope: voiceScopeSchema.optional(),
+        person: z.string().min(1).optional(),
+    })
+    .strict();
 const voiceSampleRowSchema = z.object({
+    id: idSchema,
+    owner: ownerSchema,
+    project: z.string(),
+    title: z.string().optional(),
+    transferred: z.boolean(),
+    origin: z.enum(["answer", "confirm", "enrol", "legacy"]),
+    acquiredBy: z.enum(["live", "backfill", "migration", "manual"]),
+    source: sourceSchema,
     sample: z.number().int().positive(),
     meeting: z.string(),
     seat: z.enum(["mic", "call"]),
@@ -1542,28 +1630,41 @@ const voiceSampleRowSchema = z.object({
 });
 const voiceSelectionSchema = z
     .object({
-        project: z.string().min(1),
-        person: z.string().trim().min(1),
+        project: z.string().min(1).optional(),
+        scope: voiceScopeSchema.optional(),
+        id: idSchema.optional(),
+        person: z.string().trim().min(1).optional(),
         sample: z.number().int().positive().optional(),
     })
     .strict();
+const voiceAffectedSchema = z.array(
+    z.object({ meeting: z.string(), item: z.string(), fromSec: z.number(), toSec: z.number() })
+);
 const voiceRemovalSchema = z.object({
+    ids: z.array(idSchema).optional(),
+    token: z.string().optional(),
+    revision: z.number().int().optional(),
+    planToken: z.string().optional(),
     project: z.string(),
     person: z.string(),
     removed: z.number().int().nonnegative(),
-    affected: z.array(z.object({ meeting: z.string(), item: z.string(), fromSec: z.number(), toSec: z.number() })),
+    affected: voiceAffectedSchema,
 });
 
 export const voicesList = defineMethod({
     name: "voices.list",
-    params: z.object({ project: z.string().min(1).optional() }).strict(),
+    params: voiceBrowseSchema,
     result: z.object({
+        learnt: z.array(learntVoiceSchema),
+        conflicts: z.array(z.object({ project: z.string(), file: z.string(), message: z.string() })),
         people: z.array(
             z.object({
                 project: z.string(),
                 person: z.string(),
                 meetings: z.array(z.string()),
                 samples: z.array(voiceSampleRowSchema),
+                owner: ownerSchema,
+                projects: z.array(z.string()),
             })
         ),
     }),
@@ -1618,7 +1719,7 @@ export const voicesApply = defineMethod({
 });
 export const voicesRemove = defineMethod({
     name: "voices.remove",
-    params: voiceSelectionSchema.extend({ preview: z.boolean().optional() }).strict(),
+    params: voiceSelectionSchema.extend({ preview: z.boolean().optional(), planToken: z.string().optional() }).strict(),
     result: voiceRemovalSchema,
     doc: "With preview, read which suggested lines lose a voice name without writing. Otherwise retire those suggestions across the project before removing the person's samples, or one numbered sample. Human-confirmed names remain.",
     effect: "reversible",
@@ -1641,6 +1742,66 @@ export const voicesSample = defineMethod({
     effect: "read",
 });
 
+const correctionParams = z.object({
+    preview: z.boolean().optional(),
+    token: z.string().min(1).optional(),
+    planToken: z.string().optional(),
+    expectedRevision: z.number().int().nonnegative().optional(),
+});
+const correctionResult = z.union([
+    z.object({
+        status: z.enum(["preview", "applied"]),
+        token: z.string(),
+        revision: z.number(),
+        planToken: z.string(),
+        ids: z.array(idSchema),
+        affected: voiceAffectedSchema,
+    }),
+    z.object({ status: z.enum(["stale", "refused"]), reason: z.string() }),
+]);
+export const voicesMove = defineMethod({
+    name: "voices.move",
+    params: correctionParams.extend({ id: idSchema, person: z.string().optional(), to: ownerSchema }).strict(),
+    result: correctionResult,
+    effect: "reversible",
+    doc: "Transfer one stable sample ID and refuse its former owner. Preview reports affected proposals.",
+});
+export const voicesReject = defineMethod({
+    name: "voices.reject",
+    params: correctionParams
+        .extend({
+            id: idSchema,
+            person: z.string().optional(),
+            reason: z.enum(["wrong-person", "bad-audio", "several-voices"]),
+        })
+        .strict(),
+    result: correctionResult,
+    effect: "reversible",
+    doc: "Refuse one owner or reject bad or mixed audio for all owners. Undo uses the returned token.",
+});
+export const voicesUndo = defineMethod({
+    name: "voices.undo",
+    params: z
+        .object({
+            token: z.string().min(1),
+            requestToken: z.string().min(1).optional(),
+            preview: z.boolean().optional(),
+            planToken: z.string().optional(),
+            expectedRevision: z.number().int().nonnegative().optional(),
+        })
+        .strict(),
+    result: correctionResult,
+    effect: "reversible",
+    doc: "Revert a library correction by token while it still owns the affected bindings.",
+});
+export const voicesQuality = defineMethod({
+    name: "voices.quality",
+    params: voiceBrowseSchema,
+    result: z.object({ learnt: z.array(learntVoiceSchema) }),
+    effect: "read",
+    doc: "Report independent voice evidence, compatible neighbors and advisory outliers in the selected scope.",
+});
+
 export const voicesWorkers = defineMethod({
     name: "voices.workers",
     params: z.object({}).strict(),
@@ -1653,6 +1814,35 @@ export const voicesWorkers = defineMethod({
     }),
     doc: "What `auto` voice workers means on this Mac now: the idle cores of a one-second CPU sample, no more than the performance cores, 1 to 4 (`voiceWorkerCount`). Takes about a second; saves nothing.",
     effect: "read",
+});
+
+const count = z.number().int().nonnegative();
+export const voiceJobSchema = z.object({
+    id: z.string(),
+    kind: z.enum(["answer-samples", "backfill"]),
+    project: z.string(),
+    meeting: z.string().optional(),
+    state: z.enum(["queued", "running", "done", "cancelled", "failed"]),
+    progress: z.object({ done: count, total: count, step: z.string() }),
+    added: count,
+    skipped: count,
+    error: z.string().optional(),
+});
+export type VoiceJob = z.output<typeof voiceJobSchema>;
+
+export const voicesJobs = defineMethod({
+    name: "voices.jobs",
+    params: z.object({ project: z.string().min(1).optional() }).strict(),
+    result: z.array(voiceJobSchema),
+    doc: "List current and recent voice learning jobs and their line counts, optionally for one project.",
+    effect: "read",
+});
+export const voicesJobsCancel = defineMethod({
+    name: "voices.jobs.cancel",
+    params: z.object({ id: z.string().min(1) }).strict(),
+    result: voiceJobSchema.nullable(),
+    doc: "Cancel a queued or running voice job and return its state. An unknown id returns null.",
+    effect: "reversible",
 });
 
 export const voiceBackfill = defineMethod({
@@ -1693,7 +1883,13 @@ export const VOICES_METHODS = [
     voicesRemove,
     voicesSample,
     voicesWorkers,
+    voicesMove,
+    voicesReject,
+    voicesUndo,
+    voicesQuality,
     voiceBackfill,
+    voicesJobs,
+    voicesJobsCancel,
 ] as const;
 export type VoicesMethod = (typeof VOICES_METHODS)[number]["name"];
 type VoiceMethodNamed<M extends VoicesMethod> = Extract<(typeof VOICES_METHODS)[number], { name: M }>;
@@ -1718,6 +1914,7 @@ export const meetingsApi = defineApi({
         meetingVoice,
         meetingSuggest,
         meetingSeatsSuggest,
+        meetingThresholdsPreview,
         transcript,
         wordTimingsGenerate,
         revisions,
@@ -1760,6 +1957,8 @@ export const meetingsApi = defineApi({
         peopleKnown,
         peopleMeetings,
         peopleAdd,
+        peopleDevices,
+        decideRoomDevice,
         peopleHide,
         peoplePlanMerge,
         peopleMerge,
@@ -1828,10 +2027,13 @@ export const MEETINGS_EVENTS = [
     "comment.sent",
     "comment.changed",
     "people.changed",
+    "voices.job",
 ] as const;
 export type MeetingsEvent = (typeof MEETINGS_EVENTS)[number];
 
 export const subscribeParamsSchema = z.object({
+    /** Restrict voice-job notifications to this project. */
+    project: z.string().min(1).optional(),
     /** Only this meeting's events (an exact id); absent: every meeting's. Anything else is refused (-32602). */
     meeting: z.string().min(1).optional(),
     /** Only these events; absent or empty: all of them. */
@@ -1840,6 +2042,7 @@ export const subscribeParamsSchema = z.object({
 export const subscribeResultSchema = z.object({ events: z.array(z.string()) });
 
 export const NOTIFICATION_SCHEMAS = {
+    "voices.job": voiceJobSchema,
     "meeting.wordTimings.changed": z.object({ meeting: z.string(), revision: z.string() }),
     "people.changed": z.object({}),
     "comment.changed": z.object({ meeting: z.string(), comment: meetingCommentSchema.optional() }),
@@ -1923,11 +2126,7 @@ export function meetingsProtocolVersion(): string {
     return createHash("sha1").update(text).digest("hex").slice(0, 12);
 }
 
-/** The checkout this code runs from (src/meetings/lib/service/ is four levels below it), as a decoded path. */
-export function meetingsSourceRoot(): string {
-    // fileURLToPath, not `.pathname`: a checkout path with a space would stay `%20` and match no loaded module.
-    return fileURLToPath(new URL("../../../../", import.meta.url));
-}
+export { meetingsSourceRoot };
 
 /**
  * The code stamp `hello` compares: the checkout this code runs from. A worktree's CLI and the main checkout's service

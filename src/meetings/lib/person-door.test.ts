@@ -105,3 +105,13 @@ test("delivery failures become warnings after the meeting has been saved", async
     gt.person.windowNotice.mockRejectedValueOnce(new Error("journal unavailable"));
     expect(await requestMeetingQuestionReview(run)).toContain("journal unavailable");
 });
+
+test("a sandbox home never sends the real person a review request", async () => {
+    // The test preload points GENESIS_TOOLS_HOME at a sandbox, as a probe or a measure run does.
+    const warning = await requestMeetingQuestionReview({
+        actor: agent,
+        runId: "run-sandbox",
+        record: { ...record, items: [word] },
+    });
+    expect(warning).toContain("no review request was sent");
+});

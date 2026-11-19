@@ -12,6 +12,8 @@ import SwiftUI
 //   `--select` selects a review row of the Items tab (its number keys show) and `--edit` opens its editor, so a
 //   picture can show the states that a click or a key makes. `--notice <text>` floats a notice with an Undo over the
 //   meeting, as an answer or a Skip leaves one.
+//   `--sheet room-devices` opens People with Room devices expanded. `--device-offers-file` takes an array of offers
+//   (keeping the store's confirmed devices) or a complete people.devices.list result for a seats or Contacts picture.
 //   `--card <row id>` draws that row's pin card alone, and `--sheet history` (or `history:<row id>`) the history
 //   sheet alone: a popover and a sheet are windows of their own, which the window's picture does not hold.
 //   `--sheet seats` draws the seats sheet, and `--sheet selection:<from>-<to>` the transcript's selection popover for
@@ -82,6 +84,11 @@ struct MeetingsRequest {
     /// step (no run starts).
     var voices: String?
     var voicesProgress: MeetingsCallProgress?
+    /// Open one person's sample disclosure, or replay captured voices.jobs JSON in an offscreen picture.
+    var voiceFocus: String?
+    var voiceSample: String?
+    var voiceJobFile: String?
+    var deviceOffersFile: String?
     /// `--undo-person <name>`: a removal of that person and its notice's Undo, before the picture.
     var undoPerson: String?
     var width: CGFloat = 1280
@@ -103,6 +110,7 @@ struct MeetingsRequest {
                 case "all": request.place = .all
                 case "contacts": request.place = .contacts
                 case let other where other.hasPrefix("project:"): request.place = .project(String(other.dropFirst(8)))
+                case let other where other.hasPrefix("voices:"): request.place = .projectVoices(String(other.dropFirst(7)))
                 default: break
                 }
             case "--meeting": request.meeting = value()
@@ -118,6 +126,10 @@ struct MeetingsRequest {
             case "--sheet": request.sheet = value()
             case "--suggest-progress": request.suggestProgress = value().map(MeetingsRequest.progress)
             case "--voices": request.voices = value()
+            case "--voice-focus": request.voiceFocus = value()
+            case "--voice-sample": request.voiceSample = value()
+            case "--voice-job-file": request.voiceJobFile = value()
+            case "--device-offers-file": request.deviceOffersFile = value()
             case "--voices-progress": request.voicesProgress = value().map(MeetingsRequest.progress)
             case "--undo-person": request.undoPerson = value()
             case "--snapshot": request.snapshot = value().map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath).path }
@@ -131,6 +143,7 @@ struct MeetingsRequest {
             }
             index += 1
         }
+        if request.snapshot != nil && request.sheet == "room-devices" { request.place = .contacts }
         return request
     }
 
@@ -269,13 +282,13 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
         return window
     }
 
-    static func makeWindow(model: MeetingsWindowModel, size: NSSize) -> NSWindow {
+    static func makeWindow(model: MeetingsWindowModel, size: NSSize, roomDevices: MeetingsAPI.RoomDevices.Result? = nil) -> NSWindow {
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Meetings"
         window.appearance = NSAppearance(named: .darkAqua)
         window.isReleasedWhenClosed = false
-        let hosting = NSHostingView(rootView: MeetingsRootView(model: model))
+        let hosting = NSHostingView(rootView: MeetingsRootView(model: model).environment(model).environment(\.roomDevicesPreview, roomDevices))
         // The window keeps the size the reader gives it, and `minimumSize` is its only floor: with the default options,
         // and still with `.minSize`, each notice grew the window to the content's height (900 to 1982 pt in one session).
         hosting.sizingOptions = []
@@ -323,14 +336,43 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
 
 /// A part of the window drawn alone for a snapshot (`--card`, `--sheet`), with its data read first.
 @MainActor
-private func meetingsSnapshotPart(_ request: MeetingsRequest, model: MeetingsWindowModel) async -> AnyView? {
+private func meetingsSnapshotPart(_ request: MeetingsRequest, model: MeetingsWindowModel, offers: [RoomDeviceOffer]?) async -> AnyView? {
+    if request.sheet == "voice-library-settings" {
+        guard await waitUntil(40, { model.settingsRaw != nil || model.settings.failure != nil }), let raw = model.settingsRaw else { return nil }
+        return AnyView(MeetingsVoiceLibraryCard(config: .init(raw: raw), set: { _, _ in })
+            .padding(24).frame(maxWidth: 850).frame(width: request.width, height: request.height, alignment: .top)
+            .environment(\.nativeSettingsTheme, .graphite))
+    }
+    if let sheet = request.sheet, sheet.hasPrefix("person-voices:") {
+        let query = String(sheet.dropFirst("person-voices:".count))
+        do {
+            let result = try await PeopleCalls.known(.init(query: query, limit: 500)).run(service: model.service)
+            let matches = result.people.filter { $0.email?.caseInsensitiveCompare(query) == .orderedSame ||
+                                                 $0.name.caseInsensitiveCompare(query) == .orderedSame }
+            guard matches.count == 1, let person = matches.first else {
+                FileHandle.standardError.write(Data("meetings snapshot: person-voices requires one exact name or email\n".utf8))
+                return nil
+            }
+            let destination = VoiceDestination.person(.init(name: person.name, email: person.email), project: nil)
+            guard await prepareLibrarySnapshot(destination, model: model) else { return nil }
+            model.people.showMeetings(person, voices: true)
+            guard let history = model.people.history else { return nil }
+            return AnyView(PersonMeetingsSheet(history: history, library: model.voiceLibrary, retry: {}, open: { _ in }, close: {})
+                .frame(width: request.width, height: request.height))
+        } catch {
+            FileHandle.standardError.write(Data("meetings snapshot: person lookup failed: \(error)\n".utf8))
+            return nil
+        }
+    }
     guard let detail = model.detail else { return nil }
     if let id = request.card {
         if case .idle = detail.rows { detail.loadRows() }
         _ = await waitUntil(60) { detail.rows.value != nil || detail.rows.failure != nil }
         let rows = detail.rows.value?.rows ?? []
         return rows.first { $0.id == id }.map { row in
-            AnyView(PinCard(row: row, reference: { id in rows.first { $0.id == id }.map(ReviewRowView.reference) }))
+            // The window's dock builds the card inside the meeting's view; the picture gives it the same detail.
+            AnyView(PinCard(row: row, reference: { id in rows.first { $0.id == id }.map(ReviewRowView.reference) })
+                .environment(\.meetingDetail, detail))
         }
     }
     if let sheet = request.sheet, sheet == "history" || sheet.hasPrefix("history:") {
@@ -368,7 +410,17 @@ private func meetingsSnapshotPart(_ request: MeetingsRequest, model: MeetingsWin
     }
     if request.sheet == "seats" {
         let preview: Loadable<MeetingsAPI.SeatsSuggest.Suggestion>
-        do { preview = .loaded(try await detail.suggestedSeats()) } catch { preview = .failed(asFailure(error), previous: nil) }
+        do {
+            var suggestion = try await detail.suggestedSeats()
+            if let offers { suggestion.deviceOffers = offers }
+            preview = .loaded(suggestion)
+        } catch {
+            if offers != nil {
+                FileHandle.standardError.write(Data("meetings snapshot: the seats suggestion did not load: \(error)\n".utf8))
+                return nil
+            }
+            preview = .failed(asFailure(error), previous: nil)
+        }
         return AnyView(MeetingSeatsEditor(seats: detail.record.value?.seats, preview: preview,
                                           load: { try await detail.suggestedSeats() }, save: { _, _ in }, saved: {})
             .environment(\.meetingDetail, detail))
@@ -413,6 +465,25 @@ func waitUntil(_ seconds: Double, _ ready: () -> Bool) async -> Bool {
     return ready()
 }
 
+@MainActor
+private func prepareLibrarySnapshot(_ destination: VoiceDestination, model: MeetingsWindowModel) async -> Bool {
+    let library = model.voiceLibrary
+    library.show(destination, doubtfulFirst: model.defaults.object(forKey: MeetingsVoiceCompute.doubtfulFirstKey) as? Bool ?? true)
+    guard await waitUntil(60, { library.rows.value != nil || library.rows.failure != nil }), library.rows.value != nil else {
+        FileHandle.standardError.write(Data("meetings snapshot: \(library.rows.failure?.sentence ?? "voice library read timed out")\n".utf8))
+        return false
+    }
+    if let sample = model.voiceSampleFocus, library.rows.value?.location(of: sample) == nil {
+        FileHandle.standardError.write(Data("meetings snapshot: the selected sample is absent from this scope\n".utf8))
+        return false
+    }
+    if library.snapshotJobs != nil && library.jobs.isEmpty {
+        FileHandle.standardError.write(Data("meetings snapshot: the captured jobs do not belong to this destination\n".utf8))
+        return false
+    }
+    return true
+}
+
 private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) -> Never {
     MainActor.assumeIsolated {
         _ = NSApplication.shared
@@ -421,6 +492,33 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
             let model = MeetingsWindowModel()
             // A picture with the panel open must not change what the real window opens with.
             model.remembersPanel = false
+            model.voiceFocus = request.voiceFocus
+            model.voiceSampleFocus = request.voiceSample
+            var offers: [RoomDeviceOffer]?
+            var roomDevices: MeetingsAPI.RoomDevices.Result?
+            if let file = request.deviceOffersFile {
+                do {
+                    let bytes = try Data(contentsOf: URL(fileURLWithPath: file))
+                    let decoder = JSONDecoder()
+                    if let list = try? decoder.decode(MeetingsAPI.RoomDevices.Result.self, from: bytes) {
+                        roomDevices = list
+                        offers = list.offers
+                    } else {
+                        offers = try decoder.decode([RoomDeviceOffer].self, from: bytes)
+                    }
+                } catch {
+                    FileHandle.standardError.write(Data("meetings snapshot: could not read device offers from \(file): \(error)\n".utf8))
+                    exit(1)
+                }
+            }
+            if let file = request.voiceJobFile {
+                do {
+                    model.voiceLibrary.snapshotJobs = try JSONDecoder().decode([VoiceJob].self, from: Data(contentsOf: URL(fileURLWithPath: file)))
+                } catch {
+                    FileHandle.standardError.write(Data("meetings snapshot: could not read the captured jobs: \(error)\n".utf8))
+                    exit(1)
+                }
+            }
             model.sidePanelOpen = request.sidePanel
             // A picture of a playing Moment (`--play`) makes no sound.
             model.player = MomentPlayer(load: { try AVMomentSound(url: $0, muted: true) }, defaults: model.defaults)
@@ -451,6 +549,22 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
             }
             if model.place == .contacts {
                 _ = await waitUntil(30) { model.people.known.value != nil || model.people.known.failure != nil }
+                if request.sheet == "room-devices" || offers != nil {
+                    guard model.people.known.value != nil else {
+                        FileHandle.standardError.write(Data("meetings snapshot: the people book did not load\n".utf8))
+                        exit(1)
+                    }
+                    if roomDevices == nil {
+                        do {
+                            var list = try await PeopleCalls.roomDevices(offers: offers == nil, service: model.service)
+                            if let offers { list.offers = offers }
+                            roomDevices = list
+                        } catch {
+                            FileHandle.standardError.write(Data("meetings snapshot: the room devices did not load: \(error)\n".utf8))
+                            exit(1)
+                        }
+                    }
+                }
             }
             if let detail = model.detail, detail.tab == .items {
                 // The rows are read when the tab shows; a picture taken before they land shows "Reading the items…".
@@ -536,11 +650,22 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
             if model.sidePanelOpen {
                 _ = await waitUntil(30) { model.settingsRaw != nil || model.settings.failure != nil }
             }
+            if case .projectVoices(let name) = model.place {
+                guard await prepareLibrarySnapshot(.project(name), model: model) else { exit(1) }
+            }
             if request.voices != nil || request.voicesProgress != nil, let detail = model.detail {
                 let voices = detail.voices
                 voices.open = true
-                voices.load(project: detail.record.value?.project)
-                _ = await waitUntil(60) { voices.people.value != nil || voices.people.failure != nil }
+                if let project = detail.record.value?.project {
+                    if request.voices == "meeting" { voices.meetingOnlyOverride = true }
+                    voices.focus = request.voiceFocus
+                    if request.voices == "project" { voices.meetingOnlyOverride = false }
+                    let only = voices.meetingOnlyOverride ?? model.defaults.bool(forKey: MeetingsVoiceCompute.meetingOnlyKey)
+                    guard await prepareLibrarySnapshot(.inspector(meeting: detail.id, project: project, meetingOnly: only), model: model) else { exit(1) }
+                } else if request.voices == "meeting" || request.voiceJobFile != nil {
+                    FileHandle.standardError.write(Data("meetings snapshot: the selected meeting has no project\n".utf8))
+                    exit(1)
+                }
                 if request.voices == "preview" {
                     voices.runPreview()
                     // A cold voice pass of a 172-minute meeting takes up to 90 s with one worker.
@@ -552,14 +677,15 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
                 }
             }
             let window: NSWindow
-            if request.card != nil || request.sheet != nil {
-                guard let part = await meetingsSnapshotPart(request, model: model) else {
-                    FileHandle.standardError.write(Data("meetings snapshot: no such part (--card needs a row id of --meeting, --sheet takes history, history:<row id>, voice-tools, word-timings, link-source, seats, selection:<from>-<to> or person:<name>)\n".utf8))
+            let fullWindow = request.card == nil && (request.sheet == nil || request.sheet == "room-devices")
+            if !fullWindow {
+                guard let part = await meetingsSnapshotPart(request, model: model, offers: offers) else {
+                    FileHandle.standardError.write(Data("meetings snapshot: no such part (--card needs a row id of --meeting, --sheet takes history, history:<row id>, voice-tools, word-timings, link-source, seats, room-devices, voice-library-settings, selection:<from>-<to>, person:<name> or person-voices:<name or email>)\n".utf8))
                     exit(1)
                 }
                 window = MeetingsWindow.partWindow(part)
             } else {
-                window = MeetingsWindow.makeWindow(model: model, size: NSSize(width: request.width, height: request.height))
+                window = MeetingsWindow.makeWindow(model: model, size: NSSize(width: request.width, height: request.height), roomDevices: roomDevices)
             }
             window.orderInForSnapshot()
             try? await Task.sleep(for: .milliseconds(900))
@@ -572,7 +698,7 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
                     try? await Task.sleep(for: .milliseconds(700))
                 }
             }
-            if request.card == nil, request.sheet == nil, let top = model.player.top {
+            if fullWindow, let top = model.player.top {
                 // The dock reads its waveform once it shows, after the reads the window sent before it (the service
                 // answers in order): a picture taken before they land showed a timeline without a waveform.
                 let dock = model.player.timeline
@@ -580,7 +706,7 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
                     try? await Task.sleep(for: .milliseconds(400))
                 }
             }
-            if request.card == nil, request.sheet == nil {
+            if fullWindow {
                 // The flags name the entire window, not its content rect. SwiftUI installs a toolbar after the
                 // first layout, adding 66 pt (80 with the dock) to the initial content size. Resize only after
                 // those views are present so snapshots at the same requested size remain comparable.
@@ -588,6 +714,14 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
                 window.setFrame(NSRect(origin: window.frame.origin, size: size), display: true)
                 window.contentView?.layoutSubtreeIfNeeded()
                 try? await Task.sleep(for: .milliseconds(200))
+            }
+            if request.voices != nil || request.voiceSample != nil || request.voiceJobFile != nil {
+                // The resize above re-creates the sample list, whose onDisappear hides the library: the list reads
+                // its samples again, and a picture taken before that read showed only "Reading voice samples…".
+                let library = model.voiceLibrary
+                if await waitUntil(30, { library.destination != nil && (library.rows.value != nil || library.rows.failure != nil) }) {
+                    try? await Task.sleep(for: .milliseconds(300))
+                }
             }
             guard let capture = await WindowSnapshot.capture(window),
                   let png = capture.image.representation(using: .png, properties: [:]) else {

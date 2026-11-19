@@ -388,9 +388,10 @@ case). A pattern without `*` names a file or a folder and matches everything bel
 
 `apply` refuses to start with uncommitted or untracked changes, a rebase or cherry-pick in progress, a locked index,
 a group branch name that already exists, or a MIXED commit without a decision. Per group it runs
-`git switch -c <branch> --no-track <base>` and `git cherry-pick -x` for each commit in source order. A `paths-only`
-commit is picked whole first. Then the paths outside the group are printed, put back from the branch tip before that
-pick (`git restore --source=<tip> --staged --worktree`), and the commit is amended (`--no-verify`, so no hook
+`git switch -c <branch> --no-track <base>` and `git cherry-pick` for each commit in source order. Each pick preserves
+the source commit message, including any existing cherry-pick provenance trailer, and appends no new trailer.
+A `paths-only` commit is picked whole first. Then the paths outside the group are printed, put back from the branch
+tip before that pick (`git restore --source=<tip> --staged --worktree`), and the commit is amended (`--no-verify`, so no hook
 rewrites it). Restoring from the pre-pick tip rather than the base keeps what an earlier pick on the same branch did
 to those paths. If the restore or the amend fails, `--continue` finishes that cleanup instead of picking the commit
 again. It refuses while the checkout holds a change the cleanup did not make (an edit to a path outside the group, an

@@ -118,11 +118,17 @@ export class RecordingRecord {
         startedAt: string;
         backend: string;
         displayPolicy: RecordingBlock["displayPolicy"];
+        withoutScreen?: string;
         displaySpans?: RecordingBlock["displaySpans"];
     }) {
         await this.store.update(
             this.meetingId,
-            { command: "record start", change: `display ${options.displayPolicy} (${options.backend})` },
+            {
+                command: "record start",
+                change: options.withoutScreen
+                    ? `sound only; screen frames omitted: ${options.withoutScreen}`
+                    : `display ${options.displayPolicy} (${options.backend})`,
+            },
             (current) => {
                 current.recording = {
                     ...current.recording,
@@ -130,8 +136,7 @@ export class RecordingRecord {
                     startedAt: current.recording?.startedAt ?? options.startedAt,
                     backend: options.backend,
                     displayPolicy: options.displayPolicy,
-                    framesDir: "frames",
-                    ocr: "ocr.jsonl",
+                    ...(!options.withoutScreen ? { framesDir: "frames", ocr: "ocr.jsonl" } : {}),
                     status: "recording",
                     spans: this.spans,
                     ...(options.displaySpans ? { displaySpans: options.displaySpans } : {}),
@@ -139,7 +144,11 @@ export class RecordingRecord {
                 delete current.recording.stoppedAt;
                 delete current.recording.stopReason;
                 // The last run's warning ("No frame was recorded") is not this run's; this run sets its own.
-                delete current.recording.warning;
+                if (options.withoutScreen) {
+                    current.recording.warning = `Screen frames omitted: ${options.withoutScreen}`;
+                } else {
+                    delete current.recording.warning;
+                }
                 delete current.recording.ocrWarning;
             }
         );

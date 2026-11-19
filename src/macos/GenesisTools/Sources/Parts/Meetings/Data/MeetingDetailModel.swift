@@ -120,6 +120,9 @@ final class MeetingDetailModel {
     /// Rows this window just answered that keep their open height until the reader scrolls, so the rows under them do
     /// not move (G33, `meetings.rows.keepPlace`).
     var heldFolds: Set<String> = []
+    /// Decided rows the reader unfolded (U14): they show the open layout with the whole reason, who decided and when.
+    /// Kept here, not in the row, so a row the lazy list rebuilt after a scroll stays unfolded.
+    var unfoldedRows: Set<String> = []
     /// The row each window decision was about, by its journal token: an event of it is not news.
     @ObservationIgnored var ownTokens: Set<String> = []
     /// The tokens of the decision events heard since the last event refresh: a burst that holds only decisions whose
@@ -852,25 +855,16 @@ final class MeetingDetailModel {
 
 /// The words the window uses for the data's values, in one place, so the row, the button and the note agree.
 enum MeetingsWords {
-    static func itemKind(_ item: MeetingItem) -> String {
-        switch item.kind {
-        case "speaker-range": return "Speaker range"
-        case "label": return "Mixed voices"
-        case "removal": return "Local speech output"
-        case "join": return "Join lines"
-        case "term": return "Word"
-        case "question": return "Question"
-        default: return item.kind
-        }
-    }
-
     static func itemTitle(_ item: MeetingItem) -> String {
         switch item.kind {
         case "speaker-range":
             let from = MeetingsFormat.clock(item.fromSec ?? 0), to = MeetingsFormat.clock(item.toSec ?? 0)
             let range = from == to ? "at \(from)" : "from \(from) to \(to)"
             return "\(item.label ?? "?") \(range) is \(item.speaker ?? "someone else")"
-        case "label": return "\(item.label ?? "?") holds several voices"
+        case "label":
+            // The row's title in the same words (`itemTitle` in src/meetings/lib/item-text.ts, U17).
+            let from = MeetingsFormat.clock(item.fromSec ?? 0), to = MeetingsFormat.clock(item.toSec ?? 0)
+            return "The label \"\(item.label ?? "?")\" does not belong to one person (\(from) to \(to))"
         case "removal": return "Remove local speech output: \(item.heard ?? "")"
         case "join": return "Join the line at \(MeetingsFormat.clock(item.atSec ?? 0))"
         case "term":
@@ -890,6 +884,12 @@ enum MeetingsWords {
 
     static func confidence(_ value: Double?) -> String? {
         value.map { "\(Int(($0 * 100).rounded())) %" }
+    }
+
+    /// A row's or a choice's score as it reads: a voice cosine as "0.61", since a cosine is no probability (U13), and
+    /// every other confidence as "61 %".
+    static func score(_ value: Double?, cosine: Bool) -> String? {
+        cosine ? value.map(VoiceScore.text) : confidence(value)
     }
 
     static func status(_ status: String) -> String {

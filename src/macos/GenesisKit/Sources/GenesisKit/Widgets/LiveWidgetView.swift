@@ -9,9 +9,62 @@ enum WidgetOutgoingControls {
     }
 }
 
+struct WidgetMarkAllReadButton: View {
+    @ObservedObject var model: WidgetModel
+    var showsTitle = false
+
+    var body: some View {
+        let held = model.readThrough != nil
+        let title = held ? "Undo mark all read" : "Mark all inbox items read"
+        let tip = held ? "Undo before the inbox is marked read" : "Mark items in every session read. Questions stay answerable."
+        let act = held ? model.undoMarkAllRead : model.markAllRead
+        Group {
+            if showsTitle {
+                Button(held ? "Undo mark all read" : "Mark all read", action: act)
+                    .buttonStyle(.genHover()).font(.system(size: 11, weight: .medium))
+                    .instantTooltip(tip)
+            } else {
+                IconButton(systemName: held ? "arrow.uturn.backward.circle" : "checkmark.circle", tooltip: tip, size: 11, action: act)
+            }
+        }
+        .disabled(model.markingRead)
+        .accessibilityLabel(title)
+    }
+}
+
 private struct WidgetOutgoingPosition: Equatable {
     let session: String
     let messageID: String?
+}
+
+private struct ComposerRecordingButton: View {
+    @ObservedObject var recorder: ScreenRecorder
+    let toggle: () -> Void
+
+    var body: some View {
+        switch recorder.phase {
+        case nil:
+            IconButton(systemName: "video", tooltip: ScreenRecorder.entryDetail, action: toggle)
+                .accessibilityLabel(ScreenRecorder.entryTitle)
+                .accessibilityHint(ScreenRecorder.entryDetail)
+        case .setup:
+            IconButton(systemName: "slider.horizontal.3", tooltip: "Show recording setup", action: recorder.showControls)
+                .accessibilityLabel("Show recording setup")
+        case .countdown, .starting:
+            IconButton(systemName: "hourglass", tooltip: "Recording is starting. Show controls", action: recorder.showControls)
+                .accessibilityLabel("Starting recording. Show controls")
+        case .recording, .paused:
+            IconButton(systemName: "stop.circle.fill", tooltip: "Stop the recording and paste it into the draft",
+                       tint: .red, action: toggle)
+                .accessibilityLabel("Stop and paste the recording")
+        case .finishing, .done:
+            ProgressView().controlSize(.small).frame(width: 22, height: 22)
+                .accessibilityLabel("Saving recording")
+        case .failed:
+            IconButton(systemName: "exclamationmark.circle", tooltip: "Recording failed", action: recorder.showControls)
+                .accessibilityLabel("Recording failed")
+        }
+    }
 }
 
 public struct LiveWidgetView: View {
@@ -173,6 +226,28 @@ public struct LiveWidgetView: View {
                     Button("Reconnect", action: model.start).font(.caption).buttonStyle(.genHover(accent: .orange))
                 }.foregroundStyle(.orange)
             }
+            if let grant = model.snapshot?.state.meetingRecordingWarning {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Meeting recording will fail: \(grant)", systemImage: "exclamationmark.triangle")
+                        .font(.callout.weight(.medium))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Open Permissions…") {
+                        Task {
+                            do {
+                                let result = try await model.bridge.run(subcommand: "macos", args: ["permissions", "ui"])
+                                if result.exitCode != 0 { throw ToolsBridgeError.refused(result.stderr) }
+                            } catch { model.report(error) }
+                        }
+                    }
+                    .buttonStyle(.genHover())
+                    .accessibilityIdentifier("widget.meetings.openPermissions")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+                .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("widget.meetings.recordingWarning")
+            }
             if let errors = model.snapshot?.errors, !errors.isEmpty {
                 GenDisclosure("Some sources are unavailable", isExpanded: $sourcesExpanded,
                               identifier: "widget.sources.unavailable") {
@@ -192,23 +267,16 @@ public struct LiveWidgetView: View {
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if model.inboxOverview {
                 if model.stagedView == nil { WidgetStagedChip(model: model) }
-                ScrollView {
-                    Group {
-                        if model.stagedView != nil { WidgetStagedList(model: model) } else { WidgetInboxOverview(model: model) }
-                    }
-                        .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 2)
-                        .scrollOverflowContent()
-                        .modifier(DocumentHeight(onScrollView: false) { fit.document = $0; reportFit() })
+                if model.stagedView != nil {
+                    overviewScroll(.staged) { WidgetStagedList(model: model) }
+                } else {
+                    WidgetInboxOverview(model: model, viewport: { content in AnyView(overviewScroll(.overview) { content }) })
                 }
-                .modifier(DocumentHeight(onScrollView: true) { fit.document = $0; reportFit() })
-                .onGeometryChange(for: CGFloat.self, of: \.size.height) { fit.viewport = $0; reportFit() }
-                .onDisappear { fit.viewport = nil; fit.document = nil; reportFit() }
-                .scrollOverflowHints()
             } else if model.selected == nil {
                 if model.inbox.sessions.isEmpty {
                     VStack(spacing: 10) {
                         GenesisWidgetMark()
-                        Text("Nothing needs you.").font(.headline)
+                        Text(model.snapshot?.state.meetingRecordingWarning == nil ? "Nothing needs you." : "No session items.").font(.headline)
                         Text("Questions, screenshots, and finished work land here.").font(.caption)
                             .foregroundStyle(.secondary)
                         Button("Choose sessions") { model.showSettings?() }.buttonStyle(.genHover())
@@ -222,6 +290,7 @@ public struct LiveWidgetView: View {
                 // under the top fade (Martin's image 24, 2026-10-23).
                 if section == "Inbox", !model.cards.isEmpty { inboxFilterBar }
                 if section == "Inbox", model.stagedView == nil { WidgetStagedChip(model: model) }
+                let measurement = WidgetContentFit.Scroll.session(Self.scrollID(model))
                 ScrollViewReader { reader in
                     ScrollView {
                         // The inbox is eager: a session holds tens of cards, and a lazy stack's estimated height
@@ -235,13 +304,13 @@ public struct LiveWidgetView: View {
                             }
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 2)
                             .scrollOverflowContent()
-                            .modifier(DocumentHeight(onScrollView: false) { fit.document = $0; reportFit() })
+                            .modifier(DocumentHeight(onScrollView: false) { fit.scrolls[measurement, default: .init()].document = $0; reportFit() })
                     }
                         .modifier(LatestScrollAnchor(enabled: section == "Conversation", identity: model.selectedKey))
                         // A new view (section or session) starts at its own top: the Sessions list's deep offset,
                         // kept for the much shorter inbox, drew its rows over the header (Martin, 2026-10-23). The
                         // session list keeps its place when Up and Down pick another session in it.
-                        .id(section == "Sessions" ? section : section + "|" + model.selectedKey)
+                        .id(measurement)
                         // A decision link brings its card or chat turn to the middle of the list; on appear too, since
                         // the link usually switches the tab or the session, which makes this a new scroll view.
                         .task(id: model.revealScroll) {
@@ -267,9 +336,9 @@ public struct LiveWidgetView: View {
                                 reader.scrollTo(model.selectedKey)
                             }
                         }
-                        .modifier(DocumentHeight(onScrollView: true) { fit.document = $0; reportFit() })
-                        .onGeometryChange(for: CGFloat.self, of: \.size.height) { fit.viewport = $0; reportFit() }
-                        .onDisappear { fit.viewport = nil; fit.document = nil; reportFit() }
+                        .modifier(DocumentHeight(onScrollView: true) { fit.scrolls[measurement, default: .init()].document = $0; reportFit() })
+                        .onGeometryChange(for: CGFloat.self, of: \.size.height) { fit.scrolls[measurement, default: .init()].viewport = $0; reportFit() }
+                        .onDisappear { fit.scrolls[measurement] = nil; reportFit() }
                         // Outermost, so the scroll view's own anchor modifiers still sit directly on it.
                         .scrollOverflowHints()
                 }
@@ -324,6 +393,19 @@ public struct LiveWidgetView: View {
         }
     }
 
+    private func overviewScroll(_ measurement: WidgetContentFit.Scroll, @ViewBuilder content: () -> some View) -> some View {
+        ScrollView {
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 2)
+                .scrollOverflowContent()
+                .modifier(DocumentHeight(onScrollView: false) { fit.scrolls[measurement, default: .init()].document = $0; reportFit() })
+        }
+        .modifier(DocumentHeight(onScrollView: true) { fit.scrolls[measurement, default: .init()].document = $0; reportFit() })
+        .onGeometryChange(for: CGFloat.self, of: \.size.height) { fit.scrolls[measurement, default: .init()].viewport = $0; reportFit() }
+        .onDisappear { fit.scrolls[measurement] = nil; reportFit() }
+        .scrollOverflowHints()
+    }
+
     /// The pane needs its chrome plus the whole scroll document; without a list (connecting, nothing selected) a
     /// short fixed height is enough.
     /// The three heights change in separate callbacks of one layout pass; read them together after it.
@@ -333,15 +415,25 @@ public struct LiveWidgetView: View {
         DispatchQueue.main.async { [fit, model] in
             fit.scheduled = false
             guard let outer = fit.outer else { return }
-            // The same condition that chooses the list over the connecting / nothing-selected placeholders.
-            if model.snapshot != nil, model.selected != nil || model.inboxOverview {
-                // The list is shown but not measured yet: wait instead of reporting the placeholder for a moment.
-                guard let viewport = fit.viewport, let document = fit.document else { return }
-                model.reportAgentFit(outer - viewport + document)
-            } else {
+            guard let measurement = Self.activeScroll(model) else {
                 model.reportAgentFit(WidgetContentFit.placeholderHeight)
+                return
             }
+            // Outgoing measurements may still arrive during a transition.
+            guard let viewport = fit.scrolls[measurement]?.viewport,
+                  let document = fit.scrolls[measurement]?.document else { return }
+            model.reportAgentFit(outer - viewport + document)
         }
+    }
+
+    private static func scrollID(_ model: WidgetModel) -> String {
+        model.section == "Sessions" ? model.section : model.section + "|" + model.selectedKey
+    }
+
+    private static func activeScroll(_ model: WidgetModel) -> WidgetContentFit.Scroll? {
+        guard model.snapshot != nil, model.selected != nil || model.snapshot?.rosterLoading != true else { return nil }
+        if model.inboxOverview { return model.stagedView == nil ? .overview : .staged }
+        return model.selected == nil ? nil : .session(scrollID(model))
     }
 
     private var header: some View {
@@ -438,15 +530,20 @@ public struct LiveWidgetView: View {
                     markAllReadButton
                 }.padding(.bottom, 4)
                 ForEach(model.inbox.sessions, id: \.key) { entry in
-                    let session = model.snapshot?.sessions.first { $0.key == entry.key }
+                    let session = model.session(forKey: entry.key)
+                    let source = session?.title ?? entry.latest?.message?.origin ?? "Unknown session"
                     Button {
-                        model.select(entry.key, edge: edge)
-                        section = "Inbox"
+                        if let session {
+                            model.openSessionInbox(session)
+                        } else {
+                            model.overviewFilterPick = "all"
+                            model.inboxOverview = true
+                        }
                     } label: {
                         HStack(spacing: 9) {
                             AIProviderGlyph(meta: AIProviders.meta(for: session?.target.provider ?? "unknown"), size: 18)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(session?.title ?? entry.key).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                                Text(source).font(.system(size: 12, weight: .medium)).lineLimit(1)
                                 Text(inboxSummary(entry)).font(.system(size: 10)).foregroundStyle(.secondary)
                             }
                             Spacer(minLength: 4)
@@ -459,7 +556,7 @@ public struct LiveWidgetView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(RowButtonStyle(cornerRadius: 10))
-                    .accessibilityLabel("Open " + (session?.title ?? "session") + ", " + inboxSummary(entry))
+                    .accessibilityLabel("Open " + (session == nil ? "inbox overview" : source) + ", " + inboxSummary(entry))
                 }
             }
             .padding(.vertical, 2)
@@ -475,9 +572,7 @@ public struct LiveWidgetView: View {
 
     @ViewBuilder private var markAllReadButton: some View {
         if model.inboxCount > 0 {
-            Button("Mark all read", action: model.markAllRead)
-                .buttonStyle(.genHover()).font(.system(size: 11, weight: .medium))
-                .instantTooltip("Answers become read; older questions and decisions stop counting. Nothing is deleted.")
+            WidgetMarkAllReadButton(model: model, showsTitle: true)
                 .accessibilityIdentifier("widget.inbox.markAllRead")
         }
     }
@@ -648,6 +743,9 @@ public struct LiveWidgetView: View {
         // pick).
         let pickUnder = WidgetProposal.placement(card, preferences: preferences)
         VStack(alignment: .leading, spacing: 10) {
+            if let origin = card.messageOrigin {
+                Text(origin).font(.caption).foregroundStyle(.secondary)
+            }
             WidgetReceiptContextView(card: card, model: model)
                 .id(card.id + "|" + String(card.at))
             if !card.body.isEmpty {
@@ -715,12 +813,14 @@ public struct LiveWidgetView: View {
                 }.font(.system(size: 11)).foregroundStyle(SessionPalette.secondary)
             }
             HStack(spacing: 8) {
-                if card.kind == "todo" && ["open", "acknowledged"].contains(card.status) {
+                if let task = card.task, let store = model.taskActions {
+                    WidgetInboxTaskButtons(task: task, store: store)
+                } else if card.kind == "todo" && ["open", "acknowledged"].contains(card.status) {
                     if card.status == "open" {
                         Button("Acknowledge") { model.ledger(card, state: "acknowledged") }
                     }
                     Button("Mark complete") { holdMove(card, to: "implemented") }
-                    Button("Dismiss") { holdMove(card, to: "dismissed") }
+                    LegacyWidgetTodoDismissButton(card: card, model: model)
                 } else if card.kind == "decision" && card.needsAnswer {
                     // Send now is the card's one primary action while a pick or a note waits; Dismiss is quiet and
                     // sits at the right edge, so it never moves when staging adds the buttons before it (UX audit P13).
@@ -1375,11 +1475,7 @@ public struct LiveWidgetView: View {
                 .accessibilityLabel("Paste media")
                 IconButton(systemName: "camera", tooltip: "Capture a screenshot", action: model.capture)
                     .accessibilityLabel("Capture screenshot")
-                IconButton(systemName: model.recordingVideo ? "stop.circle.fill" : "video",
-                           tooltip: model.recordingVideo ? "Stop the recording and paste it into the draft"
-                               : "Record a window, an app or a display (up to 10 min)",
-                           tint: model.recordingVideo ? Color.red : nil, action: model.toggleVideoCapture)
-                    .accessibilityLabel(model.recordingVideo ? "Stop and paste the recording" : "Record the screen")
+                ComposerRecordingButton(recorder: model.screenRecorder, toggle: model.toggleVideoCapture)
                 voiceButton
             }
             .disabled(parked != nil)
@@ -1835,9 +1931,15 @@ final class WidgetLedgerUndo: ObservableObject {
 /// Measured heights of LiveWidgetView's pane, its scroll viewport and the scroll document.
 final class WidgetContentFit {
     static let placeholderHeight: CGFloat = 360
+    enum Scroll: Hashable { case overview, staged, session(String) }
+
+    struct Measurement {
+        var viewport: CGFloat?
+        var document: CGFloat?
+    }
+
     var outer: CGFloat?
-    var viewport: CGFloat?
-    var document: CGFloat?
+    var scrolls: [Scroll: Measurement] = [:]
     var scheduled = false
 }
 
@@ -1906,5 +2008,43 @@ enum WidgetErrorText {
             return ("The widget's call to the hub failed. Try again, or reconnect.",
                     error.localizedDescription + "\n" + String(describing: error))
         }
+    }
+}
+
+private struct WidgetInboxTaskButtons: View {
+    let task: WidgetTask
+    @ObservedObject var store: WidgetTasksStore
+
+    var body: some View {
+        VStack(alignment: .leading) {
+            Text(task.addressee).font(.caption)
+            if task.sendUncertain == true { Text("Check the session before sending again.") }
+            HStack {
+                ForEach(task.actions, id: \.self) { action in
+                    Button(action.title) { store.perform(action, on: task) }
+                }
+            }.disabled(store.mutatingIDs.contains(task.id))
+            if let error = store.error(for: task) { Text(error).foregroundStyle(.red) }
+            if let undo = store.undo, undo.task.id == task.id {
+                Button("Undo") { store.perform(undo.action, on: undo.task, then: undo.then) }
+            }
+        }.taskResumePrompt(store, taskID: task.id)
+    }
+}
+
+private struct LegacyWidgetTodoDismissButton: View {
+    let card: WidgetCard
+    let model: WidgetModel
+    @State private var asking = false
+    @State private var reason = ""
+
+    var body: some View {
+        Button("Dismiss") { reason = ""; asking = true }
+            .alert("Dismiss task", isPresented: $asking) {
+                TextField("Reason", text: $reason)
+                Button("Cancel", role: .cancel) {}
+                Button("Dismiss", role: .destructive) { model.ledger(card, state: "dismissed", comment: reason) }
+                    .disabled(reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
     }
 }

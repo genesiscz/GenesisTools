@@ -90,7 +90,7 @@ export abstract class ReplToolset {
                 const name = prefix + String(property);
                 const method = methods.find((candidate) => candidate.name === name);
                 if (method && typeof value === "function") {
-                    return (...args: unknown[]) => {
+                    const invoke = (...args: unknown[]) => {
                         const input = method.positional
                             ? Object.fromEntries(method.positional.map((key, index) => [key, args[index]]))
                             : args[0] === undefined
@@ -164,6 +164,12 @@ export abstract class ReplToolset {
                         );
                         return markPromise(this.bindResult({ result, name: method.resultName }), `${owner}.${name}`);
                     };
+                    // A callable namespace (meetings.voices) also exposes independently validated methods.
+                    if (methods.some((child) => child.name.startsWith(`${name}.`))) {
+                        const callable = new Proxy(value, { apply: (_target, _receiver, args) => invoke(...args) });
+                        return this.bindMethods({ target: callable, methods, owner, prefix: `${name}.` });
+                    }
+                    return invoke;
                 }
                 if (
                     value !== null &&

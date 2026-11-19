@@ -43,7 +43,7 @@ public struct FlowTransformSettingsView: View {
                         Text("Choose an account").tag("")
                         ForEach(provider?.accounts ?? []) { account in Text(account.name).tag(account.id) }
                         if !accountID.isEmpty, provider?.accounts.contains(where: { $0.id == accountID }) != true {
-                            Text("Unavailable — select another account").tag(accountID)
+                            Text("Unavailable. Select another account").tag(accountID)
                         }
                     }.labelsHidden().frame(width: 230, alignment: .trailing)
                 }

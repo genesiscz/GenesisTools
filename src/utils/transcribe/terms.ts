@@ -485,11 +485,12 @@ class TermIndex {
 
         candidates.sort((a, b) => b.confidence - a.confidence);
 
-        if ((candidates[0]?.confidence ?? 0) < minConfidence) {
+        const best = candidates[0];
+        if (!best || best.confidence < minConfidence) {
             return undefined;
         }
 
-        const kind = candidates[0]!.kind;
+        const kind = best.kind;
         const top = candidates
             .filter((c) => c.kind === kind)
             .slice(0, MAX_CANDIDATES)

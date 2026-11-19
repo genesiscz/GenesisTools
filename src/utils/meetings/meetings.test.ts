@@ -39,8 +39,64 @@ function store(): MeetingsConfigStore {
 }
 
 describe("meetings config", () => {
-    test("native sound mode defaults to pieces, accepts session and refuses other values without changing the file", async () => {
-        expect(meetingsConfigSchema.parse({}).global.capture.recorders.native.audio.mode).toBe("pieces");
+    test("old files load term cutoffs without being rewritten and each dictionary can override one fuzzy cutoff", async () => {
+        const config = store();
+        await config.storage.setConfig({ version: 7, global: { language: "cs" } });
+        const bytes = fs.readFileSync(config.path);
+        expect((await config.read()).global.suggest.terms).toEqual({
+            applyAbove: 0.7,
+            phonetic: 0.7,
+            unknownCandidate: 0.8,
+            fuzzy: { apply: 0.95, suggest: 0.8 },
+        });
+        expect(fs.readFileSync(config.path)).toEqual(bytes);
+        await config.update((raw) => {
+            raw.global = {
+                suggest: { terms: { fuzzy: { apply: 0.9, suggest: 0.7 } } },
+                dictionary: { fuzzy: { apply: 0.92 } },
+            };
+            raw.projects = { example: { dictionary: { fuzzy: { suggest: 0.75 } } } };
+        });
+        const read = await new MeetingsConfigStore(config.storage).read();
+        expect(resolveDictionary(read).fuzzy).toEqual({ apply: 0.92, suggest: 0.7 });
+        expect(resolveDictionary(read, { project: "example" }).fuzzy).toEqual({ apply: 0.92, suggest: 0.75 });
+        expect(
+            resolveDictionary(read, { project: "example", meeting: { fuzzy: { apply: 0.98 }, entries: [] } }).fuzzy
+        ).toEqual({ apply: 0.98, suggest: 0.75 });
+    });
+
+    test("the term cutoff inherits a version 7 saved cutoff once and survives later general edits", async () => {
+        const config = store();
+        await config.storage.setConfig({
+            version: 7,
+            global: { suggest: { applyAbove: 0.9, terms: { phonetic: 0.81 } } },
+        });
+        const original = fs.readFileSync(config.path);
+        expect((await config.read()).global.suggest.terms).toMatchObject({ applyAbove: 0.9, phonetic: 0.81 });
+        expect(fs.readFileSync(config.path)).toEqual(original);
+        await config.update((raw) => {
+            const global = raw.global as { suggest: { applyAbove: number } };
+            global.suggest.applyAbove = 0.75;
+        });
+        expect(await config.storage.getConfig()).toMatchObject({
+            version: MEETINGS_CONFIG_VERSION,
+            global: { suggest: { applyAbove: 0.75, terms: { applyAbove: 0.9, phonetic: 0.81 } } },
+        });
+        const explicit = meetingsConfigSchema.parse({
+            version: 7,
+            global: { suggest: { applyAbove: 0.9, terms: { applyAbove: 0.72 } } },
+        });
+        expect(explicit.global.suggest.terms.applyAbove).toBe(0.72);
+        expect(
+            meetingsConfigSchema.parse({
+                version: MEETINGS_CONFIG_VERSION,
+                global: { suggest: { applyAbove: 0.9 } },
+            }).global.suggest.terms.applyAbove
+        ).toBe(0.7);
+    });
+
+    test("native sound defaults to a session and preserves an explicitly selected mode", async () => {
+        expect(meetingsConfigSchema.parse({}).global.capture.recorders.native.audio.mode).toBe("session");
         const config = store();
         const setMode = (mode: string) =>
             config.update((raw) => {
@@ -107,11 +163,17 @@ describe("meetings config", () => {
         const config = meetingsConfigSchema.parse({});
 
         expect(config.global.dictionary).toEqual({ entries: [] });
-        expect(config.global.capture).toMatchObject({ activeFps: 1, idleFps: 0.1, retentionDays: 30 });
+        expect(config.global.capture).toMatchObject({
+            activeFps: 1,
+            idleFps: 0.1,
+            retentionDays: 30,
+            soundWithoutScreen: true,
+        });
         expect(config.sources.wisprflow.autoRecord).toEqual({
             enabled: false,
             liveWithinSec: 30,
             notify: true,
+            permissionCard: true,
         });
         expect(config.projects).toEqual({});
         expect(config.global.playback.listen.roundCap).toBe(12);
@@ -119,7 +181,7 @@ describe("meetings config", () => {
         expect(languageSettings(config).ocr).toEqual(["cs-CZ", "en-US"]);
         expect(languageSettings(config, "sk").render.readAloudLabel).toBe("číta z");
         expect(recorderSettings(config.global.capture)).toEqual({
-            audio: { sources: ["mic", "system"], mode: "pieces" },
+            audio: { sources: ["mic", "system"], mode: "session" },
         });
     });
 
@@ -222,19 +284,24 @@ describe("meetings config", () => {
         expect(() => meetingsConfigSchema.parse({ global: { assign: { folderWaitDays: 0 } } })).toThrow();
     });
 
-    test("a file with no word, speaker label, sound or track keys reads their defaults, still at version 7", () => {
+    test("a legacy file with no word, speaker label, sound or track keys reads their defaults", () => {
         const config = meetingsConfigSchema.parse({ version: 7, global: { language: "cs" } });
 
-        expect(config.version).toBe(7);
+        expect(config.version).toBe(MEETINGS_CONFIG_VERSION);
         expect(config.global.suggest.words).toEqual({ minOccurrences: 2 });
         expect(config.global.speakerLabels).toEqual({
-            seat: { enabled: true },
+            channels: { minSeparation: 0.3 },
+            seat: { enabled: true, deviceOfferMinMeetings: 2 },
             voice: {
                 enabled: true,
                 gate: { score: 0.45, margin: 0.1, loneScore: 0.7, unsampledScore: 0.55, strangerScore: 0.3 },
                 exclusion: { enabled: true, margin: 0.15, maxConfidence: 0.69, minLines: 3, coherence: 0.82 },
                 minSeconds: 1.5,
                 compute: { priority: "normal", workers: "auto" },
+                sampleScope: "all",
+                outlierBelow: 0.5,
+                supportOnSeatLines: true,
+                seatOppositeShare: 0.1,
             },
         });
         expect(config.global.capture.audioRetentionDays).toBeUndefined();
@@ -260,6 +327,10 @@ describe("meetings config", () => {
             exclusion: { enabled: false, margin: 0.15, maxConfidence: 0.69, minLines: 5, coherence: 0.82 },
             minSeconds: 3,
             compute: { priority: "normal", workers: "auto" },
+            sampleScope: "all",
+            outlierBelow: 0.5,
+            supportOnSeatLines: true,
+            seatOppositeShare: 0.1,
         });
         expect(set.capture.audioRetentionDays).toBe(90);
         expect(set.playback.tracks).toBe("source");
@@ -271,6 +342,8 @@ describe("meetings config", () => {
             { suggest: { words: { minOccurrences: 51 } } },
             { suggest: { words: { minOccurrences: 2.5 } } },
             { speakerLabels: { seat: { enabled: "yes" } } },
+            { speakerLabels: { channels: { minSeparation: -0.01 } } },
+            { speakerLabels: { channels: { minSeparation: 1.01 } } },
             { speakerLabels: { voice: { enabled: 1 } } },
             { speakerLabels: { voice: { gate: { score: -0.1 } } } },
             { speakerLabels: { voice: { gate: { score: 1.1 } } } },
@@ -1178,6 +1251,48 @@ describe("meeting records", () => {
 });
 
 describe("calibrateChannels", () => {
+    test("live stereo levels use dBFS, RMS share and the last minute of source calibration", async () => {
+        const { MeetingLevels } = await import("./levels");
+        const levels = new MeetingLevels();
+        for (let i = 0; i < 600; i++) {
+            levels.observe({
+                atMs: i * 100,
+                mic: i < 300 ? 0.5 : 0.125,
+                system: i < 300 ? 0.125 : 0.5,
+                input: "Desk mic",
+                output: "Headphones",
+            });
+        }
+        const row = levels.snapshot(59_900);
+        expect(row.mic.dbfs).toBeCloseTo(-18.062, 2);
+        expect(row.system.dbfs).toBeCloseTo(-6.021, 2);
+        expect(row.micShare).toBeCloseTo(0.2);
+        expect(row.calibration.layout).toBe("left-mic");
+        expect(row.voiceMicShare).toBeCloseTo(0.8);
+        levels.observe({ atMs: 120_000, mic: 0, system: 0, input: "Desk mic", output: "Headphones" });
+        const quiet = levels.snapshot(120_000);
+        expect(quiet.mic).toMatchObject({ sampled: true, dbfs: null });
+        expect(quiet.micShare).toBeNull();
+        expect(quiet.calibration.layout).toBe("unknown");
+        expect(levels.snapshot(125_000).mic.sampled).toBe(false);
+    });
+    test("a short guided test of 8 s speech and 8 s playback verifies the layout", async () => {
+        const { MeetingLevels } = await import("./levels");
+        const levels = new MeetingLevels();
+        for (let i = 0; i < 160; i++) {
+            const speaking = i < 80;
+            levels.observe({
+                atMs: i * 100,
+                mic: speaking ? 0.5 : 0.05,
+                system: speaking ? 0.05 : 0.5,
+                input: "Desk mic",
+                output: "Headphones",
+            });
+        }
+        const row = levels.snapshot(15_900);
+        expect(row.calibration.layout).toBe("left-mic");
+        expect(row.voiceMicShare).toBeGreaterThan(0.8);
+    });
     // 30 mic segments (2 s each) then 30 call segments, 10 blocks per second.
     const segments = Array.from({ length: 60 }, (_, index) => ({
         startSec: index * 2,
@@ -1205,14 +1320,78 @@ describe("calibrateChannels", () => {
         expect(micShare(energyOf("right"), "right-mic", 0, 2)).toBeCloseTo(0.99, 2);
     });
 
-    test("a microphone that hears the call through loudspeakers still names its side; one that hears it as loud does not", () => {
+    test("the call can bleed onto the microphone while the two tagged distributions still separate", () => {
         // The call at a third of its loudness on the microphone's side: the call segments' left share is 0.25.
         expect(calibrateChannels(energyOf("left", 167), segments)).toMatchObject({
             layout: "left-mic",
             systemMedian: 0.25,
         });
         expect(calibrateChannels(energyOf("right", 167), segments).layout).toBe("right-mic");
-        expect(calibrateChannels(energyOf("left", 400), segments).layout).toBe("unknown");
+        expect(calibrateChannels(energyOf("left", 400), segments).layout).toBe("left-mic");
+    });
+
+    function taggedShares(mic: number, system: number) {
+        const left = new Float32Array(1200).fill(1000 * mic, 0, 600).fill(1000 * system, 600);
+        return { left, right: left.map((rms) => 1000 - rms) };
+    }
+
+    test("mic 0.55 and call 0.10 identify the channel in either order", () => {
+        expect(calibrateChannels(taggedShares(0.55, 0.1), segments)).toMatchObject({
+            layout: "left-mic",
+            micMedian: 0.55,
+            systemMedian: 0.1,
+        });
+        expect(calibrateChannels(taggedShares(0.45, 0.9), segments).layout).toBe("right-mic");
+        expect(calibrateChannels(taggedShares(0.55, 0.1), segments, { minSeparation: 0.5 }).layout).toBe("unknown");
+    });
+
+    test("mic 0.50 and call 0.45 stay unknown until their measured gap meets the configured minimum", () => {
+        const energy = taggedShares(0.5, 0.45);
+        expect(calibrateChannels(energy, segments, { sourceLayout: "left-mic" }).layout).toBe("unknown");
+        expect(calibrateChannels(energy, segments, { minSeparation: 0.04 }).layout).toBe("left-mic");
+        expect(calibrateChannels(energyOf("both"), segments, { minSeparation: 0 }).layout).toBe("unknown");
+    });
+
+    test("duplicate and overlapping same-source tags cannot inflate the independent vote count", () => {
+        const tags = Array.from({ length: 24 }, (_, i) => [
+            { startSec: i % 2, endSec: (i % 2) + 2, channel: "mic" },
+            { startSec: 60 + (i % 2), endSec: 62 + (i % 2), channel: "system" },
+        ]).flat();
+        expect(calibrateChannels(energyOf("left"), tags.reverse())).toMatchObject({
+            layout: "unknown",
+            segments: { mic: 1, system: 1 },
+        });
+    });
+
+    test("a block tagged simultaneously as mic and call cannot vote for either channel", () => {
+        // In each 8 s exchange the remote voice interrupts at 2 s, while the mic tag continues until 5 s.
+        const tagged = Array.from({ length: 24 }, (_, i) => [
+            { startSec: 8 * i, endSec: 8 * i + 5, channel: "mic" },
+            { startSec: 8 * i + 2, endSec: 8 * i + 8, channel: "system" },
+        ]).flat();
+        const left = Float32Array.from({ length: 24 * 80 }, (_, i) => (i % 80 < 20 ? 1000 : 100));
+        const right = left.map((_, i) => (i % 80 < 20 ? 0 : 4000));
+        expect(calibrateChannels({ left, right }, tagged)).toMatchObject({
+            layout: "left-mic",
+            micMedian: 1,
+            systemMedian: 0.024,
+            segments: { mic: 24, system: 24 },
+        });
+    });
+
+    test("without tags, dominant windows verify the source channel order; one active side or mono cannot", () => {
+        const energy = energyOf("left");
+        for (const sourceLayout of ["left-mic", "right-mic"] as const) {
+            expect(calibrateChannels(energy, [], { sourceLayout })).toMatchObject({
+                layout: sourceLayout,
+                segments: { mic: 0, system: 0 },
+            });
+            expect(calibrateChannels(energyOf("both"), [], { sourceLayout }).layout).toBe("unknown");
+            expect(calibrateChannels({ ...energy, right: new Float32Array(1200) }, [], { sourceLayout }).layout).toBe(
+                "unknown"
+            );
+        }
+        expect(calibrateChannels(energy, []).layout).toBe("unknown");
     });
 
     test("a mono recording, or too few tagged segments, leaves the layout unknown and the share out", () => {

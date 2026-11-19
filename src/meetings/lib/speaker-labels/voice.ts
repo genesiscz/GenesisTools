@@ -1,5 +1,6 @@
 import { availableParallelism, loadavg } from "node:os";
 import { join } from "node:path";
+import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
 import { measureCpuBusyPercent, readPerformanceCores } from "@genesiscz/utils/macos/host-stats";
 import {
     type MeetingsConfig,
@@ -8,15 +9,30 @@ import {
     type VoiceFreeCores,
     voiceWorkerCount,
 } from "@genesiscz/utils/meetings/config";
+import { type MeetingRecord, voiceRootMeeting } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { embedVoiceLines, type VoiceProgress } from "@genesiscz/utils/meetings/voice";
-import { readVoiceStore } from "@genesiscz/utils/meetings/voice-store";
+import {
+    groupedOwners,
+    meetingVoiceOwner,
+    predictionPrints,
+    readVoiceLibrary,
+    refused,
+    type SampleSource,
+    sameLine,
+    sourceForVoicePrint,
+    type VoiceLibrarySnapshot,
+    type VoicePrint,
+    type VoiceStore,
+    voiceLineKeys,
+} from "@genesiscz/utils/meetings/voice-library";
 import { backgroundPrefix } from "@genesiscz/utils/process/priority";
 import { profiler } from "@genesiscz/utils/profile";
+import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { OpenedMeeting } from "../opened-meeting";
 import { type MeetingSound, measureSoundClock, meetingSound, readSoundClock, saveSoundClock } from "../sound";
 import { nameByVoice, type VoiceLine } from "../voice-names";
-import type { LabelContext, LineLabel, SpeakerLabeler } from "./types";
+import type { LabelContext, LineLabel, SpeakerLabeler, VoiceSupport } from "./types";
 
 const prof = profiler.scope("meetings-suggest");
 
@@ -99,6 +115,7 @@ export async function embedSeatLines(
     context: Pick<LabelContext, "lines"> & {
         sound: MeetingSound;
         cachePath?: string;
+        readOnlyCache?: boolean;
         config?: MeetingsConfig;
         onProgress?: VoiceProgress;
         signal?: AbortSignal;
@@ -141,6 +158,7 @@ export async function embedSeatLines(
         const embeddings = await embedVoiceLines({
             audioPath: group.path,
             cachePath: context.cachePath,
+            readOnlyCache: context.readOnlyCache,
             workerPrefix: worker.prefix,
             clearBackground: worker.clearBackground,
             workers: worker.workers,
@@ -170,9 +188,158 @@ export async function embedSeatLines(
     return result.sort((a, b) => a.index - b.index);
 }
 
+/** The saved prints a seat line's support compared with: the person's samples on its seat and track, not its own. */
+function comparedSamples(options: {
+    store: VoiceStore;
+    person: string;
+    line: VoiceLine;
+    meeting: string;
+    sources: ReadonlyMap<VoicePrint, SampleSource>;
+}): number {
+    const voice = options.line.channels.find((channel) => channel.quality === "ready");
+    const saved = Object.entries(options.store.people).find(([name]) => sameName(name, options.person))?.[1];
+    if (!voice || !saved) {
+        return 0;
+    }
+
+    const fromSec = options.line.fromSec ?? voice.fromSec;
+    const toSec = options.line.toSec ?? voice.toSec;
+    return saved.samples.filter(
+        (sample) =>
+            sample.seat === options.line.seat &&
+            sample.track === options.line.track &&
+            sample.embedding.length === voice.embedding.length &&
+            !(
+                (options.sources.get(sample)?.rootMeeting ?? sample.meeting) === options.meeting &&
+                sample.fromSec < toSec &&
+                sample.toSec > fromSec
+            )
+    ).length;
+}
+
+export function meetingVoiceCachePath(opened: OpenedMeeting): string {
+    return join(opened.store.folder(opened.record.id), "evidence", "voice-lines.json");
+}
+
+async function meetingVoiceLines(opened: OpenedMeeting, context: LabelContext): Promise<VoiceLine[]> {
+    let sound = context.sound ?? (await prof.measureAsync("speakers.sound-inputs", () => opened.sound()));
+    {
+        using _clock = prof.section("speakers.sound-clock");
+        // Read-only previews supply their own sound without stamp tracks.
+        if (sound.tracks.some((track) => track.from.kind === "recorder" && track.clock === "stamp")) {
+            const inputs = await opened.soundInputs();
+            // Another run may have saved the measurement since this snapshot was opened.
+            const clock = readSoundClock(inputs.folder);
+            if (clock) {
+                sound = meetingSound({ ...inputs, clock });
+            } else if (inputs.tracks === "best") {
+                const measured = await measureSoundClock(inputs);
+                if (measured) {
+                    saveSoundClock(inputs.folder, measured.clock);
+                    sound = meetingSound({ ...inputs, clock: measured.clock });
+                }
+            }
+        }
+    }
+    using _pass = prof.section("voices.pass");
+    return await embedSeatLines({
+        lines: context.lines,
+        sound,
+        config: await opened.config(),
+        onProgress: voiceProgressForMeeting.get(opened),
+        signal: voiceSignalForMeeting.get(opened),
+        cachePath: meetingVoiceCachePath(opened),
+    });
+}
+
+/** Resolve the meeting's names against one library snapshot, preserving the source of every selected print. */
+export function meetingPredictionVoices(options: {
+    record: MeetingRecord;
+    project: string;
+    people: readonly string[];
+    scope: MeetingsConfig["global"]["speakerLabels"]["voice"]["sampleScope"];
+    view?: VoiceLibrarySnapshot;
+}) {
+    const view = options.view ?? readVoiceLibrary();
+    const owners = options.people.map((name) => meetingVoiceOwner(options.record, name));
+    const prints = predictionPrints({ project: options.project, scope: options.scope, owners, view });
+    const directory = groupedOwners(view);
+    const names = new Map(owners.map((owner) => [directory.select(owner), owner.name]));
+    const store: VoiceStore = { version: 1, model: prints.model, people: Object.create(null) };
+    const sources = new Map<VoicePrint, SampleSource>();
+    for (const sample of prints.samples) {
+        const name = names.get(directory.binding(sample.owner));
+        if (name) {
+            const person: { samples: VoicePrint[] } = store.people[name] ?? { samples: [] };
+            person.samples.push(sample);
+            store.people[name] = person;
+            sources.set(sample, sample.source);
+        }
+    }
+    return { view, directory, store, sources };
+}
+
+/** Address an embedded line on the transcript clock. A pass hashes each recording at most once. */
+export async function embeddedLineSource(options: {
+    line: VoiceLine;
+    root: string;
+    lineKey?: string;
+    hashes: Map<string, string>;
+}) {
+    const { line, root, lineKey, hashes } = options;
+    const ready = line.channels.find((channel) => channel.quality === "ready");
+    if (!ready) {
+        return undefined;
+    }
+    const file = ready.source.audioPath;
+    const sourceSha = hashes.get(file) ?? (await sha256FileAsync(file));
+    hashes.set(file, sourceSha);
+    return sourceForVoicePrint(
+        {
+            meeting: root,
+            sourceSha,
+            seat: line.seat,
+            track: line.track,
+            fromSec: line.fromSec ?? ready.fromSec,
+            toSec: line.toSec ?? ready.toSec,
+        },
+        root,
+        lineKey
+    );
+}
+
+export function localVoiceDecisions(options: {
+    record: MeetingRecord;
+    root: string;
+    prediction: ReturnType<typeof meetingPredictionVoices>;
+}) {
+    const { view, directory } = options.prediction;
+    const localRefusals = view.library.rejected.filter((row) => row.source.rootMeeting === options.root);
+    const localSamples = view.library.samples.filter(
+        (row) => row.source.rootMeeting === options.root && !refused(view.library, row.source, row.owner)
+    );
+    return {
+        any: localRefusals.length > 0 || localSamples.length > 0,
+        allows(name: string, source: SampleSource) {
+            const owner = meetingVoiceOwner(options.record, name);
+            const binding = directory.select(owner) ?? directory.binding(owner);
+            return (
+                !refused(view.library, source, owner) &&
+                !localRefusals.some(
+                    (r) => (!r.owner || directory.binding(r.owner) === binding) && sameLine(r.source, source)
+                ) &&
+                !localSamples.some((s) => sameLine(s.source, source) && directory.binding(s.owner) !== binding)
+            );
+        },
+    };
+}
+
 export function voiceLabeler(options: {
     opened: OpenedMeeting;
     settings: MeetingsConfig["global"]["speakerLabels"]["voice"];
+    /** A threshold preview shares the same enrollment and in-memory embeddings across its scores. */
+    voiceLibrary?: VoiceLibrarySnapshot;
+    readLines?: (context: LabelContext, model: string) => Promise<VoiceLine[]>;
 }): SpeakerLabeler {
     return {
         id: "voice",
@@ -181,60 +348,84 @@ export function voiceLabeler(options: {
             if (!context.project || !context.attended.some((stay) => stay.seat)) {
                 return [];
             }
-            const store = readVoiceStore(context.project);
+            const prediction = meetingPredictionVoices({
+                record: options.opened.record,
+                project: context.project,
+                scope: options.settings.sampleScope,
+                people: context.attended.map((stay) => stay.person),
+                view: options.voiceLibrary,
+            });
+            const { store, sources } = prediction;
             if (!Object.keys(store.people).length && !context.certain?.size) {
                 return [];
             }
-            let sound =
-                context.sound ?? (await prof.measureAsync("speakers.sound-inputs", () => options.opened.sound()));
-            {
-                using _clock = prof.section("speakers.sound-clock");
-                // Read-only previews supply their own sound without stamp tracks.
-                if (sound.tracks.some((track) => track.from.kind === "recorder" && track.clock === "stamp")) {
-                    const inputs = await options.opened.soundInputs();
-                    // Another run may have saved the measurement since this snapshot was opened.
-                    const clock = readSoundClock(inputs.folder);
-                    if (clock) {
-                        sound = meetingSound({ ...inputs, clock });
-                    } else if (inputs.tracks === "best") {
-                        const measured = await measureSoundClock(inputs);
-                        if (measured) {
-                            saveSoundClock(inputs.folder, measured.clock);
-                            sound = meetingSound({ ...inputs, clock: measured.clock });
-                        }
-                    }
-                }
-            }
-            using _pass = prof.section("voices.pass");
-            const lines = await embedSeatLines({
-                lines: context.lines,
-                sound,
-                config: await options.opened.config(),
-                onProgress: voiceProgressForMeeting.get(options.opened),
-                signal: voiceSignalForMeeting.get(options.opened),
-                cachePath: join(options.opened.store.folder(options.opened.record.id), "evidence", "voice-lines.json"),
-            });
+            const root = voiceRootMeeting(options.opened.store, options.opened.record);
+            const decisions = localVoiceDecisions({ record: options.opened.record, root, prediction });
+            const lineKeys = decisions.any ? voiceLineKeys(await options.opened.meeting()) : undefined;
+            const lines = options.readLines
+                ? await options.readLines(context, store.model)
+                : await meetingVoiceLines(options.opened, context);
             const inputs = {
                 ...options.settings,
                 store,
-                meeting: options.opened.record.id,
+                meeting: root,
+                lineKeys,
+                sources,
                 applyAbove: context.applyAbove,
                 attended: context.attended,
                 lines,
             };
             const certain = new Map(context.certain);
-            // Several strangers on the same single-owner seat must not train one another as its owner.
+            const hashes = new Map<string, string>();
+            for (const line of lines) {
+                const name = certain.get(line.index);
+                if (!name || !decisions.any) {
+                    continue;
+                }
+                const source = await embeddedLineSource({ line, root, lineKey: lineKeys?.[line.index], hashes });
+                if (!source) {
+                    continue;
+                }
+                if (!decisions.allows(name, source)) {
+                    certain.delete(line.index);
+                }
+            }
+            // Seat lines are scored against the saved samples only, so the seat never confirms itself. Several strangers
+            // on the same single-owner seat must not train one another as its owner: a stranger vetoes the owner. A
+            // line that passes the voice gate for the seat's person keeps the seat's name and gains the voice's support.
             const vetoes = new Map<number, LineLabel>();
-            if (context.seatOnlySeeds?.size && Object.keys(store.people).length) {
-                const seatLines = lines.filter((line) => context.seatOnlySeeds?.has(line.index));
-                for (const label of nameByVoice({ ...inputs, lines: seatLines, exclusion: undefined })) {
-                    if (label.reason === "not-the-seat-person") {
+            const supports = new Map<number, VoiceSupport>();
+            const seatOwners = options.settings.supportOnSeatLines ? context.seatOwners : undefined;
+            const checked = new Set([...(context.seatOnlySeeds ?? []), ...(seatOwners?.keys() ?? [])]);
+            if (checked.size && Object.keys(store.people).length) {
+                const seatLines = new Map(lines.filter((line) => checked.has(line.index)).map((l) => [l.index, l]));
+                for (const label of nameByVoice({ ...inputs, lines: [...seatLines.values()], exclusion: undefined })) {
+                    const owner = seatOwners?.get(label.index);
+                    const line = seatLines.get(label.index);
+                    if (label.reason === "not-the-seat-person" && context.seatOnlySeeds?.has(label.index)) {
                         certain.delete(label.index);
                         vetoes.set(label.index, label);
+                    } else if (
+                        label.reason === "named" &&
+                        label.person &&
+                        label.score !== undefined &&
+                        owner &&
+                        line &&
+                        sameName(label.person, owner)
+                    ) {
+                        supports.set(label.index, {
+                            person: label.person,
+                            score: label.score,
+                            ...(label.next ? { next: label.next } : {}),
+                            samples: comparedSamples({ store, person: label.person, line, meeting: root, sources }),
+                        });
                     }
                 }
             }
-            return nameByVoice({ ...inputs, certain }).map((label) => vetoes.get(label.index) ?? label);
+            return nameByVoice({ ...inputs, certain }).map((label) => {
+                const support = supports.get(label.index);
+                return vetoes.get(label.index) ?? (support ? { ...label, voiceSupport: support } : label);
+            });
         },
     };
 }

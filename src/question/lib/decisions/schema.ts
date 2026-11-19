@@ -35,6 +35,11 @@ export const DECISION_RECORD_RULE =
     'When a later decision replaces it: question_update { id, state: "superseded", supersededBy: "<new id>", ' +
     'comment: "<why>" }. Never leave an answered decision open.';
 
+export const TODO_RECORD_RULE =
+    'Post todos for the user with for: "human", and your own with for: "agent" or a model name. ' +
+    'When you finish a todo, record question_update { id, state: "implemented", commitRefs } in the same turn. ' +
+    'When you drop it, use state: "dismissed" with a comment explaining why.';
+
 /** The stored item kinds. A `question` item never reaches this store: it is a pending form. */
 export const DECISION_KINDS = ["decision", "todo"] as const;
 
@@ -131,7 +136,7 @@ export const decisionPatchSchema = z.object({
         .describe(
             "The next legal state. Decisions move forward; completed or dismissed TODOs may explicitly reopen. " +
                 "acknowledged straight from open or drafted records an answer the user gave in chat (needs option " +
-                "or answer); nothing is delivered. superseded (decisions only) needs supersededBy or comment. " +
+                "or answer); nothing is delivered. superseded needs supersededBy or comment. " +
                 "answered and sent are the inbox's send states: an agent's answered or sent is recorded as acknowledged."
         ),
     answer: z.string().optional().describe("The answer text, or a copy of an answer the user gave in chat."),
@@ -151,10 +156,10 @@ export const decisionPatchSchema = z.object({
     comment: z.string().optional().describe("Appended to the item's comments."),
     supersededBy: z
         .string()
-        .regex(/^d_\d+_.+$/)
+        .regex(/^[dt]_\d+_.+$/)
         .optional()
         .describe(
-            "With state superseded: the id of the decision that replaces this one (d_<n>_<session>, any session). " +
+            "With state superseded: the id of its replacement of the same kind (any session). " +
                 "It must exist and must not be this item."
         ),
 });

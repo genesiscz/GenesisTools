@@ -62,14 +62,16 @@ export interface CodexAgentsContext {
 export async function recentCodexAgentRecords({
     since,
     refresh,
+    parentNativeIds,
 }: {
     since: number;
     refresh?: boolean;
+    parentNativeIds?: string[];
 }): Promise<CodexAgentRecord[]> {
     const catalog = await catalogHistory({
         provider: "codex",
         refresh,
-        filters: { agentsOnly: true, mtimeFrom: since },
+        filters: { agentsOnly: true, mtimeFrom: since, parentNativeIds },
         maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS,
     });
 

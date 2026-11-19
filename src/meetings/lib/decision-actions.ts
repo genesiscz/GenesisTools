@@ -5,11 +5,12 @@ import {
     speakerAssignmentSchema,
     spellingReachSchema,
 } from "@genesiscz/utils/meetings/record";
+import { idSchema, ownerSchema, sourceSchema } from "@genesiscz/utils/meetings/voice-library";
 import { voicePrintSchema } from "@genesiscz/utils/meetings/voice-store";
 import { dictionaryEntrySchema } from "@genesiscz/utils/transcribe/dictionary";
 import { z } from "zod";
 import { sentCommentSchema } from "./comment-schema";
-import { findingSchema } from "./findings";
+import { refinePlainReason, savedFindingSchema } from "./findings";
 import { linePointSchema } from "./moment-schema";
 import { rejectFilterSchema } from "./reject-filter";
 
@@ -20,11 +21,21 @@ import { rejectFilterSchema } from "./reject-filter";
  */
 
 /** The file in a meeting's folder that keeps its decision journal: one entry per line, oldest first, append-only. */
-export const JOURNAL_FILE = "decisions.ndjson";
+export { JOURNAL_FILE } from "@genesiscz/utils/meetings/record";
 
-import { meetingSeatsSchema } from "@genesiscz/utils/meetings/seats";
+import { meetingSeatsSchema, storedMeetingSeatsSchema } from "@genesiscz/utils/meetings/seats";
 
 const itemRef = z.string().min(1);
+
+const setFieldsAction = z.object({
+    kind: z.literal("set"),
+    seats: meetingSeatsSchema.optional(),
+    seatsIfAbsent: z.literal(true).optional(),
+    project: z.string().min(1).optional(),
+    title: z.string().min(1).optional(),
+    labels: z.array(z.string().min(1)).optional(),
+    unlabel: z.array(z.string().min(1)).optional(),
+});
 
 /** One decision a person, an agent or a rule makes on a meeting. Item references take an id (`i42`) or `Q12`. */
 export const DECISION_ACTION_OPTIONS = [
@@ -134,7 +145,7 @@ export const DECISION_ACTION_OPTIONS = [
     z.object({
         kind: z.literal("add"),
         /** Empty only with `replace`: a new plan that found nothing still takes the old suggestions back. */
-        findings: z.array(findingSchema),
+        findings: z.array(savedFindingSchema),
         allowDuplicates: z.boolean().optional(),
         force: z.boolean().optional(),
         replace: z
@@ -152,18 +163,21 @@ export const DECISION_ACTION_OPTIONS = [
      * The meeting's own fields (`set`): its project (a known name: the caller resolves it first), its title, labels
      * to add and labels to remove.
      */
-    z.object({
-        kind: z.literal("set"),
-        seats: meetingSeatsSchema.optional(),
-        seatsIfAbsent: z.literal(true).optional(),
-        project: z.string().min(1).optional(),
-        title: z.string().min(1).optional(),
-        labels: z.array(z.string().min(1)).optional(),
-        unlabel: z.array(z.string().min(1)).optional(),
-    }),
+    setFieldsAction,
 ] as const;
 
-export const decisionActionSchema = z.discriminatedUnion("kind", [...DECISION_ACTION_OPTIONS]);
+/** A decision to apply now: an add's new findings give their reasons in plain words (U18); a saved line need not. */
+export const decisionActionSchema = z
+    .discriminatedUnion("kind", [...DECISION_ACTION_OPTIONS])
+    .superRefine((action, ctx) => {
+        if (action.kind !== "add") {
+            return;
+        }
+
+        for (const [index, finding] of action.findings.entries()) {
+            refinePlainReason(finding, ctx, ["findings", index]);
+        }
+    });
 export type DecisionAction = z.infer<typeof decisionActionSchema>;
 
 /** The Undo of one entry (`items`: only these of its items; a question named brings back its whole answer). */
@@ -210,7 +224,11 @@ const savedJournalActionSchema = z.preprocess(
         }
         return value;
     },
-    z.union([journalActionSchema, unsupportedJournalAction])
+    z.union([
+        journalActionSchema,
+        setFieldsAction.extend({ seats: storedMeetingSeatsSchema.optional() }),
+        unsupportedJournalAction,
+    ])
 );
 
 /** One item a decision changed: its state before (absent: the decision made it) and after (absent: it removed it). */
@@ -243,8 +261,8 @@ export const MEETING_FIELDS = ["project", "title", "labels", "seats"] as const;
 /** One meeting field a decision changed, before and after (absent: no value). */
 export const fieldChangeSchema = z.object({
     field: z.enum(MEETING_FIELDS),
-    before: z.union([z.string(), z.array(z.string()), meetingSeatsSchema]).optional(),
-    after: z.union([z.string(), z.array(z.string()), meetingSeatsSchema]).optional(),
+    before: z.union([z.string(), z.array(z.string()), storedMeetingSeatsSchema]).optional(),
+    after: z.union([z.string(), z.array(z.string()), storedMeetingSeatsSchema]).optional(),
 });
 export type FieldChange = z.infer<typeof fieldChangeSchema>;
 
@@ -306,6 +324,13 @@ export const journalEntrySchema = z.object({
                 project: z.string(),
                 person: z.string(),
                 model: z.string(),
+                source: sourceSchema.optional(),
+                owner: ownerSchema.optional(),
+                id: idSchema.optional(),
+                token: z.string().optional(),
+                item: z.string().optional(),
+                origin: z.enum(["answer", "confirm"]).optional(),
+                acquiredBy: z.enum(["live", "backfill"]).optional(),
                 before: voicePrintSchema.optional(),
                 after: voicePrintSchema,
             })

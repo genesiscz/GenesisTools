@@ -65,7 +65,7 @@ public struct LiveRecording: Equatable, Identifiable, Sendable {
 
     public init(id: String, kind: String, title: String, pid: Int32, startedAt: Date, state: String,
                 displays: [Display] = [], frames: Int = 0, lastFrameAt: Date? = nil, warning: String? = nil,
-                folder: String? = nil, controls: [String] = LiveRecordingCommand.allCases.map(\.rawValue),
+                folder: String? = nil, controls: [String] = LiveRecordingCommand.legacyMethods,
                 socket: String? = nil, panel: Bool = false) {
         self.id = id
         self.kind = kind
@@ -113,9 +113,54 @@ public struct LiveRecording: Equatable, Identifiable, Sendable {
     }
 }
 
-/// The control calls of the menu and the floating controls; the raw value is the RPC method.
-public enum LiveRecordingCommand: String, CaseIterable, Sendable {
+/// One wire format for the compact controls and the full recorder.
+public enum LiveRecordingCommand: Equatable, Sendable {
+    public enum Source: String, Hashable, Sendable { case mic, system }
     case pause, resume, stop
+    case mute(Source), unmute(Source), setInput(deviceID: String), setFrameRate(active: Int, still: Double)
+    case marker
+
+    public static let legacyMethods = ["pause", "resume", "stop"]
+
+    /// Older menu clients enumerate or look up the three parameterless transport actions.
+    public static var allCases: [Self] { [.pause, .resume, .stop] }
+
+    public init?(rawValue: String) {
+        switch rawValue {
+        case "pause": self = .pause
+        case "resume": self = .resume
+        case "stop": self = .stop
+        case "marker.add": self = .marker
+        default: return nil
+        }
+    }
+
+    public var rawValue: String {
+        switch self {
+        case .pause: "pause"
+        case .resume: "resume"
+        case .stop: "stop"
+        case .mute, .unmute: "audio.mute"
+        case .setInput: "audio.setInput"
+        case .setFrameRate: "settings.set"
+        case .marker: "marker.add"
+        }
+    }
+
+    public var parameters: [String: Any] {
+        switch self {
+        case .pause, .resume: return [:]
+        case .stop: return ["wait": true]
+        case let .mute(source): return ["source": source.rawValue, "muted": true]
+        case let .unmute(source): return ["source": source.rawValue, "muted": false]
+        case let .setInput(deviceID): return ["deviceId": deviceID]
+        case let .setFrameRate(active, still):
+            var patch: [String: Any] = ["activeFps": active]
+            if still > 0 { patch["idleFps"] = still }
+            return patch
+        case .marker: return ["label": "Mark"]
+        }
+    }
 }
 
 /// The live recordings folder: reading its entries and dropping the ones whose recorder process is gone.
@@ -196,7 +241,7 @@ public struct LiveRecordingStore: Sendable {
             guard let id = (display["id"] as? NSNumber)?.int64Value else { return nil }
             return LiveRecording.Display(id: id, name: display["name"] as? String ?? "Display \(id)")
         }
-        let controls = (object["controls"] as? [String]) ?? LiveRecordingCommand.allCases.map(\.rawValue)
+        let controls = (object["controls"] as? [String]) ?? LiveRecordingCommand.legacyMethods
         let title = (object["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? id
 
         return LiveRecording(

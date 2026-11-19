@@ -195,7 +195,9 @@ extension MeetingsPreferences {
     enum Rows {
         enum ReturnKey: String, CaseIterable { case edit, confirm }
         enum ChoiceKeys: String, CaseIterable { case on, off }
-        enum Decided: String, CaseIterable { case inPlace, hidden }
+        /// Where a decided row goes: `atEnd` folds it and moves it below the open rows (U15, U16: 32 rejected questions
+        /// stood above the 9 open ones), `inPlace` folds it where it is, `hidden` takes it out of the list.
+        enum Decided: String, CaseIterable { case inPlace, hidden, atEnd }
         enum Order: String, CaseIterable { case priority, time }
         enum LowPriority: String, CaseIterable { case hide, show }
         enum AskReach: String, CaseIterable { case always, never }
@@ -215,8 +217,9 @@ extension MeetingsPreferences {
             key: "meetings.rows.choiceKeys", defaultValue: ChoiceKeys.on, choices: ChoiceKeys.allCases,
             title: "Number keys pick a choice", detail: "1 to 9 answer the selected row with that choice.")
         static let decided = MeetingsWindowSetting(
-            key: "meetings.rows.decided", defaultValue: Decided.inPlace, choices: Decided.allCases,
-            title: "Decided rows", detail: "In place: a decided row folds where it is. Hidden: it leaves the list.")
+            key: "meetings.rows.decided", defaultValue: Decided.atEnd, choices: Decided.allCases,
+            title: "Decided rows",
+            detail: "At the end: a decided row folds and moves below the open ones. In place: it folds where it is. Hidden: it leaves the list.")
         static let order = MeetingsWindowSetting(
             key: "meetings.rows.order", defaultValue: Order.priority, choices: Order.allCases,
             title: "Row order", detail: "Priority: the order the terminal asks. Time: the transcript's order.")

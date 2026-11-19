@@ -95,6 +95,9 @@ export function navTitle(target: NavTarget): string {
     if (target.worktree) {
         return target.worktree === "cleanup" ? "worktree cleanup" : `worktree ${basename(target.worktree)}`;
     }
+    if (target.work) {
+        return `Work: ${target.work}`;
+    }
 
     if (target.agent) {
         return `agent ${target.agent}`;

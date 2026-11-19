@@ -68,6 +68,22 @@ export async function claimPidfile(pidFile: string): Promise<void> {
     }
 }
 
+/** A watcher releases its pidfile when its code changes. The same check replaces it after a crash. */
+export function superviseMeetingsWatcher(intervalMs = WATCHER_CHECK_MS): () => void {
+    const check = () => {
+        void ensureWatcher()
+            .then((result) => {
+                if (result === "started") {
+                    log.info("[daemon] started the meetings watcher");
+                }
+            })
+            .catch((err) => log.warn({ err }, "[daemon] meetings watcher check failed"));
+    };
+    check();
+    const timer = setInterval(check, intervalMs);
+    return () => clearInterval(timer);
+}
+
 export async function startDaemon(): Promise<void> {
     const pidFile = getPidFile();
     mkdirSync(dirname(pidFile), { recursive: true });
@@ -81,23 +97,10 @@ export async function startDaemon(): Promise<void> {
         .then((result) => log.info({ result }, "[daemon] widget at start"))
         .catch((err) => log.warn({ err }, "[daemon] widget start check failed"));
 
-    // The meetings watcher records the screen with Wispr Flow's recordings, when the user turned it on.
-    ensureWatcher()
-        .then((result) => log.info({ result }, "[daemon] meetings watcher at start"))
-        .catch((err) => log.warn({ err }, "[daemon] meetings watcher start failed"));
-    // A watcher killed later (a reinstall, a crash) comes back within a minute; it resumes a recording whose recorder died.
-    const watcherCheck = setInterval(() => {
-        ensureWatcher()
-            .then((result) => {
-                if (result === "started") {
-                    log.info("[daemon] meetings watcher was gone; started it again");
-                }
-            })
-            .catch((err) => log.warn({ err }, "[daemon] meetings watcher check failed"));
-    }, WATCHER_CHECK_MS);
+    const stopWatchingMeetings = superviseMeetingsWatcher();
 
     const cleanup = () => {
-        clearInterval(watcherCheck);
+        stopWatchingMeetings();
         // Guarded: a daemon that lost its claim must not delete the winner's file.
         clearPidFile(pidFile);
         log.info("[daemon] stopped");

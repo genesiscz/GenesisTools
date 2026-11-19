@@ -1,7 +1,10 @@
 import { decisionFindArgv } from "@app/claude/lib/cmux/transcript-find";
+import { readInboxGroupEntries } from "@app/question/lib/inbox/unread";
+import { untilAborted } from "@genesiscz/utils/async";
 import { CODE_CHANGED_EXIT, onLoadedCodeChange } from "@genesiscz/utils/bun/loaded-modules";
 import { execToolInteractive, runTool } from "@genesiscz/utils/cli";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
+import { writeStdoutStrict } from "@genesiscz/utils/cli/stdout";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { runningWidgetRoot } from "@genesiscz/utils/macos/native-inbox";
@@ -10,7 +13,7 @@ import { prepareWidgetAsset } from "./lib/composer/assets";
 import { widgetDispatcher } from "./lib/composer/dispatch";
 import { processWidgetOutbox } from "./lib/composer/engine";
 import { performWidgetAction } from "./lib/widget/actions";
-import { readWidgetReceiptContext } from "./lib/widget/context";
+import { readWidgetMessageBody, readWidgetReceiptContext } from "./lib/widget/context";
 import { readWidgetText } from "./lib/widget/readback";
 import { oneShotWidgetSources } from "./lib/widget/roster-cache";
 import {
@@ -23,8 +26,8 @@ import {
     stageShelfImage,
     stageShelfMedia,
 } from "./lib/widget/shelf";
-import { discoverWidgetCatalog, widgetSnapshot } from "./lib/widget/snapshot";
-import { mutateWidgetState } from "./lib/widget/storage";
+import { discoverWidgetCatalog, widgetInboxWindow, widgetSnapshot } from "./lib/widget/snapshot";
+import { mutateWidgetState, readWidgetState } from "./lib/widget/storage";
 import { StdinLines, watchWidget, widgetDecisionLine, widgetSelectionLine } from "./lib/widget/watch";
 import { registerWidgetTasks } from "./widget-tasks-cli";
 import { registerWidgetVoiceNotes } from "./widget-voice-notes-cli";
@@ -37,11 +40,45 @@ const widget = program
 registerWidgetTasks(widget);
 registerWidgetVoiceNotes(widget);
 widget
+    .command("message-body <id>")
+    .description("Read the full question and markdown body of a stored inbox entry")
+    .action(async (id: string) => {
+        out.result(await readWidgetMessageBody(id));
+    });
+widget
+    .command("answer-group <id>")
+    .description("Read earlier unread answers in the same inbox group")
+    .option("--limit <n>", "Maximum earlier answers (1 to 20)", "5")
+    .action(async (id: string, options: { limit: string }, command) => {
+        const root = command.optsWithGlobals().stateRoot;
+        const request = { id, limit: Number(options.limit) };
+        const now = Date.now();
+        const window = widgetInboxWindow((await readWidgetState(root)).inboxClearedAt, now);
+        const entries = readInboxGroupEntries({ ...request, window: { ...window, staleBefore: 0 } });
+
+        // When all candidates qualify by age alone, the roster cannot affect membership.
+        if (entries.every((entry) => entry.at >= window.staleBefore)) {
+            out.result({ entries });
+            return;
+        }
+
+        const snapshot = await widgetSnapshot({
+            root,
+            now,
+            sources: await oneShotWidgetSources(root),
+            answerGroup: request,
+        });
+        out.result({ entries: snapshot.groupEntries ?? [] });
+    });
+widget
     .command("pin <session>")
     .requiredOption("--provider <provider>")
     .action(async (session: string, options, command) => {
         const root = command.optsWithGlobals().stateRoot;
-        const snapshot = await widgetSnapshot({ root, sources: await oneShotWidgetSources(root) });
+        const snapshot = await widgetSnapshot({
+            root,
+            sources: await oneShotWidgetSources(root, { requireComplete: true }),
+        });
         const candidates = snapshot.sessions.filter(
             (entry) => entry.target.sessionId === session && entry.target.provider === options.provider
         );
@@ -237,7 +274,7 @@ widget
                         root: command.optsWithGlobals().stateRoot,
                         selectedKey: options.selected,
                         signal: owner.signal,
-                        emit: (snapshot, serialized) => {
+                        emit: async (snapshot, serialized) => {
                             // Only an opted-in reader can carry the last roster across lines of this stream.
                             const line =
                                 reuseSessions && sentSessions && Bun.deepEquals(sentSessions, snapshot.sessions)
@@ -246,7 +283,13 @@ widget
                                           { strict: true }
                                       )
                                     : serialized;
-                            out.print(`${line}\n`);
+                            try {
+                                owner.signal.throwIfAborted();
+                                await untilAborted(writeStdoutStrict(`${line}\n`), owner.signal);
+                            } catch (error) {
+                                owner.abort(error);
+                                throw error;
+                            }
                             if (reuseSessions) {
                                 sentSessions = snapshot.sessions;
                             }

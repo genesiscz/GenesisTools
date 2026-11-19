@@ -1,3 +1,4 @@
+import type { AudioLevelBlock } from "./audio-levels";
 import type { AudioDevices, AudioSource } from "./control";
 
 export const FRAME_RECORDER_IDS = ["native", "peekaboo"] as const;
@@ -18,6 +19,8 @@ export type CaptureTarget = { kind: "display"; displayId: number } | { kind: "fo
 
 export interface CaptureRequest {
     target: CaptureTarget;
+    /** CG window IDs the display filter must exclude. */
+    excludeWindowIds?: number[];
     /** At most 180. */
     durationSec: number;
     activeFps: number;
@@ -69,6 +72,7 @@ export interface LiveCapture {
 }
 
 export interface CaptureHooks {
+    onLevels?: (block: AudioLevelBlock) => void;
     /** A frame the recorder kept, as it lands; its `path` is the recorder's own file until the capture ends. */
     onFrame?: (frame: CapturedFrame) => void;
     /** The capture accepts commands from now on. */

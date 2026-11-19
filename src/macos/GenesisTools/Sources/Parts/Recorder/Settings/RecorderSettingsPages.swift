@@ -5,6 +5,8 @@ import SwiftUI
 /// one page; the editor and the library on the other. Each row edits the key its reader already reads.
 @MainActor
 enum RecorderSettingsPages {
+    static let frameRateHelp = "These rates apply to the next recording. A running movie keeps its current rate. To change it during a take, use Frame rate in the recording control bar."
+
     static func section(model: RecorderSettingsModel) -> NativeSettingsSection {
         NativeSettingsSection(
             id: "recorder", title: "Recorder",
@@ -37,9 +39,6 @@ private struct RecorderRecordingSettings: View {
             cameraCard
             shortcutsCard
             menuBarCard
-            Text("The capture picker, the menu bar menu and this page change the same settings. A running recorder follows a change at once.")
-                .font(.system(size: 11)).foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -65,7 +64,7 @@ private struct RecorderRecordingSettings: View {
             .disabled(!countdown.wrappedValue)
             Divider()
             NativeSettingsSegmented(
-                "Frame rate", detail: "Frames per second while something moves.", identifier: "recorder.settings.fps",
+                "Frame rate", detail: RecorderSettingsPages.frameRateHelp, identifier: "recorder.settings.fps",
                 options: CaptureOptions.frameRates.map { NativeSettingsOption($0, "\($0) fps") },
                 selection: model.capture(\.fps), minSegmentWidth: 52)
             Divider()
@@ -203,6 +202,10 @@ private struct RecorderRecordingSettings: View {
 
     private var menuBarCard: some View {
         NativeSettingsCard("Menu bar", subtitle: "The recorder's item in the menu bar, and where its messages go.") {
+            NativeSettingsToggle("Show separate Recorder item",
+                                 detail: "Keep Recorder running with its own menu bar item.",
+                                 identifier: MenuBarSettings.recorderKey, isOn: model.bool(MenuBarSettings.recorderKey, true))
+            Divider()
             NativeSettingsToggle("Quick actions in Recent",
                                  detail: "Each recent recording opens a menu: open, copy the movie or a GIF, show in Finder, rename, its meeting, Trash. Off: a click opens the editor.",
                                  identifier: "recorder.settings.recentActions", isOn: model.bool(RecorderMenu.recentActionsKey, true))

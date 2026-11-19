@@ -119,6 +119,10 @@ export class PeekabooFrameRecorder extends FrameRecorder {
     }
 
     async capture(request: CaptureRequest, signal?: AbortSignal): Promise<CaptureResult> {
+        if (request.excludeWindowIds?.length) {
+            throw new CaptureError("unavailable", "peekaboo cannot exclude windows from a frames recording");
+        }
+
         if (request.target.kind !== "display") {
             throw new CaptureError("unavailable", "peekaboo cannot follow the focused display");
         }

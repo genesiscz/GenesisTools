@@ -445,7 +445,9 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
 
         // Each state event re-anchors the floating controls' clock on the movie time; an error changes only the entry.
         if (event.event === "state") {
-            void control?.status().then((status) => live?.notifyStatus(status, framed));
+            void control
+                ?.status()
+                .then((status) => live?.notifyStatus(status, { ...framed, displays: status.displays }));
         } else if (event.event === "error") {
             void control?.status().then((status) => live?.update({ state: status.state, warning: status.warning }));
         } else if (event.event === "elapsed") {

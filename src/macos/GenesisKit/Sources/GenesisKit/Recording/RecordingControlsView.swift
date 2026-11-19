@@ -111,6 +111,8 @@ enum RecordingAppIcon {
 /// The small floating controls of a running recording: the recorded time with a red dot, what is recorded (a click
 /// switches it), pause or resume, restart, the host's "stop and use" action and stop and discard. The leading part
 /// (grip, dot and time) moves the window. Generic: the host names the use action and decides what it does.
+/// RecordingControlsClickTests and RecordingRenderTests still host this public view for the compact-controls
+/// interactions and reference pictures. The widget presents RecordingBarView.
 public struct RecordingControlsView: View {
     private let state: RecordingControlsState
     private let actions: RecordingControlsActions

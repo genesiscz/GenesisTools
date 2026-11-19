@@ -28,6 +28,8 @@ export interface IssueRecord {
     closed_at: string | null;
     last_fetched: string;
     last_comment_cursor: string | null;
+    reaction_total?: number | null;
+    comment_total?: number | null;
 }
 
 export interface CommentRecord {
@@ -230,7 +232,13 @@ export interface PRCommandOptions extends IssueCommandOptions {
     worktree?: boolean | string;
 }
 
+export const ISSUE_SEARCH_TYPES = ["keyword", "semantic", "hybrid"] as const;
+export type IssueSearchType = (typeof ISSUE_SEARCH_TYPES)[number];
+export type RankedIssueSearchType = Exclude<IssueSearchType, "keyword">;
+
 export interface SearchCommandOptions {
+    searchType?: IssueSearchType;
+    local?: boolean;
     type?: "issue" | "pr" | "all" | "repo";
     repo?: string;
     state?: "open" | "closed" | "all";
@@ -465,11 +473,11 @@ export interface SearchResult {
     author: string;
     createdAt: string;
     updatedAt: string;
-    comments: number;
-    reactions: number;
+    comments: number | null;
+    reactions: number | null;
     repo: string;
     url: string;
-    source?: "advanced" | "legacy" | "both";
+    source?: "advanced" | "legacy" | "both" | RankedIssueSearchType | `local-${RankedIssueSearchType}`;
 }
 
 // ============================================

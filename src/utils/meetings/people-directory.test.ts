@@ -388,6 +388,31 @@ describe("PeopleDirectory.known", () => {
 });
 
 describe("the people book and its merges", () => {
+    test("J7 reads old books without a write and journals owner device decisions under the book lock", async () => {
+        const { store, book } = scratch([]);
+        const account = "Boardroom PC";
+        const legacy = '{"version":1,"entries":[],"merges":[],"hidden":[],"future":42}';
+        mkdirSync(join(book.path, ".."), { recursive: true });
+        writeFileSync(book.path, legacy);
+        const reopen = () => new PeopleBook({ storage: store.storage });
+        expect(reopen().read().devices).toEqual([]);
+        expect(readFileSync(book.path, "utf8")).toBe(legacy);
+        await Promise.all([
+            book.decideDevice({ account, action: "map", group: "table", actor: "window" }),
+            reopen().add({ name: "Lark Example" }),
+        ]);
+        const retry = await reopen().decideDevice({ account, action: "map", group: "table", actor: "window" });
+        expect(retry.changed).toBe(false);
+        await reopen().decideDevice({ account, action: "unmap", actor: "window" });
+        expect(reopen().read()).toMatchObject({
+            entries: [{ name: "Lark Example" }],
+            devices: [
+                { account, action: "map", group: "table" },
+                { account, action: "unmap" },
+            ],
+        });
+        expect(SafeJSON.parse(readFileSync(book.path, "utf8"), { strict: true })).toHaveProperty("future", 42);
+    });
     test("a merge names the meetings and renamed labels it links, shows one person, and its token undoes it", async () => {
         const { store, book } = scratch([
             meeting("m1", "2026-11-08T10:00:00Z", {

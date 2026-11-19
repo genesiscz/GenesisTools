@@ -31,8 +31,16 @@ struct ReachSheet: View {
         let struck = detail.pendingStruck.intersection(pending.reach.judged.map(\.id))
         VStack(alignment: .leading, spacing: 12) {
             Text("This also affects").font(.system(size: 15, weight: .semibold))
-            Text(verbatim: Self.lead(pending))
-                .font(.system(size: 12.5)).foregroundStyle(.secondary)
+            if let spelling = pending.reach.spelling {
+                // U12: what changes and where, in place of "Besides i897, this decision also changes:".
+                let lead = Self.spellingLead(heard: spelling.heard, proposed: spelling.proposed,
+                                             lines: spellingLines.count, dictionary: teachDictionary)
+                HighlightedText(lead.text, ranges: lead.ranges)
+                    .font(.system(size: 13.5)).fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(verbatim: Self.lead(pending))
+                    .font(.system(size: 12.5)).foregroundStyle(.secondary)
+            }
             // As tall as the list, up to 360 pt: on the card over the column a greedy scroll area stood 360 pt high
             // under a one-item list.
             FittedScroll(maxHeight: 360) {
@@ -71,6 +79,24 @@ struct ReachSheet: View {
         let answer = pending.action.answer.map { " (→ \($0))" } ?? ""
         let verb = pending.action.replaces == nil ? "this decision also changes" : "the changed answer also changes"
         return "Besides \(pending.row.label)\(answer), \(verb):"
+    }
+
+    /// A spelling's lead (U12): "“Hoho” becomes “HoHo” in 4 lines and in the dictionary." `lines` is the number of
+    /// ticked lines and `dictionary` the dictionary box, so the sentence follows the choices below it.
+    static func spellingLead(heard: String, proposed: String, lines: Int, dictionary: Bool) -> (text: String, ranges: [NSRange]) {
+        guard lines > 0 || dictionary else {
+            return ("“\(heard)” stays as it is: tick a line or the dictionary.", [])
+        }
+        let prefix = "“\(heard)” becomes “"
+        let change = "\(prefix)\(proposed)”"
+        let suffix: String
+        switch (lines > 0, dictionary) {
+        case (true, true): suffix = " in \(Plural.count(lines, "line")) and in the dictionary."
+        case (true, false): suffix = " in \(Plural.count(lines, "line"))."
+        case (false, _): suffix = " in the dictionary."
+        }
+        let range = NSRange(location: prefix.utf16.count, length: proposed.utf16.count)
+        return (change + suffix, proposed.isEmpty ? [] : [range])
     }
 }
 
@@ -212,7 +238,9 @@ private struct SpellingReachChoices: View {
                                 Text(line.speaker).fontWeight(.medium)
                                 if line.primary { Text("This line").foregroundStyle(.secondary) }
                             }.font(.caption)
-                            Text(line.text).font(.callout).fixedSize(horizontal: false, vertical: true)
+                            // The heard words marked where they sit in the line (U12): what the spelling changes.
+                            HighlightedText(line.text, ranges: line.ranges)
+                                .font(.callout).fixedSize(horizontal: false, vertical: true)
                         }
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }

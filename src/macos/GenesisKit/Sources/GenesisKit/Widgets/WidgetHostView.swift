@@ -600,7 +600,7 @@ struct WidgetPeekView: View {
 
     /// The overview's words for the same move.
     private var openTitle: String {
-        item.needsAnswer && options.isEmpty ? "Answer in its session" : "Open in its session"
+        item.openTitle
     }
 
     /// The symbol and colour of an alert's kind: orange waits for you, green was answered elsewhere, blue is news.
@@ -623,6 +623,12 @@ struct WidgetPeekView: View {
                     if model.preferences.alertSummary,
                        let summary = item.summary, !summary.isEmpty, item.needsAnswer {
                         WidgetPeekSummary(summary: summary).equatable()
+                    }
+                    if let text = item.message?.text, !text.isEmpty {
+                        Text(verbatim: text).font(.system(size: 12)).lineLimit(4)
+                            .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 8)
+                            .accessibilityIdentifier("widget.peek.message")
+                            .frameProbe("widget.peek.message")
                     }
                     if !options.isEmpty { optionList }
                     if item.isAnsweredElsewhere { answeredBody }
@@ -710,7 +716,9 @@ struct WidgetPeekView: View {
                 }
                 Text(title).font(.system(size: 13, weight: .semibold))
                     .lineLimit(3).multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
-                if !isReminder, let session = model.session(forKey: item.key) {
+                if let origin = item.message?.origin {
+                    Text(origin).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                } else if !isReminder, let session = model.session(forKey: item.key) {
                     Text([session.title, session.project].filter { !$0.isEmpty }.joined(separator: " · "))
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                         .lineLimit(1).truncationMode(.middle)
@@ -904,7 +912,7 @@ struct WidgetPeekView: View {
                         .instantTooltip("Sends the answers again now, instead of with the session's next prompt")
                         .accessibilityIdentifier("widget.peek.sendAgain")
                 }
-                Button(isReminder ? "Show them" : "Open in its session") { open() }
+                Button(isReminder ? "Show them" : item.openTitle) { open() }
             } else {
                 footerButtons
             }

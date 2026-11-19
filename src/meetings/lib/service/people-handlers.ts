@@ -1,14 +1,87 @@
 import type { RpcHandlers } from "@genesiscz/utils/api-descriptor";
 import { type MeetingsConfig, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
+import { mappedRoomDevices, rosterAccountKey } from "@genesiscz/utils/meetings/people";
 import { PeopleBook } from "@genesiscz/utils/meetings/people-book";
 import { ContactsPeopleSource } from "@genesiscz/utils/meetings/people-contacts";
 import { type PeopleDirectory, PeopleError, peopleDirectory } from "@genesiscz/utils/meetings/people-directory";
 import type { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { roomDeviceOffers } from "../room-devices";
 import { autoVoiceWorkers } from "../speaker-labels/voice";
 import { backfillVoices } from "../voice-backfill";
-import { applyVoices, listProjectVoices, planVoiceRemoval, previewVoices, removeVoice, voiceSample } from "../voices";
+import {
+    applyVoices,
+    editVoice,
+    listProjectVoices,
+    planVoiceRemoval,
+    previewVoices,
+    removeVoice,
+    voiceQuality,
+    voiceSample,
+} from "../voices";
 import type { MeetingsParsedParams, MeetingsResult, VOICES_METHODS } from "./api";
-import { type MeetingsHandlerDeps, recordOf, refusal, voicePassProgress } from "./handlers";
+import { actorOfCall } from "./decision-handlers";
+import { type MeetingsCallContext, type MeetingsHandlerDeps, recordOf, refusal, voicePassProgress } from "./handlers";
+
+async function deviceOfferMinimum(deps: MeetingsHandlerDeps) {
+    const config = await (deps.config?.() ?? (deps.configStore?.() ?? new MeetingsConfigStore()).read());
+    return config.global.speakerLabels.seat.deviceOfferMinMeetings;
+}
+
+export async function listRoomDevices(
+    params: MeetingsParsedParams<"people.devices.list">,
+    store: MeetingStore,
+    deps: MeetingsHandlerDeps
+) {
+    const history = new PeopleBook({ storage: store.storage }).read().devices;
+    const meeting = params.meeting ? recordOf(store, params.meeting) : undefined;
+    const offers =
+        params.offers || meeting
+            ? roomDeviceOffers({ store, history, meeting, minimum: await deviceOfferMinimum(deps) })
+            : [];
+    return { devices: mappedRoomDevices(history), offers };
+}
+
+export async function decideDevice(options: {
+    params: MeetingsParsedParams<"people.devices.decide">;
+    store: MeetingStore;
+    deps: MeetingsHandlerDeps;
+    context: MeetingsCallContext;
+}) {
+    const { params, store, deps, context } = options;
+    const actor = actorOfCall(context).kind;
+    if (context.caller?.role === "agent" || (actor !== "window" && actor !== "cli" && actor !== "listen")) {
+        throw refusal("wrong-actor", "Only the owner can change a room device mapping or answer its offer.");
+    }
+    const book = new PeopleBook({ storage: store.storage, now: deps.now });
+    if (params.action !== "answer") {
+        return book.decideDevice({ ...params, actor });
+    }
+    const meeting = params.meeting ? recordOf(store, params.meeting).id : undefined;
+    const minimum = await deviceOfferMinimum(deps);
+    const meetings = [...params.meetings].sort();
+    return book.decideDevice({
+        actor,
+        account: params.account,
+        group: params.group,
+        meeting,
+        meetings,
+        action: params.yes ? "map" : "refuse",
+        verifyOffer(history) {
+            const offers = roomDeviceOffers({
+                store,
+                history,
+                meeting: meeting ? recordOf(store, meeting) : undefined,
+                minimum,
+            });
+            const current = offers.find(
+                (offer) => rosterAccountKey(offer.account) === rosterAccountKey(params.account)
+            );
+            if (!current || current.group !== params.group || !Bun.deepEquals(current.meetings, meetings)) {
+                throw new Error("This room device offer has changed. Refresh the suggestions.");
+            }
+        },
+    });
+}
 
 /** Project voice operations shared with the CLI. */
 export function voicesHandlers(
@@ -16,6 +89,26 @@ export function voicesHandlers(
     deps: MeetingsHandlerDeps = {}
 ): RpcHandlers<{ methods: typeof VOICES_METHODS }, import("./handlers").MeetingsCallContext> {
     const access = { store, linkedSource: deps.linkedSource, config: deps.config };
+    async function correction(
+        action: Parameters<typeof editVoice>[0]["action"],
+        params: { person?: string; preview?: boolean; planToken?: string },
+        context: import("./handlers").MeetingsCallContext
+    ) {
+        const result = await editVoice({
+            ...access,
+            action,
+            person: params.person,
+            preview: params.preview,
+            planToken: params.planToken,
+        });
+        if (result.status === "applied") {
+            context.emit?.("people.changed", {});
+            for (const meeting of new Set(result.affected.map((row) => row.meeting))) {
+                context.emit?.("meeting.changed", { meeting, parts: ["show", "speakers", "transcript"] });
+            }
+        }
+        return result;
+    }
     // A missing or ambiguous meeting answers with the typed refusal `meeting.show` gives (`meeting-not-found`,
     // `meeting-ref`), not with the voice library's plain error.
     const knownMeetings = (refs: readonly string[] | undefined) => {
@@ -24,11 +117,35 @@ export function voicesHandlers(
         }
     };
     return {
+        "voices.jobs": ({ project }) => deps.voiceJobs?.list(project) ?? [],
+        "voices.jobs.cancel": ({ id }) => deps.voiceJobs?.cancel(id) ?? null,
+        "voices.move": (p, context) =>
+            correction(
+                { kind: "move", id: p.id, to: p.to, token: p.token, expectedRevision: p.expectedRevision },
+                p,
+                context
+            ),
+        "voices.reject": (p, context) =>
+            correction(
+                { kind: "reject", id: p.id, reason: p.reason, token: p.token, expectedRevision: p.expectedRevision },
+                p,
+                context
+            ),
+        "voices.undo": (p, context) =>
+            correction(
+                { kind: "revert", correction: p.token, token: p.requestToken, expectedRevision: p.expectedRevision },
+                p,
+                context
+            ),
+        "voices.quality": (p) => voiceQuality({ ...access, ...p }),
         "voices.list": (params) => listProjectVoices({ ...access, ...params }),
         "voice.backfill": async (params, context) => {
             knownMeetings(params.meetings);
-            const result = await backfillVoices({ ...access, ...params });
-            if (!result.dryRun && result.added) {
+            const result =
+                deps.voiceJobs && !params.dryRun
+                    ? await deps.voiceJobs.backfill(params)
+                    : await backfillVoices({ ...access, ...params });
+            if (!deps.voiceJobs && !result.dryRun && result.added) {
                 context.emit?.("people.changed", {});
             }
             return result;
@@ -56,9 +173,10 @@ export function voicesHandlers(
             return result;
         },
         "voices.remove": async (params, context) => {
-            const result = params.preview
-                ? planVoiceRemoval({ ...access, ...params })
-                : await removeVoice({ ...access, ...params });
+            const predictionScope = (await (deps.config?.() ?? new MeetingsConfigStore().read())).global.speakerLabels
+                .voice.sampleScope;
+            const request = { ...access, ...params, predictionScope };
+            const result = params.preview ? planVoiceRemoval(request) : await removeVoice(request);
             if (!params.preview) {
                 context.emit?.("people.changed", {});
                 for (const meeting of new Set(result.affected.map((row) => row.meeting))) {

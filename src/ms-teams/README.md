@@ -157,8 +157,8 @@ tools ms-teams show "19:abc123@thread.v2"
 - A flag wins over the same part of the query: `--id` on every one of these commands, and on `show` also `--with`,
   `--topic`, `--from` and `--to`.
 - With a name, a one-to-one chat with that person wins over a group chat. When several conversations fit equally,
-  `show` prints them and asks for `--id`. `members`, `files`, `transcripts` and `meetings attendance` list nothing
-  and print only "Pass --id". `meetings attendance` also exits 1 and suggests `tools ms-teams meetings list`.
+  `show` prints them and asks for `--id`. `members`, `files` and `transcripts` ask for an ID.
+  `meetings attendance` exits 1 and prints the matching meeting chats with a retry command for each.
 - Every conversation table (`conversations`, `meetings list` and the `show` candidates) shortens long ids to 35
   characters and a trailing `…`. A one-to-one id is about 90 characters, and a cut id matches nothing (`show` then
   prints "No conversation matched that query."). Take the full id from the command that `show` prints under its
@@ -223,6 +223,11 @@ you left). Calls are listed newest first.
 `leftAt`), and `attendance` rows (`name`, `email`, `id`, `self`, `joinedAt`, `leftAt` as ISO 8601 with the local
 offset, `joinedAtExact`, `leftAtExact`, `source`). `source` is `ms-teams:web-client-log` or
 `ms-teams:call-ended-message`. `tools meetings attendance --from teams` reads this output.
+
+When a query needs a chat ID, `--json` returns `{ status, candidates }` with exit code 1. Each candidate has
+`id`, `title`, `lastCallAt` (UTC ISO timestamp or null), `participantCount` (cached chat members) and an exact
+`command` to run. Up to eight matches appear, newest cached call first. Chats without a known call date come
+last. A query with no matches returns an empty array in `candidates`.
 
 ## Repair vanished chats
 
@@ -393,8 +398,7 @@ There is no config file and no account setup: the tool reads the Teams profile o
   shortens long ids, so an id copied from it matches nothing. The command printed under the table carries the full
   id of the first match. For another match, take its id from `tools ms-teams conversations --with "<name>" --json`.
 - **"Could not resolve a single conversation. Pass --id."** (`members`, `transcripts`), **"Could not resolve that
-  conversation. Pass --id."** (`files`) or **"Could not resolve a single meeting chat. Pass --id."**
-  (`meetings attendance`). These commands list no candidates. Find the full id with
+  conversation. Pass --id."** (`files`). Find the full id with
   `tools ms-teams conversations --with "<name>" --json`, then pass it with `--id`.
 - **An image shows as a link, not a picture.** Teams never loaded the image into its disk cache on this Mac. Open the
   chat in Teams, scroll to the image, then export again.

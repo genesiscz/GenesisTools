@@ -8,6 +8,7 @@ struct EditorView: View {
     var stillPreview: CGImage?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(EditorModel.lanesShownKey) private var lanesShown = 4
+    @AppStorage(EditorModel.soundLanesShownKey) private var soundsShown = true
 
     /// Why the Style tab offers no cursor settings, or nil when the editor draws the cursor. A track that names cursor
     /// pictures without them beside it (a copy that left cursor-shapes/ behind) is not a system-cursor movie.
@@ -21,13 +22,20 @@ struct EditorView: View {
 
     var body: some View {
         GeometryReader { geometry in
+            let layout = TimelineLayout(model: model, lanesShown: lanesShown, soundsShown: soundsShown)
+            let timelineHeight = min(layout.totalHeight, max(150, geometry.size.height * 0.52))
             VStack(spacing: 0) {
                 HStack(spacing: 0) {
                     IconRail(model: model)
                     Divider().overlay(RecorderPalette.hairline)
-                    InspectorView(model: model)
-                        .frame(width: InspectorView.width)
-                        .background(RecorderPalette.panel)
+                    ScrollViewReader { scroll in
+                        InspectorView(model: model)
+                            .onChange(of: model.selection) { _, selection in
+                                if case .layer = selection { scroll.scrollTo("layerInspector", anchor: .top) }
+                            }
+                    }
+                    .frame(width: InspectorView.width)
+                    .background(RecorderPalette.panel)
                     Divider().overlay(RecorderPalette.hairline)
                     VStack(spacing: 0) {
                         PreviewView(model: model, still: stillPreview)
@@ -51,14 +59,15 @@ struct EditorView: View {
                 }
                 Divider().overlay(RecorderPalette.hairline)
                 TimelineView(model: model, viewportWidth: geometry.size.width)
-                    .frame(height: TimelineLayout(model: model, lanesShown: lanesShown).totalHeight)
+                    .frame(height: timelineHeight)
             }
             // A lane that comes or goes eases the preview to its new size instead of jumping under the pointer.
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: TimelineLayout(model: model, lanesShown: lanesShown).totalHeight)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: timelineHeight)
             .frame(width: geometry.size.width, height: geometry.size.height)
             .background(RecorderPalette.window)
         }
         .preferredColorScheme(.dark)
+        .onReceive(NSApplication.shared.publisher(for: \.mainMenu)) { EditorModel.addLayerCommand(to: $0) }
     }
 
     /// The flash an outside edit plays on what it changed: the border flash, as long as the banner stays.
@@ -169,7 +178,12 @@ private struct InspectorView: View {
                 switch model.tab {
                 case .zoom: ZoomInspector(model: model)
                 case .clip: ClipInspector(model: model)
-                case .style: StyleInspector(model: model)
+                case .style:
+                    if model.inspectedLayer != nil {
+                        LayerInspector(model: model).id("layerInspector")
+                        Divider()
+                    }
+                    StyleInspector(model: model)
                 case .cursor: CursorInspector(model: model)
                 case .captions: CaptionsInspector(model: model)
                 case .audio: AudioInspector(model: model)
@@ -681,7 +695,7 @@ private struct StyleInspector: View {
                     .accessibilityIdentifier("recorder.style.corners")
                 SwitchRow("Shadow", isOn: Binding(get: { frame.shadow }, set: { on in model.setLooks { $0.frame?.shadow = on } }))
             }
-            if model.project.camera != nil {
+            if model.project.camera != nil && model.inspectedLayer == nil {
                 Divider().padding(.vertical, 4)
                 CameraBubbleSection(model: model)
             }
@@ -1409,10 +1423,11 @@ private struct RedactionPicker: View {
 
 private struct AudioInspector: View {
     @Bindable var model: EditorModel
+    @AppStorage(EditorModel.soundLanesShownKey) private var soundsShown = true
 
     var body: some View {
         let audio = model.project.audio
-        if model.waveform.loaded && !model.waveform.hasAudio {
+        if model.waveform.loaded && !model.waveform.hasAudio && model.soundRows.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Audio").font(.system(size: 15, weight: .semibold))
                 EmptyState(symbol: "speaker.slash", text: "The recording has no sound of its own",
@@ -1445,16 +1460,10 @@ private struct AudioInspector: View {
                 }
             }
             .disabled(!audio.include)
-            if model.audioTrackCount > 1 {
-                VStack(alignment: .leading, spacing: 6) {
-                    SectionLabel(text: "Tracks")
-                    ForEach(0..<model.audioTrackCount, id: \.self) { index in
-                        SwitchRow("Track \(index + 1)",
-                                  isOn: Binding(get: { !audio.mutedTracks.contains(index) }, set: { on in model.setTrackMuted(index, !on) }))
-                            .accessibilityIdentifier("recorder.audio.track\(index)")
-                    }
-                }
-                .disabled(!audio.include)
+            if !model.soundRows.isEmpty {
+                SectionLabel(text: "Sound lanes")
+                SoundLanesView(model: model)
+                SwitchRow("Show sound lanes in timeline", isOn: $soundsShown)
             }
             if model.waveform.hasAudio {
                 WideButton(title: model.isNormalizing ? "Measuring the Loudness…" : "Normalize Loudness", systemImage: "waveform.badge.magnifyingglass") {
@@ -1927,6 +1936,7 @@ private struct ExportInspector: View {
 private struct PreviewView: View {
     @Bindable var model: EditorModel
     let still: CGImage?
+    @State private var pictureSize: CGSize = .zero
 
     var body: some View {
         // The canvas the export draws: the movie's own shape, or the frame's aspect.
@@ -1964,6 +1974,12 @@ private struct PreviewView: View {
             .overlay {
                 if model.tab == .hide && !model.isPlaying {
                     HiddenPartHandles(model: model, clock: model.clock)
+                } else if !model.isPlaying, let row = model.inspectedLayer {
+                    if let media = row.media {
+                        MediaLayerHandle(model: model, layer: media, clock: model.clock).id(media.id)
+                    } else {
+                        CameraBubbleHandle(model: model, clock: model.clock)
+                    }
                 } else if model.tab == .style && !model.isPlaying && model.project.camera != nil {
                     CameraBubbleHandle(model: model, clock: model.clock)
                 } else if model.tab == .text && !model.isPlaying {
@@ -1974,6 +1990,13 @@ private struct PreviewView: View {
                 } else if model.tab == .find && !model.isPlaying {
                     ScreenBoxOverlay(model: model, clock: model.clock)
                 }
+            }
+            .onGeometryChange(for: CGSize.self) { $0.size } action: { pictureSize = $0 }
+            .dropDestination(for: URL.self) { urls, point in
+                guard urls.count == 1, let url = urls.first else { return false }
+                let pointer = CGPoint(x: min(1, max(0, point.x / max(1, pictureSize.width))),
+                                      y: min(1, max(0, point.y / max(1, pictureSize.height))))
+                return model.acceptLayerFile(url, pointer: pointer)
             }
             .shadow(color: .black.opacity(0.5), radius: 18, y: 6)
             .padding(28)
@@ -2464,6 +2487,7 @@ private struct PlayerLayerView: NSViewRepresentable {
 
 private struct TransportBar: View {
     @Bindable var model: EditorModel
+    @State private var dropSettings = false
 
     var body: some View {
         HStack(spacing: 16) {
@@ -2485,17 +2509,20 @@ private struct TransportBar: View {
             IconButton(systemName: "forward.end.fill", tooltip: "To the end (End)", size: 15) { model.seek(model.durationUs) }
             Spacer(minLength: 8)
             MenuButton(items: {
-                EditorModel.laneChoices.map { choice in .action(choice.title, run: { model.addLane(kinds: choice.kinds) }) }
+                [.action(EditorModel.addLayerTitle, run: { model.chooseLayerFile() }),
+                 .action("Layer Drop Settings…", run: { dropSettings = true }), .divider]
+                    + EditorModel.laneChoices.map { choice in .action(choice.title, run: { model.addLane(kinds: choice.kinds) }) }
             }) {
                 Label("Add Lane", systemImage: "rectangle.stack.badge.plus")
                     .font(.system(size: 11.5, weight: .medium))
                     .foregroundStyle(RecorderPalette.text)
-                    .frame(minHeight: 22)
+                    .frame(minHeight: 24)
                     .contentShape(Rectangle())
             }
-            .instantTooltip("Add an effect lane under the others: zooms, hidden parts, texts, speed or any effect")
+            .instantTooltip("Add an image, video, or effect lane")
             .accessibilityIdentifier("recorder.timeline.addLane")
             .fixedSize()
+            .popover(isPresented: $dropSettings) { LayerDropSettings() }
             // The scale slider gives way first in a narrow window; −, Fit and + stay.
             ViewThatFits(in: .horizontal) {
                 scaleControls(slider: true)

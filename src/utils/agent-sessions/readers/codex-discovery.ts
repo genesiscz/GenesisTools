@@ -366,6 +366,7 @@ export async function discoverCodexHistorySources(
         filtered,
         filePaths: options.filePaths,
         signal: options.signal,
+        mtimeFrom: options.mtimeFrom,
         includeFile: ({ path }) => isCodexRolloutPath(path),
     });
     const issues = [...walked.issues];
@@ -377,6 +378,7 @@ export async function discoverCodexHistorySources(
     const sources: Array<NativeSessionSource<"codex">> = [];
 
     for (const file of walked.files) {
+        options.signal?.throwIfAborted();
         const home = sourceHome(file.root);
         let metadataPaths = pathsByHome.get(home);
         if (!metadataPaths) {

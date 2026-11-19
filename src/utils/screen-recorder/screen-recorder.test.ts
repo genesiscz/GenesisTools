@@ -164,6 +164,23 @@ describe("displays", () => {
 describe("native capture argv", () => {
     const displays = parseDisplayList(axScreens);
 
+    test("frames window exclusions reach ax-tool and a backend without exclusion support refuses capture", async () => {
+        const excluded = { ...request(), excludeWindowIds: [91, 105] };
+        const flags = flagsInHelp("--display-id --exclude-window-ids");
+        const argv = nativeArgv({ request: excluded, flags, displays });
+        expect(argv.slice(argv.indexOf("--exclude-window-ids"), argv.indexOf("--exclude-window-ids") + 2)).toEqual([
+            "--exclude-window-ids",
+            "91,105",
+        ]);
+        expect(nativeArgv({ request: request(), flags, displays })).not.toContain("--exclude-window-ids");
+        expect(() => nativeArgv({ request: excluded, flags: new Set(), displays })).toThrow("--exclude-window-ids");
+        const { PeekabooFrameRecorder } = await import("./peekaboo");
+        const peekaboo = new PeekabooFrameRecorder();
+        const list = spyOn(peekaboo, "displays").mockResolvedValue([]);
+        await expect(peekaboo.capture(excluded)).rejects.toThrow("exclude");
+        expect(list).not.toHaveBeenCalled();
+    });
+
     test("without the new flags, a display id becomes its current index and the cap an output scale", () => {
         const argv = nativeArgv({ request: request({ maxLongSidePx: 1280 }), flags: new Set(), displays });
 
@@ -2216,6 +2233,7 @@ test("peekaboo display output rejects incomplete JSON as a capture error", async
 describe("frame recordings with continuous sound", () => {
     class ModeRecording extends LibraryRecording {
         readonly fellBack = Promise.withResolvers<void>();
+        readonly hooks = this.config.hooks;
 
         constructor(options: ConstructorParameters<typeof LibraryRecording>[0] & { audioMode: "pieces" | "session" }) {
             super(options);
@@ -2585,6 +2603,151 @@ describe("frame recordings with continuous sound", () => {
             }
         }
     }, 15_000);
+
+    test("a startup audio failure uses the first observation time after the writer finishes cleanup", async () => {
+        const root = mkdtempSync(join(tmpdir(), "frames-startup-failure-time-"));
+        const recorder = new SessionRecorder();
+        let observedAt = 0;
+        const failure = new Error("fixture writer refused at startup");
+        const startup = spyOn(recorder, "startAudioSession").mockImplementationOnce(async (options) => {
+            const failureTime = Date.now();
+            observedAt = failureTime;
+            const now = spyOn(Date, "now").mockReturnValue(failureTime);
+            try {
+                options.onFailure?.(failure);
+            } finally {
+                now.mockRestore();
+            }
+            await Bun.sleep(30);
+            options.onFailure?.(new Error("fixture writer still closing"));
+            throw failure;
+        });
+        const recording = new ModeRecording({
+            recorder,
+            folder: join(root, "rec"),
+            liveDir: join(root, "live"),
+            audio: { mic: true },
+            audioMode: "session",
+        });
+        const events: Array<{ atMs: number; reason: string }> = [];
+        recording.hooks.onAudioChange = (change) => {
+            if (change.kind === "failure") {
+                events.push({ atMs: change.atMs, reason: change.reason });
+            }
+        };
+        await recording.start();
+        try {
+            await withTimeout(recording.fellBack.promise, 3000, new Error("startup did not fall back"));
+            expect(startup).toHaveBeenCalledTimes(1);
+            expect(events).toEqual([{ atMs: observedAt, reason: failure.message }]);
+        } finally {
+            startup.mockRestore();
+            await recording.stop();
+        }
+    });
+
+    test("sound fallback cancels a frame capture before its first frame without a third note", async () => {
+        const root = mkdtempSync(join(tmpdir(), "frames-fallback-before-frame-"));
+        const recorder = new SessionRecorder("--fixture-audio-session-restart-fails");
+        const recording = new ModeRecording({
+            recorder,
+            folder: join(root, "rec"),
+            liveDir: join(root, "live"),
+            audio: { mic: true },
+            audioMode: "session",
+        });
+        const processes = await import("./process");
+        const run = spyOn(processes, "runCaptureProcess").mockImplementationOnce(async ({ signal }) => {
+            // The first capture has spawned, but has no frame or SIGINT handler when fallback cancels it.
+            const interrupted = Promise.withResolvers<void>();
+            signal!.addEventListener("abort", () => interrupted.resolve(), { once: true });
+            writeFileSync(join(recording.folder, ".pieces", "fixture-frame-ready"), "");
+            await withTimeout(interrupted.promise, 3000, new Error("fallback did not cancel the soundless capture"));
+            return { exitCode: 130, stdout: "", stderr: "", timedOut: false, aborted: true };
+        });
+        let answer: StopAnswer;
+        try {
+            await recording.start();
+            try {
+                await withTimeout(recorder.thirdFrame.promise, 5000, new Error("fallback did not keep recording"));
+                expect(recorder.requests.at(-1)?.audio?.sources).toEqual(["mic"]);
+            } finally {
+                answer = await recording.stop();
+            }
+        } finally {
+            run.mockRestore();
+        }
+        expect(answer.notes).toEqual([
+            expect.stringContaining("an immediate restart was requested"),
+            expect.stringContaining("The sound is recorded inside the screen pieces"),
+        ]);
+    });
+
+    test("a retired sound session drains its file after replacement without publishing another failure", async () => {
+        const root = mkdtempSync(join(tmpdir(), "frames-retired-sound-"));
+        const recorder = new SessionRecorder();
+        const recording = new ModeRecording({
+            recorder,
+            folder: join(root, "rec"),
+            liveDir: join(root, "live"),
+            audio: { mic: true },
+            audioMode: "session",
+        });
+        const replacementReady = Promise.withResolvers<void>();
+        const release = Promise.withResolvers<void>();
+        const drained = Promise.withResolvers<void>();
+        const failures: string[] = [];
+        const inputs: Array<string | null> = [];
+        const kept: string[] = [];
+        recording.hooks.onSoundPath = (sound) => {
+            if (sound.path === "session" && recorder.sessionStarts === 2) {
+                replacementReady.resolve();
+            }
+        };
+        recording.hooks.onAudioChange = (change) => {
+            if (change.kind === "failure") {
+                failures.push(change.reason);
+            }
+        };
+        recording.hooks.onAudioLevels = (block) => inputs.push(block.input);
+        recording.hooks.onAudioSegment = (segment) => kept.push(segment.file);
+        const startSession = recorder.startAudioSession.bind(recorder);
+        spyOn(recorder, "startAudioSession").mockImplementationOnce(async (options) => {
+            const session = (await startSession(options))!;
+            const stop = session.stop.bind(session);
+            spyOn(session, "stop").mockImplementationOnce(async () => {
+                await withTimeout(release.promise, 5000, new Error("old session was never released"));
+                options.onWarning?.("old writer closing");
+                options.onLevels?.({ atMs: Date.now(), mic: 0, system: null, input: "old input", output: null });
+                options.onFailure?.(new Error("old writer exited"));
+                const result = await stop();
+                drained.resolve();
+                return result;
+            });
+            return session;
+        });
+        await recording.start();
+        let answer: StopAnswer;
+        try {
+            await withTimeout(recorder.thirdFrame.promise, 5000, new Error("first session did not start"));
+            recorder.starts[0]!.onFailure!(new Error("writer failed"));
+            await withTimeout(replacementReady.promise, 3000, new Error("replacement did not start"));
+            release.resolve();
+            await withTimeout(drained.promise, 3000, new Error("old session did not drain"));
+            expect(failures).toEqual(["writer failed"]);
+            expect(inputs).not.toContain("old input");
+            expect(recording.soundPath).toEqual({ path: "session", sources: ["mic"] });
+            const rows = readFileSync(join(recording.folder, "audio.jsonl"), "utf8").trim().split("\n");
+            expect(rows).toHaveLength(1);
+            const row = audioSegmentSchema.parse(SafeJSON.parse(rows[0]!, { strict: true }));
+            expect(kept).toEqual([row.file]);
+            expect(existsSync(join(recording.folder, row.file))).toBe(true);
+        } finally {
+            release.resolve();
+            answer = await recording.stop();
+        }
+        expect(answer.notes).toEqual([expect.stringContaining("an immediate restart was requested")]);
+    }, 10_000);
 
     test("a tool without audio-record leaves sound on every piece and notes the fallback once", async () => {
         const root = mkdtempSync(join(tmpdir(), "frames-piece-sound-"));

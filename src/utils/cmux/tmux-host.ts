@@ -238,12 +238,21 @@ export function tmuxPaneAncestor(
 
 /**
  * Where live sessions run in tmux, keyed by lowercase session id: one entry per pane, with the clients attached
- * to that pane's tmux session. `only` limits it to one session.
+ * to that pane's tmux session. A session list can restrict the socket reads to the rows it will show.
  *
  * A session outside tmux, with no live process, or on a tmux that does not answer has no entry. Reads ONE
  * process table; tmux is asked only when a process sits under a tmux server, once per server, on its own socket.
  */
-export async function findAllTmuxHosts(deps: TmuxHostDeps = {}, only?: string): Promise<Map<string, TmuxHost[]>> {
+export async function findAllTmuxHosts(
+    deps: TmuxHostDeps = {},
+    only?: string | readonly string[]
+): Promise<Map<string, TmuxHost[]>> {
+    const ids = typeof only === "string" ? [only] : only;
+    const wanted = ids && new Set(ids.map((id) => id.toLowerCase()));
+    if (wanted?.size === 0) {
+        return new Map();
+    }
+
     const listProcesses = deps.listProcesses ?? listHostProcesses;
     const readRegistry = deps.readRegistry ?? (() => readClaudeSessionRegistry());
     const listPanes = deps.listPanes ?? ((socket) => listTmuxPanes(undefined, { socket }));
@@ -255,7 +264,7 @@ export async function findAllTmuxHosts(deps: TmuxHostDeps = {}, only?: string): 
     const servers = new Map<number, { socket: TmuxSocket | undefined; sessionsByPanePid: Map<number, string[]> }>();
 
     for (const [sessionId, pids] of sessions) {
-        if (only !== undefined && sessionId !== only.toLowerCase()) {
+        if (wanted && !wanted.has(sessionId)) {
             continue;
         }
 
@@ -278,7 +287,7 @@ export async function findAllTmuxHosts(deps: TmuxHostDeps = {}, only?: string): 
     const hosts = new Map<string, TmuxHost[]>();
 
     if (servers.size === 0) {
-        log.debug({ only, sessions: sessions.size }, "no session runs under a tmux server");
+        log.debug({ requested: wanted?.size, sessions: sessions.size }, "no matching session runs under a tmux server");
         return hosts;
     }
 
@@ -310,7 +319,7 @@ export async function findAllTmuxHosts(deps: TmuxHostDeps = {}, only?: string): 
         }
     }
 
-    log.debug({ only, hosts: Object.fromEntries(hosts) }, "tmux hosts of live sessions");
+    log.debug({ requested: wanted?.size, hosts: Object.fromEntries(hosts) }, "tmux hosts of live sessions");
     return hosts;
 }
 
@@ -401,9 +410,9 @@ export interface TmuxCmuxLocation {
  */
 export async function tmuxCmuxLocations(
     /** `readTree`: the tree read's runner (`tree-read.ts`), answering the parsed `tree` JSON; a test injects it. */
-    deps: TmuxHostDeps & { readTree?: () => Promise<unknown>; now?: number } = {}
+    deps: TmuxHostDeps & { readTree?: () => Promise<unknown>; now?: number; sessionIds?: readonly string[] } = {}
 ): Promise<Map<string, TmuxCmuxLocation>> {
-    const hosts = await findAllTmuxHosts(deps);
+    const hosts = await findAllTmuxHosts(deps, deps.sessionIds);
     const locations = new Map<string, TmuxCmuxLocation>();
 
     if (![...hosts.values()].some((entries) => entries.some((host) => host.clientTtys.length > 0))) {

@@ -1,12 +1,23 @@
+import { isDeepStrictEqual } from "node:util";
 import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
-import { SafeJSON } from "@genesiscz/utils/json";
+import { type FileIdentity, fileIdentity } from "@genesiscz/utils/fs/identity-cache";
+import { sha256Json } from "@genesiscz/utils/hash";
+import { voiceRootMeeting } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
+import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import {
-    editVoiceStore,
-    readVoiceStore,
-    type VoicePrint,
-    VoicePrintSnapshot,
-} from "@genesiscz/utils/meetings/voice-store";
+    type ConfirmedSampleInput,
+    changeVoiceLearning,
+    meetingVoiceOwner,
+    readVoiceLibrary,
+    refused,
+    type SampleId,
+    type SampleSource,
+    sourceForVoicePrint,
+    type VoiceOwner,
+    voiceLineKeys,
+} from "@genesiscz/utils/meetings/voice-library";
+import type { VoicePrint } from "@genesiscz/utils/meetings/voice-store";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { JournalEntry } from "./decision-actions";
@@ -22,6 +33,13 @@ export interface VoicePrintChange {
     project: string;
     person: string;
     model: string;
+    source?: SampleSource;
+    owner?: VoiceOwner;
+    id?: SampleId;
+    token?: string;
+    item?: string;
+    origin?: "answer" | "confirm";
+    acquiredBy?: "live" | "backfill";
     before?: VoicePrint;
     after: VoicePrint;
 }
@@ -71,7 +89,7 @@ function confirmedVoices(entry: JournalEntry, people: readonly string[]): Confir
             : [];
     }
 
-    if (action.kind !== "confirm" || action.minConfidence !== undefined) {
+    if (action.kind !== "confirm" || action.minConfidence !== undefined || !action.items.length) {
         return [];
     }
 
@@ -81,6 +99,8 @@ function confirmedVoices(entry: JournalEntry, people: readonly string[]): Confir
             after?.kind !== "speaker-range" ||
             after.status !== "confirmed" ||
             change.before?.status === "confirmed" ||
+            (!entry.decided.includes(after.id) && !action.items.includes(after.id)) ||
+            after.segments?.length ||
             after.decision?.token !== entry.token ||
             !singleSpeaker(after.speaker) ||
             (after.voices?.length ?? 0) > 1 ||
@@ -140,62 +160,127 @@ export function answeredVoiceTargets(entry: JournalEntry, people: readonly strin
     return confirmedVoices(entry, people).map((voice) => ({ entry, voice }));
 }
 
+/** Frozen before inference and compared per line at publication, including the next start which can set its end. */
+export function voiceLineVersions(meeting: SourceMeeting, keys = voiceLineKeys(meeting)): Map<string, string> {
+    return new Map(
+        keys.map((key, i) => [key, sha256Json([meeting.transcript[i], meeting.transcript[i + 1]?.startSec ?? null])])
+    );
+}
+
+export type VoiceSourceChecks = Map<VoicePrintChange, (versions: ReadonlyMap<string, string>) => boolean>;
+
 /** A backfill can decode all the confirmed windows of one recording in the same pass. */
-export async function prepareVoicePrints<T extends VoiceTarget>(opened: OpenedMeeting, targets: T[], dryRun = false) {
+export async function prepareVoicePrints<T extends VoiceTarget>(
+    opened: OpenedMeeting,
+    targets: T[],
+    options: {
+        dryRun?: boolean;
+        signal?: AbortSignal;
+        planned?: (count: number) => void;
+        checks?: VoiceSourceChecks;
+    } = {}
+) {
+    const { dryRun, signal } = options;
     const project = opened.record.project;
     if (!project || !targets.length) {
         return [];
     }
+    signal?.throwIfAborted();
     const energy = await opened.energy();
+    const meeting = await opened.meeting();
+    const rootMeeting = voiceRootMeeting(opened.store, opened.record);
+    const keys = voiceLineKeys(meeting);
+    const versions = options.checks ? voiceLineVersions(meeting, keys) : undefined;
     const lines = lineEvidence(
-        (await opened.meeting()).transcript,
+        meeting.transcript,
         (await opened.evidence()) ?? { segments: [], speaking: [] },
         undefined,
         energy.share
     );
-    const spans: LabelContext["lines"][number][] = lines.flatMap((line) => {
-        const share = line.micShare ?? line.energyMic;
-        if (share === undefined || share === 0.5) {
-            return [];
-        }
-        return [{ index: line.index, fromSec: line.startSec, toSec: line.endSec, seat: share > 0.5 ? "mic" : "call" }];
-    });
-    const eligible = targets.map(({ voice, saved }) =>
-        spans.filter(
-            (line) =>
-                line.fromSec >= voice.fromSec &&
-                line.toSec <= voice.endSec &&
-                (!voice.seat || voice.seat === line.seat) &&
-                !saved?.some(
-                    ({ after }) =>
-                        after.fromSec === line.fromSec && after.toSec === line.toSec && after.seat === line.seat
+    const { library } = readVoiceLibrary();
+    const skipped = targets.map(() => new Map<string, number>());
+    const eligible = targets.map(({ voice, saved }, i) => {
+        const owner = meetingVoiceOwner(opened.record, voice.person);
+        return lines.flatMap((line): LabelContext["lines"] => {
+            if (line.startSec < voice.fromSec || line.endSec > voice.endSec || line.endSec <= line.startSec) {
+                return [];
+            }
+            const share = line.micShare ?? line.energyMic;
+            const seat = share === undefined || share === 0.5 ? undefined : share > 0.5 ? "mic" : "call";
+            const lineKey = keys[line.index]!;
+            if (
+                saved?.some(
+                    ({ after, source }) =>
+                        (!source?.spanKey || source.lineKey === lineKey) &&
+                        after.fromSec === line.startSec &&
+                        after.toSec === line.endSec &&
+                        (!seat || after.seat === seat)
                 )
+            ) {
+                return [];
+            }
+            const reason =
+                !seat || (voice.seat && voice.seat !== seat)
+                    ? "no complete line with usable channel and voice evidence"
+                    : refused(library, { rootMeeting, lineKey, recordingKey: "" }, owner);
+            if (reason || !seat) {
+                const counts = skipped[i]!;
+                const why = reason ?? "no complete line with usable channel and voice evidence";
+                counts.set(why, (counts.get(why) ?? 0) + 1);
+                return [];
+            }
+            return [{ index: line.index, fromSec: line.startSec, toSec: line.endSec, seat }];
+        });
+    });
+    options.planned?.(
+        targets.reduce(
+            (sum, target, i) =>
+                sum +
+                Math.max(
+                    1,
+                    (target.saved?.length ?? 0) +
+                        eligible[i]!.length +
+                        [...skipped[i]!.values()].reduce((sum, n) => sum + n, 0)
+                ),
+            0
         )
     );
-    const wanted = new Set(eligible.flat().map((line) => line.index));
+    const wanted = new Map(eligible.flat().map((line) => [line.index, line]));
     const embeddings = wanted.size
         ? await embedSeatLines({
-              lines: spans.filter((line) => wanted.has(line.index)),
+              lines: [...wanted.values()].sort((a, b) => a.index - b.index),
               sound: await opened.sound(),
+              config: await opened.config(),
+              signal,
               // An explicit empty path selects the call-local VoiceLineCache without an on-disk file.
               ...(dryRun ? { cachePath: "" } : {}),
           })
         : [];
     const byLine = new Map(embeddings.map((line) => [line.index, line]));
     const hashes = new Map<string, string>();
-    const people = readVoiceStore(project).people;
+    const files = new Map<string, FileIdentity>();
     const results = [];
     for (const [i, target] of targets.entries()) {
         const lines = eligible[i]!.flatMap(({ index }) => byLine.get(index) ?? []);
         const changes = await printsOf({
             ...target,
+            owner: meetingVoiceOwner(opened.record, target.voice.person),
             meeting: opened.record.id,
             project,
             lines,
             hashes,
-            samples: people[target.voice.person]?.samples ?? [],
+            files: options.checks ? files : undefined,
+            checks: options.checks,
+            versions,
+            keys,
+            rootMeeting,
         });
-        results.push({ target, changes });
+        results.push({
+            target,
+            changes,
+            refusals: skipped[i]!,
+            missing: eligible[i]!.length - changes.length,
+        });
     }
     return results;
 }
@@ -205,9 +290,14 @@ async function printsOf(options: {
     project: string;
     entry: JournalEntry;
     voice: ConfirmedVoice;
+    owner: VoiceOwner;
     lines: VoiceLine[];
-    samples: VoicePrint[];
+    keys: string[];
+    rootMeeting: string;
     hashes: Map<string, string>;
+    files?: Map<string, FileIdentity>;
+    checks?: VoiceSourceChecks;
+    versions?: ReadonlyMap<string, string>;
 }): Promise<VoicePrintChange[]> {
     const { project, entry, voice, hashes } = options;
     const changes: VoicePrintChange[] = [];
@@ -217,6 +307,19 @@ async function printsOf(options: {
             continue;
         }
 
+        const path = channel.source.audioPath;
+        if (options.files) {
+            const identity = fileIdentity(path);
+            if (
+                !identity ||
+                identity.size !== channel.source.size ||
+                identity.mtimeMs !== channel.source.mtimeMs ||
+                (options.files.has(path) && !isDeepStrictEqual(options.files.get(path), identity))
+            ) {
+                continue;
+            }
+            options.files.set(path, identity);
+        }
         let sourceSha = hashes.get(channel.source.audioPath);
         if (!sourceSha) {
             sourceSha = await sha256FileAsync(channel.source.audioPath);
@@ -234,50 +337,65 @@ async function printsOf(options: {
             confirmedAt: entry.at,
             question: voice.item,
         };
-        const before = options.samples.find(
-            (sample) =>
-                sample.meeting === after.meeting &&
-                sample.sourceSha === after.sourceSha &&
-                sample.track === after.track &&
-                sample.fromSec === after.fromSec &&
-                sample.toSec === after.toSec
-        );
-        changes.push({ project, person: voice.person, model: channel.model, ...(before ? { before } : {}), after });
+        const change: VoicePrintChange = {
+            project,
+            owner: options.owner,
+            person: voice.person,
+            model: channel.model,
+            after,
+            token: entry.token,
+            origin: entry.action.kind === "confirm" ? "confirm" : "answer",
+            source: sourceForVoicePrint(after, options.rootMeeting, options.keys[line.index]),
+        };
+        changes.push(change);
+        const identity = options.files?.get(path);
+        const key = options.keys[line.index]!;
+        if (options.checks && identity && options.versions) {
+            const version = options.versions.get(key);
+            options.checks.set(
+                change,
+                (current) => current.get(key) === version && isDeepStrictEqual(fileIdentity(path), identity)
+            );
+        }
     }
 
     return changes;
 }
 
-/** The changes of each project, in their order: one store read and at most one write per project. */
-function byProject(changes: readonly VoicePrintChange[]): Map<string, VoicePrintChange[]> {
-    const groups = new Map<string, VoicePrintChange[]>();
-    for (const change of changes) {
-        groups.set(change.project, [...(groups.get(change.project) ?? []), change]);
-    }
-    return groups;
+function learningInput(change: VoicePrintChange): ConfirmedSampleInput {
+    return {
+        project: change.project,
+        owner: change.owner ?? { name: change.person },
+        model: change.model,
+        print: change.after,
+        source: change.source ?? sourceForVoicePrint(change.after),
+        origin: change.origin ?? "answer",
+        acquiredBy: change.acquiredBy ?? "live",
+        ...(change.token && (change.item || change.after.question)
+            ? { decision: { token: change.token, item: (change.item ?? change.after.question)! } }
+            : {}),
+    };
 }
 
-function samePrint(a: VoicePrint | undefined, b: VoicePrint): boolean {
-    return a !== undefined && SafeJSON.stringify(a) === SafeJSON.stringify(b);
-}
-
-/** Each project's prints in one write; a project that fails is not written, and the ones before it are undone. */
-export function writeAnsweredVoiceSamples(changes: readonly VoicePrintChange[]): void {
-    const written: VoicePrintChange[] = [];
-    try {
-        for (const [project, group] of byProject(changes)) {
-            editVoiceStore(project, (snapshot) => {
-                for (const change of group) {
-                    snapshot.put(change.person, change.after, change.model);
-                }
-                return group.length > 0;
-            });
-            written.push(...group);
-        }
-    } catch (error) {
-        undoAnsweredVoiceSamples(written);
-        throw error;
-    }
+export function publishVoiceChanges(
+    changes: readonly VoicePrintChange[],
+    dryRun = false,
+    removed: readonly VoicePrintChange[] = []
+) {
+    return changeVoiceLearning({
+        add: changes.map(learningInput),
+        remove: removed.map((change) => ({
+            project: change.project,
+            model: change.model,
+            owner: change.owner ?? { name: change.person },
+            print: change.after,
+            before: change.before,
+            source: change.source,
+            token: change.token,
+            id: change.id,
+        })),
+        dryRun,
+    });
 }
 
 export async function saveAnsweredVoiceSamples(options: {
@@ -285,100 +403,92 @@ export async function saveAnsweredVoiceSamples(options: {
     entry: JournalEntry;
 }): Promise<VoicePrintChange[]> {
     const changes = await prepareAnsweredVoiceSamples(options);
-    writeAnsweredVoiceSamples(changes);
-    return changes;
+    const { results } = publishVoiceChanges(changes);
+    return changes.flatMap((change, i) => {
+        const result = results[i];
+        return result?.status === "added" ? [{ ...change, id: result.id }] : [];
+    });
 }
 
-const CONFIRMING_KINDS = new Set(["question", "speaker-range"]);
+/** Old journals have just the print and the deciding item. Match its v1 payload and human decision on replay. */
+export function journalVoices(entry: JournalEntry | undefined, item?: string, project?: string): VoicePrintChange[] {
+    if (!entry?.voices?.length) {
+        return [];
+    }
+    const targets = answeredVoiceTargets(
+        entry,
+        entry.voices.map((change) => change.person)
+    );
+    return entry.voices.flatMap((change) => {
+        const decidingItem = change.item ?? change.after.question;
+        const matching = targets.filter(
+            (t) =>
+                (!decidingItem || t.voice.item === decidingItem) &&
+                sameName(t.voice.person, change.person) &&
+                (!t.voice.seat || t.voice.seat === change.after.seat) &&
+                change.after.fromSec >= t.voice.fromSec &&
+                change.after.toSec <= t.voice.endSec
+        );
+        const target = matching.length === 1 ? matching[0] : undefined;
+        if (
+            !target ||
+            (item && item !== target.voice.item) ||
+            !change.project ||
+            (project !== undefined && change.project !== project) ||
+            entry.meeting !== change.after.meeting
+        ) {
+            return [];
+        }
+        return [
+            {
+                ...change,
+                item: target.voice.item,
+                token: entry.token,
+                origin: entry.action.kind === "confirm" ? "confirm" : "answer",
+            },
+        ];
+    });
+}
 
-/** Restore only samples owned by items whose confirmation changed, including Undo of an Undo. */
 export function transitionAnsweredVoiceSamples(options: {
     entry: JournalEntry;
     entryOf: (token: string) => JournalEntry | undefined;
+    project?: string;
 }): () => void {
     const removed: VoicePrintChange[] = [];
     const added: VoicePrintChange[] = [];
     for (const change of options.entry.changes) {
-        const was = change.before;
-        const next = change.after;
-        // The items whose confirmation owns prints: a speaker question's answer, a voice-named range's confirm.
-        if (!CONFIRMING_KINDS.has(was?.kind ?? "") && !CONFIRMING_KINDS.has(next?.kind ?? "")) {
+        const before = change.before?.status === "confirmed" ? change.before.decision?.token : undefined;
+        const after = change.after?.status === "confirmed" ? change.after.decision?.token : undefined;
+        if (before === after) {
             continue;
         }
-        const beforeToken = was?.status === "confirmed" ? was.decision?.token : undefined;
-        const afterToken = next?.status === "confirmed" ? next.decision?.token : undefined;
-        if (beforeToken === afterToken) {
-            continue;
+        if (before) {
+            removed.push(...journalVoices(options.entryOf(before), change.id));
         }
-        if (beforeToken) {
-            removed.push(
-                ...(options.entryOf(beforeToken)?.voices ?? []).filter((voice) => voice.after.question === change.id)
-            );
-        }
-        if (afterToken && afterToken !== options.entry.token) {
-            added.push(
-                ...(options.entryOf(afterToken)?.voices ?? []).filter((voice) => voice.after.question === change.id)
-            );
+        if (after && after !== options.entry.token) {
+            added.push(...journalVoices(options.entryOf(after), change.id, options.project));
         }
     }
-    added.push(...(options.entry.voices ?? []));
-    // One loaded store per project for every ownership lookup below, not one read per print.
-    const snapshots = new Map<string, VoicePrintSnapshot>();
-    const snapshotOf = (project: string) => {
-        const snapshot = snapshots.get(project) ?? new VoicePrintSnapshot(readVoiceStore(project));
-        snapshots.set(project, snapshot);
-        return snapshot;
-    };
-    const owned = removed.filter((change) =>
-        samePrint(snapshotOf(change.project).find(change.person, change.after), change.after)
-    );
-    // Snapshot ownership at the moment of the write, so another answer's later sample survives rollback.
-    const captured = added.map((change) => ({
-        ...change,
-        before: snapshotOf(change.project).find(change.person, change.after),
-    }));
-    const rollback = () => {
-        undoAnsweredVoiceSamples(captured);
-        writeAnsweredVoiceSamples(owned);
-    };
-    try {
-        undoAnsweredVoiceSamples(owned);
-        writeAnsweredVoiceSamples(captured);
-    } catch (error) {
-        rollback();
-        throw error;
+    const own = journalVoices(options.entry, undefined, options.project);
+    const batch = publishVoiceChanges([...added, ...own], false, removed);
+    if (own.length && options.entry.voices) {
+        options.entry.voices = own.flatMap((change, i) => {
+            const result = batch.results[i + added.length];
+            return result?.status === "added" ? [{ ...change, id: result.id }] : [];
+        });
     }
-    return rollback;
+    return batch.rollback;
 }
 
-/** Replay persisted embeddings in journal file order (oldest first); no source sound or model is needed. */
 export function replayAnsweredVoiceSamples(entries: readonly JournalEntry[]): void {
     const known = new Map<string, JournalEntry>();
     for (const entry of entries) {
-        transitionAnsweredVoiceSamples({ entry, entryOf: (token) => known.get(token) });
+        transitionAnsweredVoiceSamples({ entry: structuredClone(entry), entryOf: (token) => known.get(token) });
         known.set(entry.token, entry);
     }
 }
 
-/** Undo removes only a print this answer still owns; a later confirmation survives. */
 export function undoAnsweredVoiceSamples(changes: readonly VoicePrintChange[]): void {
-    for (const [project, group] of byProject(changes)) {
-        editVoiceStore(project, (snapshot) => {
-            let changed = false;
-            for (const change of [...group].reverse()) {
-                if (!samePrint(snapshot.find(change.person, change.after), change.after)) {
-                    continue;
-                }
-
-                // `before` has the identity of `after`, so putting it back replaces this answer's print.
-                if (change.before) {
-                    snapshot.put(change.person, change.before, change.model);
-                } else {
-                    snapshot.remove(change.person, change.after);
-                }
-                changed = true;
-            }
-            return changed;
-        });
-    }
+    publishVoiceChanges([], false, changes);
 }

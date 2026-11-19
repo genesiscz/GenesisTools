@@ -4,7 +4,9 @@ import SwiftUI
 /// values and follows a change at once, and a change made in the hub (⌘⇧G) shows here.
 @MainActor
 public enum HubSettingsPages {
+    public static let inboxKindsChanged = Notification.Name("hub.inbox.kindsChanged")
     public static let appearancePageID = "hub.appearance"
+    public static let inboxPageID = "hub.inbox"
     public static let panesPageID = "hub.panes"
     public static let historyPageID = "hub.history"
 
@@ -21,7 +23,7 @@ public enum HubSettingsPages {
                 },
                 NativeSettingsPage(
                     id: panesPageID, title: "Panes", symbol: "rectangle.split.3x1", tint: .teal,
-                    subtitle: "Defaults for the diff, the Inbox, the PR overview, Activity, the Agents list, the Agent processes pane and the Worktree cleanup pane."
+                    subtitle: "Defaults for Work, the diff, the Inbox, the PR overview, Activity, the Agents list, the Agent processes pane and Worktree cleanup."
                 ) {
                     // Hub UX wave 2 design sketches (Sketches/UsageSettingsSketch*.swift); nil draws the current page.
                     HubLayoutView(.usageSettings) {
@@ -31,6 +33,11 @@ public enum HubSettingsPages {
                     } classic: {
                         HubPaneSettings(preferences: preferences)
                     }
+                    .environmentObject(preferences)
+                },
+                NativeSettingsPage(id: inboxPageID, title: "Inbox", symbol: "tray", tint: .indigo,
+                                   subtitle: "Choose what the hub and widget show and count.") {
+                    HubInboxKindSettings()
                 },
                 NativeSettingsPage(
                     id: historyPageID, title: "History", symbol: "clock.arrow.circlepath", tint: .purple,
@@ -102,6 +109,39 @@ private struct HubAppearanceSettings: View {
             Text("Changes apply to a running hub at once.")
                 .font(.system(size: 11)).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+@MainActor
+struct HubWorkOpeningProjectPicker: View {
+    @EnvironmentObject private var preferences: HubPreferences
+    @AppStorage(HubWorkOpeningProject.key) private var choice: HubWorkOpeningProject = .recentSession
+    @AppStorage(HubWorkSections.foldLongListsKey) private var foldLongLists = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            NativeSettingsPicker(
+                "Opening project", detail: "Work opens the first project in the list if your choice is unavailable.",
+                identifier: HubWorkOpeningProject.key,
+                options: [
+                    NativeSettingsOption(.recentSession, "Most recently active session’s project"),
+                    NativeSettingsOption(.lastOpened, "Project I opened last"),
+                    NativeSettingsOption(.firstInList, "First in the list"),
+                ],
+                selection: $choice, width: 245)
+            Divider()
+            NativeSettingsPicker(
+                "Item details", detail: "Beside the list, or in place of the list",
+                identifier: HubPreferences.Key.workDetailPlacement,
+                options: [
+                    NativeSettingsOption("beside", "Beside the list"),
+                    NativeSettingsOption("replace", "In place of the list"),
+                ],
+                selection: $preferences.workDetailPlacement, width: 245)
+            Divider()
+            NativeSettingsToggle("Fold long handoff lists", detail: "When more than ten handoffs and epics precede items needing attention, start with the group folded.",
+                                 identifier: HubWorkSections.foldLongListsKey, isOn: $foldLongLists)
         }
     }
 }
@@ -182,6 +222,8 @@ private struct HubPaneSettings: View {
                     detail: "Adds macOS energy impact to each process. Every refresh takes one top sample of about 1 s.",
                     identifier: "hub.procs.energy", isOn: $preferences.processEnergy)
             }
+            NativeSettingsCard("Work") { HubWorkOpeningProjectPicker() }
+                .nativeSettingsAnchor("work")
             NativeSettingsCard("Worktree cleanup") {
                 NativeSettingsRow(
                     "Idle for at least",
@@ -319,6 +361,75 @@ private struct HubHistorySettings: View {
             Text("⌘[ and ⌘] go back and forward; ⌘Y lists every place. Changes apply to a running hub at once.")
                 .font(.system(size: 11)).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+@MainActor
+private struct HubInboxKindSettings: View {
+    private struct Policy: Decodable { let show: Bool; let countInBadge: Bool }
+    private struct Kinds: Decodable {
+        struct Todos: Decodable { let forHuman: Policy; let forAgent: Policy }
+        let decision, form, answer, message: Policy
+        let todo: Todos
+        var entries: [(String, String, Policy)] {
+            [("decision", "Decisions", decision), ("form", "Forms and dialogs", form),
+             ("answer", "Answers", answer), ("message", "Messages", message),
+             ("todo.forHuman", "Tasks for you", todo.forHuman), ("todo.forAgent", "Tasks for agents", todo.forAgent)]
+        }
+    }
+
+    @State private var kinds: Kinds?
+    @State private var saving = false
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let kinds {
+                NativeSettingsCard("Inbox items", subtitle: "The same choices apply in the hub and widget.") {
+                    ForEach(kinds.entries.indices, id: \.self) { index in
+                        let (key, label, policy) = kinds.entries[index]
+                        HStack {
+                            Text(label)
+                            Spacer()
+                            Toggle("Show", isOn: setting(key, "show", policy.show))
+                                .accessibilityLabel("Show \(label)")
+                            Toggle("Count in badge", isOn: setting(key, "countInBadge", policy.countInBadge))
+                                .accessibilityLabel("Count \(label) in badge")
+                                .disabled(!policy.show)
+                        }
+                    }
+                }
+                let shown = kinds.entries.filter { $0.2.show }
+                let badge = shown.filter { $0.2.countInBadge }.count
+                Text("Preview with one item of each kind: \(shown.count) visible, badge \(badge).")
+            } else if error == nil { ProgressView() }
+            if let error {
+                Text(error).foregroundStyle(.red)
+                Button("Reload") { Task { await request([]) } }
+            }
+        }.disabled(saving).task { await request([]) }
+    }
+
+    private func setting(_ key: String, _ field: String, _ current: Bool) -> Binding<Bool> {
+        Binding(get: { current }, set: { value in
+            Task { await request([key, field, value ? "on" : "off"]) }
+        })
+    }
+
+    private func request(_ args: [String]) async {
+        guard !saving else { return }
+        saving = true
+        defer { saving = false }
+        do {
+            let result = try await ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath()).run(
+                subcommand: "hub", args: ["config", "inbox"] + args + ["--json"], timeoutSeconds: 15)
+            guard result.exitCode == 0 else { throw ToolsBridgeError.refused(result.stderr) }
+            kinds = try JSONDecoder().decode(Kinds.self, from: Data(result.stdout.utf8))
+            if !args.isEmpty { NotificationCenter.default.post(name: HubSettingsPages.inboxKindsChanged, object: nil) }
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 }

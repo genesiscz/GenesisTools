@@ -1,14 +1,21 @@
 import { IntervalIndex } from "@genesiscz/utils/array";
 import { DEFAULT_APPLY_ABOVE, type MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import type { ChannelEmbedding, LineEmbedding } from "@genesiscz/utils/meetings/voice";
-import type { VoiceStore } from "@genesiscz/utils/meetings/voice-store";
+import type { SampleSource } from "@genesiscz/utils/meetings/voice-library";
+import type { VoicePrint, VoiceStore } from "@genesiscz/utils/meetings/voice-store";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { Seat, TrackKind } from "./sound";
 import type { LabelContext, LineLabel } from "./speaker-labels/types";
 
 type VoiceSettings = MeetingsConfig["global"]["speakerLabels"]["voice"];
 export type VoiceGate = VoiceSettings["gate"];
-export type VoiceLine = LineEmbedding & { seat: Seat; track: TrackKind; fromSec?: number; toSec?: number };
+export type VoiceLine = LineEmbedding & {
+    seat: Seat;
+    track: TrackKind;
+    fromSec?: number;
+    toSec?: number;
+    eligible?: string[];
+};
 type ReadyVoice = Extract<ChannelEmbedding, { quality: "ready" }>;
 type Stay = LabelContext["attended"][number];
 
@@ -20,16 +27,18 @@ interface NamingInputs {
     minSeconds: number;
     exclusion?: VoiceSettings["exclusion"];
     meeting?: string;
+    lineKeys?: readonly string[];
+    sources?: ReadonlyMap<VoicePrint, SampleSource>;
     certain?: LabelContext["certain"];
     applyAbove?: number;
 }
 
-function unit(vector: number[]): number[] | undefined {
+export function unit(vector: number[]): number[] | undefined {
     const length = Math.hypot(...vector);
     return length > 0 && Number.isFinite(length) ? vector.map((v) => v / length) : undefined;
 }
 
-function addVector(sum: number[], vector: number[], sign: 1 | -1): void {
+export function addVector(sum: number[], vector: number[], sign: 1 | -1): void {
     for (let i = 0; i < sum.length; i++) {
         sum[i]! += sign * vector[i]!;
     }
@@ -48,6 +57,7 @@ export function meanVoice(embeddings: readonly number[][]): number[] | undefined
 }
 
 interface WindowPrint {
+    lineKey?: string;
     fromSec: number;
     toSec: number;
     vector: number[];
@@ -69,7 +79,10 @@ interface Profile {
     /** The same-meeting windows by their line time, and by their source audio and channel, for the overlap lookups. */
     byTime: IntervalIndex<WindowPrint>;
     byAudio: Map<string, IntervalIndex<WindowPrint>>;
+    /** The windows by their transcript line, and the spans of every window and of the windows without a line key. */
+    byLineKey: Map<string, WindowPrint[]>;
     spans: Set<string>;
+    keylessSpans: Set<string>;
     external: number[][];
 }
 
@@ -106,15 +119,28 @@ function voiceProfiles(options: NamingInputs, people: string[]) {
             windows: [],
             byTime: new IntervalIndex(),
             byAudio: new Map(),
+            byLineKey: new Map(),
             spans: new Set(),
+            keylessSpans: new Set(),
             external: [],
         };
         if (window) {
             const span = `${window.fromSec}:${window.toSec}`;
-            if (profile.spans.has(span)) {
+            // Two windows of one transcript line are the same window; without both line keys, the same span is.
+            if (
+                window.lineKey
+                    ? profile.byLineKey.has(window.lineKey) || profile.keylessSpans.has(span)
+                    : profile.spans.has(span)
+            ) {
                 return;
             }
             profile.spans.add(span);
+            if (!window.lineKey) {
+                profile.keylessSpans.add(span);
+            }
+            if (window.lineKey !== undefined) {
+                profile.byLineKey.set(window.lineKey, [...(profile.byLineKey.get(window.lineKey) ?? []), window]);
+            }
             profile.windows.push(window);
             profile.byTime.add(window.fromSec, window.toSec, window);
             if (window.voice) {
@@ -131,20 +157,28 @@ function voiceProfiles(options: NamingInputs, people: string[]) {
     }
 
     for (const [name, person] of Object.entries(options.store.people)) {
+        const seen = new Set<string>();
         for (const sample of person.samples) {
             const vector = unit(sample.embedding);
-            if (vector) {
-                add(name, {
-                    seat: sample.seat,
-                    track: sample.track,
-                    model: options.store.model,
-                    vector,
-                    window:
-                        sample.meeting === options.meeting
-                            ? { fromSec: sample.fromSec, toSec: sample.toSec, vector }
-                            : undefined,
-                });
+            const source = options.sources?.get(sample);
+            const identity =
+                source && [source.rootMeeting, source.lineKey, sample.track, sample.embedding.length].join("\0");
+            if (!vector || (identity && seen.has(identity))) {
+                continue;
             }
+            if (identity) {
+                seen.add(identity);
+            }
+            add(name, {
+                seat: sample.seat,
+                track: sample.track,
+                model: options.store.model,
+                vector,
+                window:
+                    (source?.rootMeeting ?? sample.meeting) === options.meeting
+                        ? { lineKey: source?.lineKey, fromSec: sample.fromSec, toSec: sample.toSec, vector }
+                        : undefined,
+            });
         }
     }
     for (const line of options.lines) {
@@ -172,7 +206,7 @@ function voiceProfiles(options: NamingInputs, people: string[]) {
                 track: line.track,
                 model: voice.model,
                 vector,
-                window: { fromSec, toSec, vector, voice },
+                window: { fromSec, toSec, vector, voice, lineKey: options.lineKeys?.[line.index] },
             });
         }
     }
@@ -180,18 +214,22 @@ function voiceProfiles(options: NamingInputs, people: string[]) {
 }
 
 /**
- * The same-meeting windows that overlap the target in line time, or in the same source audio and channel. Looked up in
- * the profile's indexes, so a long meeting does not scan every training window for every target line.
+ * The same-meeting windows that overlap the target: the same transcript line (`lineKey`), the line time, or the same
+ * source audio and channel. Looked up in the profile's indexes, so a long meeting does not scan every training window
+ * for every target line.
  */
-function overlappingWindows(profile: Profile, { fromSec, toSec, voice }: Target): Set<WindowPrint> {
+function overlappingWindows(profile: Profile, { fromSec, toSec, voice, lineKey }: Target): Set<WindowPrint> {
     const found = new Set(profile.byTime.overlapping(fromSec, toSec));
     for (const window of profile.byAudio.get(audioKey(voice))?.overlapping(voice.fromSec, voice.toSec) ?? []) {
+        found.add(window);
+    }
+    for (const window of lineKey === undefined ? [] : (profile.byLineKey.get(lineKey) ?? [])) {
         found.add(window);
     }
     return found;
 }
 
-function dot(a: number[], b: number[]): number {
+export function dot(a: number[], b: number[]): number {
     let score = 0;
     for (let i = 0; i < a.length; i++) {
         score += a[i]! * b[i]!;
@@ -260,14 +298,26 @@ export function nameByVoice(options: NamingInputs): LineLabel[] {
         if (toSec - fromSec < options.minSeconds) {
             return { ...base, reason: "no-voice" };
         }
-        const target = { seat: line.seat, track: line.track, model: voice.model, vector, fromSec, toSec, voice };
+        const target = {
+            lineKey: options.lineKeys?.[line.index],
+            seat: line.seat,
+            track: line.track,
+            model: voice.model,
+            vector,
+            fromSec,
+            toSec,
+            voice,
+        };
         const touching = stays.filter(
             (stay) => stay.seat === line.seat && stay.fromSec < toSec && stay.toSec > fromSec
         );
         const present = new Map(
             touching.filter((stay) => stay.fromSec <= fromSec && stay.toSec >= toSec).map((stay) => [stay.person, stay])
         );
-        const candidates = [...present.keys()]
+        const eligiblePeople = [...present.keys()].filter(
+            (person) => !line.eligible || line.eligible.some((name) => sameName(name, person))
+        );
+        const candidates = eligiblePeople
             .flatMap((person) => {
                 const profile = profiles.get(profileKey(person, target));
                 const score = profile && profileScore(profile, target);
@@ -276,14 +326,15 @@ export function nameByVoice(options: NamingInputs): LineLabel[] {
             .sort((a, b) => b.score - a.score);
         const [first, second] = candidates;
         const missing = [...present.values()].filter(
-            (stay) => !candidates.some((sample) => sample.person === stay.person)
+            (stay) =>
+                eligiblePeople.includes(stay.person) && !candidates.some((sample) => sample.person === stay.person)
         );
         const unknown = missing[0];
         if (!first) {
             return {
                 ...base,
                 reason: unknown ? "unsampled-present" : "no-rival-sample",
-                ...(unknown ? { next: { person: unknown.person, score: 0 } } : {}),
+                ...(unknown && missing.length === 1 ? { next: { person: unknown.person, score: 0 } } : {}),
             };
         }
         const scored = { ...base, score: first.score, ...(second ? { next: second } : {}) };
@@ -298,9 +349,10 @@ export function nameByVoice(options: NamingInputs): LineLabel[] {
             !enrolled.has(unknown.person) &&
             !options.certain?.has(line.index) &&
             touching.every((stay) => present.has(stay.person)) &&
+            (!line.eligible ||
+                line.eligible.every((name) => eligiblePeople.some((person) => sameName(person, name)))) &&
             margin > 0 &&
-            margin >= exclusion.margin &&
-            applyAbove > 0
+            margin >= exclusion.margin
         ) {
             let closest = first;
             for (const candidate of candidates) {
@@ -320,7 +372,11 @@ export function nameByVoice(options: NamingInputs): LineLabel[] {
             }
         }
         if (unknown && first.score < gate.unsampledScore) {
-            return { ...scored, next: { person: unknown.person, score: 0 }, reason: "unsampled-present" };
+            return {
+                ...scored,
+                ...(missing.length === 1 ? { next: { person: unknown.person, score: 0 } } : {}),
+                reason: "unsampled-present",
+            };
         }
         if (!second && first.score < gate.loneScore) {
             return { ...scored, reason: "no-rival-sample" };

@@ -177,7 +177,7 @@ export function missingMapKey(
 }
 
 /** The value at a path of the config with its defaults filled in, or undefined. */
-export function configValueAt(config: MeetingsConfig, segments: string[]): unknown {
+export function configValueAt(config: unknown, segments: string[]): unknown {
     let current: unknown = config;
 
     for (const segment of segments) {
@@ -287,7 +287,7 @@ export async function applyConfigEdits(store: MeetingsConfigStore, edits: Config
     return config;
 }
 
-function setAt(raw: Record<string, unknown>, segments: string[], value: unknown): void {
+export function setAt(raw: Record<string, unknown>, segments: string[], value: unknown): void {
     let parent: Record<string, unknown> = raw;
 
     for (const segment of segments.slice(0, -1)) {

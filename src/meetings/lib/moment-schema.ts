@@ -9,6 +9,28 @@ import type { ToneSound } from "./tone-sound";
  * imports) names them without loading the engine.
  */
 
+/** A transcript time: seconds, or "37:43" / "1:02:10". */
+export const transcriptTimeSchema = z.union([z.number().min(0), z.string()]).transform((value, ctx) => {
+    const sec = typeof value === "number" ? value : parseClock(value);
+
+    if (sec === undefined) {
+        ctx.addIssue({ code: "custom", message: `"${value}" is not a transcript time (37:43, 1:02:10 or seconds)` });
+        return z.NEVER;
+    }
+
+    return sec;
+});
+
+const finiteTime = transcriptTimeSchema.pipe(z.number().finite());
+export const meetingTimeRangeSchema = z
+    .object({
+        meeting: z.string().min(1),
+        from: finiteTime,
+        to: finiteTime,
+    })
+    .strict()
+    .refine(({ from, to }) => to >= from, { message: "to must be at or after from" });
+
 /** A point in a transcript line: the line's start (its address), its index as a hint, and how far into its text. */
 export const linePointSchema = z.object({
     /** When the line starts on the transcript clock; it finds the line again when indexes differ. */

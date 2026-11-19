@@ -43,6 +43,8 @@
 	<string>Transcribe dictation and audio using Apple Speech, in the on-device or server mode you select.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>You turned on the camera bubble in the screen recorder: the camera is recorded beside the screen into camera.mov in that recording's folder. Nothing is recorded while the bubble is off.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Record system sound as a separate track when you record a meeting.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Record speech when you start dictation, voice notes, or audio commands. Optional pre-roll keeps a short microphone buffer while dictation is enabled.</string>
 	<key>NSAppleEventsUsageDescription</key>

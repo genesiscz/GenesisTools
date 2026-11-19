@@ -66,6 +66,26 @@ final class AudioSessionTests: XCTestCase {
         return result
     }
 
+    func testMeterReadsBothStereoPlanesAndMonitorKeepsNoAudioFile() async throws {
+        let folder = try directory()
+        let buffer = try stereo(samples: 4800, at: .zero)
+        let power = try XCTUnwrap(audioSamplePower(buffer))
+        XCTAssertEqual(power.count, 9600)
+        XCTAssertEqual(sqrt(power.sum / Double(power.count)), sqrt(0.15625), accuracy: 0.00001)
+        let delivered = expectation(description: "monitor publishes the appended stereo microphone samples")
+        let audio = SegmentedAudio(directory: folder, seconds: 60, emit: { data in
+            guard let row = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  row["event"] as? String == "levels", let mic = row["mic"] as? Double else { return }
+            XCTAssertEqual(mic, sqrt(0.15625), accuracy: 0.00001)
+            XCTAssertTrue(row["system"] is NSNull)
+            delivered.fulfill()
+        }, monitorOnly: true, metering: true)
+        audio.queue.sync { audio.append(buffer, source: .mic) }
+        await fulfillment(of: [delivered], timeout: 3)
+        try await audio.finish()
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), [])
+    }
+
     func testLaunchMuteSilencesFirstStereoBufferAndLaunchPauseWritesNothingUntilResume() async throws {
         let directory = try directory()
         let host = CMTime(value: 123, timescale: 1)

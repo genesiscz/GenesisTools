@@ -199,7 +199,7 @@ function channelOverlap(segments: EvidenceSegment[], span: { fromSec: number; to
     return { overlap, touching, total, micShare: total > 0 ? (overlap.get(SELF)?.sec ?? 0) / total : undefined };
 }
 
-/** Seat labels need only the channel overlap, falling back to calibrated energy when no segment covers the line. */
+/** A seat uses the line's calibrated energy. A quiet or uncalibrated line falls back to capture segments. */
 export function lineChannelShares({
     entries,
     segments,
@@ -209,11 +209,10 @@ export function lineChannelShares({
     segments: EvidenceSegment[];
     energy?: AcousticShare;
 }) {
-    return timedLines(entries).map(({ span, index }) => ({
-        index,
-        ...span,
-        share: channelOverlap(segments, span).micShare ?? energy?.(span.fromSec, span.toSec),
-    }));
+    return timedLines(entries).map(({ span, index }) => {
+        const energyMic = energy?.(span.fromSec, span.toSec) ?? energy?.raw?.(span.fromSec, span.toSec);
+        return { index, ...span, energyMic, share: energyMic ?? channelOverlap(segments, span).micShare };
+    });
 }
 
 export function presentAt(presence: Presence[], startSec: number): string[] {

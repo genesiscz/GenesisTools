@@ -19,7 +19,6 @@ import type { voiceFrames } from "@genesiscz/utils/meetings/voice-features";
 import { RpcError, type RpcErrorOptions } from "@genesiscz/utils/rpc/errors";
 import { type LineEvidence, lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import type { cutClip, cutTone, probeAudio } from "../audio";
-import { MutedCallLines } from "../call-mutes";
 import { meetingListRow, selectMeetings } from "../list-rows";
 import { OpenedMeeting } from "../opened-meeting";
 import { projectRequired } from "../project";
@@ -28,6 +27,7 @@ import { missingMeetingMessage } from "../shared";
 import { preservedSourceAudio } from "../source-audio";
 import type { LocalSourceAudioAccess } from "../source-audio-backfill";
 import { isMeetingSourceId, type LinkedSource, linkedSource, meetingSource, sourceRefOf } from "../sources";
+import { LineSpeakers } from "../speaker-evidence";
 import { assessIndicator } from "../speaker-indicator";
 import { correctTranscript } from "../transcript-corrections";
 import { meetingVoices } from "../voice";
@@ -95,6 +95,8 @@ export function voicePassProgress(
 }
 
 export interface MeetingsHandlerDeps {
+    /** Owned by the service process. A standalone CLI only commits the durable human decision. */
+    voiceJobs?: import("./voice-jobs").MeetingVoiceJobs;
     /** The CPU sample `voices.workers` reads (`freeCores` of the voice labeler); tests pass a fixed one. */
     freeCores?: () => Promise<VoiceFreeCores>;
     /** Local audio adapters with their live lookup; tests supply isolated ones and never read this Mac's provider. */
@@ -268,34 +270,23 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         "meeting.seats.suggest": async (params) => {
             const store = storeOf();
             const record = recordOf(store, params.meeting);
-            const { decidedSeatRanges, suggestSeats } = await import("../seat-suggest");
-            const ranges = decidedSeatRanges(record);
-            let lines: LineEvidence[] = [];
-            if (ranges.length && sourceRefOf(record)) {
-                const opened = OpenedMeeting.of(store, record, deps.linkedSource?.(record));
-                const [transcript, share] = await Promise.all([
-                    opened
-                        .meeting()
-                        .then((meeting) => meeting.transcript)
-                        .catch((error: unknown) => {
-                            log.warn({ error, meeting: record.id }, "seat suggestions without transcript lines");
-                            return [];
-                        }),
-                    opened
-                        .energy()
-                        .then((energy) => energy.share)
-                        .catch((error: unknown) => {
-                            log.warn({ error, meeting: record.id }, "seat suggestions without channel energy");
-                            return undefined;
-                        }),
-                ]);
-                lines = lineEvidence(transcript, { segments: [], speaking: [] }, undefined, share);
-            }
-            return {
-                meeting: record.id,
-                current: record.seats ?? null,
-                suggestion: suggestSeats({ record, ranges, lines, room: params.room, remote: params.remote }),
-            };
+            const { seatSuggestion } = await import("./seat-handlers");
+            const config = await (deps.config?.() ?? deps.configStore?.().read());
+            return seatSuggestion({ store, record, config, linked: deps.linkedSource?.(record), params });
+        },
+        "meeting.thresholds.preview": async (params, context) => {
+            const store = storeOf();
+            const record = params.meeting ? recordOf(store, params.meeting) : undefined;
+            const configStore = deps.configStore?.() ?? new MeetingsConfigStore();
+            const source =
+                deps.config && !deps.configStore
+                    ? { config: await deps.config(), raw: {} }
+                    : await configStore.readWithSource();
+            const opened = record
+                ? OpenedMeeting.of(store, record, deps.linkedSource?.(record), source.config)
+                : undefined;
+            const { meetingThresholds } = await import("../thresholds");
+            return meetingThresholds({ ...source, opened, values: params.values, signal: context.signal });
         },
         "meeting.suggest": async (params, context) => {
             const store = storeOf();
@@ -318,26 +309,29 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
                 ...(context.signal ? { signal: context.signal } : {}),
             });
             context.emit?.("meeting.changed", { meeting: record.id, parts: ["show", "speakers", "transcript"] });
-            return { added: result.fresh.length, warnings: result.warnings };
+            return {
+                added: result.fresh.length,
+                warnings: result.warnings,
+                ...(result.deviceOffers ? { deviceOffers: result.deviceOffers } : {}),
+            };
         },
         "meeting.listen.prepare": async (params, context) => {
             const store = storeOf();
             const record = recordOf(store, params.meeting);
             const opened = OpenedMeeting.of(store, record, deps.linkedSource?.(record));
             const { addQualityQuestions, qualityVoiceFeatures } = await import("../listen-quality");
-            const entries = (await opened.meeting()).transcript;
+            const meeting = await opened.meeting();
+            const entries = meeting.transcript;
             const evidence = await opened.evidence().catch((error: unknown) => {
                 log.debug({ error, meeting: record.id }, "roster readings unavailable for sampled questions");
                 return null;
             });
-            let callMutes: MutedCallLines | undefined;
-            if (evidence?.speaking.some((read) => read.muted?.length)) {
-                const energy = await opened.energy().catch((error: unknown) => {
-                    log.debug({ error, meeting: record.id }, "using channel segments for sampled questions");
-                    return undefined;
-                });
-                callMutes = new MutedCallLines(lineEvidence(entries, evidence, undefined, energy?.share));
-            }
+            const energy = await opened.energy().catch((error: unknown) => {
+                log.debug({ error, meeting: record.id }, "using channel segments for sampled questions");
+                return undefined;
+            });
+            const presence = await opened.presence();
+            const lines = lineEvidence(entries, evidence ?? { segments: [], speaking: [] }, presence, energy?.share);
             const features = params.group === "long-stretch" ? await qualityVoiceFeatures(opened) : undefined;
             const below =
                 params.group === "long-stretch"
@@ -350,7 +344,14 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
                 questions = addQualityQuestions({
                     record: current,
                     entries,
-                    callMutes,
+                    speakers: new LineSpeakers({
+                        devices: opened.roomDevices,
+                        lines,
+                        record: current,
+                        meeting,
+                        presence,
+                        selfName: current.participants.find((p) => p.self)?.name ?? evidence?.selfName,
+                    }),
                     features,
                     spotCheck: params.group === "spot-check" ? (params.count ?? 20) : undefined,
                     longStretchWords: params.group === "long-stretch" ? (params.words ?? 50) : undefined,
@@ -666,7 +667,19 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
             (await comments()).withdrawComment(params, context, storeOf(), deps),
         // The people directory loads Contacts (darwinkit) only when a call asks for people.
         "people.known": async (params) => (await people()).knownPeople(params, storeOf(), deps),
+        "people.devices.list": async (params) => (await people()).listRoomDevices(params, storeOf(), deps),
+        "people.devices.decide": async (params, context) => {
+            const result = await (await people()).decideDevice({ params, context, store: storeOf(), deps });
+            if (result.changed) {
+                context.emit?.("people.changed", {});
+            }
+            return result;
+        },
         // The voices methods (P6): the same functions as `tools meetings voices`, loaded with the people module.
+        "voices.jobs": async (params, context) =>
+            (await people()).voicesHandlers(storeOf(), deps)["voices.jobs"](params, context),
+        "voices.jobs.cancel": async (params, context) =>
+            (await people()).voicesHandlers(storeOf(), deps)["voices.jobs.cancel"](params, context),
         "voice.backfill": async (params, context) =>
             (await people()).voicesHandlers(storeOf(), deps)["voice.backfill"](params, context),
         "voices.list": async (params, context) =>
@@ -679,6 +692,14 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
             (await people()).voicesHandlers(storeOf(), deps)["voices.apply"](params, context),
         "voices.remove": async (params, context) =>
             (await people()).voicesHandlers(storeOf(), deps)["voices.remove"](params, context),
+        "voices.move": async (params, context) =>
+            (await people()).voicesHandlers(storeOf(), deps)["voices.move"](params, context),
+        "voices.reject": async (params, context) =>
+            (await people()).voicesHandlers(storeOf(), deps)["voices.reject"](params, context),
+        "voices.undo": async (params, context) =>
+            (await people()).voicesHandlers(storeOf(), deps)["voices.undo"](params, context),
+        "voices.quality": async (params, context) =>
+            (await people()).voicesHandlers(storeOf(), deps)["voices.quality"](params, context),
         "voices.workers": async (params, context) =>
             (await people()).voicesHandlers(storeOf(), deps)["voices.workers"](params, context),
         "people.meetings": async (params) => (await people()).personMeetings(params, storeOf(), deps),

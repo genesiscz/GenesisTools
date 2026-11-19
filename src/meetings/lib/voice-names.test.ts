@@ -1,30 +1,43 @@
-import { afterEach, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import * as hostStats from "@genesiscz/utils/macos/host-stats";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import * as voice from "@genesiscz/utils/meetings/voice";
+import * as voiceLibraryModule from "@genesiscz/utils/meetings/voice-library";
+import { insertVoiceSample, readVoiceLibrary, sourceForVoicePrint } from "@genesiscz/utils/meetings/voice-library";
 import { addVoicePrint, readVoiceStore, type VoicePrint, type VoiceStore } from "@genesiscz/utils/meetings/voice-store";
 import { Storage } from "@genesiscz/utils/storage";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { journalEntrySchema } from "./decision-actions";
 import { DecisionJournal } from "./decision-journal";
 import { identifiedDepartures } from "./departure";
+import { duplicateMeeting } from "./duplicate";
 import { itemWhat } from "./item-text";
 import { OpenedMeeting } from "./opened-meeting";
 import { voicesPreview } from "./service/api";
 import * as soundModule from "./sound";
 import { meetingSound } from "./sound";
-import { mergeLineLabels, proposeSpeakerLabels, speakerLabelRule } from "./speaker-labels";
+import { mergeLineLabels, preparePreviewLabels, proposeSpeakerLabels, speakerLabelRule } from "./speaker-labels";
 import type { LabelContext } from "./speaker-labels/types";
 import { embedSeatLines, voiceLabeler } from "./speaker-labels/voice";
 import { suggestItems } from "./suggest";
 import { correctionsOf } from "./transcript-corrections";
 import { nameByVoice, type VoiceLine } from "./voice-names";
+import { voiceReadiness } from "./voice-readiness";
 import { saveAnsweredVoiceSamples, undoAnsweredVoiceSamples } from "./voice-samples";
+import * as voices from "./voices";
+
+let previousHome: string;
+beforeEach(() => {
+    previousHome = env.tools.getHome();
+    env.testing.set("GENESIS_TOOLS_HOME", mkdtempSync(join(tmpdir(), "voice-names-")));
+});
+afterEach(() => env.testing.set("GENESIS_TOOLS_HOME", previousHome));
 
 const settings = meetingsConfigSchema.parse({}).global.speakerLabels.voice;
 const alice = { person: "Alice Example", seat: "mic" as const, fromSec: 0, toSec: 100 };
@@ -78,6 +91,7 @@ function name(
         attended?: LabelContext["attended"];
         gate?: typeof settings.gate;
         minSeconds?: number;
+        applyAbove?: number;
     } = {}
 ) {
     return nameByVoice({
@@ -142,7 +156,14 @@ test("exclusion on a shared microphone needs one unsampled person and one cohere
     );
     const nobody = (rows: ReturnType<typeof name>) => rows.every((row) => row.person === undefined);
     expect(nobody(name({ ...options, lines: lines.slice(0, 1) }))).toBe(true);
-    expect(nobody(name({ ...options, attended: [alice, bob, { ...bob, person: "Carol Example" }] }))).toBe(true);
+    const twoVisitors = name({ ...options, attended: [alice, bob, { ...bob, person: "Gale Example" }] });
+    expect(nobody(twoVisitors)).toBe(true);
+    expect(twoVisitors.every((row) => row.next === undefined)).toBe(true);
+    expect(
+        name({ ...options, applyAbove: 0 })
+            .slice(0, 3)
+            .map((row) => row.reason)
+    ).toEqual(Array(3).fill("exclusion"));
     expect(nobody(nameByVoice({ ...settings, ...options, exclusion: { ...settings.exclusion, enabled: false } }))).toBe(
         true
     );
@@ -189,6 +210,111 @@ test("meeting enrolment holds out overlapping windows from both stores and keeps
     expect(nameByVoice({ ...options, store: saved }).map((row) => row.person)).toEqual(labels.map((row) => row.person));
 });
 
+test("P2 all-project prediction holds out a retimed duplicate, filters refused temporary seeds and preserves C3 compatibility", async () => {
+    const { opened, record, store } = await sampledMeeting("spring");
+    const copy = await duplicateMeeting({ store, ref: record.id, withoutItems: true });
+    const second = await duplicateMeeting({ store, ref: copy.id, withoutItems: true });
+    const duplicate = store.read(second.id)!;
+    expect(duplicate.voiceRootMeeting).toBe(record.id);
+    expect(duplicate.items).toEqual([]);
+    const source = await opened.meeting();
+    const transcript = source.transcript.map((entry, i) => ({ ...entry, id: `line-${i}` }));
+    const { voiceLineKeys, correctVoiceSample } = await import("@genesiscz/utils/meetings/voice-library");
+    const keys = voiceLineKeys({ ...source, transcript });
+    const printed = { ...basePrint, meeting: record.id };
+    const identity = sourceForVoicePrint(printed, record.id, keys[0]);
+    const learned = insertVoiceSample({
+        project: "winter",
+        owner: { name: alice.person },
+        source: identity,
+        origin: "enrol",
+        acquiredBy: "manual",
+        print: printed,
+        model: "fixture-model",
+    });
+    if (learned.status !== "added") {
+        throw new Error("The source fixture needs a persisted sample.");
+    }
+    const target = OpenedMeeting.of(store, duplicate);
+    spies.push(
+        spyOn(target, "meeting").mockResolvedValue({
+            ...source,
+            transcript: transcript.map((entry) => ({ ...entry, startSec: entry.startSec! + 20 })),
+        })
+    );
+    const lines = [20, 25, 30].map((at, i) => timedLine(i, at, [1, 0], "mic"));
+    const run = (scope: "project" | "all", certain?: Map<number, string>) =>
+        voiceLabeler({
+            opened: target,
+            settings: { ...settings, sampleScope: scope },
+            readLines: async () => lines,
+        }).propose({
+            project: record.project,
+            attended: [alice],
+            lines: lines.map((l, i) => ({ index: i, fromSec: l.fromSec!, toSec: l.toSec!, seat: l.seat })),
+            certain,
+        });
+    expect(await run("project")).toEqual([]);
+    const predicted = await run("all");
+    expect(predicted[0]?.person).toBeUndefined();
+    expect(predicted[1]?.person).toBe(alice.person);
+    for (const line of lines) {
+        const channel = line.channels[0]!;
+        if (channel.quality === "ready") {
+            channel.source.audioPath = join(store.folder(record.id), "fixture.wav");
+        }
+    }
+    const seed = new Map([[0, alice.person]]);
+    const heldOut = (labels: Awaited<ReturnType<typeof run>>) => labels.find((label) => label.index === 1);
+    expect(heldOut(await run("project", seed))?.person).toBe(alice.person);
+    correctVoiceSample({ kind: "reject", id: learned.id, reason: "wrong-person" });
+    expect(heldOut(await run("project", seed))).toMatchObject({ index: 1 });
+    expect(heldOut(await run("project", seed))?.person).toBeUndefined();
+    expect(readVoiceLibrary().library.samples).toEqual([]);
+
+    const saved = storeOf({ [alice.person]: [[1, 0]], [bob.person]: [[0, 1]] });
+    saved.people[bob.person]!.samples[0]!.track = "mic-raw";
+    const abstain = nameByVoice({
+        ...settings,
+        store: saved,
+        attended: [alice, bob],
+        lines: [1, 6, 12].map((at, i) => timedLine(i, at, [0, 1], "mic")),
+    });
+    expect(abstain.every((row) => row.reason !== "exclusion" && !row.person)).toBe(true);
+});
+
+test("P2 playback resolves the pinned source and channel by ID and refuses changed media or conflicting selectors", async () => {
+    const { opened, record, store } = await sampledMeeting("playback");
+    const file = join(store.folder(record.id), "fixture.wav");
+    const { sha256FileAsync } = await import("@genesiscz/utils/fs/hash");
+    const print = { ...basePrint, meeting: record.id, sourceSha: await sha256FileAsync(file) };
+    const receipt = insertVoiceSample({
+        project: "playback",
+        owner: { name: alice.person },
+        model: "fixture-model",
+        print,
+        source: sourceForVoicePrint(print),
+        origin: "enrol",
+        acquiredBy: "manual",
+    });
+    if (receipt.status !== "added") {
+        throw new Error("Fixture clip missing.");
+    }
+    spies.push(spyOn(OpenedMeeting, "of").mockReturnValue(opened));
+    const selected = { store, id: receipt.id };
+    expect(await voices.voiceSample(selected)).toMatchObject({
+        path: file,
+        meeting: record.id,
+        channel: 0,
+        fileFromSec: 0,
+        fileToSec: 5,
+    });
+    await expect(voices.voiceSample({ ...selected, project: "elsewhere" })).rejects.toThrow("Stale");
+    await expect(voices.voiceSample({ ...selected, sample: 1 })).rejects.toThrow("Choose");
+    writeFileSync(file, "replaced recording");
+    await expect(voices.voiceSample(selected)).rejects.toThrow("changed");
+});
+
 test("voice registry maps to the canonical rule", () => {
     expect(speakerLabelRule("voice")).toBe(MeetingRule.VoiceEmbedding);
 });
@@ -220,6 +346,34 @@ test("mean prototypes beat an outlier single print and never mix tracks or seats
     ];
     expect(name({ store })[0]?.person).toBe(bob.person);
 });
+test("readiness for a projectless meeting does not open the voice library", async () => {
+    const { record } = await sampledMeeting("readiness");
+    const read = spyOn(voiceLibraryModule, "readVoiceLibrary");
+    spies.push(read);
+    expect(voiceReadiness({ ...record, project: undefined })).toMatchObject({ samples: 0, ready: false });
+    expect(read).not.toHaveBeenCalled();
+});
+
+test("a zero print cannot hide a usable print of the same source line", () => {
+    const store = storeOf({
+        [alice.person]: [
+            [0, 0],
+            [1, 0],
+        ],
+    });
+    const prints = store.people[alice.person]!.samples;
+    const source = sourceForVoicePrint(basePrint, "training", "shared-line");
+    const labels = nameByVoice({
+        ...settings,
+        store,
+        attended: [alice],
+        lines: [timedLine(0, 20, [1, 0], "mic")],
+        sources: new Map(prints.map((print) => [print, source])),
+        meeting: "held-out",
+    });
+    expect(labels[0]?.person).toBe(alice.person);
+});
+
 test("short, empty, zero, incompatible and unavailable voice stays unnamed", () => {
     for (const input of [line([1, 0], { toSec: 5.5 }), line([], {}), line([0, 0]), line([1, 0], { channels: [] })]) {
         expect(name({ lines: [{ ...input, fromSec: 5 }] })[0]?.reason).toBe("no-voice");
@@ -513,7 +667,24 @@ async function sampledMeeting(project: string) {
     const opened = OpenedMeeting.of(store, record);
     const audio = `${store.folder(record.id)}/fixture.wav`;
     writeFileSync(audio, "fixture audio");
+    const embed = spyOn(voice, "embedVoiceLines").mockImplementation(async (options) =>
+        options.spans.map((span) => ({
+            index: span.index,
+            channels: [
+                {
+                    ...line([1, 0]).channels[0]!,
+                    quality: "ready",
+                    model: "fixture-model",
+                    embedding: [1, 0],
+                    source: { audioPath: audio, size: 13, mtimeMs: 1 },
+                    fromSec: span.fromSec,
+                    toSec: span.toSec,
+                },
+            ],
+        }))
+    );
     spies.push(
+        embed,
         spyOn(opened, "presence").mockResolvedValue([{ name: alice.person, fromSec: 0, toSec: 30 }]),
         spyOn(opened, "energy").mockResolvedValue({}),
         spyOn(opened, "evidence").mockResolvedValue({
@@ -544,25 +715,9 @@ async function sampledMeeting(project: string) {
                 fileFromSec: request.fromSec,
                 fileToSec: request.toSec,
             }),
-        }),
-        spyOn(voice, "embedVoiceLines").mockImplementation(async (options) =>
-            options.spans.map((span) => ({
-                index: span.index,
-                channels: [
-                    {
-                        ...line([1, 0]).channels[0]!,
-                        quality: "ready",
-                        model: "fixture-model",
-                        embedding: [1, 0],
-                        source: { audioPath: audio, size: 13, mtimeMs: 1 },
-                        fromSec: span.fromSec,
-                        toSec: span.toSec,
-                    },
-                ],
-            }))
-        )
+        })
     );
-    return { store, record, opened };
+    return { store, record, opened, embed };
 }
 
 test("voice preview uses this meeting's independent seats, indicators and human decisions without saving samples", async () => {
@@ -594,10 +749,16 @@ test("voice preview uses this meeting's independent seats, indicators and human 
             voiceOnly: true,
             applyAbove: config.global.suggest.applyAbove,
         });
+    // Both legacy room seats cover the whole meeting. Bob joining the call at 5 s cannot identify Alice at 0 s.
+    expect(await preview()).toEqual([]);
+
+    record.seats.room = [alice.person, { name: bob.person, fromSec: 5 }];
     const labels = await preview();
-    expect(labels[0]?.person).toBeUndefined();
-    expect(labels[1]).toMatchObject({ person: alice.person, reason: "named" });
-    expect(labels.slice(2, 5).map((row) => row.person)).toEqual(Array(3).fill(bob.person));
+    expect(labels[0]!.person).toBeUndefined();
+    expect(labels[1]).toMatchObject({ index: 1, person: alice.person, reason: "named" });
+    expect(labels.slice(2, 5).map(({ person, reason }) => [person, reason])).toEqual(
+        Array(3).fill([bob.person, "exclusion"])
+    );
     expect(readVoiceStore(record.project!).people).toEqual({});
     config.global.speakerLabels.seat.enabled = false;
     expect(await preview()).toEqual([]);
@@ -609,7 +770,7 @@ test("voice preview uses this meeting's independent seats, indicators and human 
         label: "Speaker 1",
         speaker: alice.person,
         fromSec: 0,
-        toSec: 0,
+        toSec: 5,
         rules: [MeetingRule.SpeakingIndicator],
         confidence: 0.75,
     });
@@ -639,6 +800,61 @@ test("voice preview uses this meeting's independent seats, indicators and human 
     expect((await preview())[1]?.person).toBe(alice.person);
     record.items[1]!.decision!.actor = { kind: "agent", harness: "fixture", session: null };
     expect(await preview()).toEqual([]);
+    expect(readVoiceStore(record.project!).people).toEqual({});
+});
+
+test("voice preview names a legacy room occupant before joining and after leaving the call", async () => {
+    const { record, opened } = await sampledMeeting("legacy-room-call-stay-fixture");
+    record.seats = { room: [alice.person, bob.person], remote: [] };
+    addVoicePrint(record.project!, bob.person, { ...basePrint, sourceSha: "legacy-room-training" }, "fixture-model");
+    spies.push(spyOn(voices, "voiceReadMeeting").mockResolvedValue(opened));
+    const { speakerLabels, suggest } = meetingsConfigSchema.parse({}).global;
+    speakerLabels.seat.enabled = false;
+    const preview = await preparePreviewLabels({
+        opened,
+        settings: speakerLabels,
+        presence: [
+            { name: alice.person, fromSec: 0, toSec: 15 },
+            { name: bob.person, fromSec: 5, toSec: 10 },
+        ],
+    });
+    const labels = await preview(speakerLabels.voice, suggest.applyAbove);
+    expect(labels.map(({ index, person, reason }) => [index, person, reason])).toEqual([
+        [0, bob.person, "named"],
+        [1, bob.person, "named"],
+        [2, bob.person, "named"],
+    ]);
+});
+
+test("threshold preview rescores a shared seat from local voice evidence without saving embeddings", async () => {
+    const { opened, record, embed } = await sampledMeeting("threshold-seeds-fixture");
+    // Only Alice appears in the source attendance. Bob shares her saved room seat.
+    record.seats = { room: [alice.person, bob.person], remote: [] };
+    record.items.push({
+        id: "i1",
+        kind: "speaker-range",
+        status: "suggested",
+        suggestedAt: record.start!,
+        label: "Speaker 1",
+        speaker: alice.person,
+        fromSec: 0,
+        toSec: 5,
+        rules: [MeetingRule.SpeakingIndicator],
+        confidence: 0.75,
+        evidence: { transcriptLine: 0 },
+    });
+    spies.push(spyOn(voices, "voiceReadMeeting").mockResolvedValue(opened));
+    const config = meetingsConfigSchema.parse({ global: { speakerLabels: { voice: { compute: { workers: 1 } } } } });
+    spies.push(spyOn(opened, "config").mockResolvedValue(config));
+    const { speakerLabels } = config.global;
+    const enrollment = spyOn(voiceLibraryModule, "readVoiceLibrary");
+    spies.push(enrollment);
+    const score = await preparePreviewLabels({ opened, settings: speakerLabels, presence: await opened.presence() });
+    expect((await score(speakerLabels.voice, 0.8))[1]?.person).toBeUndefined();
+    expect((await score(speakerLabels.voice, 0.7))[1]).toMatchObject({ person: alice.person, reason: "named" });
+    expect((await score(speakerLabels.voice, 0.72))[1]?.person).toBe(alice.person);
+    expect(enrollment).toHaveBeenCalledTimes(1);
+    expect(embed.mock.calls.map(([options]) => options.cachePath)).toEqual([""]);
     expect(readVoiceStore(record.project!).people).toEqual({});
 });
 
@@ -801,7 +1017,8 @@ test("a live speaking indicator enrols its own line only when the existing rule 
             }),
         })
     );
-    const labelers = { ...meetingsConfigSchema.parse({}).global.speakerLabels, seat: { enabled: false } };
+    const labelers = meetingsConfigSchema.parse({}).global.speakerLabels;
+    labelers.seat.enabled = false;
     const preview = (applyAbove: number) =>
         proposeSpeakerLabels(opened, labelers, presence, { voiceOnly: true, applyAbove });
     const rows = await preview(0.7);

@@ -113,6 +113,7 @@ struct MeetingsContactsView: View {
     var grantContacts: () -> Void = {}
     /// Optional: show a person's meetings (the meetings list filtered to them).
     var showMeetings: ((KnownPerson) -> Void)?
+    var showVoices: ((KnownPerson) -> Void)?
     /// The search "Merge with…" asks: the whole directory (`people.known`), not the list's query or its limit.
     var mergeSearch: () -> PeopleSearch = { PeopleSearch(meeting: nil, limit: 50, service: MeetingsService.shared) }
 
@@ -122,6 +123,9 @@ struct MeetingsContactsView: View {
     @State private var mergeFrom: KnownPerson?
     @State private var mergeQuery = ""
     @State private var mergeSearching: PeopleSearch?
+    @State private var mergeChoices: [KnownPerson] = []
+    @Environment(MeetingsWindowModel.self) private var window: MeetingsWindowModel?
+    @Environment(\.roomDevicesPreview) private var roomDevicesPreview
 
     private var access: ContactsAccessState { switches.contacts ? ContactsAccessState.from(sources) : .off }
 
@@ -260,6 +264,18 @@ struct MeetingsContactsView: View {
 
     @ViewBuilder
     private var list: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                RoomDeviceBookSection(people: people, window: window, preview: roomDevicesPreview)
+                    .padding(.horizontal, 16).padding(.vertical, 6)
+                Divider()
+                personRows
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var personRows: some View {
         if people.isEmpty {
             EmptyState(symbol: "person.2", text: query.isEmpty ? "Nobody known yet" : "Nobody matches “\(query)”",
                        detail: query.isEmpty ? "People appear here from your meetings, calendars and Contacts." : nil,
@@ -267,30 +283,30 @@ struct MeetingsContactsView: View {
                        action: query.isEmpty ? nil : { add(query.trimmingCharacters(in: .whitespaces), nil) })
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(people) { person in
-                        ContactsPersonRow(
-                            person: person,
-                            mergeWith: { startMerge(from: person) },
-                            setHidden: { setHidden(person, $0) },
-                            unmerge: person.merge.map { token in { unmerge(token) } },
-                            showMeetings: showMeetings.map { show in { show(person) } })
-                        .equatable()
-                        .popover(isPresented: Binding(get: { mergeFrom?.id == person.id },
-                                                      set: { if !$0 { endMerge() } }), arrowEdge: .trailing) {
-                            PersonPicker(
-                                people: Self.mergeCandidates(mergeSearching?.people ?? [], except: person, query: ""),
-                                query: $mergeQuery, sources: mergeSearching?.sources ?? [],
-                                title: "Merge \(person.name) with", prompt: "Search people",
-                                addRule: .noResults,
-                                pick: { other in endMerge(); requestMerge(person, other) },
-                                cancel: { endMerge() })
-                            .onChange(of: mergeQuery) { _, now in mergeSearching?.ask(now) }
-                        }
-                        Divider().padding(.leading, 52)
+            ForEach(people) { person in
+                ContactsPersonRow(
+                    person: person,
+                    mergeWith: { startMerge(from: person) },
+                    setHidden: { setHidden(person, $0) },
+                    unmerge: person.merge.map { token in { unmerge(token) } },
+                    showMeetings: showMeetings.map { show in { show(person) } },
+                    showVoices: showVoices.map { show in { show(person) } })
+                .equatable()
+                .popover(isPresented: Binding(get: { mergeFrom?.id == person.id },
+                                              set: { if !$0 { endMerge() } }), arrowEdge: .trailing) {
+                    PersonPicker(
+                        people: mergeChoices,
+                        query: $mergeQuery, sources: mergeSearching?.sources ?? [],
+                        title: "Merge \(person.name) with", prompt: "Search people",
+                        addRule: .noResults,
+                        pick: { other in endMerge(); requestMerge(person, other) },
+                        cancel: { endMerge() })
+                    .onChange(of: mergeSearching?.people, initial: true) { _, found in
+                        mergeChoices = Self.mergeCandidates(found ?? [], except: person, query: "")
                     }
+                    .onChange(of: mergeQuery) { _, now in mergeSearching?.ask(now) }
                 }
+                Divider().padding(.leading, 52)
             }
         }
     }
@@ -310,6 +326,7 @@ struct MeetingsContactsView: View {
         mergeSearching?.cancel()
         mergeSearching = nil
         mergeFrom = nil
+        mergeChoices = []
     }
 
     /// The people "Merge with…" offers: everyone else whose name, alias or address holds the text.
@@ -349,6 +366,177 @@ struct MeetingsContactsView: View {
     }
 }
 
+private struct RoomDevicesPreviewKey: EnvironmentKey {
+    static let defaultValue: MeetingsAPI.RoomDevices.Result? = nil
+}
+
+extension EnvironmentValues {
+    var roomDevicesPreview: MeetingsAPI.RoomDevices.Result? {
+        get { self[RoomDevicesPreviewKey.self] }
+        set { self[RoomDevicesPreviewKey.self] = newValue }
+    }
+}
+
+private struct RoomDeviceBookSection: View {
+    let people: [KnownPerson]
+    let window: MeetingsWindowModel?
+    let preview: MeetingsAPI.RoomDevices.Result?
+    @State private var expanded: Bool
+    @State private var data: MeetingsAPI.RoomDevices.Result?
+    @State private var failure: MeetingsCLI.Failure?
+    @State private var generation = 0
+    @State private var adding = false
+    @State private var actions = RoomDeviceActions()
+    @State private var listener: MeetingsService.Listening?
+
+    init(people: [KnownPerson], window: MeetingsWindowModel?, preview: MeetingsAPI.RoomDevices.Result? = nil) {
+        self.people = people
+        self.window = window
+        self.preview = preview
+        _expanded = State(initialValue: preview != nil)
+        _data = State(initialValue: preview)
+    }
+
+    var body: some View {
+        GenDisclosure("Room devices", isExpanded: $expanded, identifier: "meetings.contacts.roomDevices") {
+            VStack(alignment: .leading, spacing: 8) {
+                if let failure {
+                    NoticePill(text: failure.sentence, more: failure.detail, tone: .error, fixes: [
+                        .button("Retry", symbol: "arrow.clockwise") { Task { await reload() } }
+                    ])
+                } else if let data {
+                    RoomDeviceRows(data: data, window: window, decide: { submit($0) })
+                    if adding {
+                        RoomDeviceMapForm(people: people, devices: data.devices,
+                                          map: { submit(.map($0), closeForm: true) }, cancel: { adding = false })
+                    } else {
+                        Button("Mark an account as a room device") { adding = true }
+                            .accessibilityLabel("Mark an account as a room device")
+                            .accessibilityIdentifier("meetings.devices.add")
+                    }
+                } else {
+                    ProgressView("Reading room devices…").controlSize(.small)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .disabled(actions.busy)
+            .task { await reload() }
+            .onAppear {
+                guard preview == nil else { return }
+                listener = window?.service?.listen { signal in
+                    guard !actions.busy else { return }
+                    switch signal {
+                    case .event(.peopleChanged), .resumed: Task { await reload() }
+                    default: break
+                    }
+                }
+            }
+            .onDisappear { listener?.cancel(); listener = nil }
+        }
+    }
+
+    private func submit(_ change: RoomDeviceChange, closeForm: Bool = false) {
+        guard let window, preview == nil else { return }
+        actions.submit(change, service: window.service, notices: window.notices, refresh: reload) {
+            if closeForm { adding = false }
+        }
+    }
+
+    private func reload() async {
+        guard preview == nil else { return }
+        generation += 1
+        let request = generation
+        do {
+            let fresh = try await PeopleCalls.roomDevices(service: window?.service)
+            guard request == generation, !Task.isCancelled else { return }
+            data = fresh
+            failure = nil
+        } catch {
+            if request == generation, !Task.isCancelled { failure = asFailure(error) }
+        }
+    }
+}
+
+struct RoomDeviceRows: View {
+    let data: MeetingsAPI.RoomDevices.Result
+    let window: MeetingsWindowModel?
+    let decide: (RoomDeviceChange) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if data.devices.isEmpty && data.offers.isEmpty {
+                Text("A room device is a shared account that joins a meeting through the room’s microphone.")
+                    .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(data.devices) { device in
+                HStack {
+                    Label(device.account, systemImage: "desktopcomputer")
+                    Text(verbatim: device.group ?? "the room").foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Unmap") { decide(.unmap(device)) }
+                        .accessibilityLabel("Unmap \(device.account)")
+                        .accessibilityIdentifier("meetings.devices.unmap.\(device.account)")
+                }
+            }
+            ForEach(data.offers) { offer in
+                RoomDeviceOfferRow(offer: offer, window: window) { decide(.answer(offer, meeting: nil, yes: $0)) }
+            }
+        }
+    }
+}
+
+private struct RoomDeviceMapForm: View {
+    let people: [KnownPerson]
+    let devices: [RoomDevice]
+    let map: (RoomDevice) -> Void
+    let cancel: () -> Void
+    @State private var accounts: [String] = []
+    @State private var account = ""
+    @State private var group = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Picker("Roster account", selection: $account) {
+                Text("Choose an account").tag("")
+                ForEach(accounts, id: \.self) { Text(verbatim: $0).tag($0) }
+            }
+            .accessibilityIdentifier("meetings.devices.account")
+            if accounts.isEmpty {
+                Text("No roster accounts in this list. Search people by the name shown in the meeting.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            TextField("Microphone group (optional)", text: $group)
+                .accessibilityLabel("Microphone group (optional)")
+            HStack {
+                Button("Map") {
+                    let name = group.trimmingCharacters(in: .whitespacesAndNewlines)
+                    map(.init(account: account, group: name.isEmpty ? nil : name))
+                }
+                .disabled(account.isEmpty)
+                .accessibilityLabel("Map the selected roster account")
+                .accessibilityIdentifier("meetings.devices.map")
+                Button("Cancel", action: cancel).accessibilityLabel("Cancel room device mapping")
+            }
+        }
+        .frame(maxWidth: 440, alignment: .leading)
+        .onChange(of: people, initial: true) { _, _ in updateAccounts() }
+        .onChange(of: devices) { _, _ in updateAccounts() }
+    }
+
+    private func updateAccounts() {
+        // Roster labels are exact apart from case. Keep spelling, punctuation and accents when sending one back.
+        var seen = Set(devices.map { $0.account.lowercased() })
+        var names: [String] = []
+        for person in people where person.sources.contains(.meetings) && !person.hidden {
+            for name in [person.name] + person.aliases where seen.insert(name.lowercased()).inserted {
+                names.append(name)
+            }
+        }
+        accounts = names
+        if !names.contains(account) { account = "" }
+    }
+}
+
 /// One person in the Contacts list: initials, the name with its badges, where they were seen, their sources, and the
 /// actions (Merge with…, Hide or Show, Split, Meetings) on hover, in the row's menu and its context menu.
 struct ContactsPersonRow: View {
@@ -358,6 +546,7 @@ struct ContactsPersonRow: View {
     /// Split a merged person again; nil when they are not a merge.
     var unmerge: (() -> Void)?
     var showMeetings: (() -> Void)?
+    var showVoices: (() -> Void)?
 
     @State private var hovering = false
 
@@ -423,6 +612,7 @@ struct ContactsPersonRow: View {
         var items: [MenuButtonItem] = [.action("Merge with…", run: mergeWith)]
         if let unmerge { items.append(.action("Split Merge", run: unmerge)) }
         if let showMeetings { items.append(.action("Show Meetings", run: showMeetings)) }
+        if let showVoices { items.append(.action("Voice samples…", run: showVoices)) }
         items.append(.divider)
         items.append(person.hidden ? .action("Show Again") { setHidden(false) } : .action("Hide") { setHidden(true) })
         return items
@@ -433,6 +623,7 @@ struct ContactsPersonRow: View {
         Button("Merge with…", systemImage: "arrow.triangle.merge", action: mergeWith)
         if let unmerge { Button("Split Merge", systemImage: "arrow.triangle.branch", action: unmerge) }
         if let showMeetings { Button("Show Meetings", systemImage: "calendar", action: showMeetings) }
+        if let showVoices { Button("Voice samples…", systemImage: "waveform", action: showVoices) }
         Divider()
         if person.hidden {
             Button("Show Again", systemImage: "eye") { setHidden(false) }
@@ -447,7 +638,7 @@ struct ContactsPersonRow: View {
 extension ContactsPersonRow: Equatable {
     static func == (lhs: ContactsPersonRow, rhs: ContactsPersonRow) -> Bool {
         lhs.person == rhs.person && (lhs.unmerge == nil) == (rhs.unmerge == nil)
-            && (lhs.showMeetings == nil) == (rhs.showMeetings == nil)
+            && (lhs.showMeetings == nil) == (rhs.showMeetings == nil) && (lhs.showVoices == nil) == (rhs.showVoices == nil)
     }
 }
 
@@ -543,6 +734,10 @@ struct ContactsMergeSheet: View {
 /// All known appearances, including meetings outside the window's current date filter.
 struct PersonMeetingsSheet: View {
     let history: MeetingsPeopleModel.History
+    let library: VoiceLibraryModel
+    @State private var showsVoices: Bool?
+    @State private var project: String?
+    @State private var projects: [String] = []
     let retry: () -> Void
     let open: (String) -> Void
     let close: () -> Void
@@ -550,11 +745,42 @@ struct PersonMeetingsSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Meetings with \(history.person.name)").font(.headline)
+                Text(history.person.name).font(.headline)
                 Spacer()
                 Button("Close", action: close).keyboardShortcut(.cancelAction)
             }
-            LoadablePane(state: history.meetings, reading: "Reading meeting history…", retry: retry) { result in
+            Picker("Person history", selection: Binding(get: { showsVoices ?? history.voices }, set: { showsVoices = $0 })) {
+                Text("Meetings").tag(false)
+                Text("Voice samples").tag(true)
+            }
+            .labelsHidden().pickerStyle(.segmented)
+            if showsVoices ?? history.voices {
+                MenuButton(items: {
+                    [.action("All projects", checked: project == nil) { project = nil }] + projects.map { name in
+                        .action(name, checked: project == name) { project = name }
+                    }
+                }) { Label(project ?? "All projects", systemImage: "line.3.horizontal.decrease") }
+                .instantTooltip("Filter this person's samples by project")
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VoiceSampleRows(model: library, destination: .person(.init(name: history.person.name, email: history.person.email), project: project),
+                                        reveal: { id in Task { @MainActor in proxy.scrollTo(id, anchor: .top) } })
+                            .padding(.horizontal, 4)
+                    }
+                }
+                .onChange(of: library.rows.value?.projects, initial: true) { _, names in
+                    if project == nil { projects = Set((names ?? []) + history.person.projects).sorted() }
+                }
+            } else {
+                meetingList
+            }
+        }
+        .padding(16)
+        .frame(minWidth: 540, idealWidth: 680, minHeight: 400, idealHeight: 600)
+    }
+
+    private var meetingList: some View {
+        LoadablePane(state: history.meetings, reading: "Reading meeting history…", retry: retry) { result in
                 if result.meetings.isEmpty {
                     Text("No meeting names this person yet.").foregroundStyle(.secondary)
                 } else {
@@ -572,9 +798,6 @@ struct PersonMeetingsSheet: View {
                         .accessibilityHint("Open this meeting")
                     }
                 }
-            }
         }
-        .padding(16)
-        .frame(minWidth: 520, minHeight: 360)
     }
 }

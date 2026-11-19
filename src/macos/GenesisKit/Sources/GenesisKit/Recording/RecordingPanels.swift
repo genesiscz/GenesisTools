@@ -233,7 +233,7 @@ final class RecordingTargetOutline {
     init(screens: [CGRect] = NSScreen.screens.map(\.frame)) {
         overlays = screens.map { frame in
             let view = RecordingOutlineView(frame: CGRect(origin: .zero, size: frame.size))
-            return Overlay(screen: frame, panel: Self.makePanel(frame: frame, view: view), view: view)
+            return Overlay(screen: frame, panel: ScreenOverlayPanels.makePanel(frame: frame, view: view), view: view)
         }
     }
 
@@ -257,24 +257,6 @@ final class RecordingTargetOutline {
     func close() {
         overlays.forEach { $0.panel.orderOut(nil); $0.panel.close() }
         overlays = []
-    }
-
-    private static func makePanel(frame: CGRect, view: NSView) -> NSPanel {
-        let panel = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered,
-                            defer: false)
-        panel.title = "Recording target"
-        panel.level = .screenSaver
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false
-        panel.ignoresMouseEvents = true
-        panel.hidesOnDeactivate = false
-        panel.isReleasedWhenClosed = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
-        panel.sharingType = .none
-        panel.contentView = view
-        panel.setFrame(frame, display: false)
-        return panel
     }
 }
 

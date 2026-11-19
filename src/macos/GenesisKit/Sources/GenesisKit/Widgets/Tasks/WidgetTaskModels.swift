@@ -1,6 +1,6 @@
 import Foundation
 
-public struct WidgetTask: Codable, Identifiable, Equatable, Sendable {
+public struct WidgetTask: Codable, Identifiable, Hashable, Sendable {
     public var id: String
     public var number: Int
     public var title: String
@@ -17,6 +17,12 @@ public struct WidgetTask: Codable, Identifiable, Equatable, Sendable {
     public var sessionTitle: String?
     public var sourceContext: WidgetSourceContext
 
+    public var sendUncertain: Bool? = nil
+    public var workRef: String?
+    public var acceptance: String?
+    public var fullTitle: String?
+    public var fullText: String?
+    public var addressee: String { owner?.lowercased() == "human" ? "For you" : "For agent" }
     public var statusLabel: String { Self.label(for: state) }
     public static func label(for state: String) -> String {
         switch state {
@@ -29,11 +35,17 @@ public struct WidgetTask: Codable, Identifiable, Equatable, Sendable {
     }
     public var actions: [WidgetTaskAction] {
         switch state {
-        case "open": return [.acknowledge, .complete, .dismiss]
-        case "acknowledged": return [.complete, .dismiss]
+        case "open": return [.acknowledge, .complete, .dismiss] + assignmentActions
+        case "acknowledged": return [.complete, .dismiss] + assignmentActions
         case "implemented", "dismissed": return [.reopen]
         default: return []
         }
+    }
+    private var assignmentActions: [WidgetTaskAction] {
+        if sendUncertain == true { return [.take] }
+        guard !isLocal, provider != "unknown" else { return [] }
+        if owner?.lowercased() == "human" { return [.send] }
+        return state == "open" ? [.send, .take] : [.take]
     }
     /// The one-click action of the row's checkbox: tick an unfinished task done, untick a finished one.
     public var toggleAction: WidgetTaskAction? {
@@ -52,21 +64,37 @@ public struct WidgetTask: Codable, Identifiable, Equatable, Sendable {
 }
 
 public enum WidgetTaskAction: String, CaseIterable, Sendable {
-    case acknowledge, complete, reopen, dismiss
+    case acknowledge, complete, reopen, dismiss, send, take
     public var title: String {
         switch self {
         case .acknowledge: return "Acknowledge"
         case .complete: return "Complete"
         case .reopen: return "Reopen"
+        case .send: return "Send to agent"
+        case .take: return "Take it myself"
         case .dismiss: return "Dismiss"
         }
     }
-    public var targetState: String {
+    public func targetState(from current: String) -> String {
         switch self {
         case .acknowledge: return "acknowledged"
         case .complete: return "implemented"
         case .reopen: return "open"
+        case .send: return "acknowledged"
+        case .take: return current
         case .dismiss: return "dismissed"
+        }
+    }
+
+    func failureHeadline(_ title: String) -> String {
+        let item = "“\(title)”"
+        switch self {
+        case .acknowledge: return "Could not start \(item)"
+        case .complete: return "Could not mark \(item) as done"
+        case .reopen: return "Could not reopen \(item)"
+        case .dismiss: return "Could not dismiss \(item)"
+        case .send: return "Could not confirm delivery of \(item)"
+        case .take: return "Could not assign \(item) to you"
         }
     }
     /// The actions that move a task back to `state`, in order; empty when there is no way back. The ledger has no
@@ -86,6 +114,7 @@ public enum WidgetTaskAction: String, CaseIterable, Sendable {
 public struct WidgetTaskDraft: Equatable, Sendable {
     public var title = ""
     public var details = ""
+    public var owner = "human"
     /// `provider:sessionId`, empty for a local task.
     public var session = ""
     public var sessionTitle = ""
@@ -123,6 +152,56 @@ struct WidgetTaskSnapshot: Codable, Equatable, Sendable {
     var sourceStamp: String
     var projects: [String]
     var sessions: [Session]
+    /// Per project, from the work store: items spotted, items reopened, outside changes held. Absent before the store.
+    var work: [WidgetWorkCount]? = nil
+    var claimedHandoffs: [WidgetClaimedHandoff]? = nil
+    var additionalSourcePaths: [String]? = nil
+}
+
+struct WidgetClaimedHandoff: Codable, Equatable, Identifiable, Sendable {
+    struct Claimant: Codable, Equatable, Sendable {
+        var title: String
+    }
+    struct Member: Codable, Equatable, Sendable {
+        var id: String
+        var slot: String?
+        var title: String
+        var state: String
+        var body: String?
+        var acceptance: String?
+        var repoRoot: String?
+        var rowID: String { slot ?? id }
+    }
+    var id: String
+    var project: String
+    var title: String
+    var claimants: [Claimant]
+    var members: [Member]
+    var body: String?
+    var repoRoot: String?
+}
+
+/// One project's counts of the work store (work-items P8): what waits for a look, shown under the Tasks header.
+public struct WidgetWorkCount: Codable, Equatable, Sendable, Identifiable {
+    public var project: String
+    public var spotted: Int
+    public var reopened: Int
+    public var held: Int
+    public var id: String { project }
+
+    /// "7 spotted · 1 reopened", the counts that are not zero; empty when all three are.
+    public var summary: String {
+        [(spotted, "spotted"), (reopened, "reopened"), (held, Plural.word(held, "held link"))]
+            .filter { $0.0 > 0 }
+            .map { "\($0.0) \($0.1)" }
+            .joined(separator: " · ")
+    }
+}
+
+struct WidgetTaskResumeRequest: Sendable {
+    let task: WidgetTask
+    let sourceHome: String?
+    var id: String { task.id }
 }
 
 struct WidgetTaskUpdate: Codable, Sendable {
@@ -134,6 +213,7 @@ struct WidgetTaskUpdate: Codable, Sendable {
         var revision: Int
         var at: String
         var saved: Bool
+        var needsResume: Bool? = nil
     }
     var task: WidgetTask
     var receipt: Receipt

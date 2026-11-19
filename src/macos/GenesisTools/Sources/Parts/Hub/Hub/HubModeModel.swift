@@ -41,6 +41,7 @@ extension HubModel {
         case .timeline: return .model(timeline)
         case .agents: return .model(agents)
         case .usage: return .model(usage)
+        case .work: return .model(work)
         }
     }
 }

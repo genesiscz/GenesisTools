@@ -1,6 +1,16 @@
 import Foundation
 import SwiftUI
 
+struct WidgetTaskFailure: Identifiable {
+    enum Operation: Hashable {
+        case list, create, change(String)
+    }
+
+    let id: Operation
+    let report: FailureReport
+    let message: String
+}
+
 /// One metadata cache, watcher and mutation owner shared by the top and side surfaces.
 @MainActor
 public final class WidgetTasksStore: ObservableObject {
@@ -14,9 +24,15 @@ public final class WidgetTasksStore: ObservableObject {
     @Published public private(set) var recent: [WidgetTask] = []
     @Published public private(set) var isCreating = false
     @Published public private(set) var error: String?
+    @Published private(set) var failures: [WidgetTaskFailure] = []
+    @Published private(set) var earlierFailureCount = 0
+    private static let retainedFailureLimit = 4
     @Published public private(set) var receipt: String?
     @Published public private(set) var undo: WidgetTaskUndo?
+    @Published var resumeRequest: WidgetTaskResumeRequest?
+    @Published var dismissRequest: WidgetTask?
     @Published public var draft = WidgetTaskDraft()
+    @Published private(set) var editSessions: [String: WidgetTaskEditSession] = [:]
     @Published public var scope = "active" { didSet { if scope != oldValue { filtersChanged() } } }
     @Published public var project = "" { didSet { if project != oldValue { filtersChanged() } } }
     @Published public var session = "" { didSet { if session != oldValue { filtersChanged() } } }
@@ -25,7 +41,7 @@ public final class WidgetTasksStore: ObservableObject {
     private let openSession: (WidgetSession, String) -> Void
     private var cache: [String: WidgetTaskSnapshot] = [:]
     private var watcher: DirectoryWatcher?
-    private var watchedPath: String?
+    private var watchedPaths: Set<String> = []
     private var visible = false
     /// The decision log changes with every agent's decision, stage and answer, several times a second in a burst: the
     /// list reloads at most once a second for it, and the burst's last change always gets its reload.
@@ -35,16 +51,17 @@ public final class WidgetTasksStore: ObservableObject {
     private var refreshTask: Task<Void, Never>?
     private var reconcileTask: Task<Void, Never>?
     private var refreshID: UUID?
-    private var mutations: [String: (id: UUID, work: Task<Void, Never>)] = [:]
+    private var sourceChangedDuringRefresh = false
+    private var mutations: [String: (id: UUID, work: Task<Void, Never>, sending: Bool)] = [:]
     private var createTask: Task<Void, Never>?
-    private var mutationFailure: String?
     private var displayedKey: String?
 
-    public init(binaryPath: String, sessions: @escaping () -> [WidgetSession],
+    public init(binaryPath: String, stateRoot: String? = nil, sessions: @escaping () -> [WidgetSession],
                 openSession: @escaping (WidgetSession, String) -> Void) {
         let bridge = ToolsBridge(binaryPath: binaryPath)
+        let prefix = ["widget"] + (stateRoot.map { ["--state-root", $0] } ?? []) + ["tasks"]
         request = { args in
-            let result = try await bridge.run(subcommand: "hub", args: ["widget", "tasks"] + args, timeoutSeconds: 15)
+            let result = try await bridge.run(subcommand: "hub", args: prefix + args, timeoutSeconds: args.contains("--action") && args.contains("send") ? 930 : 15)
             guard result.exitCode == 0 else { throw ToolsBridgeError.refused(String(result.stderr.suffix(1200))) }
             return Data(result.stdout.utf8)
         }
@@ -61,14 +78,33 @@ public final class WidgetTasksStore: ObservableObject {
     }
 
     public var tasks: [WidgetTask] { displayedKey == queryKey ? snapshot?.tasks ?? [] : [] }
+    var hasCurrentList: Bool { displayedKey == queryKey && snapshot != nil }
+    var remainingPreviewCount: Int { hasCurrentList ? max(0, (snapshot?.total ?? 0) - min(4, tasks.count)) : 0 }
+    /// The work store's counts of the projects the filter shows, the ones with something to count.
+    public var workCounts: [WidgetWorkCount] {
+        (snapshot?.work ?? []).filter { (project.isEmpty || $0.project == project) && !$0.summary.isEmpty }
+    }
+    var claimedHandoffs: [WidgetClaimedHandoff]? { displayedKey == queryKey ? snapshot?.claimedHandoffs : nil }
     public var activeCount: Int { snapshot?.activeCount ?? 0 }
     public var isMutating: Bool { !mutatingIDs.isEmpty }
-    public var projects: [String] { snapshot?.projects ?? [] }
+    var mutationProgress: String {
+        if mutations.values.contains(where: \.sending) {
+            return mutations.count == 1 ? "Sending to agent…" : "Sending and saving \(mutations.count) tasks…"
+        }
+        return mutatingIDs.count == 1 ? "Saving…" : "Saving \(mutatingIDs.count) tasks…"
+    }
+    public var projects: [String] {
+        guard let snapshot else { return [] }
+        return Set(snapshot.projects + (snapshot.work ?? []).filter { !$0.summary.isEmpty }.map(\.project))
+            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
     public var sessionFilters: [(id: String, title: String)] { (snapshot?.sessions ?? []).map { ($0.id, $0.title) } }
     private var queryKey: String { "\(scope)|\(project.utf8.count):\(project)|\(session)" }
 
     /// The state to draw for `task`: the ticked one while its change is in flight.
     public func shownState(_ task: WidgetTask) -> String { pendingStates[task.id] ?? task.state }
+
+    public func error(for task: WidgetTask) -> String? { failures.last { $0.id == .change(task.id) }?.message }
 
     /// The module's rows show in its preview and expanded panes only: the compact rail never draws them
     /// (WidgetHostView's `content`), so a compact module reads nothing and its next showing reads the ledger.
@@ -77,6 +113,7 @@ public final class WidgetTasksStore: ObservableObject {
         visible = presentation.map { $0 != .compact } ?? false
         if visible { refresh() }
         else {
+            sourceChangedDuringRefresh = false
             trailingReload?.cancel()
             trailingReload = nil
             refreshID = nil
@@ -92,7 +129,7 @@ public final class WidgetTasksStore: ObservableObject {
 
     private func filtersChanged() {
         guard !stopped else { return }
-        error = nil
+        clearFailure(.list)
         recent = []
         viewGeneration &+= 1
         refresh()
@@ -128,6 +165,10 @@ public final class WidgetTasksStore: ObservableObject {
                 if self.refreshID == identity {
                     self.isLoading = false
                     self.refreshTask = nil
+                    if self.sourceChangedDuringRefresh {
+                        self.sourceChangedDuringRefresh = false
+                        self.sourceChanged()
+                    }
                 }
             }
             do {
@@ -142,11 +183,13 @@ public final class WidgetTasksStore: ObservableObject {
                 if self.snapshot != value { self.snapshot = value }
                 let shown = Set(value.tasks.map(\.id))
                 if self.recent.contains(where: { shown.contains($0.id) }) { self.recent.removeAll { shown.contains($0.id) } }
-                self.error = self.mutationFailure
-                self.watch(value.sourcePath)
+                self.clearFailure(.list)
+                self.watch([value.sourcePath] + (value.additionalSourcePaths ?? []))
                 self.reconcileRecent(key: key, filters: filters)
             } catch {
-                if !Task.isCancelled, !self.stopped, self.refreshID == identity { self.report(error) }
+                if !Task.isCancelled, !self.stopped, self.refreshID == identity {
+                    self.report(error, operation: .list, headline: "The task list did not load")
+                }
             }
         }
     }
@@ -182,16 +225,26 @@ public final class WidgetTasksStore: ObservableObject {
         }
         let next = recent.compactMap(latest).filter { !matchesScope($0) }
         if next != recent { recent = next }
-        if let undo, latest(undo.task) != undo.task { self.undo = nil }
+        if var undo {
+            guard let now = latest(undo.task) else { self.undo = nil; return }
+            // Importing an older TODO can fill its Work link. Only a change to the saved task invalidates Undo.
+            undo.task.workRef = now.workRef
+            undo.task.acceptance = now.acceptance
+            if now != undo.task { self.undo = nil }
+            else if undo != self.undo { self.undo = undo }
+        }
     }
 
-    private func watch(_ path: String) {
-        guard watchedPath != path else { return }
+    private func watch(_ paths: [String]) {
+        let resolved = Set(paths.map {
+            DirectoryWatcher.normalizedEventPath(URL(fileURLWithPath: $0).resolvingSymlinksInPath().path)
+        })
+        guard watchedPaths != resolved else { return }
         watcher?.stop()
-        watchedPath = path
-        let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
-        watcher = DirectoryWatcher(paths: [(resolved as NSString).deletingLastPathComponent], latency: 0.2,
-                                   accepts: { $0 == resolved }) { [weak self] _ in
+        watchedPaths = resolved
+        let folders = Set(resolved.map { ($0 as NSString).deletingLastPathComponent })
+        watcher = DirectoryWatcher(paths: Array(folders), latency: 0.2,
+                                   accepts: { resolved.contains($0) }) { [weak self] _ in
             MainActor.assumeIsolated { self?.sourceChanged() }
         }
     }
@@ -200,6 +253,11 @@ public final class WidgetTasksStore: ObservableObject {
         guard !stopped else { return }
         cache.removeAll(keepingCapacity: true)
         guard visible else { return }
+        // A host lookup can outlast the next roster update. Let it reach the screen, then reread what changed.
+        if refreshTask != nil {
+            sourceChangedDuringRefresh = true
+            return
+        }
         let wait = 1 - Date().timeIntervalSince(lastSourceReload)
         if wait <= 0 {
             trailingReload?.cancel()
@@ -224,7 +282,7 @@ public final class WidgetTasksStore: ObservableObject {
     public func toggle(_ task: WidgetTask) {
         // Only while the row is still the version this store saved: a later change from another surface (a
         // dismissal) is not undone as if it were this store's tick.
-        if recent.contains(where: { $0.id == task.id }), let prior = priorStates[task.id],
+        if (recent.contains(where: { $0.id == task.id }) || task.toggleAction == .reopen), let prior = priorStates[task.id],
            prior.revision == task.revision, prior.updatedTs == task.updatedTs
         {
             let back = WidgetTaskAction.returning(to: prior.state)
@@ -239,21 +297,49 @@ public final class WidgetTasksStore: ObservableObject {
     /// Ticks, unticks, acknowledges or dismisses one task. The row shows the new state at once; the ledger's
     /// answer confirms it, or the row returns to the saved state with the reason. `next` is a second step (an undo
     /// back to in progress), run against the version this one returned.
-    public func perform(_ action: WidgetTaskAction, on task: WidgetTask, then next: WidgetTaskAction? = nil) {
+    public func perform(_ action: WidgetTaskAction, on task: WidgetTask, then next: WidgetTaskAction? = nil, afterResume: Bool = false, sourceHome: String? = nil, comment: String? = nil) {
         guard !stopped, mutations[task.id] == nil, task.actions.contains(action) else { return }
-        let args = ["update", task.id, "--action", action.rawValue,
+        let reason = comment?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if action == .dismiss, reason?.isEmpty != false {
+            dismissRequest = task
+            return
+        }
+        var args = ["update", task.id, "--action", action.rawValue,
                     "--revision", String(task.revision), "--state", task.state, "--updated-at", task.updatedTs,
                     "--session", task.sessionId, "--provider", task.provider]
         let view = viewGeneration
-        pendingStates[task.id] = action.targetState
-        mutate(task, args: args) { [weak self] data in
+        if let reason, action == .dismiss { args += ["--comment", reason] }
+        let receiverHome: String?
+        if action == .send {
+            if afterResume { args.append("--after-resume") }
+            let homes = Set(sessionsSource().filter { $0.target.sessionId == task.sessionId && $0.target.provider == task.provider }
+                .map(\.target.sourceHome).filter { !$0.isEmpty })
+            receiverHome = sourceHome ?? (homes.count == 1 ? homes.first : nil)
+            if let home = receiverHome, !home.isEmpty {
+                args += ["--source-home", home]
+            }
+        } else { receiverHome = nil }
+        pendingStates[task.id] = action.targetState(from: task.state)
+        mutate(task, args: args, headline: action.failureHeadline(task.title), sending: action == .send) { [weak self] data in
             guard let self else { return }
-            let response = try JSONDecoder().decode(WidgetTaskUpdate.self, from: data)
-            guard response.receipt.saved, response.receipt.id == task.id,
-                  response.receipt.action == action.rawValue, response.receipt.state == action.targetState,
+            var response = try JSONDecoder().decode(WidgetTaskUpdate.self, from: data)
+            // A state change returns the ledger row. Keep the Work link and acceptance from its listing.
+            response.task.workRef = task.workRef
+            response.task.acceptance = task.acceptance
+            if action == .send, response.receipt.needsResume == true, !response.receipt.saved,
+               response.task.id == task.id, response.task.sessionId == task.sessionId, response.task.provider == task.provider {
+                self.resumeRequest = .init(task: response.task, sourceHome: receiverHome)
+                return
+            }
+            let finalState = response.task.state
+            let completedDuringSend = action == .send && response.task.owner == "agent" &&
+                ["implemented", "dismissed", "superseded"].contains(finalState)
+            guard finalState == action.targetState(from: task.state) || completedDuringSend,
+                  response.receipt.saved, response.receipt.id == task.id,
+                  response.receipt.action == action.rawValue, response.receipt.state == finalState,
                   response.receipt.from == task.state, response.receipt.revision == task.revision,
                   response.task.revision == task.revision, response.task.updatedTs == response.receipt.at,
-                  response.task.id == task.id, response.task.state == action.targetState,
+                  response.task.id == task.id,
                   response.task.sessionId == task.sessionId, response.task.provider == task.provider else {
                 throw ToolsBridgeError.refused("The task update returned an inconsistent receipt. Refresh to confirm its state.")
             }
@@ -266,7 +352,7 @@ public final class WidgetTasksStore: ObservableObject {
                 Task { @MainActor [weak self] in self?.perform(next, on: response.task) }
                 return
             }
-            let back = WidgetTaskAction.returning(to: task.state)
+            let back = action == .send || action == .take ? [] : WidgetTaskAction.returning(to: task.state)
             self.undo = back.first.flatMap { first in
                 response.task.actions.contains(first)
                     ? WidgetTaskUndo(task: response.task, action: first, then: back.dropFirst().first) : nil
@@ -278,6 +364,18 @@ public final class WidgetTasksStore: ObservableObject {
     /// The state each task had before this store last changed it, and the version that change saved, so a "Just
     /// changed" row can go back to it while the ledger still holds that version.
     private var priorStates: [String: (state: String, revision: Int, updatedTs: String)] = [:]
+
+    func beginEditing(_ task: WidgetTask) {
+        guard task.editable, editSessions[task.id] == nil else { return }
+        let editor = WidgetTaskEditSession()
+        editor.begin(task)
+        let id = task.id
+        editor.onClose = { [weak self, weak editor] in
+            guard let self, let editor, self.editSessions[id] === editor else { return }
+            self.editSessions[id] = nil
+        }
+        editSessions[id] = editor
+    }
 
     /// New title and text for an open task, against the version the user edited. `onSaved` runs only once the ledger
     /// confirmed the edit, with the task as saved, so an editor that waits for it keeps the user's text through a
@@ -291,10 +389,16 @@ public final class WidgetTasksStore: ObservableObject {
         args += ["--revision", String(task.revision), "--state", task.state, "--updated-at", task.updatedTs,
                  "--session", task.sessionId, "--provider", task.provider]
         let view = viewGeneration
-        mutate(task, args: args) { [weak self] data in
+        mutate(task, args: args, headline: "Could not save “\(task.title)”") { [weak self] data in
             guard let self else { return }
-            let response = try JSONDecoder().decode(WidgetTaskSaved.self, from: data)
-            guard response.receipt.saved, response.task.id == task.id, response.task.revision == task.revision + 1 else {
+            var response = try JSONDecoder().decode(WidgetTaskSaved.self, from: data)
+            response.task.workRef = task.workRef
+            response.task.acceptance = task.acceptance
+            guard response.receipt.saved, response.receipt.action == "edit", response.receipt.id == task.id,
+                  response.receipt.revision == response.task.revision, response.receipt.at == response.task.updatedTs,
+                  response.receipt.state == response.task.state, response.task.id == task.id,
+                  response.task.provider == task.provider, response.task.sessionId == task.sessionId,
+                  response.task.revision == task.revision + 1 else {
                 throw ToolsBridgeError.refused("The task edit returned an inconsistent receipt. Refresh to confirm its text.")
             }
             self.receipt = "Saved: \(response.task.title)"
@@ -304,11 +408,10 @@ public final class WidgetTasksStore: ObservableObject {
         }
     }
 
-    private func mutate(_ task: WidgetTask, args: [String], saved: @escaping (Data) throws -> Void) {
+    private func mutate(_ task: WidgetTask, args: [String], headline: String, sending: Bool = false, saved: @escaping (Data) throws -> Void) {
         let identity = UUID()
         mutatingIDs.insert(task.id)
-        mutationFailure = nil
-        error = nil
+        clearFailure(.change(task.id))
         receipt = nil
         undo = nil
         let work = Task { [weak self] in
@@ -331,14 +434,17 @@ public final class WidgetTasksStore: ObservableObject {
             } catch {
                 guard !self.stopped, self.mutations[task.id]?.id == identity else { return }
                 if Task.isCancelled {
-                    self.error = "Update stopped. Refreshing the saved task state."
-                } else { self.report(error) }
-                self.mutationFailure = self.error
+                    let message = "Update stopped. Refreshing the saved task state."
+                    self.report(CancellationError(), operation: .change(task.id), headline: message, stoppedMessage: message)
+                } else {
+                    self.report(error, operation: .change(task.id), headline: headline,
+                                decodingMessage: "The receipt could not be read. Check the refreshed task before trying again.")
+                }
                 self.cache.removeAll(keepingCapacity: true)
                 self.refresh(force: true)
             }
         }
-        mutations[task.id] = (identity, work)
+        mutations[task.id] = (identity, work, sending)
     }
 
     /// Shows the saved task before the reload lands, so a tick never flickers back to its old state. A task that
@@ -389,6 +495,11 @@ public final class WidgetTasksStore: ObservableObject {
         sessionContext = (choice.project, choice.cwd)
     }
 
+    func chooseLocalTask() {
+        chooseSession(WidgetTaskSessionChoice(id: "", title: "", project: "", cwd: ""))
+        draft.owner = "human"
+    }
+
     public func sessionChoices(limit: Int = 30) -> [WidgetTaskSessionChoice] {
         var seen = Set<String>()
         var choices: [WidgetTaskSessionChoice] = []
@@ -406,11 +517,14 @@ public final class WidgetTasksStore: ObservableObject {
     }
 
     /// Adds the drafted task. On success the title and details clear, the session and project stay for the next.
-    public func create() {
+    public func create() { create(sendImmediately: false) }
+
+    public func create(sendImmediately: Bool) {
         let title = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
         let details = draft.details.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !stopped, !isCreating, !title.isEmpty else { return }
         var args = ["create", "--json", "--title", title]
+        if draft.owner == "agent" { args += ["--for", "agent"] }
         if !details.isEmpty { args += ["--details", details] }
         if !draft.session.isEmpty {
             args += ["--session", draft.session]
@@ -419,10 +533,11 @@ public final class WidgetTasksStore: ObservableObject {
         if !draft.project.isEmpty { args += ["--project", draft.project] }
         if !draft.cwd.isEmpty { args += ["--cwd", draft.cwd] }
         isCreating = true
-        error = nil
+        clearFailure(.create)
         receipt = nil
         undo = nil
         let submitted = draft
+        let view = viewGeneration
         createTask = Task { [weak self] in
             guard let self else { return }
             defer {
@@ -430,23 +545,36 @@ public final class WidgetTasksStore: ObservableObject {
                 self.createTask = nil
             }
             do {
+                try Task.checkCancellation()
                 let data = try await self.request(args)
                 guard !self.stopped else { return }
                 let response = try JSONDecoder().decode(WidgetTaskSaved.self, from: data)
-                guard response.receipt.saved, response.task.state == "open" else {
+                guard response.receipt.saved, response.receipt.action == "create", response.receipt.id == response.task.id,
+                      response.receipt.revision == response.task.revision, response.receipt.at == response.task.updatedTs,
+                      response.receipt.state == response.task.state, response.task.state == "open" else {
                     throw ToolsBridgeError.refused("The new task returned an inconsistent receipt. Refresh to confirm it.")
                 }
-                if self.draft == submitted {
+                if self.draft.title == submitted.title && self.draft.details == submitted.details {
                     self.draft.title = ""
                     self.draft.details = ""
                 }
                 self.receipt = "Added: \(response.task.title)"
-                self.reveal(response.task)
+                if sendImmediately && submitted.owner == "agent", response.task.actions.contains(.send) {
+                    self.perform(.send, on: response.task)
+                }
+                if view == self.viewGeneration { self.reveal(response.task) }
                 self.cache.removeAll(keepingCapacity: true)
                 self.refresh(force: true)
             } catch {
-                guard !self.stopped, !Task.isCancelled else { return }
-                self.report(error, decodingMessage: "The task response could not be read. Refresh to confirm whether it was saved before trying again.")
+                guard !self.stopped else { return }
+                if Task.isCancelled {
+                    let message = "Stopped waiting. Check the refreshed list before adding this task again."
+                    self.report(error, operation: .create, headline: message, stoppedMessage: message)
+                    self.refresh(force: true)
+                    return
+                }
+                self.report(error, operation: .create, headline: "Could not confirm that “\(title)” was added",
+                            decodingMessage: "The task response could not be read. Refresh to confirm whether it was saved before trying again.")
             }
         }
     }
@@ -462,8 +590,13 @@ public final class WidgetTasksStore: ObservableObject {
         for mutation in mutations.values { mutation.work.cancel() }
     }
 
+    func stopWaitingForCreate() { createTask?.cancel() }
+
+    func dismissReceipt() { receipt = nil; undo = nil }
+
     public func clearFeedback() {
-        mutationFailure = nil
+        failures = []
+        clearEarlierFailures()
         error = nil
         receipt = nil
         undo = nil
@@ -503,9 +636,38 @@ public final class WidgetTasksStore: ObservableObject {
         pendingStates = [:]
     }
 
-    private func report(_ failure: Error, decodingMessage: String = "The task list could not be read. Try again in a moment.") {
+    func clearFailure(_ operation: WidgetTaskFailure.Operation) {
+        guard failures.contains(where: { $0.id == operation }) else { return }
+        failures.removeAll { $0.id == operation }
+        error = failures.last?.message
+    }
+
+    func clearEarlierFailures() { earlierFailureCount = 0 }
+
+    private func report(_ failure: Error, operation: WidgetTaskFailure.Operation, headline: String,
+                        decodingMessage: String = "The task list could not be read. Try again in a moment.",
+                        stoppedMessage: String? = nil) {
         // The decoder's own words go to the log; a creation response can fail after the task was already saved.
-        error = failure is DecodingError ? decodingMessage : failure.localizedDescription
+        let message = stoppedMessage ?? (failure is DecodingError ? decodingMessage : failure.localizedDescription)
+        let nextStep: String?
+        if failure is DecodingError { nextStep = decodingMessage }
+        else if stoppedMessage != nil { nextStep = nil }
+        else {
+            switch operation {
+            case .list: nextStep = nil
+            case .create: nextStep = "Refresh the list before adding it again. Your draft is still here."
+            case .change: nextStep = "Check the refreshed task before trying the action again."
+            }
+        }
+        let report = FailureReport(headline: FailureLog.sentence(headline) ?? headline, summary: nextStep,
+                                   action: headline, log: failure.localizedDescription, app: .launch, area: "widget")
+        failures.removeAll { $0.id == operation }
+        failures.append(WidgetTaskFailure(id: operation, report: report, message: message))
+        if failures.count > Self.retainedFailureLimit {
+            failures.removeFirst()
+            earlierFailureCount += 1
+        }
+        error = message
         PerfLog.mark("widget.tasks \(failure.localizedDescription)")
     }
 }

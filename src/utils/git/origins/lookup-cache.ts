@@ -28,7 +28,7 @@ const NO_PR_TTL_MS = 15_000;
 /** One shared file, not one per key: bounded here so it can never grow without limit. */
 const MAX_ENTRIES = 500;
 
-interface PrLookupCacheEntry {
+export interface PrLookupCacheEntry {
     pr: PrInfo | null;
     cachedAt: number;
 }
@@ -125,6 +125,24 @@ export async function writePrLookupCacheSeconds(
 
     await storage.setConfigValue(PR_LOOKUP_CACHE_CONFIG_KEY, seconds);
     return seconds;
+}
+
+/**
+ * The cached answer for one head, whatever its age, and never a network call: what `tools agents context` reports
+ * without `--network`. Null when the cache holds no entry for the head.
+ */
+export function peekPrLookupCache({
+    originUrl,
+    branch,
+    head,
+    storage = new Storage(PR_LOOKUP_STORAGE),
+}: {
+    originUrl: string;
+    branch: string;
+    head: string;
+    storage?: Storage;
+}): PrLookupCacheEntry | null {
+    return readCacheFile(cachePath(storage)).entries[prLookupCacheKey(originUrl, branch, head)] ?? null;
 }
 
 /**

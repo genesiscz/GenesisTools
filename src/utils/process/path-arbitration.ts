@@ -22,7 +22,8 @@ const UPDATE_MS = 10_000;
 
 export type ArbitrationResult<T> = { acquired: true; value: T } | { acquired: false };
 
-function arbitrationPath(targetPath: string): string {
+/** proper-lockfile creates a directory at this path plus ".lock". */
+export function arbitrationPath(targetPath: string): string {
     return `${targetPath}.claim-arbitration`;
 }
 

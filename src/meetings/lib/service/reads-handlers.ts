@@ -4,6 +4,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { channelEnergy, ENERGY_BLOCKS_PER_SEC } from "@genesiscz/utils/meetings/energy";
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import { activeSeatPeople } from "@genesiscz/utils/meetings/seats";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { DEFAULT_SPAN_GAP_SEC, sameName } from "@genesiscz/utils/transcribe/speakers";
@@ -18,7 +19,7 @@ import {
 import { DecisionJournal } from "../decision-journal";
 import { type DecidedLine, decidedLines, itemLines, personPresent } from "../listen-answers";
 import { localSpeechDuring } from "../local-speech";
-import { attendanceWarning, OpenedMeeting } from "../opened-meeting";
+import { attendanceDetail, attendanceWarning, OpenedMeeting } from "../opened-meeting";
 import { compactEvidence, rawMeeting } from "../raw";
 import { screenTimeline } from "../screen-timeline";
 import { configShowRead, overviewRead, rowsRead, speakerStatsRead } from "../window-reads";
@@ -77,12 +78,14 @@ export async function readRows(
         questionDetails?: QuestionDetails[];
         lineEvidence?: WindowLineEvidence[];
         attendanceWarning?: string;
+        attendanceDetail?: string;
     }
 > {
     const record = recordOf(store, params.meeting);
     const linked = deps.linkedSource?.(record);
     const config = await (deps.config?.() ?? (deps.configStore?.() ?? new MeetingsConfigStore()).read());
     const warning = attendanceWarning(record);
+    const detail = attendanceDetail(record);
     const opened = OpenedMeeting.of(store, record, linked);
     const result = {
         ...(await rowsRead({
@@ -94,6 +97,7 @@ export async function readRows(
             applyAbove: params.applyAbove ?? config.global.suggest.applyAbove,
         })),
         ...(warning ? { attendanceWarning: warning } : {}),
+        ...(detail ? { attendanceDetail: detail } : {}),
     };
     const transcript = await opened.meeting().catch((error: unknown) => {
         logger.debug({ error, meeting: record.id }, "question line data needs a readable transcript");
@@ -204,8 +208,7 @@ export async function readRows(
         optional("energy", opened.energy()),
         optional("presence", opened.presence()),
     ]);
-    const atMic = [
-        ...(record.seats?.room ?? []),
+    const owners = [
         ...record.participants.filter((person) => person.self).map((person) => person.name),
         ...(evidence?.selfName ? [evidence.selfName] : []),
     ];
@@ -223,13 +226,10 @@ export async function readRows(
         const skipped = (swapSkips.get(line.startSec) ?? [])
             .filter((skip) => skip.labels === undefined || skip.labels.includes(line.label))
             .map((skip) => skip.id);
-        const remotePresent = record.seats
-            ? record.seats.remote.some(
-                  (person) =>
-                      line.startSec >= (person.fromSec ?? 0) &&
-                      (person.toSec === undefined || line.startSec < person.toSec) &&
-                      personPresent(record, person.name, line.startSec)
-              )
+        const active = record.seats && activeSeatPeople({ seats: record.seats, atSec: line.startSec });
+        const atMic = [...owners, ...(active?.room ?? [])];
+        const remotePresent = active
+            ? active.remote.some((person) => personPresent(record, person.name, line.startSec))
             : presence?.some(
                   (person) =>
                       !person.self &&

@@ -114,6 +114,23 @@ export const rowSourceSchema = z.discriminatedUnion("kind", [
 ]);
 export type RowSource = z.infer<typeof rowSourceSchema>;
 
+/**
+ * The voice behind a row (U13): the person the line sounds like, the cosine, the runner-up, and the saved samples of
+ * that person. `support`: the voice agrees with a seat's label, whose confidence the row keeps (the seat names the
+ * only person there); the score is then support, never the row's confidence.
+ */
+export const rowVoiceSchema = z.object({
+    person: z.string(),
+    /** A cosine 0 to 1, printed "0.61", never as a percent. */
+    score: z.number(),
+    next: z.object({ person: z.string(), score: z.number() }).optional(),
+    /** The person's saved voice samples in the scope the voice labeler compares with, and their meetings. */
+    samples: z.object({ count: z.number().int().nonnegative(), meetings: z.number().int().nonnegative() }),
+    seat: z.enum(["mic", "call"]).optional(),
+    support: z.boolean(),
+});
+export type RowVoice = z.infer<typeof rowVoiceSchema>;
+
 /** What a row's edit opens (G8): a spelling field, the person picker, the typed answer, or nothing. */
 export const ROW_EDITS = ["spelling", "person", "answer", "none"] as const;
 
@@ -125,6 +142,8 @@ export const reviewRowSchema = z.object({
     /** `Q12` for a question (the label `listen` shows, G14), else the item id. */
     label: z.string(),
     kind: z.string(),
+    /** The kind in words ("Speaker range", "Unreliable label"), from the one table in reason-words.ts. */
+    kindWord: z.string(),
     status: z.enum(ITEM_STATUSES),
     confidence: z.number().optional(),
     priority: z.number().optional(),
@@ -143,6 +162,8 @@ export const reviewRowSchema = z.object({
     edit: z.enum(ROW_EDITS),
     needs: z.enum(ROW_NEEDS).optional(),
     sources: z.array(rowSourceSchema),
+    /** A row the voice model named, or a seat line the voice supports; absent otherwise. */
+    voice: rowVoiceSchema.optional(),
     /** The row's Moment: what its play button plays. */
     target: momentTargetSchema,
     /** The last decision on the item (R35): its journal token, who made it (and in words), its action and reason. */

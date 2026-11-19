@@ -1,11 +1,12 @@
 import { ui } from "@genesiscz/utils/cli/ui";
 import { out } from "@genesiscz/utils/logger";
 import { nameKey } from "@genesiscz/utils/meetings/people";
-import type { MeetingSeats } from "@genesiscz/utils/meetings/seats";
+import { type MeetingSeats, type RemoteSeat, roomSeatNames, seatSpan } from "@genesiscz/utils/meetings/seats";
 import { shellWord } from "@genesiscz/utils/shell/quote";
 import { createBoxTable } from "@genesiscz/utils/table";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
+import { applySuggestedSeats } from "../lib/seat-suggest";
 import { withMeetingsClient } from "../lib/service/client";
 import { fail, TOOL } from "../lib/shared";
 import { windowJson } from "../lib/window-reads";
@@ -20,25 +21,20 @@ interface Options {
 
 /** Every saved seat of a person, in order: one person can sit remote for several intervals. */
 export function seatLabels(seats: MeetingSeats | null): Map<string, string> {
-    const labels = new Map<string, string[]>();
-    function add(name: string, label: string): void {
-        const key = nameKey(name);
-        labels.set(key, [...(labels.get(key) ?? []), label]);
+    const labels = new Map<string, string>();
+    for (const side of ["room", "remote"] as const) {
+        for (const row of seats?.[side] ?? []) {
+            const seat: RemoteSeat = seatSpan(row);
+            const bounds =
+                seat.fromSec !== undefined || seat.toSec !== undefined
+                    ? ` ${formatClock(seat.fromSec ?? 0)}–${seat.toSec === undefined ? "end" : formatClock(seat.toSec)}`
+                    : "";
+            const key = nameKey(seat.name);
+            const label = `${side}${bounds}${seat.label ? ` (${seat.label})` : ""}`;
+            labels.set(key, [labels.get(key), label].filter(Boolean).join(", "));
+        }
     }
-
-    for (const name of seats?.room ?? []) {
-        add(name, "room");
-    }
-
-    for (const remote of seats?.remote ?? []) {
-        const bounds =
-            remote.fromSec !== undefined || remote.toSec !== undefined
-                ? ` ${formatClock(remote.fromSec ?? 0)}–${remote.toSec === undefined ? "end" : formatClock(remote.toSec)}`
-                : "";
-        add(remote.name, `remote${bounds}${remote.label ? ` (${remote.label})` : ""}`);
-    }
-
-    return new Map([...labels].map(([key, list]) => [key, list.join(", ")]));
+    return labels;
 }
 
 function handChoice(options: { command: string; opts: Options; name: string; seat: "room" | "remote" }): string {
@@ -64,16 +60,8 @@ async function seats(ref: string, opts: Options): Promise<void> {
                 remote: opts.remote,
             });
             const { suggestion, current, meeting } = view;
-            let saved = false;
             const write = opts.apply || opts.replace || opts.room || opts.remote;
-            const hasSeats = suggestion.seats.room.length > 0 || suggestion.seats.remote.length > 0;
-            if (write && hasSeats && (!current || opts.replace)) {
-                await client.call("decision.apply", {
-                    meeting,
-                    action: { kind: "set", seats: suggestion.seats, ...(opts.replace ? {} : { seatsIfAbsent: true }) },
-                });
-                saved = true;
-            }
+            const saved = write ? await applySuggestedSeats({ client, view, replace: opts.replace }) : false;
             const command = `${TOOL} seats ${shellWord(meeting)} ${current || saved ? "--replace" : "--apply"}`;
             const unresolved = suggestion.people
                 .filter((p) => p.seat === "unsure")
@@ -98,19 +86,21 @@ async function seats(ref: string, opts: Options): Promise<void> {
             table.push([person.name, current.get(key) ?? "—", suggested.get(key) ?? person.seat, person.reason]);
         }
         for (const name of [
-            ...(report.current?.room ?? []),
+            ...roomSeatNames(report.current ?? undefined),
             ...(report.current?.remote.map((seat) => seat.name) ?? []),
         ]) {
-            const key = nameKey(name);
-            if (!listed.has(key)) {
-                listed.add(key);
-                table.push([name, current.get(key) ?? "—", "—", "Only in the saved seats."]);
+            if (!listed.has(nameKey(name))) {
+                listed.add(nameKey(name));
+                table.push([name, current.get(nameKey(name)) ?? "—", "—", "Only in the saved seats."]);
             }
         }
         if (!report.current) {
             out.println("Current seats: not set");
         }
         out.println(table.toString());
+        for (const offer of report.suggestion.deviceOffers ?? []) {
+            out.println(`${offer.question} (${offer.meetings.join(", ")})`);
+        }
         for (const mic of report.current?.microphones ?? []) {
             out.println(`Current microphone ${mic.label ?? mic.id}: ${mic.people.join(", ")}`);
         }

@@ -207,7 +207,7 @@ export function createNotificationsCommand(): Command {
         .option("--open", "Open matching notifications in browser")
         .option("--mark-read", "Mark matching notifications as read")
         .option("--mark-done", "Mark matching notifications as done (removes from inbox)")
-        .option("-L, --limit <n>", "Max results", parseInt, 50)
+        .option("-L, --limit <n>", "Max results", (value) => Number.parseInt(value, 10), 50)
         .option("-f, --format <format>", "Output format: ai|md|json", "ai")
         .option("-o, --output <file>", "Output path")
         .option("-v, --verbose", "Enable verbose logging")

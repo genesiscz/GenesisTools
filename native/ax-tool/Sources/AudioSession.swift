@@ -31,19 +31,30 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
     private var muted: [CaptureAudioSource: Bool] = [:]
     private var paused = false
     private var closed = false
+    private let monitorOnly: Bool
+    private(set) var levels: AudioLevelMeter?
     var failed: ((String) -> Void)?
     private let emit: ((Data) -> Void)?
     var rangeCopy: AudioRangeCopy = copyAudioRange
 
     init(directory: URL, seconds: Double, emit: ((Data) -> Void)? = nil,
-         muted: [CaptureAudioSource] = [], paused: Bool = false,
-         clock: (() -> (host: CMTime, wall: Date))? = nil) {
+         muted: [CaptureAudioSource] = [], paused: Bool = false, monitorOnly: Bool = false, metering: Bool = false,
+         micID: String? = nil, clock: (() -> (host: CMTime, wall: Date))? = nil) {
         self.directory = directory
+        self.monitorOnly = monitorOnly
         self.emit = emit
         segmentSeconds = seconds
         self.muted = Dictionary(uniqueKeysWithValues: muted.map { ($0, true) })
         self.paused = paused
         self.clock = clock ?? { (CMClockGetTime(CMClockGetHostTimeClock()), Date()) }
+        super.init()
+        if metering {
+            levels = AudioLevelMeter(queue: queue, micID: micID) { [weak self] row in
+                guard let self else { return }
+                if self.emit != nil { self.writeRow(row) }
+                else { CaptureEvents.emit(row) }
+            }
+        }
     }
 
     private func wallTime(_ time: CMTime) -> String {
@@ -72,6 +83,8 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
               let description = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee,
               description.mSampleRate > 0 else { return }
         let rate = description.mSampleRate
+        levels?.append(buffer, source: source, muted: muted[source] ?? false)
+        if monitorOnly { return }
         let count = CMSampleBufferGetNumSamples(buffer)
         var offset = 0
         if let end = retiredEnd[source] {
@@ -259,6 +272,7 @@ private final class AudioSessionHost: NSObject, SCStreamDelegate {
     let sources: [CaptureAudioSource]
     let configuration: SCStreamConfiguration
     var stream: SCStream?
+    var independent: IndependentAudio?
     private var muted: [String: Bool]
     private var paused: Bool
     private var stopping = false
@@ -313,6 +327,14 @@ private final class AudioSessionHost: NSObject, SCStreamDelegate {
             muted[source.rawValue] = value
             state()
         case .setMic(let id):
+            if let independent {
+                do {
+                    try independent.switchMicrophone(id)
+                    audio.queue.async { [audio] in audio.levels?.micID = id }
+                    CaptureEvents.emit(["event": "settings", "micDevice": id])
+                } catch { CaptureEvents.error("failed", error.localizedDescription) }
+                return
+            }
             guard sources.contains(.mic), #available(macOS 15.0, *), let stream else {
                 CaptureEvents.error("unsupported", "this session records no microphone")
                 return
@@ -326,6 +348,7 @@ private final class AudioSessionHost: NSObject, SCStreamDelegate {
                 do {
                     configuration.microphoneCaptureDeviceID = id
                     try await stream.updateConfiguration(configuration)
+                    audio.queue.async { [audio] in audio.levels?.micID = id }
                     CaptureEvents.emit(["event": "settings", "micDevice": id])
                 } catch {
                     configuration.microphoneCaptureDeviceID = previous
@@ -367,6 +390,7 @@ private final class AudioSessionHost: NSObject, SCStreamDelegate {
         stopping = true
         Task { @MainActor in
             var exitCode: Int32 = 0
+            independent?.stop()
             do {
                 if let stream { try await stream.stopCapture() }
             } catch {
@@ -388,10 +412,14 @@ func cmdAudioRecord() {
     defaultErrorCode = "failed"
     guard #available(macOS 13.0, *) else { errorExit("audio-record needs macOS 13 or newer") }
     CaptureEvents.enabled = true
-    let warnings = runFromPrivateRecorderCopy()
-    for warning in warnings { CaptureEvents.emit(["event": "warning", "message": warning]) }
-    requireScreenRecording()
-    guard let out = argValue("--out") else { errorExit("audio-record needs --out", code: "invalid-argument") }
+    let withoutScreen = CommandLine.arguments.contains("--without-screen")
+    if !withoutScreen {
+        let warnings = runFromPrivateRecorderCopy()
+        for warning in warnings { CaptureEvents.emit(["event": "warning", "message": warning]) }
+        requireScreenRecording()
+    }
+    let monitorOnly = CommandLine.arguments.contains("--monitor")
+    guard monitorOnly || argValue("--out") != nil else { errorExit("audio-record needs --out", code: "invalid-argument") }
     let seconds = Double(argValue("--segment-sec") ?? "60") ?? .nan
     guard seconds.isFinite, (1...3600).contains(seconds) else {
         errorExit("--segment-sec must be between 1 and 3600", code: "invalid-argument")
@@ -411,7 +439,7 @@ func cmdAudioRecord() {
         muted = []
     }
     let paused = CommandLine.arguments.contains("--paused")
-    if sources.contains(.mic) {
+    if !withoutScreen && sources.contains(.mic) {
         if #unavailable(macOS 15.0) {
             sources.removeAll { $0 == .mic }
         } else if AVCaptureDevice.authorizationStatus(for: .audio) != .authorized {
@@ -422,10 +450,35 @@ func cmdAudioRecord() {
         }
     }
     guard !sources.isEmpty else { errorExit("no requested audio source is available", code: "no-permission") }
-    let directory = URL(fileURLWithPath: out)
+    let directory = argValue("--out").map { URL(fileURLWithPath: $0) } ?? FileManager.default.temporaryDirectory
+    let micID = argValue("--mic-device")
     do {
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if !monitorOnly { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
         let configuration = SCStreamConfiguration()
+        let audio = SegmentedAudio(directory: directory, seconds: seconds, muted: muted, paused: paused,
+                                   monitorOnly: monitorOnly, metering: monitorOnly || CommandLine.arguments.contains("--levels"),
+                                   micID: micID)
+        if withoutScreen {
+            let inputs = IndependentAudio(audio: audio)
+            var started: [CaptureAudioSource] = []
+            var failures: [String] = []
+            for source in sources {
+                do {
+                    try inputs.start(source, micDevice: micID)
+                    started.append(source)
+                } catch {
+                    let reason = "\(source.rawValue) audio omitted: \(error.localizedDescription)"
+                    failures.append(reason)
+                    CaptureEvents.emit(["event": "warning", "message": reason])
+                }
+            }
+            guard !started.isEmpty else { errorExit(failures.joined(separator: " "), code: "no-permission") }
+            let host = AudioSessionHost(audio: audio, sources: started, configuration: configuration, muted: muted, paused: paused)
+            host.independent = inputs
+            host.controls()
+            host.state()
+            dispatchMain()
+        }
         configuration.width = 2
         configuration.height = 2
         configuration.minimumFrameInterval = CMTime(value: 1, timescale: 1)
@@ -435,12 +488,11 @@ func cmdAudioRecord() {
         configuration.excludesCurrentProcessAudio = true
         if #available(macOS 15.0, *) {
             configuration.captureMicrophone = sources.contains(.mic)
-            configuration.microphoneCaptureDeviceID = argValue("--mic-device")
+            configuration.microphoneCaptureDeviceID = micID
         }
         let content = try awaitResult { try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) }
         guard let display = content.displays.first else { errorExit("audio-record found no shareable display") }
         let filter = SCContentFilter(display: display, excludingWindows: [])
-        let audio = SegmentedAudio(directory: directory, seconds: seconds, muted: muted, paused: paused)
         let host = AudioSessionHost(audio: audio, sources: sources, configuration: configuration, muted: muted, paused: paused)
         let stream = SCStream(filter: filter, configuration: configuration, delegate: host)
         host.stream = stream

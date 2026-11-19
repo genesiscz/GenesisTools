@@ -73,14 +73,15 @@ struct PinCard: View {
     private var header: some View {
         HStack(spacing: 8) {
             Badge(row.label, color: row.isQuestion ? .purple : .accentColor, monospaced: true)
-            Text(verbatim: ReviewRowView.kindWord(row.kind)).font(.system(size: 11)).foregroundStyle(.secondary)
+            Text(verbatim: row.kindWord).font(.system(size: 11)).foregroundStyle(.secondary)
             if let time = whenText {
                 Text(verbatim: time).font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
             }
-            if let confidence = row.confidence, let words = MeetingsWords.confidence(confidence) {
+            if let confidence = row.confidence, let words = MeetingsWords.score(confidence, cosine: row.isVoiceModel) {
+                // A voice cosine reads "0.61", never as a percent (U13).
                 Text(verbatim: words)
                     .font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
-                    .accessibilityLabel("Confidence \(Int((confidence * 100).rounded())) percent")
+                    .accessibilityLabel(row.isVoiceModel ? "Voice match \(words)" : "Confidence \(Int((confidence * 100).rounded())) percent")
             }
             Spacer(minLength: 8)
             IconButton(systemName: "play.fill", tooltip: "Play this item's Moment", action: onPlay)
@@ -152,9 +153,19 @@ struct PinCard: View {
             default: return lhs.offset < rhs.offset
             }
         }.map(\.element)
+        let voicePeople = voicePeople
         return PinChoiceChips(items: sorted.map { choice in
-            MeetingsWords.confidence(choice.confidence).map { "\(choice.label) \($0)" } ?? choice.label
+            MeetingsWords.score(choice.confidence, cosine: row.scoresByVoice(choice, voicePeople: voicePeople))
+                .map { "\(choice.label) \($0)" } ?? choice.label
         })
+    }
+
+    /// A speaker question's people whose choice score is a voice cosine (`VoiceScore.people`), as the Items row reads
+    /// them: the card is built only while its pin is hovered, so it reads them here.
+    private var voicePeople: Set<String> {
+        guard row.isQuestion, row.isOpen, let items = detail?.record.value?.items,
+              let question = items.first(where: { $0.id == row.id }) else { return [] }
+        return VoiceScore.people(decidedBy: question) { id in items.first { $0.id == id } }
     }
 
     /// Only the sources a click can open: a transcript line, a document, a commit, a work item, a URL.

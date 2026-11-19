@@ -87,6 +87,7 @@ const recorderStateSchema = z.object({
     bytes: z.number(),
     lastFrameAt: z.string().optional(),
     warning: z.string().optional(),
+    withoutScreen: z.string().optional(),
     sound: z
         .discriminatedUnion("path", [
             z.object({ path: z.literal("session"), sources: z.array(z.enum(["mic", "system"])) }),
@@ -105,7 +106,10 @@ export function recorderAcknowledged(options: {
 }): boolean {
     const { current, meetingId, startedAfter } = options;
     return (
-        current.running && current.state?.meetingId === meetingId && Date.parse(current.state.startedAt) >= startedAfter
+        current.running &&
+        current.state?.meetingId === meetingId &&
+        Date.parse(current.state.startedAt) >= startedAfter &&
+        (!current.state.withoutScreen || (current.state.sound?.path === "session" && !current.state.stopReason))
     );
 }
 
@@ -191,6 +195,7 @@ export interface RecorderNote {
 
 /** What the recorder uses beside the store, so a test can replace each part. */
 export interface RecorderDeps {
+    scheduleLevels: (sample: (atMs: number) => void, intervalMs: number) => () => void;
     recorder: FrameRecorder;
     toJpeg: JpegConverter;
     /** Starts the meeting's OCR worker (a process of its own); the recorder never waits on it or fails by it. */
@@ -211,6 +216,10 @@ export function defaultOcrLanguages(): string[] {
 /** The recorder's own parts; `runRecorder` adds the OCR worker start (`ocr-worker.ts` reads the recorder state). */
 export function defaultDeps(capture: MeetingsConfig["global"]["capture"]): Omit<RecorderDeps, "startOcr"> {
     return {
+        scheduleLevels(sample, intervalMs) {
+            const timer = setInterval(() => sample(Date.now()), intervalMs);
+            return () => clearInterval(timer);
+        },
         recorder: FRAME_RECORDERS[capture.backend]({
             axTool: async (options) => [await ensurePinnedBinaryAsync(options)],
         }),
@@ -231,11 +240,14 @@ export function errorText(err: unknown): string {
 
 /** What `record run` passes the recorder. */
 export interface RunRecorderOptions {
+    minSeparation?: number;
     store: MeetingStore;
     meetingId: string;
     capture: MeetingsConfig["global"]["capture"];
     /** The Vision OCR languages of the meeting language (`languages.<code>.ocr`); the default language's when omitted. */
     ocrLanguages?: string[];
+    /** The live grant read that ruled out frames for this run. */
+    withoutScreen?: string;
     /** Overrides `capture.displays`. */
     display?: DisplayPolicy;
     /** Overrides `capture.recorders.<backend>.audio.sources`. */

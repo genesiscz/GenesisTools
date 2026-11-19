@@ -1,76 +1,50 @@
-# GitHub Semantic Search Status
+# Semantic and hybrid issue search
 
-*Last updated: February 2026*
+`tools github search` defaults to keyword search. Select `--search-type semantic` or `--search-type hybrid` to use GitHub's hosted issue search. Add `--local` to search previously fetched issues and pull requests offline on macOS.
 
-## Overview
+| Flags | Corpus and ranking | Result `source` |
+| --- | --- | --- |
+| `--search-type keyword` (default) | GitHub's advanced and legacy keyword search | `advanced`, `legacy` or `both` |
+| `--search-type semantic` or `hybrid` | One page from GitHub, in the order GitHub returns it | `semantic` or `hybrid` |
+| Either mode with `--local` | DarwinKit embeddings rank the local GitHub cache. Hybrid also uses SQLite FTS5. | `local-semantic` or `local-hybrid` |
 
-GitHub has three separate "semantic/improved search" efforts. Only one is partially accessible via REST API.
+## Hosted REST search
 
-| Feature | Status | Public API? | Where Available |
-|---------|--------|-------------|-----------------|
-| Copilot semantic code search | GA (March 2025) | No | VS Code, GitHub.com Copilot Chat |
-| New code search engine | GA on web (2023+) | No | github.com web UI only |
-| Improved Issue search | Public preview (Jan 29, 2026) | No (web UI only) | Issues tab on github.com |
-| Advanced issue search (`advanced_search=true`) | GA (Sept 2025) | **Yes** | REST API, gh CLI |
+The command sends one `GET /search/issues` with `advanced_search=true` and `search_type=semantic` or `search_type=hybrid`. The query parameter `q` carries the words and qualifiers. For example, `--repo owner/repo --type issue --state open` adds `repo:owner/repo`, `is:issue` and `is:open`. Use `--type pr` or `--state closed` for the corresponding qualifiers. The default `all` leaves that filter out.
 
-## What Works via API
+`--limit` sets the page size (1 to 100, default 30). An HTTP 403 or 429 ends the search and reports the quota reset time when GitHub supplies it. The command makes no automatic retry. For a comment-reaction threshold, use keyword search to scan comments over GraphQL, or add `--local` to filter cached comments.
 
-### `advanced_search=true` Query Parameter
+### Measurements on 2026-11-18
 
-The **only** API-accessible improvement. Append to `GET /search/issues`:
+The orchestrator used `gh api` against the live REST endpoint. The base query was `repo:anthropics/claude-code which model writes the compaction summary`.
 
+| Request | Observed response |
+| --- | --- |
+| Base query with `search_type=semantic` or `search_type=hybrid`, without `advanced_search` | Both returned HTTP 200 and 303 hits. The first eight in both were 101309, 109452, 108089, 94564, 97775, 96422, 104579, 104577. |
+| Base query without `search_type` or `advanced_search` | Also 303 hits. The matching counts alone do not establish identical rankings. |
+| Base query with `search_type=semantic` and `advanced_search=true` | 206 hits. The first eight were 109452, 107367, 104577, 105092, 107178, 108089, 103708, 109620. |
+| `repo:anthropics/claude-code is:open is:issue which model writes the compaction summary` with `search_type=semantic` | 46 hits. Issue #96316 ranked fourth. This call omitted `advanced_search`. |
+| `reactions:>5` inside `q` with `search_type=semantic` | HTTP 200 with 71 hits. |
+
+The repository qualifier worked inside `q`. These responses carried `X-RateLimit-Limit: 10`, consistent with the handoff's ten requests per minute. On 2026-11-11 the handoff also recorded an empty result from `gh search issues --search-type semantic --repo ...`.
+
+Adding `advanced_search=true` changed the semantic request's count and order. An advanced-only control would isolate the effect of `search_type` on this query. To check whether #96316 appears with both parameters, run the following command from the worktree.
+
+```sh
+./tools github search "which model writes the compaction summary" --repo anthropics/claude-code --type issue --state open --search-type semantic --limit 100 --format json | jq -e '.[] | select(.number == 96316 and .source == "semantic")'
 ```
-GET /search/issues?q=deep+linking+type:issue+repo:expo/expo&advanced_search=true
+
+The GraphQL search types `ISSUE_SEMANTIC` and `ISSUE_HYBRID` remain unverified.
+
+## Offline cache search
+
+```sh
+tools github search "app exits while saving" --search-type semantic --local --repo owner/repo --state open
+tools github search "empty window repo:owner/repo is:open" --search-type hybrid --local
 ```
 
-- Uses newer search backend with better relevance ranking
-- Supports OR operators and grouped qualifiers
-- Uses `type:issue`/`type:pr` instead of `is:issue`/`is:pr`
-- Merged in gh CLI [PR #11638](https://github.com/cli/cli/pull/11638) (Sept 8, 2025)
-- Results genuinely differ from legacy — natural language queries return different (often more relevant) results
+A local search reads the issue cache populated by `tools github issue` and `tools github pr`. It filters the candidates before ranking. DarwinKit embeds the query and each candidate's title and opening body text on the Mac. Hybrid also reads the full title and body for literal matches. The index lives in memory for one invocation. Runtime grows with the number of matching cached issues. A new cache has no hits.
 
-## What Does NOT Work via API
+Use `--repo` or an inline `repo:owner/repo`, `is:open|closed` or `--state`, and `type:issue|pr` or `--type`. The issue reaction filter accepts `reactions:>=N` or `--min-reactions N`. Older cache rows have unknown totals until refreshed. A minimum excludes those rows. The comment reaction filter considers only comments already cached. Results return up to 100 issues or PRs in relevance order.
 
-### Copilot Semantic Code Search
-
-Vector embeddings that find code by meaning. GA since March 12, 2025.
-
-- Copilot-internal feature, no public API
-- Works in VS Code Copilot Chat, GitHub.com Copilot Chat
-- [Changelog announcement](https://github.blog/changelog/2025-03-12-instant-semantic-code-search-indexing-now-generally-available-for-github-copilot/)
-
-### New Code Search Engine
-
-Supports regex, symbol search, boolean operators on github.com web UI.
-
-- NOT exposed via REST API — API still uses legacy engine
-- gh CLI maintainer confirmed (issue [#8522](https://github.com/cli/cli/issues/8522)):
-  > "The code search used on the web is using a newer search engine to power the queries, this search engine does not have API endpoints."
-- `gh search code --help` disclaimer: "these search results are powered by what is now a legacy GitHub code search engine"
-
-### Improved Issue Search (Jan 2026)
-
-Semantic index for issue search. 39% better results in testing.
-
-- Public preview (Jan 29, 2026)
-- Web UI only — no REST API endpoints, headers, or parameters
-- Natural language queries → semantic matching; quoted queries → lexical matching
-- [Changelog announcement](https://github.blog/changelog/2026-01-29-improved-search-for-github-issues-in-public-preview/)
-
-## What to Watch For
-
-If GitHub exposes more search capabilities via API, look for:
-- New REST API endpoints or API versions
-- Preview headers like `application/vnd.github.<feature>-preview+json`
-- `gh` CLI removing the "legacy engine" disclaimer from `gh search code --help`
-- New parameters on existing `/search/code` endpoint
-- GraphQL `SearchType` enum gaining new values (like `ISSUE_ADVANCED` did)
-
-## Sources
-
-- [gh CLI PR #11638: Use advanced issue search](https://github.com/cli/cli/pull/11638)
-- [gh CLI issue #8522: search code not returning all results](https://github.com/cli/cli/issues/8522)
-- [GitHub Changelog: Improved Issue search preview (Jan 2026)](https://github.blog/changelog/2026-01-29-improved-search-for-github-issues-in-public-preview/)
-- [GitHub Changelog: Copilot semantic code search (March 2025)](https://github.blog/changelog/2025-03-12-instant-semantic-code-search-indexing-now-generally-available-for-github-copilot/)
-- [GitHub REST API: Search endpoints](https://docs.github.com/en/rest/search/search)
-- [GitHub Docs: About GitHub Code Search](https://docs.github.com/en/search-github/github-code-search/about-github-code-search)
+Local modes make zero GitHub or hosted embedding requests. They require macOS and the installed DarwinKit sentence embedding. Results identify their source as `local-semantic` or `local-hybrid`. Keyword search continues to support GitHub query syntax, sorting, and `--advanced` or `--legacy`.

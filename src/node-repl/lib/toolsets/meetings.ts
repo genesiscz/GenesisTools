@@ -1,27 +1,36 @@
 import { prepareFindings } from "@app/meetings/lib/add-findings";
 import { type ByChannelOptions, byChannelOptionsSchema } from "@app/meetings/lib/by-channel";
 import { captureCost } from "@app/meetings/lib/capture-cost";
-import { attributeByChannel, channelEvidence } from "@app/meetings/lib/channel-operation";
+import { attributeByChannel, channelEvidence, lineEligibilityFor } from "@app/meetings/lib/channel-operation";
 import { configValueAt, parseConfigPath, setConfigValue } from "@app/meetings/lib/config-edit";
 import { decideItems, reopenItems } from "@app/meetings/lib/decide";
 import { callerActor, DecisionJournal } from "@app/meetings/lib/decision-journal";
 import { testPhrase } from "@app/meetings/lib/dictionary-test";
+import { liveMeetingLevels, savedMeetingLevels } from "@app/meetings/lib/levels";
+import { lookMeeting } from "@app/meetings/lib/look";
 import { matchPreview } from "@app/meetings/lib/match-preview";
 import { projectLabels, setMeetingFields } from "@app/meetings/lib/meeting-fields";
 import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
 import { meetingsOverview } from "@app/meetings/lib/overview";
+import { startMeetingRecording } from "@app/meetings/lib/record-start";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
 import { rejectFilterIds } from "@app/meetings/lib/reject-filter";
 import { reviewRow } from "@app/meetings/lib/review-rows";
+import { applySuggestedSeats } from "@app/meetings/lib/seat-suggest";
+import type { MeetingsMethod, MeetingsParams } from "@app/meetings/lib/service/api";
 import { withMeetingsClient } from "@app/meetings/lib/service/client";
+import { recordOf } from "@app/meetings/lib/service/handlers";
 import {
     acousticClip,
     acousticInspect,
     add,
+    type applySeats,
     assignApply,
     assignAsk,
     audioApply,
     audioPlan,
+    autostartMethod,
+    type backfillVoices,
     commentRead,
     commentWithdraw,
     configGet,
@@ -34,18 +43,24 @@ import {
     exportMethod,
     itemsList,
     itemsRows,
+    levels,
+    type lineEligibility,
     lines,
     list,
     locate,
+    type look,
+    type measure,
     meetingsToolsetApi,
     overview,
     prepareListen,
+    preview,
     projectsLabels,
     projectsPair,
     projectsPeople,
     projectsPreview,
     projectsUnpair,
     recordingMark,
+    recordStart,
     ref,
     reject,
     rename,
@@ -56,15 +71,23 @@ import {
     set,
     speakers,
     suggest,
+    type thresholds,
     voiceEnroll,
     voiceFeatures,
+    type voiceLibraryMethods,
+    type voiceReadiness,
     voiceScore,
+    type voices,
 } from "@app/meetings/lib/service/toolset-api";
 import { locateMeeting } from "@app/meetings/lib/shared";
 import { applyLocalSourceAudio, planLocalSourceAudio } from "@app/meetings/lib/source-audio-backfill";
 import { isSuggestRule, SUGGEST_RULES } from "@app/meetings/lib/suggest";
-import { runSuggest } from "@app/meetings/lib/suggest-run";
+import { previewSuggestions, runSuggest } from "@app/meetings/lib/suggest-run";
+import { readOrSetThresholds } from "@app/meetings/lib/thresholds";
 import { correctTranscript, outcomeText } from "@app/meetings/lib/transcript-corrections";
+import { voiceReadiness as readVoiceReadiness } from "@app/meetings/lib/voice-readiness";
+import { watchOnce } from "@app/meetings/lib/watch";
+import { recordingAutostart } from "@app/meetings/lib/watcher";
 import { rowsRead } from "@app/meetings/lib/window-reads";
 import { assertReach } from "@genesiscz/utils/api-descriptor";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -115,13 +138,80 @@ function itemRow(record: MeetingRecord, item: MeetingItem) {
     };
 }
 
+function serviceCall<M extends MeetingsMethod>(method: M) {
+    return async (params: MeetingsParams<M>) => withMeetingsClient((client) => client.call(method, params));
+}
+
 export class MeetingsToolset extends ReplToolset {
     readonly api = meetingsToolsetApi;
 
     async bootstrap(): Promise<Record<string, unknown>> {
         const store = new MeetingStore();
+        const listVoices = serviceCall("voices.list");
+        const resolveSample = serviceCall("voices.sample");
         return {
             meetings: {
+                levels: async (input: z.input<typeof levels.params> = {}) => {
+                    const { meeting, seconds } = levels.params.parse(input);
+                    return meeting === undefined
+                        ? liveMeetingLevels({ seconds: seconds ?? 3 })
+                        : savedMeetingLevels(store, meeting);
+                },
+                roomDevices: (params: MeetingsParams<"people.devices.list"> = {}) =>
+                    withMeetingsClient((client) => client.call("people.devices.list", params)),
+                decideRoomDevice: serviceCall("people.devices.decide"),
+                applySeats: async ({ replace, ...params }: z.input<typeof applySeats.params>) =>
+                    withMeetingsClient(async (client) => {
+                        const view = await client.call("meeting.seats.suggest", params);
+                        return { ...view, saved: await applySuggestedSeats({ client, view, replace }) };
+                    }),
+                backfillVoices: async (params: z.input<typeof backfillVoices.params>) =>
+                    withMeetingsClient((client) => client.call("voice.backfill", params, { timeoutMs: 3_600_000 })),
+                voiceJobs: serviceCall("voices.jobs"),
+                cancelVoiceJob: (id: string) =>
+                    withMeetingsClient((client) => client.call("voices.jobs.cancel", { id })),
+                seats: serviceCall("meeting.seats.suggest"),
+                thresholds: async (params: z.input<typeof thresholds.params> = {}) =>
+                    withMeetingsClient((client) => readOrSetThresholds({ client, ...params })),
+                voiceReadiness: async ({ meeting }: z.input<typeof voiceReadiness.params>) =>
+                    withMeetingsClient(async (client) =>
+                        readVoiceReadiness(await client.call("meeting.show", { ref: meeting }))
+                    ),
+                lineEligibility: async ({ meeting, line }: z.input<typeof lineEligibility.params>) =>
+                    lineEligibilityFor(OpenedMeeting.of(store, recordOf(store, meeting)), line),
+                voices: Object.assign(
+                    async (input: z.input<typeof voices.params>) => {
+                        const scope =
+                            input.scope === "meeting"
+                                ? { kind: "meeting" as const, meeting: input.meeting }
+                                : input.scope === "project"
+                                  ? { kind: "project" as const, project: input.project }
+                                  : { kind: "all" as const };
+                        return listVoices({ scope, person: input.person });
+                    },
+                    {
+                        list: listVoices,
+                        samples: listVoices,
+                        play: async ({
+                            start,
+                            player,
+                            ...selection
+                        }: z.input<typeof voiceLibraryMethods.play.params>) => {
+                            const slice = await resolveSample(selection);
+                            if (start !== false) {
+                                const { playSoundSlice } = await import("@app/meetings/lib/sound-playback");
+                                await playSoundSlice({ slice, player });
+                            }
+                            return slice;
+                        },
+                        move: serviceCall("voices.move"),
+                        quality: serviceCall("voices.quality"),
+                        reject: serviceCall("voices.reject"),
+                        remove: serviceCall("voices.remove"),
+                        sample: resolveSample,
+                        undo: serviceCall("voices.undo"),
+                    }
+                ),
                 audio: {
                     plan: async (input: z.input<typeof audioPlan.params> = {}) => {
                         audioPlan.params.parse(input);
@@ -130,6 +220,10 @@ export class MeetingsToolset extends ReplToolset {
                     apply: async (plan: z.input<typeof audioApply.params>["plan"]) =>
                         applyLocalSourceAudio({ plan: audioApply.params.parse({ plan }).plan, store }),
                 },
+                recordStart: (input: z.input<typeof recordStart.params> = {}) =>
+                    startMeetingRecording({ ...recordStart.params.parse(input), yes: true }, store),
+                autostart: (mode?: z.input<typeof autostartMethod.params>["mode"]) =>
+                    recordingAutostart(autostartMethod.params.parse({ mode }).mode, store),
                 list: (input: z.input<typeof list.params> = {}) => {
                     const { project } = list.params.parse(input);
                     return store
@@ -149,6 +243,12 @@ export class MeetingsToolset extends ReplToolset {
                         }));
                 },
                 open: (refText: string) => this.meeting(store, ref.parse({ ref: refText }).ref),
+                look: async (input: z.input<typeof look.params>) => lookMeeting(store, input),
+                measure: async ({ meeting }: z.input<typeof measure.params>) => {
+                    // lazy, like exportMeeting: the room-call scorer loads only for a measurement
+                    const { measureRoomCallMeeting } = await import("@app/meetings/lib/room-call-metrics");
+                    return measureRoomCallMeeting({ meeting, store });
+                },
                 locate: (refText: string) =>
                     locateMeeting({ ref: locate.params.parse({ ref: refText }).ref, root: store.root }) ?? null,
                 overview: async (input: z.input<typeof overview.params> = {}) => {
@@ -192,6 +292,7 @@ export class MeetingsToolset extends ReplToolset {
                         return configValueAt(config, parseConfigPath(parsed.path));
                     },
                 },
+                watchOnce: () => watchOnce(store),
                 captureCost: async () =>
                     captureCost({ store, records: store.list(), config: await new MeetingsConfigStore().read() }),
                 projects: {
@@ -488,6 +589,10 @@ export class MeetingsToolset extends ReplToolset {
                         token: decided.entry?.token ?? null,
                     };
                 },
+                preview: async (input: z.input<typeof preview.params> = {}) => {
+                    const { rules = [...SUGGEST_RULES] } = preview.params.parse(input);
+                    return previewSuggestions({ store, record: current(), rules });
+                },
                 suggest: async (input: z.input<typeof suggest.params> = {}) => {
                     const options = suggest.params.parse(input);
                     const asked = options.rules ?? [...SUGGEST_RULES];
@@ -497,7 +602,7 @@ export class MeetingsToolset extends ReplToolset {
                         throw new Error(`Unknown rule set ${unknown.join(", ")}. Known: ${SUGGEST_RULES.join(", ")}`);
                     }
 
-                    const { fresh, retired, warnings } = await runSuggest({
+                    const { fresh, retired, warnings, deviceOffers } = await runSuggest({
                         store,
                         record: current(),
                         rules: asked.filter(isSuggestRule),
@@ -505,7 +610,12 @@ export class MeetingsToolset extends ReplToolset {
                         attendanceId: options.attendanceId,
                     });
                     const record = current();
-                    return { fresh: fresh.map((item) => itemRow(record, item)), retired, warnings };
+                    return {
+                        fresh: fresh.map((item) => itemRow(record, item)),
+                        retired,
+                        warnings,
+                        ...(deviceOffers ? { deviceOffers } : {}),
+                    };
                 },
                 confirm: decideWith("confirmed"),
                 reject: decideWith("rejected"),

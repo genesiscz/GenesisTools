@@ -5,7 +5,9 @@ import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
 import { DecisionJournal } from "../decision-journal";
 import type { OpenedMeeting } from "../opened-meeting";
-import { evidenceItems } from "../suggest";
+import { NONE_OF_THESE } from "../questions";
+import { independentIndicatorLines, type LineSpeakers, speakerEvidence } from "../speaker-evidence";
+import { needsSpeakerReview } from "../speaker-scores";
 import { ATTENDANCE_CONFIDENCE } from "./seat";
 import type { LabelContext, LineLabel } from "./types";
 
@@ -21,28 +23,28 @@ export function meetingVoiceSeeds(options: {
     energy: Parameters<typeof lineEvidence>[3];
     seats: LineLabel[];
     applyAbove: number;
+    speakers?: LineSpeakers;
+    measured?: ReturnType<typeof lineEvidence>;
 }): Pick<LabelContext, "certain" | "seatOnlySeeds"> {
     const { opened, context, meeting, evidence, presence, applyAbove } = options;
     const record = opened.record;
-    const indicators = new Map<number, string>();
-    if (evidence?.speaking.length) {
-        evidenceItems({
-            meeting,
-            evidence,
-            record,
-            presence,
-            energyMicShare: options.energy,
-            lines: lineEvidence(meeting.transcript, evidence, presence, options.energy),
-            onIndicator: (index, person, confidence) => {
-                if (confidence >= applyAbove) {
-                    indicators.set(index, person);
-                }
-            },
-        });
-    }
+    const indicators = evidence?.speaking.length
+        ? independentIndicatorLines(
+              speakerEvidence({
+                  meeting,
+                  evidence,
+                  record,
+                  presence,
+                  energyMicShare: options.energy,
+                  speakers: options.speakers,
+                  lines: options.measured ?? lineEvidence(meeting.transcript, evidence, presence, options.energy),
+              }),
+              applyAbove
+          )
+        : undefined;
     const seats = new Map(
         options.seats
-            .filter((row) => row.person && (row.score ?? ATTENDANCE_CONFIDENCE) >= applyAbove)
+            .filter((row) => row.person && !row.reviewOnly && (row.score ?? ATTENDANCE_CONFIDENCE) >= applyAbove)
             .map((row) => [row.index, row.person!])
     );
     const assignments = [...(record.speakers.assignments ?? [])].sort((a, b) => b.at.localeCompare(a.at));
@@ -77,7 +79,12 @@ export function meetingVoiceSeeds(options: {
         if (entry.action.kind === "confirm") {
             return entry.action.minConfidence === undefined && entry.decided.includes(item.id);
         }
-        return entry.action.kind === "answer" && !!entry.question && targets.get(entry.question)?.has(item.id);
+        return (
+            entry.action.kind === "answer" &&
+            !entry.action.knownAnswer &&
+            !!entry.question &&
+            targets.get(entry.question)?.has(item.id)
+        );
     };
     const decidedIds = new Set(
         ranges.filter((range) => range.status === "confirmed" && direct(range)).map((range) => range.id)
@@ -117,14 +124,15 @@ export function meetingVoiceSeeds(options: {
         const answers = standaloneAnswers.flatMap((q) =>
             q.fromSec <= line.fromSec &&
             (typeof q.evidence?.endSec === "number" ? Math.max(q.toSec, q.evidence.endSec) : q.toSec) >= line.toSec &&
-            q.answer
+            q.answer &&
+            q.answer.toLowerCase() !== NONE_OF_THESE
                 ? [q.answer]
                 : []
         );
         const decided = [...answers, ...confirmed.flatMap((range) => (range.speaker ? [range.speaker] : []))];
         const independent = [
             seats.get(line.index),
-            indicators.get(line.index),
+            indicators?.get(line.index),
             ...covering.flatMap((range) =>
                 range.status === "suggested" &&
                 range.speaker &&
@@ -133,13 +141,16 @@ export function meetingVoiceSeeds(options: {
                 !range.rules.includes(MeetingRule.VoiceEmbedding) &&
                 !range.rules.includes(MeetingRule.Voice) &&
                 !range.evidence?.listen &&
+                !needsSpeakerReview(range) &&
                 !range.voices?.length &&
                 !range.segments?.length
                     ? [range.speaker]
                     : []
             ),
         ].filter((name): name is string => !!name);
-        const names = decided.length ? decided : independent;
+        const names = decided.length
+            ? decided
+            : independent.filter((name) => !line.eligible || line.eligible.some((allowed) => sameName(allowed, name)));
         const first = names[0];
         if (
             first &&

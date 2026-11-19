@@ -472,7 +472,7 @@ extension ListsSketchA {
 
         var title: String {
             switch self {
-            case .needsAnswer: return "Needs your answer"
+            case .needsAnswer: return "Waiting for you"
             case .staged: return "Staged, not sent"
             case .toSend: return "Waiting to send"
             case .quiet: return "Quiet for 3+ days"
@@ -481,10 +481,10 @@ extension ListsSketchA {
 
         var tooltip: String {
             switch self {
-            case .needsAnswer: return "Questions an agent asked and nobody answered: the ones that block an agent first, then the newest"
+            case .needsAnswer: return "Open questions and tasks, with blocking items first."
             case .staged: return "Answers you picked and did not send yet"
             case .toSend: return "Answered, not taken by the session yet. Nothing here waits for you."
-            case .quiet: return "Open questions in sessions where nothing moved for three days"
+            case .quiet: return "Open items in sessions that have been quiet for three days."
             }
         }
     }
@@ -572,7 +572,7 @@ extension ListsSketchA {
                     Image(systemName: "line.3.horizontal.decrease")
                         .foregroundColor(ReviewPalette.dim)
                         .accessibilityHidden(true)
-                    Text("Needs an answer first, then newest")
+                    Text("Waiting items first, then newest")
                         .font(.system(size: 11.5))
                         .foregroundColor(ReviewPalette.dim)
                         .lineLimit(1)
@@ -663,6 +663,7 @@ extension ListsSketchA {
         static func == (a: QueueRow, b: QueueRow) -> Bool { a.entry == b.entry && a.selected == b.selected }
 
         private var mark: (symbol: String, color: Color, words: String) {
+            if let task = entry.item.task { return ("checklist", entry.bucket == .quiet ? ReviewPalette.dim : InboxStyle.accent, task.statusLabel) }
             switch entry.bucket {
             case .needsAnswer:
                 return entry.blocking
@@ -694,14 +695,14 @@ extension ListsSketchA {
                             .lineLimit(2)
                     }
                     HStack(spacing: 5) {
-                        ProviderBadge(provider: entry.session.provider ?? "?", size: 11)
+                        if let provider = entry.session.displayProvider { ProviderBadge(provider: provider, size: 11) }
                         Text(verbatim: entry.session.displayTitle).lineLimit(1).truncationMode(.tail)
                             .layoutPriority(1)
                         Text(verbatim: "·")
                         // Not `fixedSize`: a 60-character project name pushed the row's age off the sidebar.
                         Text(verbatim: entry.session.projectName).lineLimit(1).truncationMode(.middle)
                         Spacer(minLength: 4)
-                        LiveAgo(date: entry.item.date, style: .brief).fixedSize()
+                        LiveAgo(date: entry.item.date, style: .spelled).fixedSize()
                     }
                     .font(.system(size: 10.5))
                     .foregroundColor(ReviewPalette.dim)
@@ -735,6 +736,7 @@ extension ListsSketchA {
             let index = current.flatMap { entry in entries.firstIndex { $0.id == entry.id } }
             VStack(spacing: 0) {
                 header(entries, index: index)
+                InboxTaskFeedback(store: inbox.tasks, saved: inbox.load)
                 PanelFindBarSlot()
                 if let failure = inbox.error {
                     ListVariantLoadFailure(failure) { inbox.load() }
@@ -749,10 +751,16 @@ extension ListsSketchA {
                             }
                             upNext(entries, after: index ?? 0)
                         } else if inbox.loading {
-                            PaneSkeleton("Looking for waiting questions")
-                        } else {
-                            EmptyState(symbol: "tray", text: "No question waits for an answer.")
-                                .padding(.top, 40)
+                            PaneSkeleton("Loading questions and tasks")
+                        } else if inbox.error == nil, inbox.loadedAt != nil {
+                            if model.filter.trimmed.isEmpty {
+                                EmptyState(symbol: "tray", text: "No questions or tasks are waiting.")
+                                    .padding(.top, 40)
+                            } else {
+                                EmptyState(symbol: "magnifyingglass", text: "No matching questions or tasks.", actionTitle: "Clear filter") {
+                                    model.filter = ""
+                                }.padding(.top, 40)
+                            }
                         }
                     }
                     .frame(maxWidth: HubInboxCards.readingWidth, alignment: .leading)
@@ -778,7 +786,7 @@ extension ListsSketchA {
         private func header(_ entries: [Entry], index: Int?) -> some View {
             let open = entries.filter { $0.bucket == .needsAnswer }.count
             let staged = entries.filter { $0.bucket == .staged }.count
-            var summary = open == 0 ? "Nothing needs an answer" : "\(open) need an answer"
+            var summary = "\(open) waiting"
             if staged > 0 { summary += " · \(staged) staged" }
             return TitlebarHeader {
                 HStack(spacing: 10) {
@@ -786,25 +794,26 @@ extension ListsSketchA {
                         Image(systemName: "tray.full").foregroundColor(InboxStyle.accent)
                             .accessibilityHidden(true)
                         Text("Waiting for you").font(.system(size: 14, weight: .semibold))
-                        Text(verbatim: summary)
-                            .font(.system(size: 12))
-                            .foregroundColor(ReviewPalette.dim)
                     }
                     .titlebarLabel()
                     Spacer()
-                    if let index {
-                        Text(verbatim: "\(index + 1) of \(entries.count)")
-                            .font(.system(size: 11.5, design: .monospaced))
-                            .foregroundColor(ReviewPalette.dim)
-                            .titlebarLabel()
-                    }
-                    IconButton(systemName: "chevron.up", tooltip: "Previous question (K)") {
+                    InboxAddTaskButton(model: model, tasks: inbox.tasks)
+                    IconButton(systemName: "chevron.up", tooltip: "Previous item (K)") {
                         _ = move(entries, index: index, by: -1)
-                    }
-                    IconButton(systemName: "chevron.down", tooltip: "Next question (J)") {
+                    }.disabled((index ?? 0) == 0)
+                    IconButton(systemName: "chevron.down", tooltip: "Next item (J)") {
                         _ = move(entries, index: index, by: 1)
-                    }
+                    }.disabled(entries.isEmpty || index == entries.count - 1)
                     IconButton(systemName: "arrow.clockwise", tooltip: "Look for waiting sessions again") { inbox.load() }
+                        .disabled(inbox.loading)
+                }
+            } details: {
+                if let index {
+                    HStack {
+                        Text(verbatim: summary)
+                        Spacer()
+                        Text(verbatim: "\(index + 1) of \(entries.count)").monospacedDigit()
+                    }.font(.system(size: 11)).foregroundStyle(.secondary)
                 }
             }
         }
@@ -812,7 +821,7 @@ extension ListsSketchA {
         private func sessionLine(_ entry: Entry) -> some View {
             let hubSession = entry.session.sessionId.flatMap(model.session(id:))
             return HStack(spacing: 8) {
-                ProviderBadge(provider: entry.session.provider ?? "?", size: 16)
+                if let provider = entry.session.displayProvider { ProviderBadge(provider: provider, size: 16) }
                 Text(verbatim: entry.session.displayTitle)
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
@@ -827,7 +836,7 @@ extension ListsSketchA {
                         .truncationMode(.middle)
                 }
                 Spacer(minLength: 8)
-                LiveAgo(date: entry.item.date, style: .brief) { "asked \($0)" }
+                LiveAgo(date: entry.item.date, style: .spelled) { entry.item.task == nil ? "asked \($0)" : "added \($0)" }
                     .font(.system(size: 11))
                     .foregroundColor(ReviewPalette.dim)
                     .fixedSize()
@@ -842,7 +851,9 @@ extension ListsSketchA {
 
         @ViewBuilder
         private func card(_ entry: Entry) -> some View {
-            if entry.item.isForm {
+            if let task = entry.item.task {
+                InboxTaskCard(store: inbox.tasks, task: task, session: entry.session).id(entry.item.id)
+            } else if entry.item.isForm {
                 InboxFormCard(inbox: inbox, item: entry.item).id(entry.item.id)
             } else {
                 InboxDecisionCard(model: model, inbox: inbox, session: entry.session, item: entry.item, keyed: keys)

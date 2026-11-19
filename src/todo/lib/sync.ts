@@ -14,7 +14,8 @@ export type SyncTarget = "calendar" | "reminders" | "both";
  * swallowed the signature entirely — it kept passing `tsgo` while missing the
  * method this function had started calling.
  */
-export type SyncStore = Pick<TodoStore, "get" | "updateWith" | "withSyncLock">;
+export type SyncStore = Pick<TodoStore, "get" | "updateWith" | "withSyncLock"> &
+    Partial<Pick<TodoStore, "readSyncReceipt" | "writeSyncReceipt">>;
 
 /**
  * `id` is the EventKit identifier, and it is REQUIRED on success.
@@ -24,7 +25,7 @@ export type SyncStore = Pick<TodoStore, "get" | "updateWith" | "withSyncLock">;
  * id. A success is only ever reported after the platform confirmed an
  * identifier, so the type now says so and the fallback is gone.
  */
-export type SyncOutcome = { ok: true; id: string; alreadySynced?: boolean } | { ok: false; error: Error };
+export type SyncOutcome = { ok: true; id: string; alreadySynced?: boolean } | { ok: false; error: Error; id?: string };
 
 export interface SyncResult {
     calendar?: SyncOutcome;
@@ -351,11 +352,12 @@ async function syncFreshTodo(options: {
     todo: Todo;
     target: SyncTarget;
     calendarName?: string;
+    reminderId?: string;
 }): Promise<SyncResult> {
     const { store, todo, target, calendarName } = options;
     const result: SyncResult = {};
     let updatedReminders = materializeReminders(todo);
-    let changed = false;
+    const needsWrite = new Set<(typeof SYNC_TARGETS)[number]>();
 
     if (target === "calendar" || target === "both") {
         const previousId = updatedReminders.find((r) => ownedBy(r, "calendar"))?.syncId;
@@ -363,14 +365,18 @@ async function syncFreshTodo(options: {
         if (previousId) {
             result.calendar = { ok: true, alreadySynced: true, id: previousId };
         } else {
+            let id: string | undefined;
             try {
-                const eventId = await syncTodoToCalendar({ ...todo, reminders: updatedReminders }, calendarName);
-
-                updatedReminders = recordCalendarSync(updatedReminders, eventId);
-                changed = true;
-                result.calendar = { ok: true, id: eventId };
+                const saved = store.readSyncReceipt?.(todo.id, "calendar");
+                id = saved ?? (await syncTodoToCalendar({ ...todo, reminders: updatedReminders }, calendarName));
+                if (saved === undefined) {
+                    store.writeSyncReceipt?.(todo.id, "calendar", id);
+                }
+                updatedReminders = recordCalendarSync(updatedReminders, id);
+                needsWrite.add("calendar");
+                result.calendar = { ok: true, id, ...(saved !== undefined ? { alreadySynced: true } : {}) };
             } catch (error) {
-                result.calendar = { ok: false, error: error instanceof Error ? error : new Error(String(error)) };
+                result.calendar = { ok: false, id, error: error instanceof Error ? error : new Error(String(error)) };
             }
         }
     }
@@ -381,22 +387,24 @@ async function syncFreshTodo(options: {
         if (previousId) {
             result.reminders = { ok: true, alreadySynced: true, id: previousId };
         } else {
+            let id: string | undefined;
             try {
-                const reminderId = await syncTodoToReminders({ ...todo, reminders: updatedReminders });
-
-                updatedReminders = recordReminderSync(updatedReminders, reminderId);
-                changed = true;
-                result.reminders = { ok: true, id: reminderId };
+                const receipt = store.readSyncReceipt?.(todo.id, "reminders");
+                const saved = receipt ?? options.reminderId;
+                id = saved ?? (await syncTodoToReminders({ ...todo, reminders: updatedReminders }));
+                if (receipt === undefined) {
+                    store.writeSyncReceipt?.(todo.id, "reminders", id);
+                }
+                updatedReminders = recordReminderSync(updatedReminders, id);
+                needsWrite.add("reminders");
+                result.reminders = { ok: true, id, ...(saved !== undefined ? { alreadySynced: true } : {}) };
             } catch (error) {
-                result.reminders = {
-                    ok: false,
-                    error: error instanceof Error ? error : new Error(String(error)),
-                };
+                result.reminders = { ok: false, id, error: error instanceof Error ? error : new Error(String(error)) };
             }
         }
     }
 
-    if (changed) {
+    if (needsWrite.size > 0) {
         // The platform call above can take seconds, and `updatedReminders` was
         // derived from `todo` as it looked BEFORE it. Writing that array whole
         // would drop a reminder another writer appended meanwhile. Entries past
@@ -410,21 +418,17 @@ async function syncFreshTodo(options: {
                 reminders: [...updatedReminders, ...current.reminders.slice(carried)],
             }));
         } catch (error) {
-            // This function promises to capture failures per target instead of
-            // throwing, and `sync --all` loops over it, so one unwritable todo
-            // must not abort the batch. The platform objects already EXIST by
-            // now, so their ids go into the failure message: an id nobody can
-            // read is an orphaned event with nothing on record pointing at it.
-            // `alreadySynced` outcomes are left alone — they created nothing,
-            // so there is nothing of theirs to lose.
+            // Return the platform identifiers even if recording them on the Todo failed.
+            // The independent receipt lets the next sync retry the local write.
             const cause = error instanceof Error ? error : new Error(String(error));
 
             for (const key of SYNC_TARGETS) {
                 const outcome = result[key];
 
-                if (outcome?.ok && !outcome.alreadySynced) {
+                if (outcome?.ok && needsWrite.has(key)) {
                     result[key] = {
                         ok: false,
+                        id: outcome.id,
                         error: new Error(`created ${outcome.id} but could not record it: ${cause.message}`),
                     };
                 }
@@ -440,6 +444,7 @@ export async function syncTodo(options: {
     todo: Todo;
     target: SyncTarget;
     calendarName?: string;
+    reminderId?: string;
 }): Promise<SyncResult> {
     const failureResult = (error: Error): SyncResult => {
         const failed: SyncResult = {};
@@ -468,4 +473,29 @@ export async function syncTodo(options: {
     } catch (error) {
         return failureResult(error instanceof Error ? error : new Error(String(error)));
     }
+}
+
+/** The Todo CLI reports pairing failures with the platform ID and the other target's outcome. */
+export async function syncTodoAndPair(options: {
+    store: TodoStore;
+    todo: Todo;
+    target: SyncTarget;
+    calendarName?: string;
+}): Promise<SyncResult> {
+    const result = await syncTodo(options);
+    const reminder = result.reminders;
+    if (reminder?.ok === true) {
+        try {
+            await options.store.recordPairing(options.todo.id, "reminders", reminder.id);
+        } catch (error) {
+            result.reminders = {
+                ok: false,
+                id: reminder.id,
+                error: new Error(
+                    `reminder ${reminder.id} exists but its Work pairing could not be recorded: ${String(error)}`
+                ),
+            };
+        }
+    }
+    return result;
 }

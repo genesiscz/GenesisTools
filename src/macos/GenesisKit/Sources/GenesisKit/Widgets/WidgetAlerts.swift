@@ -45,7 +45,7 @@ public enum WidgetAlerts {
     public static func announcement(_ item: WidgetInboxItem, session: String?) -> String {
         var parts = [kicker(item)]
         if let title = item.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty { parts.append(title) }
-        if let session, !session.isEmpty { parts.append("from " + session) }
+        if let sender = item.message?.origin ?? session, !sender.isEmpty { parts.append("from " + sender) }
         return parts.joined(separator: ", ")
     }
 

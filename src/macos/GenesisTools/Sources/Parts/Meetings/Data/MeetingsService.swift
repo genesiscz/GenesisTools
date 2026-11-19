@@ -290,6 +290,7 @@ enum MeetingsAPI {
         CommentSent.name: { .commentSent(try MeetingsService.decode(CommentSent.self, $0)) },
         CommentChanged.name: { .commentChanged(try MeetingsService.decode(CommentChanged.self, $0)) },
         PeopleChanged.name: { .peopleChanged(try MeetingsService.decode(PeopleChanged.self, $0)) },
+        VoiceJob.event: { .voiceJob(try MeetingsService.decode(VoiceJob.self, $0)) },
         WordTimingsChanged.name: { .wordTimingsChanged(try MeetingsService.decode(WordTimingsChanged.self, $0)) },
     ]
 
@@ -298,7 +299,7 @@ enum MeetingsAPI {
         static let name = "people.changed"
     }
 
-    static let windowEvents = [MeetingChanged.name, DecisionApplied.name, DecisionReverted.name, CommentSent.name, CommentChanged.name, PeopleChanged.name, WordTimingsChanged.name]
+    static let windowEvents = [MeetingChanged.name, DecisionApplied.name, DecisionReverted.name, CommentSent.name, CommentChanged.name, PeopleChanged.name, WordTimingsChanged.name, VoiceJob.event]
 }
 
 /// One event of the Meetings service, as the window hears it.
@@ -309,6 +310,7 @@ enum MeetingsEvent: Equatable {
     case commentSent(MeetingsAPI.CommentSent)
     case commentChanged(MeetingsAPI.CommentChanged)
     case peopleChanged(MeetingsAPI.PeopleChanged)
+    case voiceJob(VoiceJob)
     case wordTimingsChanged(MeetingsAPI.WordTimingsChanged)
 
     /// The meeting the event is about.
@@ -321,6 +323,7 @@ enum MeetingsEvent: Equatable {
         case .commentSent(let event): return event.meeting
         case .commentChanged(let event): return event.meeting
         case .peopleChanged: return nil
+        case .voiceJob(let job): return job.meeting
         }
     }
 
@@ -329,7 +332,7 @@ enum MeetingsEvent: Equatable {
         switch self {
         case .decisionApplied(let event): return event.entry
         case .decisionReverted(let event): return event.entry
-        case .meetingChanged, .commentSent, .commentChanged, .peopleChanged, .wordTimingsChanged: return nil
+        case .meetingChanged, .commentSent, .commentChanged, .peopleChanged, .wordTimingsChanged, .voiceJob: return nil
         }
     }
 }
@@ -652,13 +655,29 @@ final class MeetingsService {
             resumeSubscription()
             throw Unavailable(reason: "no Meetings service answers; the next connection subscribes")
         }
-        let heard = try await call(MeetingsAPI.Subscribe.self, params, timeout: timing.helloTimeout).events
+        let heard = try await call(MeetingsAPI.Subscribe.self, supportedEvents(params), timeout: timing.helloTimeout).events
         // An `unsubscribe()`, a newer subscribe or a closed connection while the reply was on its way: this reply is
         // not an active subscription. A reconnect sends the kept one again and marks it (`attach`).
         guard generation == subscriptionGeneration, client === connected else { return heard }
         restoreFailures = 0
         isSubscribed = true
         return heard
+    }
+
+    private func supportedEvents(_ params: MeetingsAPI.Subscribe.Params) -> MeetingsAPI.Subscribe.Params {
+        guard params.events == MeetingsAPI.windowEvents, case .connected(_, let advertised) = state else { return params }
+        var current = params
+        current.events = MeetingsAPI.windowEvents.filter(advertised.contains)
+        return current
+    }
+
+    /// Older services list project rows and expose only the original numbered playback selector.
+    func listVoiceLibrary(_ destination: VoiceDestination) async throws -> MeetingsAPI.VoicesList.Result {
+        _ = await connection()
+        if case .connected(let methods, _) = state, !methods.contains(MeetingsAPI.VoicesMove.name) {
+            return try await call(MeetingsAPI.VoicesList.self, .init(project: destination.project))
+        }
+        return try await call(MeetingsAPI.VoicesList.self, .init(scope: destination.scope, person: destination.owner?.name))
     }
 
     /// Forgets the subscription and closes the connection, so the service can go idle.
@@ -893,7 +912,7 @@ final class MeetingsService {
         if let subscription {
             Task {
                 do {
-                    _ = try await Self.send(MeetingsAPI.Subscribe.self, subscription, on: connected, timeout: timing.helloTimeout)
+                    _ = try await Self.send(MeetingsAPI.Subscribe.self, supportedEvents(subscription), on: connected, timeout: timing.helloTimeout)
                     guard self.subscription != nil, self.client === connected else { return }
                     restoreFailures = 0
                     isSubscribed = true

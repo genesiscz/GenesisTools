@@ -1,14 +1,16 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { getEventListeners } from "node:events";
 import { mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { Executor } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { onReleaseMemory } from "@genesiscz/utils/process/release-memory";
 import { nativeRootsKey } from "@genesiscz/utils/providers/session-paths";
 import { currentTraceId } from "@genesiscz/utils/trace";
+import { healthDistribution } from "../../../scripts/benchmarks/hub/health-latency";
 import { parseArgv } from "./argv";
 import { askHubServer, callHubServer } from "./client";
 import {
@@ -17,6 +19,7 @@ import {
     type DoorWorker,
     type DoorWorkerMessage,
     DoorWorkerRunner,
+    laneRunner,
     offEventLoop,
 } from "./door-runner";
 import { agentsToolChangesDoor, agentsTurnChangesDoor } from "./doors/changes";
@@ -26,12 +29,13 @@ import { navConfigureDoor, navListDoor, navRecordDoor } from "./doors/nav";
 import { prShowDoor } from "./doors/prs";
 import { sessionHostDescribeDoor, sessionHostFocusDoor } from "./doors/session-host";
 import { transcriptFetchDoor, transcriptLiveDoor } from "./doors/transcript";
-import { type CallDoor, DoorUnsupported, doorlessPrefix, type StreamDoor } from "./doors/types";
+import { type CallDoor, type Door, DoorUnsupported, doorlessPrefix, type StreamDoor } from "./doors/types";
 import { widgetCallDoor, widgetContextDoor, widgetTasksListDoor } from "./doors/widget";
 import { ensureHubServer } from "./ensure";
 import { LineBuffer } from "./protocol";
 import { type HubServerHandle, startHubServer } from "./server";
 import { type RowsWorker, type SessionRowsJob, type SessionRowsRequest, SessionRowsRunner } from "./session-rows";
+import { stallObserver } from "./stall-watch";
 
 const echoDoor: CallDoor<string[]> = {
     kind: "call",
@@ -94,17 +98,45 @@ const traceDoor: CallDoor<true> = {
 
 const servers: HubServerHandle[] = [];
 
+it("captures one sustained silence, excludes observer sleep and rate-limits the next sample", () => {
+    const observe = stallObserver();
+    expect(observe(0, 0)).toBeNull();
+    expect(observe(0, 90_000)).toBeNull();
+    const captures: number[] = [];
+    for (let second = 91; second <= 175; second++) {
+        const beat = second < 95 ? second : second < 110 ? 95 : 110;
+        if (observe(beat, second * 1000) !== null) {
+            captures.push(second);
+        }
+    }
+    expect(captures).toEqual([105, 165]);
+});
+
+it("counts missed health probes separately from completed reply latency", () => {
+    expect(
+        healthDistribution([
+            { state: "answers", ms: 20, load1: 3 },
+            { state: "busy", ms: 10_000, load1: 8 },
+            { state: "absent", ms: 1, load1: 8 },
+            { state: "answers", ms: 10, load1: 3 },
+        ])
+    ).toEqual({ attempts: 4, answers: 2, busy: 1, absent: 1, p50Ms: 10, p95Ms: 20, p99Ms: 20, maxMs: 20 });
+    expect(healthDistribution([]).p99Ms).toBeNull();
+});
+
 afterEach(async () => {
     for (const server of servers.splice(0)) {
         await server.drain("test");
     }
 });
 
-async function start(): Promise<{ socketPath: string; handle: HubServerHandle }> {
+async function start(
+    doors: readonly Door[] = [echoDoor, throwDoor, ticksDoor, traceDoor, slowDoor]
+): Promise<{ socketPath: string; handle: HubServerHandle }> {
     const socketPath = join(mkdtempSync(join(tmpdir(), "hubsrv-")), "s", "hub.sock");
     const handle = await startHubServer({
         socketPath,
-        doors: [echoDoor, throwDoor, ticksDoor, traceDoor, slowDoor],
+        doors,
         maxFootprintBytes: Number.MAX_SAFE_INTEGER,
         idleMs: 0,
         checkEveryMs: 60_000,
@@ -311,6 +343,38 @@ describe("hub server", () => {
         } finally {
             clearTimeout(deadline);
             await handle?.drain("test cleanup");
+        }
+    });
+});
+
+describe("hub server production doors", () => {
+    it("the production process list goes through the agents worker", async () => {
+        const { socketPath } = await start(HUB_SERVER_DOORS);
+        const reply = { stdout: "worker answer\n", stderr: "", exit: 0 };
+        const run = spyOn(laneRunner("agents"), "run").mockResolvedValue(reply);
+        try {
+            expect(await callHubServer({ socketPath, argv: ["hub", "procs", "--json"], timeoutMs: 2000 })).toEqual(
+                reply
+            );
+            expect(run.mock.calls[0]?.[0].door).toBe("hub procs --json");
+        } finally {
+            run.mockRestore();
+        }
+    });
+
+    it("the repo socket returns a failed git read and holds off the next request", async () => {
+        const { socketPath } = await start(HUB_SERVER_DOORS);
+        const folder = dirname(socketPath);
+        const git = spyOn(Executor.prototype, "exec").mockRejectedValue(new Error("git read timed out"));
+        const ask = () => callHubServer({ socketPath, argv: ["hub", "repo", folder], timeoutMs: 2000 });
+        try {
+            const first = await ask();
+            expect(first?.exit).toBe(1);
+            expect(first?.stderr).toContain(`${folder}: git read timed out`);
+            expect((await ask())?.stderr).toContain("retry after");
+            expect(git).toHaveBeenCalledTimes(1);
+        } finally {
+            git.mockRestore();
         }
     });
 });
@@ -691,6 +755,22 @@ describe("SessionRowsRunner", () => {
         } finally {
             runner.stop();
         }
+    });
+
+    it("shares live location work on a cache hit only while the same request is pending", async () => {
+        const reads: SessionRowsJob[] = [];
+        const runner = new SessionRowsRunner({
+            cached: async (request) => {
+                reads.push(request);
+                return { text: "hit", stale: false };
+            },
+        });
+        const journal = { ...job, liveLocations: false };
+        const other = { ...job, listing: { hours: 72 } };
+        await Promise.all([runner.run(job), runner.run(job), runner.run(journal), runner.run(other)]);
+        expect(reads).toEqual([job, journal, other]);
+        await runner.run(job);
+        expect(reads).toHaveLength(4);
     });
 
     it("expires a silent worker and allows a fresh rebuild", async () => {

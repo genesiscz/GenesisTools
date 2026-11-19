@@ -80,6 +80,7 @@ enum TranscriptSketchModes {
         case .timeline: return "clock"
         case .agents: return "person.2"
         case .usage: return "chart.bar.xaxis"
+        case .work: return "checklist"
         }
     }
 }

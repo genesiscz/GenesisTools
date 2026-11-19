@@ -13,7 +13,7 @@ import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { z } from "zod";
 import { prepareFindings } from "./add-findings";
 import { findingSchema } from "./findings";
-import { answerQuestion } from "./questions";
+import { answerQuestion } from "./question-answers";
 import { composedMeeting } from "./sources";
 import { checkAnchors, correctionsOf, correctTranscript, ledgerEntryFor, outcomeText } from "./transcript-corrections";
 

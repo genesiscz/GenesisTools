@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { AgentSessionRow } from "@app/ai/lib/sessions/agent-session-rows";
 import { kitFixturePath } from "@app/macos/lib/kit-fixtures";
 import type { DecisionRecord } from "@app/question/lib/decisions/store";
+import { DEFAULT_INBOX_KINDS } from "@app/question/lib/inbox/kinds";
 import type { AskForm } from "@app/question/lib/pending/types";
 import type { QaRow } from "@app/question/lib/read-model";
 import type { OpenQuestion } from "@genesiscz/utils/agents/dialogs/types";
@@ -456,6 +457,61 @@ describe("the golden widget snapshots", () => {
 
         expect(Object.keys(CARD_KINDS).filter((kind) => !seen.has(kind))).toEqual([]);
     });
+});
+
+it("publishes bounded question and answer text only for plain answers", async () => {
+    const root = await mkdtemp(join(tmpdir(), "widget-reply-"));
+    const question = "Which layout?";
+    const answerMd = "<fromImage>hidden</fromImage>" + "a".repeat(900);
+
+    try {
+        const rows = [
+            answer({ id: "alpha", ts: NOW, question, answerMd }),
+            answer({ id: "beta", ts: NOW, tag: "message", question: "Update", answerMd: "A message" }),
+        ];
+        const sources = { ...everyKindSources, inboxData: undefined, answers: () => rows };
+        const snapshot = await widgetSnapshot({ root, now: NOW, sources });
+        const items = snapshot.notifications?.sessions.flatMap((session) => session.items ?? []);
+        expect(items?.find((item) => item.sourceId === "alpha")?.reply).toEqual({
+            question,
+            text: "a".repeat(800),
+            more: true,
+        });
+        const message = items?.find((item) => item.sourceId === "beta");
+        expect(message?.message?.text).toBe("A message");
+        expect(message?.reply).toBeUndefined();
+    } finally {
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
+it("counts configured message groups beyond the visible rows while showing uncounted agent tasks", async () => {
+    const root = await mkdtemp(join(tmpdir(), "widget-inbox-kinds-"));
+    try {
+        const sources: WidgetSources = {
+            ...everyKindSources,
+            inboxKinds: async () => ({
+                ...DEFAULT_INBOX_KINDS,
+                decision: { show: false, countInBadge: true },
+                form: { show: false, countInBadge: true },
+                message: { show: true, countInBadge: true },
+                todo: { ...DEFAULT_INBOX_KINDS.todo, forAgent: { show: true, countInBadge: false } },
+            }),
+            inboxData: () => ({
+                answers: [],
+                recentByKind: { answer: 9, message: 7 },
+                complete: true,
+                truncated: true,
+            }),
+        };
+        const result = await widgetSnapshot({ root, sources, now: NOW });
+        expect(result.notifications?.badgeCount).toBe(7);
+        const items = result.notifications?.sessions.flatMap((row) => row.items ?? []) ?? [];
+        expect(items.some((item) => item.kind === "todo")).toBe(true);
+        expect(items.some((item) => item.kind === "decision" || item.kind === "form")).toBe(false);
+    } finally {
+        await rm(root, { recursive: true, force: true });
+    }
 });
 
 describe("a preferences write from the widget", () => {

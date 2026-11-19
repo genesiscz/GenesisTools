@@ -5,8 +5,11 @@ import { logger } from "@genesiscz/utils/logger";
 import { type MeetingsConfig, MeetingsConfigStore, resolveDictionary } from "@genesiscz/utils/meetings/config";
 import { collectEcho } from "@genesiscz/utils/meetings/echo";
 import { type ChannelCalibration, channelEnergy, type SilentCallSpan } from "@genesiscz/utils/meetings/energy";
+import { type DeviceDecision, mappedRoomDevices, type RoomDevice } from "@genesiscz/utils/meetings/people";
+import { PeopleBook } from "@genesiscz/utils/meetings/people-book";
 import { AttendanceUnavailableError } from "@genesiscz/utils/meetings/platform";
 import { MEETING_UNCHANGED, type MeetingRecord, type MeetingStore } from "@genesiscz/utils/meetings/record";
+import { wholeMeetingRoomPeople } from "@genesiscz/utils/meetings/seats";
 import type { DictionaryCandidate, MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import type { ResolvedDictionary } from "@genesiscz/utils/transcribe/dictionary";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
@@ -31,12 +34,18 @@ const { log } = logger.scoped("meetings-opened");
 
 export interface CollectOutcome {
     record: MeetingRecord;
-    /** One line per step that did something or could not, for the user. */
-    notes: Array<{ ok: boolean; text: string }>;
+    /**
+     * One line per step that did something or could not, for the user. `detail`: a failure's full text with the
+     * commands that fix it, which the terminal prints under the line and the window keeps behind "Details".
+     */
+    notes: Array<{ ok: boolean; text: string; detail?: string }>;
 }
 
-/** The last attendance attempt's failure, retained in the record's existing event history. */
-export function attendanceWarning(record: MeetingRecord): string | undefined {
+/**
+ * The last attendance attempt's failure in full, as the record's event history keeps it: the error with the commands
+ * that fix it. The window shows it only behind "Details"; a warning a person reads is `attendanceWarning`.
+ */
+export function attendanceDetail(record: MeetingRecord): string | undefined {
     const event = record.history.findLast(
         (one) =>
             one.command === "attendance" ||
@@ -44,6 +53,17 @@ export function attendanceWarning(record: MeetingRecord): string | undefined {
             one.command === "attendance-recovered"
     );
     return event?.command === "attendance-failed" ? event.change : undefined;
+}
+
+/** A failed attendance lookup in one short sentence (U3): never a command, an error text or a rule id. */
+export function attendanceSentence(platform: MeetingRecord["platform"]): string {
+    const call = platform ? MEETING_PLATFORMS[platform].label : "The call";
+    return `${call} did not say who joined, so the people come from the transcript.`;
+}
+
+/** The last attendance attempt's failure as a person reads it; its full text is `attendanceDetail`. */
+export function attendanceWarning(record: MeetingRecord): string | undefined {
+    return attendanceDetail(record) === undefined ? undefined : attendanceSentence(record.platform);
 }
 
 /** Why an `--attendance-id` cannot be used with this `--attendance`, before anything loads; undefined when it can. */
@@ -65,6 +85,8 @@ export function attendanceIdRefusal(spec: string | undefined, attendanceId: stri
  */
 export class OpenedMeeting {
     private current: MeetingRecord;
+    private deviceHistoryOnce?: DeviceDecision[];
+    private devicesOnce?: RoomDevice[];
     private linkedOnce?: Promise<LinkedSource>;
     private meetingOnce?: Promise<SourceMeeting>;
     private evidenceOnce?: Promise<MeetingEvidence | null>;
@@ -89,13 +111,32 @@ export class OpenedMeeting {
     }
 
     /** Opens a record. `linked` replaces the source the record names (a fake source in tests). */
-    static of(store: MeetingStore, record: MeetingRecord, linked?: LinkedSource): OpenedMeeting {
-        return new OpenedMeeting(store, record, linked);
+    static of(
+        store: MeetingStore,
+        record: MeetingRecord,
+        linked?: LinkedSource,
+        config?: MeetingsConfig
+    ): OpenedMeeting {
+        const opened = new OpenedMeeting(store, record, linked);
+        if (config) {
+            opened.configOnce = Promise.resolve(config);
+        }
+        return opened;
     }
 
     /** The record as the last explicit step left it. */
     get record(): MeetingRecord {
         return this.current;
+    }
+
+    get deviceHistory(): DeviceDecision[] {
+        this.deviceHistoryOnce ??= new PeopleBook({ storage: this.store.storage }).read().devices;
+        return this.deviceHistoryOnce;
+    }
+
+    get roomDevices(): RoomDevice[] {
+        this.devicesOnce ??= mappedRoomDevices(this.deviceHistory);
+        return this.devicesOnce;
     }
 
     /** The linked source meeting, without loading the source; undefined when no source names one. */
@@ -213,14 +254,17 @@ export class OpenedMeeting {
             const matchedVoices = matchedCallVoices(record, lines);
             const hints = speakerStats(meeting.transcript, { participants: meeting.speakers, presence: roster }).hints;
             const departures = identifiedDepartures({
+                devices: this.roomDevices,
+                record,
                 hints,
                 lines: lines.map((line) => (line.speakingUnknown ? { ...line, speaking: {} } : line)),
                 selfName,
                 presence: roster,
                 speaking: evidence.speaking,
                 matchedVoices,
-                roomPeople: record.seats?.room,
-                ignoredIndicator: assessIndicator({ lines, selfName, roomPeople: record.seats?.room }).ignored,
+                roomPeople: wholeMeetingRoomPeople(record.seats),
+                ignoredIndicator: assessIndicator({ lines, selfName, roomPeople: wholeMeetingRoomPeople(record.seats) })
+                    .ignored,
             });
             return personStays({
                 record,
@@ -256,14 +300,20 @@ export class OpenedMeeting {
         const lines = lineEvidence(meeting.transcript, evidence, presence, (await this.energy()).share);
         const matchedVoices = matchedCallVoices(this.current, lines);
         const departures = identifiedDepartures({
+            devices: this.roomDevices,
+            record: this.current,
             hints,
             lines: lines.map((line) => (line.speakingUnknown ? { ...line, speaking: {} } : line)),
             selfName,
             presence,
             speaking: evidence.speaking,
             matchedVoices,
-            roomPeople: this.current.seats?.room,
-            ignoredIndicator: assessIndicator({ lines, selfName, roomPeople: this.current.seats?.room }).ignored,
+            roomPeople: wholeMeetingRoomPeople(this.current.seats),
+            ignoredIndicator: assessIndicator({
+                lines,
+                selfName,
+                roomPeople: wholeMeetingRoomPeople(this.current.seats),
+            }).ignored,
         });
         return presence.map((stay) => {
             // A missing flag is legacy exact attendance (`Presence`): only a bound the platform did not record moves.
@@ -330,21 +380,24 @@ export class OpenedMeeting {
             }
 
             log.warn({ error, meeting: this.current.id }, "attendance unavailable for suggestions");
-            const warning = `attendance unavailable; E2 skipped: ${error.message}`;
-            await this.rememberAttendanceAttempt(warning);
-            options.warnings.push(warning);
+            await this.rememberAttendanceAttempt(
+                `attendance unavailable, so the suggestions skip the attendance rule: ${error.message}`
+            );
+            // The rows warn in the same sentence, so the window shows one; the full text stays the record's detail.
+            options.warnings.push(attendanceSentence(this.current.platform));
             return undefined;
         }
     }
 
-    private async rememberAttendanceAttempt(warning?: string): Promise<void> {
+    /** `detail`: the failure's full text for the record's history; nothing when the lookup succeeded. */
+    private async rememberAttendanceAttempt(detail?: string): Promise<void> {
         const updated = await this.store.updateIf(
             this.current.id,
             {
-                command: warning ? "attendance-failed" : "attendance-recovered",
-                change: warning ?? "attendance lookup succeeded",
+                command: detail ? "attendance-failed" : "attendance-recovered",
+                change: detail ?? "attendance lookup succeeded",
             },
-            (record) => (warning ? attendanceWarning(record) !== warning : attendanceWarning(record) !== undefined)
+            (record) => (detail ? attendanceDetail(record) !== detail : attendanceDetail(record) !== undefined)
         );
         if (updated) {
             this.current = updated;
@@ -353,21 +406,29 @@ export class OpenedMeeting {
 
     /** The microphone's energy share per time range, with the calibration it was read with. Writes nothing. */
     energy(): Promise<MicEnergy> {
-        this.energyOnce ??= this.sourceEvidence().then((evidence) =>
-            energyMicShareFor(this.store, this.current, evidence)
-        );
+        this.energyOnce ??= this.sourceEvidence().then(async (evidence) => {
+            if (!evidence?.audioPath) {
+                return {};
+            }
+            const { global } = await this.config();
+            const { source } = await this.linked();
+            return energyMicShareFor(this.store, this.current, evidence, {
+                minSeparation: global.speakerLabels.channels.minSeparation,
+                sourceLayout: source.sourceLayout,
+            });
+        });
         return this.energyOnce;
     }
 
     /** The stretches where the call's channel stayed silent (the call played through the room); E1 says nothing there. */
     async silentCallSpans(): Promise<SilentCallSpan[]> {
-        const stored = this.current.evidence?.channels?.callSilent;
-
-        if (stored) {
-            return stored;
+        const stored = this.current.evidence?.channels;
+        const energy = await this.energy();
+        if (energy.share && stored?.callSilent && stored.layout === energy.calibration?.layout) {
+            return stored.callSilent;
         }
 
-        return callSilentSpans(await this.energy(), await this.transcriptEndSec());
+        return callSilentSpans(energy, energy.share ? await this.transcriptEndSec() : 0);
     }
 
     /** The meetings config, read once. */
@@ -530,9 +591,9 @@ export class OpenedMeeting {
                 } catch (err) {
                     // The note below tells the user; the day log keeps the stack.
                     log.debug({ err, meeting: this.current.id, platform: platform.id }, "attendance not collected");
-                    const warning = `attendance not collected: ${err instanceof Error ? err.message : String(err)}`;
-                    await this.rememberAttendanceAttempt(warning);
-                    notes.push({ ok: false, text: warning });
+                    const detail = `attendance not collected: ${err instanceof Error ? err.message : String(err)}`;
+                    await this.rememberAttendanceAttempt(detail);
+                    notes.push({ ok: false, text: attendanceSentence(this.current.platform), detail });
                 }
             }
         }
@@ -594,6 +655,10 @@ export class OpenedMeeting {
 
             for (const note of outcome.notes) {
                 note.ok ? ui.dim(`  ${note.text}`) : ui.warn(`  ${note.text}`);
+
+                if (note.detail) {
+                    ui.dim(`    ${note.detail}`);
+                }
             }
         } catch (err) {
             log.warn({ err, meeting: this.current.id }, "collect failed");

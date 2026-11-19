@@ -1,9 +1,10 @@
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { classifyPid } from "@genesiscz/utils/process-identity";
+import { runningWidgetRoot } from "@genesiscz/utils/macos/native-inbox";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import type { WidgetRoster } from "./roster-index";
+import { streamWidgetRoster } from "./roster-pages";
 import { realWidgetSources, type WidgetSources } from "./snapshot";
 import { widgetRoot } from "./storage";
 
@@ -23,7 +24,9 @@ export const WIDGET_ROSTER_CACHE_HEARTBEAT_MS = 55_000;
 /** What a roster shows, without the time it was read: two reads that found the same sessions and agents are equal. */
 export function widgetRosterFingerprint(roster: WidgetRoster): string {
     const agents = { ...roster.agents, generatedAt: "" };
-    return Bun.hash(SafeJSON.stringify({ rows: roster.rows, agents }, { strict: true })).toString(36);
+    return Bun.hash(
+        SafeJSON.stringify({ rows: roster.rows, agents, backfill: roster.backfill }, { strict: true })
+    ).toString(36);
 }
 
 /**
@@ -49,10 +52,20 @@ function isRosterCache(value: unknown): value is WidgetRosterCacheFile {
 
     const file: Partial<Record<keyof WidgetRosterCacheFile, unknown>> = value;
     const agents = file.agents;
+    const progress = file.backfill;
     return (
         file.version === 1 &&
         typeof file.pid === "number" &&
         typeof file.writtenAt === "number" &&
+        (progress === undefined ||
+            (progress !== null &&
+                typeof progress === "object" &&
+                "revision" in progress &&
+                typeof progress.revision === "string" &&
+                "cursor" in progress &&
+                typeof progress.cursor === "number" &&
+                Number.isSafeInteger(progress.cursor) &&
+                progress.cursor >= 0)) &&
         Array.isArray(file.rows) &&
         !!agents &&
         typeof agents === "object" &&
@@ -61,11 +74,6 @@ function isRosterCache(value: unknown): value is WidgetRosterCacheFile {
         "orphans" in agents &&
         Array.isArray(agents.orphans)
     );
-}
-
-/** The pid comes from the cache file, so it goes through the shared classifier (EPERM counts as alive there too). */
-function processAlive(pid: number): boolean {
-    return classifyPid(pid).status !== "dead";
 }
 
 /** Written by the resident watch after each completed roster run: the roster it shows, for one-shot readers. */
@@ -105,17 +113,15 @@ function replaceRosterCache(path: string, file: WidgetRosterCacheFile): void {
     atomicWriteFileSync(path, SafeJSON.stringify(file, { strict: true }));
 }
 
-/** The watch's roster when its writer is alive and wrote it recently; undefined sends the caller to the index. */
+/** A recent atomic publication survives a restart of its writer. */
 export async function readWidgetRosterCache({
     root,
     now = Date.now(),
     maxAgeMs = WIDGET_ROSTER_CACHE_MAX_AGE_MS,
-    alive = processAlive,
 }: {
     root?: string;
     now?: number;
     maxAgeMs?: number;
-    alive?: (pid: number) => boolean;
 } = {}): Promise<WidgetRoster | undefined> {
     const path = widgetRosterCachePath(root);
     const file = Bun.file(path);
@@ -131,12 +137,12 @@ export async function readWidgetRosterCache({
         }
 
         const age = now - parsed.writtenAt;
-        if (age < 0 || age > maxAgeMs || !alive(parsed.pid)) {
+        if (age < 0 || age > maxAgeMs) {
             logger.debug({ path, age, writerPid: parsed.pid }, "Widget roster cache is stale; reading the index");
             return undefined;
         }
 
-        return { rows: parsed.rows, agents: parsed.agents };
+        return { rows: parsed.rows, agents: parsed.agents, ...(parsed.backfill ? { backfill: parsed.backfill } : {}) };
     } catch (error) {
         logger.debug({ error, path }, "Widget roster cache unreadable; reading the index");
         return undefined;
@@ -148,18 +154,46 @@ export async function readWidgetRosterCache({
  * not asked to be alive: the new watch holds the root's lock, so the writer is that previous watch, now gone.
  */
 export function readWarmStartRoster(root?: string): Promise<WidgetRoster | undefined> {
-    return readWidgetRosterCache({ root, maxAgeMs: WIDGET_ROSTER_WARM_START_MAX_AGE_MS, alive: () => true });
+    return readWidgetRosterCache({ root, maxAgeMs: WIDGET_ROSTER_WARM_START_MAX_AGE_MS });
 }
 
 /**
  * The sources a one-shot snapshot reads: the running watch's roster when it has a fresh one, so the settings page
  * does not rebuild the agents tree cold (1.8 s of CPU), and the index otherwise. Everything else is read fresh.
  */
-export async function oneShotWidgetSources(root?: string): Promise<WidgetSources> {
+export async function oneShotWidgetSources(root?: string, { requireComplete = false } = {}): Promise<WidgetSources> {
     const roster = await readWidgetRosterCache({ root });
-    if (!roster) {
-        return realWidgetSources;
+    if (!roster && !requireComplete) {
+        const directory = widgetRoot(root);
+        const lock = Bun.file(join(directory, "worker.lock"));
+        if (
+            (await lock.exists()) &&
+            Date.now() - lock.lastModified < WIDGET_ROSTER_CACHE_MAX_AGE_MS &&
+            runningWidgetRoot({ root: directory })
+        ) {
+            // The watch just took the lock and is preparing its first page. Settings subscribes to the file.
+            return {
+                ...realWidgetSources,
+                sessions: async () => [],
+                agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+                rosterStatus: () => ({ loading: true }),
+            };
+        }
+    }
+    if (!roster || (requireComplete && roster.backfill)) {
+        let reading: Promise<WidgetRoster> | undefined;
+        const read = () => (reading ??= streamWidgetRoster());
+        return {
+            ...realWidgetSources,
+            sessions: async () => (await read()).rows,
+            agents: async () => (await read()).agents,
+        };
     }
 
-    return { ...realWidgetSources, sessions: async () => roster.rows, agents: async () => roster.agents };
+    return {
+        ...realWidgetSources,
+        sessions: async () => roster.rows,
+        agents: async () => roster.agents,
+        rosterStatus: () => ({ loading: !!roster.backfill }),
+    };
 }

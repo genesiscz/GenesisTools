@@ -111,6 +111,8 @@ function toSourceMeeting(meeting: Meeting): SourceMeeting {
 
 export const wisprflowSource: TranscriptSource = {
     id: "wisprflow",
+    // The upload encoder interleaves mic.pcm as channel 0 and system.pcm as channel 1.
+    sourceLayout: "left-mic",
     label: "Wispr Flow",
 
     async load(sourceMeetingId) {

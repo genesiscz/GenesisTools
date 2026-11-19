@@ -433,11 +433,14 @@ export function renderGenesisToolsRPC(): { swift: string; fixtures: string } {
         listeners = [:]
         ended.forEach { $0.finish(error) }
     }
-    fileprivate func call<P: Encodable, R: Decodable>(_ method: String, _ params: P, timeout: TimeInterval? = nil) async throws -> R {
+    fileprivate func call<P: Encodable, R: Decodable & Sendable>(_ method: String, _ params: P, timeout: TimeInterval? = nil) async throws -> R {
         let peer = try await ready()
         let encoded = try JSONEncoder().encode(params)
         let object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
         let result = try await peer.call(method, params: object, timeout: timeout ?? timeoutSeconds)
+        return try await Self.decodeResponse(result)
+    }
+    private nonisolated static func decodeResponse<R: Decodable & Sendable>(_ result: Any?) async throws -> R {
         let bytes = try JSONSerialization.data(withJSONObject: result ?? NSNull(), options: [.fragmentsAllowed])
         return try JSONDecoder().decode(R.self, from: bytes)
     }

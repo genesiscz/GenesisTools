@@ -8,6 +8,7 @@ import { FRAME_RECORDER_IDS, type FrameRecorderId } from "@genesiscz/utils/scree
 import { Storage } from "@genesiscz/utils/storage/storage";
 import {
     type AbbrExpansion,
+    DEFAULT_FUZZY,
     type DictionaryEntry,
     type DictionaryLevel,
     dictionaryEntrySchema,
@@ -16,8 +17,10 @@ import {
     type ResolvedDictionary,
 } from "@genesiscz/utils/transcribe/dictionary";
 import { DEFAULT_MUTED_CARRY_SEC } from "@genesiscz/utils/transcribe/evidence";
+import { DEFAULT_MIN_CONFIDENCE } from "@genesiscz/utils/transcribe/terms";
 import { z } from "zod";
 import { MeetingsConflictError } from "./conflict";
+import { DEFAULT_CHANNEL_MIN_SEPARATION } from "./energy";
 import {
     addPairings,
     type PairedBy,
@@ -44,7 +47,7 @@ export const projectNameSchema = z
 const strings = z.array(z.string().trim().min(1)).default([]);
 
 /** The config shape this code writes. Reads migrate in memory; explicit edits persist the current shape. */
-export const MEETINGS_CONFIG_VERSION = 7;
+export const MEETINGS_CONFIG_VERSION = 8;
 
 /**
  * How a meeting finds its project, by the facts every meeting has: its calendar entry, its title and its people. A
@@ -92,7 +95,7 @@ const nativeRecorderSchema = z.object({
              * `pieces`: sound inside screen pieces; sound between two pieces can be missing;
              * `session`: one more native process, with 60-second sound files.
              */
-            mode: z.enum(["pieces", "session"]).default("pieces"),
+            mode: z.enum(["pieces", "session"]).default("session"),
             /** The microphone's device UID (`ax-tool audio-devices`); unset is the system default input. */
             micDevice: z.string().optional(),
         })
@@ -114,6 +117,13 @@ export const CAPTURE_FAILURE_NOTICES = ["failing-and-recovered", "failing", "off
 export type CaptureFailureNotices = (typeof CAPTURE_FAILURE_NOTICES)[number];
 
 const captureSchema = z.object({
+    soundWithoutScreen: z.boolean().default(true),
+    levels: z
+        .object({
+            enabled: z.boolean().default(true),
+            intervalSec: z.number().int().min(1).max(3600).default(30),
+        })
+        .prefault({}),
     /** The frame recorder: GenesisTools' own ScreenCaptureKit recorder (`native`) or `peekaboo`. */
     backend: z.enum(FRAME_RECORDER_IDS).default("native"),
     displays: displayPolicySchema.default("all"),
@@ -176,6 +186,8 @@ const sourceBaseShape = {
             liveWithinSec: z.number().int().positive().default(30),
             /** Post a notification when a recording starts by itself. */
             notify: z.boolean().default(true),
+            /** Keep a permission warning in the widget while this source records automatically. */
+            permissionCard: z.boolean().default(true),
         })
         .prefault({}),
 };
@@ -377,13 +389,35 @@ export const DEFAULT_APPLY_ABOVE = 0.7;
 
 /**
  * The speaker labelers and their keys, one block per labeler (the axis is the labeler: a new labeler is one more
- * block). `seat` names a line by the seat it was heard on, `voice` by the voice samples kept per project.
+ * block). `seat` names a line by the seat it was heard on, `voice` by compatible samples in the voice library.
  */
 const speakerLabelsSchema = z.object({
-    seat: z.object({ enabled: z.boolean().default(true) }).prefault({}),
+    /** Minimum difference in median left-channel share between tagged mic and call audio. */
+    channels: z
+        .object({ minSeparation: z.number().min(0).max(1).default(DEFAULT_CHANNEL_MIN_SEPARATION) })
+        .prefault({}),
+    seat: z
+        .object({
+            enabled: z.boolean().default(true),
+            /** Distinct meetings with a roster join at the same room microphone before asking the owner. */
+            deviceOfferMinMeetings: z.number().int().positive().default(2),
+        })
+        .prefault({}),
     voice: z
         .object({
             enabled: z.boolean().default(true),
+            /** The samples prediction may consult. Browsing and corrections carry their own scope. */
+            sampleScope: z.enum(["all", "project"]).default("all"),
+            /** Seat preview's limit on opposite-side matches as a fraction of the stronger side's count. */
+            seatOppositeShare: z.number().min(0).max(0.5).default(0.1),
+            /** Mean cosine below which a sample is offered for human review. */
+            outlierBelow: z.number().min(-1).max(1).default(0.5),
+            /**
+             * Also score a line that the seat gives to its only person against that person's saved samples, and keep
+             * a match as the voice's support beside the seat's name. The seat's confidence stays its own. Off: the
+             * voice only checks such a line for a stranger.
+             */
+            supportOnSeatLines: z.boolean().default(true),
             /** When a voice match is good enough to name a line (cosine scores, 0 to 1). */
             gate: z
                 .object({
@@ -604,6 +638,16 @@ const storedConfigSchema = z
     .object({
         /** A newer version than this code writes still reads: its keys this code knows, the rest stay in the file. */
         version: z.number().int().min(MEETINGS_CONFIG_VERSION).default(MEETINGS_CONFIG_VERSION),
+        meetings: z
+            .object({
+                voices: z
+                    .object({
+                        /** Seconds after the last learned sample before the meeting's speaker suggestions run again. */
+                        reproposeDelaySec: z.number().min(0).max(2_147_483).default(10),
+                    })
+                    .prefault({}),
+            })
+            .prefault({}),
         global: z
             .object({
                 dictionary: dictionaryLevelSchema.prefault({}),
@@ -623,10 +667,28 @@ const storedConfigSchema = z
                         mutedCarrySec: z.number().nonnegative().default(DEFAULT_MUTED_CARRY_SEC),
                         /** `--with-suggested` applies a suggested item at this confidence or more; a lower one is marked unclear. */
                         applyAbove: z.number().min(0).max(1).default(DEFAULT_APPLY_ABOVE),
-                        /** Questions one `items suggest` run makes at most, speakers and terms together; the rest stay marked. */
+                        /** Budget for ordinary questions in one `items suggest` run. Voice exclusions can exceed it. */
                         questionCap: z.number().int().min(1).max(500).default(12),
                         /** `skip`: no meaning after words a plain code name only restates ("entity data" `EntityData`). */
                         restatedIdentifiers: z.enum(["skip", "mark"]).default("skip"),
+                        terms: z
+                            .object({
+                                /** With suggestions included, apply a proposed term at this confidence. */
+                                applyAbove: z.number().min(0).max(1).default(0.7),
+                                phonetic: z
+                                    .number()
+                                    .min(0)
+                                    .max(1)
+                                    .default(DEFAULT_MIN_CONFIDENCE / 100),
+                                unknownCandidate: z.number().min(0).max(1).default(0.8),
+                                fuzzy: z
+                                    .object({
+                                        suggest: z.number().min(0).max(1).default(DEFAULT_FUZZY.suggest),
+                                        apply: z.number().min(0).max(1).default(DEFAULT_FUZZY.apply),
+                                    })
+                                    .prefault({}),
+                            })
+                            .prefault({}),
                         /** Unknown words heard again and again become one word question each. */
                         words: z
                             .object({
@@ -840,6 +902,20 @@ function repeatOnDisk(raw: Record<string, unknown>): void {
     }
 }
 
+/** Version 8 splits term application from the general cutoff. An explicitly saved cutoff is grandfathered. */
+function migrateTermCutoff(raw: Record<string, unknown>): void {
+    const global = isObject(raw.global) ? raw.global : undefined;
+    const suggest = global && isObject(global.suggest) ? global.suggest : undefined;
+    if (!suggest || typeof suggest.applyAbove !== "number") {
+        return;
+    }
+    if (suggest.terms === undefined) {
+        suggest.terms = { applyAbove: suggest.applyAbove };
+    } else if (isObject(suggest.terms) && suggest.terms.applyAbove === undefined) {
+        suggest.terms.applyAbove = suggest.applyAbove;
+    }
+}
+
 /**
  * Moves an older config to the current places, in place, one version step at a time. A file without a version is
  * version 1. Returns whether anything changed; a current config is left alone, so a second run changes nothing.
@@ -863,6 +939,7 @@ export function migrateMeetingsConfig(raw: Record<string, unknown>): boolean {
     migrateToV5(raw);
     repeatInMemory(raw);
     repeatOnDisk(raw);
+    migrateTermCutoff(raw);
     raw.version = MEETINGS_CONFIG_VERSION;
     return true;
 }
@@ -967,7 +1044,12 @@ export function resolveDictionary(
     options: { project?: string; meeting?: DictionaryLevel } = {}
 ): ResolvedDictionary {
     const project = options.project ? config.projects[options.project]?.dictionary : undefined;
-    return mergeDictionaries([config.global.dictionary, project, options.meeting]);
+    return mergeDictionaries([
+        { entries: [], fuzzy: config.global.suggest.terms.fuzzy },
+        config.global.dictionary,
+        project,
+        options.meeting,
+    ]);
 }
 
 /** Where a dictionary level lives in the config. */
@@ -998,6 +1080,11 @@ export class MeetingsConfigStore {
      * the file. An explicit update migrates the saved shape under its existing lock.
      */
     async read(): Promise<MeetingsConfig> {
+        return (await this.readWithSource()).config;
+    }
+
+    /** One file read supplies effective values and the keys that were explicitly saved. */
+    async readWithSource(): Promise<{ config: MeetingsConfig; raw: Record<string, unknown> }> {
         const raw = (await this.storage.getConfig<Record<string, unknown>>()) ?? {};
         const parsed = meetingsConfigSchema.safeParse(raw);
 
@@ -1005,7 +1092,7 @@ export class MeetingsConfigStore {
             throw new Error(formatIssues(parsed.error, this.path));
         }
 
-        return parsed.data;
+        return { config: parsed.data, raw };
     }
 
     /**

@@ -1,3 +1,4 @@
+import { type RoomDevice, rosterAccountKey } from "@genesiscz/utils/meetings/people";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import type { LineEvidence, SpeakingObservation } from "@genesiscz/utils/transcribe/evidence";
 import {
@@ -11,6 +12,7 @@ import {
     sameName,
 } from "@genesiscz/utils/transcribe/speakers";
 import { ARRIVAL_WINDOW_SEC, FROM_START_SEC } from "./arrival";
+import { channelFor, isStrongCallForNaming, speakersFor } from "./speaker-eligibility";
 import type { LineLabel } from "./speaker-labels/types";
 
 export interface IdentifiedDeparture {
@@ -60,6 +62,8 @@ export function matchedCallVoices(
 }
 
 interface DepartureEvidence {
+    devices?: readonly RoomDevice[];
+    record?: MeetingRecord;
     hints: SpeakerHint[];
     lines: LineEvidence[];
     selfName: string;
@@ -71,7 +75,7 @@ interface DepartureEvidence {
     speaking?: readonly SpeakingObservation[];
 }
 
-const onCall = (line: LineEvidence) => (line.energyMic ?? line.micShare ?? 1) < 0.35;
+const onCall = (line: LineEvidence) => isStrongCallForNaming(channelFor(line));
 
 /** The lines of one departure pass, searchable by time, and the indicator reads it may trust, computed once. */
 class DeparturePass {
@@ -226,7 +230,9 @@ export function identifiedDepartures(options: DepartureEvidence): IdentifiedDepa
         )
     );
     const remote = (name: string) =>
-        !sameName(name, options.selfName) && !options.roomPeople?.some((person) => sameName(name, person));
+        !sameName(name, options.selfName) &&
+        !options.roomPeople?.some((person) => sameName(name, person)) &&
+        !options.devices?.some(({ account }) => rosterAccountKey(account) === rosterAccountKey(name));
     for (const line of options.lines) {
         const atSec = line.startSec;
         const label = hinted.get(atSec);
@@ -239,6 +245,24 @@ export function identifiedDepartures(options: DepartureEvidence): IdentifiedDepa
         // An indicator assessed as stuck names nobody: not as the one shown speaking, and without attendance not as
         // the only candidate either, since then the candidates would come from that same indicator.
         const ignored = options.ignoredIndicator?.has(line.index) ?? false;
+        const eligibility =
+            options.record &&
+            speakersFor(
+                { index: line.index, fromSec: atSec, toSec: line.endSec },
+                {
+                    ...line,
+                    devices: options.devices,
+                    selfName: options.selfName,
+                    seats: options.record.seats,
+                    people: options.record.participants.map((p) => p.name),
+                    callStays: options.presence,
+                    ignoredIndicator: ignored,
+                }
+            );
+        const allowed = (name: string) =>
+            eligibility
+                ? eligibility.choices.some((other) => sameName(other, name))
+                : !line.muted?.some((other) => sameName(other, name));
         const candidates = [
             ...new Set(present?.map((stay) => stay.name) ?? (ignored ? [] : Object.keys(line.speaking).filter(remote))),
         ];
@@ -281,12 +305,12 @@ export function identifiedDepartures(options: DepartureEvidence): IdentifiedDepa
                 !matched &&
                 isLeavePhrase(line.text) &&
                 exchangeDeparture({ options, pass, line, present });
-            if (exchange) {
+            if (exchange && allowed(exchange.name)) {
                 departures.push(exchange);
             }
             continue;
         }
-        if (sameName(name, options.selfName) || line.muted?.some((person) => sameName(person, name))) {
+        if (sameName(name, options.selfName) || !allowed(name)) {
             continue;
         }
         departures.push({

@@ -145,6 +145,45 @@ describe("OpenedMeeting", () => {
         expect(store.read(record.id)?.history).toHaveLength(1);
     });
 
+    test("opening cached audio applies the channel separation setting and the source's stereo order", async () => {
+        const { store, record } = await newRecord();
+        const audioPath = join(store.folder(record.id), "planning.wav");
+        writeFileSync(audioPath, "fixture");
+        const folder = join(store.folder(record.id), "evidence");
+        mkdirSync(folder, { recursive: true });
+        const left = new Float32Array(1200).fill(550, 0, 600).fill(100, 600);
+        const cache = join(folder, "energy.bin");
+        writeFileSync(cache, Buffer.from(new Float32Array([...left, ...left.map((v) => 1000 - v)]).buffer));
+        const evidence: MeetingEvidence = {
+            audioPath,
+            speaking: [],
+            files: [],
+            segments: Array.from({ length: 60 }, (_, i) => ({
+                startSec: i * 2,
+                endSec: i * 2 + 2,
+                channel: i < 30 ? "mic" : "system",
+            })),
+        };
+        const read = async (minSeparation: number) => {
+            const config = meetingsConfigSchema.parse({ global: { speakerLabels: { channels: { minSeparation } } } });
+            const opened = OpenedMeeting.of(
+                store,
+                record,
+                { source: { ...fakeSource({ evidence }), sourceLayout: "left-mic" }, sourceMeetingId: "abc" },
+                config
+            );
+            return (await opened.energy()).calibration?.layout;
+        };
+        expect(await read(0.3)).toBe("left-mic");
+        expect(await read(0.5)).toBe("unknown");
+
+        evidence.segments = [];
+        const split = new Float32Array(1200).fill(1000, 0, 600);
+        writeFileSync(cache, Buffer.from(new Float32Array([...split, ...split.map((v) => 1000 - v)]).buffer));
+        expect(await read(0.3)).toBe("left-mic");
+        expect(new MeetingStore(store.storage).read(record.id)?.evidence?.channels).toBeUndefined();
+    });
+
     test("reading the source, evidence, presence and energy never writes the record", async () => {
         const { store, record } = await newRecord({
             attendance: {
@@ -161,6 +200,23 @@ describe("OpenedMeeting", () => {
         expect(await opened.silentCallSpans()).toEqual([]);
         expect(await opened.calibrate()).toBeUndefined();
         expect(store.read(record.id)?.history).toHaveLength(1);
+    });
+
+    test("stored call silence is used only if the active calibration still agrees", async () => {
+        const calibration: ChannelCalibration = { layout: "left-mic", segments: { mic: 24, system: 24 } };
+        const callSilent = [{ fromSec: 9, toSec: 14 }];
+        const { store, record } = await newRecord({ evidence: { channels: { ...calibration, callSilent } } });
+        const opened = OpenedMeeting.of(store, record);
+        const current = spyOn(opened, "energy");
+        try {
+            current.mockResolvedValue({ calibration, share: () => 1 });
+            expect(await opened.silentCallSpans()).toEqual(callSilent);
+            current.mockResolvedValue({ calibration: { ...calibration, layout: "unknown" } });
+            expect(await opened.silentCallSpans()).toEqual([]);
+            expect(store.read(record.id)?.evidence?.channels?.callSilent).toEqual(callSilent);
+        } finally {
+            current.mockRestore();
+        }
     });
 
     test("calibrate stores the silent call spans of the energy read after the echo cache was collected", async () => {
@@ -500,7 +556,8 @@ describe("suggest attendance resilience", () => {
             const opened = OpenedMeeting.of(store, record, { source: fakeSource(), sourceMeetingId: "abc" });
             await opened.collect();
             await opened.suggestionPresence({ warnings: [] });
-            expect(attendanceWarning(new MeetingStore(store.storage).read(record.id)!)).toBe(
+            const { attendanceDetail } = await import("./opened-meeting");
+            expect(attendanceDetail(new MeetingStore(store.storage).read(record.id)!)).toBe(
                 "attendance not collected: Fixture attendance missing"
             );
         } finally {
@@ -535,6 +592,41 @@ describe("suggest attendance resilience", () => {
             reader.mockRestore();
         }
     });
+    test("the rows warn in one short sentence; the full text with its commands is the detail (U3)", async () => {
+        const { attendanceDetail } = await import("./opened-meeting");
+        const { store, record } = await newRecord({ platform: "teams" });
+        const full =
+            'attendance not collected: tools ms-teams meetings attendance "Planning" failed: Could not resolve a single meeting chat. Pass --id.\ntools ms-teams meetings meetings list';
+        const failed = await store.update(record.id, { command: "attendance-failed", change: full }, () => {});
+
+        expect(attendanceWarning(failed)).toBe(
+            "Microsoft Teams did not say who joined, so the people come from the transcript."
+        );
+        expect(attendanceDetail(failed)).toBe(full);
+
+        const { MEETING_PLATFORMS } = await import("./platforms");
+        const reader = spyOn(MEETING_PLATFORMS.teams, "attendance").mockRejectedValue(
+            new AttendanceUnavailableError("Fixture chat missing. Run tools ms-teams meetings meetings list")
+        );
+        try {
+            const warnings: string[] = [];
+            await OpenedMeeting.of(store, failed, { source: fakeSource(), sourceMeetingId: "abc" }).suggestionPresence({
+                attendance: "teams",
+                warnings,
+            });
+            const saved = new MeetingStore(store.storage).read(record.id)!;
+
+            // The suggest run and the rows say the same sentence, so the window shows it once.
+            expect(warnings).toEqual([attendanceWarning(saved)!]);
+            for (const text of warnings) {
+                expect(text).not.toContain("tools ");
+                expect(text).not.toMatch(/\bE\d\b/u);
+            }
+            expect(attendanceDetail(saved)).toContain("tools ms-teams meetings meetings list");
+        } finally {
+            reader.mockRestore();
+        }
+    });
     test("edited copies look up the source title and clock", async () => {
         const { MEETING_PLATFORMS } = await import("./platforms");
         const reader = spyOn(MEETING_PLATFORMS.teams, "attendance").mockResolvedValue({
@@ -557,9 +649,9 @@ describe("suggest attendance resilience", () => {
         }
     });
 
-    test.each(["Missing chat", "Ambiguous chat"])(
-        "explicit Teams %s warns with candidates and persists unrelated suggestions",
-        async (reason) => {
+    test.each(["none", "ambiguous"] as const)(
+        "Teams attendance resolution %s shares its first three candidates with suggest and the stored warning",
+        async (status) => {
             const cli = await import("@genesiscz/utils/cli");
             const { runSuggest } = await import("./suggest-run");
             const { store, record } = await newRecord();
@@ -577,24 +669,22 @@ describe("suggest attendance resilience", () => {
             });
             const of = spyOn(OpenedMeeting, "of").mockReturnValue(opened);
             const collect = spyOn(opened, "collectWhenIncomplete").mockResolvedValue(record);
-            const exec = spyOn(cli, "execTool").mockImplementation(async (args) =>
-                args.includes("list")
-                    ? {
-                          success: true,
-                          exitCode: 0,
-                          stdout: SafeJSON.stringify([
-                              { id: "chat-a", title: "Planning A", lastMessageTime: Date.parse(record.start) },
-                              { id: "chat-b", title: "Planning B", lastMessageTime: Date.parse(record.start) + 1000 },
-                          ]),
-                          stderr: "",
-                      }
-                    : {
-                          success: false,
-                          exitCode: 1,
-                          stdout: `${reason}. Could not resolve a single meeting chat. Pass --id.`,
-                          stderr: "",
-                      }
-            );
+            const candidates =
+                status === "none"
+                    ? []
+                    : ["chat-a", "chat-b", "chat-c", "chat-d"].map((id, i) => ({
+                          id,
+                          title: "Paper Kite Review",
+                          lastCallAt: i === 2 ? null : new Date(Date.parse(record.start) - i * 60_000).toISOString(),
+                          participantCount: i + 2,
+                          command: `tools ms-teams meetings attendance --id ${id}`,
+                      }));
+            const exec = spyOn(cli, "execTool").mockResolvedValue({
+                success: false,
+                exitCode: 1,
+                stdout: SafeJSON.stringify({ status, candidates }),
+                stderr: "reader diagnostic on stderr",
+            });
             try {
                 const result = await runSuggest({
                     store,
@@ -603,9 +693,29 @@ describe("suggest attendance resilience", () => {
                     attendance: "teams",
                     wordCheck: "off",
                 });
-                expect(result.warnings.join("\n")).toContain("attendance unavailable");
-                expect(result.warnings.join("\n")).toContain("chat-a  Planning A");
-                expect(result.warnings.join("\n")).toContain("chat-b  Planning B");
+                const { attendanceDetail } = await import("./opened-meeting");
+                const saved = new MeetingStore(store.storage).read(record.id)!;
+                // The run warns in the rows' one sentence; the stored detail keeps the candidates and their commands.
+                expect(result.warnings).toContain(attendanceWarning(saved)!);
+                expect(attendanceWarning(saved)).not.toContain("tools ");
+                const warning = attendanceDetail(saved);
+                expect(warning).toContain("attendance unavailable");
+                expect(warning).not.toContain("reader diagnostic on stderr");
+                expect(exec.mock.calls.some(([args]) => args.includes("list"))).toBe(false);
+                if (status === "ambiguous") {
+                    for (const candidate of candidates.slice(0, 3)) {
+                        expect(warning).toContain(candidate.title);
+                        expect(warning).toContain(candidate.command);
+                        expect(warning).toContain(`${candidate.participantCount} participants`);
+                    }
+                    expect(warning).toContain("last call unknown");
+                    expect(warning).toContain("--attendance-id");
+                    expect(warning!.indexOf("chat-a")).toBeLessThan(warning!.indexOf("chat-b"));
+                    expect(warning!.indexOf("chat-b")).toBeLessThan(warning!.indexOf("chat-c"));
+                    expect(warning).not.toContain("chat-d");
+                } else {
+                    expect(warning).toContain("No matching meeting chats");
+                }
                 expect(result.fresh.length).toBeGreaterThan(0);
                 expect(new MeetingStore(store.storage).read(record.id)?.items).toEqual(result.fresh);
             } finally {

@@ -53,6 +53,15 @@ const lines = (prefix: string, changed: Record<number, string> = {}): string =>
     [1, 2, 3, 4, 5, 6, 7, 8].map((n) => `${changed[n] ?? `${prefix}${n}`}\n`).join("");
 
 const config = (a: number): string => `{\n  "a": ${a}\n}\n`;
+const guideUpdateMessage = [
+    "docs: guide update",
+    "",
+    "Explain the manual split.",
+    "",
+    "Signed-off-by: Alice Example <alice@example.com>",
+    "",
+    `(cherry picked from commit ${"a".repeat(40)})`,
+].join("\n");
 
 /**
  * master holds api/, web/, docs/ and shared/config.json; feat/messy then has nine commits: one IN
@@ -79,7 +88,7 @@ async function messy(r: TestRepo): Promise<void> {
         message: "feat(api): add routes",
     });
     await r.commit({ file: "web/app.ts", content: lines("w", { 1: "W1" }), message: "feat(web): new page" });
-    await r.commit({ file: "docs/guide.md", content: "g1\ng2\n", message: "docs: guide update" });
+    await r.commit({ file: "docs/guide.md", content: "g1\ng2\n", message: guideUpdateMessage });
     await r.git(["rm", "-q", "--", "web/stale.ts"]);
     await r.commitMany({
         files: {
@@ -381,32 +390,35 @@ describe("plan file (pure)", () => {
     });
 
     it("sorts picks into source order, defaults IN to whole and lists commits in no group", () => {
+        const later = commit("cccc4444", ["api/z.ts"], "four");
         const { problems, resolved } = resolvePlan(
             plan([
                 {
                     name: "api",
                     branch: "feat/x-api",
                     paths: ["api/**"],
-                    commits: [{ sha: "bbbbbbb2", decision: "paths-only" }, { sha: "aaaa1111" }],
+                    commits: [{ sha: later.sha }, { sha: "bbbbbbb2", decision: "paths-only" }, { sha: "aaaa1111" }],
                 },
             ]),
-            history
+            [...history, later]
         );
         expect(problems).toEqual([]);
         expect(resolved.groups[0].picks.map((p) => [p.sha, p.decision, p.outsidePaths])).toEqual([
             ["aaaa1111", "whole", []],
             ["bbbbbbb2", "paths-only", ["web/y.ts"]],
+            [later.sha, "whole", []],
         ]);
         expect(resolved.reordered).toEqual(["api"]);
         expect(resolved.unassigned.map((c) => c.sha)).toEqual(["bbbbbbb3"]);
         expect(applyCommands(resolved, { base: "master", returnTo: "feat/x" })).toEqual([
-            "# api → feat/x-api (2 commits)",
+            "# api → feat/x-api (3 commits)",
             "git switch -c feat/x-api --no-track master",
-            "git cherry-pick -x aaaa1111   # one",
-            "git cherry-pick -x bbbbbbb2   # two",
+            "git cherry-pick aaaa1111   # one",
+            "git cherry-pick bbbbbbb2   # two",
             "#   paths-only: put back 1 path(s) outside api",
             "git restore --source=HEAD~1 --staged --worktree -- web/y.ts",
             "git commit --amend --no-edit --no-verify",
+            "git cherry-pick cccc4444   # four",
             "git switch feat/x",
         ]);
     });
@@ -636,7 +648,24 @@ describe("rebranch against a real repository", () => {
                 "chore(web): web config",
             ].join("\n")
         );
-        expect(await r.git(["log", "-1", "--format=%B", "feat/messy-docs"])).toContain("(cherry picked from commit");
+        const docsMessage = await r.git([
+            "log",
+            "--no-textconv",
+            "--no-ext-diff",
+            "-1",
+            "--format=%B",
+            "feat/messy-docs",
+        ]);
+        const apiMessage = await r.git([
+            "log",
+            "--no-textconv",
+            "--no-ext-diff",
+            "-1",
+            "--format=%B",
+            "feat/messy-api",
+        ]);
+        expect(docsMessage.trimEnd()).toBe(guideUpdateMessage);
+        expect(apiMessage.trimEnd()).toBe("chore(web): web config");
         expect(await r.git(["diff", "--name-status", "--no-renames", "master", "feat/messy-web"])).toBe(
             "M\tweb/app.ts\nD\tweb/legacy.ts\nD\tweb/stale.ts\nA\tweb/widget.ts"
         );

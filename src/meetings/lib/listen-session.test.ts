@@ -25,15 +25,14 @@ import {
     type SessionNote,
 } from "./listen-session";
 import { GivenAnswerAdapter } from "./listen-session-answer";
+import { answerVocabulary, siblingChoices } from "./question-answers";
 import {
-    answerVocabulary,
     askedSpotSec,
     heardClip,
     openQuestions,
     type QuestionItem,
     questionView,
     questionWarnings,
-    siblingChoices,
     wordQuestions,
 } from "./questions";
 import { sineToneSound } from "./tone-sound";

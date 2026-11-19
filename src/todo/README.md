@@ -198,17 +198,19 @@ Permission problems are a TCC issue, not a todo issue: run `tools macos calendar
 
 ### Storage
 
-Todos are **JSON files**, not a database. Each project gets its own directory:
+Todo records live in the Work database. Legacy archives and attachments are stored separately.
 
 ```
-~/.genesis-tools/todo/projects/<hash>/todos.json        # the todos
-~/.genesis-tools/todo/projects/<hash>/meta.json         # projectRoot, name, lastAccessed, todoCount
+~/.genesis-tools/work/work.db                           # current todos
+~/.genesis-tools/todo/projects/<hash>/todos.json        # legacy archive
+~/.genesis-tools/todo/projects/<hash>/meta.json         # legacy project root
 ~/.genesis-tools/todo/projects/<hash>/attachments/<id>/ # files added with --attach
-~/.genesis-tools/todo/projects/<hash>/todos.json.lock   # held during every write
-~/.genesis-tools/todo/projects/<hash>/sync-<sha>.lock   # held while one todo syncs
+~/.genesis-tools/work/sync-<sha>.lock                   # one sync per canonical project and todo ID
 ```
 
-`<hash>` is the first 12 hex characters of the SHA-256 of the project root path. `GENESIS_TOOLS_HOME` moves the whole tree to `$GENESIS_TOOLS_HOME/.genesis-tools/todo/`.
+A list or lookup can read a legacy archive without changing the database. A Todo write imports missing records from the archive and replays changes from older clients only when the archive timestamp is newer than the current Work item. A dropped Work item stays dropped in archive reads.
+
+`<hash>` is the first 12 hex characters of the SHA-256 of the project root path. `GENESIS_TOOLS_HOME` moves the Work and Todo directories together.
 
 ### Projects and ids
 
@@ -225,12 +227,12 @@ The `re-run with` line is the command you ran, rebuilt from its real arguments, 
 
 Two consequences:
 
-- A linked git worktree has its own `.git` file, so each worktree is a separate project from the main checkout.
+- Linked worktrees share todo records with the main checkout. Each worktree has its own attachment directory.
 - `--project` is used as given (made absolute). It is not walked up to a git root, so `--project ~/Projects/app/src` and `--project ~/Projects/app` are two projects.
 
 ### Concurrency
 
-Writes are safe under concurrency. Every mutation re-reads `todos.json` while holding the lock file, so parallel `tools todo add` calls from several agents cannot overwrite each other. A writer waits up to 30 seconds for the lock. A lock left by a dead process is taken over. A sync does not hold the store lock during the EventKit call; it holds its own per-todo lock, and it merges its result into the record as it is at write time.
+Todo mutations use SQLite write transactions. A separate lock serializes each todo's EventKit sync across worktrees. Sync releases the database between reading the todo and recording the EventKit result.
 
 ### What a todo records
 
@@ -294,7 +296,7 @@ There is no config file. Defaults: the calendar `GenesisTools` (change it per ca
 - **A calendar or Reminders permission error**: run `tools macos calendar doctor` or `tools macos reminders doctor`. A script run (stdin not a TTY) never shows the Reminders access dialog, so run `tools macos reminders doctor --request-access` once from a terminal.
 - **The event shows the old time after an edit**: sync never updates an event. Move it with `tools macos calendar update <event-id>`, as shown above.
 - **`created <id> but could not record it`**: the event or item exists, but the todo has no record of it, so the next sync creates a second one. Delete the orphan with `tools macos calendar delete <id>` or `tools macos reminders remove <id>` before you retry.
-- **A lock timeout after 30 seconds**: a live process held `todos.json.lock` the whole time. Look for a hung `tools todo` process.
+- **A sync lock timeout after 30 seconds**. Check whether another process is still syncing the same todo.
 - **`add` asks questions in a terminal**: pass `-p`, `-t` and `-d`, or run it from a script.
 - **Lost todos in an older transcript**: before 2026-09-14, parallel `add` calls could overwrite each other, and a todo with `--at` and no reminder reported a sync without creating an event. Both are fixed.
 

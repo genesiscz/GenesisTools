@@ -6,9 +6,10 @@ import { liveWebLogRoot } from "@app/ms-teams/lib/paths";
 import { mergeShowQuery, parseShowQuery } from "@app/ms-teams/lib/query";
 import { resolveConversation } from "@app/ms-teams/lib/resolve-chat";
 import type { AttendanceRow, MeetingAttendance } from "@app/ms-teams/lib/types";
-import { suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import { out } from "@genesiscz/utils/logger";
+import { type AttendanceCandidates, formatAttendanceCandidates } from "@genesiscz/utils/meetings/attendance-candidates";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 
@@ -38,14 +39,34 @@ export function registerMeetingsCommand(program: Command): void {
             const cache = openCache();
 
             try {
-                const resolved = resolveConversation(
-                    cache,
-                    mergeShowQuery(parseShowQuery((queryParts ?? []).join(" ")), { id: opts.id })
-                );
+                const query = mergeShowQuery(parseShowQuery((queryParts ?? []).join(" ")), { id: opts.id });
+                const resolved = resolveConversation(cache, { ...query, allMatches: true });
 
                 if (resolved.status !== "exact") {
-                    out.println("Could not resolve a single meeting chat. Pass --id.");
-                    out.println(suggestCommand("tools ms-teams meetings", { replaceCommand: ["meetings", "list"] }));
+                    const rows = cache.attendanceCandidates(resolved.matches.map((chat) => chat.id));
+                    const response: AttendanceCandidates = {
+                        status: rows.length ? resolved.status : "none",
+                        candidates: rows.map(({ lastCallMs, ...chat }) => ({
+                            ...chat,
+                            lastCallAt: lastCallMs === null ? null : new Date(lastCallMs).toISOString(),
+                            command: toolCommand(
+                                "ms-teams",
+                                "meetings",
+                                "attendance",
+                                "--id",
+                                chat.id,
+                                ...(opts.call ? ["--call", opts.call] : [])
+                            ),
+                        })),
+                    };
+                    if (opts.json) {
+                        out.result(response);
+                    } else {
+                        out.println(formatAttendanceCandidates(response.candidates));
+                        if (!rows.length) {
+                            out.println(toolCommand("ms-teams", "meetings", "list"));
+                        }
+                    }
                     process.exitCode = 1;
                     return;
                 }

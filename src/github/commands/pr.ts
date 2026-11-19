@@ -284,6 +284,8 @@ export async function prCommand(input: string, options: PRCommandOptions): Promi
         closed_at: pr.closed_at,
         last_fetched: new Date().toISOString(),
         last_comment_cursor: null,
+        reaction_total: pr.reactions?.total_count,
+        comment_total: pr.comments,
     });
 
     // Handle worktree switching

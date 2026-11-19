@@ -88,6 +88,13 @@ export const REPL_TOOLSETS = {
             return new GithubToolset();
         },
     },
+    work: {
+        summary: "One store of handoffs, tasks, spotted items, epics and todos, with references between them.",
+        load: async (): Promise<ReplToolset> => {
+            const { WorkToolset } = await import("./toolsets/work");
+            return new WorkToolset();
+        },
+    },
     presets: {
         summary:
             "Save a script that worked as a named preset with parameters, list them, run one again with other values.",

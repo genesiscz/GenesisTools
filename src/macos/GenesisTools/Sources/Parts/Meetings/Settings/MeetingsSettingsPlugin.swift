@@ -19,6 +19,7 @@ package final class MeetingsSettingsPlugin: FeatureSettingsPlugin {
 
     package func settingsReady(page: String?) -> Bool {
         guard let page, page.hasPrefix("meetings.") else { return true }
+        if page == MeetingsSettingsPages.thresholdsPage { return model?.thresholdsReady ?? true }
         // The Window and Speakers pages show the engine's values from the config: a snapshot waits for that read only.
         if page == MeetingsSettingsPages.windowPage || page == MeetingsSettingsPages.speakersPage {
             guard let model else { return true }
@@ -46,9 +47,11 @@ enum MeetingsLanguage {
 @MainActor
 enum MeetingsSettingsPages {
     static let recordingPage = "meetings.recording"
+    static let microphonePage = "meetings.microphone"
     static let projectsPage = "meetings.projects"
     static let dictionaryPage = "meetings.dictionary"
     static let speakersPage = "meetings.speakers"
+    static let thresholdsPage = "meetings.thresholds"
     /// The card on the Speakers page that sets how the voice pass runs.
     static let voicePassAnchor = "voicePass"
     static let windowPage = "meetings.window"
@@ -72,6 +75,10 @@ enum MeetingsSettingsPages {
                                subtitle: "When the screen is recorded with a meeting, how often, and what it costs.") {
                 MeetingsRecordingPage(model: model)
             },
+            NativeSettingsPage(id: microphonePage, title: "Microphone test", symbol: "mic", tint: .green,
+                               subtitle: "Test your microphone and system sound, and choose what a meeting keeps.") {
+                MeetingsMicrophonePage(model: model, defaults: defaults)
+            },
             NativeSettingsPage(id: projectsPage, title: "Projects", symbol: "folder", tint: .blue,
                                subtitle: "How a meeting finds its project: rules, labels, paired people and the export folder.") {
                 MeetingsProjectsPage(model: model)
@@ -83,6 +90,10 @@ enum MeetingsSettingsPages {
             NativeSettingsPage(id: speakersPage, title: "Speakers", symbol: "person.wave.2", tint: .purple,
                                subtitle: "How the engine names who spoke, and what the voice pass costs this Mac.") {
                 MeetingsSpeakersPage(model: model)
+            },
+            NativeSettingsPage(id: thresholdsPage, title: "Thresholds", symbol: "slider.horizontal.3", tint: .blue,
+                               subtitle: "Preview how global suggestion settings change a meeting before saving.") {
+                MeetingsThresholdsPage(model: model)
             },
             NativeSettingsPage(id: windowPage, title: "Window", symbol: "macwindow", tint: .gray,
                                subtitle: "How the Meetings window opens and what it shows.") {
@@ -125,7 +136,7 @@ struct MeetingsSettingsFrame<Content: View>: View {
 }
 
 /// The settings pages' notices over the visible page; none while the search index draws the page off screen.
-private struct PageNotices: ViewModifier {
+struct PageNotices: ViewModifier {
     let model: NoticeStackModel
     let shown: Bool
 
@@ -165,9 +176,22 @@ struct MeetingsRecordingPage: View {
                                                        set: { model.set(["sources", "wisprflow", "autoRecord", "notify"], $0) }))
                 }
                 .disabled(auto?.enabled != true)
+                Divider()
+                NativeSettingsToggle("Show missing permissions in the widget",
+                                     detail: "Checks at watcher startup and every hour while autostart is on.",
+                                     identifier: "meetings.autostart.permissionCard",
+                                     isOn: Binding(get: { auto?.permissionCard ?? true },
+                                                   set: { model.set(["sources", "wisprflow", "autoRecord", "permissionCard"], $0) }))
+                    .disabled(auto?.enabled != true)
             }
 
             NativeSettingsCard("Capture", subtitle: costLine(model.cost)) {
+                NativeSettingsToggle("Record sound when Screen Recording is unavailable",
+                                     detail: "Keep the selected audio tracks when screen frames cannot be captured.",
+                                     identifier: "meetings.capture.soundWithoutScreen",
+                                     isOn: Binding(get: { capture.soundWithoutScreen ?? true },
+                                                   set: { model.set(["global", "capture", "soundWithoutScreen"], $0) }))
+                Divider()
                 NativeSettingsPicker("Displays", detail: "Which screens a recording records.", identifier: "meetings.capture.displays",
                                      options: [
                                          NativeSettingsOption(DisplayPolicy("all"), "All displays", detail: costText(cost?.displayCost("all"))),

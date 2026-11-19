@@ -19,7 +19,13 @@ import {
     type StopAnswer,
 } from "@genesiscz/utils/screen-recorder/control";
 import { parseDisplayList } from "@genesiscz/utils/screen-recorder/displays";
-import type { RecordingCommand, RecordingSession, RecordingSessionEvent, RecordingState } from "./recording-session";
+import type {
+    MovieRates,
+    RecordingCommand,
+    RecordingSession,
+    RecordingSessionEvent,
+    RecordingState,
+} from "./recording-session";
 import { describeRecordingTarget, type RecordingTarget, recordingTargetSchema } from "./recording-targets";
 import { type AxResult, runAxAsync } from "./runner";
 
@@ -79,6 +85,7 @@ export class SessionRecorderControl extends RecorderControl {
     readonly markers: RecordingMarker[] = [];
     private state: ControlState = "recording";
     private target: RecordingTarget;
+    private capturedDisplay?: RecorderStatus["displays"][number];
     private warning?: string;
     private elapsedMs = 0;
     /** A segment records: the session is `recording`, not `starting` (arming), paused or finishing. */
@@ -133,9 +140,7 @@ export class SessionRecorderControl extends RecorderControl {
 
     /** Changes the movie's rates and threshold (`activeFps`, `idleFps`, `threshold`); the next segment records with them. */
     override async setSettings(patch: RecorderSettingsPatch): Promise<SettingsAnswer> {
-        const rates = this.session.currentRates();
-
-        if (!rates) {
+        if (!this.session.currentRates()) {
             return super.setSettings(patch);
         }
 
@@ -148,18 +153,15 @@ export class SessionRecorderControl extends RecorderControl {
             );
         }
 
-        const activeFps = patch.activeFps ?? rates.activeFps;
-        // A single-rate movie (equal rates) stays single-rate when only its active rate changes: 60/60 to 120 is 120/120,
-        // never 120/60, which the capture refuses as an idle rate above 5.
-        const singleRate = patch.idleFps === undefined && rates.idleFps === rates.activeFps;
-        // ax-tool never records the idle rate above the active one (Record.swift setFrameRates).
-        const idleFps = singleRate ? activeFps : Math.min(patch.idleFps ?? rates.idleFps, activeFps);
-        const applied = await this.session.retune({
-            activeFps,
-            idleFps,
-            threshold: patch.threshold ?? rates.threshold,
+        const { rates, applied } = await this.session.retune((current) => {
+            const activeFps = patch.activeFps ?? current.activeFps;
+            // A single-rate movie stays single-rate when only its active rate changes.
+            const singleRate = patch.idleFps === undefined && current.idleFps === current.activeFps;
+            const idleFps = singleRate ? activeFps : Math.min(patch.idleFps ?? current.idleFps, activeFps);
+            return { activeFps, idleFps, threshold: patch.threshold ?? current.threshold };
         });
-        return { ...(await this.getSettings()), applied };
+        const answer = await this.getSettings();
+        return { ...answer, settings: { ...answer.settings, ...rates }, applied };
     }
 
     /** Every session event passes here, so the state and target stay what the session says. */
@@ -167,6 +169,7 @@ export class SessionRecorderControl extends RecorderControl {
         if (event.event === "state") {
             this.state = CONTROL_STATE[event.state];
             this.target = event.target;
+            this.capturedDisplay = event.display;
             this.elapsedMs = event.elapsedMs;
             this.elapsedRunning = event.state === "recording";
             this.limitMs = event.limitMs;
@@ -186,7 +189,7 @@ export class SessionRecorderControl extends RecorderControl {
             kind: this.kind,
             title: this.title,
             state: this.state,
-            displays: [],
+            displays: this.capturedDisplay ? [this.capturedDisplay] : [],
             frames: 0,
             elapsedMs: this.elapsedMs,
             elapsedRunning: this.elapsedRunning,
@@ -264,8 +267,8 @@ export class SessionRecorderControl extends RecorderControl {
         return { state: "stopped", outcome: await this.session.finished };
     }
 
-    override async restart(): Promise<{ state: ControlState }> {
-        await this.session.command({ cmd: "restart" });
+    override async restart(target?: RecordingTarget): Promise<{ state: ControlState }> {
+        await this.session.command({ cmd: "restart", target });
         return { state: this.state };
     }
 
@@ -280,15 +283,14 @@ export class SessionRecorderControl extends RecorderControl {
         return { state: this.state };
     }
 
-    /**
-     * A display target that follows the pointer marks no display: its capture drops screenIndex
-     * (`segmentCaptureSpec`) and picks the display under the pointer itself, and this path does not hear which.
-     */
+    /** A following movie identifies the captured display by its stable CG ID, even if the display order changes. */
     override async listDisplays(): Promise<DisplayEntry[]> {
         const target = this.target;
         return (await this.connectedDisplays()).map((display) => ({
             ...display,
-            recorded: target.kind === "display" && !target.follow && target.screenIndex === display.index,
+            recorded:
+                target.kind === "display" &&
+                (target.follow ? this.capturedDisplay?.id === display.id : target.screenIndex === display.index),
         }));
     }
 
@@ -331,9 +333,13 @@ const commandQueues = new WeakMap<RecorderControl, Promise<void>>();
  * One stdin command of the session, as the same RecorderControl call the socket makes, queued behind the commands
  * before it: a pause and a resume sent together each check the state the one before left.
  */
-export function applyRecordingCommand(control: RecorderControl, command: RecordingCommand): Promise<void> {
+export function applyRecordingCommand(
+    control: SessionRecorderControl,
+    command: RecordingCommand,
+    onRates?: (rates: MovieRates) => void
+): Promise<void> {
     const next = (commandQueues.get(control) ?? Promise.resolve()).then(() =>
-        dispatchRecordingCommand(control, command)
+        dispatchRecordingCommand(control, command, onRates)
     );
     commandQueues.set(
         control,
@@ -344,10 +350,24 @@ export function applyRecordingCommand(control: RecorderControl, command: Recordi
     return next;
 }
 
-async function dispatchRecordingCommand(control: RecorderControl, command: RecordingCommand): Promise<void> {
+async function dispatchRecordingCommand(
+    control: SessionRecorderControl,
+    command: RecordingCommand,
+    onRates?: (rates: MovieRates) => void
+): Promise<void> {
     log.debug({ command: command.cmd }, "session command through its RecorderControl");
 
     switch (command.cmd) {
+        case "rates": {
+            const { settings } = await control.setSettings({
+                activeFps: command.activeFps,
+                idleFps: command.idleFps || command.activeFps,
+                threshold: command.threshold,
+            });
+            const { activeFps, idleFps, threshold } = settings;
+            onRates?.({ activeFps, idleFps, threshold });
+            return;
+        }
         case "pause":
             await control.pause();
             return;
@@ -361,7 +381,7 @@ async function dispatchRecordingCommand(control: RecorderControl, command: Recor
             await control.discard();
             return;
         case "restart":
-            await control.restart();
+            await control.restart(command.target);
             return;
         case "switch":
             await control.switchTarget(command.target);

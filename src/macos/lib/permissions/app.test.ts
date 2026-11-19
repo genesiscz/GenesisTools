@@ -84,6 +84,16 @@ it("waits for a timed-out Swift command to exit before releasing its build slot"
 });
 
 describe("readAppFaceProcesses", () => {
+    it("reports an unavailable snapshot when no process command was read", () => {
+        const list = spyOn(processes, "listProcesses").mockReturnValue([]);
+
+        try {
+            expect(readAppFaceProcesses()).toBeNull();
+        } finally {
+            list.mockRestore();
+        }
+    });
+
     it("lists the faces oldest first, so they start again in the order they first started", () => {
         const entry = (pid: number, startMs: number | null) => ({
             pid,
@@ -106,7 +116,7 @@ describe("readAppFaceProcesses", () => {
         ]);
 
         try {
-            expect(readAppFaceProcesses().map((process) => process.pid)).toEqual([33573, 33590, 33602, 40000]);
+            expect(readAppFaceProcesses()?.map((process) => process.pid)).toEqual([33573, 33590, 33602, 40000]);
         } finally {
             list.mockRestore();
         }

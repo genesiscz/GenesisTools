@@ -132,8 +132,11 @@ struct SpeakerTalkTimeLanes: View {
     @Environment(\.kitLook) private var look
     /// A click on a joined block: zoom the timeline to it (G-SPK-8).
     let zoom: (Double, Double) -> Void
-    /// A click on a banner: the question ids under it.
+    /// A click on a banner: the question ids under it. Used when `questionMenu` is nil.
     var openQuestion: ([String]) -> Void = { _ in }
+    /// The menu of the question with this id, built at the click: its answers and "Show in Items" (U2). A merged banner
+    /// shows one submenu per question. nil: a banner only opens its question (`openQuestion`).
+    var questionMenu: ((String) -> [MenuButtonItem])? = nil
     /// A stretch dropped on another speaker's lane; the owner applies it through the assignment journal.
     var assign: ((DecisionAction.Stretch, String) -> Void)? = nil
 
@@ -336,11 +339,14 @@ struct SpeakerTalkTimeLanes: View {
         .frame(width: width, height: 26, alignment: .topLeading)
     }
 
-    /// One question opens on a click; a merged banner lists its questions, so each one keeps its way to the row (the
-    /// click opened only the first, and the others under it had none).
+    /// With `questionMenu`, a banner opens its question's answers, so it is answered where it stands (U2: "the ? should
+    /// be clickable so i can pick no?"). Without it, one question opens on a click; a merged banner lists its questions,
+    /// so each one keeps its way to the row (the click opened only the first, and the others under it had none).
     @ViewBuilder
     private func bannerControl(_ banner: TalkTimeBanner) -> some View {
-        if banner.ids.count == 1 {
+        if let questionMenu {
+            MenuButton(items: { Self.bannerItems(banner, questions: questions, menu: questionMenu) }) { bannerLabel(banner) }
+        } else if banner.ids.count == 1 {
             Button { openQuestion(banner.ids) } label: { bannerLabel(banner) }
                 .buttonStyle(.genHoverPlain())
         } else {
@@ -374,9 +380,21 @@ struct SpeakerTalkTimeLanes: View {
         }
     }
 
+    /// The menu of a banner with answers: one question's own menu, or one submenu per question of a merged banner, each
+    /// titled by its name and time (`bannerChoices`).
+    static func bannerItems(_ banner: TalkTimeBanner, questions: [TalkTimeQuestion],
+                            menu: (String) -> [MenuButtonItem]) -> [MenuButtonItem] {
+        if banner.ids.count == 1, let id = banner.ids.first { return menu(id) }
+        return bannerChoices(banner, questions: questions).map { choice in .submenu(choice.title, menu(choice.id)) }
+    }
+
     private func bannerText(_ banner: TalkTimeBanner) -> String {
-        banner.ids.count == 1 ? "Open question at \(MeetingsFormat.clock(banner.atSec))"
-            : "\(banner.ids.count) open questions from \(MeetingsFormat.clock(banner.atSec)): pick one to open"
+        let at = MeetingsFormat.clock(banner.atSec)
+        if questionMenu != nil {
+            return banner.ids.count == 1 ? "Open question at \(at). Pick an answer, or show it in Items."
+                : "\(banner.ids.count) open questions from \(at). Pick one to answer it."
+        }
+        return banner.ids.count == 1 ? "Open question at \(at)" : "\(banner.ids.count) open questions from \(at): pick one to open"
     }
 
     private var ruler: some View {

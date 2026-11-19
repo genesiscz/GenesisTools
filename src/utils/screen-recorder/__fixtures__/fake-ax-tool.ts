@@ -39,7 +39,7 @@ if (args[0] === "--help") {
         "capture: [--display-id ID] [--follow-focus] [--max-long-side PX] [--control-stdin] mute/unmute | set-mic | set-fps | set-threshold | set-max-long-side\n  [--audio system,mic] [--mic-device UID] [--audio-sidecar]\n  ax-tool audio-devices\n" +
             (fixtureMode === "--fixture-no-audio-session"
                 ? ""
-                : "  ax-tool audio-record --sources mic,system --segment-sec 60\n")
+                : "  ax-tool audio-record --sources mic,system --segment-sec 60 [--without-screen] [--monitor] [--levels]\n")
     );
     process.exit(0);
 }
@@ -82,6 +82,44 @@ if (args[0] === "screens") {
 
 const value = (flag: string) => (args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined);
 const outDir = value("--out") ?? ".";
+const frameReady = join(outDir, "..", "fixture-frame-ready");
+
+/** Decodable mono PCM under the native track name, for file-clock and recovery fixtures. */
+function fixturePcm(durationMs: number, marker?: { firstSecond: number; source: string }): Buffer {
+    const bytes = durationMs * 16 * 2;
+    const sound = Buffer.alloc(44 + bytes);
+    sound.write("RIFF", 0);
+    sound.writeUInt32LE(sound.length - 8, 4);
+    sound.write("WAVEfmt ", 8);
+    sound.writeUInt32LE(16, 16);
+    sound.writeUInt16LE(1, 20);
+    sound.writeUInt16LE(1, 22);
+    sound.writeUInt32LE(16_000, 24);
+    sound.writeUInt32LE(32_000, 28);
+    sound.writeUInt16LE(2, 32);
+    sound.writeUInt16LE(16, 34);
+    sound.write("data", 36);
+    sound.writeUInt32LE(bytes, 40);
+    if (marker) {
+        for (let second = 0; second * 1000 < durationMs; second++) {
+            const value = marker.firstSecond + second + 1;
+            sound.writeInt16LE(marker.source === "mic" ? value : -value, 44 + second * 32_000);
+        }
+    }
+    return sound;
+}
+
+if (args[0] === "audio-record" && args.includes("--monitor")) {
+    print({ event: "state", state: "recording", sources: ["mic", "system"] }, "stderr");
+    print(
+        { event: "levels", atMs: Date.now(), mic: 0.25, system: null, input: "Test input", output: "Test output" },
+        "stderr"
+    );
+    process.stdin.once("data", () => process.exit(0));
+    process.stdin.once("end", () => process.exit(0));
+    await new Promise<void>((resolve) => process.once("SIGTERM", () => resolve()));
+    process.exit(0);
+}
 if (args[0] === "audio-record") {
     mkdirSync(outDir, { recursive: true });
     writeFileSync(join(outDir, "argv.json"), SafeJSON.stringify(args));
@@ -98,7 +136,8 @@ if (args[0] === "audio-record") {
         mic: initiallyMuted.includes("mic"),
         system: initiallyMuted.includes("system"),
     };
-    const start = Date.parse("2026-11-03T12:00:00.000Z");
+    const timeline = fixtureMode?.match(/^--fixture-meeting-timeline=(\d+)$/);
+    const start = timeline ? Number(timeline[1]) : Date.parse("2026-11-03T12:00:00.000Z");
     let sequence = 0;
     let position = 0;
     let paused = args.includes("--paused");
@@ -110,8 +149,11 @@ if (args[0] === "audio-record") {
         sequence += 1;
         for (const source of sources) {
             const file = `audio-${String(sequence).padStart(6, "0")}-${source}.m4a`;
-            writeFileSync(join(outDir, file), "invented sound");
-            const at = new Date(start + (sequence - 1) * 60_000).toISOString();
+            writeFileSync(
+                join(outDir, file),
+                timeline ? fixturePcm(durationMs, { firstSecond: (sequence - 1) * 30, source }) : "invented sound"
+            );
+            const at = new Date(start + (sequence - 1) * (timeline ? 30_000 : 60_000)).toISOString();
             openSegment(file, source, at);
             print({
                 file,
@@ -140,6 +182,10 @@ if (args[0] === "audio-record") {
     ) {
         // As the real tool did on 2026-11-17: an error on the first captured buffer, before it was ready.
         print({ event: "error", message: "could not split system audio at the segment boundary" }, "stderr");
+        await new Promise<void>((resolve) => {
+            process.stdin.once("data", () => resolve());
+            process.stdin.once("end", () => resolve());
+        });
         process.exit(1);
     }
 
@@ -154,10 +200,24 @@ if (args[0] === "audio-record") {
         setTimeout(() => process.exit(1), 150);
     }
     if (fixtureMode === "--fixture-audio-session-dies-later" || (restartCase && !restarted)) {
-        setTimeout(() => {
+        const failWriter = () => {
             print({ event: "error", message: "the system writer stopped accepting samples" }, "stderr");
-            process.exit(1);
-        }, 150);
+            // Let the supervisor read the error and close this session before exiting.
+            process.stdin.prependOnceListener("data", () => process.exit(1));
+            process.stdin.once("end", () => process.exit(1));
+        };
+        const gate =
+            value("--fixture-fail-when") ??
+            (fixtureMode === "--fixture-audio-session-restart-fails" ? frameReady : undefined);
+        if (gate) {
+            const { waitForPath } = await import("@genesiscz/utils/fs/watcher");
+            if (!(await waitForPath(gate, { timeoutMs: 10_000 }))) {
+                throw new Error(`missing fixture failure trigger: ${gate}`);
+            }
+            failWriter();
+        } else {
+            setTimeout(failWriter, 150);
+        }
     }
 
     if (fixtureMode === "--fixture-audio-loss") {
@@ -168,23 +228,19 @@ if (args[0] === "audio-record") {
             emitSegment(60_000);
         }
     }
+    if (timeline) {
+        const { waitForPath } = await import("@genesiscz/utils/fs/watcher");
+        for (let piece = 1; piece <= 3; piece++) {
+            if (!(await waitForPath(join(outDir, "..", `frame-${piece}`), { timeoutMs: 5000 }))) {
+                throw new Error(`frame piece ${piece} did not start`);
+            }
+            emitSegment(30_000);
+        }
+    }
     if (fixtureMode === "--fixture-audio-crash") {
         // A decodable 1.25 s file under the native name: recovery must ignore its unrelated file times.
-        const sound = Buffer.alloc(44 + 40_000);
-        sound.write("RIFF", 0);
-        sound.writeUInt32LE(sound.length - 8, 4);
-        sound.write("WAVEfmt ", 8);
-        sound.writeUInt32LE(16, 16);
-        sound.writeUInt16LE(1, 20);
-        sound.writeUInt16LE(1, 22);
-        sound.writeUInt32LE(16_000, 24);
-        sound.writeUInt32LE(32_000, 28);
-        sound.writeUInt16LE(2, 32);
-        sound.writeUInt16LE(16, 34);
-        sound.write("data", 36);
-        sound.writeUInt32LE(40_000, 40);
         const file = "audio-000001-system.m4a";
-        writeFileSync(join(outDir, file), sound);
+        writeFileSync(join(outDir, file), fixturePcm(1250));
         openSegment(file, "system", new Date(start + 700).toISOString());
         process.exit(1);
     }
@@ -210,7 +266,7 @@ if (args[0] === "audio-record") {
             if (
                 !paused &&
                 !(
-                    (fixtureMode === "--fixture-audio-three" || fixtureMode === "--fixture-audio-loss") &&
+                    (timeline || fixtureMode === "--fixture-audio-three" || fixtureMode === "--fixture-audio-loss") &&
                     command.cmd === "stop" &&
                     position === 0
                 )
@@ -330,6 +386,9 @@ if (fixtureMode === "--fixture-screen-changes") {
     }
 } else {
     const firstPng = keep({ reason: "first" });
+    if (fixtureMode === "--fixture-audio-session-restart-fails") {
+        writeFileSync(frameReady, "");
+    }
     if (capturedAt !== undefined) {
         const landed = new Date(capturedAt + 800);
         utimesSync(firstPng, landed, landed);

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import type { GitHubEvent } from "@genesiscz/utils/github/types";
-import { buildActivityItems } from "./activity";
+import { buildActivityItems, createActivityCommand } from "./activity";
+import { createNotificationsCommand } from "./notifications";
+import { createSearchCommand } from "./search";
 
 function pushEvent(overrides: {
     id: string;
@@ -52,5 +54,20 @@ describe("buildActivityItems", () => {
         ]);
 
         expect(items.map((item) => item.id)).toEqual(["newest", "middle", "oldest"]);
+    });
+});
+
+describe("--limit options with a default", () => {
+    // Commander passes the default as the second argument: a bare parseInt read it as the radix ("10" in base 30 = 30).
+    it.each([
+        ["search", createSearchCommand],
+        ["activity", createActivityCommand],
+        ["notifications", createNotificationsCommand],
+    ])("%s parses --limit in base 10", (_name, create) => {
+        const command = create();
+        command.parseOptions(["--limit", "10"]);
+        expect(command.opts().limit).toBe(10);
+        command.parseOptions(["--limit", "100"]);
+        expect(command.opts().limit).toBe(100);
     });
 });

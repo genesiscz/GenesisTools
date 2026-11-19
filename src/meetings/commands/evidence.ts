@@ -1,21 +1,25 @@
+import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { formatBytes } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
-import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import type { MeetingLevelRow } from "@genesiscz/utils/meetings/levels";
+import { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { microphoneCandidates } from "@genesiscz/utils/meetings/room-people";
 import { createBoxTable } from "@genesiscz/utils/table";
 import { labelIdentityTable, lineEvidence, SELF } from "@genesiscz/utils/transcribe/evidence";
 import { parseClock } from "@genesiscz/utils/transcribe/render";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { channelEvidence } from "../lib/channel-operation";
+import { channelEvidence, lineEligibilityFor } from "../lib/channel-operation";
+import { liveMeetingLevels, savedMeetingLevels } from "../lib/levels";
 import { localSpeechDuring } from "../lib/local-speech";
 import { OpenedMeeting } from "../lib/opened-meeting";
 import { compactEvidence, rawMeeting } from "../lib/raw";
 import { fail, formatFlag, resolveEnum, TOOL } from "../lib/shared";
-import { rawTerms } from "../lib/suggest";
+import { rawTerms } from "../lib/suggest-terms";
 import { lineDeviceCandidates, meetingVoices } from "../lib/voice";
 import { voiceReadiness } from "../lib/voice-readiness";
 import { DEFAULT_WORD_CHECK, WORD_CHECKS } from "../lib/word-check";
@@ -43,7 +47,9 @@ async function evidence(
         wordCheck?: string;
         voices?: string;
         voiceFeatures?: boolean;
+        lineEligibility?: string;
         channel?: string;
+        levels?: boolean;
     }
 ): Promise<void> {
     const flag = formatFlag(opts);
@@ -66,6 +72,19 @@ async function evidence(
     }
 
     try {
+        if (opts.levels) {
+            const rows = savedMeetingLevels(store, ref);
+            if (format === "json" || opts.raw) {
+                out.result(rows);
+            } else if (rows.length === 0) {
+                out.println("This meeting has no saved level readings.");
+            } else {
+                for (const row of rows) {
+                    out.println(levelLine(row));
+                }
+            }
+            return;
+        }
         const record = store.resolve(ref);
 
         if (!record) {
@@ -73,10 +92,17 @@ async function evidence(
             return;
         }
 
+        const opened = OpenedMeeting.of(store, record);
+        if (opts.lineEligibility !== undefined) {
+            if (!/^\d+$/.test(opts.lineEligibility)) {
+                throw new Error("--line-eligibility requires a zero-based transcript line index.");
+            }
+            out.result(SafeJSON.stringify(await lineEligibilityFor(opened, Number(opts.lineEligibility))));
+            return;
+        }
         // A meeting without a transcript source fails in linked() with [no-transcript-source], as every command does.
         const readiness = voiceReadiness(record);
         readiness.hints.forEach(ui.info);
-        const opened = OpenedMeeting.of(store, record);
         // The voice measurement decodes the whole recording: only when asked for, and only into an output that shows it.
         const wantsVoice = opts.voiceFeatures === true || opts.voices !== undefined;
         if (wantsVoice && (opts.table || (format === "table" && !opts.raw))) {
@@ -200,6 +226,12 @@ async function evidence(
                   )
                   .reduce((sum, line) => sum + line.text.split(/\s+/).filter(Boolean).length, 0)
             : undefined;
+        const sharedNames = new Set(
+            lines.flatMap((line) => {
+                const people = microphoneCandidates(record, line.startSec);
+                return people.length > 1 ? people : [];
+            })
+        );
         const volume = found.tokens
             ? {
                   micTokens: found.tokens.mic,
@@ -222,10 +254,7 @@ async function evidence(
                             knownLines: lines.filter((line) => !line.speakingUnknown).length,
                             unknownLines: lines.filter((line) => line.speakingUnknown).length,
                         },
-                        volume:
-                            record.seats && record.seats.room.length > 1
-                                ? { ...volume, spread: false, sharedMic: true }
-                                : volume,
+                        volume: sharedNames.size > 1 ? { ...volume, spread: false, sharedMic: true } : volume,
                         channels: energy.calibration ?? null,
                         files: found.files,
                         devices: found.devices,
@@ -239,7 +268,7 @@ async function evidence(
                             // A shared device names no winner: several people speak into it, whatever the share.
                             const shared =
                                 withCandidates.deviceCandidates.length > 1 ||
-                                (line.winner === SELF && sharedOwnMicrophone(record));
+                                (line.winner === SELF && microphoneCandidates(record, line.startSec).length > 1);
                             return { ...withCandidates, winner: shared ? undefined : line.winner };
                         }),
                     },
@@ -258,8 +287,8 @@ async function evidence(
             "LABEL \\ VOICE",
             ...identities.map((name) =>
                 name === SELF
-                    ? record.seats && record.seats.room.length > 1
-                        ? `microphone group (${record.seats.room.join(", ")})`
+                    ? sharedNames.size > 1
+                        ? `microphone group (${[...sharedNames].join(", ")})`
                         : `you (${found.selfName ?? "mic"})`
                     : name
             ),
@@ -280,13 +309,15 @@ async function evidence(
             ui.dim("audio energy: not checked (no audio on this Mac, or ffmpeg is missing)");
         } else if (channels.layout === "unknown") {
             ui.warn(`audio energy: not used, the microphone channel is unknown: ${channels.reason}`);
+        } else if (channels.reason) {
+            ui.dim(`audio energy: ${channels.layout} (${channels.reason})`);
         } else {
             ui.dim(
                 `audio energy: ${channels.layout} (mic segments median left share ${channels.micMedian}, call ${channels.systemMedian}; ${channels.segments.mic} + ${channels.segments.system} segments)`
             );
         }
 
-        if (record.seats && record.seats.room.length > 1) {
+        if (sharedNames.size > 1) {
             ui.dim("A shared microphone identifies its active people as candidates, not its owner as speaker.");
         } else if (volume) {
             const say =
@@ -310,13 +341,67 @@ async function evidence(
     }
 }
 
-/** More than one person speaks into the owner's microphone: its microphone group, else the room seats. */
-function sharedOwnMicrophone(record: MeetingRecord): boolean {
-    const group = record.seats?.microphones?.find((one) => one.id === "self");
-    return (group?.people.length ?? record.seats?.room.length ?? 0) > 1;
+function levelLine(row: MeetingLevelRow): string {
+    const source = (one: MeetingLevelRow["mic"]) => {
+        const value = one.sampled ? (one.dbfs === null ? "silent" : `${one.dbfs.toFixed(1)} dBFS`) : "no samples";
+        return `${one.device ?? "unknown device"} · ${value}${one.muted ? " (muted)" : ""}`;
+    };
+    const percent = (n: number | null) => (n === null ? "—" : `${Math.round(100 * n)}%`);
+    return [
+        row.at + (row.paused ? " (paused)" : ""),
+        `mic ${source(row.mic)}`,
+        `system ${source(row.system)}`,
+        `mic share ${percent(row.micShare)}`,
+        `loud mic passages ${percent(row.calibration.sourceMicShare ?? null)}`,
+        `last-minute calibration ${row.calibration.layout}`,
+    ].join("  ");
 }
 
 export function registerEvidenceCommand(program: Command): void {
+    program
+        .command("levels")
+        .description("Test the microphone and system sound without saving audio")
+        .option("--seconds <n>", "monitor for 1–60 seconds", "3")
+        .option("--stream", "print live readings as JSON lines")
+        .option("--until-stdin-closes", "also stop when the parent closes stdin")
+        .action(async (opts: { seconds: string; stream?: boolean; untilStdinCloses?: boolean }) => {
+            const parent = new AbortController();
+            const close = () => parent.abort();
+            if (opts.untilStdinCloses) {
+                process.stdin.once("end", close);
+                process.stdin.resume();
+            }
+            try {
+                await withInterrupt(
+                    async (interrupt) => {
+                        const signal = AbortSignal.any([interrupt, parent.signal]);
+                        try {
+                            const result = await liveMeetingLevels({
+                                seconds: Number(opts.seconds),
+                                signal,
+                                onRow: opts.stream ? (row) => out.print(`${SafeJSON.stringify(row)}\n`) : undefined,
+                                onWarning: opts.stream
+                                    ? (warning) => out.print(`${SafeJSON.stringify({ warning })}\n`)
+                                    : undefined,
+                            });
+                            out.print(`${SafeJSON.stringify(result)}\n`);
+                        } catch (error) {
+                            if (!signal.aborted) {
+                                throw error;
+                            }
+                        }
+                    },
+                    { handleTermination: true }
+                );
+            } catch (error) {
+                fail(error);
+            } finally {
+                if (opts.untilStdinCloses) {
+                    process.stdin.off("end", close);
+                    process.stdin.pause();
+                }
+            }
+        });
     program
         .command("evidence")
         .argument("<meeting>", "meeting id, a unique prefix, last, or wisprflow:<id>")
@@ -329,7 +414,12 @@ export function registerEvidenceCommand(program: Command): void {
         .option("--voices <n>", "cluster lines into 1..16 voices, anchored by confirmed assignments")
         .option("--channel <0|1>", "physical clustering channel, default calibrated mic channel or left when unknown")
         .option("--files", "also list the evidence files and their sizes")
+        .option("--levels", "recorded level readings, device names, mute state and last-minute calibration")
         .option("--table", "compact per-line evidence table")
+        .option(
+            "--line-eligibility <index>",
+            "print eligible and excluded speakers for one zero-based transcript line as JSON"
+        )
         .option("--from <seconds>", "table start time")
         .option("--to <seconds>", "table end time")
         .option(

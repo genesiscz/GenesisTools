@@ -14,8 +14,26 @@ import {
 } from "@genesiscz/utils/repl/toolsets/recorder";
 import { DEFAULT_SPAN_GAP_SEC } from "@genesiscz/utils/transcribe/speakers";
 import { z } from "zod";
+import { meetingTimeRangeSchema } from "../moment-schema";
 import { sourceAudioPlanSchema } from "../source-audio-discovery";
-import { listenPrepare, meetingPeopleEdit, meetingVoice, momentSave, voiceEnrol } from "./api";
+import {
+    listenPrepare,
+    meetingPeopleEdit,
+    meetingsMethod,
+    meetingVoice,
+    momentSave,
+    voiceBackfill,
+    voiceEnrol,
+    voicesJobs,
+    voicesJobsCancel,
+    voicesList,
+    voicesMove,
+    voicesQuality,
+    voicesReject,
+    voicesRemove,
+    voicesSample,
+    voicesUndo,
+} from "./api";
 
 /**
  * The REPL `meetings` toolset's descriptor (src/node-repl/lib/toolsets/meetings.ts reads it), beside the Meetings
@@ -35,6 +53,19 @@ export const byChannel = defineMethod({
 });
 
 export const ref = z.object({ ref: z.string().min(1) });
+export const levels = defineMethod({
+    name: "levels",
+    params: z
+        .object({ meeting: z.string().min(1).optional(), seconds: z.number().int().min(1).max(60).optional() })
+        .strict()
+        .refine(
+            (input) => input.meeting === undefined || input.seconds === undefined,
+            "seconds applies only to the live microphone test"
+        ),
+    result: z.unknown(),
+    effect: "read",
+    doc: `Read saved dBFS, share, calibration, devices and mute rows with {meeting} (${toolCommand("meetings evidence")} <meeting> --levels). Without a meeting, sample live inputs for 1–60 seconds (default 3) and return the final reading and warnings (${toolCommand("meetings levels")} --seconds <n>). No test audio is saved.`,
+});
 export const ids = z.array(z.string().min(1));
 export const recordDoc =
     "{ id, title, start, project, labels, sources, speakers, items: { suggested, confirmed, rejected }, summary }";
@@ -55,6 +86,22 @@ export const open = defineMethod({
     resultName: "Meeting",
     effect: "read",
     doc: 'Open a stored meeting by id, a unique prefix, "last", or wisprflow:<id>. meetings.open("last").',
+});
+export const look = defineMethod({
+    name: "look",
+    params: meetingTimeRangeSchema,
+    result: z.unknown(),
+    resultName: "{ meeting, fromSec, toSec, lines, attendance, questions, items, screen }",
+    effect: "read",
+    doc: `Read the transcript lines, speaker and voice evidence, attendance stays, open questions, items and screen text changes within inclusive transcript times (seconds, MM:SS or H:MM:SS). Same result as ${toolCommand("meetings", "look")} <meeting> --from <time> --to <time> --json.`,
+});
+export const measure = defineMethod({
+    name: "measure",
+    params: z.strictObject({ meeting: ref.shape.ref }),
+    result: z.unknown(),
+    resultName: "RoomCallReport",
+    effect: "read",
+    doc: "Return the held-out room/call report with baseline and candidate speaker counts, per-line outcomes, cohort changes and quality targets. Read reference.json, holdout.json, baseline.json and candidate.json from the room-call/ folder beside the meeting record. CLI: bun scripts/benchmarks/meetings/room-call.ts --reference <dir>/reference.json --holdout <dir>/holdout.json --baseline <dir>/baseline.json --candidate <dir>/candidate.json --out <new-file>.",
 });
 export const info = defineMethod({
     name: "info",
@@ -213,9 +260,10 @@ export const itemsRows = defineMethod({
         .object({ lowPriority: z.enum(["hide", "show"]).optional(), applyAbove: z.number().min(0).max(1).optional() })
         .strict(),
     result: z.unknown(),
-    resultName: "{ meeting, rows: ReviewRow[], hidden, attendanceWarning?, lineEvidence?, questionDetails? }",
+    resultName:
+        "{ meeting, rows: ReviewRow[], hidden, attendanceWarning?, attendanceDetail?, lineEvidence?, questionDetails? }",
     effect: "read",
-    doc: `The review rows, as \`${toolCommand("meetings", "rows", "--json")}\` prints them: each item in the order listen asks, with its question as parts, its typed choices with confidence, its edit kind, sources, Moment and last decision. Optional attendanceWarning, lineEvidence (per source line) and questionDetails (per question); a missing field was not available, never a negative result. lowPriority: "show" keeps the open questions under the priority line.`,
+    doc: `The review rows, as \`${toolCommand("meetings", "rows", "--json")}\` prints them: each item in the order listen asks, with its question as parts, its typed choices with confidence, its edit kind, sources, Moment and last decision. Optional attendanceWarning and attendanceDetail, lineEvidence (per source line) and questionDetails (per question); a missing field was not available, never a negative result. lowPriority: "show" keeps the open questions under the priority line.`,
 });
 export const add = defineMethod({
     name: "items.add",
@@ -239,9 +287,17 @@ export const suggest = defineMethod({
         })
         .strict(),
     result: z.unknown(),
-    resultName: "{ fresh: items.list rows, warnings }",
+    resultName: "{ fresh: items.list rows, retired: string[], warnings: string[], deviceOffers? }",
     effect: "reversible",
-    doc: `Run the rules on the transcript and add what they find as suggested items, in one save. rules: any of ${SUGGEST_RULES.join(", ")} (default all). A word check that cannot run is a warning.`,
+    doc: `Run ${toolCommand("meetings", "suggest")} with any of ${SUGGEST_RULES.join(", ")} (default all). Returns fresh items, retired item IDs and warnings, including an unavailable word check. With attendance "teams", a warning lists up to three matching chats by last call. Pass attendanceId to select one.`,
+});
+export const preview = defineMethod({
+    name: "items.preview",
+    params: z.object({ rules: z.array(z.enum(SUGGEST_RULES)).optional() }).strict(),
+    result: z.unknown(),
+    resultName: "{ changes: { meeting, fresh, updated, stays }, warnings }",
+    effect: "read",
+    doc: `Preview the next ${toolCommand("meetings", "suggest")} on saved evidence. Returns new items, existing item edits with before values, and participant stay edits. To save, call items.suggest with the same rules.`,
 });
 export const decide = {
     result: z.unknown(),
@@ -318,7 +374,7 @@ export const set = defineMethod({
     result: z.unknown(),
     resultName: recordDoc,
     effect: "reversible",
-    doc: "Change the meeting's title, project and labels (a new project name joins the known projects; a new label joins the project's labels). unlabel removes labels.",
+    doc: "Change the meeting's title, project, labels or seats. Room and remote seats accept names or half-open intervals {name, fromSec?, toSec?}. A new project or label joins the known ones. unlabel removes labels.",
 });
 
 export const person = z.object({ name: z.string().min(1), email: z.string().min(1).optional() });
@@ -476,6 +532,37 @@ export const configSet = defineMethod({
     effect: "reversible",
     doc: "Write one meetings setting; the whole config is validated first and nothing is written when it fails.",
 });
+export const recordStart = defineMethod({
+    name: "recordStart",
+    params: z
+        .object({
+            meeting: z.string().optional(),
+            source: z.string().optional(),
+            title: z.string().optional(),
+            project: z.string().optional(),
+            display: z.string().optional(),
+            audio: z.string().optional(),
+        })
+        .strict(),
+    result: z.unknown(),
+    effect: "reversible",
+    doc: "Start a recording (tools meetings record start). Returns the meeting id, capturing identity, whether frames were omitted, and any partial-start reason.",
+});
+export const watchOnceMethod = defineMethod({
+    name: "watchOnce",
+    params: z.object({}).strict(),
+    result: z.string(),
+    effect: "reversible",
+    doc: "Run one tools meetings watch --once tick, including recording permission preflight, and return its outcome.",
+});
+export const autostartMethod = defineMethod({
+    name: "autostart",
+    params: z.object({ mode: z.enum(["on", "off", "status"]).optional() }).strict(),
+    positional: ["mode"],
+    result: z.unknown(),
+    effect: "reversible",
+    doc: "Read or change tools meetings autostart. Returns enabled, running and the last failed or partial start with its time and delivery receipts.",
+});
 export const captureCostMethod = defineMethod({
     name: "captureCost",
     params: z.object({}).strict(),
@@ -616,6 +703,144 @@ export const commentWithdraw = defineMethod({
     doc: "Withdraw an unread comment. Refuses a comment the receiver has already acknowledged.",
 });
 
+const seatsRpc = meetingsMethod("meeting.seats.suggest");
+export const roomDevices = defineMethod({
+    ...meetingsMethod("people.devices.list"),
+    name: "roomDevices",
+    doc: `Return devices and, with {offers: true} or {meeting}, questions with their supporting meeting IDs and available titles. CLI: ${toolCommand("meetings people devices list")} [--offers] [--meeting <id>].`,
+});
+export const decideRoomDevice = defineMethod({
+    ...meetingsMethod("people.devices.decide"),
+    name: "decideRoomDevice",
+    doc: `Return {changed, device, token?} for the owner's map, unmap, undo or yes/no answer. Answer with account, group and meetings from the offer, and the selected meeting when scoped. Undo sends {action: "undo", account, reverses: token}. Agent callers can read offers. CLI: ${toolCommand("meetings people devices")} map|unmap|answer.`,
+});
+const thresholdsRpc = meetingsMethod("meeting.thresholds.preview");
+export const applySeats = defineMethod({
+    name: "applySeats",
+    params: seatsRpc.params.extend({ replace: z.boolean().optional() }),
+    result: seatsRpc.result.extend({ saved: z.boolean() }),
+    effect: "reversible",
+    doc: `Return the seat preview and saved flag. Accept names or timed room and remote entries. Save when seats are absent, or replace them with replace: true. CLI: ${toolCommand("meetings", "seats")} <meeting> --apply --json.`,
+});
+export const voiceJobs = defineMethod({
+    ...voicesJobs,
+    name: "voiceJobs",
+    doc: `Return current and recent voice jobs with progress, counts and errors. CLI: ${toolCommand("meetings voices jobs")} [--project <p>] --json.`,
+});
+export const cancelVoiceJob = defineMethod({
+    ...voicesJobsCancel,
+    name: "cancelVoiceJob",
+    positional: ["id"],
+    doc: `Return the cancelled or terminal voice job, or null for an unknown id. CLI: ${toolCommand("meetings voices jobs cancel")} <id>.`,
+});
+
+export const backfillVoices = defineMethod({
+    ...voiceBackfill,
+    name: "backfillVoices",
+    doc: `Return added, already-present and skipped counts for human-confirmed samples, by meeting and person. dryRun counts without saving. CLI: ${toolCommand("meetings", "voices", "backfill")} [meetings...] [--project <p>] [--dry-run] --json.`,
+});
+export const seats = defineMethod({
+    ...seatsRpc,
+    name: "seats",
+    doc: `Return the current seats, suggested seats and the reason and confidence for each person. Room and remote accept names or half-open stays { name, fromSec?, toSec? }. CLI: ${toolCommand("meetings", "seats")} <meeting> --json.`,
+});
+export const thresholds = defineMethod({
+    name: "thresholds",
+    params: thresholdsRpc.params.omit({ values: true }).extend({
+        set: thresholdsRpc.params.shape.values.optional(),
+        preview: z.boolean().optional(),
+    }),
+    result: thresholdsRpc.result,
+    effect: "reversible",
+    doc: `Return thresholds, changes, counts and warnings. Pass a meeting and set (name to number) to save globally, or preview: true to compare without saving. CLI: ${toolCommand("meetings", "thresholds")} [meeting] [--set name=value] [--preview] --json.`,
+});
+export const voiceReadiness = defineMethod({
+    name: "voiceReadiness",
+    params: seatsRpc.params.pick({ meeting: true }),
+    result: z.object({
+        seats: z.boolean(),
+        samples: z.number(),
+        people: z.record(z.string(), z.number()),
+        ready: z.boolean(),
+        hints: z.array(z.string()),
+    }),
+    effect: "read",
+    doc: `Return the voice field of ${toolCommand("meetings", "show")} <meeting> --json, including seat coverage, per-person sample counts, readiness and next commands.`,
+});
+
+const browsePerson = voicesList.params.pick({ person: true });
+export const voices = defineMethod({
+    ...voicesList,
+    name: "voices",
+    params: z.discriminatedUnion("scope", [
+        browsePerson.extend({ scope: z.literal("meeting"), meeting: seatsRpc.params.shape.meeting }),
+        browsePerson.extend({ scope: z.literal("project"), project: voicesList.params.shape.project.unwrap() }),
+        browsePerson.extend({ scope: z.literal("global") }),
+    ]),
+    doc: `Return people, samples, learnt voice quality and conflicts for one meeting ID, project or the global library. CLI: ${toolCommand("meetings", "voices")} --json.`,
+});
+
+export const lineEligibility = defineMethod({
+    name: "lineEligibility",
+    params: seatsRpc.params.pick({ meeting: true }).extend({ line: z.number().int().nonnegative() }),
+    result: z.object({
+        channel: z.object({
+            side: z.enum(["mic", "call", "mixed", "unknown"]),
+            strong: z.boolean(),
+            source: z.enum(["segments", "energy", "both", "none"]).optional(),
+        }),
+        choices: z.array(z.string()),
+        excluded: z.array(z.object({ person: z.string(), reason: z.string() })),
+        reviewOnly: z.boolean(),
+    }),
+    effect: "read",
+    doc: `Return the channel, eligible people, exclusions with reasons and reviewOnly flag for a zero-based source transcript line. CLI: ${toolCommand("meetings", "evidence")} <meeting> --line-eligibility <index> --json.`,
+});
+
+export const voiceLibraryMethods = {
+    list: defineMethod({
+        ...voicesList,
+        doc: `Return people, confirmed samples, learnt voices and conflicts in the requested scope, as in ${toolCommand("meetings voices")} [--project <p> | --meeting <id> | --all] --json.`,
+    }),
+    sample: defineMethod({
+        ...voicesSample,
+        doc: `Return a hash-verified track, file, channel and playback interval by stable ID or scoped sample number. CLI: ${toolCommand("meetings voices play")} <person> --sample <id|number> --no-start --json.`,
+    }),
+    samples: defineMethod({
+        ...voicesList,
+        name: "voices.samples",
+        params: voicesList.params.required({ person: true }),
+        doc: `Return the person's stable sample IDs and source details, as in ${toolCommand("meetings voices samples")} <person>.`,
+    }),
+    quality: defineMethod({
+        ...voicesQuality,
+        doc: `Return independent sample counts, neighbors and advisory outliers for each learnt voice, as in ${toolCommand("meetings voices quality")}.`,
+    }),
+    play: defineMethod({
+        ...voicesSample,
+        name: "voices.play",
+        params: voicesSample.params.extend({ start: z.boolean().optional(), player: z.string().optional() }),
+        effect: "reversible",
+        doc: `Play the clip and return its verified path, track, channel and interval. Set start to false to resolve the clip as in ${toolCommand("meetings voices play")} <person> --sample <id> --no-start.`,
+    }),
+    move: defineMethod({
+        ...voicesMove,
+        doc: `Move a sample to the given owner and block the former owner from relearning it. Return the receipt or refusal from ${toolCommand("meetings voices move")}.`,
+    }),
+    reject: defineMethod({
+        ...voicesReject,
+        doc: `Reject the owner or source by sample ID. Return the receipt or refusal from ${toolCommand("meetings voices reject")}.`,
+    }),
+    remove: defineMethod({
+        ...voicesRemove,
+        doc: `Return the IDs and suggestions affected by ${toolCommand("meetings voices remove")}. Set preview to true for a planToken to pass when confirming.`,
+    }),
+    undo: defineMethod({
+        ...voicesUndo,
+        doc: `Undo a correction by token. Return the receipt or refusal from ${toolCommand("meetings voices undo")}.`,
+    }),
+};
+
 export const meetingsToolsetApi = defineApi({
     id: "meetings",
     global: "meetings",
@@ -623,8 +848,23 @@ export const meetingsToolsetApi = defineApi({
     summary:
         "List and open meetings; read their corrected transcript, evidence and items; suggest, confirm and reject items; name speakers.",
     methods: [
+        roomDevices,
+        decideRoomDevice,
+        applySeats,
+        backfillVoices,
+        voiceJobs,
+        cancelVoiceJob,
+        seats,
+        thresholds,
+        voiceReadiness,
+        voices,
+        lineEligibility,
+        ...Object.values(voiceLibraryMethods),
         list,
+        levels,
         open,
+        look,
+        measure,
         locate,
         overview,
         projectsLabels,
@@ -638,6 +878,9 @@ export const meetingsToolsetApi = defineApi({
         audioApply,
         configSet,
         captureCostMethod,
+        recordStart,
+        autostartMethod,
+        watchOnceMethod,
         assignSweepMethod,
     ],
     handles: [
@@ -668,6 +911,7 @@ export const meetingsToolsetApi = defineApi({
                 byChannel,
                 add,
                 suggest,
+                preview,
                 confirm,
                 reject,
                 reopen,

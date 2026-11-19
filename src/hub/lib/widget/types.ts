@@ -81,6 +81,8 @@ export const widgetPreferencesSchema = z.object({
     alertSummary: z.boolean().default(true),
     /** Show a compact answer field instead of a footer button in the alert popup. */
     alertCompactAnswer: z.boolean().default(true),
+    /** Show session rows or a newest-first feed of inbox entries in the hover list. */
+    previewView: z.enum(["sessions", "items"]).default("sessions"),
     /** The agents hover list: only sessions that need you, or every active session too. */
     previewFilter: z.enum(["needs-you", "active"]).default("needs-you"),
     /** The agents hover list's order: waiting for you first, newest activity first, or by project. */
@@ -118,6 +120,13 @@ export const widgetPreferencesSchema = z.object({
     dialogAnswer: z.enum(["press", "refuse"]).default("press"),
     /** Width in points of the rail's hover list (the agents preview). */
     previewWidth: z.number().min(260).max(560).default(324),
+    tasks: z
+        .object({
+            /** How claimed handoffs appear when Tasks opens. An unset preference starts each handoff folded. */
+            handoffs: z.enum(["folded", "expanded", "hidden"]).optional(),
+            showTooltips: z.boolean().optional(),
+        })
+        .optional(),
     /**
      * The Usage module's own preferences. Optional with no default, so a state saved before the module keeps its
      * bytes; the widget reads a missing key as its default.
@@ -134,8 +143,10 @@ export const widgetPreferencesSchema = z.object({
     stagedOnLeave: z.enum(["ask", "keep", "send"]).default("ask"),
     /** Seconds before a successful send-and-close folds the panel; 0 keeps it open. */
     sendCloseSeconds: z.number().min(0).max(60).default(2.5),
-    /** The inbox of every session: entries grouped under their session ("session"), or one list. */
-    inboxGrouping: z.enum(["session", "list"]).default("session"),
+    /** The newest-first feed, all entries of each session together, or one waiting-first list. */
+    inboxGrouping: z.enum(["feed", "session", "list"]).default("feed"),
+    inboxFeedRuns: z.enum(["session", "project"]).default("session"),
+    inboxFeedHeaders: z.enum(["groups", "all"]).default("all"),
     /** The filter a session's inbox opens with: every entry ("all"), the inbox entries, or the decisions. */
     inboxFilter: z.enum(["all", "inbox", "decisions"]).default("all"),
     /** The filter the inbox of every session opens with: every entry ("all"), the ones that need you, or unread. */
@@ -345,5 +356,7 @@ export const widgetStateSchema = z.object({
     inboxClearedAt: z.number().finite().nonnegative().optional(),
     /** `tools hub widget show-decision`: the running widget shows this decision once per `at` (a decision link). */
     showDecision: z.object({ id: z.string().min(1), at: z.number().finite() }).optional(),
+    /** Maintained by the meetings watcher while a required recording grant is unavailable. */
+    meetingRecordingWarning: z.string().min(1).optional(),
 });
 export type WidgetState = z.infer<typeof widgetStateSchema>;

@@ -54,6 +54,7 @@ export const widgetActionSchema = z.discriminatedUnion("action", [
         sessionId: z.string(),
         expectedRevision: z.number().int().positive(),
         state: z.enum(["drafted", "dismissed", "acknowledged", "implemented"]),
+        comment: z.string().trim().min(1).optional(),
         draft: z.string().optional(),
         draftOption: z.string().optional(),
     }),
@@ -126,6 +127,7 @@ export async function performWidgetAction({
             }
             return updateDecision(files.file, files.events, request.id, {
                 state: request.state,
+                ...(request.comment !== undefined ? { comment: request.comment } : {}),
                 expectedRevision: request.expectedRevision,
                 ...(request.draft !== undefined ? { draft: request.draft } : {}),
                 ...(request.draftOption !== undefined ? { draftOption: request.draftOption } : {}),

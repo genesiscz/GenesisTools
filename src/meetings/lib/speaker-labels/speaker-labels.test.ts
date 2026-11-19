@@ -1,23 +1,31 @@
-import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { existsSync, linkSync, readFileSync, renameSync, utimesSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { existsSync, linkSync, mkdtempSync, readFileSync, renameSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import type { AreaClients } from "@genesiscz/utils/genesis-tools";
 import * as requestJournal from "@genesiscz/utils/genesis-tools/areas/person/journal";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
+import type { ChannelEmbedding } from "@genesiscz/utils/meetings/voice";
+import * as voiceEmbedding from "@genesiscz/utils/meetings/voice";
 import * as voiceFeatures from "@genesiscz/utils/meetings/voice-features";
+import { addVoicePrint } from "@genesiscz/utils/meetings/voice-store";
 import { PROFILER_SCOPE_NAMES, profiler } from "@genesiscz/utils/profile";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import * as evidenceModule from "@genesiscz/utils/transcribe/evidence";
 import type { WordCheck } from "@genesiscz/utils/transcribe/languages/word-check";
 import { groupTurns, transcriptMarkdown, transcriptTextLines } from "@genesiscz/utils/transcribe/render";
+import * as terms from "@genesiscz/utils/transcribe/terms";
+import * as speechHistory from "../local-speech";
 import { OpenedMeeting } from "../opened-meeting";
 import { questionView } from "../questions";
 import { rawMeeting } from "../raw";
 import { reviewRow } from "../review-rows";
 import { suggestItems } from "../suggest";
-import { runSuggest } from "../suggest-run";
+import { previewSuggestionRuns, runSuggest } from "../suggest-run";
 import { correctTranscript } from "../transcript-corrections";
 import * as labelers from "./index";
 import { mergeLineLabels, proposeSpeakerLabels } from "./index";
@@ -126,8 +134,10 @@ describe("suggest runner word settings", () => {
         const scope = profiler.scope("meetings-suggest");
         const measured = spyOn(scope, "measureAsync");
         const sections = spyOn(scope, "section");
-        spies.push(measured, sections);
+        const history = spyOn(speechHistory, "localSpeechDuring");
+        spies.push(measured, sections, history);
         await runSuggest({ store, record, rules: ["terms"], wordCheck: "off" });
+        expect(history).not.toHaveBeenCalled();
         expect(PROFILER_SCOPE_NAMES).toContain("meetings-suggest");
         expect(measured.mock.calls.map(([label]) => label)).toContain("collectForSuggest");
         expect(sections.mock.calls.map(([label]) => label)).toEqual(
@@ -135,14 +145,14 @@ describe("suggest runner word settings", () => {
         );
     });
 
-    test("seat lines use the segment share before energy and skip evidence unrelated to a seat", async () => {
+    test("seat lines prefer calibrated energy, keep the segment fallback and skip unrelated evidence", async () => {
         const { opened, meeting, config } = await runnerFixture();
         config.global.speakerLabels.seat.enabled = true;
         config.global.speakerLabels.voice.enabled = false;
-        meeting.transcript = [0, 5, 10].map((startSec) => ({ speaker: "Speaker 1", startSec, text: "A line." }));
+        meeting.transcript = [0, 5, 10, 15].map((startSec) => ({ speaker: "Speaker 1", startSec, text: "A line." }));
         const share = Object.assign(
-            mock(() => 0.1),
-            { acoustic: mock(() => undefined) }
+            mock((from: number) => (from === 0 ? 0 : undefined)),
+            { raw: (from: number) => (from === 5 ? 0.9 : undefined), acoustic: mock(() => undefined) }
         );
         spies.push(
             spyOn(opened, "energy").mockResolvedValue({ share }),
@@ -152,16 +162,128 @@ describe("suggest runner word settings", () => {
                 segments: [
                     { startSec: 0, endSec: 10, channel: "mic" },
                     { startSec: 5, endSec: 10, channel: "system" },
+                    { startSec: 10, endSec: 15, channel: "mic" },
                 ],
             })
         );
         const labels = await proposeSpeakerLabels(opened, config.global.speakerLabels);
         expect(labels.map(({ index, seat }) => [index, seat])).toEqual([
-            [0, "mic"],
-            [2, "call"],
+            [0, "call"],
+            [1, "mic"],
+            [2, "mic"],
         ]);
-        expect(share).toHaveBeenCalledTimes(1);
+        expect(share).toHaveBeenCalledTimes(4);
         expect(share.acoustic).not.toHaveBeenCalled();
+    });
+
+    test("calibrated seat answers stay below apply in the unsure band, including after reopening old answers", async () => {
+        const owner = "Alice Example";
+        const { opened, meeting, config, store, record } = await runnerFixture({
+            seats: { room: [owner], remote: [] },
+        });
+        config.global.speakerLabels.voice.enabled = false;
+        config.global.suggest.applyAbove = 0.45;
+        meeting.transcript = [0, 5, 10, 15, 20].map((startSec) => ({ speaker: "Voice", startSec, text: "A line." }));
+        const evidence = {
+            selfName: owner,
+            files: [],
+            speaking: [],
+            segments: [{ startSec: 0, endSec: 30, channel: "mic" as const }],
+        };
+        spies.push(spyOn(opened, "evidence").mockResolvedValue(evidence));
+        const run = () => runSuggest({ store, record, rules: ["speakers", "evidence"] });
+        await run();
+        const shares = new Map([
+            [0, 0.2],
+            [5, 0.62],
+            [10, 0.7],
+            [20, 0.5],
+        ]);
+        spies.push(spyOn(opened, "energy").mockResolvedValue({ share: (from) => shares.get(from) }));
+        const labels = await proposeSpeakerLabels(opened, config.global.speakerLabels);
+        expect(labels.filter((label) => label.person === owner).map((label) => label.index)).toEqual([1, 2, 3]);
+        const preview = await labelers.preparePreviewLabels({
+            opened,
+            settings: config.global.speakerLabels,
+            presence: [],
+        });
+        const weak = (await preview(config.global.speakerLabels.voice, 0.35)).find((label) => label.index === 1);
+        expect(weak?.score).toBeLessThan(0.35);
+        const allApply = await preview(config.global.speakerLabels.voice, 0);
+        expect(allApply.some((label) => label.index === 1 && label.person)).toBe(false);
+
+        // An agreeing legacy channel rule must not push the fresh seat answer over the threshold either.
+        const fresh = suggestItems({
+            record,
+            meeting,
+            labels,
+            rules: ["evidence"],
+            evidence,
+            energyMicShare: (from) => shares.get(from),
+            dictionary: { abbrExpansion: "every", entries: [] },
+            sourceWords: [],
+            now: START,
+        });
+        expect(
+            fresh.find((item) => item.evidence?.reason === "seat-of-one" && item.evidence.transcriptLine === 1)
+                ?.confidence
+        ).toBeLessThan(0.45);
+
+        await run();
+        const savedSeats = new MeetingStore(store.storage)
+            .read(record.id)!
+            .items.filter((item) => item.status === "suggested" && item.evidence?.reason === "seat-of-one");
+        expect(savedSeats.map((item) => item.evidence?.transcriptLine)).toEqual([1, 2, 3]);
+        expect(savedSeats[0]?.confidence).toBeLessThan(0.45);
+        expect(savedSeats.slice(1).map((item) => item.confidence)).toEqual([0.95, 0.95]);
+    });
+
+    test("a speakers-only voice pass saves each local speech removal once", async () => {
+        const { store, record, meeting, config } = await runnerFixture();
+        config.global.speakerLabels.voice.enabled = true;
+        meeting.transcript = [{ startSec: 5, speaker: "Voice", text: "Fixture render complete." }];
+        spies.push(
+            spyOn(speechHistory, "localSpeechDuring").mockReturnValue([
+                { ts: Date.parse(START) + 5000, text: "Fixture render complete" },
+            ]),
+            spyOn(labelers, "proposeSpeakerLabels").mockResolvedValue([
+                { index: 0, seat: "mic", reason: "named", labeler: "voice", person: "Alice Example", score: 0.8 },
+            ])
+        );
+        const run = () => runSuggest({ store, record, rules: ["speakers"] });
+        await run();
+        await run();
+        const saved = new MeetingStore(store.storage).read(record.id)!.items;
+        expect(saved.some((item) => item.rules.includes(MeetingRule.VoiceEmbedding))).toBe(true);
+        expect(saved.filter((item) => item.kind === "removal")).toEqual([
+            expect.objectContaining({
+                confidence: 0.9,
+                rules: [MeetingRule.LocalSpeech],
+                evidence: { reason: "local speech output", transcriptLine: 0 },
+            }),
+        ]);
+    });
+
+    test("an evidence-free threshold preview rebuilds measured lines for changed attendance", async () => {
+        const { opened, meeting, config } = await runnerFixture({ sources: { wisprflow: { meetingId: "planning" } } });
+        meeting.transcript = [{ speaker: "Voice", startSec: 5, text: "The supplier joined the call." }];
+        config.global.speakerLabels.seat.enabled = false;
+        config.global.speakerLabels.voice.enabled = false;
+        spies.push(spyOn(opened, "wordCheck").mockResolvedValue({ reason: "fixture" }));
+        const draft = structuredClone(config);
+        draft.global.suggest.leaveSilenceMinutes += 1;
+        const before = [{ name: "Finch Example", fromSec: 0, toSec: 4 }];
+        const after = [{ name: "Finch Example", fromSec: 0, toSec: 10 }];
+        spies.push(spyOn(opened, "presence").mockResolvedValueOnce(before).mockResolvedValue(after));
+        const measure = spyOn(evidenceModule, "lineEvidence");
+        spies.push(measure);
+        await previewSuggestionRuns(opened, config, draft);
+        expect(measure.mock.calls).toContainEqual([
+            meeting.transcript,
+            { segments: [], speaking: [] },
+            after,
+            undefined,
+        ]);
     });
 
     test("a speakers-only run does not read term dictionaries or open sound for the seat labeler", async () => {
@@ -230,6 +352,104 @@ describe("suggest runner word settings", () => {
         expect(reopened.items.some((item) => item.kind === "question" && item.heard === "zorbax")).toBe(false);
     });
 
+    test("lowering the candidate cutoff restores automatic retirements and preserves human rejection", async () => {
+        const { store, record, opened, config } = await runnerFixture();
+        const check: WordCheck = {
+            provider: "fixture",
+            language: "cs",
+            verdict: () => ({ class: "dictionary", count: 9 }),
+            dispose: () => undefined,
+        };
+        spies.push(spyOn(opened, "wordCheck").mockResolvedValue({ check }));
+        const term = {
+            kind: "term" as const,
+            heard: "deployovat",
+            proposed: "Deploy",
+            status: "suggested" as const,
+            rules: [MeetingRule.UnknownWord],
+            suggestedAt: START,
+            evidence: {
+                occurrences: 1,
+                candidateSources: [{ term: "Deploy", source: "meeting" }],
+                candidateScores: [{ term: "Deploy", confidence: 0.85 }],
+            },
+        };
+        await store.update(
+            record.id,
+            { command: "fixture", change: "save an automatic and a rejected candidate" },
+            (current) => {
+                current.items.push(
+                    { ...term, id: "i1" },
+                    { ...term, id: "i2", heard: "deployovali", status: "rejected", decidedAt: START },
+                    {
+                        id: "i3",
+                        kind: "question",
+                        status: "suggested",
+                        about: "term",
+                        fromSec: 0,
+                        toSec: 4,
+                        question: "What is it?",
+                        heard: "deployovat",
+                        choices: [],
+                        decides: ["i1"],
+                        rules: [],
+                        suggestedAt: START,
+                    }
+                );
+            }
+        );
+        const suggest = () => runSuggest({ store, record: store.read(record.id)!, rules: ["terms"] });
+        config.global.suggest.terms.unknownCandidate = 0.9;
+        expect((await suggest()).retired).toEqual(["i1", "i3"]);
+        const reopened = new MeetingStore(store.storage);
+        expect(
+            reopened
+                .read(record.id)
+                ?.items.slice(0, 3)
+                .map((item) => item.status)
+        ).toEqual(["rejected", "rejected", "rejected"]);
+
+        config.global.suggest.terms.unknownCandidate = 0.8;
+        await suggest();
+        const items = reopened.read(record.id)!.items;
+        expect(items.slice(0, 3).map((item) => item.status)).toEqual(["suggested", "rejected", "suggested"]);
+        expect(items[0]?.evidence?.retired).toBeUndefined();
+    });
+
+    test("an unknown-word candidate exactly at the fractional cutoff qualifies", async () => {
+        const { store, record, opened, config } = await runnerFixture();
+        const check: WordCheck = {
+            provider: "fixture",
+            language: "cs",
+            verdict: () => ({ class: "dictionary", count: 9 }),
+            dispose: () => undefined,
+        };
+        spies.push(spyOn(opened, "wordCheck").mockResolvedValue({ check }));
+        spies.push(
+            spyOn(terms, "findUnknownWords").mockReturnValue([
+                {
+                    heard: "deployovat",
+                    occurrences: 1,
+                    examples: [],
+                    verdict: { class: "unknown", count: 0 },
+                    candidates: [{ term: "Deploy", confidence: 55, source: "meeting" }],
+                },
+            ])
+        );
+        const suggest = () => runSuggest({ store, record: store.read(record.id)!, rules: ["terms"] });
+        config.global.suggest.terms.unknownCandidate = 0.56;
+        expect((await suggest()).fresh).toEqual([]);
+        config.global.suggest.terms.unknownCandidate = 0.55;
+        expect((await suggest()).fresh).toContainEqual(
+            expect.objectContaining({
+                kind: "term",
+                heard: "deployovat",
+                proposed: "Deploy",
+                confidence: 0.55,
+            })
+        );
+    });
+
     test("an agent's run that leaves word questions posts one window notice; other runs and callers post none", async () => {
         const { store, record, opened, meeting, config } = await runnerFixture();
         config.global.suggest.words.minOccurrences = 2;
@@ -275,7 +495,7 @@ describe("suggest runner word settings", () => {
         });
     });
 
-    test("a test process posts nothing real: without a fake the person area refuses and the run only warns", async () => {
+    test("a test process posts nothing real: without a fake the sandbox home sends no request and the run only warns", async () => {
         const { store, record, opened, meeting, config } = await runnerFixture();
         config.global.suggest.words.minOccurrences = 1;
         const check: WordCheck = {
@@ -299,7 +519,7 @@ describe("suggest runner word settings", () => {
         });
         expect(result.fresh.some((item) => item.kind === "question")).toBe(true);
         expect(dispatch).not.toHaveBeenCalled();
-        expect(result.warnings).toEqual([expect.stringContaining("The meeting review request could not reach you")]);
+        expect(result.warnings).toEqual([expect.stringContaining("no review request was sent")]);
     });
 
     test("twelve open word questions leave room for a long-stretch question", async () => {
@@ -389,9 +609,13 @@ describe("suggest runner word settings", () => {
             );
         });
         const suggest = () => runSuggest({ store, record: store.read(record.id)!, rules: ["evidence"] });
-        await suggest();
+        const first = await suggest();
         await suggest();
         const saved = new MeetingStore(store.storage).read(record.id)!;
+        const qualityQuestion = (row: MeetingRecord["items"][number]) =>
+            row.kind === "question" && row.group === "long-stretch";
+        expect(first.fresh.filter(qualityQuestion)).toEqual(saved.items.filter(qualityQuestion));
+        expect(first.fresh.some((row) => row.evidence?.qualitySource)).toBe(false);
         expect(
             saved.items.flatMap((item) =>
                 item.kind === "question" && item.group === "long-stretch" ? [item.fromSec] : []
@@ -477,6 +701,52 @@ describe("seat labeler", () => {
 });
 
 describe("speaker-label integration", () => {
+    test("R3 preview and writer agree on the muted room guest and leave preview bytes untouched", async () => {
+        const owner = "Elm Example";
+        const guest = "Finch Example";
+        const { store, record, meeting, opened, config } = await runnerFixture({
+            seats: { room: [owner, guest], remote: [] },
+            participants: [
+                { name: owner, self: true, from: ["fixture"] },
+                { name: guest, from: ["fixture"] },
+            ],
+        });
+        config.global.speakerLabels.voice.enabled = false;
+        meeting.transcript = [{ speaker: "Voice", startSec: 0, text: "Yes please." }];
+        spies.push(
+            spyOn(opened, "evidence").mockResolvedValue({
+                selfName: owner,
+                files: [],
+                segments: [{ startSec: 0, endSec: 30, channel: "mic" }],
+                speaking: [{ tSec: 0, speaking: [], muted: [guest] }],
+            }),
+            spyOn(opened, "energy").mockResolvedValue({
+                share: Object.assign(() => 1, {
+                    voice: () => ({
+                        person: guest,
+                        quality: "matched" as const,
+                        candidates: [],
+                        model: "fixture",
+                        reason: "independent match",
+                    }),
+                }),
+            })
+        );
+        const args = { store, record, rules: ["evidence" as const] };
+        const bytes = readFileSync(store.path(record.id));
+        const { previewSuggestions } = await import("../suggest-run");
+        const preview = await previewSuggestions(args);
+        expect(readFileSync(store.path(record.id))).toEqual(bytes);
+        const predicted = preview.changes.fresh.find((item) => item.kind === "speaker-range");
+        expect(predicted).toMatchObject({ speaker: guest, rules: [MeetingRule.Voice] });
+        await runSuggest(args);
+        const saved = new MeetingStore(store.storage).read(record.id)!;
+        expect(saved.items.find((item) => item.id === predicted!.id)).toMatchObject({
+            speaker: guest,
+            rules: [MeetingRule.Voice],
+        });
+        expect((await runSuggest({ ...args, record: saved })).fresh).toEqual([]);
+    });
     test("a stranger stretch asks once, withdraws old seat proposals, and preserves confirmed lines after reopen", async () => {
         const { store, record, meeting, config } = await runnerFixture({
             participants: [
@@ -1042,7 +1312,7 @@ describe("speaker-label integration", () => {
         expect(range).toEqual(before);
     });
 
-    test("an agreeing old channel rule joins the item, while a different person gives one question even on a short line", async () => {
+    test("R3 an agreeing channel rule joins the seat but an ineligible name cannot reopen the line", async () => {
         const { record, meeting } = await runnerFixture({
             participants: [{ name: "Alice Example", self: true, from: ["fixture"] }],
         });
@@ -1073,10 +1343,9 @@ describe("speaker-label integration", () => {
         const ranges = fresh.filter((item) => item.kind === "speaker-range");
         const questions = fresh.filter((item) => item.kind === "question");
         expect(ranges).toHaveLength(1);
-        expect(ranges[0]?.speaker).toBeUndefined();
-        expect(questions).toHaveLength(1);
-        expect(questions[0]?.choices).toEqual(expect.arrayContaining(["Alice Example", "Bob Example"]));
-        expect(questions[0]?.decides).toEqual([ranges[0]!.id]);
+        expect(ranges[0]?.speaker).toBe("Alice Example");
+        expect(ranges[0]?.candidates ?? []).not.toContain("Bob Example");
+        expect(questions).toHaveLength(0);
         record.items.push(...fresh);
         expect(suggestItems({ ...inputs, labels: [{ ...labels[0]!, person: "Bob Example" }] })).toEqual([]);
     });
@@ -1104,6 +1373,235 @@ describe("speaker-label integration", () => {
         const second = await runSuggest({ store, record: reopened, rules: ["speakers"] });
         expect(second.fresh).toEqual([]);
         expect(new MeetingStore(store.storage).read(record.id)?.items).toEqual(reopened.items);
+    });
+});
+
+describe("voice support on seat lines", () => {
+    const owner = "Alice Example";
+    const project = "voice-support-fixture";
+    let previousHome: string;
+
+    beforeEach(() => {
+        previousHome = env.tools.getHome();
+        env.testing.set("GENESIS_TOOLS_HOME", mkdtempSync(join(tmpdir(), "voice-support-")));
+    });
+    afterEach(() => env.testing.set("GENESIS_TOOLS_HOME", previousHome));
+
+    function readyChannel(options: { embedding: number[]; fromSec: number; toSec: number; audioPath: string }) {
+        const channel: ChannelEmbedding = {
+            quality: "ready",
+            model: "fixture-model",
+            embedding: options.embedding,
+            fromSec: options.fromSec,
+            toSec: options.toSec,
+            channel: 0,
+            track: "raw-mic",
+            source: { audioPath: options.audioPath, size: 13, mtimeMs: 1 },
+        };
+        return channel;
+    }
+
+    /** Alice alone on the microphone seat, one saved sample of her voice, and one embedding per transcript line. */
+    async function seatVoiceFixture(vectors: number[][]) {
+        const fixture = await runnerFixture({
+            project,
+            participants: [{ name: owner, self: true, from: ["fixture"] }],
+            seats: { room: [owner], remote: [] },
+        });
+        const { store, record, opened, meeting } = fixture;
+        const audioPath = join(store.folder(record.id), "fixture.wav");
+        writeFileSync(audioPath, "fixture audio");
+        const endSec = vectors.length * 5 + 10;
+        meeting.transcript = vectors.map((_, index) => ({
+            speaker: "Speaker 1",
+            startSec: index * 5,
+            text: "A line.",
+        }));
+        spies.push(
+            spyOn(opened, "evidence").mockResolvedValue({
+                segments: [{ startSec: 0, endSec, channel: "mic" }],
+                speaking: [],
+                files: [],
+            }),
+            spyOn(opened, "presence").mockResolvedValue([{ name: owner, fromSec: 0, toSec: endSec }]),
+            spyOn(opened, "sound").mockResolvedValue({
+                tracks: [],
+                slice: (request) => ({
+                    track: "source-mic",
+                    path: audioPath,
+                    channel: 0,
+                    clock: "source",
+                    fileFromSec: request.fromSec,
+                    fileToSec: request.toSec,
+                }),
+            }),
+            spyOn(voiceEmbedding, "embedVoiceLines").mockImplementation(async (input) =>
+                input.spans.map((span) => ({
+                    index: span.index,
+                    channels: [
+                        readyChannel({
+                            embedding: vectors[span.index]!,
+                            fromSec: span.fromSec,
+                            toSec: span.toSec,
+                            audioPath,
+                        }),
+                    ],
+                }))
+            )
+        );
+        addVoicePrint(
+            project,
+            owner,
+            {
+                meeting: "training",
+                sourceSha: "digest",
+                seat: "mic",
+                track: "source-mic",
+                fromSec: 0,
+                toSec: 5,
+                embedding: [1, 0],
+                confirmedAt: START,
+            },
+            "fixture-model"
+        );
+        return fixture;
+    }
+
+    function storedRanges(store: MeetingStore, id: string) {
+        return new MeetingStore(store.storage).read(id)!.items.filter((item) => item.kind === "speaker-range");
+    }
+
+    test("merge keeps the seat label and attaches the voice's support only when it names the seat's person", () => {
+        const owned: LineLabel = { labeler: "seat", index: 0, seat: "mic", person: owner, reason: "seat-of-one" };
+        const support = { person: owner, score: 0.82, samples: 21 };
+        const voiced: LineLabel = {
+            labeler: "voice",
+            index: 0,
+            seat: "mic",
+            person: owner,
+            reason: "named",
+            score: 0.8,
+            voiceSupport: support,
+        };
+        expect(
+            mergeLineLabels(
+                new Map([
+                    ["seat", [owned]],
+                    ["voice", [voiced]],
+                ])
+            )
+        ).toEqual([{ ...owned, voiceSupport: support }]);
+        const elsewhere: LineLabel = { ...voiced, voiceSupport: { ...support, person: "Bob Example" } };
+        expect(
+            mergeLineLabels(
+                new Map([
+                    ["seat", [owned]],
+                    ["voice", [elsewhere]],
+                ])
+            )
+        ).toEqual([owned]);
+        const veto: LineLabel = {
+            labeler: "voice",
+            index: 0,
+            seat: "mic",
+            reason: "not-the-seat-person",
+            score: 0.1,
+            next: { person: owner, score: 0.1 },
+        };
+        expect(
+            mergeLineLabels(
+                new Map([
+                    ["seat", [owned]],
+                    ["voice", [veto]],
+                ])
+            )
+        ).toEqual([veto]);
+    });
+
+    test("a seat line whose voice matches the seat person carries voiceSupport and keeps confidence 0.95", async () => {
+        const { store, record, opened, config } = await seatVoiceFixture([
+            [1, 0],
+            [0.96, 0.28],
+        ]);
+        const labels = await proposeSpeakerLabels(opened, config.global.speakerLabels);
+        expect(labels.map(({ labeler, reason, person, score }) => [labeler, reason, person, score])).toEqual([
+            ["seat", "seat-of-one", owner, undefined],
+            ["seat", "seat-of-one", owner, undefined],
+        ]);
+        expect(labels[0]?.voiceSupport).toEqual({ person: owner, score: 1, samples: 1 });
+        expect(labels[1]?.voiceSupport).toMatchObject({ person: owner, samples: 1 });
+        expect(labels[1]?.voiceSupport?.score).toBeCloseTo(0.96, 6);
+
+        await runSuggest({ store, record, rules: ["speakers"] });
+        const ranges = storedRanges(store, record.id);
+        expect(ranges.map((item) => [item.speaker, item.confidence, item.rules])).toEqual([
+            [owner, 0.95, [MeetingRule.Attendance]],
+            [owner, 0.95, [MeetingRule.Attendance]],
+        ]);
+        expect(ranges[0]?.evidence).toMatchObject({
+            labeler: "seat",
+            reason: "seat-of-one",
+            voiceSupport: { person: owner, score: 1, samples: 1 },
+        });
+        expect(ranges[0]?.evidence?.score).toBeUndefined();
+    });
+
+    test("a stranger's line on the seat still gets not-the-seat-person while the owner's lines carry support", async () => {
+        const { opened, config } = await seatVoiceFixture([
+            [1, 0],
+            [0, 1],
+            [1, 0],
+        ]);
+        const labels = await proposeSpeakerLabels(opened, config.global.speakerLabels);
+        expect(labels.map(({ labeler, reason, person }) => [labeler, reason, person])).toEqual([
+            ["seat", "seat-of-one", owner],
+            ["voice", "not-the-seat-person", undefined],
+            ["seat", "seat-of-one", owner],
+        ]);
+        expect(labels[1]).toMatchObject({ score: 0, next: { person: owner, score: 0 } });
+        expect(labels.map((label) => label.voiceSupport?.person)).toEqual([owner, undefined, owner]);
+    });
+
+    test("with supportOnSeatLines off the labels are today's: the same seats and vetoes, no support", async () => {
+        expect(meetingsConfigSchema.parse({}).global.speakerLabels.voice.supportOnSeatLines).toBe(true);
+        const { opened, config } = await seatVoiceFixture([
+            [1, 0],
+            [0, 1],
+            [1, 0],
+        ]);
+        const on = await proposeSpeakerLabels(opened, config.global.speakerLabels);
+        config.global.speakerLabels.voice.supportOnSeatLines = false;
+        const off = await proposeSpeakerLabels(opened, config.global.speakerLabels);
+        expect(on.filter((label) => label.voiceSupport)).toHaveLength(2);
+        expect(off.filter((label) => label.voiceSupport)).toEqual([]);
+        expect(on.map((label): LineLabel => ({ ...label, voiceSupport: undefined }))).toEqual(off);
+    });
+
+    test("a rerun adds the voice's support to the stored seat proposal and takes it away when the setting is off", async () => {
+        const { store, record, config } = await seatVoiceFixture([
+            [1, 0],
+            [1, 0],
+        ]);
+        config.global.speakerLabels.voice.supportOnSeatLines = false;
+        await runSuggest({ store, record, rules: ["speakers"] });
+        const before = storedRanges(store, record.id);
+        expect(before.map((item) => item.evidence?.voiceSupport)).toEqual([undefined, undefined]);
+
+        config.global.speakerLabels.voice.supportOnSeatLines = true;
+        const second = await runSuggest({ store, record: store.read(record.id)!, rules: ["speakers"] });
+        expect(second.fresh).toEqual([]);
+        const supported = storedRanges(store, record.id);
+        expect(supported.map((item) => [item.id, item.status, item.confidence])).toEqual(
+            before.map((item) => [item.id, "suggested", 0.95])
+        );
+        expect(supported.map((item) => item.evidence?.voiceSupport)).toEqual([
+            { person: owner, score: 1, samples: 1 },
+            { person: owner, score: 1, samples: 1 },
+        ]);
+
+        config.global.speakerLabels.voice.supportOnSeatLines = false;
+        await runSuggest({ store, record: store.read(record.id)!, rules: ["speakers"] });
+        expect(storedRanges(store, record.id)).toEqual(before);
     });
 });
 

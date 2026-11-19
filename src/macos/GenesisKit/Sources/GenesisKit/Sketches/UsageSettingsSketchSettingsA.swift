@@ -219,6 +219,10 @@ struct UsageSettingsSketchPanesA: View {
                     identifier: "hub.procs.energy", isOn: $preferences.processEnergy)
                     .usageSketchRowA()
             }
+            UsageSettingsSketchGroupA("Work", symbol: "checklist") {
+                HubWorkOpeningProjectPicker().usageSketchRowA()
+            }
+            .nativeSettingsAnchor("work")
             UsageSettingsSketchGroupA("Worktrees", symbol: "arrow.triangle.branch") {
                 number("Removable after idle for", detail: "Only worktrees idle this long count as removable. 0 days means any idle time.",
                        unit: "days", range: HubPreferences.cleanupIdleDaysRange, identifier: "hub.cleanup.idleDays",
