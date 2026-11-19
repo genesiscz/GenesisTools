@@ -634,9 +634,22 @@ function decideAccept(cmd: Extract<WorkCommand, { verb: "accept" }>, view: Store
 
         const item = resolved.item;
         items.push(item.id);
+        const to = TRANSITIONS.accept[item.state];
+
+        if (to === undefined) {
+            diagnostics.push(
+                infoDiagnostic("NOOP", `${item.id} is ${item.state}; accept changes only a spotted item.`)
+            );
+            continue;
+        }
+
         const set: ItemPatch = {};
 
         if (cmd.type !== undefined && cmd.type !== item.type) {
+            if (item.type === "handoff" || cmd.type === "handoff") {
+                return fail("TYPE_LOCKED", "A handoff stays a handoff; make a new item instead.", "type");
+            }
+
             set.type = cmd.type;
         }
 
@@ -646,15 +659,6 @@ function decideAccept(cmd: Extract<WorkCommand, { verb: "accept" }>, view: Store
 
         if (Object.keys(set).length > 0) {
             changes.push({ ...base(env, item.id), kind: "edited", payload: { set } });
-        }
-
-        const to = TRANSITIONS.accept[item.state];
-
-        if (to === undefined) {
-            diagnostics.push(
-                infoDiagnostic("NOOP", `${item.id} is ${item.state}; accept changes only a spotted item.`)
-            );
-            continue;
         }
 
         changes.push(move(env, item, to));
@@ -1230,7 +1234,17 @@ function guard(command: WorkCommand, view: StoreView, env: WriteEnv): Decision |
         case "unlink":
             return check(command.ref, "reference");
         case "accept":
-            return first(command.refs.map((ref) => check(ref, "accept")));
+            return first(
+                command.refs.map((ref) => {
+                    const item = view.resolve(ref)?.item;
+                    const changesFields =
+                        item?.state === "spotted" &&
+                        ((command.type !== undefined && command.type !== item.type) ||
+                            (command.severity !== undefined && command.severity !== item.severity));
+
+                    return check(ref, "accept") ?? (changesFields ? check(ref, "edit") : null);
+                })
+            );
         case "drop":
             return first(command.refs.map((ref) => check(ref, "drop")));
         case "handoff":
