@@ -350,6 +350,36 @@ describe("github cache database", () => {
         await expect(searchCachedIssues("save", "semantic", { advanced: true }, deps)).rejects.toThrow("keyword");
     });
 
+    test("local ranking filters by cached comment reactions before embedding", async () => {
+        const repo = getOrCreateRepo("acme", "widgets");
+        const qualifying = upsertIssue(issueFields(repo.id, { number: 1, title: "Save failure" }));
+        const below = upsertIssue(issueFields(repo.id, { number: 2, title: "Save issue" }));
+        upsertIssue(issueFields(repo.id, { number: 3, title: "Save error" }));
+        upsertComments([
+            commentRecord({ id: "a", issue_id: qualifying.id, reaction_count: 3 }),
+            commentRecord({ id: "b", issue_id: below.id, reaction_count: 2 }),
+        ]);
+        let embedded = 0;
+        const embedder = {
+            dimensions: 2,
+            isAvailable: async () => true,
+            embed: async () => {
+                embedded++;
+                return { dimensions: 2, vector: new Float32Array([1, 0]) };
+            },
+        };
+        for (const mode of ["semantic", "hybrid"] as const) {
+            const results = await searchCachedIssues(
+                "save",
+                mode,
+                { minCommentReactions: 3 },
+                { cachePath: join(dir, "cache.db"), embedder }
+            );
+            expect(results.map((result) => result.number)).toEqual([1]);
+        }
+        expect(embedded).toBe(4);
+    });
+
     test("semantic synonyms and keyword matches both contribute to hybrid rank", async () => {
         const repo = getOrCreateRepo("acme", "widgets");
         upsertIssue(issueFields(repo.id, { number: 1, title: "Gray screen", body: "" }));
