@@ -1,6 +1,4 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createConfigStore } from "@genesiscz/utils/genesis-tools/actions/config";
 import { createAreaEventBus } from "@genesiscz/utils/genesis-tools/actions/events";
@@ -10,11 +8,12 @@ import { memoryStateStore } from "@genesiscz/utils/genesis-tools/actions/state";
 import { AREAS } from "@genesiscz/utils/genesis-tools/areas";
 import type { ServiceDoor } from "@genesiscz/utils/genesis-tools/service/clients";
 import { okReply } from "@genesiscz/utils/output/reply";
+import { makeTempDir } from "@genesiscz/utils/paths";
 import { workMethods } from "@genesiscz/utils/work/api";
 import { registerWorkDoor } from "@genesiscz/utils/work/door";
 
 function deps(events = createAreaEventBus(), inService?: { agent: boolean }): EngineDeps {
-    const dir = mkdtempSync(join(tmpdir(), "gt-work-area-"));
+    const dir = makeTempDir("gt-work-area-");
     return {
         config: createConfigStore({ registry: AREAS, file: join(dir, "config.json") }),
         state: memoryStateStore(),

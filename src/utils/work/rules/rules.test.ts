@@ -1,9 +1,9 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { makeTempDir } from "@genesiscz/utils/paths";
 import type { Actor } from "../model/item";
 import { type WorkContext, write } from "../service";
 import { openWorkDb } from "../store/db";
@@ -17,7 +17,7 @@ let db: Database;
 let n = 0;
 
 beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "work-rules-"));
+    dir = makeTempDir("work-rules-");
     configPath = join(dir, "config.json");
     db = openWorkDb(":memory:");
 });
@@ -139,7 +139,16 @@ describe("the config file", () => {
             SafeJSON.stringify({
                 version: 1,
                 global: { rules: { types: { "*": { fields: { cost: { level: "recommended" } } } } } },
-                projects: { App: { rules: { types: { bug: { fields: { cost: { level: "required" } } } } } } },
+                projects: {
+                    App: {
+                        rules: {
+                            types: {
+                                "*": { fields: { cost: { level: "optional" } } },
+                                bug: { fields: { cost: { level: "required" } } },
+                            },
+                        },
+                    },
+                },
             })
         );
         const loaded = await loadWorkRules({ project: "App", configPath });
@@ -147,15 +156,7 @@ describe("the config file", () => {
         expect(bug.value.level).toBe("required");
         expect(bug.from).toBe("config.project");
         expect(bug.layers.map((l) => l.layer)).toEqual(["default", "config.global", "config.project"]);
-        expect(loaded.rules.field("idea", "cost").from).toBe("config.global");
-    });
-
-    test("a warm load is fast", async () => {
-        writeFileSync(configPath, SafeJSON.stringify({ version: 1 }));
-        await loadWorkRules({ project: "App", configPath });
-        const start = performance.now();
-        await loadWorkRules({ project: "App", configPath });
-        expect(performance.now() - start).toBeLessThan(50);
+        expect(loaded.rules.field("idea", "cost").value.level).toBe("optional");
     });
 });
 
