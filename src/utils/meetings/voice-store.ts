@@ -5,6 +5,7 @@ export {
     projectVoiceStore as readVoiceStore,
     removeProjectVoicePrint as removeVoicePrint,
     type VoicePrint,
+    type VoicePrintIdentity,
     type VoiceStore,
     voicePrintKey,
     voicePrintSchema,

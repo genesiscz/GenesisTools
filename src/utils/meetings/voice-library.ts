@@ -1278,22 +1278,28 @@ export function addProjectVoicePrints(input: {
     });
 }
 
-export function removeProjectVoicePrint(
-    project: string,
-    person: string,
-    at?: { meeting: string; fromSec: number }
-): number {
+/** What names one print in a person's samples: its meeting, source file, track and interval. */
+export type VoicePrintIdentity = Pick<VoicePrint, "meeting" | "sourceSha" | "seat" | "track" | "fromSec" | "toSec">;
+
+function sameVoicePrint(a: VoicePrintIdentity, b: VoicePrintIdentity): boolean {
+    return (
+        a.meeting === b.meeting &&
+        a.sourceSha === b.sourceSha &&
+        a.seat === b.seat &&
+        a.track === b.track &&
+        a.fromSec === b.fromSec &&
+        a.toSec === b.toSec
+    );
+}
+
+/** Removes the one print `at` names (another track or end at the same start stays), or every print of the person. */
+export function removeProjectVoicePrint(project: string, person: string, at?: VoicePrintIdentity): number {
     projectNameSchema.parse(project);
     return transact((library) => {
         requireUnambiguousName(library, project, person);
         const before = library.samples.length;
         library.samples = library.samples.filter(
-            (s) =>
-                !(
-                    s.project === project &&
-                    s.owner.name === person &&
-                    (!at || (s.meeting === at.meeting && s.fromSec === at.fromSec))
-                )
+            (s) => !(s.project === project && s.owner.name === person && (!at || sameVoicePrint(s, at)))
         );
         const removed = before - library.samples.length;
         return { changed: removed > 0, result: removed };
