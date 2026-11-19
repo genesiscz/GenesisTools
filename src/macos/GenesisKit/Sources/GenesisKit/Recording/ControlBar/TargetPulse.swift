@@ -14,6 +14,7 @@ public final class TargetPulse {
     private static let animationDuration: CFTimeInterval = 0.9
     private let overlays: [Overlay]
     private let reduceMotion: () -> Bool
+    private let installCompletion: (@escaping @MainActor () -> Void) -> Void
     private var hovered: [CGRect] = []
     private var choice: UUID?
     private var pending: Task<Void, Never>?
@@ -22,8 +23,12 @@ public final class TargetPulse {
         self.init(screens: screens, reduceMotion: { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion })
     }
 
-    init(screens: [CGRect], reduceMotion: @escaping () -> Bool, makeStroke: () -> CAShapeLayer = { CAShapeLayer() }) {
+    init(screens: [CGRect], reduceMotion: @escaping () -> Bool, makeStroke: () -> CAShapeLayer = { CAShapeLayer() },
+         installCompletion: @escaping (@escaping @MainActor () -> Void) -> Void = { completion in
+             CATransaction.setCompletionBlock { Task { @MainActor in completion() } }
+         }) {
         self.reduceMotion = reduceMotion
+        self.installCompletion = installCompletion
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
@@ -122,7 +127,7 @@ public final class TargetPulse {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         if let completion {
-            CATransaction.setCompletionBlock { Task { @MainActor in completion() } }
+            installCompletion(completion)
         }
         defer { CATransaction.commit() }
         for overlay in overlays {

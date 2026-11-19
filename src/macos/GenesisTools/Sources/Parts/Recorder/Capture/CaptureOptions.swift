@@ -64,7 +64,7 @@ enum CaptureChoice: Equatable {
     }
 
     static var screenIDs: [UInt32?] {
-        NSScreen.screens.map { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value }
+        RecordingTarget.connectedDisplayIDs
     }
 
     static func region(_ rect: CGRect, on display: Int, screens: [CGRect]) -> CGRect? {
@@ -76,9 +76,11 @@ enum CaptureChoice: Equatable {
     func resolvedArguments(screens: [CGRect], displayIDs: [UInt32?]) throws -> [String] {
         let missing = RecordingEngineError.unsupported("A selected display disconnected. Choose the target again.")
         switch self {
-        case let .target(.area(rect, index)):
-            guard let region = Self.region(rect, on: index, screens: screens) else { throw missing }
-            return CaptureChoice.area(region).arguments
+        case let .target(target) where target.kind == .area:
+            guard let primary = screens.first, let cocoa = target.areaBounds(screens: screens, displayIDs: displayIDs) else {
+                throw missing
+            }
+            return CaptureChoice.area(Self.coreGraphicsRect(cocoa: cocoa, primaryHeight: primary.maxY)).arguments
         case let .target(.displays(indices)):
             let ids = try indices.map { index -> UInt32 in
                 guard displayIDs.indices.contains(index), let id = displayIDs[index] else { throw missing }
@@ -105,9 +107,9 @@ struct CaptureOptions: Equatable {
         }
     }
 
-    static let frameRates = [15, 24, 30, 60]
+    static let frameRates = RecordingSetup.frameRates
     /// 0 is "the same as the frame rate" (a movie keeps one rate).
-    static let idleRates: [Double] = [0, 0.5, 1, 2, 5]
+    static let idleRates = RecordingSetup.stillFrameRates
     static let thresholds: [Double] = [0.5, 1, 2.5, 5]
 
     enum Key {
@@ -142,7 +144,8 @@ struct CaptureOptions: Equatable {
         options.countdown = bool(Key.countdown, options.countdown)
         if let seconds = defaults.object(forKey: Key.countdownSeconds) as? Int { options.countdownSeconds = min(max(seconds, 1), 10) }
         if let fps = defaults.object(forKey: Key.fps) as? Int, frameRates.contains(fps) { options.fps = fps }
-        if let idle = defaults.object(forKey: Key.idleFps) as? Double, idleRates.contains(idle) { options.idleFps = idle }
+        if let idle = defaults.object(forKey: Key.idleFps) as? Double,
+           RecordingSetup.supportsStillRate(idle, at: options.fps) { options.idleFps = idle }
         if let threshold = defaults.object(forKey: Key.threshold) as? Double, thresholds.contains(threshold) {
             options.threshold = threshold
         }
@@ -176,7 +179,9 @@ struct CaptureOptions: Equatable {
     func startArguments(_ choice: CaptureChoice, excludeWindowIds: [Int] = [], targetArguments: [String]? = nil) -> [String] {
         var args = ["recorder", "start"] + (targetArguments ?? choice.arguments)
         args += ["--fps", String(fps)]
-        if idleFps > 0 { args += ["--idle-fps", Self.number(idleFps)] }
+        if idleFps > 0 && (idleFps != Double(fps) || args.contains("--frames")) {
+            args += ["--idle-fps", Self.number(idleFps)]
+        }
         if threshold != 0.5 { args += ["--threshold", Self.number(threshold)] }
         // A window or app movie is made from those windows alone and has no audio track; `start` refuses --audio there.
         if !audioSources.isEmpty, choice.recordsAudio { args += ["--audio", audioSources.joined(separator: ",")] }
@@ -206,6 +211,7 @@ struct CaptureOptions: Equatable {
         let choice = setup.target.map(CaptureChoice.target) ?? .followPointer
         var targetArguments = try choice.resolvedArguments(screens: screens, displayIDs: displayIDs)
         if case .displays = setup.target {
+            if options.idleFps == 0 { options.idleFps = RecordingSetup.framesDefaultStillRate }
             guard !options.camera else { throw RecordingEngineError.unsupported("Several displays record frames without a camera. Turn the camera off or choose one display.") }
             options.drawCursor = true
             options.shortcutsOverlay = true

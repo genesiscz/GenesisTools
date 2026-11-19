@@ -637,7 +637,7 @@ final class WidgetBarRecordingTests: XCTestCase {
         let wire = try argument("--target")
         XCTAssertEqual(try JSONDecoder().decode(RecordingTarget.self, from: Data(wire.utf8)),
                        RecordingFixture.targets.windows.first?.target)
-        XCTAssertEqual(try argument("--fps"), "60")
+        XCTAssertEqual(try argument("--fps"), "15", "The widget keeps its default when only the full recorder rate is saved")
         let exclusions = Set(try argument("--exclude-window-ids").split(separator: ",").compactMap { Int($0) })
         XCTAssertTrue(exclusions.contains(window.windowNumber))
         XCTAssertTrue(exclusions.contains(pickerID))

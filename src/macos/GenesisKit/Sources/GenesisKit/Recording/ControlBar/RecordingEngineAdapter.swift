@@ -7,6 +7,7 @@ public struct RecordingCapabilities: Equatable, Sendable {
     public var liveMicrophoneDevice: Bool
     public var liveSystemAudioMute: Bool
     public var liveFrameRate: Bool
+    public var liveRestart: Bool
     public var liveCamera: Bool
     public var liveDisplaysAddRemove: Bool
     public var maxDurationMs: Double?
@@ -15,7 +16,7 @@ public struct RecordingCapabilities: Equatable, Sendable {
     public init(targets: Set<RecordingTargetKind> = [], liveTargetSwitch: Bool = false,
                 liveMicrophoneMute: Bool = false, liveMicrophoneDevice: Bool = false,
                 liveSystemAudioMute: Bool = false, liveFrameRate: Bool = false,
-                liveCamera: Bool = false, liveDisplaysAddRemove: Bool = false, maxDurationMs: Double? = nil,
+                liveCamera: Bool = false, liveDisplaysAddRemove: Bool = false, liveRestart: Bool = true, maxDurationMs: Double? = nil,
                 reasonUnavailable: [String: String] = [:]) {
         self.targets = targets
         self.liveTargetSwitch = liveTargetSwitch
@@ -23,6 +24,7 @@ public struct RecordingCapabilities: Equatable, Sendable {
         self.liveMicrophoneDevice = liveMicrophoneDevice
         self.liveSystemAudioMute = liveSystemAudioMute
         self.liveFrameRate = liveFrameRate
+        self.liveRestart = liveRestart
         self.liveCamera = liveCamera
         self.liveDisplaysAddRemove = liveDisplaysAddRemove
         self.maxDurationMs = maxDurationMs
@@ -91,9 +93,14 @@ public struct RecordingAudioDevice: Equatable, Codable, Identifiable, Sendable {
 
 public enum RecordingEngineError: LocalizedError, Equatable, Sendable {
     case unsupported(String)
+    case partialTargetSwitch(RecordingTarget, String)
+    case restartEnded(RecordingEngineEvent.Value)
 
     public var errorDescription: String? {
-        switch self { case let .unsupported(reason): return reason }
+        switch self {
+        case let .unsupported(reason), let .partialTargetSwitch(_, reason), let .restartEnded(.failed(reason)): return reason
+        case .restartEnded: return "The recording ended before Restart was confirmed."
+        }
     }
 }
 

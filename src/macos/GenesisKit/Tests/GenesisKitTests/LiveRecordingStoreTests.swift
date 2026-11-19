@@ -9,30 +9,69 @@ final class LiveRecordingStoreTests: XCTestCase {
         let probing = FrameProbe.enabled
         FrameProbe.enabled = true
         defer { FrameProbe.enabled = probing; FrameProbe.reset() }
-        for state in ["recording", "paused"] {
-            for id in ["first", "second"] {
-                let warning = (1...8).map { "Display \($0) disconnected during \(id)." }.joined(separator: "\n")
-                let data = try JSONSerialization.data(withJSONObject: [
-                    "pid": 7, "startedAt": 1762195200000, "id": id, "state": state, "warning": warning,
-                ])
-                let recording = try XCTUnwrap(LiveRecordingStore.decode(data))
-                FrameProbe.reset()
-                let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 600, height: 280),
-                                      styleMask: .borderless, backing: .buffered, defer: false)
-                window.isReleasedWhenClosed = false
-                window.contentView = NSHostingView(rootView:
-                    LiveRecordingControlsView(recording: recording, send: { _ in }, hide: {}).fixedSize())
-                window.orderInForSnapshot()
-                defer { window.close() }
-                let key = "live-recording.message." + warning
-                let deadline = ContinuousClock.now + .seconds(2)
-                while FrameProbe.frames[key] == nil, ContinuousClock.now < deadline {
-                    try await Task.sleep(for: .milliseconds(20))
+        let ids = ["first", "second"]
+        let warnings = ids.map { id in (1...8).map { "Display \($0) disconnected during \(id)." }.joined(separator: "\n") }
+        var recordings = try zip(ids, warnings).map { id, warning in
+            let data = try JSONSerialization.data(withJSONObject: [
+                "pid": 7, "startedAt": 1762195200000, "id": id, "state": "recording", "warning": warning,
+            ])
+            return try XCTUnwrap(LiveRecordingStore.decode(data))
+        }
+        func controls() -> AnyView {
+            AnyView(VStack {
+                ForEach(recordings, id: \.id) { recording in
+                    LiveRecordingControlsView(recording: recording, send: { _ in }, hide: {}).fixedSize()
                 }
-                let frame = try XCTUnwrap(FrameProbe.frames[key], "missing \(state) warning for \(id)")
+            })
+        }
+        FrameProbe.reset()
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 600, height: 520),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let host = NSHostingView(rootView: controls())
+        window.contentView = host
+        window.orderInForSnapshot()
+        defer { window.close() }
+        let keys = warnings.map { "live-recording.message." + $0 }
+        func verifyWarnings() async throws {
+            let deadline = ContinuousClock.now + .seconds(2)
+            while keys.contains(where: { FrameProbe.frames[$0] == nil }), ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            for key in keys {
+                let frame = try XCTUnwrap(FrameProbe.frames[key])
                 XCTAssertGreaterThan(frame.height, 80, "all eight lines are visible")
             }
         }
+        try await verifyWarnings()
+        recordings[0].state = "paused"
+        FrameProbe.reset()
+        host.rootView = controls()
+        try await verifyWarnings()
+    }
+
+    @MainActor
+    func testCompactControlsStayVisibleUntilTheFullBarOpens() throws {
+        let resolve = LiveRecordingBarPresentation.resolve
+        defer { LiveRecordingBarPresentation.resolve = resolve }
+        var complete: ((Bool) -> Void)?
+        LiveRecordingBarPresentation.resolve = { _, _ in
+            LiveRecordingBarPresentation(show: { complete = $0 }, update: { _ in }, close: {})
+        }
+        let recording = LiveRecording(id: "handoff", kind: "library", title: "Adoption fixture",
+                                      pid: 7, startedAt: Date(), state: "recording")
+        let panel = LiveRecordingPanel(recording: recording, stack: 0, send: { _ in }, hide: {})
+        defer { panel.close() }
+
+        panel.show()
+        let compact = try XCTUnwrap(NSApplication.shared.windows.first { $0.title == "Recording controls: Adoption fixture" })
+        XCTAssertTrue(compact.isVisible)
+        try XCTUnwrap(complete)(false)
+        XCTAssertTrue(compact.isVisible)
+
+        panel.show()
+        try XCTUnwrap(complete)(true)
+        XCTAssertFalse(compact.isVisible)
     }
 
     private var folder: URL!

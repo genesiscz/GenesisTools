@@ -143,12 +143,27 @@ final class TargetPulseTests: XCTestCase {
         XCTAssertEqual(stroke.submissions, [key, key])
         XCTAssertEqual(stroke.animationKeys(), [key])
 
+    }
+
+    func testReplacementSurvivesThePreviousChoiceCompletion() throws {
+        _ = NSApplication.shared
+        let stroke = ObservedStroke()
+        var completions: [@MainActor () -> Void] = []
+        let pulse = TargetPulse(screens: [right], reduceMotion: { false }, makeStroke: { stroke },
+                                installCompletion: { completions.append($0) })
+        let panel = try XCTUnwrap(NSApp.window(withWindowNumber: pulse.windowIDs[0]))
+        panel.alphaValue = 0
+        defer { pulse.clear() }
         let other = target.offsetBy(dx: 120, dy: 0)
-        f.pulse.pulse([other], after: .zero)
-        try await Task.sleep(for: .milliseconds(80))
-        XCTAssertEqual(stroke.submissions, [key, key, key])
-        XCTAssertEqual(stroke.animationKeys(), [key], "the replaced choice's completion cannot clear the new choice")
-        XCTAssertEqual(stroke.path?.boundingBoxOfPath, other)
+        pulse.pulse([target], after: .zero)
+        pulse.pulse([other], after: .zero)
+        XCTAssertEqual(completions.count, 2)
+        try XCTUnwrap(completions.first)()
+        assertRect(stroke.path?.boundingBoxOfPath, other)
+        XCTAssertTrue(panel.isVisible)
+        try XCTUnwrap(completions.last)()
+        XCTAssertNil(stroke.path)
+        XCTAssertFalse(panel.isVisible)
     }
 
     func testHoverSettlesToAThinBorderUntilCleared() async throws {

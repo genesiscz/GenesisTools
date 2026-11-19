@@ -12,7 +12,7 @@ private final class WidgetSessionPipe: RecordingCommandChannel {
     let screens = [CGRect(x: 0, y: 0, width: 1000, height: 800), CGRect(x: -600, y: 200, width: 600, height: 400)]
 
     func makeController() -> RecordingSessionController {
-        RecordingSessionController(screenFrames: { self.screens }) { args, lines, exit in
+        RecordingSessionController(screenFrames: { self.screens }, displayIDs: { [51, 52] }) { args, lines, exit in
             self.arguments = args
             self.receive = lines
             self.exit = exit
@@ -165,7 +165,7 @@ final class WidgetSessionEngineTests: XCTestCase {
         try await engine.start(.init(target: area), excludeWindowIDs: [])
         XCTAssertEqual(pipe.arguments.dropFirst(5).first, region)
         pipe.receive?([#"{"event":"state","state":"paused","target":\#(region),"reason":"user"}"#])
-        let next = RecordingTarget.area(rect: CGRect(x: 50, y: 60, width: 90, height: 70), display: 1)
+        let next = RecordingTarget.area(rect: CGRect(x: 50, y: 60, width: 90, height: 70), display: 0, displayID: 52)
         try await engine.apply(.target(next))
         XCTAssertTrue(pipe.writes.isEmpty, "the existing switch command would start capturing immediately")
         let switched = #"{"height":70,"kind":"region","width":90,"x":-550,"y":470}"#
@@ -175,6 +175,63 @@ final class WidgetSessionEngineTests: XCTestCase {
         defer { pipe.respond = { _ in } }
         try await engine.resume()
         XCTAssertEqual(pipe.writes, [#"{"cmd":"switch","target":\#(switched)}"#])
+    }
+
+    func testRestartSendsThePendingTargetAndIgnoresAnOldWarning() async throws {
+        let pipe = WidgetSessionPipe()
+        let engine = makeEngine(pipe)
+        try await engine.start(.init(target: window), excludeWindowIDs: [])
+        pipe.state("paused")
+        let target = RecordingTarget.display(index: 1, name: nil)
+        try await engine.apply(.target(target))
+        pipe.respond = { _ in
+            pipe.receive?([#"{"event":"error","message":"Old segment warning","fatal":false}"#,
+                           #"{"event":"state","state":"starting","reason":"user","elapsedMs":0,"segments":0}"#])
+        }
+        try await engine.restart()
+        XCTAssertEqual(pipe.writes, [#"{"cmd":"restart","target":{"kind":"display","screenIndex":1}}"#])
+    }
+
+    func testTerminalFailureDuringRestartIsDifferentFromACommandRefusal() async throws {
+        let pipe = WidgetSessionPipe()
+        let engine = makeEngine(pipe)
+        try await engine.start(.init(target: window), excludeWindowIDs: [])
+        pipe.state("paused")
+        pipe.respond = { _ in
+            pipe.receive?([#"{"event":"error","code":"command-refused","message":"Refused","fatal":false}"#])
+        }
+        do {
+            try await engine.restart()
+            XCTFail("A refusal cannot confirm Restart")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, "Refused")
+        }
+        pipe.respond = { _ in pipe.exit?(1, "Recorder stopped") }
+        do {
+            try await engine.restart()
+            XCTFail("A terminal event cannot confirm Restart")
+        } catch {
+            guard case .restartEnded(.failed) = error as? RecordingEngineError else {
+                return XCTFail("Expected a terminal restart failure, got \(error)")
+            }
+        }
+        try await engine.start(.init(target: window), excludeWindowIDs: [])
+    }
+
+    func testFinishDeadlineDoesNotReportAnUnconfirmedSave() async throws {
+        let pipe = WidgetSessionPipe()
+        let engine = WidgetSessionEngine(makeController: { pipe.makeController() }, showsBorder: { false },
+                                         finishTimeout: .milliseconds(20))
+        try await engine.start(.init(target: window), excludeWindowIDs: [])
+        do {
+            _ = try await engine.stop()
+            XCTFail("Only a confirmed stop can return a saved file")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("did not confirm"))
+        }
+        pipe.respond = { _ in pipe.receive?([#"{"event":"discarded"}"#]) }
+        try await engine.discard()
+        XCTAssertEqual(pipe.writes, [#"{"cmd":"stop"}"#, #"{"cmd":"discard"}"#])
     }
 
     func testRatesWaitForTheSessionReplyAndKeepSingleRateOnTheWire() async throws {

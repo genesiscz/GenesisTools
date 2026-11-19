@@ -38,6 +38,18 @@ public enum RecordingQuality: String, Codable, CaseIterable, Sendable { case sta
 
 /// The choices for one take. Editing this value never writes preferences.
 public struct RecordingSetup: Equatable, Codable, Sendable {
+    public static let frameRates = [5, 10, 15, 24, 30, 60]
+    public static let stillFrameRates: [Double] = [0, 0.5, 1, 2, 5]
+    public static let framesDefaultStillRate: Double = 0.5
+
+    public static func supportsStillRate(_ still: Double, at active: Int) -> Bool {
+        stillFrameRates.contains(still) || still == Double(active)
+    }
+
+    static func framesQuality(_ defaults: UserDefaults) -> RecordingQuality {
+        defaults.string(forKey: Key.quality).flatMap(RecordingQuality.init(rawValue:)) ?? .standard
+    }
+
     public var target: RecordingTarget?
     public var microphone: MicrophoneSetup
     public var systemAudio: SystemAudioSetup
@@ -68,9 +80,9 @@ public struct RecordingSetup: Equatable, Codable, Sendable {
         var setup = Self()
         func read<T>(_ key: String, _ fallback: T) -> T { defaults.object(forKey: key) as? T ?? fallback }
         let fps = read(Key.fps, setup.frameRate)
-        if [5, 10, 15, 24, 30, 60].contains(fps) { setup.frameRate = fps }
+        if frameRates.contains(fps) { setup.frameRate = fps }
         let idle = read(Key.idleFps, setup.stillFrameRate)
-        if [0, 0.5, 1, 2, 5].contains(idle) || idle == Double(setup.frameRate) { setup.stillFrameRate = idle }
+        if supportsStillRate(idle, at: setup.frameRate) { setup.stillFrameRate = idle }
         setup.countdownSeconds = read(Key.countdown, true) ? min(10, max(1, read(Key.seconds, 3))) : nil
         setup.microphone = .init(enabled: read(Key.microphone, false), muted: read(Key.micMuted, false),
                                  deviceID: defaults.string(forKey: Key.device))
@@ -80,7 +92,6 @@ public struct RecordingSetup: Equatable, Codable, Sendable {
         if [140, 200, 260].contains(size) { setup.camera.size = size }
         let shape = read(Key.cameraShape, setup.camera.shape)
         if ["circle", "rounded", "square"].contains(shape) { setup.camera.shape = shape }
-        setup.quality = defaults.string(forKey: Key.quality).flatMap(RecordingQuality.init(rawValue:)) ?? .standard
         setup.drawsCursor = read(Key.cursor, true)
         return setup
     }
@@ -98,7 +109,7 @@ public struct RecordingSetup: Equatable, Codable, Sendable {
         defaults.set(camera.enabled, forKey: Key.camera)
         defaults.set(camera.size, forKey: Key.cameraSize)
         defaults.set(camera.shape, forKey: Key.cameraShape)
-        defaults.set(quality.rawValue, forKey: Key.quality)
+        if target?.kind == .displays { defaults.set(quality.rawValue, forKey: Key.quality) }
         defaults.set(drawsCursor, forKey: Key.cursor)
     }
 

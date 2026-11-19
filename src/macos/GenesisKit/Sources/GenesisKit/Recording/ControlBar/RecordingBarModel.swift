@@ -34,6 +34,7 @@ public final class RecordingBarModel: ObservableObject {
     @Published public private(set) var audioLevels: (microphone: Double, systemAudio: Double)?
     @Published public private(set) var audioInputs: [RecordingAudioDevice] = []
     @Published public private(set) var audioOutputs: [RecordingAudioDevice] = []
+    @Published public private(set) var isRestartPending = false
 
     /// The host updates these when a bar, outline, picker or pulse panel gets its window number.
     public var excludeWindowIDs: [Int] = []
@@ -43,6 +44,7 @@ public final class RecordingBarModel: ObservableObject {
     private let countdownTick: () async -> Void
     private var openingSetup: RecordingSetup
     private var activeTake: String?
+
     private var pauseRequestedByUser: Bool?
     private var finishRequestedFor: String?
     private var phaseBeforeFinish: RecordingBarPhase?
@@ -77,6 +79,17 @@ public final class RecordingBarModel: ObservableObject {
         eventTask?.cancel()
         noticeTimer?.cancel()
         deviceTask?.cancel()
+    }
+
+    /// Reopen setup on the same engine and stream consumer.
+    public func resetSetup(_ draft: RecordingSetup) {
+        switch phase {
+        case .setup, .done, .failed:
+            setup = draft
+            openingSetup = draft
+            end(.setup)
+        default: break
+        }
     }
 
     public func cancelSetup() {
@@ -133,9 +146,32 @@ public final class RecordingBarModel: ObservableObject {
 
     public func apply(_ change: RecordingSetupChange) {
         if phase == .setup {
-            change.edit(&setup)
-        } else if phase.acceptsLiveChanges {
+            var draft = setup
+            change.edit(&draft)
+            if draft.target?.kind != setup.target?.kind {
+                if draft.target?.kind == .displays {
+                    draft.quality = RecordingSetup.framesQuality(defaults)
+                    if draft.stillFrameRate == 0 || draft.stillFrameRate == Double(draft.frameRate) {
+                        draft.stillFrameRate = RecordingSetup.framesDefaultStillRate
+                    }
+                } else {
+                    draft.quality = .standard
+                }
+            }
+            setup = draft
+        } else if phase.acceptsLiveChanges && !isRestartPending {
             forTake { take in _ = await self.applyLive(change, take: take) }
+        }
+    }
+
+    public func changeFrameRate(active: Int? = nil, still: Double? = nil) {
+        if phase == .setup {
+            apply(.frameRate(active ?? setup.frameRate, still: still ?? setup.stillFrameRate))
+        } else if phase.acceptsLiveChanges && !isRestartPending {
+            forTake { take in
+                _ = await self.applyLive(.frameRate(active ?? self.setup.frameRate, still: still ?? self.setup.stillFrameRate),
+                                         take: take)
+            }
         }
     }
 
@@ -156,7 +192,13 @@ public final class RecordingBarModel: ObservableObject {
             if notice?.controlID == change.controlID { clearNotice() }
             return true
         } catch {
-            if activeTake == take { report(error.localizedDescription, control: change.controlID) }
+            if activeTake == take {
+                if case let RecordingEngineError.partialTargetSwitch(target, _) = error {
+                    setup.target = target
+                    phase = .recording(take: take)
+                }
+                report(error.localizedDescription, control: change.controlID)
+            }
             return false
         }
     }
@@ -164,8 +206,15 @@ public final class RecordingBarModel: ObservableObject {
     public func pause() { forTake { await self.pause(take: $0, byUser: true) } }
     public func resume() { forTake { await self.resume(take: $0) } }
 
-    public func beginTargetSelection() {
-        forTake { await self.pause(take: $0, byUser: false) }
+    public func beginTargetSelection(onReady: @escaping @MainActor () -> Void = {}) {
+        if phase == .setup { onReady(); return }
+        guard !isRestartPending else { return }
+        if case .paused = phase { onReady(); return }
+        guard case .recording = phase else { return }
+        forTake { take in
+            await self.pause(take: take, byUser: false)
+            if self.activeTake == take, case .paused = self.phase, !self.isRestartPending { onReady() }
+        }
     }
 
     /// Both Choose and Cancel come through here. A picker opened while manually paused leaves that pause in place.
@@ -175,9 +224,17 @@ public final class RecordingBarModel: ObservableObject {
             return
         }
         forTake { take in
-            guard case let .paused(_, byUser) = self.phase else { return }
-            if let target, !(await self.applyLive(.target(target), take: take)) { return }
-            if !byUser, self.activeTake == take { await self.resume(take: take) }
+            guard case let .paused(_, byUser) = self.phase else {
+                if target != nil {
+                    self.report("Pause the recording before changing its target.", control: "target")
+                }
+                return
+            }
+            if let target { _ = await self.applyLive(.target(target), take: take) }
+            if !byUser, self.activeTake == take, case .paused = self.phase {
+                await self.resume(take: take)
+                if self.phase == .paused(take: take, byUser: false) { self.phase = .paused(take: take, byUser: true) }
+            }
         }
     }
 
@@ -208,7 +265,7 @@ public final class RecordingBarModel: ObservableObject {
     }
 
     public func stop() {
-        guard phase.acceptsLiveChanges else { return }
+        guard phase.acceptsLiveChanges, !isRestartPending else { return }
         finish(keeping: true)
     }
 
@@ -218,6 +275,7 @@ public final class RecordingBarModel: ObservableObject {
     }
 
     public func discard() {
+        guard !isRestartPending else { return }
         switch phase {
         case .countdown:
             pendingCommand?.cancel()
@@ -254,8 +312,14 @@ public final class RecordingBarModel: ObservableObject {
     }
 
     public func restart() {
-        guard phase.acceptsLiveChanges else { return }
+        guard phase.acceptsLiveChanges, !isRestartPending, finishRequestedFor == nil else { return }
+        guard capabilities.liveRestart else {
+            report(capabilities.reasonUnavailable["restart"] ?? "This recorder does not offer Restart.", control: "restart")
+            return
+        }
+        isRestartPending = true
         forTake { oldTake in
+            defer { self.isRestartPending = false }
             let previous = self.phase
             let oldElapsed = self.elapsedMs
             let take = self.engine.nextTakeID
@@ -267,6 +331,10 @@ public final class RecordingBarModel: ObservableObject {
             do { try await self.engine.restart() }
             catch {
                 guard self.activeTake == take else { return }
+                if case let .restartEnded(event) = error as? RecordingEngineError {
+                    self.receive(.init(take: take, value: event))
+                    return
+                }
                 self.activeTake = oldTake
                 self.phase = previous
                 self.elapsedMs = oldElapsed
@@ -292,7 +360,7 @@ public final class RecordingBarModel: ObservableObject {
 
     private func receive(_ event: RecordingEngineEvent) {
         let take = event.take
-        guard activeTake == take else { return }
+        guard take == activeTake else { return }
         switch event.value {
         case .firstFrame:
             if (phaseBeforeFinish ?? phase) == .starting(take: take) { enginePhase(.recording(take: take)) }
@@ -323,6 +391,7 @@ public final class RecordingBarModel: ObservableObject {
 
     private func end(_ result: RecordingBarPhase) {
         activeTake = nil
+        isRestartPending = false
         pauseRequestedByUser = nil
         phaseBeforeFinish = nil
         clearNotice()

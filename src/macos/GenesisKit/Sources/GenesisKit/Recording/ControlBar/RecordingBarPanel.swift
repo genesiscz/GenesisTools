@@ -195,7 +195,12 @@ public final class RecordingBarPanel {
         var bounds = target.flatMap(targetBounds)
         switch target {
         case let .display(index, _) where screens.indices.contains(index): return (screens[index], nil)
-        case let .area(rect, display) where screens.indices.contains(display): return (screens[display], bounds ?? rect)
+        case .area:
+            if let target, let display = target.areaDisplayIndex(displayIDs: RecordingTarget.connectedDisplayIDs),
+               screens.indices.contains(display) {
+                return (screens[display], bounds ?? target.areaBounds(screens: screens.map(\.frame),
+                                                                       displayIDs: RecordingTarget.connectedDisplayIDs))
+            }
         case let .displays(indices) where bounds == nil:
             if let index = indices.first, screens.indices.contains(index) { return (screens[index], nil) }
         case let .window(ids, _, _, _) where bounds == nil:

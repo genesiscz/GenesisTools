@@ -67,6 +67,7 @@ final class RecordingPickerTests: XCTestCase {
             XCTAssertEqual(window.id, self.back.id)
             order.append("raise")
             didRaise = done
+            return nil
         }, pulse: { raised in
             XCTAssertTrue(raised)
             order.append("pulse")
@@ -103,11 +104,12 @@ final class RecordingPickerTests: XCTestCase {
         await fulfillment(of: [shown], timeout: 3)
     }
 
-    func testChoiceUpdatesTheBarWithoutStartingWhenChoiceStartsIsOff() {
+    func testChoiceUpdatesTheBarWithoutStartingWhenChoiceStartsIsOff() async {
         let engine = PickerTestEngine()
         let bar = RecordingBarModel(engine: engine, setup: RecordingSetup(countdownSeconds: nil))
         let picker = RecordingTargetPicker(load: .loading, bar: bar, overlays: .init(screens: []), onChoose: {}, onCancel: {})
         picker.commitChoice(display.target, choiceStarts: false)
+        await bar.pendingCommand?.value
         XCTAssertEqual(bar.setup.target, display.target)
         XCTAssertEqual(bar.phase, .setup)
         XCTAssertEqual(engine.starts, [])
@@ -122,6 +124,40 @@ final class RecordingPickerTests: XCTestCase {
         picker.commitChoice(side.target, choiceStarts: true)
         await fulfillment(of: [started], timeout: 2)
         XCTAssertEqual(engine.starts, [side.target])
+    }
+
+    func testCanceledWindowChoiceCancelsItsWorkerAndIgnoresItsCallback() {
+        let feedback = RecordingPickerFeedback()
+        var completed: (() -> Void)?
+        var canceled = false
+        feedback.choose(background: back, front: { _, done in
+            completed = done
+            return { canceled = true }
+        }, pulse: { _ in XCTFail("an abandoned choice cannot pulse") },
+        restore: {}, commit: { XCTFail("an abandoned choice cannot commit") })
+        feedback.cancelChoice()
+        XCTAssertTrue(canceled)
+        completed?()
+    }
+
+    func testAreaResolvesDisplayIDAfterReorderAndRefusesDisconnectedDisplay() {
+        let primary = CGRect(x: 0, y: 0, width: 600, height: 400)
+        let side = CGRect(x: -600, y: 0, width: 600, height: 400)
+        let rect = CGRect(x: 50, y: 40, width: 90, height: 70)
+        let area = RecordingTarget.area(rect: rect, display: 1, displayID: 42)
+        XCTAssertEqual(area.areaBounds(screens: [side, primary], displayIDs: [42, 81]),
+                       rect.offsetBy(dx: -600, dy: 0))
+        XCTAssertNil(area.areaBounds(screens: [side, primary], displayIDs: [5, 81]))
+    }
+
+    func testAreaCanBeMovedSizedAndConfirmedWithoutMouseInput() {
+        let selector = RecordingAreaSelectionView(frame: CGRect(x: 0, y: 0, width: 400, height: 200))
+        var result: CGRect?
+        selector.onSelect = { result = $0 }
+        selector.moveSelection(dx: 10, dy: 10, resizing: false)
+        selector.moveSelection(dx: 20, dy: -10, resizing: true)
+        selector.confirm()
+        XCTAssertEqual(result, CGRect(x: 110, y: 60, width: 220, height: 90))
     }
 
     func testCheckedDisplaysResolveToTheSingleOrMultipleTarget() {
@@ -182,10 +218,10 @@ private final class PickerTestEngine: RecordingEngineAdapter {
     let capabilities = RecordingCapabilities(targets: [.display, .displays, .window, .area])
     let nextTakeID = "picker-fixture"
     let events = AsyncStream<RecordingEngineEvent> { $0.finish() }
-    var starts: [RecordingTarget] = []
+    var starts: [RecordingTarget?] = []
     var started: (() -> Void)?
     func start(_ setup: RecordingSetup, excludeWindowIDs: [Int]) async throws {
-        if let target = setup.target { starts.append(target) }
+        starts.append(setup.target)
         started?()
     }
     func pause() async throws {}

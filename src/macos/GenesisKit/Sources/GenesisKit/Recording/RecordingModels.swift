@@ -10,8 +10,8 @@ public enum RecordingTarget: Hashable, Sendable {
     case window(ids: [UInt32], app: String?, title: String?, pid: Int32?)
     case app(app: String, name: String?)
     case display(index: Int, name: String?)
-    /// Cocoa screen points on the chosen display, indexed at selection time.
-    case area(rect: CGRect, display: Int)
+    /// Cocoa screen points on the chosen display. The index remains a label and a fallback for old records.
+    case area(rect: CGRect, display: Int, displayID: UInt32? = nil)
     case displays(indices: [Int])
 
     public var kind: RecordingTargetKind {
@@ -22,6 +22,24 @@ public enum RecordingTarget: Hashable, Sendable {
         case .area: return .area
         case .displays: return .displays
         }
+    }
+
+    public static var connectedDisplayIDs: [UInt32?] {
+        NSScreen.screens.map { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value }
+    }
+
+    public func areaDisplayIndex(displayIDs: [UInt32?]) -> Int? {
+        guard case let .area(_, index, id) = self else { return nil }
+        if let id { return displayIDs.firstIndex(of: id) }
+        return index
+    }
+
+    public func areaBounds(screens: [CGRect], displayIDs: [UInt32?]) -> CGRect? {
+        guard case let .area(rect, _, _) = self, let index = areaDisplayIndex(displayIDs: displayIDs),
+              screens.indices.contains(index) else { return nil }
+        let frame = screens[index]
+        let cocoa = rect.offsetBy(dx: frame.minX, dy: frame.minY)
+        return frame.contains(cocoa) && !cocoa.isEmpty ? cocoa : nil
     }
 
     // CGRect gained Hashable in macOS 15. The kit also runs on macOS 14.
@@ -39,8 +57,9 @@ public enum RecordingTarget: Hashable, Sendable {
         case let .display(index, name):
             hasher.combine(index)
             hasher.combine(name)
-        case let .area(rect, display):
+        case let .area(rect, display, displayID):
             hasher.combine(display)
+            hasher.combine(displayID)
             hasher.combine(rect.minX)
             hasher.combine(rect.minY)
             hasher.combine(rect.maxX)
@@ -60,7 +79,7 @@ public enum RecordingTarget: Hashable, Sendable {
             return name ?? app
         case let .display(index, name):
             return name ?? "Display \(index + 1)"
-        case let .area(_, display): return "Area on Display \(display + 1)"
+        case let .area(_, display, _): return "Area on Display \(display + 1)"
         case let .displays(indices): return "Displays " + indices.map { String($0 + 1) }.joined(separator: ", ")
         }
     }
@@ -114,7 +133,7 @@ public enum RecordingTarget: Hashable, Sendable {
 }
 
 extension RecordingTarget: Codable {
-    private enum Keys: String, CodingKey { case kind, windowIds, app, title, pid, name, screenIndex, rect, indices }
+    private enum Keys: String, CodingKey { case kind, windowIds, app, title, pid, name, screenIndex, rect, indices, displayID }
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: Keys.self)
@@ -131,8 +150,9 @@ extension RecordingTarget: Codable {
         case let .display(index, name):
             try container.encode(index, forKey: .screenIndex)
             try container.encodeIfPresent(name, forKey: .name)
-        case let .area(rect, display):
+        case let .area(rect, display, displayID):
             try container.encode(display, forKey: .screenIndex)
+            try container.encodeIfPresent(displayID, forKey: .displayID)
             try container.encode(RecordingWindow.Bounds(x: rect.origin.x, y: rect.origin.y,
                                                        width: rect.size.width, height: rect.size.height), forKey: .rect)
         case let .displays(indices):
@@ -158,7 +178,8 @@ extension RecordingTarget: Codable {
         case .area:
             let bounds = try container.decode(RecordingWindow.Bounds.self, forKey: .rect)
             self = .area(rect: CGRect(x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height),
-                         display: try container.decode(Int.self, forKey: .screenIndex))
+                         display: try container.decode(Int.self, forKey: .screenIndex),
+                         displayID: try container.decodeIfPresent(UInt32.self, forKey: .displayID))
         case .displays:
             self = .displays(indices: try container.decode([Int].self, forKey: .indices))
         }

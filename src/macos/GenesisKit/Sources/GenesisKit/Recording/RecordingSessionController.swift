@@ -43,6 +43,7 @@ public final class RecordingSessionController: ObservableObject {
 
     private let bridge: ToolsBridge?
     private let screenFrames: @MainActor () -> [CGRect]
+    private let displayIDs: @MainActor () -> [UInt32?]
     private let openChannel: (([String], @escaping @MainActor ([String]) -> Void,
                                @escaping @MainActor (Int32, String) -> Void) throws -> RecordingCommandChannel)?
     private var channel: RecordingCommandChannel?
@@ -51,15 +52,18 @@ public final class RecordingSessionController: ObservableObject {
     public init(bridge: ToolsBridge) {
         self.bridge = bridge
         screenFrames = { NSScreen.screens.map(\.frame) }
+        displayIDs = { RecordingTarget.connectedDisplayIDs }
         openChannel = nil
     }
 
     /// Tests: `open` gets the CLI arguments and the line and exit callbacks, and returns the command channel.
     init(screenFrames: @escaping @MainActor () -> [CGRect] = { NSScreen.screens.map(\.frame) },
+         displayIDs: @escaping @MainActor () -> [UInt32?] = { RecordingTarget.connectedDisplayIDs },
          open: @escaping ([String], @escaping @MainActor ([String]) -> Void,
                           @escaping @MainActor (Int32, String) -> Void) throws -> RecordingCommandChannel) {
         bridge = nil
         self.screenFrames = screenFrames
+        self.displayIDs = displayIDs
         openChannel = open
     }
 
@@ -106,7 +110,7 @@ public final class RecordingSessionController: ObservableObject {
     }
 
     enum Command: Equatable {
-        case pause, resume, restart, stop, discard, switchTo(RecordingTarget), rates(Int, Double)
+        case pause, resume, restart, restartOn(RecordingTarget), stop, discard, switchTo(RecordingTarget), rates(Int, Double)
     }
 
     public func pause() { send(.pause) }
@@ -120,24 +124,22 @@ public final class RecordingSessionController: ObservableObject {
         send(.switchTo(target))
     }
 
-    private func switchCommand(_ target: RecordingTarget) throws -> [String: Any] {
+    private func targetCommand(_ command: String, _ target: RecordingTarget) throws -> [String: Any] {
         var wire = try sessionTarget(target)
         // The channel takes one line of at most 512 bytes. A window's title and a display's name are labels only, so
         // a long one is left out rather than the switch refused.
-        let line = try? JSONSerialization.data(withJSONObject: ["cmd": "switch", "target": wire], options: [.sortedKeys])
+        let line = try? JSONSerialization.data(withJSONObject: ["cmd": command, "target": wire], options: [.sortedKeys])
         if (line?.count ?? 0) >= Self.commandLimit {
             wire["title"] = nil
             wire["name"] = nil
         }
-        return ["cmd": "switch", "target": wire]
+        return ["cmd": command, "target": wire]
     }
 
     private func sessionTarget(_ target: RecordingTarget) throws -> [String: Any] {
-        guard case let .area(_, display) = target else { return target.wire }
+        guard target.kind == .area else { return target.wire }
         let screens = screenFrames()
-        guard let primary = screens.first,
-              let cocoa = RecordingPickerGeometry.rects(target, windows: [], screens: screens).first,
-              !cocoa.isEmpty, screens[display].contains(cocoa) else {
+        guard let primary = screens.first, let cocoa = target.areaBounds(screens: screens, displayIDs: displayIDs()) else {
             throw RecordingEngineError.unsupported("Choose the area again on a connected display.")
         }
         let region = RecordingPanelLayout.cocoa(cocoa, primaryHeight: primary.maxY)
@@ -168,9 +170,10 @@ public final class RecordingSessionController: ObservableObject {
         case .pause: wire = ["cmd": "pause"]
         case .resume: wire = ["cmd": "resume"]
         case .restart: wire = ["cmd": "restart"]
+        case let .restartOn(target): wire = try targetCommand("restart", target)
         case .stop: wire = ["cmd": "stop"]
         case .discard: wire = ["cmd": "discard"]
-        case let .switchTo(target): wire = try switchCommand(target)
+        case let .switchTo(target): wire = try targetCommand("switch", target)
         case let .rates(active, idle): wire = ["cmd": "rates", "activeFps": active, "idleFps": idle]
         }
         let data = try JSONSerialization.data(withJSONObject: wire, options: [.sortedKeys])
@@ -211,8 +214,11 @@ public final class RecordingSessionController: ObservableObject {
         if let primary = screens.first {
             let rect = RecordingPanelLayout.cocoa(CGRect(x: x, y: y, width: w, height: h), primaryHeight: primary.maxY)
             if let index = screens.firstIndex(where: { $0.contains(rect) }) {
+                let ids = displayIDs()
+                let id = ids.indices.contains(index) ? ids[index] : nil
                 object["target"] = RecordingTarget.area(
-                    rect: rect.offsetBy(dx: -screens[index].minX, dy: -screens[index].minY), display: index).wire
+                    rect: rect.offsetBy(dx: -screens[index].minX, dy: -screens[index].minY),
+                    display: index, displayID: id).wire
             }
         }
         guard let normalized = try? JSONSerialization.data(withJSONObject: object) else { return nil }

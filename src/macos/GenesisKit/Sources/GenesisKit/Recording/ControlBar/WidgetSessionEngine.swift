@@ -20,6 +20,7 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
     private let output: AsyncStream<RecordingEngineEvent>.Continuation
     private let makeController: @MainActor () -> RecordingSessionController
     private let showsBorder: @MainActor () -> Bool
+    private let finishTimeout: Duration
     private var controller: RecordingSessionController?
     private var take: String?
     private var hasFrame = false
@@ -38,9 +39,11 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
                   showsBorder: { (settings ?? RecordingSettings.shared).showsBorder })
     }
 
-    init(makeController: @escaping @MainActor () -> RecordingSessionController, showsBorder: @escaping @MainActor () -> Bool) {
+    init(makeController: @escaping @MainActor () -> RecordingSessionController, showsBorder: @escaping @MainActor () -> Bool,
+         finishTimeout: Duration = .seconds(240)) {
         self.makeController = makeController
         self.showsBorder = showsBorder
+        self.finishTimeout = finishTimeout
         (events, output) = AsyncStream.makeStream(of: RecordingEngineEvent.self)
     }
 
@@ -60,14 +63,23 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
             guard let self, self.controller === session else { return }
             self.receive(event)
         }
-        session.onRates = { [weak self] active, idle in
-            guard let self, case let .rates(fps, still) = self.waiting else { return }
+        session.onRates = { [weak self, weak session] active, idle in
+            guard let self, self.controller === session, case let .rates(fps, still) = self.waiting else { return }
             if active == Double(fps), idle == (still == 0 ? active : still) { self.complete(.success(nil)) }
             else { self.complete(.failure(Failure("The recorder applied \(active) fps and \(idle) fps while still."))) }
         }
-        session.onDone = { [weak self] url, _ in self?.ended(.stopped(url)) }
-        session.onDiscarded = { [weak self] in self?.ended(.discarded) }
-        session.onFailed = { [weak self] message, _ in self?.ended(.failed(message)) }
+        session.onDone = { [weak self, weak session] url, _ in
+            guard let self, self.controller === session else { return }
+            self.ended(.stopped(url))
+        }
+        session.onDiscarded = { [weak self, weak session] in
+            guard let self, self.controller === session else { return }
+            self.ended(.discarded)
+        }
+        session.onFailed = { [weak self, weak session] message, _ in
+            guard let self, self.controller === session else { return }
+            self.ended(.failed(message))
+        }
         do {
             try session.start(target: target, excludeWindowIDs: excludeWindowIDs, frameRate: setup.frameRate,
                               showsBorder: showsBorder(), stillFrameRate: setup.stillFrameRate)
@@ -93,9 +105,9 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
 
     public func restart() async throws {
         let id = reserveTake()
-        // Switching first means Restart discards the old take and starts on the target the picker selected.
-        if targetOnResume != nil { try await resume() }
-        _ = try await command(.restart, restartingAs: id)
+        let command: Command = targetOnResume.map(Command.restartOn) ?? .restart
+        _ = try await self.command(command, restartingAs: id)
+        targetOnResume = nil
     }
 
     public func apply(_ change: RecordingSetupChange) async throws {
@@ -151,13 +163,17 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
             waiting = command
             self.restartingAs = restartingAs
             reply = continuation
-            // A second Pause/Resume sent by another control can be refused without a line on stdout.
-            // A save can legitimately take minutes and reports its own terminal event or retryable error.
-            if command != .stop && command != .discard && command != .restart {
-                deadline = Task { [weak self] in
-                    do { try await Task.sleep(for: .seconds(15)) } catch { return }
-                    guard !Task.isCancelled else { return }
-                    self?.complete(.failure(Failure("The recorder did not confirm the command.")))
+            // Joining the finished movie can take minutes. Boundary-changing commands get a longer deadline.
+            let timeout = command == .stop || command == .discard || restartingAs != nil ? finishTimeout : .seconds(15)
+            deadline = Task { [weak self] in
+                do { try await Task.sleep(for: timeout) } catch { return }
+                guard let self else { return }
+                let message = "The recorder did not confirm the command."
+                if self.restartingAs != nil {
+                    self.ended(.failed(message))
+                    controller.terminate()
+                } else {
+                    self.complete(.failure(Failure(message)))
                 }
             }
             do { try controller.write(command) }
@@ -200,7 +216,8 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
             let message = event.message ?? "The recorder could not apply the command."
             emit(.warning(message))
             // A segment may report a recoverable warning while it winds down. The join can still succeed.
-            if controller?.phase == .paused || event.code == "command-refused" || message.hasPrefix("Unknown command:") {
+            if event.code == "command-refused" || message.hasPrefix("Unknown command:")
+                || (restartingAs == nil && controller?.phase == .paused) {
                 complete(.failure(Failure(message)))
             }
         default: break
@@ -214,6 +231,8 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
         case let (.window(ids, _, _, _), .window(echo, _, _, _)): return ids == echo
         case let (.display(index, _), .display(echo, _)): return index == echo
         case let (.app(app, _), .app(echo, _)): return app == echo
+        case let (.area(rect, index, id), .area(echo, echoIndex, echoID)):
+            return rect == echo && (id.map { $0 == echoID } ?? (index == echoIndex))
         default: return requested == target
         }
     }
@@ -223,12 +242,17 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
     }
 
     private func ended(_ event: RecordingEngineEvent.Value) {
-        emit(event)
-        switch (waiting, event) {
-        case let (.stop, .stopped(url)): complete(.success(url))
-        case (.discard, .discarded): complete(.success(nil))
-        case let (_, .failed(message)): complete(.failure(Failure(message)))
-        default: complete(.failure(Failure("The recording ended before it confirmed the command.")))
+        if let restartingAs {
+            output.yield(.init(take: restartingAs, value: event))
+            complete(.failure(RecordingEngineError.restartEnded(event)))
+        } else {
+            emit(event)
+            switch (waiting, event) {
+            case let (.stop, .stopped(url)): complete(.success(url))
+            case (.discard, .discarded): complete(.success(nil))
+            case let (_, .failed(message)): complete(.failure(Failure(message)))
+            default: complete(.failure(Failure("The recording ended before it confirmed the command.")))
+            }
         }
         take = nil
         controller = nil

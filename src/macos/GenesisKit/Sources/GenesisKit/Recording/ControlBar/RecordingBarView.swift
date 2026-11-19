@@ -235,8 +235,7 @@ public struct RecordingBarView: View {
     }
 
     private func pick(_ kind: RecordingTargetKind?) {
-        model.beginTargetSelection()
-        actions.chooseTarget(kind)
+        model.beginTargetSelection { actions.chooseTarget(kind) }
     }
 
     private var audioReason: String? { Self.audioNote(for: setup.target, capabilities: caps) }
@@ -317,7 +316,7 @@ public struct RecordingBarView: View {
         let why = reason("frameRate", live: caps.liveFrameRate)
         return choice("Frame rate", "frameRate", value: setup.frameRate, values: [15, 24, 30, 60],
                       title: { "\($0) fps" }, reason: why, scope: scope(why), compact: true) {
-            model.apply(.frameRate($0, still: setup.stillFrameRate))
+            model.changeFrameRate(active: $0)
         }
     }
 
@@ -358,7 +357,9 @@ public struct RecordingBarView: View {
         }
     }
 
-    private var stop: some View { icon("stop.fill", "Stop", "stop", action: model.stop) }
+    private var stop: some View {
+        icon("stop.fill", "Stop", "stop", reason: model.isRestartPending ? "Restart is in progress." : nil, action: model.stop)
+    }
 
     private func clock(paused: Bool) -> some View {
         let time = RecordingClock.format(model.elapsedMs)
@@ -394,13 +395,16 @@ public struct RecordingBarView: View {
 
     private var videoOptions: some View {
         HStack(spacing: 7) {
-            let qualityReason = reason("quality", live: false)
-            choice("Quality", "quality", value: setup.quality, values: RecordingQuality.allCases,
+            let frames = setup.target?.kind == .displays
+            let qualityReason = frames ? reason("quality", live: false)
+                : (caps.reasonUnavailable["quality"] ?? "Movies record at the target’s native size.")
+            choice("Quality", "quality", value: setup.quality, values: frames ? RecordingQuality.allCases : [.standard],
                    title: { $0.rawValue.capitalized }, reason: qualityReason, scope: scope(qualityReason)) { model.apply(.quality($0)) }
             let rateReason = reason("frameRate", live: caps.liveFrameRate)
-            choice("While still", "stillFrameRate", value: setup.stillFrameRate, values: [0, 0.5, 1, 2, 5],
+            let stillRates = RecordingSetup.stillFrameRates.filter { !frames || $0 > 0 }
+            choice("While still", "stillFrameRate", value: setup.stillFrameRate, values: stillRates,
                    title: { $0 == 0 ? "Same" : "\($0.formatted()) fps" }, reason: rateReason, scope: scope(rateReason)) {
-                model.apply(.frameRate(setup.frameRate, still: $0))
+                model.changeFrameRate(still: $0)
             }
             let thresholdReason = setup.stillFrameRate == 0 || setup.stillFrameRate == Double(setup.frameRate)
                 ? "The active and still frame rates are the same."
@@ -552,8 +556,11 @@ public struct RecordingBarView: View {
                     }
                 }
             }
-            word("Restart", "restart") { confirm(.restart) }
-            word("Discard", "discard") { confirm(.discard) }
+            let pendingReason = model.isRestartPending ? "Restart is in progress." : nil
+            let restartReason = caps.liveRestart ? pendingReason
+                : (caps.reasonUnavailable["restart"] ?? "This recorder does not offer Restart.")
+            word("Restart", "restart", reason: restartReason) { confirm(.restart) }
+            word("Discard", "discard", reason: pendingReason) { confirm(.discard) }
         }
     }
 

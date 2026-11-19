@@ -40,7 +40,7 @@ const MARK_WAIT_MS = 15_000;
 export const recordingCommandSchema = z.discriminatedUnion("cmd", [
     z.object({ cmd: z.literal("pause") }),
     z.object({ cmd: z.literal("resume") }),
-    z.object({ cmd: z.literal("restart") }),
+    z.object({ cmd: z.literal("restart"), target: recordingTargetSchema.optional() }),
     z.object({ cmd: z.literal("stop") }),
     z.object({ cmd: z.literal("discard") }),
     z.object({ cmd: z.literal("switch"), target: recordingTargetSchema }),
@@ -342,11 +342,24 @@ export class RecordingSession {
      * next starts with the new ones at once (`restart`: a short gap while it arms); while paused the next segment
      * takes them (`next-piece`). Rates equal to the current ones change nothing (`live`).
      */
-    retune(rates: MovieRates): Promise<"live" | "restart" | "next-piece"> {
-        let applied: "live" | "restart" | "next-piece" = "live";
+    retune(
+        merge: (current: MovieRates) => MovieRates
+    ): Promise<{ rates: MovieRates; applied: "live" | "restart" | "next-piece" }> {
+        let result: { rates: MovieRates; applied: "live" | "restart" | "next-piece" } | undefined;
         return this.enqueue(async () => {
-            applied = await this.applyRates(rates);
-        }).then(() => applied);
+            if (!this.rates) {
+                throw new Error("This session has no recording rates.");
+            }
+
+            const rates = merge(this.rates);
+            result = { rates, applied: await this.applyRates(rates) };
+        }).then(() => {
+            if (!result) {
+                throw new Error("The recording no longer accepts rate changes.");
+            }
+
+            return result;
+        });
     }
 
     private async applyRates(rates: MovieRates): Promise<"live" | "restart" | "next-piece"> {
@@ -479,6 +492,7 @@ export class RecordingSession {
                 await this.deleteSegments();
                 this.recordedMs = 0;
                 this.movieMs = 0;
+                this.target = command.target ?? this.target;
                 this.beginSegment("user");
                 return;
             case "stop":

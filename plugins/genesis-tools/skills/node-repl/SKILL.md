@@ -13,7 +13,8 @@ and `describe("movies.demo")` print the loaded toolsets' real signatures; read t
 Load what the task needs: `tools node-repl mcp --toolset movies,computer,presets` (or `run --toolset …` for one turn
 in a fresh process). Bindings survive between `js` calls of the MCP server, never between `run` calls.
 
-`await recorder.start({ excludeWindowIds: [91, 105] })` starts a frames recording and returns its handle. The CLI
+With `tools node-repl mcp --toolset recorder`, `await recorder.start({ excludeWindowIds: [91, 105] })` starts a
+frames recording and returns its handle. The CLI
 equivalent is `tools recorder start --frames --exclude-window-ids 91,105`.
 
 ## Presets (save a script that worked, run it again)
