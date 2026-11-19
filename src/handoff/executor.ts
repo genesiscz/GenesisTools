@@ -536,7 +536,8 @@ export function executeHandoffActions(input: ExecuteActionsInput, deps: HandoffD
         );
     }
 
-    const sections = input.include !== undefined ? parseIncludeSections(input.include) : null;
+    const requested = input.include !== undefined ? parseIncludeSections(input.include) : null;
+    const sections = requested?.includes("full") ? null : requested;
     const editId = normalizeEditId(input.editId);
     const by = buildBy(deps);
 

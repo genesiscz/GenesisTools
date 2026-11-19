@@ -116,7 +116,7 @@ export function projectHandoff({
     const want = new Set(sections);
 
     // The compact view (rows alone) leaves the body out; it is the largest field of most handoffs.
-    if (handoff.description !== undefined && (want.has("description") || want.has("tasks"))) {
+    if (handoff.description !== undefined && !(want.size === 1 && want.has("rows"))) {
         core.description = handoff.description;
     }
 
