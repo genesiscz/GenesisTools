@@ -1530,15 +1530,30 @@ final class MeetingsServiceTests: XCTestCase {
         let service = makeService()
         let detail = MeetingDetailModel(id: Self.design, window: nil, service: service)
         let voices = detail.voices
-        voices.runPreview()
         let fake = self.fake!
-        _ = try await Task.detached { try fake.line { $0["method"] as? String == "voices.preview" } }.value
+        voices.runPreview()
+        let firstSent = try await Task.detached { try fake.line { $0["method"] as? String == "voices.preview" } }.value
+        let firstID = try XCTUnwrap(firstSent["id"] as? Int)
+        fake.send(["jsonrpc": "2.0", "id": firstID, "result": [
+            "meeting": Self.design, "project": "Atlas",
+            "lines": [["labeler": "voice", "index": 3, "seat": "call", "fromSec": 12, "toSec": 15, "text": "Hello there.",
+                       "current": "Speaker 2", "person": "Bob Example", "score": 0.71, "reason": "named"]],
+        ]])
+        let loaded = await waitUntil(3) { voices.running == nil }
+        XCTAssertTrue(loaded, "the first preview lands")
+        let earlier = try XCTUnwrap(voices.preview.value, "the first preview is the earlier list")
+
+        voices.runPreview()
+        let secondSent = try await Task.detached {
+            try fake.line { $0["method"] as? String == "voices.preview" && $0["id"] as? Int != firstID }
+        }.value
         voices.cancelRun()
-        _ = try await Task.detached { try fake.line { $0["method"] as? String == "$/cancel" } }.value
+        let cancel = try await Task.detached { try fake.line { $0["method"] as? String == "$/cancel" } }.value
+        XCTAssertEqual((cancel["params"] as? [String: Any])?["id"] as? Int, secondSent["id"] as? Int, "the cancel names the second call")
         let ended = await waitUntil(3) { voices.running == nil }
         XCTAssertTrue(ended)
-        XCTAssertEqual(voices.preview, .idle, "a cancelled first preview leaves no failure behind")
-        XCTAssertTrue(detail.notices.notices.isEmpty)
+        XCTAssertEqual(voices.preview, .loaded(earlier), "a cancelled refresh keeps the earlier list")
+        XCTAssertTrue(detail.notices.notices.isEmpty, "a cancel is not a failure")
     }
 
     func testTheWindowReadsTheRuleSentencesOnceFromTheService() async throws {
