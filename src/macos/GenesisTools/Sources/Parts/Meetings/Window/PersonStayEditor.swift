@@ -18,6 +18,8 @@ struct PersonStayEditor: View {
     @State private var via: String
     @State private var busy = false
     @State private var failure: MeetingsCLI.Failure?
+    /// What failed, so the notice's retry runs the same write again (a removal, not a save).
+    @State private var failed: Operation = .save
     @State private var search: PeopleSearch?
     /// The join and the leave the editor opened with, as seconds and as the text the fields showed: an untouched field
     /// saves the exact seconds, not its text rounded to a tenth.
@@ -51,6 +53,8 @@ struct PersonStayEditor: View {
                    via: via.trimmingCharacters(in: .whitespaces).isEmpty ? nil : via.trimmingCharacters(in: .whitespaces),
                    stays: original?.stays ?? 0)
     }
+
+    private enum Operation { case save, remove }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -92,7 +96,7 @@ struct PersonStayEditor: View {
             }
             if let failure {
                 NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
-                           fixes: [failure.detailsFix { save() }], dismiss: { self.failure = nil })
+                           fixes: [failure.detailsFix { retry() }], dismiss: { self.failure = nil })
             }
             HStack {
                 if original != nil {
@@ -148,17 +152,25 @@ struct PersonStayEditor: View {
 
     private func save() {
         guard !busy, problem == nil, !draft.name.isEmpty else { return }
-        run { try await detail.savePersonStay(draft, before: original) }
+        run(.save) { try await detail.savePersonStay(draft, before: original) }
     }
 
     private func remove() {
         guard !busy, let original else { return }
-        run { try await detail.removePersonStay(original) }
+        run(.remove) { try await detail.removePersonStay(original) }
     }
 
-    private func run(_ work: @escaping () async throws -> Void) {
+    private func retry() {
+        switch failed {
+        case .save: save()
+        case .remove: remove()
+        }
+    }
+
+    private func run(_ operation: Operation, _ work: @escaping () async throws -> Void) {
         busy = true
         failure = nil
+        failed = operation
         Task {
             defer { busy = false }
             do {
