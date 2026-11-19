@@ -91,19 +91,19 @@ export function sessionTodoLogState(state: ItemState): string {
 }
 
 /** The to-do rows as the store holds them: the pointer's fields, the item's text and state, newest change first. */
-export function readSessionTodos(db: Database): { rows: StoredSessionTodo[]; stamp: string } {
+export function readSessionTodos(db: Database, sessionId?: string): { rows: StoredSessionTodo[]; stamp: string } {
     const stamp = String((db.query("SELECT MAX(seq) AS seq FROM changes").get() as { seq: number | null }).seq ?? 0);
     const rows = db
         .query<
             { meta: string | null; title: string; body: string | null; state: ItemState; updatedTs: string },
-            [string]
+            [string, ...string[]]
         >(
             `SELECT p.meta, i.title, i.body, i.state, i.updated_ts AS updatedTs
              FROM pointers p JOIN items i ON i.id = p.item
-             WHERE p.kind = ?
+             WHERE p.kind = ?${sessionId === undefined ? "" : " AND json_extract(p.meta, '$.sessionId') = ?"}
              ORDER BY i.updated_ts DESC, i.id`
         )
-        .all(SESSION_TODO_POINTER)
+        .all(SESSION_TODO_POINTER, ...(sessionId === undefined ? [] : [sessionId]))
         .flatMap((r) => {
             const meta: unknown = r.meta === null ? null : SafeJSON.parse(r.meta);
 

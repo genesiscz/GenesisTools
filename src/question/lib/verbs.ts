@@ -165,7 +165,9 @@ export function pollQuestions(input: PollQuestionsInput, deps: QuestionVerbDeps 
     if (!input.ids?.length) {
         const forms = listPendingForms(deps);
         const session = deps.decisionLog?.session ?? currentHarnessSession();
-        const answered = session ? unacknowledged(readDecisions(decisionLog(deps).file), session) : [];
+        const answered = session
+            ? unacknowledged(readDecisions(decisionLog(deps).file, { kind: "decision", sessionId: session }), session)
+            : [];
         return { kind: "pending", forms, answered };
     }
 

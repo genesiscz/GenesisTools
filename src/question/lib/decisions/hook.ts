@@ -216,7 +216,7 @@ async function runChatAnswers(
         return null;
     }
 
-    const open = openChatDecisions(readDecisions(deps.log.file), session);
+    const open = openChatDecisions(readDecisions(deps.log.file, { kind: "decision", sessionId: session }), session);
 
     if (open.length === 0) {
         return null;
@@ -379,7 +379,7 @@ function mergedStop(outputs: (StopHookOutput | null)[]): StopHookOutput | null {
 
 /** Whether the session posted a decision at or after `since`: a new post, or a new version of one. */
 function decisionLoggedSince(file: string, session: string, since: number): boolean {
-    return readDecisions(file).some(
+    return readDecisions(file, { kind: "decision" }).some(
         (row) =>
             row.sessionId === session &&
             kindOf(row) === "decision" &&
@@ -438,7 +438,7 @@ async function runQuestionNudge({
     const refs = decisionQuestionRefs(reply);
     const logged =
         refs.length > 0
-            ? readDecisions(deps.log.file).filter(
+            ? readDecisions(deps.log.file, { kind: "decision", sessionId: session }).filter(
                   (row) => row.sessionId === session && kindOf(row) === "decision" && refs.includes(row.number)
               )
             : [];
@@ -527,7 +527,7 @@ async function runReplyChecks(
     }
 
     const posted = () =>
-        readDecisions(deps.log.file)
+        readDecisions(deps.log.file, { kind: "decision", sessionId: session })
             .filter((row) => row.sessionId === session && kindOf(row) === "decision")
             .map((row) => row.number);
     let harvested: number[] = [];

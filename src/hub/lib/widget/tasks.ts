@@ -199,23 +199,19 @@ export function listWidgetTasks({
             ...(fromStore ? { work: fromStore.work } : {}),
         };
     }
-    let cached: { stamp: string; tasks: WidgetTask[] } | undefined;
-    let stamp: string;
-    if (storeHasTodos) {
-        stamp = `store:${fromStore.stamp}`;
-        cached = { stamp, tasks: fromStore.tasks };
-    } else {
+    let cached: { stamp: string; tasks: WidgetTask[] } = { stamp: "missing", tasks: [] };
+    if (existsSync(file)) {
         const stat = statSync(file);
         if (stat.size > MAX_LEDGER_BYTES) {
             throw new Error("The task ledger is too large for the Widget. Open the question task list to inspect it.");
         }
-        stamp = `${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
-        cached = taskCache.get(file);
-        if (cached?.stamp !== stamp) {
+        const stamp = `${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
+        const prior = taskCache.get(file);
+        if (prior?.stamp === stamp) {
+            cached = prior;
+        } else {
             const tasks = prof.measure("tasks-read", () =>
-                readDecisions(file)
-                    .filter((row) => kindOf(row) === "todo")
-                    .map(widgetTask)
+                readDecisions(file, { kind: "todo", logOnly: true }).map(widgetTask)
             );
             cached = { stamp, tasks };
             if (taskCache.size >= 4) {
@@ -225,7 +221,16 @@ export function listWidgetTasks({
             logger.debug({ file, count: tasks.length, bytes: stat.size }, "Widget task metadata read");
         }
     }
-    const selected = cached.tasks
+    const byId = new Map(fromStore?.tasks.map((task) => [task.id, task]));
+    for (const task of cached.tasks) {
+        const stored = byId.get(task.id);
+        if (stored === undefined || task.updatedTs > stored.updatedTs) {
+            byId.set(task.id, task);
+        }
+    }
+    const tasks = [...byId.values()];
+    const stamp = fromStore === null ? cached.stamp : `store:${fromStore.stamp}:log:${cached.stamp}`;
+    const selected = tasks
         .filter((task) => {
             if (
                 options.projects.length &&
@@ -251,13 +256,11 @@ export function listWidgetTasks({
         );
     return {
         projects: [
-            ...new Set(
-                cached.tasks.map((task) => task.sourceContext.project ?? task.sourceContext.cwd ?? "").filter(Boolean)
-            ),
+            ...new Set(tasks.map((task) => task.sourceContext.project ?? task.sourceContext.cwd ?? "").filter(Boolean)),
         ].sort(),
         sessions: [
             ...new Map(
-                cached.tasks.map((task) => [
+                tasks.map((task) => [
                     `${task.provider}:${task.sessionId}`,
                     {
                         id: `${task.provider}:${task.sessionId}`,
@@ -268,7 +271,7 @@ export function listWidgetTasks({
         ].sort((a, b) => a.title.localeCompare(b.title)),
         tasks: structuredClone(selected.slice(0, options.limit)),
         total: selected.length,
-        activeCount: cached.tasks.filter((task) => ["open", "acknowledged"].includes(task.state)).length,
+        activeCount: tasks.filter((task) => ["open", "acknowledged"].includes(task.state)).length,
         truncated: selected.length > options.limit,
         // Session to-dos come from the log until imported. A store write lands in the WAL between checkpoints.
         sourcePath: storeHasTodos ? `${store}-wal` : file,
