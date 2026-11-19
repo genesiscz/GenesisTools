@@ -31,12 +31,19 @@ const log = logger.child({ component: "work:adapters" });
 /** The old executor's input for one action on an existing handoff; the owner's add uses the poster credential. */
 function executorInput(
     action: Exclude<LegacyAction, { action: "post" }>,
-    deps: HandoffDeps
-): { id: string; editId?: string; actions: HandoffActionInput[] } {
+    deps: HandoffDeps,
+    preview = false
+): { id: string; editId?: string; asOwner?: boolean; actions: HandoffActionInput[] } {
     const { handoff, ...rest } = action;
-    const editId = rest.action === "add_tasks" && rest.asOwner === true ? posterEditId(handoff, deps) : undefined;
+    const asOwner = rest.action === "add_tasks" && rest.asOwner === true;
+    const editId = asOwner && !preview ? posterEditId(handoff, deps) : undefined;
     const input = rest.action === "add_tasks" ? { action: rest.action, tasks: rest.tasks } : rest;
-    return { id: handoff, ...(editId !== undefined ? { editId } : {}), actions: [{ ...input }] };
+    return {
+        id: handoff,
+        ...(editId !== undefined ? { editId } : {}),
+        ...(asOwner && preview ? { asOwner: true } : {}),
+        actions: [{ ...input }],
+    };
 }
 
 function failed(error: unknown): LegacyWriteResult {
@@ -91,7 +98,7 @@ export function legacyHandoffs(deps: HandoffDeps = {}): LegacyHandoffs {
 
             try {
                 const answers = checkHandoffActions(
-                    onHandoffs.map((a) => executorInput(a, deps)),
+                    onHandoffs.map((a) => executorInput(a, deps, true)),
                     deps
                 );
                 let next = 0;

@@ -1,4 +1,4 @@
-import type { Database } from "bun:sqlite";
+import { Database } from "bun:sqlite";
 import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -134,6 +134,29 @@ export function openHandoffModel(dbPath?: string): Database {
 
     log.debug({ path }, "handoff read-model opened");
     return db;
+}
+
+/** Apply unseen log entries to an in-memory snapshot for a read-only action preview. */
+export function withHandoffPreview<T>(options: { dbPath?: string; base?: string }, fn: (db: Database) => T): T {
+    const path = options.dbPath ?? handoffDbPath();
+    let preview: Database;
+    if (existsSync(path)) {
+        const source = new Database(path, { readonly: true });
+        try {
+            preview = Database.deserialize(source.serialize());
+        } finally {
+            source.close();
+        }
+    } else {
+        preview = new Database(":memory:");
+    }
+    try {
+        createTables(preview);
+        catchUpHandoffs(preview, options.base);
+        return fn(preview);
+    } finally {
+        preview.close();
+    }
 }
 
 interface HandoffRow {
