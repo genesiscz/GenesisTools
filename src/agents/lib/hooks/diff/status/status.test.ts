@@ -1,16 +1,22 @@
-import { afterAll, beforeAll, describe, expect, it, mock } from "bun:test";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { appendFileSync, closeSync, fsyncSync, openSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
+import { withSpawnCounter } from "@app/benchmark/lib";
 import { TestRepo } from "@genesiscz/utils/git/test-repo";
 import type { MetricsRecorder } from "@genesiscz/utils/metrics";
 import { DEFAULT_HOOKS_CONFIG, HOOK_CONFIG_SECTIONS } from "../../config";
 import { statusOf } from "../../git";
 import { applySetting } from "../../set-config";
-import type { StatusArm, StatusModeModule, StatusModeSettings } from "./types";
+import { gitMode } from "./git";
+import { armsFor, STATUS_MODES } from "./modes";
+import { narrowGitMode } from "./narrow-git";
+import { gitReads, prepareStatus, statusEligible } from "./prepare";
+import { compareToReference, PARITY_CLASSES } from "./shadow";
+import { type StatusArm, unbuiltArm } from "./types";
 
-/** The narrow-git module is replaced by a fake whose arm drops the first dirty entry of the Git view. */
+/** A fake shadow arm that drops the first entry of the Git view. */
 const dropFirst: StatusArm = {
-    id: "narrow-git",
+    id: "drop-first",
     mode: "narrow-git",
     async observe(request) {
         const summary = statusOf(request.root);
@@ -23,12 +29,6 @@ const dropFirst: StatusArm = {
         };
     },
 };
-const fakeNarrow: StatusModeModule<StatusModeSettings["narrow-git"]> = { primary: () => dropFirst, variants: () => [] };
-mock.module("./narrow-git", () => ({ narrowGitMode: fakeNarrow }));
-
-const { prepareStatus, gitReads, statusEligible } = await import("./prepare");
-const { compareToReference, PARITY_CLASSES } = await import("./shadow");
-const { armsFor, STATUS_MODES } = await import("./modes");
 
 interface Recorded {
     metric: string;
@@ -146,15 +146,20 @@ describe("the status seam", () => {
             need: "all",
             call,
             config: statusConfig((config) => {
-                config.shadow.modes = ["narrow-git", "snapshot"];
+                config.shadow.modes = ["narrow-git"];
             }),
             recorder,
+            arms: {
+                active: gitMode.primary({}),
+                reference: gitMode.primary({}),
+                shadow: [dropFirst, unbuiltArm("snapshot:watchman", "snapshot")],
+            },
         });
         expect(reads.read(repo.dir).entries).toEqual(statusOf(repo.dir).entries);
         const cpu = recorder.events.filter((event) => event.metric === "hook.status.cpu_ms");
         expect(cpu.map((event) => [event.dims.arm, event.dims.role, event.dims.outcome, event.dims.parity])).toEqual([
             ["git", "reference", "answered", "none"],
-            ["narrow-git", "shadow", "answered", "missing-dirty"],
+            ["drop-first", "shadow", "answered", "missing-dirty"],
             ["snapshot:watchman", "shadow", "fallback", "none"],
         ]);
     });
@@ -171,6 +176,7 @@ describe("the status seam", () => {
                 config.shadow.budgetMs = 0;
             }),
             recorder,
+            arms: { active: gitMode.primary({}), reference: gitMode.primary({}), shadow: [dropFirst] },
         });
         const shadow = recorder.events.find((event) => event.dims.role === "shadow");
         expect(shadow?.dims.outcome).toBe("skipped");
@@ -227,5 +233,68 @@ describe("parity and eligibility", () => {
         expect(statusEligible({ ...call, command: "nohup make" }, { background: false, deferred: false })).toBe(false);
         expect(statusEligible(call, { background: true, deferred: false })).toBe(false);
         expect(statusEligible({ ...call, command: "a && b" }, { background: false, deferred: false })).toBe(false);
+    });
+});
+
+describe("the narrow-git mode", () => {
+    let repo: TestRepo;
+
+    beforeAll(async () => {
+        repo = await TestRepo.create({ prefix: "hook-status-narrow-" });
+        await repo.commitMany({ files: { "a.txt": "a\n", "b.txt": "b\n", "held.txt": "held\n" }, message: "base" });
+        appendFileSync(join(repo.dir, "a.txt"), "edit\n");
+    });
+
+    afterAll(() => {
+        repo.cleanup();
+    });
+
+    const request = (root: string, phase: "pre" | "post" = "pre") => ({
+        phase,
+        root,
+        need: "all" as const,
+        head: null,
+        mark: null,
+    });
+
+    it("admits once, then answers from the narrow reads with no git status, and a git add admits again", async () => {
+        const arm = narrowGitMode.primary({});
+        const first = await arm.observe(request(repo.dir));
+        expect(first.state === "ok" && first.source).toBe("admission");
+        expect(first.state === "ok" && first.view.entries).toEqual(statusOf(repo.dir).entries);
+
+        const counted = await withSpawnCounter(() => arm.observe(request(repo.dir)));
+        expect(counted.result.state === "ok" && counted.result.source).toBe("narrow");
+        expect(counted.spawns.length).toBe(2);
+        expect(counted.spawns.some((spawn) => spawn.cmd.includes("status"))).toBe(false);
+        expect(counted.result.state === "ok" && counted.result.view.entries.map((entry) => entry.path)).toEqual([
+            "a.txt",
+        ]);
+
+        await repo.git(["add", "a.txt"]);
+        const staged = await arm.observe(request(repo.dir));
+        expect(staged.state === "ok" && staged.source).toBe("admission");
+        const refused = await arm.observe(request(repo.dir));
+        expect(refused.state === "unavailable" && refused.reason).toBe("refused-staged");
+        await repo.git(["reset", "-q", "a.txt"]);
+    });
+
+    it("a write to a clean tracked file that stays open is in the pre view", async () => {
+        const arm = narrowGitMode.primary({});
+        await arm.observe(request(repo.dir));
+        const fd = openSync(join(repo.dir, "held.txt"), "a");
+
+        try {
+            writeSync(fd, "A\n");
+            fsyncSync(fd);
+            const pre = await arm.observe(request(repo.dir));
+            writeSync(fd, "B\n");
+            fsyncSync(fd);
+            const post = await arm.observe(request(repo.dir, "post"));
+            expect(pre.state === "ok" && pre.view.entries.map((entry) => entry.path)).toContain("held.txt");
+            expect(post.state === "ok" && post.view.entries.map((entry) => entry.path)).toContain("held.txt");
+        } finally {
+            closeSync(fd);
+        }
     });
 });
