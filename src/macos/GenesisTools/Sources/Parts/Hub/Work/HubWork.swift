@@ -157,14 +157,19 @@ struct WorkMain: View {
                     .padding(.horizontal, 18)
                     .padding(.top, 8)
             }
-            content
-                .workRowUpdates(screen: screen)
-                .overlay {
-                    if screen.isFirstLoad && screen.isLoading && screen.project != nil && screen.itemRef == nil {
-                        ProgressView("Reading this project’s work").controlSize(.small)
+            if screen.pane == .notify, screen.project != nil, screen.itemRef == nil {
+                WorkNotifyPane(screen: screen).id(screen.project)
+            } else {
+                content
+                    .workRowUpdates(screen: screen)
+                    .overlay {
+                        if screen.isFirstLoad && screen.isLoading && screen.project != nil && screen.itemRef == nil {
+                            ProgressView("Reading this project's work").controlSize(.small)
+                        }
                     }
-                }
+            }
         }
+        .noticeStack(screen.notifyNotices)
         .hubSurface(.content)
     }
 

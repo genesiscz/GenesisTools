@@ -25,7 +25,7 @@ final class MeetingsUXTests: XCTestCase {
                                               select: { picked.append($0) })
         var titles: [String] = []
         for item in menu {
-            guard case .action(let title, let checked, _, let run) = item else { continue }
+            guard case .action(let title, let checked, _, _, _, _, let run) = item else { continue }
             titles.append(checked ? "\(title) ✓" : title)
             run()
         }

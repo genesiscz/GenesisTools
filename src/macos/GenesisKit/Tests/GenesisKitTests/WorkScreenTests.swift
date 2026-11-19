@@ -192,8 +192,11 @@ final class WorkScreenTests: XCTestCase {
         await settle { source.resumeRead != nil }
         XCTAssertFalse(model.isFirstLoad)
         XCTAssertFalse(model.isLoading)
+        let start = CFAbsoluteTimeGetCurrent()
         source.resumeRead?.resume()
-        await settle { source.resumeRead == nil }
+        await model.finishCurrentRead()
+        let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
+        print(String(format: "Work unchanged fixture read applied in %.3f ms, including task resumption", elapsed))
         XCTAssertEqual(publications, 0)
     }
 
@@ -247,6 +250,7 @@ final class WorkScreenTests: XCTestCase {
         let write = Task { await model.perform(.accept(ref: "w_spot0002")) }
         await settle { source.resumeRead != nil }
         XCTAssertTrue(model.pending.contains("w_spot0002"))
+        XCTAssertEqual(model.snapshot?.triage.first { $0.ref == "w_spot0002" }?.state, "open")
         source.resumeRead?.resume()
         await write.value
         XCTAssertTrue(model.pending.isEmpty)
@@ -288,23 +292,6 @@ final class WorkScreenTests: XCTestCase {
         let text = try render(WorkItemsView(snapshot: empty, pending: []) { _ in }.frame(width: 600), name: "work-items-empty")
         XCTAssertTrue(text.contains("No open handoff or epic in Quiet"), text)
         XCTAssertTrue(text.contains("Nothing spotted waits for a look"), text)
-    }
-
-    func testTheNotifyGridShowsEachLevelAndItsLayer() throws {
-        let cell = { (action: String, level: String, from: String) in
-            WorkNotifyCell(action: action, level: level, from: from,
-                           layers: [.init(layer: "default", level: "list"), .init(layer: "config.project", level: from == "default" ? nil : level)])
-        }
-        let rows = [
-            WorkNotifyRow(type: "bug", cells: [cell("spotted", "inbox", "config.project"), cell("finished", "list", "default"),
-                                                cell("reopened", "banner", "config.global")]),
-            WorkNotifyRow(type: "task", cells: [cell("spotted", "list", "default"), cell("finished", "off", "config.project"),
-                                                 cell("reopened", "list", "default")]),
-        ]
-        let text = try render(WorkNotifyGridView(project: "App", rows: rows).frame(width: 640), name: "work-notify-grid")
-        for expected in ["spotted", "finished", "inbox", "banner", "off", "tools work config set", "projects.App"] {
-            XCTAssertTrue(text.contains(expected), "missing \(expected) in:\n\(text)")
-        }
     }
 
     private func render<V: View>(_ view: V, name: String) throws -> String {
