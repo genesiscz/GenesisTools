@@ -103,6 +103,43 @@ test("an App write schedules sync when it changes an item in Other with a connec
 });
 
 describe("one store (P6)", () => {
+    test("handoff preview reads a WAL-backed model without adding a journal entry", async () => {
+        const posted = postHandoff({ title: "Fixture", tasks: [{ text: "Read" }] }, deps);
+        const before = journalHead(db);
+
+        const preview = await write(
+            ctx(),
+            { verb: "add", type: "task", title: "New task", under: posted.handoff.id },
+            {
+                dryRun: true,
+            }
+        );
+
+        expect(preview.ok).toBe(true);
+        expect(journalHead(db)).toBe(before);
+        expect(getHandoff({ id: posted.handoff.id }, deps).handoff.tasks.map((task) => task.text)).toEqual(["Read"]);
+    });
+
+    test("a refused handoff action rolls back its Work item on the same database", async () => {
+        const posted = postHandoff({ title: "Fixture", tasks: [{ text: "Read" }] }, deps);
+        executeHandoffActions(
+            { id: posted.handoff.id, actions: [{ action: "cancel_handoff", reason: "Stopped" }] },
+            deps
+        );
+        const before = journalHead(db);
+
+        const result = await write(ctx(), {
+            verb: "add",
+            type: "task",
+            title: "Refused task",
+            under: posted.handoff.id,
+        });
+
+        expect(result.ok).toBe(false);
+        expect(journalHead(db)).toBe(before);
+        expect(getHandoff({ id: posted.handoff.id }, deps).handoff.status).toBe("cancelled");
+    });
+
     test("a post and a tick fold the handoff and its items in one write; parity holds", () => {
         const posted = postHandoff({ title: "h", tasks: [{ text: "one" }, { text: "two" }] }, deps);
         const id = posted.handoff.id;

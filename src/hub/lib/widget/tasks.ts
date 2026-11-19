@@ -326,7 +326,7 @@ export async function listLiveWidgetTasks({
     }
 
     const wal = `${path}-wal`;
-    const paths = new Set([path, wal]);
+    const paths = new Set([path, wal, options.file ?? decisionFiles().file]);
     if (snapshot.work !== undefined) {
         const db = new Database(path, { readonly: true });
         let tree: ClaimedHandoff[] = [];

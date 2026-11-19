@@ -7,7 +7,7 @@ import type { Item, ItemId } from "../model/item";
 import type { LegacyAction, LegacyWriteResult } from "../ports";
 import { applyChange } from "./apply";
 import { decide, type WorkCommand, type WriteEnv } from "./decide";
-import { selectItem } from "./rows";
+import { journalHead, selectChangesAfter, selectItem } from "./rows";
 import { sqlView } from "./view";
 
 /** What one transaction did; the service turns it into the reply of its verb. */
@@ -185,7 +185,8 @@ export function transact(
 
         const applied = decision.changes.map((change) => applyChange(db, change));
         const completedLegacy: PendingWrite["completed"] = [];
-        if (options.writeLegacy !== undefined) {
+        if (options.writeLegacy !== undefined && decision.legacy.length > 0) {
+            const beforeLegacy = journalHead(db);
             for (const action of decision.legacy) {
                 const written = options.writeLegacy(action);
                 if (!written.ok) {
@@ -202,6 +203,9 @@ export function transact(
                     );
                 }
                 completedLegacy.push({ action: action.action, ...written });
+            }
+            for (const change of selectChangesAfter(db, beforeLegacy, -1)) {
+                applied.push(change);
             }
         }
         const reply = okReply(

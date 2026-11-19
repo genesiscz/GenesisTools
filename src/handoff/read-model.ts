@@ -147,7 +147,12 @@ export function withHandoffPreview<T>(options: { dbPath?: string; base?: string 
     if (existsSync(path)) {
         const source = new Database(path, { readonly: true });
         try {
-            preview = Database.deserialize(source.serialize());
+            const image = source.serialize();
+            // SQLite cannot deserialize a WAL-mode image. These are the file header's read/write version bytes.
+            // https://www.sqlite.org/c3ref/deserialize.html
+            image[18] = 1;
+            image[19] = 1;
+            preview = Database.deserialize(image);
         } finally {
             source.close();
         }
