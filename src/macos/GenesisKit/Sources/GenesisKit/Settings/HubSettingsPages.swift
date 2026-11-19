@@ -393,7 +393,9 @@ private struct HubInboxKindSettings: View {
                             Text(label)
                             Spacer()
                             Toggle("Show", isOn: setting(key, "show", policy.show))
+                                .accessibilityLabel("Show \(label)")
                             Toggle("Count in badge", isOn: setting(key, "countInBadge", policy.countInBadge))
+                                .accessibilityLabel("Count \(label) in badge")
                                 .disabled(!policy.show)
                         }
                     }
@@ -411,13 +413,13 @@ private struct HubInboxKindSettings: View {
 
     private func setting(_ key: String, _ field: String, _ current: Bool) -> Binding<Bool> {
         Binding(get: { current }, set: { value in
-            guard !saving else { return }
-            saving = true
             Task { await request([key, field, value ? "on" : "off"]) }
         })
     }
 
     private func request(_ args: [String]) async {
+        guard !saving else { return }
+        saving = true
         defer { saving = false }
         do {
             let result = try await ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath()).run(
