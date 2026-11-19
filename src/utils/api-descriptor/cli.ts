@@ -115,10 +115,12 @@ export function toCliCommands(api: ApiDescriptor, program: Command, options: Cli
             }
 
             const kind = kindOf(property);
+            const delimiters = valuesOf(property) !== undefined ? ["[", "]"] : ["<", ">"];
+            const valueName = kind === "array" ? `${key},…` : key;
             const flag =
                 kind === "boolean"
                     ? `--${kebab(key)} [true|false]`
-                    : `--${kebab(key)} <${kind === "array" ? `${key},…` : key}>`;
+                    : `--${kebab(key)} ${delimiters[0]}${valueName}${delimiters[1]}`;
 
             if (required.has(key) && kind !== "boolean") {
                 command.requiredOption(flag, describe(property));
@@ -154,6 +156,12 @@ export function toCliCommands(api: ApiDescriptor, program: Command, options: Cli
                 if (extraKeys.has(key)) {
                     extra[key] = value;
                 } else if (properties[key] !== undefined) {
+                    const values = valuesOf(properties[key]);
+
+                    if (value === true && values !== undefined) {
+                        command.error(`--${kebab(key)} needs a value: ${values.join(", ")}.`);
+                    }
+
                     params[key] = coerce(properties[key], value);
                 }
             }
