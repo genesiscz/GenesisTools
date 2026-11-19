@@ -6,7 +6,7 @@ import { applyEffects } from "./effects";
 import { fluidSynthArgs } from "./fluidsynth";
 import { encodeMidi, MIDI_PARTS } from "./midi";
 import { SYNTH_PRESETS } from "./presets";
-import { runAudio, withMusicScratch } from "./process";
+import { musicCheckpoint, runAudio, withMusicScratch } from "./process";
 import { resolveSample } from "./samples";
 import { room } from "./space";
 import { renderSynth } from "./synth";
@@ -193,8 +193,8 @@ function level(part: ScorePart, buffer: Stereo): Stereo {
     return buffer;
 }
 
-function synthStem(part: ScorePart, patch: string | Patch, context: StemContext): Stereo {
-    const buffer = renderSynth({
+async function synthStem(part: ScorePart, patch: string | Patch, context: StemContext): Promise<Stereo> {
+    const buffer = await renderSynth({
         patch: resolvePatch(patch),
         notes: part.notes,
         lanes: part.lanes,
@@ -238,6 +238,7 @@ export async function mixScore(options: { score: Score; folder: string; soundfon
     }
 
     for (const [index, part] of score.parts.entries()) {
+        await musicCheckpoint();
         const lanes = new Map((part.lanes ?? []).map((lane) => [lane.target, new Curve(lane.points, lane.hold)]));
         const buffer = await renderStem(part, index, context);
         const level = lanes.get("level");
@@ -279,6 +280,7 @@ export async function mixScore(options: { score: Score; folder: string; soundfon
     }
 
     if (score.room) {
+        await musicCheckpoint();
         const wet = room(send, score.room);
 
         for (let n = 0; n < samples; n++) {

@@ -4,6 +4,7 @@ import { createReadStream } from "node:fs";
 import { link, mkdir, mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import { type ExecResult, Executor } from "@genesiscz/utils/cli/executor";
 
 const executor = new Executor({ label: "music" });
@@ -16,6 +17,25 @@ export function musicSignal(): AbortSignal | undefined {
 /** One cancellation scope covers child processes, downloads and publication for an audio operation. */
 export function withMusicSignal<T>(options: { signal: AbortSignal; run: () => Promise<T> }): Promise<T> {
     return musicSignals.run(options.signal, options.run);
+}
+
+/** How long in-process rendering may hold the event loop before it lets a signal handler run. */
+const CHECKPOINT_MS = 50;
+let lastCheckpoint = 0;
+
+/**
+ * In-process rendering calls this between units of work (a stem, a voice). Once `CHECKPOINT_MS` passed, it gives
+ * the event loop a turn, so Ctrl-C reaches the abort signal, and it throws when the operation was cancelled.
+ */
+export async function musicCheckpoint(): Promise<void> {
+    const signal = musicSignal();
+
+    if (performance.now() - lastCheckpoint >= CHECKPOINT_MS) {
+        await nextTurn();
+        lastCheckpoint = performance.now();
+    }
+
+    signal?.throwIfAborted();
 }
 
 export async function runAudio(command: string[]): Promise<{ stdout: string; stderr: string }> {

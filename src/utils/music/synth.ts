@@ -1,4 +1,5 @@
 import { Adsr, Curve, gain, hertz, RATE, random, type Stereo, Svf, stereo } from "./dsp";
+import { musicCheckpoint } from "./process";
 import type { Lane, Lfo, Note, Oscillator, Patch } from "./types";
 
 const CONTROL = 8;
@@ -388,14 +389,17 @@ function renderVoice(options: {
     }
 }
 
-/** Render every note of one part. A mono patch is one voice; any other patch gets a voice per note. */
-export function renderSynth(options: {
+/**
+ * Render every note of one part. A mono patch is one voice; any other patch gets a voice per note, with a
+ * cancellation checkpoint between voices.
+ */
+export async function renderSynth(options: {
     patch: Patch;
     notes: Note[];
     lanes?: Lane[];
     samples: number;
     seed: number;
-}): Stereo {
+}): Promise<Stereo> {
     const out = stereo(options.samples);
     const lanes = new Map((options.lanes ?? []).map((lane) => [lane.target, new Curve(lane.points, lane.hold)]));
     const events = [...options.notes]
@@ -416,8 +420,10 @@ export function renderSynth(options: {
         return out;
     }
 
-    events.forEach((event, index) => {
+    for (const [index, event] of events.entries()) {
+        await musicCheckpoint();
         renderVoice({ patch: options.patch, events: [event], out, seed: options.seed + index * 7919, lanes });
-    });
+    }
+
     return out;
 }

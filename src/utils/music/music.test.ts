@@ -274,15 +274,15 @@ describe("sources, synth and stems", () => {
         expect(refused({ lanes: [{ target: "level", points: [[0, -6]] }] })).toBe(true);
     });
 
-    test("a synth render repeats sample for sample and is silent before its first note", () => {
+    test("a synth render repeats sample for sample and is silent before its first note", async () => {
         const options = {
             patch: resolvePatch("reese"),
             notes: [{ at: 0.1, duration: 0.2, midi: 41, velocity: 100 }],
             samples: RATE / 2,
             seed: 7,
         };
-        const first = renderSynth(options);
-        const second = renderSynth(options);
+        const first = await renderSynth(options);
+        const second = await renderSynth(options);
         expect(first.left).toEqual(second.left);
         expect(first.left.subarray(0, RATE / 10 - 1).every((sample) => sample === 0)).toBe(true);
         expect(first.left.some((sample) => Math.abs(sample) > 0.05)).toBe(true);
