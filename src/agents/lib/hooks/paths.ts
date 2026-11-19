@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { safeSessionId } from "@genesiscz/utils/agents/session-id";
@@ -47,6 +48,15 @@ function requireSegment(kind: string, value: string): string {
     }
 
     return safe;
+}
+
+/**
+ * The admission record of the `narrow-git` status mode for one worktree: a sibling of `hookDataRoot()`, so the capture
+ * sweep never reads it as a harness folder. Named by a hash of the root path.
+ */
+export function narrowAdmissionPath(root: string): string {
+    const name = createHash("sha256").update(root).digest("hex").slice(0, 20);
+    return join(hookDataRoot(), "..", "narrow-admission", `${name}.json`);
 }
 
 export function sessionDir(harness: string, sessionId: string): string {

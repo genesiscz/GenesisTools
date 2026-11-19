@@ -223,6 +223,8 @@ export async function prepareStatus(options: {
     call: StatusCall;
     config: DiffStatusConfig;
     recorder?: MetricsRecorder;
+    /** A test hands its own arms; every caller in the hooks lets the config choose them through `armsFor`. */
+    arms?: Awaited<ReturnType<typeof armsFor>>;
 }): Promise<StatusReads> {
     const { phase, roots, need, call, config } = options;
     const fallback = gitReads(need);
@@ -237,7 +239,7 @@ export async function prepareStatus(options: {
         return fallback;
     }
 
-    const { active, reference, shadow } = await armsFor(config, shape);
+    const { active, reference, shadow } = options.arms ?? (await armsFor(config, shape));
     const shadowing = sampled(call, config.shadow.every) && (shadow.length > 0 || active.id !== reference.id);
     const recorder = shadowing ? (options.recorder ?? (await defaultRecorder())) : null;
     const { compareToReference, recordArm } = shadowing

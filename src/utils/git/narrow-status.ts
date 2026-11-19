@@ -1,5 +1,5 @@
-import { closeSync, existsSync, fstatSync, openSync, readdirSync, readSync } from "node:fs";
-import { join } from "node:path";
+import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync } from "node:fs";
+import { isAbsolute, join, resolve } from "node:path";
 import { type GitRead, type GitReadCost, readHookStatus, runGitSync } from "./hook-status";
 import type { StatusEntry, StatusSummary } from "./porcelain";
 
@@ -56,6 +56,60 @@ export function indexHash(gitDir: string): string | null {
             closeSync(fd);
         }
     }
+}
+
+function readText(path: string): string | null {
+    try {
+        return readFileSync(path, "utf8");
+    } catch {
+        // An absent ref file is normal (a packed ref); the caller looks in the next place.
+        return null;
+    }
+}
+
+const OID = /^[0-9a-f]{40,64}$/;
+
+/**
+ * The commit HEAD names, read from files without a Git process: `HEAD` itself, the loose ref in the worktree's admin
+ * folder or the shared one (`commondir`), then `packed-refs`. Null for an unborn HEAD or a shape it cannot read.
+ */
+export function headOf(gitDir: string): string | null {
+    const head = readText(join(gitDir, "HEAD"))?.trim();
+
+    if (!head) {
+        return null;
+    }
+
+    if (OID.test(head)) {
+        return head;
+    }
+
+    const ref = /^ref:\s*(\S+)$/.exec(head)?.[1];
+
+    if (!ref) {
+        return null;
+    }
+
+    const common = readText(join(gitDir, "commondir"))?.trim();
+    const commonDir = common ? (isAbsolute(common) ? common : resolve(gitDir, common)) : gitDir;
+
+    for (const dir of new Set([gitDir, commonDir])) {
+        const loose = readText(join(dir, ...ref.split("/")))?.trim();
+
+        if (loose && OID.test(loose)) {
+            return loose;
+        }
+    }
+
+    for (const line of (readText(join(commonDir, "packed-refs")) ?? "").split("\n")) {
+        const [oid, name] = line.trim().split(" ");
+
+        if (name === ref && oid && OID.test(oid)) {
+            return oid;
+        }
+    }
+
+    return null;
 }
 
 /** The first refusal the status entries give, or null when every entry is an unstaged edit, deletion or untracked path. */
