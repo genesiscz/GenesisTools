@@ -1377,19 +1377,29 @@ function buildSuggestions(options: SuggestInputs): void {
             wordLines.add(line);
             return true;
         });
+    // An exclusion (another person's voice on a shared seat) and a review-only range (a roster elimination) are asked
+    // whatever the budget, even a zero one. A stranger stretch's question is a speaker question of the group rules like
+    // any other: it comes first, inside the budget.
+    const isStranger = (question: (typeof voiceQuestions)[number]) =>
+        question.evidence?.reason === "not-the-seat-person";
+    const exclusions = voiceQuestions.filter((question) => !isStranger(question));
+    const strangers = voiceQuestions.filter(isStranger);
     let left = budget;
+    const ordered = [
+        ...exclusions.map((question) => ({ question, exempt: true })),
+        ...[...strangers, ...worth].map((question) => ({ question, exempt: false })),
+    ];
 
-    // A stranger stretch's question is a speaker question of the group rules too: it comes first, inside the budget.
-    for (const question of [...voiceQuestions, ...worth]) {
+    for (const { question, exempt } of ordered) {
         if (known.has(questionKey(question))) {
             continue;
         }
 
-        if (left <= 0) {
+        if (!exempt && left <= 0) {
             break;
         }
 
-        left -= 1;
+        left -= exempt ? 0 : 1;
         known.add(questionKey(question));
         const asked = meetingItemSchema.parse({ ...question, id: nextId("i", taken), suggestedAt: options.now });
         taken.push(asked);
