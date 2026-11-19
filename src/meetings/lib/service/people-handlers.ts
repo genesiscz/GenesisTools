@@ -56,25 +56,27 @@ export async function decideDevice(options: {
     if (params.action !== "answer") {
         return book.decideDevice({ ...params, actor });
     }
-    const meeting = recordOf(store, params.meeting).id;
+    const meeting = params.meeting ? recordOf(store, params.meeting).id : undefined;
     const minimum = await deviceOfferMinimum(deps);
+    const meetings = [...params.meetings].sort();
     return book.decideDevice({
         actor,
         account: params.account,
         group: params.group,
         meeting,
-        meetings: [...params.meetings].sort(),
+        meetings,
         action: params.yes ? "map" : "refuse",
         verifyOffer(history) {
-            const offers = roomDeviceOffers({ store, history, meeting: recordOf(store, meeting), minimum });
+            const offers = roomDeviceOffers({
+                store,
+                history,
+                meeting: meeting ? recordOf(store, meeting) : undefined,
+                minimum,
+            });
             const current = offers.find(
                 (offer) => rosterAccountKey(offer.account) === rosterAccountKey(params.account)
             );
-            if (
-                !current ||
-                current.group !== params.group ||
-                !Bun.deepEquals(current.meetings, [...params.meetings].sort())
-            ) {
+            if (!current || current.group !== params.group || !Bun.deepEquals(current.meetings, meetings)) {
                 throw new Error("This room device offer has changed. Refresh the suggestions.");
             }
         },

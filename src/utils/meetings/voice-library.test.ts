@@ -204,7 +204,20 @@ test("a busy v1 writer and failures on both sides of publication recover the lat
 test("model and validation conflicts identify the source, allow scoped recovery and prevent partial first or later writes", async () => {
     const one = legacy("garden", [print(1)]);
     const other = legacy("studio", [print(2)], second, "incompatible");
-    const { readVoiceLibrary, predictionPrints, upgradeVoiceLibrary } = await library();
+    const { changeVoiceLearning, readVoiceLibrary, predictionPrints, sourceForVoicePrint, upgradeVoiceLibrary } =
+        await library();
+    const sample: ConfirmedSampleInput = {
+        project: "third",
+        model,
+        owner: first,
+        print: print(3),
+        source: sourceForVoicePrint(print(3)),
+        origin: "answer",
+        acquiredBy: "live",
+    };
+    for (const dryRun of [true, false]) {
+        expect(() => changeVoiceLearning({ add: [sample], dryRun })).toThrow(other.file);
+    }
     expect(readVoiceLibrary().conflicts).toMatchObject([{ project: "studio", file: other.file }]);
     expect(() => upgradeVoiceLibrary()).toThrow(other.file);
     expect(() => addVoicePrint("third", first.name, print(3), model)).toThrow("incompatible");
@@ -260,6 +273,47 @@ test("a directory merge and its undo preserve raw homonyms, unresolved ownership
     expect(rows()).toEqual(original);
     expect(readVoiceLibrary().library).toEqual(disk);
     expect(readFileSync(libraryPath())).toEqual(bytes);
+});
+
+test("simultaneous transcript entries can persist distinct samples and undo only their own attachment", async () => {
+    const { changeVoiceLearning, insertVoiceSample, sourceForVoicePrint } = await library();
+    const p = print(2);
+    const sample: ConfirmedSampleInput = {
+        project: "one",
+        owner: first,
+        print: p,
+        model,
+        source: sourceForVoicePrint(p, p.meeting, "line-a"),
+        origin: "answer",
+        acquiredBy: "live",
+        decision: { token: "first", item: "i1" },
+    };
+    const one = insertVoiceSample(sample);
+    const two = insertVoiceSample({
+        ...sample,
+        source: sourceForVoicePrint(p, p.meeting, "line-b"),
+        decision: { token: "second", item: "i2" },
+    });
+    expect(one.status).toBe("added");
+    expect(two.status).toBe("added");
+    if (!("id" in one) || !("id" in two)) {
+        throw new Error("Expected two sample IDs");
+    }
+    expect(persisted().samples.map((row) => [row.id, row.source.lineKey])).toEqual([
+        [one.id, "line-a"],
+        [two.id, "line-b"],
+    ]);
+    const remove = { ...sample, id: one.id, token: "first" };
+    changeVoiceLearning({
+        add: [],
+        remove: [
+            { ...remove, id: two.id },
+            { ...remove, id: undefined },
+        ],
+    });
+    expect(persisted().samples).toHaveLength(2);
+    changeVoiceLearning({ add: [], remove: [remove] });
+    expect(persisted().samples.map((row) => row.id)).toEqual([two.id]);
 });
 
 test("checked insertion reuses its persisted receipt and prediction holds out only related speech", async () => {

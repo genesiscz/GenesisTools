@@ -291,6 +291,14 @@ describe("a term's spot from the meeting's word timings (U11)", () => {
         ).toBeCloseTo(estimatedAda, 5);
     });
 
+    test("simultaneous lines do not borrow another line's word timing", () => {
+        const turns = [transcript[1]!, ...transcript];
+        const target: MomentTarget = { kind: "item", id: "i9" };
+        const selected = record([{ id: "i9", kind: "term", atSec: 20, heard: "Ada", evidence: { transcriptLine: 2 } }]);
+        const options = { record: selected, transcript: turns, listen, target };
+        expect(planMoment({ ...options, wordTimedLines: timedLines }).spotSec).toBe(planMoment(options).spotSec);
+    });
+
     test("a saved meeting's term takes its spot from the meeting's cached word timings", async () => {
         const audioPath = recording("word-timed-term");
         const store = new MeetingStore(new Storage("meetings-moment-word-timed"));

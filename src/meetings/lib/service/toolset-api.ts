@@ -707,12 +707,12 @@ const seatsRpc = meetingsMethod("meeting.seats.suggest");
 export const roomDevices = defineMethod({
     ...meetingsMethod("people.devices.list"),
     name: "roomDevices",
-    doc: `Return devices and, with {offers: true} or {meeting}, questions with their supporting meeting IDs. CLI: ${toolCommand("meetings people devices list")} [--offers] [--meeting <id>].`,
+    doc: `Return devices and, with {offers: true} or {meeting}, questions with their supporting meeting IDs and available titles. CLI: ${toolCommand("meetings people devices list")} [--offers] [--meeting <id>].`,
 });
 export const decideRoomDevice = defineMethod({
     ...meetingsMethod("people.devices.decide"),
     name: "decideRoomDevice",
-    doc: `Return {changed, device} for the owner's map, unmap or yes/no answer. Answer with the meeting, account, group and meetings from the offer. Agent callers can read offers. CLI: ${toolCommand("meetings people devices")} map|unmap|answer.`,
+    doc: `Return {changed, device, token?} for the owner's map, unmap, undo or yes/no answer. Answer with account, group and meetings from the offer, and the selected meeting when scoped. Undo sends {action: "undo", account, reverses: token}. Agent callers can read offers. CLI: ${toolCommand("meetings people devices")} map|unmap|answer.`,
 });
 const thresholdsRpc = meetingsMethod("meeting.thresholds.preview");
 export const applySeats = defineMethod({

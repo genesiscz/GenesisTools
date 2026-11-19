@@ -489,7 +489,7 @@ export function readVoiceLibrary(options: Pick<MigrationOptions, "idDigest"> = {
     };
 }
 
-function requireValid(input: ReturnType<typeof reconcile>): void {
+function requireValid(input: Pick<VoiceLibrarySnapshot, "conflicts">): void {
     if (input.conflicts.length) {
         throw new Error(input.conflicts.map((c) => `${c.file}: ${c.message}`).join("\n"));
     }
@@ -805,6 +805,7 @@ function insertLocked(
                 sameVoiceOwner(s.owner, owner) &&
                 (sameLine(s.source, source) ||
                     (input.acquiredBy === "backfill" &&
+                        (!s.source.spanKey || !source.spanKey) &&
                         voicePrintKey(owner.name, s) === voicePrintKey(owner.name, print)))
         );
         if (existing) {
@@ -822,7 +823,8 @@ function insertLocked(
             s.track === print.track &&
             s.sourceSha === print.sourceSha &&
             s.fromSec === print.fromSec &&
-            s.toSec === print.toSec
+            s.toSec === print.toSec &&
+            (!s.source.spanKey || !source.spanKey || sameLine(s.source, source))
     );
     const prior = matches[0];
     if (prior && matches.length > 1) {
@@ -917,40 +919,95 @@ export function changeVoiceLearning(options: {
         const beforeModel = library.model;
         const beforeSamples = [...library.samples];
         const beforeReceipts = [...library.receipts];
-        for (const owned of options.remove ?? []) {
-            const priorReceipt = library.receipts.findLast(
-                (r) =>
-                    r.kind === "learn" &&
-                    r.token === owned.token &&
-                    r.project === owned.project &&
-                    sameVoiceOwner(r.owner, owned.owner) &&
-                    (r.id === owned.id ||
-                        (r.item === owned.print.question &&
-                            sameLine(r.source, owned.source ?? sourceForVoicePrint(owned.print))))
-            );
-            if (priorReceipt?.kind === "learn" && priorReceipt.active !== false) {
-                library.receipts = library.receipts.map((r) =>
-                    r === priorReceipt ? { ...priorReceipt, active: false, revision: library.revision + 1 } : r
-                );
+        type LearnReceipt = Extract<VoiceReceipt, { kind: "learn" }>;
+        const latestReceipt = new Map<SampleId, LearnReceipt>();
+        const byDecision = new Map<string, number[]>();
+        const byAttachment = new Map<string, number[]>();
+        const decisionKey = (row: { project: string; token?: string }, value?: string) =>
+            SafeJSON.stringify([row.project, row.token ?? null, value ?? null]);
+
+        for (const [index, receipt] of library.receipts.entries()) {
+            if (receipt.kind !== "learn") {
+                continue;
             }
-            const matches = library.samples.filter(
-                (s) =>
-                    !s.transferred &&
-                    (!owned.id || s.id === owned.id) &&
-                    s.project === owned.project &&
-                    sameVoiceOwner(s.owner, owned.owner) &&
-                    isDeepStrictEqual(voicePrintSchema.parse(s), voicePrintSchema.parse(owned.print))
+            latestReceipt.set(receipt.id, receipt);
+            const item = decisionKey(receipt, receipt.item);
+            const sample = decisionKey(receipt, receipt.id);
+            const decisions = byDecision.get(item) ?? [];
+            const attachments = byAttachment.get(sample) ?? [];
+            decisions.push(index);
+            attachments.push(index);
+            byDecision.set(item, decisions);
+            byAttachment.set(sample, attachments);
+        }
+
+        const remaining = new Map<SampleId, { sample: VoiceSample; print?: VoicePrint }>();
+        const byPrint = new Map<string, SampleId[]>();
+        const printKey = (project: string, print: VoicePrint) =>
+            SafeJSON.stringify([project, print.meeting, print.sourceSha, print.track, print.fromSec, print.toSec]);
+
+        function indexSamples() {
+            remaining.clear();
+            byPrint.clear();
+            for (const sample of library.samples) {
+                remaining.set(sample.id, { sample });
+                const key = printKey(sample.project, sample);
+                const ids = byPrint.get(key) ?? [];
+                ids.push(sample.id);
+                byPrint.set(key, ids);
+            }
+        }
+
+        if (options.remove?.length) {
+            indexSamples();
+        }
+        for (const owned of options.remove ?? []) {
+            const print = voicePrintSchema.parse(owned.print);
+            const source = owned.source ?? sourceForVoicePrint(print);
+            const matchingItem = byDecision.get(decisionKey(owned, print.question)) ?? [];
+            const matchingId = owned.id ? (byAttachment.get(decisionKey(owned, owned.id)) ?? []) : [];
+            const priorIndex = Math.max(
+                matchingItem.findLast((index) => {
+                    const row = library.receipts[index] as LearnReceipt;
+                    return sameVoiceOwner(row.owner, owned.owner) && sameLine(row.source, source);
+                }) ?? -1,
+                matchingId.findLast((index) =>
+                    sameVoiceOwner((library.receipts[index] as LearnReceipt).owner, owned.owner)
+                ) ?? -1
             );
+            const priorReceipt = library.receipts[priorIndex];
+            if (priorReceipt?.kind === "learn" && priorReceipt.active !== false) {
+                library.receipts[priorIndex] = { ...priorReceipt, active: false, revision: library.revision + 1 };
+            }
+
+            const candidates = owned.id ? [owned.id] : (byPrint.get(printKey(owned.project, print)) ?? []);
+            const matches = candidates.flatMap((id) => {
+                const row = remaining.get(id);
+                const sample = row?.sample;
+                if (
+                    !row ||
+                    !sample ||
+                    sample.transferred ||
+                    sample.project !== owned.project ||
+                    !sameVoiceOwner(sample.owner, owned.owner)
+                ) {
+                    return [];
+                }
+                row.print ??= voicePrintSchema.parse(sample);
+                return isDeepStrictEqual(row.print, print) ? [sample] : [];
+            });
             const sample = matches[0];
             if (matches.length !== 1 || !sample) {
                 continue;
             }
-            const receipt = library.receipts.findLast((r) => r.kind === "learn" && r.id === sample.id);
+            const receipt = latestReceipt.get(sample.id);
             if (receipt && receipt.token !== owned.token) {
                 continue;
             }
-            library.samples = library.samples.filter((s) => s.id !== sample.id);
+            remaining.delete(sample.id);
             if (owned.before) {
+                // A legacy replacement is visible to later removals in the same batch.
+                library.samples = [...remaining.values()].map(({ sample }) => sample);
                 insertLocked(
                     library,
                     {
@@ -964,7 +1021,11 @@ export function changeVoiceLearning(options: {
                     },
                     false
                 );
+                indexSamples();
             }
+        }
+        if (options.remove?.length) {
+            library.samples = [...remaining.values()].map(({ sample }) => sample);
         }
         const results = options.add.map((input) => insertLocked(library, input, false).result);
         const previousSamples = new Set(beforeSamples),
@@ -1020,7 +1081,12 @@ export function changeVoiceLearning(options: {
     if (!options.add.length && !options.remove?.length) {
         return { results: [], rollback: () => {} };
     }
-    return options.dryRun ? edit(readVoiceLibrary().library).result : transact(edit).result;
+    if (options.dryRun) {
+        const pending = reconcile(legacyProjects(), {});
+        requireValid(pending);
+        return edit(pending.library).result;
+    }
+    return transact(edit).result;
 }
 
 type StoredCorrection = Extract<VoiceReceipt, { kind: "correct" }>;

@@ -154,9 +154,9 @@ struct SpeakerChip: View {
                 })
                 items.append(.divider)
             }
-        case .open(_, let candidates):
+        case .open(let sourceLabel, let candidates):
             items += answers(speaker: speaker, label: actingLabel(shown, speaker: speaker, detail: detail),
-                              startSec: startSec, candidates: candidates, detail: detail, pick: pick)
+                              sourceLabel: sourceLabel, startSec: startSec, candidates: candidates, detail: detail, pick: pick)
         case .name:
             break
         }
@@ -177,7 +177,7 @@ struct SpeakerChip: View {
     /// journal with an Undo (`reviewAnswerItems`), and "Show in Items" leads to its row. Without one, the facts the window
     /// has (`OpenSpeakerOffer`): the covering suggestion with its score, the mark's candidates and the meeting's people.
     /// "Somebody else…" opens the person picker for the stretch.
-    private static func answers(speaker: String, label: String, startSec: Double?, candidates: [String],
+    private static func answers(speaker: String, label: String, sourceLabel: String?, startSec: Double?, candidates: [String],
                                 detail: MeetingDetailModel, pick: @escaping (PickerMode) -> Void) -> [MenuButtonItem] {
         var items: [MenuButtonItem] = [.note("Who said this?")]
         guard let startSec else {
@@ -193,7 +193,8 @@ struct SpeakerChip: View {
             items.append(.action("Show in Items") { detail.reveal(row: row.id) })
             return items
         }
-        items += OpenSpeakerOffer.items(speaker: speaker, startSec: startSec, candidates: candidates, detail: detail)
+        items += OpenSpeakerOffer.items(speaker: speaker, sourceLabel: sourceLabel, startSec: startSec,
+                                        candidates: candidates, detail: detail)
         items.append(somebodyElse)
         return items
     }

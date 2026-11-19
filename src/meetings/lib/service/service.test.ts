@@ -607,7 +607,7 @@ test("J7 offers a room device only for distinct roster joins and persists the ow
     async function addMeeting(id: string, copyOf?: string) {
         const record = meetingRecordSchema.parse({
             id,
-            title: id,
+            title: `Room fixture ${id}`,
             start: NOW.toISOString(),
             createdAt: NOW.toISOString(),
             createdBy: "new",
@@ -652,6 +652,7 @@ test("J7 offers a room device only for distinct roster joins and persists the ow
         account,
         group,
         meetings: ["first-room", "second-room"],
+        titles: { "first-room": "Room fixture first-room", "second-room": "Room fixture second-room" },
         question: "Is Boardroom PC the room's device?",
     };
     expect((await view()).suggestion.deviceOffers).toEqual([offer]);
@@ -706,6 +707,26 @@ test("J7 offers a room device only for distinct roster joins and persists the ow
     expect((await view()).suggestion.deviceOffers ?? []).toEqual([]);
     expect((await view()).suggestion.people.map((row) => row.name)).toContain(account);
     await expect(client.call("people.devices.decide", answer)).rejects.toThrow("offer");
+
+    const map = await client.call("people.devices.decide", { action: "map", account, group: "other table" });
+    const remap = await client.call("people.devices.decide", { action: "map", account, group });
+    expect(map.token).toBeDefined();
+    await expect(
+        client.call("people.devices.decide", { action: "undo", account, reverses: map.token! })
+    ).rejects.toThrow("has changed");
+    expect((await view()).suggestion.people.map((row) => row.name)).not.toContain(account);
+    expect(
+        await client.call("people.devices.decide", { action: "undo", account, reverses: remap.token! })
+    ).toMatchObject({ device: { account, group: "other table" } });
+    await client.call("people.devices.decide", { action: "unmap", account });
+    await store.update("first-room", { command: "fixture", change: "moved seats to the copy" }, (record) => {
+        delete record.seats;
+    });
+    const { meeting: _, ...contactsAnswer } = answer;
+    expect(await client.call("people.devices.decide", contactsAnswer)).toMatchObject({
+        changed: true,
+        device: { account, group },
+    });
 });
 
 test("P2 scoped voice selection pins legacy numbers, rolls back failed corrections and refuses an occupied destination", async () => {

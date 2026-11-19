@@ -15,6 +15,7 @@ final class MeetingsVoiceJobsTests: XCTestCase {
         let cancelled = payload("cancelled", "Recording changed")
         let done = payload("done", "1 × recording changed")
         fake.fixtureMethods = ["voices.list", "voices.jobs", "voices.jobs.cancel"]
+        fake.answers["subscribe"] = ["result": ["events": MeetingsAPI.windowEvents]]
         fake.fixtureReply = { [weak fake] method, _ in
             if method == "voices.list" { return ["people": []] }
             if method == "voices.jobs.cancel" { return cancelled }
@@ -25,8 +26,13 @@ final class MeetingsVoiceJobsTests: XCTestCase {
             model.show(.inspector(meeting: "one", project: "Orchard", meetingOnly: true), doubtfulFirst: true)
             let listed = await waitUntil(3) { model.jobs.first?.state == .queued }
             XCTAssertTrue(listed)
-            let event = try XCTUnwrap(MeetingsAPI.eventDecoders["voices.job"])(running)
-            window.receive(.event(event))
+            window.startLiveUpdates()
+            defer { window.detachLiveUpdates() }
+            let subscribed = await waitUntil(3) { window.service?.isSubscribed == true }
+            XCTAssertTrue(subscribed)
+            fake.send(["jsonrpc": "2.0", "method": "voices.job", "params": running])
+            let heard = await waitUntil(3) { model.jobs.first?.state == .running }
+            XCTAssertTrue(heard)
             let job = try XCTUnwrap(model.jobs.first)
             XCTAssertEqual(job.state, .running)
             XCTAssertEqual(job.skipped, 1)
@@ -35,11 +41,36 @@ final class MeetingsVoiceJobsTests: XCTestCase {
             XCTAssertTrue(stopped)
             let params = fake.received.first { $0["method"] as? String == "voices.jobs.cancel" }?["params"] as? [String: String]
             XCTAssertEqual(params, ["id": "job-one"])
-            model.receive(.resumed)
-            let resumed = await waitUntil(3) { model.jobs.first?.state == .done }
+            fake.hangUp()
+            let resumed = await waitUntil(5) { model.jobs.first?.state == .done }
             XCTAssertTrue(resumed)
             XCTAssertEqual(model.jobs.first?.progress.step, "1 × recording changed")
             XCTAssertEqual(fake.count("voices.jobs"), 2)
+            XCTAssertEqual(fake.count("subscribe"), 2)
+        }
+    }
+
+    func testTheHistoryCapAppliesAfterMeetingMembershipArrives() async throws {
+        let fake = try FakeMeetingsService()
+        fake.fixtureMethods = ["voices.list"]
+        fake.fixtureReply = { _, _ in ["people": []] }
+        try await fake.withVoiceWindow { window in
+            let model = window.voiceLibrary
+            let owner = VoiceOwner(name: "Aster")
+            let jobs = (0...50).map { index in
+                ["id": "job-\(index)", "kind": "answer-samples", "project": "Orchard",
+                 "meeting": "practice-\(index)", "state": "done",
+                 "progress": ["done": 1, "total": 1, "step": "Learned"], "added": 0, "skipped": 1] as [String: Any]
+            }
+            model.snapshotJobs = try MeetingsService.decode(MeetingsAPI.VoicesJobs.Result.self, jobs)
+            model.show(.person(owner, project: nil), doubtfulFirst: false)
+            XCTAssertEqual(model.jobs.map(\.id), [])
+            model.rememberMeetings(try MeetingsService.decode(MeetingsAPI.PeopleMeetings.Result.self, [
+                "person": ["id": "name:aster", "name": "Aster", "rank": "meetings", "sources": ["meetings"]],
+                "meetings": [["meeting": "practice-0", "title": "Practice", "start": "2026-01-12T10:00:00Z",
+                              "as": ["participant"], "present": [], "labels": []]],
+            ] as [String: Any]))
+            XCTAssertEqual(model.jobs.map(\.id), ["job-0"])
         }
     }
 

@@ -754,7 +754,7 @@
           ],
           "wordTimings": {
             "state": "missing",
-            "revision": "0000000000000000000000000000000000000000000000000000000000000014",
+            "revision": "0000000000000000000000000000000000000000000000000000000000000015",
             "windows": [],
             "sources": []
           }
@@ -812,7 +812,7 @@
           ],
           "wordTimings": {
             "state": "missing",
-            "revision": "0000000000000000000000000000000000000000000000000000000000000014",
+            "revision": "0000000000000000000000000000000000000000000000000000000000000015",
             "windows": [],
             "sources": []
           },
@@ -1027,7 +1027,7 @@
           ],
           "wordTimings": {
             "state": "missing",
-            "revision": "0000000000000000000000000000000000000000000000000000000000000014",
+            "revision": "0000000000000000000000000000000000000000000000000000000000000015",
             "windows": [],
             "sources": []
           }
@@ -1053,7 +1053,7 @@
         "id": 21,
         "result": {
           "meeting": "2026-11-03-1000-design-review",
-          "cacheRevision": "0000000000000000000000000000000000000000000000000000000000000015",
+          "cacheRevision": "0000000000000000000000000000000000000000000000000000000000000016",
           "reused": false,
           "window": {
             "fromSec": 0,
@@ -1069,7 +1069,7 @@
             "boundaryLinesSkipped": 1
           },
           "provenance": {
-            "id": "0000000000000000000000000000000000000000000000000000000000000016",
+            "id": "0000000000000000000000000000000000000000000000000000000000000017",
             "kind": "asr",
             "modelId": "fixture/words",
             "language": "auto",
@@ -1077,8 +1077,8 @@
               "id": "transformers-js",
               "version": "4.2.0"
             },
-            "modelFingerprint": "0000000000000000000000000000000000000000000000000000000000000017",
-            "audioFingerprint": "0000000000000000000000000000000000000000000000000000000000000018",
+            "modelFingerprint": "0000000000000000000000000000000000000000000000000000000000000018",
+            "audioFingerprint": "0000000000000000000000000000000000000000000000000000000000000019",
             "generatedAt": "2026-11-03T10:00:00.000Z",
             "policy": "exact-word-v1",
             "pcmSha256": "fixture-pcm"
@@ -2798,7 +2798,7 @@
           },
           "delaySec": 2,
           "repeatGapSec": 1,
-          "path": "<home>/meetings-cache/moments/2026-11-03-1000-design-review/00-09-fixture15.wav"
+          "path": "<home>/meetings-cache/moments/2026-11-03-1000-design-review/00-09-fixture16.wav"
         }
       }
     },
@@ -3077,7 +3077,7 @@
         "jsonrpc": "2.0",
         "id": 47,
         "result": {
-          "path": "<home>/meetings-cache/tones/tone-fixture16.wav",
+          "path": "<home>/meetings-cache/tones/tone-fixture17.wav",
           "sound": {
             "hz": 880,
             "sec": 0.15,
@@ -3104,7 +3104,7 @@
         "jsonrpc": "2.0",
         "id": 48,
         "result": {
-          "path": "<home>/meetings-cache/tones/tone-fixture17.wav",
+          "path": "<home>/meetings-cache/tones/tone-fixture18.wav",
           "sound": {
             "hz": 2000,
             "sec": 0.03,
@@ -5846,7 +5846,7 @@
           "unassigned": [
             "2026-11-03-1000-design-review"
           ],
-          "backup": "<home>/backups/meetings/2026-11-03-1000-project-Harbor-19.json"
+          "backup": "<home>/backups/meetings/2026-11-03-1000-project-Harbor-20.json"
         }
       }
     },
@@ -6318,7 +6318,7 @@
           "entry": {
             "id": "c1",
             "kind": "file",
-            "ref": "<meetings>/2026-11-03-1000-design-review/clips/00-02-00-04-fixture18.wav",
+            "ref": "<meetings>/2026-11-03-1000-design-review/clips/00-02-00-04-fixture19.wav",
             "title": "Clip 00:02–00:04",
             "note": "Saved words",
             "addedAt": "2026-11-03T10:00:00.000Z",
@@ -6340,7 +6340,7 @@
             "spotSec": 2,
             "delaySec": 2,
             "repeatGapSec": 1,
-            "path": "<meetings>/2026-11-03-1000-design-review/clips/00-02-00-04-fixture18.wav"
+            "path": "<meetings>/2026-11-03-1000-design-review/clips/00-02-00-04-fixture19.wav"
           },
           "created": true
         }
@@ -6599,7 +6599,7 @@
             {
               "id": "c1",
               "kind": "file",
-              "ref": "<meetings>/2026-11-03-1000-design-review/clips/00-02-00-04-fixture18.wav",
+              "ref": "<meetings>/2026-11-03-1000-design-review/clips/00-02-00-04-fixture19.wav",
               "title": "Clip 00:02–00:04",
               "note": "Saved words",
               "addedAt": "2026-11-03T10:00:00.000Z",
@@ -6702,7 +6702,7 @@
             {
               "at": "2026-11-03T10:00:00.000Z",
               "command": "clip save",
-              "change": "00-02-00-04-fixture18.wav"
+              "change": "00-02-00-04-fixture19.wav"
             },
             {
               "at": "2026-11-03T10:00:00.000Z",
@@ -6770,7 +6770,7 @@
             {
               "id": "c1",
               "kind": "file",
-              "ref": "<meetings>/2026-11-03-1000-design-review/clips/00-02-00-04-fixture18.wav",
+              "ref": "<meetings>/2026-11-03-1000-design-review/clips/00-02-00-04-fixture19.wav",
               "title": "Clip 00:02–00:04",
               "note": "Saved words",
               "addedAt": "2026-11-03T10:00:00.000Z",
@@ -6857,7 +6857,7 @@
             {
               "at": "2026-11-03T10:00:00.000Z",
               "command": "clip save",
-              "change": "00-02-00-04-fixture18.wav"
+              "change": "00-02-00-04-fixture19.wav"
             },
             {
               "at": "2026-11-03T10:00:00.000Z",
@@ -6882,7 +6882,7 @@
         "id": 115,
         "method": "projects.restore",
         "params": {
-          "backup": "<home>/backups/meetings/2026-11-03-1000-project-Harbor-19.json"
+          "backup": "<home>/backups/meetings/2026-11-03-1000-project-Harbor-20.json"
         }
       },
       "reply": {
@@ -7306,7 +7306,8 @@
           "device": {
             "account": "Boardroom PC",
             "group": "table"
-          }
+          },
+          "token": "00000000-0000-4000-8000-000000000015"
         }
       }
     },

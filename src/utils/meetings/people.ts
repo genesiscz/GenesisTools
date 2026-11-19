@@ -10,6 +10,7 @@ export type RoomDevice = z.infer<typeof roomDeviceSchema>;
 export const roomDeviceOfferSchema = roomDeviceSchema.extend({
     question: z.string(),
     meetings: z.array(rosterName).min(1),
+    titles: z.record(z.string(), z.string()).optional(),
 });
 export type RoomDeviceOffer = z.infer<typeof roomDeviceOfferSchema>;
 export const deviceDecisionSchema = roomDeviceSchema
@@ -17,6 +18,7 @@ export const deviceDecisionSchema = roomDeviceSchema
         action: z.enum(["map", "unmap", "refuse"]),
         actor: z.enum(["window", "listen", "cli"]),
         at: isoTime,
+        token: rosterName.optional(),
         meeting: rosterName.optional(),
         meetings: z.array(rosterName).optional(),
     })

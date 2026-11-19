@@ -231,7 +231,13 @@ export function groupSpeakerQuestions(
         const owner = first.evidence?.seatPerson;
         const person = first.evidence?.exclusionPerson ?? first.speaker ?? first.candidates?.[0];
         const stranger = first.evidence?.reason === "not-the-seat-person";
-        const fromSec = Math.min(...ranges.map((r) => r.fromSec));
+        let fromSec = first.fromSec;
+        let toSec = -Infinity;
+        for (const range of ranges) {
+            fromSec = Math.min(fromSec, range.fromSec);
+            const end = range.evidence?.endSec;
+            toSec = Math.max(toSec, typeof end === "number" ? end : range.toSec);
+        }
         const indices = ranges.flatMap((r) => context.speakers?.linesFor(r).map((line) => line.index) ?? []);
         const choices = speakerChoices(
             [
@@ -250,9 +256,7 @@ export function groupSpeakerQuestions(
             about: "speaker",
             group: "rules",
             fromSec,
-            toSec: Math.max(
-                ...ranges.map((r) => (typeof r.evidence?.endSec === "number" ? r.evidence.endSec : r.toSec))
-            ),
+            toSec,
             question: stranger
                 ? `This does not sound like ${owner}. Who is speaking?`
                 : typeof person === "string"
@@ -292,10 +296,6 @@ export function refreshSpeakerQuestions(items: MeetingItem[], context: QuestionC
             return target?.kind === "speaker-range" ? [target] : [];
         });
         const indices = ranges.flatMap((r) => speakers.linesFor(r).map((row) => row.index));
-        const allowed = speakers.choices(indices);
-        if (!allowed) {
-            continue;
-        }
         if (
             ranges.some((r) => r.status === "rejected" && r.evidence?.retired) ||
             (new Set(indices.map((i) => speakers.key(i))).size > 1 && ranges.length > 1)
@@ -304,10 +304,13 @@ export function refreshSpeakerQuestions(items: MeetingItem[], context: QuestionC
             question.evidence = { ...question.evidence, retired: "speaker-eligibility" };
             continue;
         }
-        const choices = speakerChoices(question.choices, allowed, [], speakers);
-        if (!Bun.deepEquals(choices, question.choices)) {
-            question.choices = choices;
-            delete question.signature;
+        const allowed = speakers.choices(indices);
+        if (allowed) {
+            const choices = speakerChoices(question.choices, allowed, [], speakers);
+            if (!Bun.deepEquals(choices, question.choices)) {
+                question.choices = choices;
+                delete question.signature;
+            }
         }
         if (indices.some((i) => speakers.unknownCall(i))) {
             delete question.signature;

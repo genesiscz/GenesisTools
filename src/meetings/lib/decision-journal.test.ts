@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { withTimeout } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
 import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
 import * as fileLines from "@genesiscz/utils/fs/read-lines";
@@ -166,6 +167,10 @@ async function fixture(
 }
 
 const person = { kind: "listen" } as const;
+
+function waitForVoiceJob<T>(promise: Promise<T>, event: string): Promise<T> {
+    return withTimeout(promise, 2_500, new Error(`Timed out waiting for ${event}`));
+}
 
 async function voiceAnswerFixture(
     project = `journal-voice-${++stores}`,
@@ -339,10 +344,13 @@ describe("speaker answers and their project voice prints", () => {
         const decision = fx.journal.apply({ meeting, actor: person, action: { kind: "confirm", items: ["i4", "i5"] } });
         try {
             expect(
-                await Promise.race([
-                    decision.then(() => "decision returned"),
-                    started.promise.then(() => "embedder blocked"),
-                ])
+                await waitForVoiceJob(
+                    Promise.race([
+                        decision.then(() => "decision returned"),
+                        started.promise.then(() => "embedder blocked"),
+                    ]),
+                    "decision confirmation"
+                )
             ).toBe("decision returned");
             const confirm = await decision;
             expect(confirm.entry?.voices).toBeUndefined();
@@ -350,7 +358,18 @@ describe("speaker answers and their project voice prints", () => {
             const { MeetingVoiceJobs } = await import("./service/voice-jobs");
             jobs = new MeetingVoiceJobs({ store: fx.store, notify: (job) => events.push(job) });
             const work = jobs.discover(fx.store.read(meeting)!, "answer-samples", confirm.entry!.token);
-            await started.promise;
+            if (!work) {
+                throw new Error("The confirmed items did not queue work");
+            }
+            await waitForVoiceJob(
+                Promise.race([
+                    started.promise,
+                    work.then(() => {
+                        throw new Error("The voice job finished before embedding");
+                    }),
+                ]),
+                "the embedder to start"
+            );
             expect(events.map((job) => job.state)).toContain("queued");
             expect(events.at(-1)?.state).toBe("running");
             if (interruption === "partial Undo") {
@@ -413,9 +432,12 @@ describe("speaker answers and their project voice prints", () => {
             }
         } finally {
             resume.resolve();
-            await decision;
-            jobs?.stop();
-            fx.restore();
+            try {
+                await waitForVoiceJob(decision, "the decision to finish during cleanup");
+            } finally {
+                jobs?.stop();
+                fx.restore();
+            }
         }
     });
 
@@ -466,7 +488,7 @@ describe("speaker answers and their project voice prints", () => {
                 { timeoutMs: 2500 }
             );
             expect(confirm.entry?.voices).toBeUndefined();
-            await entered.promise;
+            await waitForVoiceJob(entered.promise, "the service to start embedding");
             expect(await client.call("voices.jobs", { project: fx.project })).toEqual([
                 expect.objectContaining({
                     meeting,
@@ -477,7 +499,11 @@ describe("speaker answers and their project voice prints", () => {
             ]);
             await client.call("decision.revert", { meeting, token: confirm.entry!.token, items: ["i4"] });
             resume.resolve();
-            expect(await finished.promise).toMatchObject({ added: 1, skipped: 1, state: "done" });
+            expect(await waitForVoiceJob(finished.promise, "the terminal voice job event")).toMatchObject({
+                added: 1,
+                skipped: 1,
+                state: "done",
+            });
             expect(readVoiceLibrary().library.samples).toEqual([
                 expect.objectContaining({ question: "i5", acquiredBy: "live" }),
             ]);
@@ -561,7 +587,7 @@ describe("speaker answers and their project voice prints", () => {
                         expect(await client.call("voices.jobs", { project: fx.project })).toEqual([
                             expect.objectContaining({ kind: "backfill" }),
                         ]);
-                        await ready.promise;
+                        await waitForVoiceJob(ready.promise, "embedding after restart");
                     }
                     const finished = Promise.withResolvers<void>();
                     await client.subscribe({ project: fx.project, events: ["voices.job"] }, (e) => {
@@ -572,7 +598,7 @@ describe("speaker answers and their project voice prints", () => {
                     const list = () => client.call("voices.jobs", { project: fx.project });
                     if (!(await list()).some((r) => r.state === "done")) {
                         blocked.resolve();
-                        await finished.promise;
+                        await waitForVoiceJob(finished.promise, "the recovered voice job to finish");
                     }
                     expect(await list()).toContainEqual(
                         expect.objectContaining({ state: "done", added, skipped: 2 - added })
@@ -642,7 +668,7 @@ describe("speaker answers and their project voice prints", () => {
             fx.embed.mockClear();
             fx.embed.mockRejectedValue(new Error("stored receipts must suffice"));
             await jobs.discover(fx.store.read(fx.meeting.id)!);
-            await named.promise;
+            await waitForVoiceJob(named.promise, "the naming job to finish");
             expect(passes).toEqual([fx.meeting.id]);
             expect(fx.embed).not.toHaveBeenCalled();
             expect(
@@ -701,7 +727,7 @@ describe("speaker answers and their project voice prints", () => {
                 return fx.embedLines(input);
             });
             await client.call("decision.apply", { meeting, action: { kind: "set", project } });
-            await entered.promise;
+            await waitForVoiceJob(entered.promise, "the service to start embedding");
             const [active] = await client.call("voices.jobs", { project });
             expect(active).toMatchObject({ meeting, kind: "backfill", state: "running" });
             expect(await client.call("voices.jobs.cancel", { id: active!.id })).toMatchObject({ state: "cancelled" });
@@ -765,14 +791,25 @@ describe("speaker answers and their project voice prints", () => {
         try {
             const first = await confirm(["i4"]);
             const work = jobs.discover(fx.store.read(meeting)!, "answer-samples", first.token);
-            await firstStarted.promise;
+            if (!work) {
+                throw new Error("The first set of confirmed items did not queue work");
+            }
+            await waitForVoiceJob(
+                Promise.race([
+                    firstStarted.promise,
+                    work.then(() => {
+                        throw new Error("The voice job finished before embedding");
+                    }),
+                ]),
+                "the first voice job to start"
+            );
             const second = await confirm(["i5", "i6"]);
             const queued = jobs.discover(fx.store.read(meeting)!, "answer-samples", second.token);
             expect(jobs.list(fx.project).map((j) => j.state)).toEqual(["running", "queued"]);
             await fx.journal.revert({ meeting, token: second.token, actor: person, items: ["i5"] });
             resume.resolve();
             await Promise.all([work, queued]);
-            await named.promise;
+            await waitForVoiceJob(named.promise, "the naming job to finish");
             expect(
                 events
                     .filter((r) => r.state === "running" && r.progress.step.startsWith("Naming again"))

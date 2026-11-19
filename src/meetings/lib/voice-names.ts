@@ -163,24 +163,22 @@ function voiceProfiles(options: NamingInputs, people: string[]) {
             const source = options.sources?.get(sample);
             const identity =
                 source && [source.rootMeeting, source.lineKey, sample.track, sample.embedding.length].join("\0");
-            if (identity && seen.has(identity)) {
+            if (!vector || (identity && seen.has(identity))) {
                 continue;
             }
             if (identity) {
                 seen.add(identity);
             }
-            if (vector) {
-                add(name, {
-                    seat: sample.seat,
-                    track: sample.track,
-                    model: options.store.model,
-                    vector,
-                    window:
-                        (source?.rootMeeting ?? sample.meeting) === options.meeting
-                            ? { lineKey: source?.lineKey, fromSec: sample.fromSec, toSec: sample.toSec, vector }
-                            : undefined,
-                });
-            }
+            add(name, {
+                seat: sample.seat,
+                track: sample.track,
+                model: options.store.model,
+                vector,
+                window:
+                    (source?.rootMeeting ?? sample.meeting) === options.meeting
+                        ? { lineKey: source?.lineKey, fromSec: sample.fromSec, toSec: sample.toSec, vector }
+                        : undefined,
+            });
         }
     }
     for (const line of options.lines) {

@@ -23,10 +23,10 @@ import SwiftUI
 /// meeting asked "Who is this?" with nothing under it, while an open suggestion (Speaker 5 is Alice Example, 85 %) covered
 /// the line and the seats named six people.
 enum OpenSpeakerOffer {
-    /// The open speaker-range suggestion whose range holds `sec`, the most confident first.
-    static func suggestion(at sec: Double, in items: [MeetingItem]) -> MeetingItem? {
+    /// The most confident open suggestion that covers this source label at `sec`.
+    static func suggestion(label: String, at sec: Double, in items: [MeetingItem]) -> MeetingItem? {
         items.filter { item in
-            item.kind == "speaker-range" && item.status == "suggested" && item.speaker?.isEmpty == false
+            item.kind == "speaker-range" && item.label == label && item.status == "suggested" && item.speaker?.isEmpty == false
                 && (item.fromSec ?? .infinity) <= sec && sec <= (item.toSec ?? -.infinity)
         }
         .max { ($0.confidence ?? 0) < ($1.confidence ?? 0) }
@@ -81,9 +81,12 @@ enum OpenSpeakerOffer {
 
     /// The open chip's entries without a covering question: the suggestion (a click confirms it), a divider, then the
     /// mark's candidates and the meeting's people (a click gives them the block's stretch).
-    @MainActor static func items(speaker: String, startSec: Double, candidates: [String], detail: MeetingDetailModel) -> [MenuButtonItem] {
+    @MainActor static func items(speaker: String, sourceLabel: String?, startSec: Double,
+                                 candidates: [String], detail: MeetingDetailModel) -> [MenuButtonItem] {
         let record = detail.record.value
-        let suggested = suggestion(at: startSec, in: record?.items ?? [])
+        let labels = detail.speakerLabels(forShown: speaker)
+        let label = sourceLabel ?? (labels.count > 1 ? nil : (labels.first ?? speaker))
+        let suggested = label.flatMap { suggestion(label: $0, at: startSec, in: record?.items ?? []) }
         let names = record?.speakers.labels ?? [:]
         let spoken = (detail.speakers.value?.speakers ?? []).sorted { $0.spokenSec > $1.spokenSec }
             .map { names[$0.label] ?? $0.label }

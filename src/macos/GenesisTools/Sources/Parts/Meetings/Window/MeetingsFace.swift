@@ -680,7 +680,7 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
             let fullWindow = request.card == nil && (request.sheet == nil || request.sheet == "room-devices")
             if !fullWindow {
                 guard let part = await meetingsSnapshotPart(request, model: model, offers: offers) else {
-                    FileHandle.standardError.write(Data("meetings snapshot: no such part (--card needs a row id of --meeting, --sheet takes history, history:<row id>, voice-tools, word-timings, link-source, seats, selection:<from>-<to> or person:<name>)\n".utf8))
+                    FileHandle.standardError.write(Data("meetings snapshot: no such part (--card needs a row id of --meeting, --sheet takes history, history:<row id>, voice-tools, word-timings, link-source, seats, room-devices, voice-library-settings, selection:<from>-<to>, person:<name> or person-voices:<name or email>)\n".utf8))
                     exit(1)
                 }
                 window = MeetingsWindow.partWindow(part)

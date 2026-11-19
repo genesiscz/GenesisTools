@@ -94,7 +94,7 @@ export function learntVoices(
                         ? "zero-vector"
                         : others < 2
                           ? "too-few-independent"
-                          : !usable || norm <= Number.EPSILON * others
+                          : norm <= Number.EPSILON * others
                             ? "zero-centroid"
                             : undefined;
                     const score = reason ? null : Math.max(-1, Math.min(1, dot(sum, vector!) / norm));

@@ -306,12 +306,7 @@ final class VoiceLibraryModel {
 
     private func prepareJobs() {
         guard let destination else { return }
-        var finished = 0
-        allJobs = allJobs.reversed().filter { job in
-            if job.canCancel { return true }
-            finished += 1
-            return finished <= 50
-        }.reversed()
+
         var meetings = rows.value?.meetings ?? []
         if destination.owner != nil, destination.owner == historyOwner { meetings.formUnion(historyMeetings) }
         let matching = allJobs.reversed().filter { $0.matches(destination, meetings: meetings) }

@@ -157,6 +157,8 @@ final class MeetingsTimedSeatsTests: XCTestCase {
         XCTAssertTrue(MeetingSeatsEditor.showsLabel(layout: layout, current: "Speaker 2"))
         XCTAssertTrue(MeetingSeatsEditor.showsLabel(layout: "left-mic", current: nil))
         XCTAssertFalse(MeetingSeatsEditor.showsLabel(layout: nil, current: nil))
+        XCTAssertFalse(MeetingSeatsEditor.showsLabel(layout: "unrecognized", current: nil))
+        XCTAssertTrue(MeetingSeatsEditor.showsLabel(layout: "unrecognized", current: "Speaker 2"))
     }
 
     /// U3: the people pill's tooltip is one sentence and where to act; the log with its commands is under Details.

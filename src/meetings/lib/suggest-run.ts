@@ -179,7 +179,8 @@ export async function runSuggest(options: {
             options.signal?.throwIfAborted();
             using _mutate = prof.section("save.compute");
             applySuggestionChanges(current, changes);
-            fresh = changes.fresh.filter((item) => !item.evidence?.qualitySource);
+            // Quality questions are visible results. Their private per-line decision targets stay in the record.
+            fresh = changes.fresh.filter((item) => item.kind !== "speaker-range" || !item.evidence?.qualitySource);
             retired = changes.updated
                 .filter(({ before, after }) => before.status === "suggested" && after.status === "rejected")
                 .map(({ id }) => id);
@@ -356,9 +357,11 @@ async function readSuggestInputs(
                   lineEvidence(meeting.transcript, evidence ?? { segments: [], speaking: [] }, presence, share)
               )
             : [],
-        localSpeech: prof.measure("evidence.local-speech-history", () =>
-            localSpeechDuring({ start: meeting.start, end: meeting.end })
-        ),
+        localSpeech: needsSpeakerInputs
+            ? prof.measure("evidence.local-speech-history", () =>
+                  localSpeechDuring({ start: meeting.start, end: meeting.end })
+              )
+            : undefined,
         record: collected,
         meeting,
         rules,
@@ -462,8 +465,13 @@ export async function previewSuggestionRuns(
                     record: copy,
                     presence,
                     measuredLines:
-                        inputs.evidence && presence !== inputs.presence
-                            ? lineEvidence(inputs.meeting.transcript, inputs.evidence, presence, inputs.energyMicShare)
+                        presence !== inputs.presence
+                            ? lineEvidence(
+                                  inputs.meeting.transcript,
+                                  inputs.evidence ?? { segments: [], speaking: [] },
+                                  presence,
+                                  inputs.energyMicShare
+                              )
                             : inputs.measuredLines,
                     labels,
                     dictionary: resolveDictionary(config, { project: record.project, meeting: record.dictionary }),

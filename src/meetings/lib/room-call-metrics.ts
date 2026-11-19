@@ -347,7 +347,7 @@ export function measureRoomCall(input: {
     const truth = indexed(reference.entries, "reference");
     const before = exactRows(reference.entries, baseline.rows, "baseline");
     const after = exactRows(reference.entries, candidate.rows, "candidate");
-    const held = indexed(manifest.lines, "holdout");
+    const held = exactRows(reference.entries, manifest.lines, "holdout");
     const original = indexed(manifest.originalRemote, "original remote cohort");
     const people = new Map<string, Population>();
     for (const [pop, names] of [
@@ -427,9 +427,10 @@ export function measureRoomCall(input: {
     const ownerWrongName = lines.filter(
         (line) => line.population === "owner" && line.candidate.named === manifest.roomTarget
     ).length;
+    const nonTarget = lines.filter((line) => line.speaker !== manifest.roomTarget);
     const blanketRoomOffer =
-        lines.some((line) => line.speaker !== manifest.roomTarget) &&
-        lines.every(
+        nonTarget.length > 0 &&
+        nonTarget.every(
             (line) =>
                 line.candidate.choices.includes(manifest.roomTarget) || line.candidate.named === manifest.roomTarget
         );

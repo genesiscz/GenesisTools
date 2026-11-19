@@ -554,19 +554,29 @@ function swappedStretches(lines: LineEvidence[], selfName: string, platformLabel
         return [];
     }
 
-    const end = Math.max(...measured.map((line) => line.startSec));
-    const others = [...new Set(measured.map((line) => line.label))].filter(
-        (label) => label !== selfLabel && platformLabels.has(label)
-    );
+    const byWindow = new Map<number, Map<string, LineEvidence[]>>();
+    const labels = new Set<string>();
+    let lastWindow = 0;
+    for (const line of measured) {
+        const window = Math.floor(line.startSec / SWAP_WINDOW_SEC);
+        const bucket = byWindow.get(window) ?? new Map<string, LineEvidence[]>();
+        const group = bucket.get(line.label) ?? [];
+        group.push(line);
+        bucket.set(line.label, group);
+        byWindow.set(window, bucket);
+        labels.add(line.label);
+        lastWindow = Math.max(lastWindow, window);
+    }
+    const others = [...labels].filter((label) => label !== selfLabel && platformLabels.has(label));
     const stretches: SwapStretch[] = [];
 
     for (const otherLabel of others) {
         const windows: SwapWindow[] = [];
 
-        for (let from = 0; from <= end; from += SWAP_WINDOW_SEC) {
-            const inside = measured.filter((line) => line.startSec >= from && line.startSec < from + SWAP_WINDOW_SEC);
-            const self = inside.filter((line) => line.label === selfLabel);
-            const other = inside.filter((line) => line.label === otherLabel);
+        for (let index = 0; index <= lastWindow; index++) {
+            const bucket = byWindow.get(index);
+            const self = bucket?.get(selfLabel) ?? [];
+            const other = bucket?.get(otherLabel) ?? [];
             windows.push({ state: swapWindowState(self, other), self, other });
         }
 
@@ -634,8 +644,15 @@ function swappedStretches(lines: LineEvidence[], selfName: string, platformLabel
     return stretches;
 }
 
-/** The two items of a swapped stretch: the other label's lines are the user's, the user's label's are the other's. */
-function swapItems(swap: SwapStretch, selfName: string, lines: LineEvidence[]): NewItem[] {
+/** The other label's lines are the user's, and the user's label's are the other's. */
+function swapItems(
+    swap: SwapStretch,
+    selfName: string,
+    lines: LineEvidence[]
+): Array<{
+    line: LineEvidence;
+    item: Extract<NewItem, { kind: "speaker-range" }>;
+}> {
     const confidence =
         Math.round(Math.min(SWAP_MAX_CONFIDENCE, 0.5 + (swap.otherMedian - swap.selfMedian) / 2) * 100) / 100;
     const inside = lines.filter(
@@ -650,20 +667,24 @@ function swapItems(swap: SwapStretch, selfName: string, lines: LineEvidence[]): 
     };
     swap.skipped = inside.filter((line) => !agrees(line)).map((line) => line.startSec);
     return inside.filter(agrees).map((line) => ({
-        kind: "speaker-range",
-        status: "suggested",
-        label: line.label,
-        fromSec: line.startSec,
-        toSec: line.startSec,
-        speaker: line.label === swap.otherLabel ? selfName : swap.otherLabel,
-        confidence,
-        rules: [MeetingRule.LabelSwap, MeetingRule.Energy],
-        evidence: {
-            channel: line.label === swap.otherLabel ? "mic" : "system",
-            lines: 1,
-            endSec: line.endSec,
-            swap: { fromSec: swap.fromSec, toSec: swap.toSec, skipped: swap.skipped },
-            note: "label swap agrees with this line's own channel",
+        line,
+        item: {
+            kind: "speaker-range",
+            status: "suggested",
+            label: line.label,
+            fromSec: line.startSec,
+            toSec: line.startSec,
+            speaker: line.label === swap.otherLabel ? selfName : swap.otherLabel,
+            confidence,
+            rules: [MeetingRule.LabelSwap, MeetingRule.Energy],
+            evidence: {
+                channel: line.label === swap.otherLabel ? "mic" : "system",
+                lines: 1,
+                endSec: line.endSec,
+                transcriptLine: line.index,
+                swap: { fromSec: swap.fromSec, toSec: swap.toSec, skipped: swap.skipped },
+                note: "label swap agrees with this line's own channel",
+            },
         },
     }));
 }
@@ -1009,54 +1030,41 @@ export function speakerEvidence(options: EvidenceInput): EvaluatedEvidence {
     const swaps = swappedStretches(swapLines, selfName, platformLabels);
     const swapped = (line: LineEvidence) => inSwap(swaps, line.label, line.startSec);
 
-    // A line a confirmed voice names is decided by that voice below, so the swap gives it no competing assignment.
-    const voiced = new Set(
-        lines.filter((line) => line.voice?.quality === "matched").map((line) => `${line.label}|${line.startSec}`)
-    );
-
     for (const swap of swaps) {
-        const findings: NewItem[] = swapItems(swap, selfName, swapLines).filter(
-            (found) => found.kind !== "speaker-range" || !voiced.has(`${found.label}|${found.fromSec}`)
-        );
-        for (const item of findings) {
-            if (item.kind !== "speaker-range") {
+        for (const { line, item } of swapItems(swap, selfName, swapLines)) {
+            // A matched voice gets the line below, without a competing assignment from the swap.
+            if (line.voice?.quality === "matched") {
+                continue;
+            }
+            const choices = speakers.eligibility.get(line.index)?.choices ?? [];
+            if (item.speaker === selfName && choices.length > 1) {
+                delete item.speaker;
+                item.candidates = choices;
+                item.confidence = 0.4;
+            } else if (!item.speaker || !choices.some((name) => sameName(name, item.speaker!))) {
                 continue;
             }
 
-            if (item.speaker === selfName) {
-                const swapLine = swapLines.find((line) => line.label === item.label && line.startSec === item.fromSec);
-                const room = swapLine ? (speakers.eligibility.get(swapLine.index)?.choices ?? []) : [];
-                if (room.length > 1) {
-                    delete item.speaker;
-                    item.candidates = room;
-                    item.confidence = 0.4;
-                }
-            }
-
-            // A swap range carries typed candidate scores as every other speaker range does, from its one line.
-            const line = swapLines.find((one) => one.label === item.label && one.startSec === item.fromSec);
-            if (line) {
-                const candidates = item.candidates;
-                const scores = scoreCandidates({
-                    tallies: lineTallies({
-                        lines: [line],
-                        eligibility: speakers.eligibility,
-                        selfName,
-                        nearby: [],
-                        micHolds: micSure,
-                        samePerson: options.samePerson,
-                    }).tallies,
-                    lines: 1,
-                    label: item.label,
-                    speaker: item.speaker,
-                    confidence: item.confidence ?? 0,
-                    rules: item.rules,
+            const candidates = item.candidates;
+            const scores = scoreCandidates({
+                tallies: lineTallies({
+                    lines: [line],
+                    eligibility: speakers.eligibility,
+                    selfName,
+                    nearby: [],
+                    micHolds: micSure,
                     samePerson: options.samePerson,
-                }).filter((score) => !candidates || candidates.some((name) => sameName(name, score.speaker)));
-                item.evidence = { ...item.evidence, ...scoresEvidence(scores) };
-            }
+                }).tallies,
+                lines: 1,
+                label: item.label,
+                speaker: item.speaker,
+                confidence: item.confidence ?? 0,
+                rules: item.rules,
+                samePerson: options.samePerson,
+            }).filter((score) => !candidates || candidates.some((name) => sameName(name, score.speaker)));
+            item.evidence = { ...item.evidence, ...scoresEvidence(scores) };
+            swapRanges.push(item);
         }
-        swapRanges.push(...findings);
     }
 
     const voices = microphoneVoices(
@@ -1103,6 +1111,15 @@ export function speakerEvidence(options: EvidenceInput): EvaluatedEvidence {
         return [...labels];
     };
 
+    const confirmedByLabel = new Map<string, Array<Extract<MeetingItem, { kind: "speaker-range" }>>>();
+    for (const item of options.items ?? []) {
+        if (item.kind === "speaker-range" && item.status === "confirmed") {
+            const group = confirmedByLabel.get(item.label) ?? [];
+            group.push(item);
+            confirmedByLabel.set(item.label, group);
+        }
+    }
+
     const labels: SpeakerEvidence["labels"] = [];
     for (const [label, labelLines] of byLabel) {
         const outcomes: LineOutcome[] = [];
@@ -1121,19 +1138,13 @@ export function speakerEvidence(options: EvidenceInput): EvaluatedEvidence {
             }
             const voice = options.voiceMatches?.[String(line.index)];
             const eligible = speakers.eligibility.get(line.index)!;
-            const confirmed = options.items?.some(
-                (item) =>
-                    item.kind === "speaker-range" &&
-                    item.status === "confirmed" &&
-                    item.label === line.label &&
-                    line.startSec >= item.fromSec &&
-                    line.startSec <= item.toSec
-            );
             if (
-                !confirmed &&
                 voice?.quality === "matched" &&
                 voice.person &&
-                speakers.allowsMatchedVoice(line, voice.person)
+                speakers.allowsMatchedVoice(line, voice.person) &&
+                !confirmedByLabel
+                    .get(label)
+                    ?.some((item) => line.startSec >= item.fromSec && line.startSec <= item.toSec)
             ) {
                 const item: NewItem = {
                     kind: "speaker-range",
@@ -1154,7 +1165,7 @@ export function speakerEvidence(options: EvidenceInput): EvaluatedEvidence {
                 outcomes.push({ kind: "direct", line, item });
                 continue;
             }
-            // R20 already said who the line is.
+            // R20 handled this line, even if timed eligibility prevented it from naming a speaker.
             if (swapped(line) && line.voice?.quality !== "matched") {
                 outcomes.push({ kind: "none", line, reason: "in-swap" });
                 continue;

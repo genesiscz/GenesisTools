@@ -50,8 +50,8 @@ function speechWords(text: string): string[] {
 }
 
 function matchesSpeechCall(spoken: string[], heard: string[]): boolean {
-    // A one-word notification must match exactly. Longer calls can lose, gain or change at most two words.
-    const tolerance = Math.min(2, Math.floor(spoken.length / 2));
+    // A short notification must match exactly: one changed word can reverse its meaning.
+    const tolerance = spoken.length <= 2 ? 0 : Math.min(2, Math.floor(spoken.length / 2));
     if (!spoken.length || !heard.length || Math.abs(spoken.length - heard.length) > tolerance) {
         return false;
     }

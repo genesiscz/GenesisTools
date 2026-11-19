@@ -647,6 +647,8 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
        "fromSec":0,"toSec":40,"speaker":"Alice Example"},
       {"id":"i623","kind":"speaker-range","status":"rejected","confidence":0.95,"rules":["agent"],"label":"Speaker 5",
        "fromSec":0,"toSec":40,"speaker":"Erin Example"},
+      {"id":"overlap","kind":"speaker-range","status":"suggested","confidence":0.99,"label":"Speaker 6",
+       "fromSec":0,"toSec":40,"speaker":"Erin Example"},
       {"id":"i700","kind":"speaker-range","status":"suggested","confidence":0.8,"rules":["voice-embedding"],
        "label":"Speaker 5","fromSec":100,"toSec":140,"speaker":"Dan Example","evidence":{"score":0.61}},
       {"id":"q12","kind":"question","status":"suggested","about":"speaker","fromSec":6588,"toSec":6602,

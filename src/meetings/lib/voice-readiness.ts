@@ -35,21 +35,22 @@ export function voiceReadiness(record: MeetingRecord, { seatsHint = true } = {})
             })
             .map((person) => person.name),
     ].filter((name, index, names) => names.findIndex((known) => sameName(known, name)) === index);
-    const view = readVoiceLibrary();
-    const directory = groupedOwners(view);
-    const enrolled = record.project
-        ? predictionPrints({
-              project: record.project,
-              view,
-              owners: attended.map((name) => meetingVoiceOwner(record, name)),
-          }).samples
-        : [];
+    const view = record.project ? readVoiceLibrary() : undefined;
+    const directory = view && groupedOwners(view);
+    const enrolled =
+        record.project && view
+            ? predictionPrints({
+                  project: record.project,
+                  view,
+                  owners: attended.map((name) => meetingVoiceOwner(record, name)),
+              }).samples
+            : [];
     const occupied = new Set<Seat>();
     const covered = new Set<Seat>();
     const people = Object.fromEntries(
         attended.map((name) => {
-            const binding = directory.select(meetingVoiceOwner(record, name));
-            const prints = enrolled.filter((s) => directory.binding(s.owner) === binding);
+            const binding = directory?.select(meetingVoiceOwner(record, name));
+            const prints = enrolled.filter((s) => directory?.binding(s.owner) === binding);
             if (seats) {
                 const ownMic = record.participants.some((person) => person.self && sameName(person.name, name));
                 const intervals = record.seats && seatIntervalsFor(record.seats, name);

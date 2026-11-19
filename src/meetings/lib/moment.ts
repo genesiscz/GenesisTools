@@ -413,30 +413,34 @@ function wordTimedSpot({
         return undefined;
     }
 
+    // Correction can remove or rewrite lines. A start time identifies a line only if it is unique in both views.
+    if (lines.entries.some((entry, index) => index !== said.index && entry.startSec === line.startSec)) {
+        return undefined;
+    }
+    const atStart = timed.filter((entry) => entry.startSec === line.startSec);
+    const entry = atStart[0];
+    if (atStart.length !== 1 || !entry?.words?.length) {
+        return undefined;
+    }
+
     const nth = heardIn(line.text, item.heard).findIndex((one) => one.at === said.at);
 
     if (nth < 0) {
         return undefined;
     }
 
-    for (const entry of timed) {
-        if (entry.startSec !== line.startSec || !entry.words?.length) {
-            continue;
-        }
+    for (const spelling of item.proposed ? [item.heard, item.proposed] : [item.heard]) {
+        const found = heardIn(entry.text, spelling)[nth];
+        const word =
+            found &&
+            entry.words.find(
+                (one) =>
+                    one.range.location < found.at + found.text.length &&
+                    one.range.location + one.range.length > found.at
+            );
 
-        for (const spelling of item.proposed ? [item.heard, item.proposed] : [item.heard]) {
-            const found = heardIn(entry.text, spelling)[nth];
-            const word =
-                found &&
-                entry.words.find(
-                    (one) =>
-                        one.range.location < found.at + found.text.length &&
-                        one.range.location + one.range.length > found.at
-                );
-
-            if (word) {
-                return word.startSec;
-            }
+        if (word) {
+            return word.startSec;
         }
     }
 

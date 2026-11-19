@@ -422,7 +422,7 @@ struct RoomDeviceOfferRow: View {
     let window: MeetingsWindowModel?
     let answer: (Bool) -> Void
     @State private var showingMeetings = false
-    @State private var titles: [String: String] = [:]
+
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -441,28 +441,17 @@ struct RoomDeviceOfferRow: View {
             GenDisclosure(Plural.count(offer.meetings.count, "meeting"), isExpanded: $showingMeetings, minHeight: 22) {
                 VStack(alignment: .leading, spacing: 3) {
                     ForEach(offer.meetings, id: \.self) { id in
-                        Text(verbatim: titles[id] ?? id)
+                        Text(verbatim: window?.meeting(id)?.displayTitle ?? offer.title(id))
                     }
                 }
-                .task(id: offer.meetings) { await readTitles() }
+
             }
             .font(.callout).foregroundStyle(.secondary)
         }
         .padding(.vertical, 3)
     }
 
-    /// The offer carries stable IDs. Resolve older meetings outside the overview only when the evidence is opened.
-    private func readTitles() async {
-        for id in offer.meetings where titles[id] == nil {
-            guard !Task.isCancelled else { return }
-            if let known = window?.meeting(id) {
-                titles[id] = known.displayTitle
-            } else if let record = try? await MeetingDetailModel.recordRead(id).run(service: window?.service),
-                      !record.title.isEmpty, !Task.isCancelled {
-                titles[id] = record.title
-            }
-        }
-    }
+
 }
 
 /// "Seats and microphones…" from the meeting header's "…" menu: who sat in the room, who joined from elsewhere and
@@ -534,8 +523,7 @@ struct MeetingSeatsEditor: View {
     /// visible, so it can be cleared. An unmeasured meeting (no layout) shows none.
     static func showsLabel(layout: String?, current: String?) -> Bool {
         if current != nil { return true }
-        guard let layout else { return false }
-        return layout != "unknown"
+        return layout == "left-mic" || layout == "right-mic"
     }
 
     init(seats: MeetingSeats?, preview: Loadable<MeetingsAPI.SeatsSuggest.Suggestion> = .idle,
