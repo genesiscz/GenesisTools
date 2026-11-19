@@ -272,6 +272,7 @@ tools recorder finish <recording> <movie> [--from T --to T]  # subtitles and cha
 tools recorder proxy <recording> [--display most-change|ID] [--window 10] [--switch FROM-TO=ID]... [--keep-plan]
 tools recorder proxy <recording> --plan <file>   # the proxy with exactly that display plan (a copy of a proxy.json)
 tools recorder proxy <recording> --undo-switch   # take the last display switch back (--redo-switch makes it again)
+tools recorder displays <recording> [--json]     # each display, the segments and the switch points (source seconds)
 ```
 
 `export --size` takes `1920x1080`, `1920x` (width) or `x1080` (height). Progress prints on stderr every 10 %; stdout
@@ -288,6 +289,13 @@ editor's ⌘Z and the REPL's `undoDisplaySwitch()` take back the same one. A mee
 captions with the speakers' names. The picture holds every display that has frames (bars round a smaller one), so a
 switch never moves an edit's hidden parts; an edit made on an older proxy is moved onto the new picture once (one undo
 step, `fitToProxy`). `edit` makes the proxy by itself for a frames-only recording.
+
+`displays` reads the plan back: every display with frames, the segments from start to end and the switch times. The
+editor draws one row per display from the same plan, with the switch points as lines. Three ops of `apply` change it,
+each call one undo step: `switchDisplay` (`{display, from, to}`), `hideDisplay` (`{display, from?, to?}`: the display
+next to each of its segments shows instead) and `moveDisplaySwitch` (`{at, to}`). The REPL's `m.displays()`,
+`m.switchDisplay()`, `m.hideDisplay()` and `m.moveDisplaySwitch()` call the same code
+(`src/recorder/lib/display-ops.ts`).
 
 ### Windows and the service
 

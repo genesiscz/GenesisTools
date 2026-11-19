@@ -322,6 +322,10 @@ private struct RecorderEditorSettings: View {
                                  detail: "A drag on the frames lane opens a popover (cut, speed, zoom, hide, text, export). Off: the drag marks the export part.",
                                  identifier: "recorder.settings.rangePopover", isOn: model.bool(EditorModel.rangePopoverKey, true))
             Divider()
+            NativeSettingsToggle("Display switch lines through every lane",
+                                 detail: "A recording of several displays: the lines where the movie changes display run through the clips, effects and sound too. Off: only through the display rows.",
+                                 identifier: "recorder.settings.displaySwitchLines", isOn: model.bool(EditorModel.displaySwitchLinesKey, true))
+            Divider()
             NativeSettingsSegmented(
                 "Effect lanes before scrolling", detail: "Past this many effect lanes the lanes area scrolls, with a fade at the cut edge.",
                 identifier: "recorder.settings.lanesShown",

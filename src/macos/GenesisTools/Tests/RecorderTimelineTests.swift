@@ -909,6 +909,70 @@ final class RecorderTimelineTests: XCTestCase {
         model.displayPlan = plan
         let layout = TimelineLayout(model: model)
         XCTAssertTrue(layout.displays)
-        XCTAssertEqual(layout.clipTop, before + TimelineView.displayLaneHeight + 4, "the display lane sits over the frames")
+        XCTAssertEqual(plan.rows.map(\.id), [1, 2, 4], "recording.json lists no frames: every display it names is a row")
+        XCTAssertEqual(plan.switches, [4_000_000])
+        XCTAssertEqual(layout.clipTop, before + DisplayRowsView.height(rows: 3), "one row per display sits over the frames")
+    }
+
+    /// A recording of two displays: each display is its own row (a third that recording.json names but never captured
+    /// is not), the switch points are the lines between them, and hiding a display or moving a switch runs the op of
+    /// the same name in `tools recorder apply` (the REPL's hideDisplay / moveDisplaySwitch) as one undo step each.
+    func testEachDisplayIsARowAndHideAndMoveRunAsOneUndoStepThroughTheApplyOps() throws {
+        let recording = folder.appendingPathComponent("two-displays")
+        try FileManager.default.createDirectory(at: recording, withIntermediateDirectories: true)
+        let plan3 = #"{"policy":"most-change","ranges":[{"displayId":1,"fromUs":0,"toUs":10000000},{"displayId":2,"fromUs":10000000,"toUs":20000000},{"displayId":1,"fromUs":20000000,"toUs":30000000}],"version":1,"windowSec":10}"#
+        let hidden = #"{"policy":"most-change","ranges":[{"displayId":1,"fromUs":0,"toUs":12000000},{"displayId":2,"fromUs":12000000,"toUs":20000000},{"displayId":1,"fromUs":20000000,"toUs":30000000}],"version":1,"windowSec":10}"#
+        let planFile = recording.appendingPathComponent("proxy.json")
+        try Data(plan3.utf8).write(to: planFile)
+        try Data(#"{"displays":[{"id":1,"name":"Built-in"},{"id":2,"name":"Studio"},{"id":3,"name":"Never"}],"frames":[{"file":"a.jpg","atMs":0,"displayId":1},{"file":"b.jpg","atMs":4000,"displayId":2}]}"#.utf8)
+            .write(to: recording.appendingPathComponent("recording.json"))
+        let plan = try XCTUnwrap(DisplayPlan.read(video: recording.appendingPathComponent("proxy.mp4").path))
+        XCTAssertEqual(plan.rows.map(\.name), ["Built-in", "Studio"])
+        XCTAssertEqual(plan.switches, [10_000_000, 20_000_000])
+        XCTAssertEqual(plan.firstFrameUs, [1: 0, 2: 4_000_000])
+        XCTAssertFalse(plan.hasFrames(2, before: 4_000_000), "Studio has no picture before its first frame")
+        XCTAssertTrue(plan.hasFrames(2, before: 10_000_000))
+        XCTAssertEqual(plan.rangeIndex(atSource: 25_000_000), 2)
+
+        let project = EditProject.whole(video: recording.appendingPathComponent("proxy.mp4").path, durationUs: 30_000_000,
+                                        width: 1920, height: 1080, cursor: nil, recording: nil)
+        service = FakeServiceLink(project: project, rules: { project, _ in project })
+        let model = EditorModel.on(service, store: ProjectStore(url: recording.appendingPathComponent("edit.json")))
+        XCTAssertEqual(TimelineLayout(model: model).displayRows, 2)
+        var calls: [[String]] = []
+        model.runTools = { argv, _, done in
+            calls.append(argv)
+            try? Data((argv.contains("--undo-switch") ? plan3 : hidden).utf8).write(to: planFile)
+            done(0, "{}", "")
+        }
+
+        model.hideDisplay(fromUs: 10_000_000, toUs: 12_000_000, displayId: 2)
+        XCTAssertEqual(calls.last, ["recorder", "apply", recording.path, #"{"display":2,"from":10,"op":"hideDisplay","to":12}"#])
+        XCTAssertEqual(model.displayPlan?.ranges.first?.toUs, 12_000_000)
+        XCTAssertEqual(model.undoName, "Display Switch")
+        model.undo()
+        XCTAssertEqual(calls.last, ["recorder", "proxy", recording.path, "--undo-switch"])
+        XCTAssertEqual(model.displayPlan?.switches, [10_000_000, 20_000_000])
+
+        model.moveDisplaySwitch(atUs: 10_000_000, toUs: 12_000_000)
+        XCTAssertEqual(calls.last, ["recorder", "apply", recording.path, #"{"at":10,"op":"moveDisplaySwitch","to":12}"#])
+        XCTAssertEqual(model.displayPlan?.switches, [12_000_000, 20_000_000])
+        XCTAssertEqual(model.undoName, "Display Switch")
+        model.undo()
+
+        // A real click on the Studio row's faint slot in the first segment shows Studio there.
+        FrameProbe.enabled = true
+        defer { FrameProbe.enabled = false }
+        let window = host(model, width: 900)
+        let row = try XCTUnwrap(FrameProbe.frames["recorder.timeline.display.2"], "the Studio row is drawn")
+        XCTAssertNotNil(FrameProbe.frames["recorder.timeline.display.1"])
+        XCTAssertNil(FrameProbe.frames["recorder.timeline.display.3"], "a display with no frames has no row")
+        XCTAssertNotNil(FrameProbe.frames["recorder.timeline.displaySwitch.20000000"], "each switch has its line")
+        let switchLine = try XCTUnwrap(FrameProbe.frames["recorder.timeline.displaySwitch.10000000"])
+        XCTAssertEqual(switchLine.midX, row.minX + TimelineScale(pointsPerSecond: model.fittedPointsPerSecond).x(10_000_000),
+                       accuracy: 1.5, "the line's hit area sits where it is drawn")
+        let scale = TimelineScale(pointsPerSecond: model.fittedPointsPerSecond)
+        click(window, x: row.minX + scale.x(7_000_000), y: row.midY)
+        XCTAssertEqual(calls.last, ["recorder", "proxy", recording.path, "--keep-plan", "--switch", "0.000-10.000=2"])
     }
 }
