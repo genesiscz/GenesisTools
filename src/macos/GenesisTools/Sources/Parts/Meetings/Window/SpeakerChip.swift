@@ -161,10 +161,7 @@ struct SpeakerChip: View {
     /// journal with an Undo; without one, the candidates of the transcript's mark, each given the stretch.
     private func answers(_ detail: MeetingDetailModel, candidates: [String]) -> [MenuButtonItem] {
         guard let startSec else { return [] }
-        let question = detail.record.value?.items.first { item in
-            item.kind == "question" && item.status == "suggested" && item.about == "speaker"
-                && (item.fromSec ?? .infinity) <= startSec && startSec <= (item.toSec ?? -.infinity)
-        }
+        let question = Self.speakerQuestion(in: detail.record.value?.items ?? [], at: startSec, label: actingLabel(detail))
         var items: [MenuButtonItem] = [.note("Who said this?")]
         if let question, let row = detail.rows.value?.rows.first(where: { $0.id == question.id }) {
             items += row.choices.filter { $0.role != "skip" }.map { choice in
@@ -179,6 +176,22 @@ struct SpeakerChip: View {
         }
         items.append(.divider)
         return items
+    }
+
+    /// The open speaker question a block starting at `startSec` answers. A question covers the half-open range from
+    /// its start to its end, so at a boundary shared by two questions the later one answers, never the one that ended
+    /// there; a zero-length question covers its one instant. When several still cover the start, the one about the
+    /// block's source label (`evidence.labels`) wins.
+    static func speakerQuestion(in items: [MeetingItem], at startSec: Double, label: String) -> MeetingItem? {
+        let covering = items.filter { item in
+            guard item.kind == "question", item.status == "suggested", item.about == "speaker",
+                  let from = item.fromSec, let to = item.toSec else { return false }
+            return from <= startSec && (startSec < to || (from == to && startSec == to))
+        }
+        return covering.first { item in
+            if case .array(let labels) = item.evidence?["labels"] ?? .null { return labels.contains(.string(label)) }
+            return false
+        } ?? covering.first
     }
 
     private func open(_ mode: PickerMode, detail: MeetingDetailModel) {
