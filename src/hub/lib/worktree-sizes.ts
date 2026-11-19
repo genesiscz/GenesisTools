@@ -21,8 +21,8 @@ export interface WorktreeSize {
 
 /**
  * One clone-aware scan per worktree through the `tools du` C core (bun:ffi, its own threads).
- * Other worktrees nested inside are excluded. Sequential on purpose: each scan already uses
- * every core, and two at once only fight over the disk.
+ * Other worktrees nested inside are excluded. Scans run sequentially to avoid competing for disk I/O.
+ * Each scan requests half the available parallelism, with a minimum of two threads.
  */
 export async function worktreeSizes(paths: string[]): Promise<WorktreeSize[]> {
     const storage = new Storage("du");
