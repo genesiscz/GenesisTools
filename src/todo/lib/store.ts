@@ -5,12 +5,21 @@
  * a file that is newer than the import (an old checkout wrote it) is imported again by the same key.
  */
 import { Database } from "bun:sqlite";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import { gitCommonRoot } from "@genesiscz/utils/agent/identity";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import {
+    defaultRuleContext,
+    graceMinutesFor,
+    kickDrainer,
+    loadRmConfig,
+    moveToTrash,
+    planRemoval,
+    rmCallerFromRuntime,
+} from "@genesiscz/utils/rm";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { pairItem } from "@genesiscz/utils/work/connectors/sync";
 import type { NewChange } from "@genesiscz/utils/work/model/change";
@@ -388,6 +397,39 @@ export class TodoStore {
         return this.updateWith(id, () => patch);
     }
 
+    private attachmentDirectories(todo: Todo): string[] {
+        const root = resolve(this.storageRoot);
+        const dirs = new Set<string>();
+        for (const { storedPath } of todo.attachments) {
+            const dir = dirname(resolve(storedPath));
+            const [projects, hash, attachments, id, extra] = relative(root, dir).split(sep);
+            if (
+                projects === "projects" &&
+                /^[a-f0-9]{12}$/.test(hash) &&
+                attachments === "attachments" &&
+                id === todo.id &&
+                extra === undefined &&
+                existsSync(dir)
+            ) {
+                if (realpathSync(dir) !== join(realpathSync(root), projects, hash, attachments, id)) {
+                    throw new Error(`Todo attachment directory is a symbolic link: ${dir}`);
+                }
+                dirs.add(dir);
+            }
+        }
+        return [...dirs];
+    }
+
+    /** The pointer is retained after drop so an interrupted trash move can be retried. */
+    async getForRemoval(id: string): Promise<Todo | null> {
+        const row = readRows(this.dbPath, { projectRoot: this.projectRoot, todoId: id })[0];
+        if (row?.item.state === "dropped") {
+            const todo = SafeJSON.parse<Todo>(row.meta.todo, { strict: true });
+            return this.attachmentDirectories(todo).length > 0 ? todo : null;
+        }
+        return this.get(id);
+    }
+
     /** A removed todo is dropped in the store (the journal keeps it) and leaves every todo list. */
     async remove(id: string): Promise<boolean> {
         const actor = actorHere(this.projectRoot);
@@ -395,8 +437,13 @@ export class TodoStore {
             inTransaction(db, () => {
                 const row = rowsOf(db, { projectRoot: this.projectRoot, todoId: id })[0];
 
-                if (!row || row.item.state === "dropped") {
-                    return false;
+                if (row === undefined) {
+                    return null;
+                }
+
+                const todo = SafeJSON.parse<Todo>(row.meta.todo, { strict: true });
+                if (row.item.state === "dropped") {
+                    return this.attachmentDirectories(todo).length > 0 ? todo : null;
                 }
 
                 applyChange(db, {
@@ -412,19 +459,41 @@ export class TodoStore {
                         why: "removed with the remove command of the todo tool",
                     },
                 });
-                return true;
+                return todo;
             })
         );
 
-        if (removed) {
-            const dir = join(this.fileRoot, "attachments", id);
-
-            if (existsSync(dir)) {
-                rmSync(dir, { recursive: true, force: true });
-            }
+        if (removed === null) {
+            return false;
         }
 
-        return removed;
+        const dirs = this.attachmentDirectories(removed);
+        if (dirs.length > 0) {
+            const config = loadRmConfig();
+            const caller = rmCallerFromRuntime();
+            const context = defaultRuleContext(config, caller, process.cwd());
+            const plan = planRemoval(dirs, context);
+            if (plan.some((item) => item.verdict.kind === "deny")) {
+                throw new Error(`Todo ${id} was dropped, but its attachment directory is protected from removal.`);
+            }
+            const batch = moveToTrash(
+                plan.map((item) => ({ target: item.target, rule: "todo attachments" })),
+                {
+                    config,
+                    caller,
+                    graceMinutes: Math.max(...plan.map((item) => graceMinutesFor(item, context))),
+                }
+            );
+            if (batch !== null) {
+                kickDrainer(config);
+            }
+            if (this.attachmentDirectories(removed).length > 0) {
+                throw new Error(
+                    `Todo ${id} was dropped, but some attachments could not be moved to trash. Retry removal.`
+                );
+            }
+        }
+        return true;
     }
 
     async complete(id: string, note?: string): Promise<Todo> {

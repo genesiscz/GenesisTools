@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
@@ -264,30 +264,6 @@ export class FileTodoStore {
 
     async update(id: string, patch: Partial<Todo>): Promise<Todo> {
         return this.updateWith(id, () => patch);
-    }
-
-    async remove(id: string): Promise<boolean> {
-        const removed = await this.mutate((todos) => {
-            const filtered = todos.filter((t) => t.id !== id);
-
-            if (filtered.length === todos.length) {
-                return { todos, result: false };
-            }
-
-            return { todos: filtered, result: true };
-        });
-
-        if (!removed) {
-            return false;
-        }
-
-        const todoAttachDir = join(this.attachmentsDir, id);
-
-        if (existsSync(todoAttachDir)) {
-            rmSync(todoAttachDir, { recursive: true, force: true });
-        }
-
-        return true;
     }
 
     async complete(id: string, note?: string): Promise<Todo> {
