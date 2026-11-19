@@ -135,15 +135,6 @@ function capitalMidSentence(heard: string, transcript: readonly TranscriptEntry[
 }
 
 /**
- * The question a suggested item needs before anyone confirms it, or nothing when it is not worth a person's time
- * (Martin, 2026-11-02: "just on those which are really important and not sure of"):
- * - a speaker range under `listenBelow` with more than 5 words that are not all fillers, and 15 words or a decision;
- * - a term under `listenBelow` whose time is known and that is seen twice, looks like an identifier, is a person's
- *   name from the summary, or sits in a line with a decision; an unknown word with nothing proposed only when shaped
- *   like an identifier, or seen twice with a capital that no sentence start explains (a name).
- * The question carries its impact and signature in `evidence`; `selectQuestions` clusters and ranks them.
- */
-/**
  * Who the presence places in the call at `atSec`, and who it knows of but places outside the call then. Every
  * speaker question offers only the first and never the second (I13: a person is offered only inside their window).
  */
@@ -295,6 +286,15 @@ export function refreshSpeakerQuestions(items: MeetingItem[], context: QuestionC
     }
 }
 
+/**
+ * The question a suggested item needs before anyone confirms it, or nothing when it is not worth a person's time
+ * (Martin, 2026-11-02: "just on those which are really important and not sure of"):
+ * - a speaker range under `listenBelow` with more than 5 words that are not all fillers, and 15 words or a decision;
+ * - a term under `listenBelow` whose time is known and that is seen twice, looks like an identifier, is a person's
+ *   name from the summary, or sits in a line with a decision; an unknown word with nothing proposed only when shaped
+ *   like an identifier, or seen twice with a capital that no sentence start explains (a name).
+ * The question carries its impact and signature in `evidence`; `selectQuestions` clusters and ranks them.
+ */
 export function questionFor(item: MeetingItem, context: QuestionContext): NewQuestion | undefined {
     const low =
         item.evidence?.listen === true || (item.confidence !== undefined && item.confidence < context.listenBelow);

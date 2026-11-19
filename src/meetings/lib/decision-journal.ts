@@ -1358,10 +1358,6 @@ export function actorOf(item: MeetingItem): DecisionActor {
 }
 
 /**
- * What a planned decision reaches beyond the items it names, for the window's "This also affects" sheet (R22, G9,
- * G26, G27): the other items it changes, the transcript lines a spelling changes, and the dictionary it teaches.
- */
-/**
  * How a reached item stands to the decision. `sets`: a target of the decided question outside the span it asks
  * about, which the answer also sets ("This answer also sets"); `look-alike`: another question or item the engine
  * settles the same way; `same`: the same question again (a target inside the asked span, a look-alike over the same
@@ -1669,15 +1665,6 @@ export function actorText(actor: DecisionActor): string {
 }
 
 /**
- * The decision journal of the meetings store: every decision on a meeting goes through it. `apply` makes one decision
- * (a confirm, a reject, a respelling, an answer with its comment, a skip, a split, a speaker rename, a reopen), records
- * its actor and reason, and keeps the before and after of every item it changed under one token; `plan` answers the
- * same entry without saving anything (the look-alikes an answer would settle); `revert` undoes exactly one entry and is
- * refused with `item-changed` once a later decision changed one of its items; `read` lists a meeting's entries, newest
- * first. It is the one writer of the journal file, of the answer log's decision lines and of the corrections ledger,
- * all under the record's lock, so they keep the record's order.
- */
-/**
  * What a decision does to the dictionary, read before the record's lock: the entry an answer writes, the entries an
  * Undo takes back, and what a corrected word needs before it gets a dictionary question (the owner's answer to M5:
  * the tool asks, it never adds an entry on its own).
@@ -1931,6 +1918,15 @@ async function revertDictionaryChanges(
     }
 }
 
+/**
+ * The decision journal of the meetings store: every decision on a meeting goes through it. `apply` makes one decision
+ * (a confirm, a reject, a respelling, an answer with its comment, a skip, a split, a speaker rename, a reopen), records
+ * its actor and reason, and keeps the before and after of every item it changed under one token; `plan` answers the
+ * same entry without saving anything (the look-alikes an answer would settle); `revert` undoes exactly one entry and is
+ * refused with `item-changed` once a later decision changed one of its items; `read` lists a meeting's entries, newest
+ * first. It is the one writer of the journal file, of the answer log's decision lines and of the corrections ledger,
+ * all under the record's lock, so they keep the record's order.
+ */
 export class DecisionJournal {
     constructor(private readonly options: DecisionJournalOptions) {}
 

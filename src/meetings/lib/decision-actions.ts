@@ -275,12 +275,6 @@ export const SKIP_NEEDS = ["speaker", "proposed", "listen", "nothing"] as const;
 export const skipSchema = z.object({ id: z.string(), reason: z.string(), needs: z.enum(SKIP_NEEDS).optional() });
 export type DecisionSkip = z.infer<typeof skipSchema>;
 
-/**
- * One line of the journal: who decided what on a meeting, when and why, and everything it changed, so its token
- * undoes exactly it. `decided`: the items it decided (their status or decision time changed); `settled`: the
- * look-alike questions an answer settled; `corrections`: the ledger lines it wrote; `fields`: the meeting's own fields
- * it changed (`set`); `assignments`: the speaker assignments it changed (`assign`).
- */
 /** A dictionary level, as `MeetingsConfigStore` names it (`DictionaryScope`). */
 const dictionaryScopeSchema = z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("global") }),
@@ -295,6 +289,12 @@ export const dictionaryChangeSchema = z.object({
 });
 export type DictionaryChange = z.infer<typeof dictionaryChangeSchema>;
 
+/**
+ * One line of the journal: who decided what on a meeting, when and why, and everything it changed, so its token
+ * undoes exactly it. `decided`: the items it decided (their status or decision time changed); `settled`: the
+ * look-alike questions an answer settled; `corrections`: the ledger lines it wrote; `fields`: the meeting's own fields
+ * it changed (`set`); `assignments`: the speaker assignments it changed (`assign`).
+ */
 export const journalEntrySchema = z.object({
     token: z.string().min(1),
     at: z.string().min(1),
