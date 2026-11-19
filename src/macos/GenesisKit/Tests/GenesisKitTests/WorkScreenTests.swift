@@ -15,10 +15,13 @@ private final class FakeWorkSource: WorkSource {
     var reads = 0
     var holdNextRead = false
     var resumeRead: CheckedContinuation<Void, Never>?
+    var holdWrite = false
+    var resumeWrite: CheckedContinuation<Void, Never>?
     var subscriptions = 0
     var serviceDown = false
+    var readsToFail = 0
     var projectNames = ["App", "Other"]
-    private var continuation: AsyncStream<Void>.Continuation?
+    private var continuation: AsyncStream<WorkSourceEvent>.Continuation?
 
     init(_ snapshot: WorkSnapshotValue) { snapshotValue = snapshot }
 
@@ -26,12 +29,17 @@ private final class FakeWorkSource: WorkSource {
     func detail(ref: String) async throws -> WorkItemDetail { throw WorkSourceError("No fixture item \(ref)") }
     func snapshot(project: String) async throws -> WorkSnapshotValue {
         reads += 1
+        if readsToFail > 0 {
+            readsToFail -= 1
+            throw WorkSourceError("Fixture read failed")
+        }
+        let confirmed = snapshotValue
         if holdNextRead {
             holdNextRead = false
             await withCheckedContinuation { resumeRead = $0 }
             resumeRead = nil
         }
-        return snapshotValue
+        return confirmed
     }
     func notify(project: String) async throws -> [WorkNotifyRow] { notifyRows }
     func setNotify(project: String?, scope: WorkNotifyScope, type: String, action: String, level: String?) async throws -> WorkActionOutcome {
@@ -40,40 +48,64 @@ private final class FakeWorkSource: WorkSource {
     }
     func perform(_ action: WorkScreenAction, project: String) async throws -> WorkActionOutcome {
         performed.append(action)
+        if holdWrite { await withCheckedContinuation { resumeWrite = $0 }; resumeWrite = nil }
         if let writeResult { return writeResult }
         return WorkActionOutcome(ok: true, message: "\(action.done): \(action.ref)")
     }
-    func changes() -> AsyncStream<Void> {
+    func changes() -> AsyncStream<WorkSourceEvent> {
         subscriptions += 1
         return AsyncStream {
             continuation = $0
             if serviceDown { $0.finish() }
         }
     }
-    func tick() { continuation?.yield(()) }
+    func tick() { continuation?.yield(.serviceChange) }
     func end() { continuation?.finish() }
 }
 
 @MainActor
 final class WorkScreenTests: XCTestCase {
-    func testLiveSourceEndsWhenTheSubscribedSocketCloses() async throws {
+    func testLiveSourceKeepsFileChangesAfterTheSubscribedSocketCloses() async throws {
         let peer = FakeRPCPeer()
         try peer.start()
+        var peerStopped = false
+        defer { if !peerStopped { peer.stop() } }
         let rpc = GenesisToolsRPC(path: peer.path)
-        let source = LiveWorkSource(rpc: rpc, walPath: peer.path + "/work.db-wal")
+        let directory = URL(fileURLWithPath: peer.path + "-store", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let wal = directory.appendingPathComponent("work.db-wal")
+        let source = LiveWorkSource(rpc: rpc, walPath: wal.path)
         let stream = source.changes()
-        let ended = expectation(description: "Work observed the socket closing")
-        let listener = Task { for await _ in stream {}; ended.fulfill() }
+        let subscribed = expectation(description: "Work received a service change")
+        let disconnected = expectation(description: "Work observed the socket closing")
+        let fileChanged = expectation(description: "Work received a WAL change after disconnect")
+        let listener = Task {
+            for await event in stream {
+                switch event {
+                case .serviceChange: subscribed.fulfill()
+                case .serviceDisconnected: disconnected.fulfill()
+                case .localChange: fileChanged.fulfill(); return
+                }
+            }
+        }
         defer { listener.cancel(); rpc.close() }
         try await Task.detached {
-            defer { peer.stop() }
             for method in ["hello", "subscribe"] {
                 let request = try peer.line { $0["method"] as? String == method }
                 let id = try XCTUnwrap(request["id"])
                 peer.send(["jsonrpc": "2.0", "id": id, "result": [:]])
             }
+            peer.send(["jsonrpc": "2.0", "method": "work.changed",
+                       "params": ["payload": ["method": "edit", "items": ["w_fixture01"]],
+                                  "at": "2026-11-19T06:00:00Z"]])
         }.value
-        await fulfillment(of: [ended], timeout: 3)
+        await fulfillment(of: [subscribed], timeout: 3)
+        peer.stop()
+        peerStopped = true
+        await fulfillment(of: [disconnected], timeout: 3)
+        try Data("fixture WAL".utf8).write(to: wal)
+        await fulfillment(of: [fileChanged], timeout: 3)
     }
 
     func testNotifyUsesTheTypedSourceAndEncodesInheritanceAsNull() async throws {
@@ -151,6 +183,22 @@ final class WorkScreenTests: XCTestCase {
         model.deactivate()
     }
 
+    func testAFailedChangeReloadRetriesWithoutAnotherWrite() async {
+        let source = FakeWorkSource(fixture())
+        let model = WorkScreenModel(source: source, reloadInterval: 0.2, settle: 0.05)
+        model.activate()
+        defer { model.deactivate() }
+        await settle { model.snapshot != nil }
+        let before = source.reads
+        source.readsToFail = 1
+        source.tick()
+        await settle { model.failure != nil }
+        XCTAssertEqual(source.reads, before + 1)
+        await settle { source.reads >= before + 2 && model.failure == nil }
+        XCTAssertEqual(source.reads, before + 2)
+        XCTAssertNil(model.failure)
+    }
+
     /// Every session writes the store, and a reload costs the service about 1.3 s of CPU: a burst is one reload, a
     /// hidden screen reloads nothing, and the first look after that reloads once.
     func testABurstOfChangesIsOneReloadAndAHiddenScreenWaits() async throws {
@@ -191,7 +239,7 @@ final class WorkScreenTests: XCTestCase {
         model.deactivate()
     }
 
-    func testAnEqualLiveReadPublishesNothingAndKeepsTheSnapshot() async {
+    func testAnEqualLiveReadPublishesNothingAndKeepsTheSnapshot() async throws {
         let source = FakeWorkSource(fixture())
         let model = WorkScreenModel(source: source, reloadInterval: 0, settle: 0)
         model.activate()
@@ -206,7 +254,7 @@ final class WorkScreenTests: XCTestCase {
         XCTAssertFalse(model.isFirstLoad)
         XCTAssertFalse(model.isLoading)
         let start = CFAbsoluteTimeGetCurrent()
-        source.resumeRead?.resume()
+        try XCTUnwrap(source.resumeRead).resume()
         await model.finishCurrentRead()
         let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
         print(String(format: "Work unchanged fixture read applied in %.3f ms, including task resumption", elapsed))
@@ -257,15 +305,24 @@ final class WorkScreenTests: XCTestCase {
         await settle { model.live == .catchingUp }
         XCTAssertEqual(model.live, .catchingUp)
         XCTAssertFalse(model.isLoading)
-        source.resumeRead?.resume()
-        await settle { model.live == .live }
-        source.holdNextRead = true
+        // The write starts while the tick's read is held. Its preview and its pending flag outlive that read.
+        source.holdWrite = true
         let acknowledged = expectation(description: "Write acknowledged during the held refresh")
         let write = Task {
             let saved = await model.write(.accept(ref: "w_spot0002"))
             XCTAssertTrue(saved)
             acknowledged.fulfill()
         }
+        await settle { source.resumeWrite != nil }
+        XCTAssertTrue(model.pending.contains("w_spot0002"))
+        source.resumeRead?.resume()
+        await settle { model.live == .live }
+        XCTAssertTrue(model.pending.contains("w_spot0002"))
+        XCTAssertEqual(model.snapshot?.triage.first { $0.ref == "w_spot0002" }?.state, "open")
+        source.holdNextRead = true
+        source.snapshotValue = source.snapshotValue.previewing(["w_spot0002": "open"])
+        source.resumeWrite?.resume()
+        // The service's answer ends the write. Its own readback is still held and the acknowledged state stays shown.
         await settle { source.resumeRead != nil }
         await fulfillment(of: [acknowledged], timeout: 1)
         XCTAssertNotNil(source.resumeRead)
@@ -274,6 +331,8 @@ final class WorkScreenTests: XCTestCase {
         source.resumeRead?.resume()
         await write.value
         await model.finishCurrentRead()
+        XCTAssertTrue(model.pending.isEmpty)
+        XCTAssertEqual(model.snapshot?.triage.first { $0.ref == "w_spot0002" }?.state, "open")
     }
 
     func testWorkNoticeHistoryEvictsBothCopiesOfTheOldestOutcome() async {

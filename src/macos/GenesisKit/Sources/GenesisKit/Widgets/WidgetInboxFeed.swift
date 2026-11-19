@@ -4,36 +4,12 @@ struct WidgetFeedRun: Equatable, Identifiable {
     let id: String
     let runKey: String
     var items: [WidgetInboxItem]
+    var sessionCount: Int { Set(items.map(\.key)).count }
 
+    /// An external sender or a single session is named by the run's header. A project shared by several sessions is not.
     var spansSessions: Bool {
         guard let first = items.first, first.message?.origin == nil else { return false }
         return items.dropFirst().contains { $0.key != first.key }
-    }
-}
-
-/// Both feed hosts put a lone item's source in the row. A project shared by several sessions
-/// names the project above the rows and leaves each row to identify its own session.
-struct WidgetFeedSection<Row: View>: View {
-    let run: WidgetFeedRun
-    let model: WidgetModel
-    var surface: WidgetSurfaceID?
-    let first: Bool
-    @ViewBuilder let row: (WidgetInboxItem, WidgetInboxRowContext) -> Row
-
-    var body: some View {
-        if run.items.count == 1, model.preferences.inboxFeedHeaders != "all", let item = run.items.first {
-            VStack(spacing: 0) { row(item, .inlineSource) }
-                .accessibilityElement(children: .contain)
-                .accessibilityIdentifier("widget.feed.run." + run.id)
-        } else {
-            let context: WidgetInboxRowContext = run.spansSessions ? .projectHeader : .sessionHeader
-            Section {
-                ForEach(run.items, id: \.id) { row($0, context) }
-            } header: {
-                WidgetFeedRunHeader(run: run, model: model, surface: surface).equatable()
-                    .padding(.top, first ? 0 : 6)
-            }
-        }
     }
 }
 
@@ -61,6 +37,52 @@ enum WidgetInboxFeed {
             }
         }
         return result
+    }
+}
+
+/// Headers and items are siblings so moving an item between runs keeps its SwiftUI state. A lone item's source
+/// goes in its row unless every run has a header. A project shared by several sessions names the project above
+/// the rows and leaves each row to identify its own session.
+enum WidgetFeedRow: Identifiable {
+    case header(WidgetFeedRun, first: Bool)
+    case item(WidgetInboxItem, context: WidgetInboxRowContext)
+
+    var id: String {
+        switch self {
+        case .header(let run, _): "header/" + run.id
+        case .item(let item, _): "item/" + item.id
+        }
+    }
+
+    static func rows(_ runs: [WidgetFeedRun], headers: String) -> [Self] {
+        runs.enumerated().flatMap { index, run -> [Self] in
+            if run.items.count == 1, headers != "all", let item = run.items.first {
+                return [.item(item, context: .inlineSource)]
+            }
+            let context: WidgetInboxRowContext = run.spansSessions ? .projectHeader : .sessionHeader
+            return [.header(run, first: index == 0)] + run.items.map { .item($0, context: context) }
+        }
+    }
+}
+
+/// Both feed hosts draw the same rows. An item is never wrapped by its run, so it keeps its place in the view tree
+/// when its run gains or loses a header.
+struct WidgetFeedRows<Row: View>: View {
+    let runs: [WidgetFeedRun]
+    let model: WidgetModel
+    var surface: WidgetSurfaceID?
+    @ViewBuilder let row: (WidgetInboxItem, WidgetInboxRowContext) -> Row
+
+    var body: some View {
+        ForEach(WidgetFeedRow.rows(runs, headers: model.preferences.inboxFeedHeaders)) { entry in
+            switch entry {
+            case .header(let run, let first):
+                WidgetFeedRunHeader(run: run, model: model, surface: surface).equatable()
+                    .padding(.top, first ? 0 : 6)
+            case .item(let item, let context):
+                row(item, context)
+            }
+        }
     }
 }
 
@@ -100,10 +122,10 @@ struct WidgetFeedRunHeader: View, Equatable {
         let first = run.items.first
         let external = first?.message?.origin
         let session = external == nil ? first.flatMap { model.session(forKey: $0.key) } : nil
+        let sessions = run.sessionCount
         provider = run.spansSessions ? nil : session?.target.provider
         let project = session?.project ?? ""
         title = external ?? (project.isEmpty ? session?.title ?? "Unknown session" : project)
-        let sessions = Set(run.items.map(\.key)).count
         // A session named after its only item (an agent result) would print the same words twice: the row keeps them.
         let sessionTitle = run.items.count == 1 && session?.title == first.map(WidgetInboxOverview.title)
             ? nil : session?.title
@@ -159,9 +181,10 @@ struct WidgetFeedRunHeader: View, Equatable {
 /// Keep the displayed prefix fixed while the reader is below the top. The next visit to the top reveals all
 /// arrivals together. A refresh can still update or remove any existing row, including a resolved decision.
 enum WidgetFeedReadingPlace {
-    static func split(_ runs: [WidgetFeedRun], at boundary: WidgetInboxItem?) -> (runs: [WidgetFeedRun], pending: Int) {
+    static func split(_ runs: [WidgetFeedRun], at boundary: WidgetInboxItem?)
+        -> (runs: [WidgetFeedRun], pending: Int, replacement: WidgetInboxItem?) {
         guard let boundary, let first = runs.first?.items.first, WidgetInboxFeed.newer(first, boundary) else {
-            return (runs, 0)
+            return (runs, 0, nil)
         }
         var pending = 0
         for (index, run) in runs.enumerated() {
@@ -169,10 +192,10 @@ enum WidgetFeedReadingPlace {
             pending += run.items.count - rest.count
             if let head = rest.first {
                 let visible = WidgetFeedRun(id: run.runKey + "|" + head.id, runKey: run.runKey, items: Array(rest))
-                return ([visible] + runs.dropFirst(index + 1), pending)
+                return ([visible] + runs.dropFirst(index + 1), pending, nil)
             }
         }
         // The entire old window has gone. Show the new data, including its first header.
-        return (runs, 0)
+        return (runs, 0, first)
     }
 }

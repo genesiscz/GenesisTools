@@ -164,7 +164,16 @@ export function registerWorkCommands(program: Command): void {
     registerConfigSet(commands.get("config"));
     // The spec's spelling (P5 decision 5); the method keeps the camel-case name every other door uses.
     commands.get("addMember")?.alias("add-member");
-    commands.get("configSet")?.alias("config-set");
+    commands
+        .get("configSet")
+        ?.alias("config-set")
+        .addHelpText(
+            "after",
+            `\nSupply exactly one of --notify or --restore as quoted JSON. Project scope requires a current project or --project.
+Set level to null to inherit the next applicable rule.
+  tools work config-set --scope project --project Orchard --notify '{"type":"bug","action":"spotted","level":null}'
+  tools work config-set --scope global --restore '[{"type":"bug","action":"spotted","from":null,"to":"inbox"}]'`
+        );
 
     program
         .command("dump")

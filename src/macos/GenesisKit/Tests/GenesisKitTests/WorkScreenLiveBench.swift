@@ -15,7 +15,7 @@ private final class CountingSource: WorkSource {
     func perform(_ action: WorkScreenAction, project: String) async throws -> WorkActionOutcome {
         try await inner.perform(action, project: project)
     }
-    func changes() -> AsyncStream<Void> { inner.changes() }
+    func changes() -> AsyncStream<WorkSourceEvent> { inner.changes() }
 }
 
 /// The open Work screen against a real service for 60 s while another process writes. Runs only with

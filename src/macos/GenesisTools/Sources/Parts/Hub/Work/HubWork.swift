@@ -160,6 +160,7 @@ struct WorkProjectRow: View, Equatable {
 /// The main view: the header in the title bar, then the Items or the Notifications pane.
 struct WorkMain: View {
     @State private var findRequest = 0
+    @State private var findClearRequest = 0
     @State private var focusAfterReturn = false
     @FocusState private var workFocus: Bool
     @GenReduceMotion private var reduceMotion
@@ -346,7 +347,7 @@ struct WorkMain: View {
             WorkFindBar(filter: $screen.filter,
                         matchedCount: screen.results?.matchedCount ?? 0,
                         totalCount: screen.results?.totalCount ?? 0,
-                        focusRequest: findRequest, filterNotice: screen.filterNotice,
+                        focusRequest: findRequest, clearRequest: findClearRequest, filterNotice: screen.filterNotice,
                         onClear: { screen.filter = .default },
                         onSubmit: { if let ref = screen.filter.fullRef { screen.select(ref) } })
                 .id(screen.project)
@@ -360,7 +361,10 @@ struct WorkMain: View {
                                       indexLoading: screen.indexLoading, indexFailure: screen.indexFailure,
                                       foldedSections: $foldedSections, drafts: drafts,
                                       select: { workFocus = true; screen.select($0) }, toggleExpansion: { ref, _ in screen.toggleContainer(ref) },
-                                      showMore: screen.showMore, clearFilters: { screen.filter = .default },
+                                      showMore: screen.showMore, clearFilters: {
+                                          findClearRequest += 1
+                                          screen.filter = .default
+                                      },
                                       retryIndex: screen.loadIndexIfNeeded, perform: screen.write)
                             .padding(.horizontal, 16)
                             .padding(.vertical, 12)
@@ -414,14 +418,6 @@ struct WorkMain: View {
                 focusAfterReturn = false
                 findRequest += 1
             }
-        }
-        .task(id: screen.filter.fullRef) {
-            guard let ref = screen.filter.fullRef else { return }
-            try? await Task.sleep(for: .milliseconds(350))
-            guard !Task.isCancelled, screen.filter.fullRef == ref, let snapshot = screen.snapshot,
-                  !snapshot.containers.contains(where: { $0.ref == ref || $0.members.contains(where: { $0.ref == ref && $0.isOpen }) }),
-                  !snapshot.triage.contains(where: { $0.ref == ref }) else { return }
-            screen.select(ref)
         }
     }
 
@@ -519,7 +515,8 @@ struct HubWorkContent: View {
 
     var body: some View {
         let origin = screen.itemDetail?.item.checkoutPath
-        let known = screen.project.flatMap { name in
+        let detailProject = screen.itemDetail?.item.project
+        let known = detailProject.flatMap { name in
             model.worktrees.first { $0.isMain && $0.repo.caseInsensitiveCompare(name) == .orderedSame }?.path
                 ?? PRsModel.projectRoot(name, in: model.prs.allProjects)
         }

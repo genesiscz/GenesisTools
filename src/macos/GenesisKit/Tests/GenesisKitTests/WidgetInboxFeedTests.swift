@@ -88,6 +88,49 @@ final class WidgetInboxFeedTests: XCTestCase {
         XCTAssertEqual(WidgetFeedReadingPlace.split(fresh, at: nil).runs.first?.items.first, arrival)
     }
 
+    func testReplacingTheWindowAdoptsItsHeadAndHoldsTheNextArrival() {
+        let replaced = WidgetInboxFeed.runs(Array(items.prefix(2)), by: "session") { _ in nil }
+        let first = WidgetFeedReadingPlace.split(replaced, at: items[2])
+        XCTAssertEqual(first.replacement, items[0])
+        XCTAssertEqual(first.pending, 0)
+        var next = items[0]
+        next.id = "decision:next"
+        next.at += 1
+        let updated = WidgetInboxFeed.runs([next] + Array(items.prefix(2)), by: "session") { _ in nil }
+        let held = WidgetFeedReadingPlace.split(updated, at: first.replacement)
+        XCTAssertEqual(held.runs, replaced)
+        XCTAssertEqual(held.pending, 1)
+        XCTAssertNil(held.replacement)
+    }
+
+    func testMultiSessionProjectHeadersKeepRowSessionNamesAndHaveNoSessionShortcut() throws {
+        let model = try makeModel()
+        defer { model.stop() }
+        let runs = WidgetInboxFeed.runs(items, by: "project") { model.session(forKey: $0.key)?.project }
+        let run = try XCTUnwrap(runs.first { $0.sessionCount == 2 })
+        let header = WidgetFeedRunHeader(run: run, model: model)
+        XCTAssertEqual(header.subtitle, "2 sessions")
+        XCTAssertNil(header.openInbox)
+        let rows = WidgetFeedRow.rows([run], headers: model.preferences.inboxFeedHeaders).compactMap { row -> String? in
+            guard case .item(let item, let context) = row, context == .projectHeader else { return nil }
+            return model.session(forKey: item.key)?.title
+        }
+        XCTAssertEqual(rows, ["Beta", "Gamma"])
+    }
+
+    func testALoneRunKeepsItsRowIdentityWhenItGainsAHeader() throws {
+        let lone = WidgetInboxFeed.runs([items[3]], by: "session") { _ in nil }
+        let pair = WidgetInboxFeed.runs([items[3], items[4]], by: "session") { _ in nil }
+        let before = WidgetFeedRow.rows(lone, headers: "groups")
+        let after = WidgetFeedRow.rows(pair, headers: "groups")
+        XCTAssertEqual(before.map(\.id), ["item/decision:d5"])
+        XCTAssertEqual(after.map(\.id), ["header/" + pair[0].id, "item/decision:d5", "item/decision:d6"])
+        guard case .item(_, let inline) = before[0], case .item(_, let grouped) = after[1] else { return XCTFail("rows") }
+        XCTAssertEqual(inline, .inlineSource)
+        XCTAssertEqual(grouped, .sessionHeader)
+        XCTAssertEqual(WidgetFeedRow.rows(lone, headers: "all").map(\.id), ["header/" + lone[0].id, "item/decision:d5"])
+    }
+
     func testTheOverviewShowsSingletonSourcesInTheirRowsAndGroupedItemsUnderOneHeader() throws {
         let size = CGSize(width: 460, height: 640)
         for order in ["session", "feed"] {
@@ -229,11 +272,46 @@ final class WidgetInboxFeedTests: XCTestCase {
             }
         }
         XCTAssertTrue(top.joined(separator: " ").contains("Items"), top.description)
-        assertOrder(["Pick a basket", "Orchard", "Delivery note", "Meadow", "Sort the crates", "Meadow",
-                     "Orchard", "Choose a shelf", "Choose a label"], in: top + bottom)
+        assertOrder(["Pick a basket", "Orchard", "Delivery note", "Meadow", "Sort the crates"], in: top)
+        assertOrder(["Sort the crates", "Meadow", "Orchard", "Choose a shelf", "Choose a label"], in: bottom)
         let text = (top + bottom).joined(separator: " ")
         XCTAssertFalse(text.localizedCaseInsensitiveContains("Working"), text)
         XCTAssertTrue(text.contains("3 sessions"), text)
+    }
+
+    func testPreviewTabsFitAtTheMinimumWidthInBothModes() throws {
+        let size = CGSize(width: WidgetModel.previewWidthRange.lowerBound, height: 480)
+        for mode in ["sessions", "items"] {
+            let model = try makeModel(view: mode)
+            model.livePreviewWidth = size.width
+            defer { model.stop() }
+            let lines = try WidgetInboxRender.draw(AgentWidgetPreview(model: model, surface: .init(edge: .right)), size: size)
+            for label in ["Waiting for you", "Active too", "Items"] {
+                XCTAssertTrue(lines.joined(separator: " ").contains(label), "\(mode): \(lines)")
+            }
+        }
+    }
+
+    func testClosingTheLastHoverHoldDismissesOnlyIfThePointerIsStillOut() throws {
+        let model = try makeModel(view: "items")
+        defer { model.stop() }
+        let surface = WidgetSurfaceID(edge: .right)
+        model.hoveredSurface = surface
+        model.togglePreviewEntry(items[1])
+        model.dialogOpen = true
+        model.hover(surface, inside: false)
+        model.closePreviewEntry()
+        XCTAssertEqual(model.hoveredSurface, surface)
+        model.dialogOpen = false
+        WidgetInboxRender.waitFor("hover to dismiss after the dialog") { model.hoveredSurface == nil }
+
+        model.hoveredSurface = surface
+        model.dialogOpen = true
+        model.hover(surface, inside: false)
+        model.hover(surface, inside: true)
+        model.dialogOpen = false
+        WidgetInboxRender.settle()
+        XCTAssertEqual(model.hoveredSurface, surface)
     }
 
     private static func itemScroll(in view: NSView) -> NSScrollView? {

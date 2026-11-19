@@ -20,7 +20,7 @@ private final class WorkRemovalPictureSource: WorkSource {
               title: "Fading evidence row"),
     ])
     var reads = 0
-    private var continuation: AsyncStream<Void>.Continuation?
+    private var continuation: AsyncStream<WorkSourceEvent>.Continuation?
     func projects() async throws -> [String] { ["Orchard"] }
     func snapshot(project: String) async throws -> WorkSnapshotValue { reads += 1; return value }
     func detail(ref: String) async throws -> WorkItemDetail { throw WorkSourceError("No detail in this fixture") }
@@ -28,8 +28,8 @@ private final class WorkRemovalPictureSource: WorkSource {
     func perform(_ action: WorkScreenAction, project: String) async throws -> WorkActionOutcome {
         throw WorkSourceError("This evidence fixture never writes")
     }
-    func changes() -> AsyncStream<Void> { AsyncStream { continuation = $0 } }
-    func tick() { continuation?.yield(()) }
+    func changes() -> AsyncStream<WorkSourceEvent> { AsyncStream { continuation = $0 } }
+    func tick() { continuation?.yield(.serviceChange) }
 }
 
 private struct WorkRemovalPictureView: View {

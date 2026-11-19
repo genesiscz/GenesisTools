@@ -132,7 +132,7 @@ program
     )
     .option("--repo <path|owner/repo>", "with --commit and no --pr: the commit's checkout path or forge project")
     .option("--worktree <path>", "open the Worktrees mode on this checkout folder")
-    .option("--work <ref>", "open a task or handoff in Work")
+    .option("--work <ref>", "open a Work item, handoff slot, or legacy task ledger id")
     .option("--tab [tab]", `${HUB_TABS.join("|")}: the pane to show`)
     .option("--filter <text>", "filter the session list (also searches every project's history)")
     .option("--palette [text]", "open the command palette (⌘K), optionally with this text: 'gt pr 424'")

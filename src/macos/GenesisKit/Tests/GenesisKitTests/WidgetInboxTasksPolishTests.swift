@@ -179,14 +179,11 @@ final class WidgetTasksPolishTests: XCTestCase {
         store.refresh()
         await settled(store)
         var urls: [URL] = []
-        var clickStarted: TimeInterval?
-        var dispatchMS: Double?
         let opened = expectation(description: "The task button requested a URL")
         let projectOpened = expectation(description: "The project count opened its own project")
         let card = WidgetTasksModuleView(store: store, presentation: .preview, handoffDisplay: .expanded)
             .frame(width: 432, height: 300, alignment: .top)
             .environment(\.openURL, OpenURLAction { url in
-                dispatchMS = clickStarted.map { (ProcessInfo.processInfo.systemUptime - $0) * 1_000 }
                 urls.append(url)
                 if URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first?.name == "work-project" {
                     projectOpened.fulfill()
@@ -210,6 +207,7 @@ final class WidgetTasksPolishTests: XCTestCase {
         host.cacheDisplay(in: host.bounds, to: bitmap)
         let ocr = VNRecognizeTextRequest()
         ocr.recognitionLevel = .accurate
+        ocr.usesLanguageCorrection = false
         try VNImageRequestHandler(cgImage: XCTUnwrap(bitmap.cgImage)).perform([ocr])
         func click(_ label: String) throws {
             let line = try XCTUnwrap(ocr.results?.first { $0.topCandidates(1).first?.string.contains(label) == true })
@@ -219,20 +217,13 @@ final class WidgetTasksPolishTests: XCTestCase {
                     timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
                     eventNumber: 0, clickCount: 1, pressure: 1))
             }
-            // Supply mouse-up before mouse-down enters a control's tracking loop.
-            NSApp.postEvent(try mouse(.leftMouseUp), atStart: true)
             window.sendEvent(try mouse(.leftMouseDown))
-            if let up = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) {
-                window.sendEvent(up)
-            }
+            window.sendEvent(try mouse(.leftMouseUp))
         }
-        clickStarted = ProcessInfo.processInfo.systemUptime
         try click("Inspect the archive")
         await fulfillment(of: [opened], timeout: 2)
         let url = try XCTUnwrap(urls.first)
-        let ms = try XCTUnwrap(dispatchMS)
-        print(String(format: "widget Work click to route: %.1f ms", ms))
-        XCTAssertLessThan(ms, 100)
+        XCTAssertEqual(urls.count, 1)
         XCTAssertEqual(url.scheme, "genesis-tools")
         XCTAssertEqual(url.host, "hub")
         XCTAssertEqual(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,

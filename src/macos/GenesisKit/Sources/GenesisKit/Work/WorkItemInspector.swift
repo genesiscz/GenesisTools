@@ -230,7 +230,7 @@ public struct WorkItemInspector: View {
                     reason(.reopen, ref: ref, title: detail.item.title, pending: pending)
                 }
                 if ["spotted", "open", "active", "reopened"].contains(state) {
-                    if !handoffs.isEmpty {
+                    if detail.item.type != "handoff", model.snapshot?.project == detail.item.project, !handoffs.isEmpty {
                         MenuButton(items: {
                             handoffs.map { handoff in
                                 .action("\(handoff.title) (\(handoff.ref))") {

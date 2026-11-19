@@ -38,6 +38,11 @@ export const workMethods = {
                 .optional()
                 .describe("columns: ref,state,type,severity,worker,title,project,slot"),
             limit: z.number().int().positive().max(5000).optional(),
+            after: z
+                .string()
+                .min(1)
+                .optional()
+                .describe("start after this item ref in creation order; incompatible with under"),
         }),
         result: z.array(listRowSchema),
         resultName: `${reply}, data: { ref, state, type, severity?, worker?, title, project, slot? }[]`,

@@ -17,6 +17,7 @@ import {
 } from "./connectors/sync";
 import { originFor, type Pairing } from "./connectors/types";
 import { type ContextReport, stampOf } from "./context";
+import { legacySessionTodoItem, SESSION_TODO_POINTER, type SessionTodoRow } from "./legacy/session-todos";
 import type { Item } from "./model/item";
 import { ITEM_TYPES, type ItemType, isOpenState, OPEN_STATES, type Severity } from "./model/vocab";
 import { defaultNotify, type ResolvedNotify, resolveNotify } from "./notify";
@@ -68,6 +69,8 @@ export interface WorkSession {
     loadRules?: LoadProjectRules;
     /** The machine file this session edits; tests supply a temporary file. */
     configPath?: string;
+    /** Compatibility lookup for a ledger row that has yet to be imported. */
+    legacySessionTodo?(ref: string): SessionTodoRow | undefined;
     /** The preflight context; the door builds it (git, the forge, T3 state). */
     context(network: boolean): Promise<ContextReport>;
 }
@@ -277,9 +280,22 @@ function notifyForConfig({
 }
 
 function rulesForConfig(session: WorkSession, project: string): Promise<LoadedRules> {
+    const repoRoot = project === session.ctx.project ? session.ctx.actor.repoRoot : null;
+    const itemRoots = repoRoot
+        ? []
+        : session.ctx.db
+              .query<{ root: string }, [string]>(
+                  `SELECT json_extract(created_by, '$.repoRoot') AS root
+                   FROM items WHERE project = ?1 AND json_extract(created_by, '$.project') = ?1
+                     AND typeof(json_extract(created_by, '$.repoRoot')) = 'text'
+                   GROUP BY root ORDER BY MAX(updated_ts) DESC, root`
+              )
+              .all(project)
+              .map(({ root }) => root);
     const location = {
         project,
-        repoRoot: project === session.ctx.project ? session.ctx.actor.repoRoot : null,
+        repoRoot,
+        itemRoots,
     };
     return session.loadRules
         ? session.loadRules(location)
@@ -288,6 +304,14 @@ function rulesForConfig(session: WorkSession, project: string): Promise<LoadedRu
 
 export const workHandlers: WorkHandlers = {
     async list(p, session) {
+        if (p.after !== undefined && p.under !== undefined) {
+            return failReply("list", [
+                errorDiagnostic(
+                    "INCOMPATIBLE_FILTERS",
+                    "Page by creation order without the slot-ordered under filter."
+                ),
+            ]);
+        }
         const workerSession = p.worker === "me" ? (session.ctx.actor.sessionId ?? "-") : p.worker;
         const result = listItems(
             session.ctx.db,
@@ -301,6 +325,7 @@ export const workHandlers: WorkHandlers = {
                 tag: p.tag,
                 workerSession,
                 limit: p.limit,
+                after: p.after,
             })
         );
 
@@ -326,7 +351,24 @@ export const workHandlers: WorkHandlers = {
     },
 
     async show(p, session) {
-        const shown = showItem(session.ctx.db, p.ref);
+        const db = session.ctx.db;
+        const ref = p.ref.trim();
+        let shown = showItem(db, ref);
+        if (shown === null && ref.startsWith("t_")) {
+            const imported = db
+                .query<{ item: string }, [string, string]>(
+                    "SELECT item FROM pointers WHERE kind = ? AND json_extract(meta, '$.id') = ? LIMIT 1"
+                )
+                .get(SESSION_TODO_POINTER, ref);
+            if (imported) {
+                shown = showItem(db, imported.item);
+            } else {
+                const row = session.legacySessionTodo?.(ref);
+                if (row) {
+                    shown = { item: legacySessionTodoItem(row), refs: { out: [], in: [] }, pointers: [], log: [] };
+                }
+            }
+        }
         return shown === null
             ? failReply("show", [errorDiagnostic("NOT_FOUND", `No item ${p.ref}.`)])
             : okReply("show", shown);
@@ -409,10 +451,11 @@ export const workHandlers: WorkHandlers = {
         const project = p.project ?? session.ctx.project;
         const loaded = await rulesForConfig(session, project);
         const lockedCells = new Set<string>();
+        const repoNotify = loaded.notifyLayers.find((layer) => layer.layer === "config.repo")?.rules?.notify;
 
         for (const type of ITEM_TYPES) {
             for (const action of NOTIFY_ACTIONS) {
-                if (notifyForConfig({ loaded, type, action }).from === "config.repo") {
+                if ((repoNotify?.[type]?.[action] ?? repoNotify?.["*"]?.[action]) !== undefined) {
                     lockedCells.add(`${type}:${action}`);
                 }
             }
@@ -420,6 +463,7 @@ export const workHandlers: WorkHandlers = {
 
         const result = await setWorkNotifyConfig({
             ...p,
+            project,
             ...(session.configPath !== undefined ? { configPath: session.configPath } : {}),
             dryRun: session.call.dryRun === true,
             projectExists: selectItems(session.ctx.db, { project, limit: 1 }).length > 0,

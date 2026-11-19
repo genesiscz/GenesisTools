@@ -17,7 +17,7 @@ private final class NotifyFixtureSource: WorkSource {
     var hold = false
     var held: CheckedContinuation<Void, Never>?
     func projects() async throws -> [String] { ["Orchard"] }
-    func changes() -> AsyncStream<Void> { AsyncStream { _ in } }
+    func changes() -> AsyncStream<WorkSourceEvent> { AsyncStream { _ in } }
     func snapshot(project: String) async throws -> WorkSnapshotValue { .init(project: project, containers: [], triage: []) }
     func detail(ref: String) async throws -> WorkItemDetail { throw WorkSourceError("Unknown fixture") }
     func perform(_ action: WorkScreenAction, project: String) async throws -> WorkActionOutcome { throw WorkSourceError("Unsupported") }
@@ -41,8 +41,7 @@ private final class NotifyFixtureSource: WorkSource {
                     return .level(value)
                 } ?? .inherit
                 if before == after { continue }
-                cell.layers[index].rule = after; cell.layers[index].level = level
-                cell.level = level ?? cell.builtInLevel; cell.from = level == nil ? "default" : layer
+                setRule(after, at: index, in: &cell)
                 rows[i].cells[j] = cell
                 let prefix = scope == .project ? "projects.Orchard" : "global"
                 changes.append(.init(path: "\(prefix).rules.notify.\(rows[i].type).\(cell.action)",
@@ -53,8 +52,35 @@ private final class NotifyFixtureSource: WorkSource {
     }
     func restoreNotify(project: String?, scope: WorkNotifyScope, changes: [WorkNotifyChange]) async throws -> WorkActionOutcome {
         restores.append(changes)
-        rows = WorkNotifyPictureFixture.rows
+        var restored = rows
+        let layer = scope == .project ? "config.project" : "config.global"
+        for change in changes {
+            guard let row = restored.firstIndex(where: { $0.type == change.type }),
+                  let column = restored[row].cells.firstIndex(where: { $0.action == change.action }),
+                  let index = restored[row].cells[column].layers.firstIndex(where: { $0.layer == layer }),
+                  (restored[row].cells[column].layers[index].rule ?? .inherit) == change.to else {
+                throw WorkSourceError("The fixture could not restore the supplied cell")
+            }
+            setRule(change.from, at: index, in: &restored[row].cells[column])
+        }
+        rows = restored
         return .init(ok: true, message: "Restored")
+    }
+
+    private func setRule(_ rule: WorkNotifyRule, at index: Int, in cell: inout WorkNotifyCell) {
+        switch rule {
+        case .inherit:
+            cell.layers[index].rule = nil
+            cell.layers[index].level = nil
+        case .level(let level), .threshold(let level, _):
+            cell.layers[index].rule = rule
+            cell.layers[index].level = level
+        }
+        let effective = cell.layers.last { $0.level != nil }
+        cell.level = effective?.level ?? cell.builtInLevel
+        cell.from = effective?.layer ?? "default"
+        if case .threshold(_, let severity) = effective?.rule { cell.minSeverity = severity }
+        else { cell.minSeverity = nil }
     }
 }
 
@@ -103,13 +129,43 @@ final class WorkNotifyTests: XCTestCase {
         let screen = try await ready(source)
         defer { screen.deactivate() }
         let cell = try XCTUnwrap(screen.notifyRows.first?.cells.first)
+        let before = screen.notifyRows
         let native = menu(.init(type: "bug", action: "spotted", cells: [cell]), screen)
         XCTAssertEqual(Array(native.items.prefix(4).map(\.title)), ["Nobody", "In the list", "Inbox line", "Inbox and banner"])
         XCTAssertEqual(native.item(withTitle: "Inbox line")?.state, .on)
         XCTAssertTrue(native.items.prefix(4).allSatisfy { $0.image != nil })
-        try choose("Inbox line", in: native)
-        try await wait { source.calls.count == 1 }
-        XCTAssertEqual(source.calls, [.init(scope: .project, type: "bug", action: "spotted", level: "inbox")])
+        try choose("Inbox and banner", in: native)
+        try await wait { screen.notifyRows.first?.cells.first?.level == "banner" }
+        XCTAssertEqual(source.calls, [.init(scope: .project, type: "bug", action: "spotted", level: "banner")])
+        XCTAssertEqual(Array(screen.notifyRows[0].cells.dropFirst()), Array(before[0].cells.dropFirst()))
+        XCTAssertEqual(Array(screen.notifyRows.dropFirst()), Array(before.dropFirst()))
+    }
+
+    func testSingleCellResetUsesTheSelectedScope() throws {
+        let cell = try XCTUnwrap(WorkNotifyPictureFixture.rows[0].cells.first { $0.action == "claimed" })
+        XCTAssertEqual(cell.from, "config.global")
+        let target = WorkNotifyMenu.Target(type: "bug", action: cell.action, cells: [cell])
+        var applied: [WorkNotifyScope] = []
+        func native(_ scope: WorkNotifyScope) -> NSMenu {
+            MenuButtonPresenter.menu(WorkNotifyMenu.items(target: target, scope: scope, enabled: true,
+                chooseScope: { _ in }, apply: { scope, _, _, level in XCTAssertNil(level); applied.append(scope) }))
+        }
+        XCTAssertEqual(native(.project).items.first { $0.title.hasPrefix("Use inherited") }?.isEnabled, false)
+        try choose("Use the built-in level (In the list)", in: native(.global))
+        XCTAssertEqual(applied, [.global])
+    }
+
+    func testResetThatExposesARepositoryRuleDoesNotOfferUndo() async throws {
+        let source = NotifyFixtureSource()
+        let repo = try XCTUnwrap(source.rows[0].cells[0].layers.firstIndex { $0.layer == "config.repo" })
+        source.rows[0].cells[0].layers[repo].rule = .level("off")
+        source.rows[0].cells[0].layers[repo].level = "off"
+        let screen = try await ready(source)
+        defer { screen.deactivate() }
+        await screen.setNotify(scope: .project, type: "bug", action: "spotted", level: nil)
+        XCTAssertEqual(screen.notifyRows.first?.cells.first?.from, "config.repo")
+        let notice = try XCTUnwrap(screen.noticeStack.notices.last)
+        XCTAssertFalse(notice.actions.contains { $0.label == "Undo" })
     }
 
     func testBulkMenuMakesOneWriteAndTheNoticeRestoresEveryRawValue() async throws {
@@ -125,7 +181,19 @@ final class WorkNotifyTests: XCTestCase {
         let undo = try XCTUnwrap(notice.actions.first(where: { $0.label == "Undo" }))
         undo.perform(notice.id)
         try await wait { source.restores.count == 1 && screen.notifyRows == WorkNotifyPictureFixture.rows }
-        XCTAssertGreaterThan(source.restores[0].count, 1)
+        func expected(_ action: String, _ initial: WorkNotifyRule, _ edited: WorkNotifyRule = .level("off")) -> WorkNotifyChange {
+            .init(path: "projects.Orchard.rules.notify.bug.\(action)", type: "bug", action: action, from: initial, to: edited)
+        }
+        XCTAssertEqual(source.restores.first, [
+            expected("spotted", .level("inbox")),
+            expected("accepted", .inherit),
+            expected("claimed", .inherit),
+            expected("reopened", .threshold(level: "inbox", minSeverity: "high"), .threshold(level: "off", minSeverity: "high")),
+            expected("reopen-undelivered", .inherit),
+            expected("dropped", .inherit),
+            expected("sync-held", .level("inbox")),
+            expected("sync-failed", .inherit),
+        ])
         XCTAssertNotNil(screen.notifyCommand)
     }
 

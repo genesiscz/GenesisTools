@@ -4773,8 +4773,9 @@ public struct WorkListParams: Codable, Sendable {
     public var `worker`: String?
     public var `fields`: [String]?
     public var `limit`: Int?
+    public var `after`: String?
     public var `call`: WorkListParamsCall?
-    public init(`project`: String? = nil, `under`: String? = nil, `spottedIn`: String? = nil, `state`: [WorkListParamsStateItem]? = nil, `type`: [WorkListParamsTypeItem]? = nil, `tag`: String? = nil, `severity`: [WorkListParamsSeverityItem]? = nil, `worker`: String? = nil, `fields`: [String]? = nil, `limit`: Int? = nil, `call`: WorkListParamsCall? = nil) {
+    public init(`project`: String? = nil, `under`: String? = nil, `spottedIn`: String? = nil, `state`: [WorkListParamsStateItem]? = nil, `type`: [WorkListParamsTypeItem]? = nil, `tag`: String? = nil, `severity`: [WorkListParamsSeverityItem]? = nil, `worker`: String? = nil, `fields`: [String]? = nil, `limit`: Int? = nil, `after`: String? = nil, `call`: WorkListParamsCall? = nil) {
         self.`project` = `project`
         self.`under` = `under`
         self.`spottedIn` = `spottedIn`
@@ -4785,9 +4786,10 @@ public struct WorkListParams: Codable, Sendable {
         self.`worker` = `worker`
         self.`fields` = `fields`
         self.`limit` = `limit`
+        self.`after` = `after`
         self.`call` = `call`
     }
-    private enum CodingKeys: String, CodingKey { case `project`; case `under`; case `spottedIn`; case `state`; case `type`; case `tag`; case `severity`; case `worker`; case `fields`; case `limit`; case `call` }
+    private enum CodingKeys: String, CodingKey { case `project`; case `under`; case `spottedIn`; case `state`; case `type`; case `tag`; case `severity`; case `worker`; case `fields`; case `limit`; case `after`; case `call` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
@@ -4800,6 +4802,7 @@ public struct WorkListParams: Codable, Sendable {
         self.`worker` = try box.decodeIfPresent(String.self, forKey: .`worker`)
         self.`fields` = try box.decodeIfPresent([String].self, forKey: .`fields`)
         self.`limit` = try box.decodeIfPresent(Int.self, forKey: .`limit`)
+        self.`after` = try box.decodeIfPresent(String.self, forKey: .`after`)
         self.`call` = try box.decodeIfPresent(WorkListParamsCall.self, forKey: .`call`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -4814,6 +4817,7 @@ public struct WorkListParams: Codable, Sendable {
         try box.encodeIfPresent(`worker`, forKey: .`worker`)
         try box.encodeIfPresent(`fields`, forKey: .`fields`)
         try box.encodeIfPresent(`limit`, forKey: .`limit`)
+        try box.encodeIfPresent(`after`, forKey: .`after`)
         try box.encodeIfPresent(`call`, forKey: .`call`)
     }
 }

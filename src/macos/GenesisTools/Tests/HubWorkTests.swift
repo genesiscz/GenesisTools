@@ -17,9 +17,9 @@ private final class FakeWorkSource: WorkSource {
     var snapshotReads = 0
     var holdNextSnapshot = false
     private(set) var heldSnapshot: CheckedContinuation<Void, Never>?
-    private var changeFeed: AsyncStream<Void>.Continuation?
+    private var changeFeed: AsyncStream<WorkSourceEvent>.Continuation?
 
-    func tick() { changeFeed?.yield(()) }
+    func tick() { changeFeed?.yield(.serviceChange) }
     func stopChanges() { changeFeed?.finish() }
     func releaseSnapshot() {
         let held = heldSnapshot
@@ -99,7 +99,7 @@ private final class FakeWorkSource: WorkSource {
         performed.append(action)
         return WorkActionOutcome(ok: true, message: "\(action.done): \(action.ref)")
     }
-    func changes() -> AsyncStream<Void> { AsyncStream { changeFeed = $0 } }
+    func changes() -> AsyncStream<WorkSourceEvent> { AsyncStream { changeFeed = $0 } }
 }
 
 @MainActor
@@ -579,8 +579,8 @@ private func headerRGBA(_ rep: NSBitmapImageRep) throws -> [UInt8] {
 
 private func changedHeaderPixels(_ first: NSBitmapImageRep, _ second: NSBitmapImageRep,
                                  ignoringTrailingPoints: CGFloat = 0) throws -> Int {
-    XCTAssertEqual(first.pixelsWide, second.pixelsWide)
-    XCTAssertEqual(first.pixelsHigh, second.pixelsHigh)
+    _ = try XCTUnwrap(first.pixelsWide == second.pixelsWide && first.pixelsHigh == second.pixelsHigh ? second : nil,
+                      "Capture sizes differ: \(first.pixelsWide)×\(first.pixelsHigh) and \(second.pixelsWide)×\(second.pixelsHigh)")
     let width = first.pixelsWide
     let height = first.pixelsHigh
     let lhs = try headerRGBA(first)
@@ -688,14 +688,7 @@ extension HubWorkTests {
             let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
                 context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0))
-            NSApp.postEvent(event, atStart: false)
-        }
-        let deadline = Date().addingTimeInterval(0.25)
-        while Date() < deadline {
-            if let event = NSApp.nextEvent(matching: [.leftMouseDown, .leftMouseUp], until: deadline,
-                                           inMode: .default, dequeue: true) {
-                NSApp.sendEvent(event)
-            }
+            window.sendEvent(event)
         }
     }
 
@@ -844,20 +837,21 @@ extension HubWorkTests {
         XCTAssertTrue(model.screen.visibleRefs.contains("w_arch0030"), "the route must reveal the archive row")
         if window == nil { window = interactionWindow(AnyView(view), size: size) }
         let content = try XCTUnwrap(window?.contentView)
-        // A hidden window draws only when asked. Each await returns to the run loop, so a scroll queued for the next
-        // turn runs too.
-        for _ in 0..<3 {
+        let scrollDeadline = ContinuousClock.now + .seconds(3)
+        var text: String
+        repeat {
             content.layoutSubtreeIfNeeded()
             content.displayIfNeeded()
-            try? await Task.sleep(for: .milliseconds(200))
-        }
-        content.layoutSubtreeIfNeeded()
-        let bitmap = try XCTUnwrap(content.bitmapImageRepForCachingDisplay(in: content.bounds))
-        content.cacheDisplay(in: content.bounds, to: bitmap)
-        // Only the list column: the inspector shows its own title, so the row must be found in the list itself.
-        let image = try XCTUnwrap(bitmap.cgImage)
-        let list = try XCTUnwrap(image.cropping(to: CGRect(x: 0, y: 0, width: image.width * 900 / 1500, height: image.height)))
-        return try HubInboxUXTests.drawnText(NSBitmapImageRep(cgImage: list))
+            let bitmap = try XCTUnwrap(content.bitmapImageRepForCachingDisplay(in: content.bounds))
+            content.cacheDisplay(in: content.bounds, to: bitmap)
+            // The inspector also shows the title. Only the list viewport can satisfy this check.
+            let image = try XCTUnwrap(bitmap.cgImage)
+            let list = try XCTUnwrap(image.cropping(to: CGRect(x: 0, y: 0, width: image.width * 900 / 1500, height: image.height)))
+            text = try HubInboxUXTests.drawnText(NSBitmapImageRep(cgImage: list))
+            if text.contains("The routed archive row") { break }
+            try await Task.sleep(for: .milliseconds(80))
+        } while ContinuousClock.now < scrollDeadline
+        return text
     }
 
     /// This is the keyboard selection handler and the hub's real Back/Forward actions, without a global key monitor.
@@ -877,6 +871,11 @@ extension HubWorkTests {
         await waitForDetail(hub.work.screen, ref: second)
         XCTAssertEqual(HubPlace(entry: hub.navEntry, tab: .transcript).arguments, ["--work", second])
         hub.goBack()
+        await waitForDetail(hub.work.screen, ref: first)
+        hub.goBack()
+        XCTAssertNil(hub.work.screen.itemRef)
+        XCTAssertEqual(hub.work.screen.pane, .items)
+        hub.goForward()
         await waitForDetail(hub.work.screen, ref: first)
         hub.goForward()
         await waitForDetail(hub.work.screen, ref: second)

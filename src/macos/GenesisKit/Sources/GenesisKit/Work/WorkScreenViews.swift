@@ -139,12 +139,16 @@ public struct WorkItemsView: View {
 
     @ViewBuilder
     private func sections(_ items: WorkItemsProjection) -> some View {
+        let handoffs = HandoffChoices(snapshot.openHandoffs)
         if Self.showsOpenSections(filter) {
             section(Self.containersTitle, count: items.containers.count,
                     empty: "No open handoff or epic in \(snapshot.project)") {
                 ForEach(items.containers) { container in
+                    // A container redraws for its own rows only: its own ref, and its tasks while they are shown.
+                    let shown = Set(container.isExpanded ? container.members.map(\.ref) : []).union([container.ref])
                     ContainerRow(container: container, filtered: filter.isActive, showsRef: showsRef,
-                                 snapshot: snapshot, pending: pending, selection: selection,
+                                 handoffs: handoffs, pending: pending.intersection(shown),
+                                 selection: selection.flatMap { shown.contains($0) ? $0 : nil },
                                  selectable: projection != nil, drafts: drafts ?? localDrafts, select: select,
                                  toggle: { open in
                                      if let toggleExpansion { toggleExpansion(container.ref, open) }
@@ -160,17 +164,17 @@ public struct WorkItemsView: View {
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(KitPalette.dim)
                         .padding(.top, 4)
-                    ForEach(group.rows) { triage($0, accept: true) }
+                    ForEach(group.rows) { triage($0, accept: true, handoffs: handoffs) }
                 }
             }
             section(Self.reopenedTitle, count: items.reopened.count,
                     empty: "No reopened item waits for a worker") {
-                ForEach(items.reopened) { triage($0, accept: false) }
+                ForEach(items.reopened) { triage($0, accept: false, handoffs: handoffs) }
             }
         }
         if !items.other.isEmpty {
             section(Self.otherTitle, count: items.other.count, empty: "") {
-                ForEach(items.other) { row($0) }
+                ForEach(items.other) { row($0, choices: handoffs.forRow($0)) }
             }
         }
         if filter.requiresIndex {
@@ -207,19 +211,21 @@ public struct WorkItemsView: View {
     /// times the ID is in the row's context menu and in the item details.
     private var showsRef: Bool { !filter.text.trimmingCharacters(in: .whitespaces).isEmpty }
 
-    private func row(_ value: WorkRowValue, archive: Bool = false) -> some View {
+    private func row(_ value: WorkRowValue, archive: Bool = false, choices: [HandoffChoice] = []) -> some View {
         ItemRow(value: value, detail: nil, summary: nil, accept: value.state == "spotted", archive: archive,
-                showActions: true, showsRef: showsRef, snapshot: snapshot, pending: pending,
+                showActions: true, showsRef: showsRef, choices: choices, pending: pending.contains(value.ref),
                 selected: selection == value.ref, selectable: projection != nil, drafts: drafts ?? localDrafts,
                 select: select, perform: perform).equatable()
     }
 
-    private func triage(_ value: WorkTriageValue, accept: Bool) -> some View {
-        ItemRow(value: WorkRowValue(ref: value.ref, state: value.state, type: value.type,
-                                   severity: value.severity, worker: value.worker, title: value.title,
-                                   pairings: value.pairings),
+    private func triage(_ value: WorkTriageValue, accept: Bool, handoffs: HandoffChoices) -> some View {
+        let row = WorkRowValue(ref: value.ref, state: value.state, type: value.type,
+                               severity: value.severity, worker: value.worker, title: value.title,
+                               pairings: value.pairings)
+        return ItemRow(value: row,
                 detail: [value.userSees, value.why, value.where].compactMap { $0 }.joined(separator: " · "), summary: nil,
-                accept: accept, archive: false, showActions: true, showsRef: showsRef, snapshot: snapshot, pending: pending,
+                accept: accept, archive: false, showActions: true, showsRef: showsRef, choices: handoffs.forRow(row),
+                pending: pending.contains(value.ref),
                 selected: selection == value.ref, selectable: projection != nil, drafts: drafts ?? localDrafts,
                 select: select, perform: perform).equatable()
     }
@@ -254,11 +260,37 @@ public struct WorkItemsView: View {
         .id(Self.sectionID(title))
     }
 
+    private struct HandoffChoice: Equatable {
+        let ref: String
+        let title: String
+    }
+
+    /// The handoffs a row can join, computed once for the list: a row compares its own choices, never the snapshot.
+    private struct HandoffChoices: Equatable {
+        let choices: [HandoffChoice]
+        let memberships: [String: Set<String>]
+
+        init(_ handoffs: [WorkContainerValue]) {
+            choices = handoffs.map { HandoffChoice(ref: $0.ref, title: $0.title) }
+            var memberships: [String: Set<String>] = [:]
+            for handoff in handoffs {
+                for member in handoff.members { memberships[member.ref, default: []].insert(handoff.ref) }
+            }
+            self.memberships = memberships
+        }
+
+        func forRow(_ row: WorkRowValue) -> [HandoffChoice] {
+            guard row.type != "handoff", row.state != "done", row.state != "dropped" else { return [] }
+            guard let parents = memberships[row.ref] else { return choices }
+            return choices.filter { !parents.contains($0.ref) }
+        }
+    }
+
     private struct ContainerRow: View, Equatable {
         let container: WorkItemsProjection.Container
         let filtered: Bool
         let showsRef: Bool
-        let snapshot: WorkSnapshotValue
+        let handoffs: HandoffChoices
         let pending: Set<String>
         let selection: String?
         let selectable: Bool
@@ -269,7 +301,7 @@ public struct WorkItemsView: View {
 
         static func == (lhs: Self, rhs: Self) -> Bool {
             lhs.container == rhs.container && lhs.filtered == rhs.filtered && lhs.showsRef == rhs.showsRef
-                && lhs.snapshot == rhs.snapshot && lhs.pending == rhs.pending && lhs.selection == rhs.selection
+                && lhs.handoffs == rhs.handoffs && lhs.pending == rhs.pending && lhs.selection == rhs.selection
                 && lhs.selectable == rhs.selectable && lhs.drafts === rhs.drafts
         }
 
@@ -288,7 +320,8 @@ public struct WorkItemsView: View {
                     ItemRow(value: WorkRowValue(ref: value.ref, state: value.state, type: value.type,
                                                 title: value.title, pairings: value.pairings),
                             detail: nil, summary: summary, accept: false, archive: false, showActions: false,
-                            showsRef: showsRef, snapshot: snapshot, pending: pending, selected: selection == value.ref,
+                            showsRef: showsRef, choices: [], pending: pending.contains(value.ref),
+                            selected: selection == value.ref,
                             selectable: selectable, drafts: drafts, select: select, perform: perform).equatable()
                 }
                 if container.isExpanded {
@@ -299,8 +332,9 @@ public struct WorkItemsView: View {
                         }
                         ForEach(container.members) { member in
                             ItemRow(value: member, detail: nil, summary: nil, accept: member.state == "spotted",
-                                    archive: false, showActions: true, showsRef: showsRef, snapshot: snapshot,
-                                    pending: pending, selected: selection == member.ref, selectable: selectable,
+                                    archive: false, showActions: true, showsRef: showsRef,
+                                    choices: handoffs.forRow(member), pending: pending.contains(member.ref),
+                                    selected: selection == member.ref, selectable: selectable,
                                     drafts: drafts, select: select, perform: perform).equatable()
                         }
                     }
@@ -322,8 +356,8 @@ public struct WorkItemsView: View {
         let archive: Bool
         let showActions: Bool
         let showsRef: Bool
-        let snapshot: WorkSnapshotValue
-        let pending: Set<String>
+        let choices: [HandoffChoice]
+        let pending: Bool
         let selected: Bool
         let selectable: Bool
         let drafts: WorkItemInspectorDrafts
@@ -333,7 +367,7 @@ public struct WorkItemsView: View {
         static func == (lhs: Self, rhs: Self) -> Bool {
             lhs.value == rhs.value && lhs.detail == rhs.detail && lhs.summary == rhs.summary
                 && lhs.accept == rhs.accept && lhs.archive == rhs.archive && lhs.showActions == rhs.showActions
-                && lhs.showsRef == rhs.showsRef && lhs.snapshot == rhs.snapshot && lhs.pending == rhs.pending
+                && lhs.showsRef == rhs.showsRef && lhs.choices == rhs.choices && lhs.pending == rhs.pending
                 && lhs.selected == rhs.selected && lhs.selectable == rhs.selectable && lhs.drafts === rhs.drafts
         }
 
@@ -350,7 +384,7 @@ public struct WorkItemsView: View {
                 .contextMenu { Button("Copy item ID") { Clipboard.copy(value.ref, what: "Item ID") } }
                 if !archive, let pairings = value.pairings, !pairings.isEmpty {
                     WorkPairingActions(ref: value.ref, pairings: pairings, project: value.project,
-                                       pending: pending) { _ = perform($0) }.padding(.leading, 24)
+                                       pending: pending ? [value.ref] : []) { _ = perform($0) }.padding(.leading, 24)
                 }
                 if let detail, !detail.isEmpty {
                     Text(detail).font(.system(size: 11)).foregroundStyle(KitPalette.dim).lineLimit(2)
@@ -432,7 +466,7 @@ public struct WorkItemsView: View {
                         _ = perform(.accept(ref: ref))
                     }
                     .accessibilityLabel("Accept: it becomes open work")
-                    .disabled(pending.contains(ref))
+                    .disabled(pending)
                 }
                 if ["open", "active", "reopened"].contains(state) {
                     reasonButton(.finish, ref: ref, title: title)
@@ -441,10 +475,9 @@ public struct WorkItemsView: View {
                     reasonButton(.reopen, ref: ref, title: title)
                 }
                 if state != "dropped" && state != "done" {
-                    if !handoffs(excluding: ref).isEmpty {
+                    if !choices.isEmpty {
                         let handoffAction = accept ? "Accept and add to handoff" : "Add to handoff"
                         MenuButton(items: {
-                            let choices = handoffs(excluding: ref)
                             let byTitle = Dictionary(grouping: choices, by: \.title)
                             return choices.map { handoff in
                                 let label = byTitle[handoff.title]?.count == 1 ? handoff.title : "\(handoff.title) (\(handoff.ref))"
@@ -457,26 +490,23 @@ public struct WorkItemsView: View {
                         .instantTooltip("Add to a handoff as one of its tasks")
                         .accessibilityLabel(Text(verbatim: handoffAction))
                         .accessibilityHint("Choose the handoff")
-                        .disabled(pending.contains(ref))
+                        .disabled(pending)
                     }
                     reasonButton(.drop, ref: ref, title: title)
                 }
             }
             .overlay(alignment: .trailing) {
-                if pending.contains(ref) { ProgressView().controlSize(.mini).offset(x: 18).accessibilityLabel("Saving") }
+                if pending { ProgressView().controlSize(.mini).offset(x: 18).accessibilityLabel("Saving") }
             }
         }
 
+        /// The row and the inspector of one item share a draft, so a refused write and a redrawn row keep the text.
         private func reasonButton(_ kind: WorkReasonButton.Kind, ref: String, title: String) -> some View {
-            WorkReasonButton(kind: kind, title: title, busy: pending.contains(ref),
+            WorkReasonButton(kind: kind, title: title, busy: pending,
                              identifier: "work.reason.\(kind.purpose).\(ref)",
                              text: drafts.binding(.init(ref: ref, purpose: kind.purpose))) { value in
                 await perform(kind.action(ref: ref, text: value)).value
             }
-        }
-
-        private func handoffs(excluding ref: String) -> [WorkContainerValue] {
-            snapshot.openHandoffs.filter { handoff in handoff.ref != ref && !handoff.members.contains { $0.ref == ref } }
         }
     }
 }

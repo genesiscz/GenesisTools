@@ -112,3 +112,36 @@ test("dry run, no change and three invalid requests leave config alone", async (
     expect(existsSync(absent)).toBe(false);
     expect(readFileSync(configPath, "utf8")).toBe(before);
 });
+
+test("restore refuses a repository rule without writing any part of the undo", async () => {
+    await set({ type: "bug", action: "reopened", level: null });
+    const before = readFileSync(configPath, "utf8");
+    expect(
+        await setWorkNotifyConfig({
+            scope: "project",
+            project,
+            configPath,
+            lockedCells: new Set(["bug:reopened"]),
+            restore: [
+                { type: "bug", action: "spotted", from: null, to: "inbox" },
+                { type: "bug", action: "reopened", from: { level: "banner", minSeverity: "high" }, to: null },
+            ],
+        })
+    ).toMatchObject({ ok: false, code: "REPO_RULE_LOCKED" });
+    expect(readFileSync(configPath, "utf8")).toBe(before);
+});
+
+test("a repository rule becomes locked when the last project override is removed", async () => {
+    const lockedCells = new Set(["bug:spotted"]);
+    const write = (level: NotifyEdit["level"]) =>
+        setWorkNotifyConfig({
+            configPath,
+            scope: "project",
+            project,
+            lockedCells,
+            notify: { type: "bug", action: "spotted", level },
+        });
+    expect(await write("banner")).toMatchObject({ ok: true, changed: [{ from: "inbox", to: "banner" }] });
+    expect(await write(null)).toMatchObject({ ok: true, changed: [{ from: "banner", to: null }] });
+    expect(await write("inbox")).toMatchObject({ ok: false, code: "REPO_RULE_LOCKED" });
+});

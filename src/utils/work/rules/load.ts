@@ -113,6 +113,8 @@ export interface LoadedRules {
 export interface ProjectLocation {
     project: string;
     repoRoot?: string | null;
+    /** Saved checkout candidates supplied by the project's items. */
+    itemRoots?: readonly string[];
 }
 
 export type LoadProjectRules = (location: ProjectLocation) => Promise<LoadedRules>;
@@ -124,16 +126,18 @@ function existingCheckout(root: string | null | undefined): root is string {
 /** A work call can reuse its checkout for its own project and its rule reads across consumers. */
 export function projectRuleLoader(caller: ProjectLocation & { configPath?: string }): LoadProjectRules {
     const cache = new Map<string, { root?: string | null; loaded: Promise<LoadedRules> }>();
-    return ({ project, repoRoot }) => {
+    return ({ project, repoRoot, itemRoots }) => {
         const root = project === caller.project ? (caller.repoRoot ?? repoRoot) : repoRoot;
         const cached = cache.get(project);
 
-        if (cached && (!root || cached.root === root)) {
+        if (!itemRoots?.length && cached && (!root || cached.root === root)) {
             return cached.loaded;
         }
 
-        const loaded = loadWorkRules({ project, repoRoot: root, configPath: caller.configPath });
-        cache.set(project, { root, loaded });
+        const loaded = loadWorkRules({ project, repoRoot: root, itemRoots, configPath: caller.configPath });
+        if (!itemRoots?.length) {
+            cache.set(project, { root, loaded });
+        }
         return loaded;
     };
 }
@@ -165,6 +169,7 @@ export async function loadRulesForItems<T extends { item: Item }>(batch: readonl
 export async function loadWorkRules({
     project,
     repoRoot,
+    itemRoots,
     configPath = workConfigPath(),
 }: ProjectLocation & { configPath?: string }): Promise<LoadedRules> {
     const machine = readWorkConfig(configPath);
@@ -178,7 +183,7 @@ export async function loadWorkRules({
         sources.push({ layer: "config.global", path: configPath });
     }
 
-    const root = repoRoot ?? own?.roots?.find(existingCheckout);
+    const root = repoRoot ?? own?.roots?.find(existingCheckout) ?? itemRoots?.find(existingCheckout);
 
     if (root) {
         const repo = await loadRepoConfig(root);
@@ -393,6 +398,7 @@ export async function setWorkNotifyConfig(options: NotifyConfigWrite): Promise<N
         }
         const base = scope === "global" ? ["global", "rules", "notify"] : ["projects", project!, "rules", "notify"];
         const rules = scope === "global" ? config.global?.rules : config.projects?.[project!]?.rules;
+        const projectNotify = project ? config.projects?.[project]?.rules?.notify : undefined;
         const updates = notify
             ? selectedCells(notify).map((cell) => ({ ...cell, edit: notify, previous: null }))
             : (restore ?? []).map((previous) => ({
@@ -409,10 +415,13 @@ export async function setWorkNotifyConfig(options: NotifyConfigWrite): Promise<N
                 return { keep: refuse("INVALID_EDIT", "A rule appears twice in this change.") };
             }
             seen.add(key);
-            // Undoing a removal may now reveal a repository rule. Restore the machine override that
-            // the receipt removed, provided no newer machine override replaced it.
-            if (!previous && lockedCells?.has(key)) {
-                if (updates.length > 1) {
+            // Resolve the project layer from the same document revision as the write. A removal
+            // can expose the repository rule, and a restore payload alone cannot unlock it.
+            if (
+                lockedCells?.has(key) &&
+                (projectNotify?.[type]?.[action] ?? projectNotify?.["*"]?.[action]) === undefined
+            ) {
+                if (!previous && updates.length > 1) {
                     continue;
                 }
                 return { keep: refuse("REPO_RULE_LOCKED", "Change this rule in the repository’s file.") };

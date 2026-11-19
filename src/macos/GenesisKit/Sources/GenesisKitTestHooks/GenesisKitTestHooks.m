@@ -25,7 +25,7 @@ VNRecognizeTextRequest *GenesisKitFixtureTextRequest(void) {
     // accurate revision can fail while starting its E5RT model on a busy test machine.
     request.revision = VNRecognizeTextRequestRevision1;
     request.recognitionLevel = VNRequestTextRecognitionLevelAccurate;
-    request.usesLanguageCorrection = YES;
+    request.usesLanguageCorrection = NO;
     NSDictionary *stages = [request supportedComputeStageDevicesAndReturnError:NULL];
     for (VNComputeStage stage in stages) {
         for (id device in stages[stage]) {

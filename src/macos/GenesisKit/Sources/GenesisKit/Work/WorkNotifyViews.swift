@@ -120,16 +120,17 @@ enum WorkNotifyMenu {
         }
         items.append(.divider)
         if let cell = target.cell {
-            let decidingScope: WorkNotifyScope = cell.from == "config.global" ? .global : .project
-            let wildcard = cell.layers.contains { $0.layer == cell.from && $0.wildcard }
-            let inherited = cell.inheriting(decidingScope)
+            let scopeLayer = scope == .project ? "config.project" : "config.global"
+            let stored = cell.layers.first { $0.layer == scopeLayer }
+            let wildcard = stored?.wildcard == true
+            let inherited = cell.inheriting(scope)
             let resetTitle = inherited.layer == "default"
                 ? "Use the built-in level (\(WorkNotifyWords.level(inherited.level)))"
                 : "Use inherited level (\(WorkNotifyWords.level(inherited.level)), from \(WorkNotifyWords.layer(inherited.layer).lowercased()))"
             items.append(.action(resetTitle,
-                                 enabled: enabled && !busy && cell.from != "default" && !wildcard,
+                                 enabled: enabled && !busy && stored?.level != nil && !wildcard,
                                  systemImage: "arrow.uturn.backward", identifier: id + "-reset") {
-                apply(decidingScope, target.type, target.action, nil)
+                apply(scope, target.type, target.action, nil)
             })
             if wildcard { items.append(.note("This level comes from a rule for several changes.")) }
         } else {
@@ -158,21 +159,28 @@ public struct WorkNotifyPane: View {
 
     public var body: some View {
         Group {
-            if let failure = screen.failure {
-                FailureInline(.unexpected(failure, outcome: "The notification rules did not load", action: "Read the rules"),
-                              identifier: "work-notify-failure") { screen.reload() }
-            } else if !screen.notifyLoaded {
+            if screen.notifyLoaded {
+                VStack(spacing: 0) {
+                    WorkNotifyGridView(project: screen.project ?? "", rows: screen.notifyRows,
+                                       pending: screen.notifyPending, command: screen.notifyCommand,
+                                       serviceAvailable: serviceAvailable) { scope, type, action, level in
+                        Task { await screen.setNotify(scope: scope, type: type, action: action, level: level) }
+                    }
+                    if let failure = screen.failure { retry(failure, form: .compact) }
+                }
+            } else if let failure = screen.failure {
+                retry(failure, form: .pane)
+            } else {
                 ProgressView("Reading notification rules")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .accessibilityIdentifier("work-notify-loading")
-            } else {
-                WorkNotifyGridView(project: screen.project ?? "", rows: screen.notifyRows,
-                                   pending: screen.notifyPending, command: screen.notifyCommand,
-                                   serviceAvailable: serviceAvailable) { scope, type, action, level in
-                    Task { await screen.setNotify(scope: scope, type: type, action: action, level: level) }
-                }
             }
         }
+    }
+
+    private func retry(_ failure: String, form: FailureInline.Form) -> some View {
+        FailureInline(.unexpected(failure, outcome: "The notification rules did not load", action: "Read the rules"),
+                      form: form, identifier: "work-notify-failure") { screen.reload() }
     }
 
     private var serviceAvailable: Bool {
@@ -349,6 +357,7 @@ struct WorkNotifyFrozenGrid: View {
     @State private var scope: WorkNotifyScope = .project
     @State private var origin: CGPoint = .zero
     @State private var selectedRow: String?
+    @State private var menuAfterScroll: WorkNotifyCoordinate?
     @State private var host = WorkNotifyHost()
     let crosshair: WorkNotifyCrosshair
     @FocusState private var gridFocused: Bool
@@ -392,7 +401,13 @@ struct WorkNotifyFrozenGrid: View {
                         })
                     }
                     .coordinateSpace(name: "work-notify-viewport")
-                    .onPreferenceChange(WorkNotifyOriginKey.self) { if origin != $0 { origin = $0 } }
+                    .onPreferenceChange(WorkNotifyOriginKey.self) { nextOrigin in
+                        if origin != nextOrigin { origin = nextOrigin }
+                        guard let target = menuAfterScroll, crosshair.focus == target,
+                              let rect = visibleRect(target, origin: nextOrigin, viewport: geometry.size) else { return }
+                        menuAfterScroll = nil
+                        openMenu(target, at: rect)
+                    }
                     .scrollOverflowContent()
                     pinnedTypes.frame(width: WorkNotifyMetrics.typeWidth,
                                       height: WorkNotifyMetrics.visibleHeight(rows: rows.count, origin: origin.y,
@@ -420,14 +435,14 @@ struct WorkNotifyFrozenGrid: View {
                 .contentShape(Rectangle())
                 .focusable().focused($gridFocused)
                 .onKeyPress(keys: [.leftArrow, .rightArrow, .upArrow, .downArrow, .space, .return, .escape]) { press in
-                    guard press.modifiers.intersection([.command, .control, .option]).isEmpty else { return .ignored }
+                    guard press.modifiers.isDisjoint(with: [.command, .control, .option]) else { return .ignored }
                     return key(press.key, reader: reader, viewport: geometry.size)
                 }
                 .onChange(of: gridFocused) { _, focused in
                     if focused, crosshair.focus == nil, let first = rows.first, let action = actions.first {
                         focus(.init(type: first.type, action: action))
                     }
-                    if !focused { crosshair.focus = nil; selectedRow = nil }
+                    if !focused { crosshair.focus = nil; selectedRow = nil; menuAfterScroll = nil }
                 }
                 .onChange(of: rows.map(\.type)) { _, types in
                     if let type = crosshair.focus?.type, !types.contains(type) {
@@ -531,6 +546,7 @@ struct WorkNotifyFrozenGrid: View {
     }
 
     private func focus(_ target: WorkNotifyCoordinate) {
+        menuAfterScroll = nil
         crosshair.focus = target; selectedRow = target.type; gridFocused = true
     }
 
@@ -540,26 +556,44 @@ struct WorkNotifyFrozenGrid: View {
         let current = crosshair.focus ?? .init(type: rows.first?.type, action: actions.first)
         if key == .space || key == .return {
             guard apply != nil else { return .handled }
-            let target = WorkNotifyMenu.Target(type: current.type ?? "*", action: current.action ?? "*",
-                                              cells: allRows.filter { current.type == nil || $0.type == current.type }
-                                                .flatMap { $0.cells.filter { current.action == nil || $0.action == current.action } })
-            if let view = host.view {
-                let rect = WorkNotifyCrosshairLayer.rect(current, rows: rows, actions: actions, origin: origin)
-                let point = view.convert(NSPoint(x: rect.minX, y: view.bounds.height - rect.maxY), to: nil)
-                MenuButtonPresenter.pop(menu(target), in: view.window, at: point)
+            if let rect = visibleRect(current, origin: origin, viewport: viewport) {
+                openMenu(current, at: rect)
+            } else {
+                focus(current)
+                menuAfterScroll = current
+                reveal(current, reader: reader)
             }
             return .handled
         }
         guard let next = current.moved(key, rows: rows, actions: actions) else { return .ignored }
         focus(next)
-        let rect = WorkNotifyCrosshairLayer.rect(next, rows: rows, actions: actions, origin: origin)
-        let hiddenHorizontally = next.action != nil && (rect.minX < WorkNotifyMetrics.typeWidth || rect.maxX > viewport.width)
-        let hiddenVertically = next.type != nil && (rect.minY < WorkNotifyMetrics.headerHeight || rect.maxY > viewport.height)
-        if (hiddenHorizontally || hiddenVertically),
-           let type = next.type ?? rows.first?.type, let action = next.action ?? actions.first {
-            reader.scrollTo("notify:\(type):\(action)", anchor: .center)
-        }
+        if visibleRect(next, origin: origin, viewport: viewport) == nil { reveal(next, reader: reader) }
         return .handled
+    }
+
+    private func reveal(_ target: WorkNotifyCoordinate, reader: ScrollViewProxy) {
+        guard let type = target.type ?? rows.first?.type, let action = target.action ?? actions.first else { return }
+        reader.scrollTo("notify:\(type):\(action)", anchor: .center)
+    }
+
+    private func visibleRect(_ target: WorkNotifyCoordinate, origin: CGPoint, viewport: CGSize) -> CGRect? {
+        let rect = WorkNotifyCrosshairLayer.rect(target, rows: rows, actions: actions, origin: origin)
+        let left = target.action == nil ? 0 : WorkNotifyMetrics.typeWidth
+        let top = target.type == nil ? 0 : WorkNotifyMetrics.headerHeight
+        let visible = rect.intersection(CGRect(x: left, y: top, width: max(0, viewport.width - left),
+                                              height: max(0, viewport.height - top)))
+        guard visible.width >= min(rect.width, viewport.width - left) - 1,
+              visible.height >= min(rect.height, viewport.height - top) - 1, !visible.isEmpty else { return nil }
+        return visible
+    }
+
+    private func openMenu(_ coordinate: WorkNotifyCoordinate, at rect: CGRect) {
+        guard let view = host.view else { return }
+        let target = WorkNotifyMenu.Target(type: coordinate.type ?? "*", action: coordinate.action ?? "*",
+                                          cells: allRows.filter { coordinate.type == nil || $0.type == coordinate.type }
+                                            .flatMap { $0.cells.filter { coordinate.action == nil || $0.action == coordinate.action } })
+        let point = view.convert(NSPoint(x: rect.minX, y: view.bounds.height - rect.maxY), to: nil)
+        MenuButtonPresenter.pop(menu(target), in: view.window, at: point)
     }
 }
 

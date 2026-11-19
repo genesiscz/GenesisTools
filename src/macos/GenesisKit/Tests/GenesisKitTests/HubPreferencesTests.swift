@@ -82,8 +82,12 @@ final class HubPreferencesTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: name) }
         let scripted = preferences(defaults, name)
         let reader = preferences(UserDefaults(suiteName: name)!, name, observe: true)
+        let notified = expectation(description: "The open reader is notified by the scripted write")
+        notified.isInverted = true
+        let subscription = reader.objectWillChange.sink { notified.fulfill() }
         scripted.workDetailPlacement = "replace"
-        try await Task.sleep(for: .milliseconds(300))
+        await fulfillment(of: [notified], timeout: 0.3)
+        subscription.cancel()
         XCTAssertEqual(reader.workDetailPlacement, "beside")
         reader.reloadFromDefaults()
         XCTAssertEqual(reader.workDetailPlacement, "replace", "Positive control for the observer's read path")

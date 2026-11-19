@@ -32,6 +32,7 @@ public final class WorkScreenModel: ObservableObject {
                     project = oldValue
                 } else if project != oldValue {
                     resetFind()
+                    clearProjectEdits()
                 }
                 return
             }
@@ -167,7 +168,6 @@ public final class WorkScreenModel: ObservableObject {
     public func deactivate() {
         active = false
         if let wake { NSWorkspace.shared.notificationCenter.removeObserver(wake); self.wake = nil }
-        listTask?.cancel()
         invalidateFindReads()
         opening?.cancel()
         opening = nil
@@ -211,25 +211,38 @@ public final class WorkScreenModel: ObservableObject {
     }
 
     private func listen() {
+        listening?.cancel()
         if live != .live { live = .live }
         let stream = source.changes()
         listening = Task { [weak self] in
-            for await _ in stream {
-                guard !Task.isCancelled else { return }
-                self?.retryIndex = 0
-                self?.changed()
+            for await event in stream {
+                guard !Task.isCancelled, let self else { return }
+                switch event {
+                case .localChange:
+                    self.changed()
+                case .serviceChange:
+                    self.retryIndex = 0
+                    self.changed()
+                case .serviceDisconnected:
+                    self.serviceDisconnected()
+                }
             }
             guard !Task.isCancelled, let self else { return }
             self.listening = nil
-            self.live = .stopped(reason: "The GenesisTools service stopped.")
-            guard self.retryDelays.indices.contains(self.retryIndex) else { return }
-            let delay = self.retryDelays[self.retryIndex]
-            self.retryIndex += 1
-            self.retry = Task { [weak self] in
-                try? await Task.sleep(for: .seconds(delay))
-                guard !Task.isCancelled else { return }
-                self?.restart()
-            }
+            self.serviceDisconnected()
+        }
+    }
+
+    private func serviceDisconnected() {
+        live = .stopped(reason: "The GenesisTools service stopped.")
+        guard retry == nil, retryDelays.indices.contains(retryIndex) else { return }
+        let delay = retryDelays[retryIndex]
+        retryIndex += 1
+        retry = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled, let self else { return }
+            self.retry = nil
+            self.restart()
         }
     }
 
@@ -283,7 +296,7 @@ public final class WorkScreenModel: ObservableObject {
 
     private var indexedProject: String?
     private var indexTask: Task<Void, Never>?
-    private var listTask: Task<Void, Never>?
+    private var indexDirtyDuringRead = false
     private var expanded: Set<String> = []
     private var collapsedMatches: Set<String> = []
     private var archiveLimit = 200
@@ -294,9 +307,8 @@ public final class WorkScreenModel: ObservableObject {
     private func resetFind() {
         parentRef = nil
         indexTask?.cancel()
-        listTask?.cancel()
         indexTask = nil
-        listTask = nil
+        indexDirtyDuringRead = false
         indexedProject = nil
         indexLoading = false
         indexFailure = nil
@@ -341,7 +353,7 @@ public final class WorkScreenModel: ObservableObject {
                 let rows = try await source.list(project: project)
                 guard !Task.isCancelled, self.project == project else { return }
                 index = rows
-                indexedProject = project
+                indexedProject = indexDirtyDuringRead ? nil : project
                 updateResults()
                 revealRouteIfReady()
             } catch {
@@ -350,6 +362,9 @@ public final class WorkScreenModel: ObservableObject {
             }
             indexLoading = false
             indexTask = nil
+            let needsFollowUp = indexDirtyDuringRead
+            indexDirtyDuringRead = false
+            if needsFollowUp && !stale { loadIndexIfNeeded() }
         }
     }
 
@@ -359,35 +374,26 @@ public final class WorkScreenModel: ObservableObject {
         recentRefs.append(ref)
         cachedDetails[ref] = detail
         if recentRefs.count > 20 { cachedDetails.removeValue(forKey: recentRefs.removeFirst()) }
-        if snapshot == nil || companionReadNeeded { readListBesideDetail() }
         revealRouteIfReady()
     }
 
     public func readListBesideDetail() {
-        guard let project else { return }
-        companionReadNeeded = false
-        listTask?.cancel()
-        listFailure = nil
-        listTask = Task {
-            do {
-                let value = try await source.snapshot(project: project)
-                guard !Task.isCancelled, self.project == project else { return }
-                adopt(value)
-            } catch {
-                guard !Task.isCancelled, self.project == project else { return }
-                listFailure = error.localizedDescription
-            }
-        }
+        companionReadNeeded = true
+        reload()
     }
 
-    private func invalidateFindReads() {
+    private func invalidateFindReads(cancelIndex: Bool = true) {
         cachedDetails.removeAll()
         recentRefs.removeAll()
         indexedProject = nil
-        indexTask?.cancel()
-        indexTask = nil
-        // An equal live read publishes nothing, so only a real change of this flag may publish.
-        if indexLoading { indexLoading = false }
+        if cancelIndex {
+            indexTask?.cancel()
+            indexTask = nil
+            indexDirtyDuringRead = false
+            if indexLoading { indexLoading = false }
+        } else if indexTask != nil {
+            indexDirtyDuringRead = true
+        }
         companionReadNeeded = true
     }
 
@@ -529,7 +535,7 @@ public final class WorkScreenModel: ObservableObject {
         read(explicit: true)
     }
 
-    private func read(explicit: Bool = false, change: Bool = false) {
+    private func read(explicit: Bool = false, change: Bool = false, retryOnFailure: Bool = true) {
         loading?.cancel()
         if live == .catchingUp { live = .live }
         let project = project
@@ -549,25 +555,44 @@ public final class WorkScreenModel: ObservableObject {
         loading = Task { [weak self] in
             guard let self else { return }
             let span = PerfSpans.begin("work.live.reload", awaits: true)
+            var failed = false
             let slow = change ? Task { [weak self, catchUpDelay] in
                 try? await Task.sleep(for: .seconds(catchUpDelay))
                 guard !Task.isCancelled, let self, self.loadToken == token, self.live == .live else { return }
                 self.live = .catchingUp
             } : nil
-            defer { slow?.cancel(); span.end() }
+            defer {
+                slow?.cancel()
+                span.end()
+                if self.loadToken == token {
+                    if self.isLoading { self.isLoading = false }
+                    if self.live == .catchingUp { self.live = .live }
+                    self.loading = nil
+                    // Changes that came during this reload get one more, by the same rules.
+                    if self.stale || self.projectsStale {
+                        self.schedule()
+                    } else if failed, change, retryOnFailure, self.active {
+                        // A failed read after a store change retries once by itself; a second failure waits for the
+                        // next change.
+                        self.stale = true
+                        self.schedule(retryOnFailure: false)
+                    }
+                }
+            }
             do {
                 if let ref {
                     let detail = try await self.source.detail(ref: ref)
                     guard !Task.isCancelled, self.itemRef == ref else { return }
                     self.adoptingItemProject = true
                     if self.project != detail.item.project {
-                        self.snapshot = nil
-                        self.notifyRows = []
                         self.project = detail.item.project
+                        if self.snapshot?.project != self.project {
+                            self.snapshot = nil
+                            self.notifyRows = []
+                        }
                     }
                     self.adoptingItemProject = false
                     if self.itemDetail != detail { self.itemDetail = detail }
-                    else if self.companionReadNeeded { self.readListBesideDetail() }
                 } else if let project, pane == .items {
                     let confirmed = try await self.source.snapshot(project: project)
                     guard !Task.isCancelled, self.project == project else { return }
@@ -582,14 +607,22 @@ public final class WorkScreenModel: ObservableObject {
                 if self.failure != nil { self.failure = nil }
             } catch {
                 guard !Task.isCancelled else { return }
+                failed = true
                 if self.failure != error.localizedDescription { self.failure = error.localizedDescription }
             }
-            guard self.loadToken == token else { return }
-            if self.isLoading { self.isLoading = false }
-            if self.live == .catchingUp { self.live = .live }
-            self.loading = nil
-            // Changes that came during this reload get one more, by the same rules.
-            if self.stale || self.projectsStale { self.schedule() }
+            if !Task.isCancelled, ref != nil, let project = self.project,
+               self.snapshot == nil || self.companionReadNeeded {
+                self.companionReadNeeded = false
+                if self.listFailure != nil { self.listFailure = nil }
+                do {
+                    let confirmed = try await self.source.snapshot(project: project)
+                    guard !Task.isCancelled, self.project == project else { return }
+                    self.adopt(confirmed)
+                } catch {
+                    guard !Task.isCancelled, self.project == project else { return }
+                    self.listFailure = error.localizedDescription
+                }
+            }
         }
     }
 
@@ -616,7 +649,7 @@ public final class WorkScreenModel: ObservableObject {
     /// A change of the store: the screen is stale, and one reload follows by the rules above.
     func changed() {
         PerfSpans.measure("work.live.tick") {
-            invalidateFindReads()
+            invalidateFindReads(cancelIndex: false)
             stale = true
             projectsStale = true
             schedule()
@@ -625,7 +658,7 @@ public final class WorkScreenModel: ObservableObject {
 
     /// One reload after the burst settles, no sooner than `reloadInterval` after the last one, never beside a running
     /// one, never while hidden. A burst that keeps going still reloads once per interval.
-    private func schedule() {
+    private func schedule(retryOnFailure: Bool = true) {
         guard active, visible, trailing == nil, loading == nil else { return }
         let wait = max(settle, reloadInterval - Date().timeIntervalSince(lastReload))
         trailing = Task { [weak self] in
@@ -644,7 +677,7 @@ public final class WorkScreenModel: ObservableObject {
             guard !Task.isCancelled else { return }
             self.trailing = nil
             guard self.active, self.visible, self.loadToken == previousLoad else { return }
-            self.read(change: true)
+            self.read(change: true, retryOnFailure: retryOnFailure)
         }
     }
 
@@ -722,8 +755,8 @@ public final class WorkScreenModel: ObservableObject {
         }
         if !result.ok { showPendingItemStates() }
         invalidateFindReads()
-        listTask?.cancel()
         // The live source bounds each RPC and CLI read. Navigation may replace this read without delaying the editor.
+        // The same read refreshes the list beside an open item, so no separate list read is left to cancel.
         read()
         return result.ok
     }
@@ -754,6 +787,13 @@ public final class WorkScreenModel: ObservableObject {
         }
     }
 
+    /// A notification edit shows its command for the rules it read back, so it waits for that read.
+    private func readAfterWrite() async {
+        read()
+        // An explicit read or a navigation may supersede our read while it is in flight.
+        while let current = loading { await current.value }
+    }
+
     func finishCurrentRead() async {
         await loading?.value
     }
@@ -774,6 +814,7 @@ public final class WorkScreenModel: ObservableObject {
         if case .stopped = live { return }
         let layer = scope == .global ? "config.global" : "config.project"
         var previews: [String: String] = [:]
+        var exposesRepository = Set<String>()
         for row in notifyRows where type == "*" || type == row.type {
             for cell in row.cells where cell.writable && (action == "*" || action == cell.action) {
                 let key = "notify:\(row.type):\(cell.action)"
@@ -783,7 +824,9 @@ public final class WorkScreenModel: ObservableObject {
                 } else if let level {
                     previews[key] = level
                 } else {
-                    previews[key] = cell.inheriting(scope).level
+                    let inherited = cell.inheriting(scope)
+                    previews[key] = inherited.level
+                    if inherited.layer == "config.repo" { exposesRepository.insert(key) }
                 }
             }
         }
@@ -825,7 +868,10 @@ public final class WorkScreenModel: ObservableObject {
                     message = "Rules saved. The updated rules could not be read."
                 }
             }
-            let fixes: [StackedNotice.Action] = result.changes.isEmpty ? [] : [
+            let canRestore = !result.changes.isEmpty && !result.changes.contains {
+                exposesRepository.contains("notify:\($0.type):\($0.action)")
+            }
+            let fixes: [StackedNotice.Action] = !canRestore ? [] : [
                 .undo { [weak self] id in Task {
                     await self?.undoNotify(project: project, scope: scope, changes: result.changes, noticeID: id)
                 } }
@@ -873,7 +919,7 @@ public final class WorkScreenModel: ObservableObject {
     }
 }
 
-private extension WorkSnapshotValue {
+extension WorkSnapshotValue {
     func previewing(_ states: [String: String]) -> Self {
         guard !states.isEmpty else { return self }
         var result = self
