@@ -593,7 +593,11 @@ export async function pullRemote(
             for (const fact of SYNCED_FACTS) {
                 const theirs = remoteFact(remote, fact);
 
-                if (theirs === undefined || SafeJSON.stringify(theirs) === SafeJSON.stringify(factOf(item, fact))) {
+                const matches =
+                    fact === "state" && connector.stateMatches !== undefined
+                        ? connector.stateMatches(remote, item.state)
+                        : SafeJSON.stringify(theirs) === SafeJSON.stringify(factOf(item, fact));
+                if (theirs === undefined || matches) {
                     continue;
                 }
 

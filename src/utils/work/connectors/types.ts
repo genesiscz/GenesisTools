@@ -63,6 +63,8 @@ export interface RemoteItem {
     body?: string;
     type?: ItemType;
     state?: ItemState;
+    /** Native status when several local states share one remote representation. */
+    status?: string;
     severity?: Severity;
     tags?: string[];
     labels?: string[];
@@ -82,6 +84,8 @@ export interface Connector<S = unknown> {
     status(ctx: ConnectorContext<S>): Promise<{ ok: boolean; detail: string }>;
     push(intents: readonly PushIntent[], ctx: ConnectorContext<S>): Promise<PushResult[]>;
     pull(ask: { remoteKeys: readonly string[] }, ctx: ConnectorContext<S>): Promise<RemoteItem[]>;
+    /** Compare a decoded remote state against the representation this connector sends. */
+    stateMatches?(remote: RemoteItem, local: ItemState): boolean;
 }
 
 /** `gt/pm/{machine}{project}/{id}`: what a person in the tracker sees, and how a lost pairing is found again. */
