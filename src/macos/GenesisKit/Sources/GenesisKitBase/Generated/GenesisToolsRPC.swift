@@ -25,6 +25,17 @@ public indirect enum GenesisToolsJSON: Codable, Sendable {
     }
 }
 
+/// A JSON null and nothing else: the null arm of a union, so it never takes a value that belongs to another arm.
+public struct GenesisToolsNull: Codable, Sendable, Equatable {
+    public init() {}
+    public init(from decoder: Decoder) throws {
+        guard try decoder.singleValueContainer().decodeNil() else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Expected null"))
+        }
+    }
+    public func encode(to encoder: Encoder) throws { var box = encoder.singleValueContainer(); try box.encodeNil() }
+}
+
 public struct AppHelloParams: Codable, Sendable {
 
     public init() {
@@ -683,15 +694,20 @@ public enum AppBuildResult: Codable, Sendable {
 
 public enum WindowsOpenParamsWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
-    case value9 = "--permission-dialog"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
+    case value10 = "--permission-dialog"
+}
+
+public enum WindowsOpenParamsFix: String, Codable, Sendable {
+    case value0 = "skip"
 }
 
 public struct WindowsOpenParams: Codable, Sendable {
@@ -699,19 +715,22 @@ public struct WindowsOpenParams: Codable, Sendable {
     public var `args`: [String]?
     public var `activate`: Bool?
     public var `wait`: Bool?
-    public init(`window`: WindowsOpenParamsWindow, `args`: [String]? = nil, `activate`: Bool? = nil, `wait`: Bool? = nil) {
+    public var `fix`: WindowsOpenParamsFix?
+    public init(`window`: WindowsOpenParamsWindow, `args`: [String]? = nil, `activate`: Bool? = nil, `wait`: Bool? = nil, `fix`: WindowsOpenParamsFix? = nil) {
         self.`window` = `window`
         self.`args` = `args`
         self.`activate` = `activate`
         self.`wait` = `wait`
+        self.`fix` = `fix`
     }
-    private enum CodingKeys: String, CodingKey { case `window`; case `args`; case `activate`; case `wait` }
+    private enum CodingKeys: String, CodingKey { case `window`; case `args`; case `activate`; case `wait`; case `fix` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`window` = try box.decode(WindowsOpenParamsWindow.self, forKey: .`window`)
         self.`args` = try box.decodeIfPresent([String].self, forKey: .`args`)
         self.`activate` = try box.decodeIfPresent(Bool.self, forKey: .`activate`)
         self.`wait` = try box.decodeIfPresent(Bool.self, forKey: .`wait`)
+        self.`fix` = try box.decodeIfPresent(WindowsOpenParamsFix.self, forKey: .`fix`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -719,6 +738,7 @@ public struct WindowsOpenParams: Codable, Sendable {
         try box.encodeIfPresent(`args`, forKey: .`args`)
         try box.encodeIfPresent(`activate`, forKey: .`activate`)
         try box.encodeIfPresent(`wait`, forKey: .`wait`)
+        try box.encodeIfPresent(`fix`, forKey: .`fix`)
     }
 }
 
@@ -728,15 +748,16 @@ public enum WindowsOpenResultOption0Status: String, Codable, Sendable {
 
 public enum WindowsOpenResultOption0ValueWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
-    case value9 = "--permission-dialog"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
+    case value10 = "--permission-dialog"
 }
 
 public enum WindowsOpenResultOption0ValueOpened: Codable, Sendable {
@@ -943,14 +964,15 @@ public enum PersonAskParamsKind: String, Codable, Sendable {
 
 public enum PersonAskParamsOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct PersonAskParamsOpen: Codable, Sendable {
@@ -1255,14 +1277,15 @@ public enum PersonConfirmParamsKind: String, Codable, Sendable {
 
 public enum PersonConfirmParamsOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct PersonConfirmParamsOpen: Codable, Sendable {
@@ -1831,14 +1854,15 @@ public enum PersonNoticeResult: Codable, Sendable {
 
 public enum PersonWindowNoticeParamsOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct PersonWindowNoticeParamsOpen: Codable, Sendable {
@@ -2139,14 +2163,15 @@ public enum PersonShowWindowParamsKind: String, Codable, Sendable {
 
 public enum PersonShowWindowParamsOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct PersonShowWindowParamsOpen: Codable, Sendable {
@@ -2463,14 +2488,15 @@ public enum PersonNotifyThenAskParamsKind: String, Codable, Sendable {
 
 public enum PersonNotifyThenAskParamsOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct PersonNotifyThenAskParamsOpen: Codable, Sendable {
@@ -2787,14 +2813,15 @@ public enum PersonAskNowParamsKind: String, Codable, Sendable {
 
 public enum PersonAskNowParamsOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct PersonAskNowParamsOpen: Codable, Sendable {
@@ -3111,14 +3138,15 @@ public enum PersonAskElseNotifyParamsKind: String, Codable, Sendable {
 
 public enum PersonAskElseNotifyParamsOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct PersonAskElseNotifyParamsOpen: Codable, Sendable {
@@ -3435,14 +3463,15 @@ public enum TerminalPromptParamsKind: String, Codable, Sendable {
 
 public enum TerminalPromptParamsOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct TerminalPromptParamsOpen: Codable, Sendable {
@@ -15885,6 +15914,202 @@ public struct HelloResult: Codable, Sendable {
     }
 }
 
+public struct ActionsRunParams: Codable, Sendable {
+    public var `id`: String
+    public var `args`: GenesisToolsJSON?
+    public var `timeoutMs`: Int?
+    public init(`id`: String, `args`: GenesisToolsJSON? = nil, `timeoutMs`: Int? = nil) {
+        self.`id` = `id`
+        self.`args` = `args`
+        self.`timeoutMs` = `timeoutMs`
+    }
+    private enum CodingKeys: String, CodingKey { case `id`; case `args`; case `timeoutMs` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`id` = try box.decode(String.self, forKey: .`id`)
+        self.`args` = try box.decodeIfPresent(GenesisToolsJSON.self, forKey: .`args`)
+        self.`timeoutMs` = try box.decodeIfPresent(Int.self, forKey: .`timeoutMs`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`id`, forKey: .`id`)
+        try box.encodeIfPresent(`args`, forKey: .`args`)
+        try box.encodeIfPresent(`timeoutMs`, forKey: .`timeoutMs`)
+    }
+}
+
+public enum ActionsRunResultOption0Status: String, Codable, Sendable {
+    case value0 = "ran"
+}
+
+public struct ActionsRunResultOption0SkippedItemFix: Codable, Sendable {
+    public var `command`: String
+    public var `sentence`: String
+    public init(`command`: String, `sentence`: String) {
+        self.`command` = `command`
+        self.`sentence` = `sentence`
+    }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
+    }
+}
+
+public struct ActionsRunResultOption0SkippedItem: Codable, Sendable {
+    public var `way`: String
+    public var `code`: String
+    public var `reason`: String
+    public var `fix`: ActionsRunResultOption0SkippedItemFix?
+    public init(`way`: String, `code`: String, `reason`: String, `fix`: ActionsRunResultOption0SkippedItemFix? = nil) {
+        self.`way` = `way`
+        self.`code` = `code`
+        self.`reason` = `reason`
+        self.`fix` = `fix`
+    }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(ActionsRunResultOption0SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
+}
+
+public struct ActionsRunResultOption0: Codable, Sendable {
+    public var `status`: ActionsRunResultOption0Status
+    public var `via`: String
+    public var `value`: GenesisToolsJSON
+    public var `skipped`: [ActionsRunResultOption0SkippedItem]
+    public init(`status`: ActionsRunResultOption0Status, `via`: String, `value`: GenesisToolsJSON, `skipped`: [ActionsRunResultOption0SkippedItem]) {
+        self.`status` = `status`
+        self.`via` = `via`
+        self.`value` = `value`
+        self.`skipped` = `skipped`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `via`; case `value`; case `skipped` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(ActionsRunResultOption0Status.self, forKey: .`status`)
+        self.`via` = try box.decode(String.self, forKey: .`via`)
+        self.`value` = try box.decode(GenesisToolsJSON.self, forKey: .`value`)
+        self.`skipped` = try box.decode([ActionsRunResultOption0SkippedItem].self, forKey: .`skipped`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`via`, forKey: .`via`)
+        try box.encode(`value`, forKey: .`value`)
+        try box.encode(`skipped`, forKey: .`skipped`)
+    }
+}
+
+public enum ActionsRunResultOption1Status: String, Codable, Sendable {
+    case value0 = "unreachable"
+}
+
+public struct ActionsRunResultOption1SkippedItemFix: Codable, Sendable {
+    public var `command`: String
+    public var `sentence`: String
+    public init(`command`: String, `sentence`: String) {
+        self.`command` = `command`
+        self.`sentence` = `sentence`
+    }
+    private enum CodingKeys: String, CodingKey { case `command`; case `sentence` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`command` = try box.decode(String.self, forKey: .`command`)
+        self.`sentence` = try box.decode(String.self, forKey: .`sentence`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`command`, forKey: .`command`)
+        try box.encode(`sentence`, forKey: .`sentence`)
+    }
+}
+
+public struct ActionsRunResultOption1SkippedItem: Codable, Sendable {
+    public var `way`: String
+    public var `code`: String
+    public var `reason`: String
+    public var `fix`: ActionsRunResultOption1SkippedItemFix?
+    public init(`way`: String, `code`: String, `reason`: String, `fix`: ActionsRunResultOption1SkippedItemFix? = nil) {
+        self.`way` = `way`
+        self.`code` = `code`
+        self.`reason` = `reason`
+        self.`fix` = `fix`
+    }
+    private enum CodingKeys: String, CodingKey { case `way`; case `code`; case `reason`; case `fix` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`way` = try box.decode(String.self, forKey: .`way`)
+        self.`code` = try box.decode(String.self, forKey: .`code`)
+        self.`reason` = try box.decode(String.self, forKey: .`reason`)
+        self.`fix` = try box.decode(ActionsRunResultOption1SkippedItemFix?.self, forKey: .`fix`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`way`, forKey: .`way`)
+        try box.encode(`code`, forKey: .`code`)
+        try box.encode(`reason`, forKey: .`reason`)
+        try box.encode(`fix`, forKey: .`fix`)
+    }
+}
+
+public struct ActionsRunResultOption1: Codable, Sendable {
+    public var `status`: ActionsRunResultOption1Status
+    public var `skipped`: [ActionsRunResultOption1SkippedItem]
+    public var `manual`: String?
+    public init(`status`: ActionsRunResultOption1Status, `skipped`: [ActionsRunResultOption1SkippedItem], `manual`: String? = nil) {
+        self.`status` = `status`
+        self.`skipped` = `skipped`
+        self.`manual` = `manual`
+    }
+    private enum CodingKeys: String, CodingKey { case `status`; case `skipped`; case `manual` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`status` = try box.decode(ActionsRunResultOption1Status.self, forKey: .`status`)
+        self.`skipped` = try box.decode([ActionsRunResultOption1SkippedItem].self, forKey: .`skipped`)
+        self.`manual` = try box.decode(String?.self, forKey: .`manual`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`status`, forKey: .`status`)
+        try box.encode(`skipped`, forKey: .`skipped`)
+        try box.encode(`manual`, forKey: .`manual`)
+    }
+}
+
+public enum ActionsRunResult: Codable, Sendable {
+    case option0(ActionsRunResultOption0)
+    case option1(ActionsRunResultOption1)
+    public init(from decoder: Decoder) throws {
+        if let value = try? ActionsRunResultOption0(from: decoder) { self = .option0(value); return }
+        if let value = try? ActionsRunResultOption1(from: decoder) { self = .option1(value); return }
+        throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "No ActionsRunResult variant matched"))
+    }
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .option0(value): try value.encode(to: encoder)
+        case let .option1(value): try value.encode(to: encoder)
+        }
+    }
+}
+
 public struct ActionsExplainParams: Codable, Sendable {
     public var `id`: String
     public var `fresh`: Bool?
@@ -16224,14 +16449,15 @@ public enum RequestsPostParamsInputKind: String, Codable, Sendable {
 
 public enum RequestsPostParamsInputOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct RequestsPostParamsInputOpen: Codable, Sendable {
@@ -16312,14 +16538,15 @@ public enum RequestsPostResultRequestKind: String, Codable, Sendable {
 
 public enum RequestsPostResultRequestOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct RequestsPostResultRequestOpen: Codable, Sendable {
@@ -16408,14 +16635,15 @@ public enum RequestsPostResultEventsItemOption0RequestKind: String, Codable, Sen
 
 public enum RequestsPostResultEventsItemOption0RequestOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct RequestsPostResultEventsItemOption0RequestOpen: Codable, Sendable {
@@ -16940,14 +17168,15 @@ public enum RequestsGetResultRequestKind: String, Codable, Sendable {
 
 public enum RequestsGetResultRequestOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct RequestsGetResultRequestOpen: Codable, Sendable {
@@ -17036,14 +17265,15 @@ public enum RequestsGetResultEventsItemOption0RequestKind: String, Codable, Send
 
 public enum RequestsGetResultEventsItemOption0RequestOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct RequestsGetResultEventsItemOption0RequestOpen: Codable, Sendable {
@@ -17568,14 +17798,15 @@ public enum RequestsListResultItemRequestKind: String, Codable, Sendable {
 
 public enum RequestsListResultItemRequestOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct RequestsListResultItemRequestOpen: Codable, Sendable {
@@ -17664,14 +17895,15 @@ public enum RequestsListResultItemEventsItemOption0RequestKind: String, Codable,
 
 public enum RequestsListResultItemEventsItemOption0RequestOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct RequestsListResultItemEventsItemOption0RequestOpen: Codable, Sendable {
@@ -18174,36 +18406,27 @@ public struct RequestsListResultItem: Codable, Sendable {
     }
 }
 
-public enum RequestsAnswerParamsStatus: String, Codable, Sendable {
-    case value0 = "done"
-    case value1 = "declined"
-}
-
-public struct RequestsAnswerParams: Codable, Sendable {
+public struct RequestsPresentParams: Codable, Sendable {
     public var `id`: String
-    public var `status`: RequestsAnswerParamsStatus
-    public var `reason`: String?
-    public init(`id`: String, `status`: RequestsAnswerParamsStatus, `reason`: String? = nil) {
+    public var `takesFocus`: Bool?
+    public init(`id`: String, `takesFocus`: Bool? = nil) {
         self.`id` = `id`
-        self.`status` = `status`
-        self.`reason` = `reason`
+        self.`takesFocus` = `takesFocus`
     }
-    private enum CodingKeys: String, CodingKey { case `id`; case `status`; case `reason` }
+    private enum CodingKeys: String, CodingKey { case `id`; case `takesFocus` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`id` = try box.decode(String.self, forKey: .`id`)
-        self.`status` = try box.decode(RequestsAnswerParamsStatus.self, forKey: .`status`)
-        self.`reason` = try box.decodeIfPresent(String.self, forKey: .`reason`)
+        self.`takesFocus` = try box.decodeIfPresent(Bool.self, forKey: .`takesFocus`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
         try box.encode(`id`, forKey: .`id`)
-        try box.encode(`status`, forKey: .`status`)
-        try box.encodeIfPresent(`reason`, forKey: .`reason`)
+        try box.encodeIfPresent(`takesFocus`, forKey: .`takesFocus`)
     }
 }
 
-public enum RequestsAnswerResultStatus: String, Codable, Sendable {
+public enum RequestsPresentResultStatus: String, Codable, Sendable {
     case value0 = "done"
     case value1 = "failed"
     case value2 = "declined"
@@ -18212,18 +18435,18 @@ public enum RequestsAnswerResultStatus: String, Codable, Sendable {
     case value5 = "unreachable"
 }
 
-public enum RequestsAnswerResultMethod: String, Codable, Sendable {
+public enum RequestsPresentResultMethod: String, Codable, Sendable {
     case value0 = "click"
     case value1 = "terminal"
     case value2 = "touch-id"
     case value3 = "password"
 }
 
-public struct RequestsAnswerResult: Codable, Sendable {
+public struct RequestsPresentResult: Codable, Sendable {
     public var `id`: String
-    public var `status`: RequestsAnswerResultStatus
+    public var `status`: RequestsPresentResultStatus
     public var `reason`: String?
-    public var `method`: RequestsAnswerResultMethod?
+    public var `method`: RequestsPresentResultMethod?
     public var `via`: String?
     public var `elevation`: String?
     public var `note`: String?
@@ -18231,7 +18454,7 @@ public struct RequestsAnswerResult: Codable, Sendable {
     public var `outputTail`: String?
     public var `verified`: Bool?
     public var `manual`: String?
-    public init(`id`: String, `status`: RequestsAnswerResultStatus, `reason`: String? = nil, `method`: RequestsAnswerResultMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
+    public init(`id`: String, `status`: RequestsPresentResultStatus, `reason`: String? = nil, `method`: RequestsPresentResultMethod? = nil, `via`: String? = nil, `elevation`: String? = nil, `note`: String? = nil, `exitCode`: Int? = nil, `outputTail`: String? = nil, `verified`: Bool? = nil, `manual`: String? = nil) {
         self.`id` = `id`
         self.`status` = `status`
         self.`reason` = `reason`
@@ -18248,9 +18471,9 @@ public struct RequestsAnswerResult: Codable, Sendable {
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`id` = try box.decode(String.self, forKey: .`id`)
-        self.`status` = try box.decode(RequestsAnswerResultStatus.self, forKey: .`status`)
+        self.`status` = try box.decode(RequestsPresentResultStatus.self, forKey: .`status`)
         self.`reason` = try box.decode(String?.self, forKey: .`reason`)
-        self.`method` = try box.decodeIfPresent(RequestsAnswerResultMethod.self, forKey: .`method`)
+        self.`method` = try box.decodeIfPresent(RequestsPresentResultMethod.self, forKey: .`method`)
         self.`via` = try box.decodeIfPresent(String.self, forKey: .`via`)
         self.`elevation` = try box.decodeIfPresent(String.self, forKey: .`elevation`)
         self.`note` = try box.decodeIfPresent(String.self, forKey: .`note`)
@@ -18369,14 +18592,15 @@ public enum RequestPresentParamsKind: String, Codable, Sendable {
 
 public enum RequestPresentParamsOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct RequestPresentParamsOpen: Codable, Sendable {
@@ -18561,14 +18785,15 @@ public enum RequestChangedEventRequestKind: String, Codable, Sendable {
 
 public enum RequestChangedEventRequestOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct RequestChangedEventRequestOpen: Codable, Sendable {
@@ -18657,14 +18882,15 @@ public enum RequestChangedEventEventsItemOption0RequestKind: String, Codable, Se
 
 public enum RequestChangedEventEventsItemOption0RequestOpenWindow: String, Codable, Sendable {
     case value0 = "--features"
-    case value1 = "--hub"
-    case value2 = "--review"
-    case value3 = "--widget"
-    case value4 = "--markdown"
-    case value5 = "--recorder"
-    case value6 = "--meetings"
-    case value7 = "--window"
-    case value8 = "--requests"
+    case value1 = "--clicky"
+    case value2 = "--hub"
+    case value3 = "--review"
+    case value4 = "--widget"
+    case value5 = "--markdown"
+    case value6 = "--recorder"
+    case value7 = "--meetings"
+    case value8 = "--window"
+    case value9 = "--requests"
 }
 
 public struct RequestChangedEventEventsItemOption0RequestOpen: Codable, Sendable {
@@ -19440,122 +19666,206 @@ public struct ConfigPersonWindowNotice: Codable, Sendable {
 @MainActor
 public final class GenesisToolsRPC {
     public static let shared = GenesisToolsRPC()
-    public var timeoutSeconds: TimeInterval = 130
+    /// The wait of a call that runs no action: past the service's default call bound.
+    public var timeoutSeconds: TimeInterval = 140
+    /// The actions whose budget is not the default two minutes.
+    private static let actionBudgetsMs: [String: Int] = ["app.build": 600000, "windows.open": 600000]
+    /// How long a client waits for an action call: the budget the service runs it with, plus the service's grace to answer
+    /// and the same again, so the service's own expiry answer always arrives first (serviceActionClientTimeoutMs).
+    static func actionClientTimeout(_ id: String, override: Int? = nil) -> TimeInterval {
+        TimeInterval(max(1, override ?? actionBudgetsMs[id] ?? 120000) + 20000) / 1000
+    }
+    /// Once per published connection that the service ends (a restart, a crash); not after `close()`.
+    public var onDisconnect: (() -> Void)?
     private var peer: JSONRPCSocketClient?
+    /// The one connection attempt in flight: every caller that finds no peer awaits it.
+    private var connecting: Task<JSONRPCSocketClient, Error>?
     private let path: String
     private var handlers: [String: JSONRPCSocketClient.Handler] = [:]
-    private var listeners: [String: [UUID: (Data) -> Void]] = [:]
-    public init(path: String = GenesisToolsHome.path("genesis-tools/service.sock")) { self.path = path }
-    public func connect() async throws {
-        if peer != nil { return }
-        if !FileManager.default.fileExists(atPath: path) {
-            let bridge = ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath())
-            let started = try await bridge.run(subcommand: "genesis-tools", args: ["serve", "--detach"], timeoutSeconds: 20)
-            guard started.exitCode == 0 else { throw ToolsBridgeError.refused(started.stderr) }
-        }
+    private struct Listener {
+        let deliver: (Data) -> Void
+        let finish: (Error?) -> Void
+    }
+    private var listeners: [String: [UUID: Listener]] = [:]
+    /// Starts the service and returns once it listens: `genesis-tools serve --detach` unless a test passes its own.
+    private let startService: @MainActor () async throws -> Void
+    public init(
+        path: String = GenesisToolsHome.path("genesis-tools/service.sock"),
+        startService: (@MainActor () async throws -> Void)? = nil
+    ) {
+        self.path = path
+        self.startService = startService ?? GenesisToolsRPC.serveDetached
+    }
+    public func connect() async throws { _ = try await ready() }
+    private func ready() async throws -> JSONRPCSocketClient {
+        if let peer { return peer }
+        if let connecting { return try await connecting.value }
+        let attempt = Task { @MainActor in try await self.open() }
+        connecting = attempt
+        defer { if connecting == attempt { connecting = nil } }
+        return try await attempt.value
+    }
+    /// Starts the service when its socket is missing or refuses the connection, and publishes the connection only after
+    /// `hello` and `subscribe`.
+    private func open() async throws -> JSONRPCSocketClient {
+        if !FileManager.default.fileExists(atPath: path) { try await startService() }
         let opened = JSONRPCSocketClient(path: path)
-        try opened.connect()
-        peer = opened
+        do {
+            try opened.connect()
+        } catch {
+            // A service that was killed leaves its socket file behind. `serve --detach` starts a new one, which
+            // replaces the file, so the second connect reaches it; a second failure is the caller's error.
+            try await startService()
+            try opened.connect()
+        }
+        var announced = Set(handlers.keys)
         for (name, handler) in handlers { opened.answer(name, with: handler) }
-        opened.onClose = { [weak self] in Task { @MainActor in self?.peer = nil } }
+        opened.onClose = { [weak self, weak opened] in
+            Task { @MainActor in
+                guard let self, let opened, self.peer === opened else { return }
+                self.peer = nil
+                self.finishListeners(JSONRPCSocketClient.Failure.closed)
+                self.onDisconnect?()
+            }
+        }
         opened.onNotification = { [weak self] name, value in
             guard let value, let data = try? JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed]) else { return }
-            Task { @MainActor in self?.listeners[name]?.values.forEach { $0(data) } }
+            Task { @MainActor in self?.listeners[name]?.values.forEach { $0.deliver(data) } }
         }
-        _ = try await opened.call("hello", params: ["methods": Array(handlers.keys)])
-        _ = try await opened.call("subscribe", params: [:])
+        do {
+            _ = try await opened.call("hello", params: ["methods": Array(announced)])
+            _ = try await opened.call("subscribe", params: [:])
+            // A handler registered while the handshake ran is answered and announced on this connection too.
+            while Set(handlers.keys) != announced {
+                announced = Set(handlers.keys)
+                for (name, handler) in handlers { opened.answer(name, with: handler) }
+                _ = try await opened.call("hello", params: ["methods": Array(announced)])
+            }
+            try Task.checkCancellation()
+        } catch {
+            opened.close()
+            throw error
+        }
+        peer = opened
+        return opened
     }
-    public func close() { peer?.close(); peer = nil }
+    private static func serveDetached() async throws {
+        let bridge = ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath())
+        let started = try await bridge.run(subcommand: "genesis-tools", args: ["serve", "--detach"], timeoutSeconds: 20)
+        guard started.exitCode == 0 else { throw ToolsBridgeError.refused(started.stderr) }
+    }
+    public func close() {
+        connecting?.cancel()
+        connecting = nil
+        peer?.close()
+        peer = nil
+        finishListeners(nil)
+    }
+    private func finishListeners(_ error: Error?) {
+        let ended = listeners.values.flatMap(\.values)
+        listeners = [:]
+        ended.forEach { $0.finish(error) }
+    }
     fileprivate func call<P: Encodable, R: Decodable>(_ method: String, _ params: P, timeout: TimeInterval? = nil) async throws -> R {
-        try await connect()
+        let peer = try await ready()
         let encoded = try JSONEncoder().encode(params)
         let object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
-        let result = try await peer!.call(method, params: object, timeout: timeout ?? timeoutSeconds)
+        let result = try await peer.call(method, params: object, timeout: timeout ?? timeoutSeconds)
         let bytes = try JSONSerialization.data(withJSONObject: result ?? NSNull(), options: [.fragmentsAllowed])
         return try JSONDecoder().decode(R.self, from: bytes)
     }
-    fileprivate func stream<E: Decodable>(_ name: String) -> AsyncStream<E> {
-        AsyncStream { continuation in
+    /// Events named `name`. The stream ends with the error when the connection cannot be made or the service ends it.
+    fileprivate func stream<E: Decodable>(_ name: String) -> AsyncThrowingStream<E, Error> {
+        AsyncThrowingStream { continuation in
             let id = UUID()
-            listeners[name, default: [:]][id] = { data in if let value = try? JSONDecoder().decode(E.self, from: data) { continuation.yield(value) } }
+            listeners[name, default: [:]][id] = Listener(
+                deliver: { data in if let value = try? JSONDecoder().decode(E.self, from: data) { continuation.yield(value) } },
+                finish: { error in continuation.finish(throwing: error) }
+            )
             continuation.onTermination = { [weak self] _ in Task { @MainActor in self?.listeners[name]?[id] = nil } }
-            Task { try? await connect() }
+            Task {
+                do { try await connect() } catch {
+                    listeners[name]?[id] = nil
+                    continuation.finish(throwing: error)
+                }
+            }
         }
     }
     public lazy var app = App(owner: self)
     @MainActor public final class App {
         unowned let owner: GenesisToolsRPC
         init(owner: GenesisToolsRPC) { self.owner = owner }
-        public func hello(_ params: AppHelloParams) async throws -> AppHelloResult { try await owner.call("app.hello", params, timeout: 130) }
-        public func rpc(_ params: AppRpcParams) async throws -> AppRpcResult { try await owner.call("app.rpc", params, timeout: 130) }
-        public func build(_ params: AppBuildParams) async throws -> AppBuildResult { try await owner.call("app.build", params, timeout: 610) }
+        public func hello(_ params: AppHelloParams) async throws -> AppHelloResult { try await owner.call("app.hello", params, timeout: 140) }
+        public func rpc(_ params: AppRpcParams) async throws -> AppRpcResult { try await owner.call("app.rpc", params, timeout: 140) }
+        public func build(_ params: AppBuildParams) async throws -> AppBuildResult { try await owner.call("app.build", params, timeout: 620) }
     }
     public lazy var windows = Windows(owner: self)
     @MainActor public final class Windows {
         unowned let owner: GenesisToolsRPC
         init(owner: GenesisToolsRPC) { self.owner = owner }
-        public func open(_ params: WindowsOpenParams) async throws -> WindowsOpenResult { try await owner.call("windows.open", params, timeout: 610) }
+        public func open(_ params: WindowsOpenParams) async throws -> WindowsOpenResult { try await owner.call("windows.open", params, timeout: 620) }
     }
     public lazy var person = Person(owner: self)
     @MainActor public final class Person {
         unowned let owner: GenesisToolsRPC
         init(owner: GenesisToolsRPC) { self.owner = owner }
-        public func ask(_ params: PersonAskParams) async throws -> PersonAskResult { try await owner.call("person.ask", params, timeout: 130) }
-        public func confirm(_ params: PersonConfirmParams) async throws -> PersonConfirmResult { try await owner.call("person.confirm", params, timeout: 130) }
-        public func notice(_ params: PersonNoticeParams) async throws -> PersonNoticeResult { try await owner.call("person.notice", params, timeout: 130) }
-        public func windowNotice(_ params: PersonWindowNoticeParams) async throws -> PersonWindowNoticeResult { try await owner.call("person.windowNotice", params, timeout: 130) }
-        public func showWindow(_ params: PersonShowWindowParams) async throws -> PersonShowWindowResult { try await owner.call("person.showWindow", params, timeout: 130) }
-        public func notifyThenAsk(_ params: PersonNotifyThenAskParams) async throws -> PersonNotifyThenAskResult { try await owner.call("person.notifyThenAsk", params, timeout: 130) }
-        public func askNow(_ params: PersonAskNowParams) async throws -> PersonAskNowResult { try await owner.call("person.askNow", params, timeout: 130) }
-        public func askElseNotify(_ params: PersonAskElseNotifyParams) async throws -> PersonAskElseNotifyResult { try await owner.call("person.askElseNotify", params, timeout: 130) }
+        public func ask(_ params: PersonAskParams) async throws -> PersonAskResult { try await owner.call("person.ask", params, timeout: 140) }
+        public func confirm(_ params: PersonConfirmParams) async throws -> PersonConfirmResult { try await owner.call("person.confirm", params, timeout: 140) }
+        public func notice(_ params: PersonNoticeParams) async throws -> PersonNoticeResult { try await owner.call("person.notice", params, timeout: 140) }
+        public func windowNotice(_ params: PersonWindowNoticeParams) async throws -> PersonWindowNoticeResult { try await owner.call("person.windowNotice", params, timeout: 140) }
+        public func showWindow(_ params: PersonShowWindowParams) async throws -> PersonShowWindowResult { try await owner.call("person.showWindow", params, timeout: 140) }
+        public func notifyThenAsk(_ params: PersonNotifyThenAskParams) async throws -> PersonNotifyThenAskResult { try await owner.call("person.notifyThenAsk", params, timeout: 140) }
+        public func askNow(_ params: PersonAskNowParams) async throws -> PersonAskNowResult { try await owner.call("person.askNow", params, timeout: 140) }
+        public func askElseNotify(_ params: PersonAskElseNotifyParams) async throws -> PersonAskElseNotifyResult { try await owner.call("person.askElseNotify", params, timeout: 140) }
     }
     public lazy var terminal = Terminal(owner: self)
     @MainActor public final class Terminal {
         unowned let owner: GenesisToolsRPC
         init(owner: GenesisToolsRPC) { self.owner = owner }
-        public func prompt(_ params: TerminalPromptParams) async throws -> TerminalPromptResult { try await owner.call("terminal.prompt", params, timeout: 130) }
-        public func runVisibly(_ params: TerminalRunVisiblyParams) async throws -> TerminalRunVisiblyResult { try await owner.call("terminal.runVisibly", params, timeout: 130) }
+        public func prompt(_ params: TerminalPromptParams) async throws -> TerminalPromptResult { try await owner.call("terminal.prompt", params, timeout: 140) }
+        public func runVisibly(_ params: TerminalRunVisiblyParams) async throws -> TerminalRunVisiblyResult { try await owner.call("terminal.runVisibly", params, timeout: 140) }
     }
     public lazy var permissions = Permissions(owner: self)
     @MainActor public final class Permissions {
         unowned let owner: GenesisToolsRPC
         init(owner: GenesisToolsRPC) { self.owner = owner }
-        public func openTerminalRequest(_ params: PermissionsOpenTerminalRequestParams) async throws -> PermissionsOpenTerminalRequestResult { try await owner.call("permissions.openTerminalRequest", params, timeout: 130) }
-        public func status(_ params: PermissionsStatusParams) async throws -> PermissionsStatusResult { try await owner.call("permissions.status", params, timeout: 130) }
-        public func require(_ params: PermissionsRequireParams) async throws -> PermissionsRequireResult { try await owner.call("permissions.require", params, timeout: 130) }
+        public func openTerminalRequest(_ params: PermissionsOpenTerminalRequestParams) async throws -> PermissionsOpenTerminalRequestResult { try await owner.call("permissions.openTerminalRequest", params, timeout: 140) }
+        public func status(_ params: PermissionsStatusParams) async throws -> PermissionsStatusResult { try await owner.call("permissions.status", params, timeout: 140) }
+        public func require(_ params: PermissionsRequireParams) async throws -> PermissionsRequireResult { try await owner.call("permissions.require", params, timeout: 140) }
     }
     public lazy var work = Work(owner: self)
     @MainActor public final class Work {
         unowned let owner: GenesisToolsRPC
         init(owner: GenesisToolsRPC) { self.owner = owner }
-        public func list(_ params: WorkListParams) async throws -> WorkListResult { try await owner.call("work.list", params, timeout: 130) }
-        public func show(_ params: WorkShowParams) async throws -> WorkShowResult { try await owner.call("work.show", params, timeout: 130) }
-        public func tree(_ params: WorkTreeParams) async throws -> WorkTreeResult { try await owner.call("work.tree", params, timeout: 130) }
-        public func triage(_ params: WorkTriageParams) async throws -> WorkTriageResult { try await owner.call("work.triage", params, timeout: 130) }
-        public func context(_ params: WorkContextParams) async throws -> WorkContextResult { try await owner.call("work.context", params, timeout: 130) }
-        public func config(_ params: WorkConfigParams) async throws -> WorkConfigResult { try await owner.call("work.config", params, timeout: 130) }
-        public func spot(_ params: WorkSpotParams) async throws -> WorkSpotResult { try await owner.call("work.spot", params, timeout: 130) }
-        public func add(_ params: WorkAddParams) async throws -> WorkAddResult { try await owner.call("work.add", params, timeout: 130) }
-        public func edit(_ params: WorkEditParams) async throws -> WorkEditResult { try await owner.call("work.edit", params, timeout: 130) }
-        public func link(_ params: WorkLinkParams) async throws -> WorkLinkResult { try await owner.call("work.link", params, timeout: 130) }
-        public func unlink(_ params: WorkUnlinkParams) async throws -> WorkUnlinkResult { try await owner.call("work.unlink", params, timeout: 130) }
-        public func accept(_ params: WorkAcceptParams) async throws -> WorkAcceptResult { try await owner.call("work.accept", params, timeout: 130) }
-        public func claim(_ params: WorkClaimParams) async throws -> WorkClaimResult { try await owner.call("work.claim", params, timeout: 130) }
-        public func release(_ params: WorkReleaseParams) async throws -> WorkReleaseResult { try await owner.call("work.release", params, timeout: 130) }
-        public func finish(_ params: WorkFinishParams) async throws -> WorkFinishResult { try await owner.call("work.finish", params, timeout: 130) }
-        public func drop(_ params: WorkDropParams) async throws -> WorkDropResult { try await owner.call("work.drop", params, timeout: 130) }
-        public func comment(_ params: WorkCommentParams) async throws -> WorkCommentResult { try await owner.call("work.comment", params, timeout: 130) }
-        public func log(_ params: WorkLogParams) async throws -> WorkLogResult { try await owner.call("work.log", params, timeout: 130) }
-        public func reopen(_ params: WorkReopenParams) async throws -> WorkReopenResult { try await owner.call("work.reopen", params, timeout: 130) }
-        public func pair(_ params: WorkPairParams) async throws -> WorkPairResult { try await owner.call("work.pair", params, timeout: 130) }
-        public func unpair(_ params: WorkUnpairParams) async throws -> WorkUnpairResult { try await owner.call("work.unpair", params, timeout: 130) }
-        public func pull(_ params: WorkPullParams) async throws -> WorkPullResult { try await owner.call("work.pull", params, timeout: 130) }
-        public func sync(_ params: WorkSyncParams) async throws -> WorkSyncResult { try await owner.call("work.sync", params, timeout: 130) }
-        public func addMember(_ params: WorkAddMemberParams) async throws -> WorkAddMemberResult { try await owner.call("work.addMember", params, timeout: 130) }
-        public func handoff(_ params: WorkHandoffParams) async throws -> WorkHandoffResult { try await owner.call("work.handoff", params, timeout: 130) }
-        public func batch(_ params: WorkBatchParams) async throws -> WorkBatchResult { try await owner.call("work.batch", params, timeout: 130) }
+        public func list(_ params: WorkListParams) async throws -> WorkListResult { try await owner.call("work.list", params, timeout: 140) }
+        public func show(_ params: WorkShowParams) async throws -> WorkShowResult { try await owner.call("work.show", params, timeout: 140) }
+        public func tree(_ params: WorkTreeParams) async throws -> WorkTreeResult { try await owner.call("work.tree", params, timeout: 140) }
+        public func triage(_ params: WorkTriageParams) async throws -> WorkTriageResult { try await owner.call("work.triage", params, timeout: 140) }
+        public func context(_ params: WorkContextParams) async throws -> WorkContextResult { try await owner.call("work.context", params, timeout: 140) }
+        public func config(_ params: WorkConfigParams) async throws -> WorkConfigResult { try await owner.call("work.config", params, timeout: 140) }
+        public func spot(_ params: WorkSpotParams) async throws -> WorkSpotResult { try await owner.call("work.spot", params, timeout: 140) }
+        public func add(_ params: WorkAddParams) async throws -> WorkAddResult { try await owner.call("work.add", params, timeout: 140) }
+        public func edit(_ params: WorkEditParams) async throws -> WorkEditResult { try await owner.call("work.edit", params, timeout: 140) }
+        public func link(_ params: WorkLinkParams) async throws -> WorkLinkResult { try await owner.call("work.link", params, timeout: 140) }
+        public func unlink(_ params: WorkUnlinkParams) async throws -> WorkUnlinkResult { try await owner.call("work.unlink", params, timeout: 140) }
+        public func accept(_ params: WorkAcceptParams) async throws -> WorkAcceptResult { try await owner.call("work.accept", params, timeout: 140) }
+        public func claim(_ params: WorkClaimParams) async throws -> WorkClaimResult { try await owner.call("work.claim", params, timeout: 140) }
+        public func release(_ params: WorkReleaseParams) async throws -> WorkReleaseResult { try await owner.call("work.release", params, timeout: 140) }
+        public func finish(_ params: WorkFinishParams) async throws -> WorkFinishResult { try await owner.call("work.finish", params, timeout: 140) }
+        public func drop(_ params: WorkDropParams) async throws -> WorkDropResult { try await owner.call("work.drop", params, timeout: 140) }
+        public func comment(_ params: WorkCommentParams) async throws -> WorkCommentResult { try await owner.call("work.comment", params, timeout: 140) }
+        public func log(_ params: WorkLogParams) async throws -> WorkLogResult { try await owner.call("work.log", params, timeout: 140) }
+        public func reopen(_ params: WorkReopenParams) async throws -> WorkReopenResult { try await owner.call("work.reopen", params, timeout: 140) }
+        public func pair(_ params: WorkPairParams) async throws -> WorkPairResult { try await owner.call("work.pair", params, timeout: 140) }
+        public func unpair(_ params: WorkUnpairParams) async throws -> WorkUnpairResult { try await owner.call("work.unpair", params, timeout: 140) }
+        public func pull(_ params: WorkPullParams) async throws -> WorkPullResult { try await owner.call("work.pull", params, timeout: 140) }
+        public func sync(_ params: WorkSyncParams) async throws -> WorkSyncResult { try await owner.call("work.sync", params, timeout: 140) }
+        public func addMember(_ params: WorkAddMemberParams) async throws -> WorkAddMemberResult { try await owner.call("work.addMember", params, timeout: 140) }
+        public func handoff(_ params: WorkHandoffParams) async throws -> WorkHandoffResult { try await owner.call("work.handoff", params, timeout: 140) }
+        public func batch(_ params: WorkBatchParams) async throws -> WorkBatchResult { try await owner.call("work.batch", params, timeout: 140) }
     }
     public func hello(_ params: HelloParams) async throws -> HelloResult { try await call("hello", params) }
+    public func actionsRun(_ params: ActionsRunParams) async throws -> ActionsRunResult { try await call("actions.run", params, timeout: GenesisToolsRPC.actionClientTimeout(params.id, override: params.timeoutMs)) }
     public func actionsExplain(_ params: ActionsExplainParams) async throws -> ActionsExplainResult { try await call("actions.explain", params) }
     public func configGet(_ params: ConfigGetParams) async throws -> GenesisToolsJSON { try await call("config.get", params) }
     public func configSet(_ params: ConfigSetParams) async throws -> ConfigSetResult { try await call("config.set", params) }
@@ -19564,16 +19874,16 @@ public final class GenesisToolsRPC {
     public func requestsPost(_ params: RequestsPostParams) async throws -> RequestsPostResult { try await call("requests.post", params) }
     public func requestsGet(_ params: RequestsGetParams) async throws -> RequestsGetResult? { try await call("requests.get", params) }
     public func requestsList(_ params: RequestsListParams) async throws -> [RequestsListResultItem] { try await call("requests.list", params) }
-    public func requestsAnswer(_ params: RequestsAnswerParams) async throws -> RequestsAnswerResult { try await call("requests.answer", params) }
+    public func requestsPresent(_ params: RequestsPresentParams) async throws -> RequestsPresentResult { try await call("requests.present", params, timeout: GenesisToolsRPC.actionClientTimeout("person.showWindow")) }
     public func requestsWithdraw(_ params: RequestsWithdrawParams) async throws -> RequestsWithdrawResult { try await call("requests.withdraw", params) }
     public lazy var events = Events(owner: self)
     @MainActor public final class Events {
         unowned let owner: GenesisToolsRPC
         init(owner: GenesisToolsRPC) { self.owner = owner }
-        public var workChanged: AsyncStream<WorkChangedEvent> { owner.stream("work.changed") }
-        public var requestChanged: AsyncStream<RequestChangedEvent> { owner.stream("request.changed") }
-        public var configChanged: AsyncStream<ConfigChangedEvent> { owner.stream("config.changed") }
-        public var stateChanged: AsyncStream<StateChangedEvent> { owner.stream("state.changed") }
+        public var workChanged: AsyncThrowingStream<WorkChangedEvent, Error> { owner.stream("work.changed") }
+        public var requestChanged: AsyncThrowingStream<RequestChangedEvent, Error> { owner.stream("request.changed") }
+        public var configChanged: AsyncThrowingStream<ConfigChangedEvent, Error> { owner.stream("config.changed") }
+        public var stateChanged: AsyncThrowingStream<StateChangedEvent, Error> { owner.stream("state.changed") }
     }
     public lazy var config = Config(owner: self)
     @MainActor public final class Config {
@@ -19691,6 +20001,7 @@ public final class GenesisToolsRPC {
         case "work.handoff": _ = try decoder.decode(WorkHandoffParams.self, from: params); _ = try decoder.decode(WorkHandoffResult.self, from: result)
         case "work.batch": _ = try decoder.decode(WorkBatchParams.self, from: params); _ = try decoder.decode(WorkBatchResult.self, from: result)
         case "hello": _ = try decoder.decode(HelloParams.self, from: params); _ = try decoder.decode(HelloResult.self, from: result)
+        case "actions.run": _ = try decoder.decode(ActionsRunParams.self, from: params); _ = try decoder.decode(ActionsRunResult.self, from: result)
         case "actions.explain": _ = try decoder.decode(ActionsExplainParams.self, from: params); _ = try decoder.decode(ActionsExplainResult.self, from: result)
         case "config.get": _ = try decoder.decode(ConfigGetParams.self, from: params); _ = try decoder.decode(GenesisToolsJSON.self, from: result)
         case "config.set": _ = try decoder.decode(ConfigSetParams.self, from: params); _ = try decoder.decode(ConfigSetResult.self, from: result)
@@ -19699,7 +20010,7 @@ public final class GenesisToolsRPC {
         case "requests.post": _ = try decoder.decode(RequestsPostParams.self, from: params); _ = try decoder.decode(RequestsPostResult.self, from: result)
         case "requests.get": _ = try decoder.decode(RequestsGetParams.self, from: params); _ = try decoder.decode(RequestsGetResult?.self, from: result)
         case "requests.list": _ = try decoder.decode(RequestsListParams.self, from: params); _ = try decoder.decode([RequestsListResultItem].self, from: result)
-        case "requests.answer": _ = try decoder.decode(RequestsAnswerParams.self, from: params); _ = try decoder.decode(RequestsAnswerResult.self, from: result)
+        case "requests.present": _ = try decoder.decode(RequestsPresentParams.self, from: params); _ = try decoder.decode(RequestsPresentResult.self, from: result)
         case "requests.withdraw": _ = try decoder.decode(RequestsWithdrawParams.self, from: params); _ = try decoder.decode(RequestsWithdrawResult.self, from: result)
         case "request.present": _ = try decoder.decode(RequestPresentParams.self, from: params); _ = try decoder.decode(RequestPresentResult.self, from: result)
         default: throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "Unknown method " + method))

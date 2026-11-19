@@ -16,6 +16,22 @@
     }
   },
   {
+    "method": "app.hello",
+    "params": {},
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
     "method": "app.rpc",
     "params": {
       "method": "rpc.hello",
@@ -26,6 +42,25 @@
       "via": "fixture",
       "value": null,
       "skipped": []
+    }
+  },
+  {
+    "method": "app.rpc",
+    "params": {
+      "method": "rpc.hello",
+      "params": {}
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
     }
   },
   {
@@ -44,12 +79,31 @@
     }
   },
   {
+    "method": "app.build",
+    "params": {
+      "part": "features"
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
     "method": "windows.open",
     "params": {
       "window": "--features",
       "args": [],
       "activate": true,
-      "wait": true
+      "wait": true,
+      "fix": "skip"
     },
     "result": {
       "status": "ran",
@@ -62,7 +116,87 @@
     }
   },
   {
+    "method": "windows.open",
+    "params": {
+      "window": "--features",
+      "args": [],
+      "activate": true,
+      "wait": true,
+      "fix": "skip"
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
     "method": "person.ask",
+    "params": {
+      "kind": "notice",
+      "id": "fixture",
+      "title": "fixture",
+      "reason": "fixture",
+      "open": {
+        "window": "--features",
+        "args": []
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "id": "fixture",
+        "status": "done",
+        "reason": "fixture",
+        "method": "click",
+        "via": "fixture",
+        "elevation": "fixture",
+        "note": "fixture",
+        "exitCode": -9007199254740991,
+        "outputTail": "fixture",
+        "verified": true,
+        "manual": "fixture"
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "person.ask",
+    "params": {
+      "kind": "notice",
+      "id": "fixture",
+      "title": "fixture",
+      "reason": "fixture",
+      "open": {
+        "window": "--features",
+        "args": [
+          "fixture"
+        ]
+      }
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
+    "method": "person.confirm",
     "params": {
       "kind": "notice",
       "id": "fixture",
@@ -101,8 +235,30 @@
       "reason": "fixture",
       "open": {
         "window": "--features",
-        "args": []
+        "args": [
+          "fixture"
+        ]
       }
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
+    "method": "person.notice",
+    "params": {
+      "id": "fixture",
+      "title": "fixture",
+      "reason": "fixture"
     },
     "result": {
       "status": "ran",
@@ -131,22 +287,16 @@
       "reason": "fixture"
     },
     "result": {
-      "status": "ran",
-      "via": "fixture",
-      "value": {
-        "id": "fixture",
-        "status": "done",
-        "reason": "fixture",
-        "method": "click",
-        "via": "fixture",
-        "elevation": "fixture",
-        "note": "fixture",
-        "exitCode": -9007199254740991,
-        "outputTail": "fixture",
-        "verified": true,
-        "manual": "fixture"
-      },
-      "skipped": []
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
     }
   },
   {
@@ -180,7 +330,97 @@
     }
   },
   {
+    "method": "person.windowNotice",
+    "params": {
+      "id": "fixture",
+      "title": "fixture",
+      "reason": "fixture",
+      "open": {
+        "window": "--features",
+        "args": [
+          "fixture"
+        ]
+      }
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
     "method": "person.showWindow",
+    "params": {
+      "kind": "notice",
+      "id": "fixture",
+      "title": "fixture",
+      "reason": "fixture",
+      "open": {
+        "window": "--features",
+        "args": []
+      },
+      "createdAt": "2026-11-17T12:00:00.000Z",
+      "deadlineSeconds": 1,
+      "takesFocus": true
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "id": "fixture",
+        "status": "done",
+        "reason": "fixture",
+        "method": "click",
+        "via": "fixture",
+        "elevation": "fixture",
+        "note": "fixture",
+        "exitCode": -9007199254740991,
+        "outputTail": "fixture",
+        "verified": true,
+        "manual": "fixture"
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "person.showWindow",
+    "params": {
+      "kind": "notice",
+      "id": "fixture",
+      "title": "fixture",
+      "reason": "fixture",
+      "open": {
+        "window": "--features",
+        "args": [
+          "fixture"
+        ]
+      },
+      "createdAt": "2026-11-17T12:00:00.000Z",
+      "deadlineSeconds": 1,
+      "takesFocus": true
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
+    "method": "person.notifyThenAsk",
     "params": {
       "kind": "notice",
       "id": "fixture",
@@ -222,6 +462,36 @@
       "reason": "fixture",
       "open": {
         "window": "--features",
+        "args": [
+          "fixture"
+        ]
+      },
+      "createdAt": "2026-11-17T12:00:00.000Z",
+      "deadlineSeconds": 1,
+      "takesFocus": true
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
+    "method": "person.askNow",
+    "params": {
+      "kind": "notice",
+      "id": "fixture",
+      "title": "fixture",
+      "reason": "fixture",
+      "open": {
+        "window": "--features",
         "args": []
       },
       "createdAt": "2026-11-17T12:00:00.000Z",
@@ -249,6 +519,36 @@
   },
   {
     "method": "person.askNow",
+    "params": {
+      "kind": "notice",
+      "id": "fixture",
+      "title": "fixture",
+      "reason": "fixture",
+      "open": {
+        "window": "--features",
+        "args": [
+          "fixture"
+        ]
+      },
+      "createdAt": "2026-11-17T12:00:00.000Z",
+      "deadlineSeconds": 1,
+      "takesFocus": true
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
+    "method": "person.askElseNotify",
     "params": {
       "kind": "notice",
       "id": "fixture",
@@ -290,29 +590,25 @@
       "reason": "fixture",
       "open": {
         "window": "--features",
-        "args": []
+        "args": [
+          "fixture"
+        ]
       },
       "createdAt": "2026-11-17T12:00:00.000Z",
       "deadlineSeconds": 1,
       "takesFocus": true
     },
     "result": {
-      "status": "ran",
-      "via": "fixture",
-      "value": {
-        "id": "fixture",
-        "status": "done",
-        "reason": "fixture",
-        "method": "click",
-        "via": "fixture",
-        "elevation": "fixture",
-        "note": "fixture",
-        "exitCode": -9007199254740991,
-        "outputTail": "fixture",
-        "verified": true,
-        "manual": "fixture"
-      },
-      "skipped": []
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
     }
   },
   {
@@ -350,7 +646,73 @@
     }
   },
   {
+    "method": "terminal.prompt",
+    "params": {
+      "kind": "notice",
+      "id": "fixture",
+      "title": "fixture",
+      "reason": "fixture",
+      "open": {
+        "window": "--features",
+        "args": [
+          "fixture"
+        ]
+      },
+      "createdAt": "2026-11-17T12:00:00.000Z",
+      "deadlineSeconds": 1,
+      "takesFocus": true
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
     "method": "terminal.runVisibly",
+    "params": {
+      "argv": [
+        "fixture"
+      ]
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "opened": true
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "terminal.runVisibly",
+    "params": {
+      "argv": [
+        "fixture"
+      ]
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
+    "method": "permissions.openTerminalRequest",
     "params": {
       "argv": [
         "fixture"
@@ -373,12 +735,16 @@
       ]
     },
     "result": {
-      "status": "ran",
-      "via": "fixture",
-      "value": {
-        "opened": true
-      },
-      "skipped": []
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
     }
   },
   {
@@ -397,6 +763,24 @@
     }
   },
   {
+    "method": "permissions.status",
+    "params": {
+      "kind": "input-monitoring"
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
     "method": "permissions.require",
     "params": {
       "kind": "input-monitoring",
@@ -410,6 +794,25 @@
         "status": "fixture"
       },
       "skipped": []
+    }
+  },
+  {
+    "method": "permissions.require",
+    "params": {
+      "kind": "input-monitoring",
+      "reason": "fixture"
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
     }
   },
   {
@@ -453,6 +856,47 @@
     }
   },
   {
+    "method": "work.list",
+    "params": {
+      "project": "fixture",
+      "under": "fixture",
+      "spottedIn": "fixture",
+      "state": [
+        "spotted"
+      ],
+      "type": [
+        "epic"
+      ],
+      "tag": "fixture",
+      "severity": [
+        "critical"
+      ],
+      "worker": "fixture",
+      "fields": [
+        "fixture"
+      ],
+      "limit": 1,
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
     "method": "work.show",
     "params": {
       "ref": "fixture",
@@ -482,6 +926,31 @@
         }
       },
       "skipped": []
+    }
+  },
+  {
+    "method": "work.show",
+    "params": {
+      "ref": "fixture",
+      "section": "all",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
     }
   },
   {
@@ -521,6 +990,31 @@
     }
   },
   {
+    "method": "work.tree",
+    "params": {
+      "project": "fixture",
+      "all": true,
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
     "method": "work.triage",
     "params": {
       "project": "fixture",
@@ -552,6 +1046,30 @@
     }
   },
   {
+    "method": "work.triage",
+    "params": {
+      "project": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
     "method": "work.context",
     "params": {
       "network": true,
@@ -580,6 +1098,30 @@
         }
       },
       "skipped": []
+    }
+  },
+  {
+    "method": "work.context",
+    "params": {
+      "network": true,
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
     }
   },
   {
@@ -616,6 +1158,33 @@
         }
       },
       "skipped": []
+    }
+  },
+  {
+    "method": "work.config",
+    "params": {
+      "project": "fixture",
+      "type": [
+        "epic"
+      ],
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
     }
   },
   {
@@ -659,6 +1228,39 @@
     }
   },
   {
+    "method": "work.spot",
+    "params": {
+      "title": "fixture",
+      "type": "epic",
+      "where": "fixture",
+      "why": "fixture",
+      "userSees": "fixture",
+      "cost": "fixture",
+      "severity": "critical",
+      "existedBefore": true,
+      "production": true,
+      "during": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
     "method": "work.add",
     "params": {
       "title": "fixture",
@@ -668,6 +1270,77 @@
       "for": "fixture",
       "body": "fixture",
       "acceptance": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": null,
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "work.add",
+    "params": {
+      "title": "fixture",
+      "type": "epic",
+      "parent": "fixture",
+      "under": "fixture",
+      "for": "fixture",
+      "body": "fixture",
+      "acceptance": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
+    "method": "work.edit",
+    "params": {
+      "ref": "fixture",
+      "type": "epic",
+      "severity": "critical",
+      "parent": "fixture",
+      "for": "fixture",
+      "title": "fixture",
+      "where": "fixture",
+      "why": "fixture",
+      "userSees": "fixture",
+      "cost": "fixture",
+      "during": "fixture",
       "call": {
         "request": "fixture",
         "dryRun": true,
@@ -717,6 +1390,32 @@
       }
     },
     "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
+    "method": "work.link",
+    "params": {
+      "ref": "fixture",
+      "kind": "related",
+      "to": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
       "status": "ran",
       "via": "fixture",
       "value": {
@@ -738,6 +1437,32 @@
   },
   {
     "method": "work.link",
+    "params": {
+      "ref": "fixture",
+      "kind": "related",
+      "to": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
+    "method": "work.unlink",
     "params": {
       "ref": "fixture",
       "kind": "related",
@@ -783,23 +1508,16 @@
       }
     },
     "result": {
-      "status": "ran",
-      "via": "fixture",
-      "value": {
-        "v": 1,
-        "verb": "fixture",
-        "ok": true,
-        "data": null,
-        "diagnostics": [],
-        "next": [],
-        "dryRun": true,
-        "receipt": {
-          "requestId": "fixture",
-          "changes": [],
-          "replayed": true
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
         }
-      },
-      "skipped": []
+      ],
+      "manual": null
     }
   },
   {
@@ -838,7 +1556,90 @@
     }
   },
   {
+    "method": "work.accept",
+    "params": {
+      "refs": [
+        "fixture"
+      ],
+      "type": "epic",
+      "severity": "critical",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
     "method": "work.claim",
+    "params": {
+      "ref": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": null,
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "work.claim",
+    "params": {
+      "ref": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
+    "method": "work.release",
     "params": {
       "ref": "fixture",
       "call": {
@@ -880,6 +1681,32 @@
       }
     },
     "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
+    "method": "work.finish",
+    "params": {
+      "ref": "fixture",
+      "proof": "fixture",
+      "commits": [],
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
       "status": "ran",
       "via": "fixture",
       "value": {
@@ -904,7 +1731,36 @@
     "params": {
       "ref": "fixture",
       "proof": "fixture",
-      "commits": [],
+      "commits": [
+        "fixture"
+      ],
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
+    "method": "work.drop",
+    "params": {
+      "refs": [
+        "fixture"
+      ],
+      "why": "fixture",
       "call": {
         "request": "fixture",
         "dryRun": true,
@@ -947,6 +1803,31 @@
       }
     },
     "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
+    "method": "work.comment",
+    "params": {
+      "ref": "fixture",
+      "text": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
       "status": "ran",
       "via": "fixture",
       "value": {
@@ -971,6 +1852,33 @@
     "params": {
       "ref": "fixture",
       "text": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
+    "method": "work.log",
+    "params": {
+      "ref": "fixture",
+      "result": "fixed",
+      "note": "fixture",
+      "measured": "fixture",
       "call": {
         "request": "fixture",
         "dryRun": true,
@@ -1013,6 +1921,32 @@
       }
     },
     "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
+    "method": "work.reopen",
+    "params": {
+      "ref": "fixture",
+      "why": "fixture",
+      "deliver": "auto",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
       "status": "ran",
       "via": "fixture",
       "value": {
@@ -1038,6 +1972,32 @@
       "ref": "fixture",
       "why": "fixture",
       "deliver": "auto",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
+    "method": "work.pair",
+    "params": {
+      "ref": "fixture",
+      "connector": "fixture",
+      "key": "fixture",
       "call": {
         "request": "fixture",
         "dryRun": true,
@@ -1079,6 +2039,31 @@
       }
     },
     "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
+    "method": "work.unpair",
+    "params": {
+      "ref": "fixture",
+      "connector": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
       "status": "ran",
       "via": "fixture",
       "value": {
@@ -1103,6 +2088,34 @@
     "params": {
       "ref": "fixture",
       "connector": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
+    "method": "work.pull",
+    "params": {
+      "connector": "fixture",
+      "keys": [
+        "fixture"
+      ],
+      "project": "fixture",
       "call": {
         "request": "fixture",
         "dryRun": true,
@@ -1146,23 +2159,16 @@
       }
     },
     "result": {
-      "status": "ran",
-      "via": "fixture",
-      "value": {
-        "v": 1,
-        "verb": "fixture",
-        "ok": true,
-        "data": null,
-        "diagnostics": [],
-        "next": [],
-        "dryRun": true,
-        "receipt": {
-          "requestId": "fixture",
-          "changes": [],
-          "replayed": true
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
         }
-      },
-      "skipped": []
+      ],
+      "manual": null
     }
   },
   {
@@ -1197,12 +2203,99 @@
     }
   },
   {
+    "method": "work.sync",
+    "params": {
+      "release": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
     "method": "work.addMember",
     "params": {
       "refs": [
         "fixture"
       ],
       "to": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": {
+        "v": 1,
+        "verb": "fixture",
+        "ok": true,
+        "data": null,
+        "diagnostics": [],
+        "next": [],
+        "dryRun": true,
+        "receipt": {
+          "requestId": "fixture",
+          "changes": [],
+          "replayed": true
+        }
+      },
+      "skipped": []
+    }
+  },
+  {
+    "method": "work.addMember",
+    "params": {
+      "refs": [
+        "fixture"
+      ],
+      "to": "fixture",
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
+    "method": "work.handoff",
+    "params": {
+      "title": "fixture",
+      "from": [
+        "fixture"
+      ],
+      "target": "fixture",
+      "body": "fixture",
       "call": {
         "request": "fixture",
         "dryRun": true,
@@ -1247,23 +2340,16 @@
       }
     },
     "result": {
-      "status": "ran",
-      "via": "fixture",
-      "value": {
-        "v": 1,
-        "verb": "fixture",
-        "ok": true,
-        "data": null,
-        "diagnostics": [],
-        "next": [],
-        "dryRun": true,
-        "receipt": {
-          "requestId": "fixture",
-          "changes": [],
-          "replayed": true
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
         }
-      },
-      "skipped": []
+      ],
+      "manual": null
     }
   },
   {
@@ -1303,6 +2389,35 @@
     }
   },
   {
+    "method": "work.batch",
+    "params": {
+      "calls": [
+        {
+          "method": "fixture",
+          "params": {}
+        }
+      ],
+      "call": {
+        "request": "fixture",
+        "dryRun": true,
+        "ownerSaid": "fixture",
+        "project": "fixture"
+      }
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
+    }
+  },
+  {
     "method": "hello",
     "params": {
       "methods": [],
@@ -1311,6 +2426,40 @@
     "result": {
       "protocol": 1,
       "methods": []
+    }
+  },
+  {
+    "method": "actions.run",
+    "params": {
+      "id": "fixture",
+      "args": null,
+      "timeoutMs": 1
+    },
+    "result": {
+      "status": "ran",
+      "via": "fixture",
+      "value": null,
+      "skipped": []
+    }
+  },
+  {
+    "method": "actions.run",
+    "params": {
+      "id": "fixture",
+      "args": null,
+      "timeoutMs": 1
+    },
+    "result": {
+      "status": "unreachable",
+      "skipped": [
+        {
+          "way": "fixture",
+          "code": "fixture",
+          "reason": "fixture",
+          "fix": null
+        }
+      ],
+      "manual": null
     }
   },
   {
@@ -1325,6 +2474,36 @@
       "summary": "fixture",
       "ways": [],
       "first": "fixture",
+      "config": {}
+    }
+  },
+  {
+    "method": "actions.explain",
+    "params": {
+      "id": "fixture",
+      "fresh": false,
+      "args": null
+    },
+    "result": {
+      "id": "fixture",
+      "summary": "fixture",
+      "ways": [
+        {
+          "way": "fixture",
+          "needsKnown": true,
+          "needs": [
+            {
+              "need": "fixture",
+              "ok": true,
+              "code": "fixture",
+              "reason": "fixture",
+              "fix": null,
+              "from": "state"
+            }
+          ]
+        }
+      ],
+      "first": null,
       "config": {}
     }
   },
@@ -1419,6 +2598,412 @@
     }
   },
   {
+    "method": "requests.post",
+    "params": {
+      "input": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        }
+      },
+      "timeoutMs": 120000
+    },
+    "result": {
+      "id": "fixture",
+      "request": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        },
+        "createdAt": "2026-11-17T12:00:00.000Z",
+        "deadlineSeconds": 1,
+        "takesFocus": true
+      },
+      "state": "waiting",
+      "events": [
+        {
+          "type": "delivered",
+          "at": "2026-11-17T12:00:00.000Z",
+          "channel": "dialog",
+          "noticeId": null
+        }
+      ],
+      "outcome": {
+        "id": "fixture",
+        "status": "done",
+        "reason": null,
+        "method": "click",
+        "via": "fixture",
+        "elevation": null,
+        "note": null,
+        "exitCode": null,
+        "outputTail": "fixture",
+        "verified": null,
+        "manual": "fixture"
+      }
+    }
+  },
+  {
+    "method": "requests.post",
+    "params": {
+      "input": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        }
+      },
+      "timeoutMs": 120000
+    },
+    "result": {
+      "id": "fixture",
+      "request": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        },
+        "createdAt": "2026-11-17T12:00:00.000Z",
+        "deadlineSeconds": 1,
+        "takesFocus": true
+      },
+      "state": "waiting",
+      "events": [
+        {
+          "type": "accepted",
+          "at": "2026-11-17T12:00:00.000Z",
+          "via": "fixture",
+          "elevation": "fixture",
+          "method": "click"
+        }
+      ],
+      "outcome": {
+        "id": "fixture",
+        "status": "done",
+        "reason": "fixture",
+        "method": "click",
+        "via": "fixture",
+        "elevation": "fixture",
+        "note": "fixture",
+        "exitCode": -9007199254740991,
+        "outputTail": "fixture",
+        "verified": true,
+        "manual": "fixture"
+      }
+    }
+  },
+  {
+    "method": "requests.post",
+    "params": {
+      "input": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        }
+      },
+      "timeoutMs": 120000
+    },
+    "result": {
+      "id": "fixture",
+      "request": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        },
+        "createdAt": "2026-11-17T12:00:00.000Z",
+        "deadlineSeconds": 1,
+        "takesFocus": true
+      },
+      "state": "waiting",
+      "events": [
+        {
+          "type": "declined",
+          "at": "2026-11-17T12:00:00.000Z",
+          "via": "fixture",
+          "note": null
+        }
+      ],
+      "outcome": {
+        "id": "fixture",
+        "status": "done",
+        "reason": null,
+        "method": "click",
+        "via": "fixture",
+        "elevation": null,
+        "note": null,
+        "exitCode": null,
+        "outputTail": "fixture",
+        "verified": null,
+        "manual": "fixture"
+      }
+    }
+  },
+  {
+    "method": "requests.post",
+    "params": {
+      "input": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        }
+      },
+      "timeoutMs": 120000
+    },
+    "result": {
+      "id": "fixture",
+      "request": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        },
+        "createdAt": "2026-11-17T12:00:00.000Z",
+        "deadlineSeconds": 1,
+        "takesFocus": true
+      },
+      "state": "waiting",
+      "events": [
+        {
+          "type": "started",
+          "at": "2026-11-17T12:00:00.000Z",
+          "runnerPid": 1,
+          "where": "terminal"
+        }
+      ],
+      "outcome": {
+        "id": "fixture",
+        "status": "done",
+        "reason": "fixture",
+        "method": "click",
+        "via": "fixture",
+        "elevation": "fixture",
+        "note": "fixture",
+        "exitCode": -9007199254740991,
+        "outputTail": "fixture",
+        "verified": true,
+        "manual": "fixture"
+      }
+    }
+  },
+  {
+    "method": "requests.post",
+    "params": {
+      "input": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        }
+      },
+      "timeoutMs": 120000
+    },
+    "result": {
+      "id": "fixture",
+      "request": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        },
+        "createdAt": "2026-11-17T12:00:00.000Z",
+        "deadlineSeconds": 1,
+        "takesFocus": true
+      },
+      "state": "waiting",
+      "events": [
+        {
+          "type": "finished",
+          "at": "2026-11-17T12:00:00.000Z",
+          "exitCode": -9007199254740991,
+          "outputTail": "fixture",
+          "verified": null
+        }
+      ],
+      "outcome": {
+        "id": "fixture",
+        "status": "done",
+        "reason": null,
+        "method": "click",
+        "via": "fixture",
+        "elevation": null,
+        "note": null,
+        "exitCode": null,
+        "outputTail": "fixture",
+        "verified": null,
+        "manual": "fixture"
+      }
+    }
+  },
+  {
+    "method": "requests.post",
+    "params": {
+      "input": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        }
+      },
+      "timeoutMs": 120000
+    },
+    "result": {
+      "id": "fixture",
+      "request": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        },
+        "createdAt": "2026-11-17T12:00:00.000Z",
+        "deadlineSeconds": 1,
+        "takesFocus": true
+      },
+      "state": "waiting",
+      "events": [
+        {
+          "type": "obsolete",
+          "at": "2026-11-17T12:00:00.000Z",
+          "reason": "fixture"
+        }
+      ],
+      "outcome": {
+        "id": "fixture",
+        "status": "done",
+        "reason": "fixture",
+        "method": "click",
+        "via": "fixture",
+        "elevation": "fixture",
+        "note": "fixture",
+        "exitCode": -9007199254740991,
+        "outputTail": "fixture",
+        "verified": true,
+        "manual": "fixture"
+      }
+    }
+  },
+  {
+    "method": "requests.post",
+    "params": {
+      "input": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        }
+      },
+      "timeoutMs": 120000
+    },
+    "result": {
+      "id": "fixture",
+      "request": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        },
+        "createdAt": "2026-11-17T12:00:00.000Z",
+        "deadlineSeconds": 1,
+        "takesFocus": true
+      },
+      "state": "waiting",
+      "events": [
+        {
+          "type": "withdrawn",
+          "at": "2026-11-17T12:00:00.000Z",
+          "reason": "fixture"
+        }
+      ],
+      "outcome": {
+        "id": "fixture",
+        "status": "done",
+        "reason": null,
+        "method": "click",
+        "via": "fixture",
+        "elevation": null,
+        "note": null,
+        "exitCode": null,
+        "outputTail": "fixture",
+        "verified": null,
+        "manual": "fixture"
+      }
+    }
+  },
+  {
     "method": "requests.get",
     "params": {
       "id": "fixture"
@@ -1456,6 +3041,151 @@
     }
   },
   {
+    "method": "requests.get",
+    "params": {
+      "id": "fixture"
+    },
+    "result": null
+  },
+  {
+    "method": "requests.get",
+    "params": {
+      "id": "fixture"
+    },
+    "result": {
+      "id": "fixture",
+      "request": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        },
+        "createdAt": "2026-11-17T12:00:00.000Z",
+        "deadlineSeconds": 1,
+        "takesFocus": true
+      },
+      "state": "waiting",
+      "events": [
+        {
+          "type": "accepted",
+          "at": "2026-11-17T12:00:00.000Z",
+          "via": "fixture",
+          "elevation": "fixture",
+          "method": "click"
+        }
+      ],
+      "outcome": {
+        "id": "fixture",
+        "status": "done",
+        "reason": "fixture",
+        "method": "click",
+        "via": "fixture",
+        "elevation": "fixture",
+        "note": "fixture",
+        "exitCode": -9007199254740991,
+        "outputTail": "fixture",
+        "verified": true,
+        "manual": "fixture"
+      }
+    }
+  },
+  {
+    "method": "requests.get",
+    "params": {
+      "id": "fixture"
+    },
+    "result": {
+      "id": "fixture",
+      "request": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        },
+        "createdAt": "2026-11-17T12:00:00.000Z",
+        "deadlineSeconds": 1,
+        "takesFocus": true
+      },
+      "state": "waiting",
+      "events": [
+        {
+          "type": "started",
+          "at": "2026-11-17T12:00:00.000Z",
+          "runnerPid": 1,
+          "where": "terminal"
+        }
+      ],
+      "outcome": {
+        "id": "fixture",
+        "status": "done",
+        "reason": "fixture",
+        "method": "click",
+        "via": "fixture",
+        "elevation": "fixture",
+        "note": "fixture",
+        "exitCode": -9007199254740991,
+        "outputTail": "fixture",
+        "verified": true,
+        "manual": "fixture"
+      }
+    }
+  },
+  {
+    "method": "requests.get",
+    "params": {
+      "id": "fixture"
+    },
+    "result": {
+      "id": "fixture",
+      "request": {
+        "kind": "notice",
+        "id": "fixture",
+        "title": "fixture",
+        "reason": "fixture",
+        "open": {
+          "window": "--features",
+          "args": [
+            "fixture"
+          ]
+        },
+        "createdAt": "2026-11-17T12:00:00.000Z",
+        "deadlineSeconds": 1,
+        "takesFocus": true
+      },
+      "state": "waiting",
+      "events": [
+        {
+          "type": "obsolete",
+          "at": "2026-11-17T12:00:00.000Z",
+          "reason": "fixture"
+        }
+      ],
+      "outcome": {
+        "id": "fixture",
+        "status": "done",
+        "reason": "fixture",
+        "method": "click",
+        "via": "fixture",
+        "elevation": "fixture",
+        "note": "fixture",
+        "exitCode": -9007199254740991,
+        "outputTail": "fixture",
+        "verified": true,
+        "manual": "fixture"
+      }
+    }
+  },
+  {
     "method": "requests.list",
     "params": {
       "limit": 100
@@ -1463,11 +3193,385 @@
     "result": []
   },
   {
-    "method": "requests.answer",
+    "method": "requests.list",
+    "params": {
+      "limit": 100
+    },
+    "result": [
+      {
+        "id": "fixture",
+        "request": {
+          "kind": "notice",
+          "id": "fixture",
+          "title": "fixture",
+          "reason": "fixture",
+          "open": {
+            "window": "--features",
+            "args": [
+              "fixture"
+            ]
+          },
+          "createdAt": "2026-11-17T12:00:00.000Z",
+          "deadlineSeconds": 1,
+          "takesFocus": true
+        },
+        "state": "waiting",
+        "events": [
+          {
+            "type": "delivered",
+            "at": "2026-11-17T12:00:00.000Z",
+            "channel": "dialog",
+            "noticeId": null
+          }
+        ],
+        "outcome": {
+          "id": "fixture",
+          "status": "done",
+          "reason": null,
+          "method": "click",
+          "via": "fixture",
+          "elevation": null,
+          "note": null,
+          "exitCode": null,
+          "outputTail": "fixture",
+          "verified": null,
+          "manual": "fixture"
+        }
+      }
+    ]
+  },
+  {
+    "method": "requests.list",
+    "params": {
+      "limit": 100
+    },
+    "result": [
+      {
+        "id": "fixture",
+        "request": {
+          "kind": "notice",
+          "id": "fixture",
+          "title": "fixture",
+          "reason": "fixture",
+          "open": {
+            "window": "--features",
+            "args": [
+              "fixture"
+            ]
+          },
+          "createdAt": "2026-11-17T12:00:00.000Z",
+          "deadlineSeconds": 1,
+          "takesFocus": true
+        },
+        "state": "waiting",
+        "events": [
+          {
+            "type": "accepted",
+            "at": "2026-11-17T12:00:00.000Z",
+            "via": "fixture",
+            "elevation": "fixture",
+            "method": "click"
+          }
+        ],
+        "outcome": {
+          "id": "fixture",
+          "status": "done",
+          "reason": "fixture",
+          "method": "click",
+          "via": "fixture",
+          "elevation": "fixture",
+          "note": "fixture",
+          "exitCode": -9007199254740991,
+          "outputTail": "fixture",
+          "verified": true,
+          "manual": "fixture"
+        }
+      }
+    ]
+  },
+  {
+    "method": "requests.list",
+    "params": {
+      "limit": 100
+    },
+    "result": [
+      {
+        "id": "fixture",
+        "request": {
+          "kind": "notice",
+          "id": "fixture",
+          "title": "fixture",
+          "reason": "fixture",
+          "open": {
+            "window": "--features",
+            "args": [
+              "fixture"
+            ]
+          },
+          "createdAt": "2026-11-17T12:00:00.000Z",
+          "deadlineSeconds": 1,
+          "takesFocus": true
+        },
+        "state": "waiting",
+        "events": [
+          {
+            "type": "declined",
+            "at": "2026-11-17T12:00:00.000Z",
+            "via": "fixture",
+            "note": null
+          }
+        ],
+        "outcome": {
+          "id": "fixture",
+          "status": "done",
+          "reason": null,
+          "method": "click",
+          "via": "fixture",
+          "elevation": null,
+          "note": null,
+          "exitCode": null,
+          "outputTail": "fixture",
+          "verified": null,
+          "manual": "fixture"
+        }
+      }
+    ]
+  },
+  {
+    "method": "requests.list",
+    "params": {
+      "limit": 100
+    },
+    "result": [
+      {
+        "id": "fixture",
+        "request": {
+          "kind": "notice",
+          "id": "fixture",
+          "title": "fixture",
+          "reason": "fixture",
+          "open": {
+            "window": "--features",
+            "args": [
+              "fixture"
+            ]
+          },
+          "createdAt": "2026-11-17T12:00:00.000Z",
+          "deadlineSeconds": 1,
+          "takesFocus": true
+        },
+        "state": "waiting",
+        "events": [
+          {
+            "type": "started",
+            "at": "2026-11-17T12:00:00.000Z",
+            "runnerPid": 1,
+            "where": "terminal"
+          }
+        ],
+        "outcome": {
+          "id": "fixture",
+          "status": "done",
+          "reason": "fixture",
+          "method": "click",
+          "via": "fixture",
+          "elevation": "fixture",
+          "note": "fixture",
+          "exitCode": -9007199254740991,
+          "outputTail": "fixture",
+          "verified": true,
+          "manual": "fixture"
+        }
+      }
+    ]
+  },
+  {
+    "method": "requests.list",
+    "params": {
+      "limit": 100
+    },
+    "result": [
+      {
+        "id": "fixture",
+        "request": {
+          "kind": "notice",
+          "id": "fixture",
+          "title": "fixture",
+          "reason": "fixture",
+          "open": {
+            "window": "--features",
+            "args": [
+              "fixture"
+            ]
+          },
+          "createdAt": "2026-11-17T12:00:00.000Z",
+          "deadlineSeconds": 1,
+          "takesFocus": true
+        },
+        "state": "waiting",
+        "events": [
+          {
+            "type": "finished",
+            "at": "2026-11-17T12:00:00.000Z",
+            "exitCode": -9007199254740991,
+            "outputTail": "fixture",
+            "verified": null
+          }
+        ],
+        "outcome": {
+          "id": "fixture",
+          "status": "done",
+          "reason": null,
+          "method": "click",
+          "via": "fixture",
+          "elevation": null,
+          "note": null,
+          "exitCode": null,
+          "outputTail": "fixture",
+          "verified": null,
+          "manual": "fixture"
+        }
+      }
+    ]
+  },
+  {
+    "method": "requests.list",
+    "params": {
+      "limit": 100
+    },
+    "result": [
+      {
+        "id": "fixture",
+        "request": {
+          "kind": "notice",
+          "id": "fixture",
+          "title": "fixture",
+          "reason": "fixture",
+          "open": {
+            "window": "--features",
+            "args": [
+              "fixture"
+            ]
+          },
+          "createdAt": "2026-11-17T12:00:00.000Z",
+          "deadlineSeconds": 1,
+          "takesFocus": true
+        },
+        "state": "waiting",
+        "events": [
+          {
+            "type": "obsolete",
+            "at": "2026-11-17T12:00:00.000Z",
+            "reason": "fixture"
+          }
+        ],
+        "outcome": {
+          "id": "fixture",
+          "status": "done",
+          "reason": "fixture",
+          "method": "click",
+          "via": "fixture",
+          "elevation": "fixture",
+          "note": "fixture",
+          "exitCode": -9007199254740991,
+          "outputTail": "fixture",
+          "verified": true,
+          "manual": "fixture"
+        }
+      }
+    ]
+  },
+  {
+    "method": "requests.list",
+    "params": {
+      "limit": 100
+    },
+    "result": [
+      {
+        "id": "fixture",
+        "request": {
+          "kind": "notice",
+          "id": "fixture",
+          "title": "fixture",
+          "reason": "fixture",
+          "open": {
+            "window": "--features",
+            "args": [
+              "fixture"
+            ]
+          },
+          "createdAt": "2026-11-17T12:00:00.000Z",
+          "deadlineSeconds": 1,
+          "takesFocus": true
+        },
+        "state": "waiting",
+        "events": [
+          {
+            "type": "withdrawn",
+            "at": "2026-11-17T12:00:00.000Z",
+            "reason": "fixture"
+          }
+        ],
+        "outcome": {
+          "id": "fixture",
+          "status": "done",
+          "reason": null,
+          "method": "click",
+          "via": "fixture",
+          "elevation": null,
+          "note": null,
+          "exitCode": null,
+          "outputTail": "fixture",
+          "verified": null,
+          "manual": "fixture"
+        }
+      }
+    ]
+  },
+  {
+    "method": "requests.present",
     "params": {
       "id": "fixture",
+      "takesFocus": true
+    },
+    "result": {
+      "id": "fixture",
       "status": "done",
-      "reason": null
+      "reason": "fixture",
+      "method": "click",
+      "via": "fixture",
+      "elevation": "fixture",
+      "note": "fixture",
+      "exitCode": -9007199254740991,
+      "outputTail": "fixture",
+      "verified": true,
+      "manual": "fixture"
+    }
+  },
+  {
+    "method": "requests.present",
+    "params": {
+      "id": "fixture",
+      "takesFocus": true
+    },
+    "result": {
+      "id": "fixture",
+      "status": "done",
+      "reason": null,
+      "method": "click",
+      "via": "fixture",
+      "elevation": null,
+      "note": null,
+      "exitCode": null,
+      "outputTail": "fixture",
+      "verified": null,
+      "manual": "fixture"
+    }
+  },
+  {
+    "method": "requests.withdraw",
+    "params": {
+      "id": "fixture"
     },
     "result": {
       "id": "fixture",
@@ -1491,14 +3595,14 @@
     "result": {
       "id": "fixture",
       "status": "done",
-      "reason": "fixture",
+      "reason": null,
       "method": "click",
       "via": "fixture",
-      "elevation": "fixture",
-      "note": "fixture",
-      "exitCode": -9007199254740991,
+      "elevation": null,
+      "note": null,
+      "exitCode": null,
       "outputTail": "fixture",
-      "verified": true,
+      "verified": null,
       "manual": "fixture"
     }
   },
@@ -1528,6 +3632,37 @@
       "exitCode": -9007199254740991,
       "outputTail": "fixture",
       "verified": true,
+      "manual": "fixture"
+    }
+  },
+  {
+    "method": "request.present",
+    "params": {
+      "kind": "notice",
+      "id": "fixture",
+      "title": "fixture",
+      "reason": "fixture",
+      "open": {
+        "window": "--features",
+        "args": [
+          "fixture"
+        ]
+      },
+      "createdAt": "2026-11-17T12:00:00.000Z",
+      "deadlineSeconds": 1,
+      "takesFocus": true
+    },
+    "result": {
+      "id": "fixture",
+      "status": "done",
+      "reason": null,
+      "method": "click",
+      "via": "fixture",
+      "elevation": null,
+      "note": null,
+      "exitCode": null,
+      "outputTail": "fixture",
+      "verified": null,
       "manual": "fixture"
     }
   }
