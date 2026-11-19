@@ -762,7 +762,7 @@ export function flushHandoffCopies(db: Database): void {
                     const nextFile = rows.findIndex((row) => row.copy_to !== file);
                     const batch = nextFile < 0 ? rows : rows.slice(0, nextFile);
                     appendHandoffEvents(
-                        batch.map((row) => SafeJSON.parse<HandoffEvent>(row.payload, { strict: true })),
+                        batch.map((row) => SafeJSON.parse(row.payload, { strict: true }) as HandoffEvent),
                         file
                     );
                     db.run("UPDATE handoff_replay SET copy_to = NULL WHERE seq <= ?", [batch[batch.length - 1].seq]);
@@ -799,7 +799,7 @@ export function rebuildHandoffModel(db: Database, base?: string): void {
             }
             foldEvents(
                 db,
-                rows.map((row) => SafeJSON.parse<HandoffEvent>(row.payload, { strict: true })),
+                rows.map((row) => SafeJSON.parse(row.payload, { strict: true }) as HandoffEvent),
                 base
             );
             seq = rows[rows.length - 1].seq;

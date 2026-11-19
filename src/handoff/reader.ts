@@ -377,18 +377,18 @@ export class HandoffReader {
         const ignored = sections.filter((s) => s !== "tasks");
 
         return withHandoffReadDb(deps, (db) => {
-            const agent = input.agent?.trim();
-            const session = input.session?.trim();
+            const agentFilter = input.agent?.trim() || undefined;
+            const sessionFilter = input.session?.trim() || undefined;
             const matches =
-                input.mine || agent || session
+                input.mine || agentFilter || sessionFilter
                     ? (h: Handoff) =>
                           (!input.mine ||
                               isPosterSession(h, by) ||
                               isClaimedBy(h, by) ||
                               targetMatchesSession(h.target?.sessionId ?? null, by.sessionId) ||
                               (h.target?.sessionName != null && h.target.sessionName === by.sessionTitle)) &&
-                          (!agent || agentFilterMatches(h.target, agent)) &&
-                          (!session || sessionFilterMatches(h.target, session))
+                          (agentFilter === undefined || agentFilterMatches(h.target, agentFilter)) &&
+                          (sessionFilter === undefined || sessionFilterMatches(h.target, sessionFilter))
                     : undefined;
             const { page, total } = listHandoffPage(db, {
                 statuses: input.open === true ? ["open", "claimed"] : undefined,
