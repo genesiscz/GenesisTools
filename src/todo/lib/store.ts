@@ -6,7 +6,7 @@
  */
 import { Database } from "bun:sqlite";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import { gitCommonRoot } from "@genesiscz/utils/agent/identity";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -30,7 +30,7 @@ import type { ItemState } from "@genesiscz/utils/work/model/vocab";
 import { randomItemSuffix } from "@genesiscz/utils/work/service";
 import { applyChange } from "@genesiscz/utils/work/store/apply";
 import { openWorkDb, workDbPath } from "@genesiscz/utils/work/store/db";
-import { type ItemRow, rowToItem } from "@genesiscz/utils/work/store/rows";
+import { type ItemRow, rowToItem, selectItem } from "@genesiscz/utils/work/store/rows";
 import { nanoid } from "nanoid";
 import { captureContext } from "./context";
 import { applyFilters, defaultStorageRoot, projectHash } from "./file-store";
@@ -240,9 +240,7 @@ function persist(
             applyChange(db, { ...base, kind: "edited", payload: { set } });
         }
 
-        const wasBlocked = row.meta.todo.includes('"status":"blocked"');
-
-        if (item.state !== state || (after.status === "blocked") !== wasBlocked) {
+        if (todoOf(item, row.meta)?.status !== after.status) {
             applyChange(db, { ...base, kind: "moved", payload: { from: item.state, to: state } });
         }
     }
@@ -593,6 +591,69 @@ export class TodoStore {
         }
 
         return null;
+    }
+
+    /** Attach Todo metadata to a Work-native Todo without creating another item. */
+    static adoptWorkTodo(itemId: string): { todo: Todo; projectRoot: string } | null {
+        const db = openWorkDb();
+        try {
+            return inTransaction(db, () => {
+                const existing = rowsOf(db, { itemId })[0];
+                if (existing !== undefined) {
+                    const todo = todoOf(existing.item, existing.meta);
+                    return todo === null ? null : { todo, projectRoot: existing.meta.projectRoot };
+                }
+                const item = selectItem(db, itemId);
+                if (item?.type !== "todo" || item.state === "dropped") {
+                    return null;
+                }
+                const created = db
+                    .query<{ actor: string }, [string]>(
+                        "SELECT actor FROM changes WHERE item = ? AND kind = 'created' ORDER BY seq LIMIT 1"
+                    )
+                    .get(itemId);
+                const creator = created === null ? null : SafeJSON.parse<Actor>(created.actor, { strict: true });
+                const repoRoot = creator?.repoRoot;
+                const projectRoot =
+                    repoRoot && isAbsolute(repoRoot)
+                        ? canonicalTodoRoot(repoRoot)
+                        : join(defaultStorageRoot(), "work-projects", projectHash(item.project));
+                const copy: Todo = {
+                    id: item.id,
+                    title: item.title,
+                    status: "todo",
+                    priority: "medium",
+                    tags: [],
+                    attachments: [],
+                    links: [],
+                    reminders: [],
+                    context: {
+                        projectRoot,
+                        cwd: repoRoot ?? projectRoot,
+                        hostname: creator?.host ?? "",
+                        createdAt: item.createdTs,
+                        updatedAt: item.updatedTs,
+                    },
+                };
+                const meta = { projectRoot, todo: SafeJSON.stringify(copy, { strict: true }) };
+                const todo = todoOf(item, meta);
+                if (todo === null) {
+                    return null;
+                }
+                applyChange(db, {
+                    v: 1,
+                    ts: new Date().toISOString(),
+                    item: item.id,
+                    actor: actorHere(projectRoot),
+                    origin: { via: "connector", id: "reminders" },
+                    kind: "pointed",
+                    payload: { pointer: { kind: POINTER, target: todo.id, meta } },
+                });
+                return { todo, projectRoot };
+            });
+        } finally {
+            db.close();
+        }
     }
 
     /** Records that a todo is paired with an outside item (made by `--sync-to`), so the store knows the pairing. */
