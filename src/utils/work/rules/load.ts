@@ -220,7 +220,7 @@ function setPath(target: Record<string, unknown>, path: string[], value: unknown
     let node = target;
 
     for (const key of path.slice(0, -1)) {
-        const next = node[key];
+        const next = Object.hasOwn(node, key) ? node[key] : undefined;
 
         if (typeof next !== "object" || next === null || Array.isArray(next)) {
             node[key] = {};
@@ -253,6 +253,12 @@ export async function setWorkConfigValue({
     value: unknown;
     configPath?: string;
 }): Promise<SetResult> {
+    const keys = path.split(".");
+
+    if (keys.some((key) => !key || key === "__proto__" || key === "constructor" || key === "prototype")) {
+        return { ok: false, problem: "Invalid configuration path." };
+    }
+
     return machineDocument(configPath).update((current): DocumentUpdate<unknown, SetResult> => {
         const migrated = migrateWorkConfig(current ?? EMPTY_FILE);
 
@@ -267,11 +273,7 @@ export async function setWorkConfigValue({
         }
 
         const next = structuredClone(migrated.raw);
-        setPath(
-            next,
-            path.split(".").filter((p) => p.length > 0),
-            value
-        );
+        setPath(next, keys, value);
         const parsed = workConfigFileSchema.safeParse(next);
 
         if (!parsed.success) {
