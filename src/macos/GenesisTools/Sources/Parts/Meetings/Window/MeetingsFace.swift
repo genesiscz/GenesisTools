@@ -283,7 +283,7 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
         window.title = "Meetings"
         window.appearance = NSAppearance(named: .darkAqua)
         window.isReleasedWhenClosed = false
-        let hosting = NSHostingView(rootView: MeetingsRootView(model: model))
+        let hosting = NSHostingView(rootView: MeetingsRootView(model: model).environment(model))
         // The window keeps the size the reader gives it, and `minimumSize` is its only floor: with the default options,
         // and still with `.minSize`, each notice grew the window to the content's height (900 to 1982 pt in one session).
         hosting.sizingOptions = []
