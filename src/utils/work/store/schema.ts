@@ -64,7 +64,7 @@ export const WORK_MIGRATIONS: Migration[] = [
             db.run("CREATE INDEX claims_session ON claims(session_id, active)");
 
             // The edit credential of a handoff is stored here and selected by no read.
-            db.run(`CREATE TABLE handoffs (
+            db.run(`CREATE TABLE handoff_meta (
                 id TEXT PRIMARY KEY,
                 name TEXT,
                 target TEXT,
@@ -125,7 +125,12 @@ export const WORK_MIGRATIONS: Migration[] = [
         description:
             "the work store's own handoff table becomes handoff_meta; the name handoffs is the legacy view's (P6)",
         apply(db) {
-            db.run("ALTER TABLE handoffs RENAME TO handoff_meta");
+            // A store that ran the original v1 has the Work columns in handoffs.
+            const columns = db.query<{ name: string }, []>("PRAGMA table_info(handoffs)").all();
+
+            if (columns.some(({ name }) => name === "edit_credential")) {
+                db.run("ALTER TABLE handoffs RENAME TO handoff_meta");
+            }
         },
     },
 ];
