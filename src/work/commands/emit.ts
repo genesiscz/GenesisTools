@@ -25,11 +25,12 @@ export function commandOf(call: NonNullable<NextAction["call"]>): string {
     }
 
     for (const [key, value] of Object.entries(params)) {
-        if (value === undefined || value === false) {
+        if (value === undefined) {
             continue;
         }
 
-        parts.push(...(value === true ? [`--${kebab(key)}`] : [`--${kebab(key)}`, text(value)]));
+        const flag = `--${kebab(key)}`;
+        parts.push(...(value === true ? [flag] : value === false ? [`${flag}=false`] : [flag, text(value)]));
     }
 
     return parts.join(" ");
