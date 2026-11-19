@@ -253,77 +253,77 @@ async function pushProject({
         const intents: PushIntent[] = [];
         const generations: (number | null)[] = [];
 
-        for (const candidate of items) {
-            const item = selectItem(db, candidate.id);
+        inTransaction(db, () => {
+            for (const candidate of items) {
+                const item = selectItem(db, candidate.id);
 
-            if (item === null || item.project !== project) {
-                continue;
-            }
-
-            const pairing = selectPairings(db, { item: item.id, connector: id })[0] ?? null;
-            const canCreate = connector.can.create && config.createTypes.includes(item.type);
-
-            if (mode.kind === "release" && pairing?.state !== "held") {
-                continue;
-            }
-
-            if (mode.kind === "pair" && pairing === null) {
-                continue;
-            }
-
-            if (!pairing?.remoteKey && !canCreate) {
-                continue;
-            }
-
-            if (mode.kind === "sync") {
-                if (
-                    !mode.touched.has(item.id) &&
-                    (pairing?.state !== "failed" || pairing.updatedTs > mode.retryBefore)
-                ) {
+                if (item === null || item.project !== project) {
                     continue;
                 }
 
-                const rule = config.push(item.type) ?? defaultPush(item.type);
-                const actors = rule === "anyone" ? [] : pushActors(db, item.id, mode.cursor);
-                const blocked = actors.some(
-                    (actor) =>
-                        !allows(
-                            rule,
-                            rolesOf(view, item, {
-                                lineage: actor.sessionId !== null ? [actor.sessionId] : [],
-                                ownerKind: actor.kind === "owner",
-                                sessionId: actor.sessionId,
-                            })
-                        )
-                );
+                const pairing = selectPairings(db, { item: item.id, connector: id })[0] ?? null;
+                const canCreate = connector.can.create && config.createTypes.includes(item.type);
 
-                if (pairing?.state === "held" || blocked) {
-                    if (pairing?.state !== "held") {
-                        inTransaction(db, () =>
+                if (mode.kind === "release" && pairing?.state !== "held") {
+                    continue;
+                }
+
+                if (mode.kind === "pair" && pairing === null) {
+                    continue;
+                }
+
+                if (!pairing?.remoteKey && !canCreate) {
+                    continue;
+                }
+
+                if (mode.kind === "sync") {
+                    if (
+                        !mode.touched.has(item.id) &&
+                        (pairing?.state !== "failed" || pairing.updatedTs > mode.retryBefore)
+                    ) {
+                        continue;
+                    }
+
+                    const rule = config.push(item.type) ?? defaultPush(item.type);
+                    const actors = rule === "anyone" ? [] : pushActors(db, item.id, mode.cursor);
+                    const blocked = actors.some(
+                        (actor) =>
+                            !allows(
+                                rule,
+                                rolesOf(view, item, {
+                                    lineage: actor.sessionId !== null ? [actor.sessionId] : [],
+                                    ownerKind: actor.kind === "owner",
+                                    sessionId: actor.sessionId,
+                                })
+                            )
+                    );
+
+                    if (pairing?.state === "held" || blocked) {
+                        if (pairing?.state !== "held") {
                             writePairing(db, deps, {
                                 ...(pairing ?? newPairing(item.id, id, deps.now())),
                                 state: "held",
                                 note: "a change needs a lead or the owner to release it",
-                            })
-                        );
+                            });
+                        }
+
+                        report.held++;
+                        continue;
                     }
-
-                    report.held++;
-                    continue;
                 }
-            }
 
-            const machine = deps.machinePrefix;
-            const labels = [item.id, ...containersOf(db, item.id)].map((target) =>
-                pairingLabelFor(config.labelTemplate || DEFAULT_LABEL_TEMPLATE, {
-                    machine,
-                    project: item.project,
-                    id: target,
-                })
-            );
-            intents.push({ item, pairing, labels });
-            generations.push(pairingGeneration(db, item.id, id));
-        }
+                const machine = deps.machinePrefix;
+                const labels = [item.id, ...containersOf(db, item.id)].map((target) =>
+                    pairingLabelFor(config.labelTemplate || DEFAULT_LABEL_TEMPLATE, {
+                        machine,
+                        project: item.project,
+                        id: target,
+                    })
+                );
+                intents.push({ item, pairing, labels });
+                generations.push(pairingGeneration(db, item.id, id));
+            }
+        });
 
         if (intents.length === 0) {
             continue;
