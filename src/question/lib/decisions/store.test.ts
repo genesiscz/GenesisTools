@@ -1847,14 +1847,29 @@ describe("Widget Tasks use the canonical TODO ledger", () => {
         const { files, row } = fixture();
         let current = row;
         for (const state of ["acknowledged", "implemented", "open", "acknowledged", "dismissed", "open"] as const) {
+            if (state === "dismissed") {
+                await expect(
+                    updateTodo({
+                        ...files,
+                        id: row.id,
+                        state,
+                        expected: expected(current),
+                        comment: "  ",
+                    })
+                ).rejects.toThrow("comment");
+            }
             const next = await updateTodo({
                 ...files,
                 id: row.id,
                 state,
+                ...(state === "dismissed" ? { comment: "The fixture issue was closed." } : {}),
                 expected: expected(current),
                 now: () => row.updatedTs,
             });
             expect(next.state).toBe(state);
+            if (state === "dismissed") {
+                expect(readDecisions(files.file)[0].comments).toContain("The fixture issue was closed.");
+            }
             expect(Date.parse(next.updatedTs)).toBeGreaterThan(Date.parse(current.updatedTs));
             current = next;
         }
