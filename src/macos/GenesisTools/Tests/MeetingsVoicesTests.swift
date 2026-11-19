@@ -202,7 +202,7 @@ final class MeetingsVoicesTests: XCTestCase {
         XCTAssertTrue(empty.contains("Cancel"), empty)
     }
 
-    // MARK: w_xow4oigk: the empty state's button    // MARK: w_xow4oigk: the empty state's button
+    // MARK: w_xow4oigk: the empty state's button
 
     /// With a second closure parameter after `action`, Swift 5 mode bound the trailing closure of
     /// `EmptyState(…, actionTitle: "Suggest items") { … }` to the last one, and the button was never drawn.
