@@ -11,6 +11,7 @@ import type {
     LineageResolver,
     SessionDelivery,
 } from "./ports";
+import { type LoadProjectRules, loadWorkRules, type ProjectLocation } from "./rules/load";
 import type { ResolvedRules } from "./rules/resolve";
 import type { WorkCommand, WriteEnv } from "./store/decide";
 import { newItemId } from "./store/decide";
@@ -24,6 +25,7 @@ import {
     transact,
     type WriteOutcome,
 } from "./store/transact";
+import { sqlView } from "./store/view";
 
 export interface WorkPorts {
     legacy: LegacyHandoffs;
@@ -45,6 +47,7 @@ export interface WorkContext {
     inferred?: { during: string; evidence: string };
     /** The effective rules of the project (P3). */
     rules?: ResolvedRules;
+    loadRules?: LoadProjectRules;
     /** The owner's words when an agent acts on them; the journal keeps them in the stamp. */
     ownerSaid?: string;
 }
@@ -108,6 +111,52 @@ export async function envOf(ctx: WorkContext, request?: string): Promise<WriteEn
     };
 }
 
+async function rulesForCommand(
+    ctx: WorkContext,
+    command: WorkCommand
+): Promise<Map<string, ResolvedRules> | undefined> {
+    const view = sqlView(ctx.db);
+    const refs =
+        "ref" in command
+            ? [command.ref]
+            : command.verb === "add-member"
+              ? [command.to, ...command.refs]
+              : "refs" in command
+                ? command.refs
+                : command.verb === "handoff"
+                  ? command.from
+                  : [];
+    const locations = new Map<string, ProjectLocation>();
+
+    for (const ref of refs) {
+        const item = view.resolve(ref)?.item;
+        if (item !== undefined && item.project !== ctx.project && !locations.has(item.project)) {
+            locations.set(item.project, {
+                project: item.project,
+                repoRoot: item.createdBy.project === item.project ? item.createdBy.repoRoot : null,
+            });
+        }
+    }
+
+    if ("project" in command && command.project !== undefined && command.project !== ctx.project) {
+        locations.set(command.project, { project: command.project });
+    }
+
+    if (locations.size === 0) {
+        return undefined;
+    }
+
+    const load = ctx.loadRules ?? loadWorkRules;
+    return new Map(
+        await Promise.all(
+            Array.from(
+                locations.values(),
+                async (location) => [location.project, (await load(location)).rules] as const
+            )
+        )
+    );
+}
+
 /**
  * One write: the old log's verdict on its part (folded in memory), the store's transaction, then the writes the old
  * log still owns. Their hook brings the result
@@ -119,6 +168,7 @@ export async function write(
     options: { request?: string; dryRun?: boolean } = {}
 ): Promise<Reply<WriteData>> {
     const env = await envOf(ctx, options.dryRun ? undefined : options.request);
+    env.rulesByProject = await rulesForCommand(ctx, command);
     // The old log may refuse what the store accepts (a poster credential, a claim). During the double writing a
     // write it would refuse must not reach the store, so its actions are checked on a dry run before the commit.
     // The check folds in memory; it cannot run inside the store's transaction, because the old executor opens the
