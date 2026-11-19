@@ -173,6 +173,7 @@ final class WidgetTasksPolishTests: XCTestCase {
         host.cacheDisplay(in: host.bounds, to: bitmap)
         let ocr = VNRecognizeTextRequest()
         ocr.recognitionLevel = .accurate
+        ocr.usesLanguageCorrection = false
         try VNImageRequestHandler(cgImage: XCTUnwrap(bitmap.cgImage)).perform([ocr])
         let line = try XCTUnwrap(ocr.results?.first { $0.topCandidates(1).first?.string.contains("Inspect the archive") == true })
         let location = NSPoint(x: line.boundingBox.midX * host.bounds.width, y: line.boundingBox.midY * host.bounds.height)

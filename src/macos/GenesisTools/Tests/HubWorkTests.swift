@@ -777,20 +777,21 @@ extension HubWorkTests {
         XCTAssertTrue(model.screen.visibleRefs.contains("w_arch0030"), "the route must reveal the archive row")
         if window == nil { window = interactionWindow(AnyView(view), size: size) }
         let content = try XCTUnwrap(window?.contentView)
-        // A hidden window draws only when asked. Each await returns to the run loop, so a scroll queued for the next
-        // turn runs too.
-        for _ in 0..<3 {
+        let scrollDeadline = ContinuousClock.now + .seconds(3)
+        var text: String
+        repeat {
             content.layoutSubtreeIfNeeded()
             content.displayIfNeeded()
-            try? await Task.sleep(for: .milliseconds(200))
-        }
-        content.layoutSubtreeIfNeeded()
-        let bitmap = try XCTUnwrap(content.bitmapImageRepForCachingDisplay(in: content.bounds))
-        content.cacheDisplay(in: content.bounds, to: bitmap)
-        // Only the list column: the inspector shows its own title, so the row must be found in the list itself.
-        let image = try XCTUnwrap(bitmap.cgImage)
-        let list = try XCTUnwrap(image.cropping(to: CGRect(x: 0, y: 0, width: image.width * 900 / 1500, height: image.height)))
-        return try HubInboxUXTests.drawnText(NSBitmapImageRep(cgImage: list))
+            let bitmap = try XCTUnwrap(content.bitmapImageRepForCachingDisplay(in: content.bounds))
+            content.cacheDisplay(in: content.bounds, to: bitmap)
+            // The inspector also shows the title. Only the list viewport can satisfy this check.
+            let image = try XCTUnwrap(bitmap.cgImage)
+            let list = try XCTUnwrap(image.cropping(to: CGRect(x: 0, y: 0, width: image.width * 900 / 1500, height: image.height)))
+            text = try HubInboxUXTests.drawnText(NSBitmapImageRep(cgImage: list))
+            if text.contains("The routed archive row") { break }
+            try await Task.sleep(for: .milliseconds(80))
+        } while ContinuousClock.now < scrollDeadline
+        return text
     }
 
     /// This is the keyboard selection handler and the hub's real Back/Forward actions, without a global key monitor.
