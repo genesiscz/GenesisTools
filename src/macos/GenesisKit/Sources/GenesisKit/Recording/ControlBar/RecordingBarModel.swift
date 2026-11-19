@@ -208,10 +208,11 @@ public final class RecordingBarModel: ObservableObject {
 
     public func beginTargetSelection(onReady: @escaping @MainActor () -> Void = {}) {
         if phase == .setup { onReady(); return }
-        guard !isRestartPending else { return }
-        if case .paused = phase { onReady(); return }
-        guard case .recording = phase else { return }
+        // Read the phase inside the command queue: a Resume or Pause queued just before must land first.
         forTake { take in
+            guard !self.isRestartPending else { return }
+            if case .paused = self.phase { onReady(); return }
+            guard case .recording = self.phase else { return }
             await self.pause(take: take, byUser: false)
             if self.activeTake == take, case .paused = self.phase, !self.isRestartPending { onReady() }
         }
