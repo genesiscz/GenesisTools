@@ -28,6 +28,9 @@ import { spawnSync } from "node:child_process";
 import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import type { DEFAULT_HOOKS_CONFIG } from "@app/agents/lib/hooks/config";
+import type { capturePre } from "@app/agents/lib/hooks/diff/capture";
+import type { runDiffPost } from "@app/agents/lib/hooks/diff/run";
 import { type BaselineMetrics, withSpawnCounter } from "@app/benchmark/lib";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -50,260 +53,279 @@ const SHAPES = ["edit", "read"] as const;
 type Shape = (typeof SHAPES)[number];
 
 const SCRATCH = realpathSync(mkdtempSync(join(tmpdir(), "gt-bench-status-")));
+const HOOK_DEADLINE_MS = 60_000;
 
-const SANDBOX_TMP = join(SCRATCH, "tmp");
-const SANDBOX_HOME = join(SCRATCH, "home");
+async function benchmark(): Promise<void> {
+    const SANDBOX_TMP = join(SCRATCH, "tmp");
+    const SANDBOX_HOME = join(SCRATCH, "home");
 
-// The sandbox is this whole process's environment on purpose: the hook modules imported below build their paths from
-// it at call time, and every hook child inherits it. A scoped override would reach neither.
-process.env.TMPDIR = SANDBOX_TMP;
-process.env.GENESIS_TOOLS_HOME = SANDBOX_HOME;
-mkdirSync(SANDBOX_TMP, { recursive: true });
-mkdirSync(genesisToolsDirIn(SANDBOX_HOME, "agents"), { recursive: true });
-writeFileSync(
-    genesisToolsDirIn(SANDBOX_HOME, "agents", "hooks.json"),
-    SafeJSON.stringify({ shadow: false, diff: { highlight: "none" } })
-);
+    // The sandbox is this whole process's environment on purpose: the hook modules imported below build their paths from
+    // it at call time, and every hook child inherits it. A scoped override would reach neither.
+    process.env.TMPDIR = SANDBOX_TMP;
+    process.env.GENESIS_TOOLS_HOME = SANDBOX_HOME;
+    mkdirSync(SANDBOX_TMP, { recursive: true });
+    mkdirSync(genesisToolsDirIn(SANDBOX_HOME, "agents"), { recursive: true });
+    writeFileSync(
+        genesisToolsDirIn(SANDBOX_HOME, "agents", "hooks.json"),
+        SafeJSON.stringify({ shadow: false, diff: { highlight: "none" } })
+    );
 
-function git(root: string, gitArgs: string[]): string {
-    const run = spawnSync("git", ["-C", root, ...gitArgs], { encoding: "utf8" });
+    function git(root: string, gitArgs: string[]): string {
+        const run = spawnSync("git", ["-C", root, ...gitArgs], { encoding: "utf8" });
 
-    if (run.status !== 0) {
-        throw new Error(`git ${gitArgs.join(" ")} failed in ${root}: ${run.stderr}`);
+        if (run.status !== 0) {
+            throw new Error(`git ${gitArgs.join(" ")} failed in ${root}: ${run.stderr}`);
+        }
+
+        return run.stdout;
     }
 
-    return run.stdout;
-}
-
-const ROOT = join(SCRATCH, "repo");
-try {
+    const ROOT = join(SCRATCH, "repo");
     git(SCRATCH, ["clone", "-q", "--shared", HERE, ROOT]);
-} catch (err) {
-    rmSync(SCRATCH, { recursive: true, force: true });
-    throw err;
-}
 
-const tracked = git(ROOT, ["ls-files"]).split("\n").filter(Boolean);
-const dirty = tracked.filter((file) => file.startsWith("src/agents/lib/hooks/") && file.endsWith(".ts")).slice(0, 5);
-const TARGET = dirty[0] ?? "README.md";
+    const tracked = git(ROOT, ["ls-files"]).split("\n").filter(Boolean);
+    const dirty = tracked
+        .filter((file) => file.startsWith("src/agents/lib/hooks/") && file.endsWith(".ts"))
+        .slice(0, 5);
+    const TARGET = dirty[0] ?? "README.md";
 
-/**
- * Moves a file's mtime an hour back. The post phase admits a file changed since the command's start
- * in WHOLE seconds, so a file written by the previous call in the same second would count as this
- * call's change and make the arms do different work depending on the clock.
- */
-function age(name: string): void {
-    const past = Date.now() / 1000 - 3600;
+    /**
+     * Moves a file's mtime an hour back. The post phase admits a file changed since the command's start
+     * in WHOLE seconds, so a file written by the previous call in the same second would count as this
+     * call's change and make the arms do different work depending on the clock.
+     */
+    function age(name: string): void {
+        const past = Date.now() / 1000 - 3600;
 
-    utimesSync(join(ROOT, name), past, past);
-}
-
-for (const file of dirty) {
-    appendFileSync(join(ROOT, file), "\n// bench: dirty before the session's command\n");
-    age(file);
-}
-
-mkdirSync(join(ROOT, "notes-scratch"), { recursive: true });
-
-for (let index = 0; index < 3; index += 1) {
-    writeFileSync(join(ROOT, "notes-scratch", `note-${index}.md`), `note ${index}\n`);
-    age(`notes-scratch/note-${index}.md`);
-}
-
-const COMMANDS: Record<Shape, string> = { edit: `bun scripts/fmt.ts ${TARGET}`, read: `rg needle ${TARGET}` };
-const UNNAMED = "bench-unnamed.md";
-/**
- * ONE session for both arms. With one per arm, a file the other arm's call wrote in the same second
- * reads as another session's change (the touches ledger), is not diffed, and the arms do different
- * work depending on the clock.
- */
-const SESSION = "bench";
-let callCounter = 0;
-
-function act(shape: Shape, label: string): void {
-    if (shape === "read") {
-        return;
+        utimesSync(join(ROOT, name), past, past);
     }
 
-    appendFileSync(join(ROOT, TARGET), `// ${label}\n`);
-    writeFileSync(join(ROOT, UNNAMED), `${label}\n`);
-}
-
-/** After the post phase: what this call changed is older than the next call's start, as in real use. */
-function settle(shape: Shape): void {
-    if (shape === "edit") {
-        age(TARGET);
-        age(UNNAMED);
-    }
-}
-
-function spawnHook(arm: Arm, entry: string, payload: Record<string, unknown>) {
-    const started = performance.now();
-    const run = Bun.spawnSync(["bun", join(ARMS[arm], "src/agents/bin", entry)], {
-        stdin: Buffer.from(SafeJSON.stringify(payload)),
-        env: env.getProcessEnv(),
-    });
-
-    if (run.exitCode !== 0) {
-        throw new Error(`${arm} ${entry} exited ${run.exitCode}: ${run.stderr.toString()}`);
+    for (const file of dirty) {
+        appendFileSync(join(ROOT, file), "\n// bench: dirty before the session's command\n");
+        age(file);
     }
 
-    return {
-        wallMs: performance.now() - started,
-        cpuMs: Number(run.resourceUsage.cpuTime.total) / 1000,
-        printed: run.stdout.length > 0,
-    };
-}
+    mkdirSync(join(ROOT, "notes-scratch"), { recursive: true });
 
-/** One tool call end to end: the pre hook, the command's effect, the post hook. */
-function endToEnd(arm: Arm, shape: Shape) {
-    callCounter += 1;
-
-    const base = {
-        tool_name: "Bash",
-        cwd: ROOT,
-        session_id: SESSION,
-        tool_use_id: `bench-${arm}-${callCounter}`,
-        tool_input: { command: COMMANDS[shape] },
-    };
-    const pre = spawnHook(arm, "hook-pre.ts", { ...base, hook_event_name: "PreToolUse" });
-
-    act(shape, `${arm} ${callCounter}`);
-
-    const post = spawnHook(arm, "hook-diff-post.ts", {
-        ...base,
-        hook_event_name: "PostToolUse",
-        tool_response: { stdout: "" },
-    });
-
-    settle(shape);
-
-    return { cpuMs: pre.cpuMs + post.cpuMs, wallMs: pre.wallMs + post.wallMs, printed: post.printed };
-}
-
-interface HookModules {
-    capturePre: (payload: unknown, diff: unknown) => unknown;
-    runDiffPost: (args: { payload: unknown; config: unknown }) => { files: string[] };
-    config: { diff: Record<string, unknown> } & Record<string, unknown>;
-}
-
-async function loadArm(arm: Arm): Promise<HookModules> {
-    const capture = await import(join(ARMS[arm], "src/agents/lib/hooks/diff/capture.ts"));
-    const run = await import(join(ARMS[arm], "src/agents/lib/hooks/diff/run.ts"));
-    const config = await import(join(ARMS[arm], "src/agents/lib/hooks/config.ts"));
-    const base = config.DEFAULT_HOOKS_CONFIG as HookModules["config"];
-
-    return {
-        capturePre: capture.capturePre,
-        runDiffPost: run.runDiffPost,
-        config: { ...base, diff: { ...base.diff, highlight: "none" } },
-    };
-}
-
-/** git processes one call starts, all of them and the `git status` ones. Deterministic, so N = 1. */
-async function countSpawns(
-    arm: Arm,
-    shape: Shape
-): Promise<{ git: number; status: number; files: number; commands: string[] }> {
-    const hooks = await loadArm(arm);
-
-    callCounter += 1;
-
-    const payload = {
-        event: "PreToolUse",
-        tool: "Bash",
-        cwd: ROOT,
-        sessionId: SESSION,
-        toolUseId: `bench-count-${callCounter}`,
-        command: COMMANDS[shape],
-        model: "",
-        harness: "claude" as const,
-        nativeDiffFiles: [],
-        raw: {},
-    };
-    const counted = await withSpawnCounter(async () => {
-        hooks.capturePre(payload, hooks.config.diff);
-        act(shape, `count ${arm} ${callCounter}`);
-        return hooks.runDiffPost({ payload, config: hooks.config });
-    });
-
-    settle(shape);
-
-    const gitSpawns = counted.spawns.filter((spawn) => spawn.cmd[0] === "git");
-
-    return {
-        git: gitSpawns.length,
-        status: gitSpawns.filter((spawn) => spawn.cmd.includes("status")).length,
-        files: counted.result.files.length,
-        // The repository path is the same for both arms; dropping it keeps the list readable.
-        commands: gitSpawns.map((spawn) => spawn.cmd.slice(1).join(" ").replaceAll(ROOT, "<repo>")),
-    };
-}
-
-const counts: BaselineMetrics = {};
-const commands: Record<string, string[]> = {};
-
-for (const arm of Object.keys(ARMS) as Arm[]) {
-    for (const shape of SHAPES) {
-        const counted = await countSpawns(arm, shape);
-
-        counts[`${arm}.${shape}.gitSpawns`] = counted.git;
-        counts[`${arm}.${shape}.statusSpawns`] = counted.status;
-        counts[`${arm}.${shape}.renderedFiles`] = counted.files;
-        commands[`${arm}.${shape}`] = counted.commands;
+    for (let index = 0; index < 3; index += 1) {
+        writeFileSync(join(ROOT, "notes-scratch", `note-${index}.md`), `note ${index}\n`);
+        age(`notes-scratch/note-${index}.md`);
     }
-}
 
-for (let warm = 0; warm < args.warmup; warm += 1) {
+    const COMMANDS: Record<Shape, string> = { edit: `bun scripts/fmt.ts ${TARGET}`, read: `rg needle ${TARGET}` };
+    const UNNAMED = "bench-unnamed.md";
+    /**
+     * ONE session for both arms. With one per arm, a file the other arm's call wrote in the same second
+     * reads as another session's change (the touches ledger), is not diffed, and the arms do different
+     * work depending on the clock.
+     */
+    const SESSION = "bench";
+    let callCounter = 0;
+
+    function act(shape: Shape, label: string): void {
+        if (shape === "read") {
+            return;
+        }
+
+        appendFileSync(join(ROOT, TARGET), `// ${label}\n`);
+        writeFileSync(join(ROOT, UNNAMED), `${label}\n`);
+    }
+
+    /** After the post phase: what this call changed is older than the next call's start, as in real use. */
+    function settle(shape: Shape): void {
+        if (shape === "edit") {
+            age(TARGET);
+            age(UNNAMED);
+        }
+    }
+
+    function spawnHook(arm: Arm, entry: string, payload: Record<string, unknown>) {
+        const started = performance.now();
+        const run = Bun.spawnSync(["bun", join(ARMS[arm], "src/agents/bin", entry)], {
+            stdin: Buffer.from(SafeJSON.stringify(payload)),
+            env: env.getProcessEnv(),
+            timeout: HOOK_DEADLINE_MS,
+        });
+
+        if (run.signalCode) {
+            throw new Error(
+                `${arm} ${entry} did not finish (signal ${run.signalCode}, deadline ${HOOK_DEADLINE_MS} ms)`
+            );
+        }
+        if (run.exitCode !== 0) {
+            throw new Error(`${arm} ${entry} exited ${run.exitCode}: ${run.stderr.toString()}`);
+        }
+
+        return {
+            wallMs: performance.now() - started,
+            cpuMs: Number(run.resourceUsage.cpuTime.total) / 1000,
+            printed: run.stdout.length > 0,
+        };
+    }
+
+    /** One tool call end to end: the pre hook, the command's effect, the post hook. */
+    function endToEnd(arm: Arm, shape: Shape) {
+        callCounter += 1;
+
+        const base = {
+            tool_name: "Bash",
+            cwd: ROOT,
+            session_id: SESSION,
+            tool_use_id: `bench-${arm}-${callCounter}`,
+            tool_input: { command: COMMANDS[shape] },
+        };
+        const pre = spawnHook(arm, "hook-pre.ts", { ...base, hook_event_name: "PreToolUse" });
+
+        act(shape, `${arm} ${callCounter}`);
+
+        const post = spawnHook(arm, "hook-diff-post.ts", {
+            ...base,
+            hook_event_name: "PostToolUse",
+            tool_response: { stdout: "" },
+        });
+
+        settle(shape);
+
+        return { cpuMs: pre.cpuMs + post.cpuMs, wallMs: pre.wallMs + post.wallMs, printed: post.printed };
+    }
+
+    type Post = typeof runDiffPost;
+    type Capture = typeof capturePre;
+    type Payload = Parameters<Capture>[0];
+    type HookConfig = typeof DEFAULT_HOOKS_CONFIG;
+    type LegacyPost = (payload: Payload, config: HookConfig) => ReturnType<Post>;
+    interface HookModules {
+        capturePre: Capture;
+        runDiffPost: Post;
+        config: HookConfig;
+    }
+
+    async function loadArm(arm: Arm): Promise<HookModules> {
+        const capture = await import(join(ARMS[arm], "src/agents/lib/hooks/diff/capture.ts"));
+        const run = await import(join(ARMS[arm], "src/agents/lib/hooks/diff/run.ts"));
+        const config = await import(join(ARMS[arm], "src/agents/lib/hooks/config.ts"));
+        const base: HookConfig = config.DEFAULT_HOOKS_CONFIG;
+        const runPost: Post | LegacyPost = run.runDiffPost;
+        // The October baseline took positional payload and config. Its second parameter precedes the first default.
+        const post: Post =
+            runPost.length >= 2 ? ({ payload, config }) => (runPost as LegacyPost)(payload, config) : (runPost as Post);
+
+        return {
+            capturePre: capture.capturePre,
+            runDiffPost: post,
+            config: { ...base, diff: { ...base.diff, highlight: "none" } },
+        };
+    }
+
+    /** git processes one call starts, all of them and the `git status` ones. Deterministic, so N = 1. */
+    async function countSpawns(
+        arm: Arm,
+        shape: Shape
+    ): Promise<{ git: number; status: number; files: number; commands: string[] }> {
+        const hooks = await loadArm(arm);
+
+        callCounter += 1;
+
+        const payload: Payload = {
+            event: "PreToolUse",
+            tool: "Bash",
+            cwd: ROOT,
+            sessionId: SESSION,
+            toolUseId: `bench-count-${callCounter}`,
+            command: COMMANDS[shape],
+            model: "",
+            harness: "claude",
+            caller: "claude",
+            nativeDiffFiles: [],
+            raw: {},
+        };
+        const counted = await withSpawnCounter(async () => {
+            hooks.capturePre(payload, hooks.config.diff);
+            act(shape, `count ${arm} ${callCounter}`);
+            return hooks.runDiffPost({ payload, config: hooks.config });
+        });
+
+        settle(shape);
+
+        const gitSpawns = counted.spawns.filter((spawn) => spawn.cmd[0] === "git");
+
+        return {
+            git: gitSpawns.length,
+            status: gitSpawns.filter((spawn) => spawn.cmd.includes("status")).length,
+            files: counted.result.files.length,
+            // The repository path is the same for both arms; dropping it keeps the list readable.
+            commands: gitSpawns.map((spawn) => spawn.cmd.slice(1).join(" ").replaceAll(ROOT, "<repo>")),
+        };
+    }
+
+    const counts: BaselineMetrics = {};
+    const commands: Record<string, string[]> = {};
+
     for (const arm of Object.keys(ARMS) as Arm[]) {
         for (const shape of SHAPES) {
-            endToEnd(arm, shape);
-        }
-    }
-}
+            const counted = await countSpawns(arm, shape);
 
-const runs: BaselineMetrics[] = [];
-const uptimeBefore = spawnSync("uptime", { encoding: "utf8" }).stdout.trim();
-
-for (let run = 0; run < args.runs; run += 1) {
-    const order: Arm[] = run % 2 === 0 ? ["before", "after"] : ["after", "before"];
-    const metrics: BaselineMetrics = { ...counts };
-
-    for (const arm of order) {
-        for (const shape of SHAPES) {
-            const call = endToEnd(arm, shape);
-
-            metrics[`${arm}.${shape}.cpuMs`] = Number(call.cpuMs.toFixed(1));
-            metrics[`${arm}.${shape}.wallMs`] = Number(call.wallMs.toFixed(1));
-            metrics[`${arm}.${shape}.printed`] = call.printed ? 1 : 0;
+            counts[`${arm}.${shape}.gitSpawns`] = counted.git;
+            counts[`${arm}.${shape}.statusSpawns`] = counted.status;
+            counts[`${arm}.${shape}.renderedFiles`] = counted.files;
+            commands[`${arm}.${shape}`] = counted.commands;
         }
     }
 
-    runs.push(metrics);
+    for (let warm = 0; warm < args.warmup; warm += 1) {
+        for (const arm of Object.keys(ARMS) as Arm[]) {
+            for (const shape of SHAPES) {
+                endToEnd(arm, shape);
+            }
+        }
+    }
+
+    const runs: BaselineMetrics[] = [];
+    const uptimeBefore = spawnSync("uptime", { encoding: "utf8" }).stdout.trim();
+
+    for (let run = 0; run < args.runs; run += 1) {
+        const order: Arm[] = run % 2 === 0 ? ["before", "after"] : ["after", "before"];
+        const metrics: BaselineMetrics = { ...counts };
+
+        for (const arm of order) {
+            for (const shape of SHAPES) {
+                const call = endToEnd(arm, shape);
+
+                metrics[`${arm}.${shape}.cpuMs`] = Number(call.cpuMs.toFixed(1));
+                metrics[`${arm}.${shape}.wallMs`] = Number(call.wallMs.toFixed(1));
+                metrics[`${arm}.${shape}.printed`] = call.printed ? 1 : 0;
+            }
+        }
+
+        runs.push(metrics);
+    }
+
+    const uptimeAfter = spawnSync("uptime", { encoding: "utf8" }).stdout.trim();
+
+    await finishBench({
+        name: "hooks-status-ab",
+        title: "Bash diff hook, one tool call (pre + post), before vs after",
+        args,
+        runs,
+        // `printed` and `renderedFiles` are check values: a drop means an arm did less work, not better work.
+        lowerIsBetter: Object.keys(runs[0] ?? {}).filter(
+            (metric) => !metric.endsWith(".printed") && !metric.endsWith(".renderedFiles")
+        ),
+        floor: Object.fromEntries(
+            Object.keys(runs[0] ?? {})
+                .filter((metric) => metric.endsWith("Ms"))
+                .map((metric) => [metric, 5])
+        ),
+        notes: `before ${ARMS.before} | ${tracked.length} tracked files, ${dirty.length} dirty, 1 untracked directory | ${uptimeBefore} -> ${uptimeAfter}`,
+        context: { scratch: SCRATCH, before: ARMS.before, after: ARMS.after, trackedFiles: tracked.length, commands },
+    });
+
+    out.println(`uptime before: ${uptimeBefore}`);
+    out.println(`uptime after:  ${uptimeAfter}`);
 }
 
-const uptimeAfter = spawnSync("uptime", { encoding: "utf8" }).stdout.trim();
-
-await finishBench({
-    name: "hooks-status-ab",
-    title: "Bash diff hook, one tool call (pre + post), before vs after",
-    args,
-    runs,
-    // `printed` and `renderedFiles` are check values: a drop means an arm did less work, not better work.
-    lowerIsBetter: Object.keys(runs[0] ?? {}).filter(
-        (metric) => !metric.endsWith(".printed") && !metric.endsWith(".renderedFiles")
-    ),
-    floor: Object.fromEntries(
-        Object.keys(runs[0] ?? {})
-            .filter((metric) => metric.endsWith("Ms"))
-            .map((metric) => [metric, 5])
-    ),
-    notes: `before ${ARMS.before} | ${tracked.length} tracked files, ${dirty.length} dirty, 1 untracked directory | ${uptimeBefore} -> ${uptimeAfter}`,
-    context: { scratch: SCRATCH, before: ARMS.before, after: ARMS.after, trackedFiles: tracked.length, commands },
-});
-
-out.println(`uptime before: ${uptimeBefore}`);
-out.println(`uptime after:  ${uptimeAfter}`);
-
-// A shared clone of this checkout is tens of MB per run.
-rmSync(SCRATCH, { recursive: true, force: true });
+try {
+    await benchmark();
+} finally {
+    rmSync(SCRATCH, { recursive: true, force: true });
+}
