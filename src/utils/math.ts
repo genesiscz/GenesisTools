@@ -24,6 +24,20 @@ export function maxOf(values: Iterable<number>, floor = Number.NEGATIVE_INFINITY
     return max;
 }
 
+/** The `p`-th percentile (0..1) with linear interpolation between ranks; undefined for no values. */
+export function percentile(values: readonly number[], p: number): number | undefined {
+    if (values.length === 0) {
+        return undefined;
+    }
+
+    const sorted = [...values].sort((a, b) => a - b);
+    const rank = Math.min(Math.max(p, 0), 1) * (sorted.length - 1);
+    const low = Math.floor(rank);
+    const high = Math.ceil(rank);
+
+    return sorted[low] + (sorted[high] - sorted[low]) * (rank - low);
+}
+
 /**
  * Compute cosine distance between two vectors.
  * Returns 0 for identical vectors, 2 for opposite vectors.
