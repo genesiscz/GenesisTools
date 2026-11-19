@@ -1,3 +1,4 @@
+import { rename, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { workerData } from "node:worker_threads";
 import { logger } from "@genesiscz/utils/logger";
@@ -18,16 +19,22 @@ async function capture(lagMs: number): Promise<void> {
     // The server owns this 0700 directory. Keep the latest successful stack across restarts.
     const file = join(dirname(socketPath), "last-stall.sample.txt");
     const pending = `${file}.${pid}.tmp`;
-    const result = await boundedCommand({
-        command: ["/usr/bin/sample", String(pid), "2", "-file", pending],
-        timeoutMs: 10_000,
-    });
-    if (result.error || result.status !== 0) {
-        throw new Error(result.error?.message ?? (result.stderr.trim() || `sample exited ${result.status}`));
+    try {
+        const result = await boundedCommand({
+            command: ["/usr/bin/sample", String(pid), "2", "-file", pending],
+            timeoutMs: 10_000,
+        });
+        if (result.error || result.status !== 0) {
+            throw new Error(result.error?.message ?? (result.stderr.trim() || `sample exited ${result.status}`));
+        }
+        await rename(pending, file);
+    } catch (error) {
+        await unlink(pending).catch((cleanupError) => {
+            logger.debug({ cleanupError, pending }, "Pending stall sample cleanup");
+        });
+        throw error;
     }
 
-    const { rename } = await import("node:fs/promises");
-    await rename(pending, file);
     logger.warn({ pid, at, lagMs, file }, "hub server stall sample saved");
 }
 
