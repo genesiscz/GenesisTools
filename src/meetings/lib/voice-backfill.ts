@@ -126,6 +126,7 @@ export interface LearningRun {
     signal?: AbortSignal;
     acquiredBy?: "live" | "backfill";
     progress?: (progress: { done: number; total: number; added: number; skipped: number; step: string }) => void;
+    publishWhenFree?: (publish: () => Promise<BackfillRow[]>) => Promise<BackfillRow[]>;
 }
 
 function sameRecording(a: MeetingRecord, b: MeetingRecord): boolean {
@@ -161,11 +162,11 @@ export async function learnMeetingVoices(options: {
                 [...(decision.refusals?.values() ?? [])].reduce((sum, n) => sum + n, 0)
         );
     const total = decisions.reduce((sum, d) => sum + units(d), 0);
-    let done = 0,
-        added = 0,
-        skipped = 0;
-    job.progress?.({ done, total, added, skipped, step: "Checking confirmed lines" });
     const finish = async (current: MeetingRecord) => {
+        let done = 0,
+            added = 0,
+            skipped = 0;
+        job.progress?.({ done, total, added, skipped, step: "Checking confirmed lines" });
         job.signal?.throwIfAborted();
         if (!dryRun) {
             journal.repairVoiceReceipts(record.id);
@@ -279,12 +280,13 @@ export async function learnMeetingVoices(options: {
                   },
               ];
     };
-    return dryRun
-        ? finish(record)
-        : access.store.withRecords({
-              ids: [record.id],
-              fn: async (current) => finish(current.get(record.id)!),
-          });
+    if (dryRun) {
+        return finish(record);
+    }
+    // Keep the prepared prints and their source checks. Each publication attempt rereads the meeting under its lock.
+    const publish = () =>
+        access.store.withRecords({ ids: [record.id], fn: (current) => finish(current.get(record.id)!) });
+    return job.publishWhenFree ? job.publishWhenFree(publish) : publish();
 }
 
 export function backfillRecords(options: VoicesAccess & { meetings?: string[]; project?: string; dryRun?: boolean }) {

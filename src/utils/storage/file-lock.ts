@@ -159,6 +159,33 @@ export function withRecoverablePathArbitrationSync<T>(targetPath: string, fn: ()
     }
 }
 
+/** Wait until the path can be taken or the caller's deadline signal fires. A dying process need not emit a file event. */
+export async function waitForPathArbitration(targetPath: string, deadlineSignal: AbortSignal): Promise<boolean> {
+    const { watchFileFeed } = await import("@genesiscz/utils/fs/file-feed-watcher");
+    let available = false;
+    let failure: unknown;
+    await watchFileFeed({
+        path: `${arbitrationPath(targetPath)}.lock`,
+        signal: deadlineSignal,
+        onChange: () => {
+            try {
+                withRecoverablePathArbitrationSync(targetPath, () => {});
+                available = true;
+            } catch (error) {
+                if (error instanceof PathLockBusyError) {
+                    return;
+                }
+                failure = error;
+            }
+            return { done: true };
+        },
+    });
+    if (failure) {
+        throw failure;
+    }
+    return available && !deadlineSignal.aborted;
+}
+
 /**
  * Try to acquire a lock file atomically: an O_CREAT|O_EXCL create (writeFile flag:'wx'), and when the file exists,
  * the shared fenced takeover (`takeOverStaleClaimAsync` in pidfile.ts, which also owns the rule for an empty lock)

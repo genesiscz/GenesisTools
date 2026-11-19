@@ -4,6 +4,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import type { SampleId } from "@genesiscz/utils/meetings/voice-library";
+import { PathLockBusyError, waitForPathArbitration } from "@genesiscz/utils/storage/file-lock";
 import { DecisionJournal } from "../decision-journal";
 import { recordPeople } from "../listen-answers";
 import { errorText } from "../shared";
@@ -13,6 +14,7 @@ import { applyVoices, type VoicesAccess } from "../voices";
 import type { VoiceJob, VoicesParams } from "./api";
 
 const { log } = logger.scoped("meetings-voice-jobs");
+const LIBRARY_LOCK_WAIT_MS = 5_000;
 
 interface Options extends VoicesAccess {
     notify: (job: VoiceJob) => void;
@@ -167,6 +169,7 @@ export class MeetingVoiceJobs {
                     signal: run.controller.signal,
                     acquiredBy: kind === "backfill" ? "backfill" : "live",
                     progress: ({ added, skipped, ...progress }) => this.update(run, { added, skipped, progress }),
+                    publishWhenFree: (publish) => this.publishWhenFree(run, publish),
                 };
                 // Undo may have retired some units before this job reached the head of the queue.
                 const current = this.options.store.read(record.id);
@@ -207,6 +210,34 @@ export class MeetingVoiceJobs {
                 return rows;
             }
         );
+    }
+
+    private async publishWhenFree(run: Run, publish: () => Promise<BackfillRow[]>): Promise<BackfillRow[]> {
+        let wait: AbortSignal | undefined;
+        const { signal } = run.controller;
+        for (;;) {
+            signal.throwIfAborted();
+            try {
+                return await publish();
+            } catch (error) {
+                if (!(error instanceof PathLockBusyError)) {
+                    throw error;
+                }
+                wait ??= AbortSignal.any([signal, AbortSignal.timeout(LIBRARY_LOCK_WAIT_MS)]);
+                this.update(run, { progress: { ...run.row.progress, step: "Waiting for the voice library" } });
+                if (!(await waitForPathArbitration(error.targetPath, wait))) {
+                    signal.throwIfAborted();
+                    const message =
+                        "Voice library lock timed out. Learning remains pending for the next service start.";
+                    log.warn(
+                        { meeting: run.row.meeting, path: error.targetPath, waitMs: LIBRARY_LOCK_WAIT_MS },
+                        message
+                    );
+                    throw new Error(message, { cause: error });
+                }
+                // The meeting lock was released before the wait. Recheck the decision and source before publication.
+            }
+        }
     }
 
     private scheduleNaming(meeting: string, project: string, ids: SampleId[], delaySec: number): void {
