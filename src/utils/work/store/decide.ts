@@ -4,7 +4,7 @@ import type { ContextStamp, NewChange } from "../model/change";
 import type { Actor, Item, ItemFields, ItemId } from "../model/item";
 import { asItemId } from "../model/item";
 import type { CreatedPayload, ItemPatch } from "../model/payloads";
-import type { ItemState, ItemType, LinkKind, LogResult, Severity } from "../model/vocab";
+import type { ItemState, ItemType, LinkKind, LogResult, Role, Severity } from "../model/vocab";
 import { isOpenState } from "../model/vocab";
 import type { DeliveryReceipt, LegacyAction } from "../ports";
 import { RULE_FIELDS, type RuleField, type WriteVerb } from "../rules/config";
@@ -1168,14 +1168,20 @@ function guard(command: WorkCommand, view: StoreView, env: WriteEnv): Decision |
         }
 
         const item = resolved.item;
-        const roles = rolesOf(view, item, ask);
-        const rule = rules.mayWrite(item.type, verb).value;
+        const resolvedRule = rules.mayWrite(item.type, verb);
+        const rule = resolvedRule.value;
 
-        if (allows(rule, roles) || (workerMay && roles.includes("worker"))) {
+        if (rule === "anyone") {
             return null;
         }
 
-        const needs = rule === "anyone" ? "anyone" : rule.length === 0 ? "nobody" : rule.join(" or ");
+        const roles = rolesOf(view, item, ask);
+
+        if (allows(rule, roles) || (workerMay && resolvedRule.from === "default" && roles.includes("worker"))) {
+            return null;
+        }
+
+        const needs = rule.length === 0 ? "nobody" : rule.join(" or ");
         return {
             ok: false,
             diagnostics: [
@@ -1190,7 +1196,22 @@ function guard(command: WorkCommand, view: StoreView, env: WriteEnv): Decision |
     const first = (checks: (Decision | null)[]): Decision | null => checks.find((c) => c !== null) ?? null;
 
     switch (command.verb) {
-        case "spot":
+        case "spot": {
+            const rule = rules.mayWrite(command.type, "spot").value;
+            const roles: Role[] = [];
+
+            if (ask.ownerKind) {
+                roles.push("owner");
+            }
+
+            if (ask.sessionId !== null) {
+                roles.push("poster");
+            }
+
+            return allows(rule, roles)
+                ? null
+                : fail("ROLE_REFUSED", `This actor may not spot items of type ${command.type}.`);
+        }
         case "add":
         case "delivered":
             return null;
@@ -1199,7 +1220,10 @@ function guard(command: WorkCommand, view: StoreView, env: WriteEnv): Decision |
                 command.type === undefined &&
                 command.parent === undefined &&
                 command.for === undefined &&
-                command.title === undefined;
+                command.title === undefined &&
+                command.severity === undefined &&
+                command.during === undefined &&
+                Object.keys(command.fields ?? {}).every((key) => key === "why" || key === "userSees" || key === "cost");
             return check(command.ref, "edit", onlyDeferral);
         }
         case "link":

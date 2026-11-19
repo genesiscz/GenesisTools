@@ -154,6 +154,23 @@ describe("the config file", () => {
 });
 
 describe("the write rules", () => {
+    test("spot and worker deferral honor the project's explicit rules", async () => {
+        const rules = resolveWorkRules([
+            { layer: "config.project", rules: { types: { bug: { writes: { spot: ["owner"], edit: [] } } } } },
+        ]);
+        const spot = { verb: "spot", type: "bug", title: "report", during: "none", fields: {} } as const;
+        expect((await write(ctx("agent", { rules }), spot)).diagnostics[0].code).toBe("ROLE_REFUSED");
+        expect((await write(ctx("owner", { rules, actor: actor("owner", "owner") }), spot)).ok).toBe(true);
+
+        const made = await write(ctx("agent"), { verb: "add", type: "bug", title: "report" });
+        const id = made.ok ? made.data.items[0].id : "";
+        expect((await write(ctx("agent"), { verb: "claim", ref: id })).ok).toBe(true);
+        expect(
+            (await write(ctx("agent", { rules }), { verb: "edit", ref: id, fields: { why: "later" } })).diagnostics[0]
+                .code
+        ).toBe("ROLE_REFUSED");
+    });
+
     test("a released worker and a child with only its lead's session cannot edit", async () => {
         const made = await write(ctx("worker"), { verb: "add", type: "task", title: "work" });
         const id = made.ok ? made.data.items[0].id : "";
