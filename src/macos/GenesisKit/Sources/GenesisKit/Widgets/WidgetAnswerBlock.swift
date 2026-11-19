@@ -81,9 +81,12 @@ private struct WidgetClampedMarkdown: View {
                     }
                 }
             if overflows {
-                Button(expanded ? "Show less" : "Show all") {
+                Button {
                     GenMotion.perform(expanding: !expanded, reduceMotion: reduceMotion) { expanded.toggle() }
-                }.buttonStyle(.genHoverPlain()).font(.caption)
+                } label: {
+                    Text(expanded ? "Show less" : "Show all").font(.caption)
+                        .frame(minHeight: 22).contentShape(Rectangle())
+                }.buttonStyle(.genHoverPlain())
             }
         }
     }

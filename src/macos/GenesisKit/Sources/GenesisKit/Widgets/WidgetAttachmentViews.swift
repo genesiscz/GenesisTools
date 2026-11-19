@@ -79,7 +79,7 @@ private struct WidgetAssetTile: View {
             HStack(spacing: 3) {
                 Text(verbatim: asset.name)
                     .font(.system(size: 10, weight: .medium)).lineLimit(1).truncationMode(.middle)
-                if isVideo {
+                if isVideo, asset.error == nil {
                     Spacer(minLength: 0)
                     IconButton(
                         systemName: "slider.horizontal.3",
@@ -89,12 +89,25 @@ private struct WidgetAssetTile: View {
                 }
             }
             .frame(width: tile.width, alignment: .leading)
-            Text(verbatim: detail)
-                .font(.system(size: 9).monospacedDigit())
-                .foregroundStyle(asset.error != nil || reviewRequired ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
-                .lineLimit(1)
-                .frame(width: tile.width, alignment: .leading)
-                .instantTooltip(asset.error ?? detail)
+            if isVideo, asset.error != nil {
+                Button { showMedia(.video(asset.id)) } label: {
+                    ViewThatFits(in: .horizontal) {
+                        Label("Review failure", systemImage: "exclamationmark.triangle").fixedSize()
+                        Text("Details")
+                    }.font(.system(size: 11)).frame(width: tile.width).frame(minHeight: 22)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.genHoverPlain())
+                .instantTooltip("See why video preparation failed and try again")
+                .accessibilityLabel("Review video preparation failure")
+            } else {
+                Text(verbatim: detail)
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(reviewRequired ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                    .lineLimit(1)
+                    .frame(width: tile.width, alignment: .leading)
+                    .instantTooltip(detail)
+            }
         }
         // Room for the remove badge that sits over the corner.
         .padding(.top, remove == nil ? 0 : 6)
@@ -116,7 +129,8 @@ private struct WidgetAssetTile: View {
             return "Preparing frames…"
         }
         guard let counts = manifest?.counts else { return asset.status?.capitalized ?? "Video" }
-        return reviewRequired ? "Review \(counts.kept) frames" : "\(counts.kept) frames · \(counts.images) images"
+        let frames = Plural.count(counts.kept, "frame")
+        return reviewRequired ? "Review " + frames : frames + " · " + Plural.count(counts.images, "image")
     }
 }
 
@@ -160,7 +174,7 @@ struct WidgetCardAttachments: View {
                             aspect: aspect, height: height, maxWidth: maxWidth, minWidth: height * 0.6)
                         VStack(alignment: .leading, spacing: 3) {
                             MediaThumbnailView(item: Self.item(image), gallery: gallery, aspect: aspect)
-                                .frame(width: size.width, height: size.height)
+                                .frame(width: max(22, size.width), height: max(22, size.height))
                             Text(verbatim: image.label ?? image.name)
                                 .font(.system(size: 10)).foregroundStyle(.secondary)
                                 .lineLimit(1).truncationMode(.middle)
@@ -177,7 +191,7 @@ struct WidgetCardAttachments: View {
                     showMedia(.images(attachments, attachments[0].id))
                 } label: {
                     Label("Compare side by side…", systemImage: "rectangle.split.2x1")
-                        .font(.system(size: 11))
+                        .font(.system(size: 11)).frame(minHeight: 22).contentShape(Rectangle())
                 }
                 .buttonStyle(.genHoverPlain())
                 .instantTooltip("Single, side by side, wipe and pixel difference views")
