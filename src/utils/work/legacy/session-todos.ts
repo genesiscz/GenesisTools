@@ -94,8 +94,14 @@ export function sessionTodoLogState(state: ItemState): string {
 export function readSessionTodos(db: Database): { rows: StoredSessionTodo[]; stamp: string } {
     const stamp = String((db.query("SELECT MAX(seq) AS seq FROM changes").get() as { seq: number | null }).seq ?? 0);
     const rows = db
-        .query<{ meta: string | null; body: string | null; state: ItemState }, [string]>(
-            "SELECT p.meta AS meta, i.body AS body, i.state AS state FROM pointers p JOIN items i ON i.id = p.item WHERE p.kind = ?"
+        .query<
+            { meta: string | null; title: string; body: string | null; state: ItemState; updatedTs: string },
+            [string]
+        >(
+            `SELECT p.meta, i.title, i.body, i.state, i.updated_ts AS updatedTs
+             FROM pointers p JOIN items i ON i.id = p.item
+             WHERE p.kind = ?
+             ORDER BY i.updated_ts DESC, i.id`
         )
         .all(SESSION_TODO_POINTER)
         .flatMap((r) => {
@@ -109,7 +115,15 @@ export function readSessionTodos(db: Database): { rows: StoredSessionTodo[]; sta
             // The log's word survives while the item still stands for it (superseded and dismissed are both dropped);
             // a move through the store (`tools work finish`) gives the word of the new state.
             const state = sessionTodoState(logState) === r.state ? logState : sessionTodoLogState(r.state);
-            return [{ ...rest, prompt: r.body ?? "", state }];
+            return [
+                {
+                    ...rest,
+                    title: r.title,
+                    prompt: r.body ?? "",
+                    state,
+                    updatedTs: r.updatedTs > rest.updatedTs ? r.updatedTs : rest.updatedTs,
+                },
+            ];
         });
     return { rows, stamp };
 }
@@ -120,7 +134,7 @@ export function sessionTodoKey(row: Pick<SessionTodoRow, "sessionId" | "number">
 
 function projectOf(row: SessionTodoRow): string {
     const path = row.repoRoot ?? row.cwd;
-    return row.project ?? (path ? (path.split("/").filter(Boolean).pop() ?? "unknown") : "unknown");
+    return row.project ?? (path ? (path.split(/[/\\]/).filter(Boolean).pop() ?? "unknown") : "unknown");
 }
 
 function actorOf(row: SessionTodoRow): Actor {
@@ -157,99 +171,92 @@ export function mirrorSessionTodos(
     random: () => string = randomItemSuffix
 ): MirrorReport {
     const report: MirrorReport = { created: 0, changed: 0, unchanged: 0 };
-    const known = new Map<string, { item: ItemId; meta: string }>();
-
-    for (const pointer of db
-        .query<{ item: string; target: string; meta: string | null }, [string]>(
-            "SELECT item, target, meta FROM pointers WHERE kind = ?"
-        )
-        .all(SESSION_TODO_POINTER)) {
-        known.set(pointer.target, { item: asItemId(pointer.item), meta: pointer.meta ?? "" });
-    }
+    const lookup = db.query<{ item: ItemId; meta: string | null }, [string, string]>(
+        "SELECT item, meta FROM pointers WHERE kind = ? AND target = ?"
+    );
 
     for (const row of rows) {
         const key = sessionTodoKey(row);
-        const had = known.get(key);
         const title = (row.title || row.prompt.split("\n")[0] || `TODO ${row.number}`).slice(0, 500);
         const state = sessionTodoState(row.state);
         const meta = metaOf(row);
         const metaJson = SafeJSON.stringify(meta);
 
-        // The pointer carries every field but the text, the update time and the log's state word included: when it
-        // is the same, the row did not change since the last write, and nothing is read or written.
-        if (had !== undefined && had.meta === metaJson) {
-            report.unchanged++;
-            continue;
-        }
-
         const ts = row.updatedTs;
         const actor = actorOf(row);
         const origin = { via: "legacy" as const, uid: `${SESSION_TODO_POINTER}:${row.id}:${row.updatedTs}` };
-        const id = had?.item ?? asItemId(`w_${random()}`);
-        const base = { v: 1 as const, ts, item: id, actor, origin };
-        let wrote = false;
 
-        db.transaction(() => {
-            const item = had === undefined ? null : selectItem(db, id);
+        const result = db
+            .transaction((): keyof MirrorReport => {
+                const had = lookup.get(SESSION_TODO_POINTER, key);
+                const id = had?.item ?? asItemId(`w_${random()}`);
+                const item = had === null ? null : selectItem(db, id);
+                const base = { v: 1 as const, ts, item: id, actor, origin };
+                let wrote = false;
 
-            if (item === null) {
-                applyChange(db, {
-                    ...base,
-                    kind: "created",
-                    payload: {
-                        type: "task",
-                        state,
-                        project: projectOf(row),
-                        title,
-                        body: row.prompt,
-                        ...(row.for !== undefined ? { for: row.for } : {}),
-                        tags: [SESSION_TODO_TAG],
-                        fields: {},
-                    },
-                });
-                wrote = true;
-            } else {
-                const set: ItemPatch = {};
-
-                if (item.title !== title) {
-                    set.title = title;
+                if (item !== null && item.updatedTs > ts) {
+                    return "unchanged";
                 }
 
-                if ((item.body ?? "") !== row.prompt) {
-                    set.body = row.prompt;
-                }
-
-                if (Object.keys(set).length > 0) {
-                    applyChange(db, { ...base, kind: "edited", payload: { set, reconcile: true } });
-                    wrote = true;
-                }
-
-                if (item.state !== state) {
+                if (item === null) {
                     applyChange(db, {
                         ...base,
-                        kind: "moved",
-                        payload: { from: item.state, to: state, reconcile: true },
+                        kind: "created",
+                        payload: {
+                            type: "task",
+                            state,
+                            project: projectOf(row),
+                            title,
+                            body: row.prompt,
+                            ...(row.for !== undefined ? { for: row.for } : {}),
+                            tags: [SESSION_TODO_TAG],
+                            fields: {},
+                        },
                     });
                     wrote = true;
+                } else {
+                    const set: ItemPatch = {};
+
+                    if (item.title !== title) {
+                        set.title = title;
+                    }
+
+                    if ((item.body ?? "") !== row.prompt) {
+                        set.body = row.prompt;
+                    }
+
+                    if (item.project !== actor.project) {
+                        set.project = actor.project;
+                    }
+
+                    if (Object.keys(set).length > 0) {
+                        applyChange(db, { ...base, kind: "edited", payload: { set, reconcile: true } });
+                        wrote = true;
+                    }
+
+                    if (item.state !== state) {
+                        applyChange(db, {
+                            ...base,
+                            kind: "moved",
+                            payload: { from: item.state, to: state, reconcile: true },
+                        });
+                        wrote = true;
+                    }
                 }
-            }
 
-            if (had === undefined || had.meta !== metaJson) {
-                applyChange(db, {
-                    ...base,
-                    kind: "pointed",
-                    payload: { pointer: { kind: SESSION_TODO_POINTER, target: key, meta: { ...meta } } },
-                });
-            }
-        })();
+                if (had?.meta !== metaJson) {
+                    applyChange(db, {
+                        ...base,
+                        kind: "pointed",
+                        payload: { pointer: { kind: SESSION_TODO_POINTER, target: key, meta: { ...meta } } },
+                    });
+                }
 
-        if (had === undefined) {
-            report.created++;
-        } else if (wrote || had.meta !== metaJson) {
-            report.changed++;
-        } else {
-            report.unchanged++;
-        }
+                return item === null ? "created" : wrote || had?.meta !== metaJson ? "changed" : "unchanged";
+            })
+            .immediate();
+
+        report[result]++;
     }
 
     return report;
