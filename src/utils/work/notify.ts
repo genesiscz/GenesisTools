@@ -8,6 +8,7 @@
  * here: they keep their own path, so nothing that shows today stops showing (list 2 of the detail file).
  */
 import type { Database } from "bun:sqlite";
+import { randomUUID } from "node:crypto";
 import type { Change } from "./model/change";
 import type { DeliveredPayload, MovedPayload, PairedPayload } from "./model/payloads";
 import { type ItemType, SEVERITIES, type Severity } from "./model/vocab";
@@ -160,6 +161,7 @@ export interface NotifyReport {
 }
 
 const CURSOR = "notify";
+const LEASE_MS = 120_000;
 const BATCH = 500;
 
 const ACTION_WORDS: Record<NotifyAction, string> = {
@@ -176,8 +178,7 @@ const ACTION_WORDS: Record<NotifyAction, string> = {
 };
 
 /**
- * Claim the batch after its rules load, before sending. A failed load can retry the same batch, and two runners
- * that loaded the same batch cannot both send it.
+ * Claim delivery after loading rules. Advance through the journal only when each line has been delivered or skipped.
  */
 export async function runNotifyOnce(deps: NotifyDeps): Promise<NotifyReport> {
     const { db } = deps;
@@ -198,54 +199,84 @@ export async function runNotifyOnce(deps: NotifyDeps): Promise<NotifyReport> {
         return action !== null && item !== null ? [{ change, action, item }] : [];
     });
     const projects = await loadRulesForItems(batch, deps.loadRules);
-    const cursor = last.seq;
-    // Another writer may have claimed a shorter batch while we loaded. Take its unclaimed suffix under the lock.
-    const claimedAfter = db
-        .transaction(() => {
-            const current = cursorQuery.get(CURSOR)?.seq ?? start;
+    const token = randomUUID();
+    const now = new Date();
+    const lease = db.run(
+        "UPDATE cursors SET lease_owner = ?, lease_until = ? WHERE consumer = ? AND (lease_owner IS NULL OR lease_until <= ?)",
+        [token, new Date(now.getTime() + LEASE_MS).toISOString(), CURSOR, now.toISOString()]
+    );
+    const claimedAfter = cursorQuery.get(CURSOR)?.seq ?? start;
 
-            if (current < cursor) {
-                db.run("UPDATE cursors SET seq = ? WHERE consumer = ?", [cursor, CURSOR]);
-            }
-
-            return current;
-        })
-        .immediate();
-
-    if (claimedAfter >= cursor) {
+    if (lease.changes === 0) {
         return { seen: 0, sent: 0, cursor: claimedAfter };
     }
 
+    const ready = new Map(batch.map((entry) => [entry.change.seq, entry]));
+    let cursor = claimedAfter;
+    let seen = 0;
     let sent = 0;
 
-    for (const { change, action, item } of batch) {
-        if (change.seq <= claimedAfter) {
-            continue;
+    try {
+        for (const change of changes) {
+            if (change.seq <= claimedAfter) {
+                continue;
+            }
+
+            const now = new Date();
+            const renew = db.run(
+                "UPDATE cursors SET lease_until = ? WHERE consumer = ? AND lease_owner = ? AND lease_until > ?",
+                [new Date(now.getTime() + LEASE_MS).toISOString(), CURSOR, token, now.toISOString()]
+            );
+
+            if (renew.changes === 0) {
+                break;
+            }
+
+            const entry = ready.get(change.seq);
+
+            if (entry !== undefined) {
+                const { action, item } = entry;
+                const resolved = resolveNotify(projects.get(item.project)?.loaded.notifyLayers ?? [], {
+                    type: item.type,
+                    action,
+                    ...(item.severity !== null && item.severity !== undefined ? { severity: item.severity } : {}),
+                    production: item.fields.production === true,
+                });
+
+                if (resolved.level === "inbox" || resolved.level === "banner") {
+                    await deps.inbox({
+                        item: item.id,
+                        project: item.project,
+                        type: item.type,
+                        action,
+                        level: resolved.level,
+                        title: `${item.type} ${item.id} ${ACTION_WORDS[action]}`,
+                        text: `${item.title}\n\n${item.project} · decided by ${resolved.from}`,
+                        sessionId: change.actor.sessionId,
+                    });
+                    sent++;
+                }
+            }
+
+            const advanced = db.run("UPDATE cursors SET seq = ? WHERE consumer = ? AND lease_owner = ?", [
+                change.seq,
+                CURSOR,
+                token,
+            ]);
+
+            if (advanced.changes === 0) {
+                break;
+            }
+
+            cursor = change.seq;
+            seen++;
         }
 
-        const resolved = resolveNotify(projects.get(item.project)?.loaded.notifyLayers ?? [], {
-            type: item.type,
-            action,
-            ...(item.severity !== null && item.severity !== undefined ? { severity: item.severity } : {}),
-            production: item.fields.production === true,
-        });
-
-        if (resolved.level !== "inbox" && resolved.level !== "banner") {
-            continue;
-        }
-
-        await deps.inbox({
-            item: item.id,
-            project: item.project,
-            type: item.type,
-            action,
-            level: resolved.level,
-            title: `${item.type} ${item.id} ${ACTION_WORDS[action]}`,
-            text: `${item.title}\n\n${item.project} · decided by ${resolved.from}`,
-            sessionId: change.actor.sessionId,
-        });
-        sent++;
+        return { seen, sent, cursor };
+    } finally {
+        db.run("UPDATE cursors SET lease_owner = NULL, lease_until = NULL WHERE consumer = ? AND lease_owner = ?", [
+            CURSOR,
+            token,
+        ]);
     }
-
-    return { seen: changes.filter((change) => change.seq > claimedAfter).length, sent, cursor };
 }

@@ -52,6 +52,34 @@ afterEach(() => {
 });
 
 describe("the notifier (P8 decision 3)", () => {
+    test("a failed inbox write retries its line without repeating acknowledged lines", async () => {
+        const delivered: string[] = [];
+        const deps = {
+            db,
+            loadRules,
+            inbox: async (line: NotifyLine) => void delivered.push(line.text.split("\n")[0]),
+        };
+        await runNotifyOnce(deps);
+        await write(ctx("s1"), { verb: "spot", title: "first", type: "bug", fields: { production: true } });
+        await write(ctx("s1"), { verb: "spot", title: "second", type: "bug", fields: { production: true } });
+
+        await expect(
+            runNotifyOnce({
+                ...deps,
+                inbox: async (line) => {
+                    if (line.text.startsWith("second")) {
+                        throw new Error("inbox unavailable");
+                    }
+
+                    await deps.inbox(line);
+                },
+            })
+        ).rejects.toThrow("inbox unavailable");
+        expect(delivered).toEqual(["first"]);
+        await runNotifyOnce(deps);
+        expect(delivered).toEqual(["first", "second"]);
+    });
+
     test("defaults: a production bug and an undelivered high reopen are inbox lines; the rest is the tree only", () => {
         expect(defaultNotify({ type: "bug", action: "spotted", production: true })).toBe("inbox");
         expect(defaultNotify({ type: "bug", action: "spotted" })).toBe("list");
