@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { AppDoor, Fix, UnavailableCode } from "@genesiscz/utils/genesis-tools/actions/define";
 import type { StateStore, StateValue } from "@genesiscz/utils/genesis-tools/actions/state";
 import { type AppBuilder, appBuilder, defaultBuildCommand } from "@genesiscz/utils/genesis-tools/app-builder";
@@ -15,6 +17,7 @@ export type NeedSpec =
     | { kind: "platform"; platform: "darwin" | "linux" }
     | { kind: "app.installed" }
     | { kind: "app.bundle" }
+    | { kind: "app.diffViewer" }
     | { kind: "app.rpc"; method: AppRpcMethod }
     | { kind: "app.part"; part: AppPartId }
     | { kind: "app.grant"; grant: PermissionKindId }
@@ -35,6 +38,7 @@ export const Need = {
         installed: { kind: "app.installed" },
         /** The bundle and its launcher on disk, routing not asked: for effects that start the bundle themselves. */
         bundle: { kind: "app.bundle" },
+        diffViewer: { kind: "app.diffViewer" },
         rpc: (method: AppRpcMethod): NeedSpec => ({ kind: "app.rpc", method }),
         part: (part: AppPartId): NeedSpec => ({ kind: "app.part", part }),
         grant: (grant: PermissionKindId): NeedSpec => ({ kind: "app.grant", grant }),
@@ -133,6 +137,19 @@ export function checkAppInstalled(
     return inTest(env, "GenesisTools.app") ?? appBundleProblem(env, { routing: true }) ?? OK_PROBE;
 }
 
+/** Older hub builds can link the part without bundling the page that displays a proposal's diff. */
+export function checkAppDiffViewer(bundle: string, builder: AppBuilder | null): NeedResult {
+    if (existsSync(join(bundle, "Contents", "Resources", "diff-viewer", "index.html"))) {
+        return OK_PROBE;
+    }
+
+    return fail(
+        "app-stale",
+        "GenesisTools.app has no bundled diff viewer.",
+        buildFix({ builder }, "hub", "Rebuilds the hub part with its diff viewer.")
+    );
+}
+
 /** Human-readable diagnostic text. A satisfied need has nothing to explain. */
 export function describeNeedFailure(result: NeedResult): string {
     if (result.ok) {
@@ -178,6 +195,11 @@ export const NEED_CHECKERS: { [K in NeedKind]: Checker<Extract<NeedSpec, { kind:
 
     "app.bundle": async (_need, env) =>
         inTest(env, "GenesisTools.app") ?? appBundleProblem(env, { routing: false }) ?? OK_PROBE,
+
+    "app.diffViewer": async (_need, env) =>
+        inTest(env, "GenesisTools.app") ??
+        appBundleProblem(env, { routing: false }) ??
+        checkAppDiffViewer(env.facts.appBundle().path, env.builder),
 
     "app.part": async (need, env) => {
         const refused = inTest(env, "GenesisTools.app") ?? appBundleProblem(env, { routing: false });
@@ -327,6 +349,7 @@ export function describeNeed(need: NeedSpec): string {
             return `service.client(${need.method})`;
         case "app.installed":
         case "app.bundle":
+        case "app.diffViewer":
         case "person.display":
         case "person.terminal":
         case "sudo.touchId":
