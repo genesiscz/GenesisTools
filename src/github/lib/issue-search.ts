@@ -260,17 +260,16 @@ async function searchHostedIssues(query: string, options: RankedSearchOptions): 
         });
         return mapItems(data.items, mode);
     } catch (error) {
-        if (!(error instanceof RequestError) || (error.status !== 403 && error.status !== 429)) {
+        if (!(error instanceof RequestError) || !isRateLimitError(error)) {
             throw error;
         }
 
-        const { response, status, message: detail } = error;
+        const { response, status } = error;
         const reset = response?.headers["x-ratelimit-reset"];
         const resetDate = new Date(Number(reset) * 1000);
         const resetTime = reset && Number.isFinite(resetDate.getTime()) ? resetDate.toISOString() : undefined;
-        const reason = isRateLimitError(error) ? "rate limit reached" : detail;
         const resetHint = resetTime ? `Rate limit resets at ${resetTime}.` : "GitHub did not provide a reset time.";
-        const message = `GitHub ${mode} search (HTTP ${status}): ${reason}. Search quota: 10 requests per minute. ${resetHint}`;
+        const message = `GitHub ${mode} search (HTTP ${status}): rate limit reached. Search quota: 10 requests per minute. ${resetHint}`;
         logger.warn({ mode, status, resetTime }, message);
         throw new Error(message, { cause: error });
     }
