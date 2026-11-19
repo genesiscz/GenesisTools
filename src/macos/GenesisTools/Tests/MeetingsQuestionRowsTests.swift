@@ -306,6 +306,9 @@ extension MeetingsQuestionRowsTests {
         detail.rows = .failed(failure, previous: nil)
         XCTAssertEqual(detail.rowsForReopen.failure, failure)
         XCTAssertEqual(detail.rowsForReopen.value, saved)
+        detail.restoreRowsForReopen()
+        XCTAssertEqual(detail.rows.failure, failure, "a reopened failure keeps its sentence and Details, not a loading state no read ends")
+        XCTAssertEqual(detail.rows.value, saved)
     }
 
     func testPatchPreservesEveryOptionalRowAndEvidenceField() throws {

@@ -869,12 +869,13 @@ extension MeetingDetailModel {
         return .loading(previous: saved)
     }
 
+    /// A failed read keeps its failure and Details (its Retry starts the next read); an unread pane starts its read.
     func restoreRowsForReopen() {
         let unread = rows == .idle
-        if rows.value == nil, let saved = rowsForReopen.value {
-            rows = .loading(previous: saved)
-            if unread { readRows(quiet: true) }
-        }
+        let reopened = rowsForReopen
+        guard rows.value == nil, reopened.value != nil else { return }
+        rows = reopened
+        if unread { readRows(quiet: true) }
     }
 }
 
