@@ -54,9 +54,8 @@ import {
 } from "../lib/listen-session";
 import { GivenAnswerAdapter } from "../lib/listen-session-answer";
 import { OpenedMeeting } from "../lib/opened-meeting";
+import { answerVocabulary, DICTIONARY_CHOICES } from "../lib/question-answers";
 import {
-    answerVocabulary,
-    DICTIONARY_CHOICES,
     type HeardContext,
     heardTimes,
     NONE_OF_THESE,

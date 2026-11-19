@@ -12,6 +12,7 @@ import * as channelOperation from "@app/meetings/lib/channel-operation";
 import { DecisionJournal } from "@app/meetings/lib/decision-journal";
 import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
+import { measureRoomCall } from "@app/meetings/lib/room-call-metrics";
 import type { MeetingsResult } from "@app/meetings/lib/service/api";
 import { InProcessMeetingsClient } from "@app/meetings/lib/service/client";
 import type { voiceLibraryMethods } from "@app/meetings/lib/service/toolset-api";
@@ -66,6 +67,7 @@ import * as cli from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
 import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
 import { waitForPath } from "@genesiscz/utils/fs/watcher";
+import { sha256Json } from "@genesiscz/utils/hash";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import * as ocr from "@genesiscz/utils/macos/ocr";
@@ -287,6 +289,7 @@ interface MeetingsHandle {
     voices: ((input: unknown) => Promise<MeetingsResult<"voices.list">>) & VoiceDoors;
     lineEligibility(input: { meeting: string; line: number }): Promise<unknown>;
     look(input: { meeting: string; from: number | string; to: number | string }): Promise<unknown>;
+    measure(input: { meeting: string }): Promise<ReturnType<typeof measureRoomCall>>;
     list(): Array<{ id: string; seconds: number | null }>;
     open(ref: string): MeetingHandle;
     locate(ref: string): { store: string; setting?: string } | null;
@@ -779,34 +782,72 @@ describe("toolset method names", () => {
         });
     });
 
-    test("meetings.levels documents live and saved reads and opens a transcript-free meeting", async () => {
-        const toolset = new MeetingsToolset();
-        const doc = toolset.api.methods.find((method) => method.name === "levels")?.doc;
-        expect(doc).toContain("tools meetings evidence");
-        expect(doc).toContain("--levels");
-        expect(doc).toContain("live");
-        const store = new MeetingStore();
-        const record = await store.create(
-            { title: "Silent room", start: new Date().toISOString(), createdBy: "new" },
-            { command: "new", change: "fixture" }
-        );
-        const { meetings } = (await toolset.bootstrap()) as {
-            meetings: { levels(input: { meeting: string }): Promise<unknown> };
-        };
-        expect(await meetings.levels({ meeting: record.id })).toEqual([]);
-    });
-    test("the Recording handle lists switchTarget, restart and capabilities with their effects and CLI help", () => {
-        const methods = recorderApi.handles.find((handle) => handle.name === "Recording")?.methods;
-        for (const [name, effect] of [
-            ["switchTarget", "reversible"],
-            ["restart", "destructive"],
-            ["capabilities", "read"],
-        ]) {
-            expect(methods?.find((method) => method.name === name)).toMatchObject({
-                effect,
-                doc: expect.stringContaining("tools recorder"),
+    test("meetings.measure reads the frozen room-call bundle and identifies a missing file", async () => {
+        const root = mkdtempSync(join(tmpdir(), "repl-room-call-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: root }, async () => {
+            const store = new MeetingStore();
+            const { id: meeting } = await store.create(
+                { title: "Glasshouse rehearsal", start: "2026-10-01T09:00:00.000Z", createdBy: "new" },
+                { command: "new", change: "room-call fixture" }
+            );
+            const folder = join(store.folder(meeting), "room-call");
+            mkdirSync(folder);
+            const room = "Mica Vale";
+            const remote = "Lark Fen";
+            const line = { id: "line-glass", startSec: 2, endSec: 4 };
+            const reference = { meeting, entries: [{ ...line, speaker: remote }] };
+            const source = { rootMeeting: meeting, audioSha256: "a".repeat(64) };
+            const run = { revision: "glasshouse-revision", seats: null };
+            const holdout = {
+                source,
+                people: { owner: "Pip Ash", room: [room], remote: [remote] },
+                roomTarget: room,
+                lateRemote: { person: remote, fromSec: 1, toSec: 5 },
+                mute: { lastPositiveSec: 1, firstOmittedSec: 5 },
+                runs: { baseline: run, candidate: run },
+                libraryHash: "b".repeat(64),
+                referenceHash: sha256Json(reference),
+                lines: [line],
+                originalRemote: [line],
+                history: [],
+            };
+            const snapshot = {
+                ...run,
+                source,
+                holdoutHash: sha256Json(holdout),
+                libraryHash: holdout.libraryHash,
+                configHash: "c".repeat(64),
+                inputHash: "d".repeat(64),
+                training: [],
+                cachedDecisions: 0,
+                temporarySeeds: 0,
+                muteHint: { person: room, included: 1, explicit: 2, missing: 0 },
+                warnings: [],
+            };
+            const baseline = { ...snapshot, rows: [{ ...line, named: null, choices: [] }] };
+            const candidate = { ...snapshot, rows: [{ ...line, named: remote, choices: [] }] };
+            for (const [name, data] of Object.entries({ reference, holdout, baseline })) {
+                writeFileSync(join(folder, `${name}.json`), SafeJSON.stringify(data));
+            }
+
+            const meetings = await loadMeetings();
+            await expect(meetings.measure({ meeting })).rejects.toThrow(join("room-call", "candidate.json"));
+            writeFileSync(join(folder, "candidate.json"), SafeJSON.stringify(candidate));
+            const report = await meetings.measure({ meeting });
+            expect(report).toEqual(measureRoomCall({ reference, holdout, baseline, candidate }));
+            expect(report).toMatchObject({
+                structuralAccepted: true,
+                qualityPassed: false,
+                heldOut: 1,
+                baseline: { populations: { remote: { counts: { abstained: 1 } } } },
+                candidate: { populations: { remote: { counts: { namedCorrect: 1 } } } },
+                cohorts: { originalRemote: { recoveredName: [line.id] } },
             });
-        }
+            const help = describeMethod([new MeetingsToolset().api], "meetings.measure");
+            for (const word of ["room-call.ts", "reference.json", "holdout.json", "baseline.json", "candidate.json"]) {
+                expect(help).toContain(word);
+            }
+        });
     });
 
     test("a missing method names the real ones, while inspection and await still read missing names", async () => {

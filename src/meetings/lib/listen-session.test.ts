@@ -25,8 +25,8 @@ import {
     type SessionNote,
 } from "./listen-session";
 import { GivenAnswerAdapter } from "./listen-session-answer";
+import { answerVocabulary } from "./question-answers";
 import {
-    answerVocabulary,
     askedSpotSec,
     heardClip,
     openQuestions,

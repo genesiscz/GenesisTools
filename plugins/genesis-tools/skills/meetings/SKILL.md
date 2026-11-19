@@ -1,6 +1,6 @@
 ---
 name: meetings
-description: Polish a recorded meeting (Wispr Flow, Spellar, Teams) into one trustworthy file - fix misheard terms and code identifiers, re-attribute wrong speaker labels with scored rules, check the source's own summary against the transcript, and log every change as a diff. Use for "polish the transcript", "fix the meeting notes", "who said this in the meeting", "wrong speaker in Wispr", "build a glossary for the meeting", "export and clean the meeting", or any meeting export under a vault `meetings/` folder.
+description: Polish a recorded meeting (Wispr Flow, Spellar, Teams) into one trustworthy file - fix misheard terms and code identifiers, re-attribute wrong speaker labels with scored rules, check the source's own summary against the transcript, and log every change as a diff. Use for "polish the transcript", "fix the meeting notes", "who said this in the meeting", "wrong speaker in Wispr", "review learned voice samples", "build a glossary for the meeting", "export and clean the meeting", or any meeting export under a vault `meetings/` folder.
 ---
 
 # Meetings: export, polish, attribute
@@ -255,29 +255,60 @@ Cosine and margin are evidence, not probabilities. Missing models, quiet audio, 
 scores remain unknown. Ordinary reads never provision models. Preserve raw microphone, isolated call and optional
 estimated-clean tracks separately.
 
-Each sample lists the meeting, seat, track, time and words. `voices preview <meeting>` prints the lines the voice labeler would name, with scores and
-refusal reasons. A preview can cache line embeddings. `voices apply <meeting>` saves the names as suggestions.
-`voices remove <person> [--sample <n>]` retires that person's voice-named suggestions first.
+### Review a learned voice sample
 
-| Voice library command (after `tools meetings`) | REPL call (await the result) |
+Choose a scope, then copy the owner's name and the sample's stable `id` from the same row. An attendee may have
+no samples yet. In the examples, `project` is `Glasshouse`, `person` is `Mica Vale`, and `id` is
+`vs_glasshouse_04`. Substitute your listed values. Use the meeting ID for `meeting`.
+
+| CLI command (after `tools meetings`) | REPL call (await the result) |
 | --- | --- |
-| `voices --project <p> --json` | `meetings.voices({ scope: "project", project })` |
-| `voices --meeting <meeting> --person <person> --json` | `meetings.voices.list({ scope: { kind: "meeting", meeting }, person })` |
-| `voices samples <person> --project <p> --json` | `meetings.voices.samples({ project, person })` |
-| `voices play <person> --sample <id> --no-start --json` | `meetings.voices.sample({ id })` returns the verified file and slice |
-| `voices play <person> --sample <id>` | `meetings.voices.play({ id })` plays the clip and returns the same slice |
-| `voices quality --project <p> --person <person>` | `meetings.voices.quality({ project, person })` |
-| `voices move <person> --sample <id> --to <name>` | `meetings.voices.move({ id, person, to: { name } })` |
-| `voices reject <person> --sample <id> --reason wrong-person` | `meetings.voices.reject({ id, person, reason: "wrong-person" })` |
-| `voices remove <person> --sample <id> --preview` | `meetings.voices.remove({ id, preview: true })` |
-| `voices undo <token>` | `meetings.voices.undo({ token })` |
+| `voices --all --json` | `meetings.voices({ scope: "global" })` |
+| `voices --project "$project" --json` | `meetings.voices({ scope: "project", project })` |
+| `voices --meeting "$meeting" --person "$person" --json` | `meetings.voices.list({ scope: { kind: "meeting", meeting }, person })` |
+| `voices samples "$person" --project "$project" --json` | `meetings.voices.samples({ project, person })` |
+| `voices quality --project "$project" --person "$person" --json` | `meetings.voices.quality({ project, person })` |
+| `voices play "$person" --sample "$id" --no-start --json` | `meetings.voices.sample({ id, person })` |
+| `voices play "$person" --sample "$id"` | `meetings.voices.play({ id, person })` |
 
-The callable browser also takes `{ scope: "meeting", meeting: id }` or `{ scope: "global" }`. Each scope accepts a `person` filter.
-Copy the stable `id` from the list. For playback, pass `player` to choose a player or `start: false` to return the slice silently.
-In the REPL, add `preview: true` to inspect a move, rejection or removal.
-Use the preview's `planToken` on the same call without `preview` to
-apply it. A stale preview needs a fresh read. The applied receipt's `token` addresses that correction for Undo.
-Use `wrong-person` for an incorrect owner. Use `bad-audio` or `several-voices` when the clip is unsuitable for any owner.
+Match the resolved meeting, track and interval to the sample row. Play it for the owner before choosing a correction.
+A quality outlier flags a clip to listen to. The owner decides whether it needs a correction.
+
+| Owner's decision | CLI command (after `tools meetings`) | REPL call (await the result) |
+| --- | --- | --- |
+| The speaker is Lark Fen. | `voices move "$person" --sample "$id" --to "Lark Fen" --json` | `meetings.voices.move({ id, person, to: { name: "Lark Fen" } })` |
+| This is the wrong person. | `voices reject "$person" --sample "$id" --reason wrong-person --json` | `meetings.voices.reject({ id, person, reason: "wrong-person" })` |
+| Preview forgetting the clip. | `voices remove "$person" --sample "$id" --preview --json` | `meetings.voices.remove({ id, person, preview: true })` |
+| Apply that preview. | `voices remove "$person" --sample "$id" --plan-token "$planToken" --json` | `meetings.voices.remove({ id, person, planToken })` |
+| Undo the applied correction. | `voices undo "$token" --json` | `meetings.voices.undo({ token })` |
+
+A move keeps the ID and blocks the former owner from relearning the source. A `wrong-person` rejection blocks it for
+that owner alone. Use the same rejection command with `bad-audio` or `several-voices` to block the source for everyone.
+Plain removal lets an eligible backfill learn the clip again. Read the affected IDs and suggestions before applying a
+removal. The REPL also accepts `preview: true` on a move or rejection. On a stale preview, list again and get a fresh
+`planToken`. To check a rejection, verify the receipt lists the ID you played, then reopen the person's samples and
+check that ID is absent. Undo takes the applied receipt's `token` while the correction still owns the changes.
+Reopen the list again. The same ID should be back under its original owner and resolve to the same track and interval.
+
+### Follow voice learning jobs
+
+A human speaker answer or individual voice confirmation in a meeting with a project can queue learning after the
+decision is saved. Inspect progress (`done` / `total`, current step), added and skipped counts, and any error.
+
+| CLI command (after `tools meetings`) | REPL call (await the result) |
+| --- | --- |
+| `voices jobs --json` | `meetings.voiceJobs()` |
+| `voices jobs --project "$project" --json` | `meetings.voiceJobs({ project })` |
+| `voices jobs cancel "$jobId" --json` | `meetings.cancelVoiceJob(jobId)` |
+| `voices backfill "$meeting" --json` | `meetings.backfillVoices({ meetings: [meeting] })` |
+
+Use the job ID from the list to cancel queued or running work. The saved decision and already learned samples survive
+cancellation. Explicit backfill retries eligible lines and counts existing samples separately. The service also checks
+for unfinished learning when it starts. After learning a new sample, it schedules a naming pass for that meeting.
+Answers within `meetings.voices.reproposeDelaySec` (default 10 seconds) share one pass. Review the resulting speaker
+suggestions in the meeting.
+
+### Playback and seat evidence
 
 `play <meeting> --track <track>` plays one track; `show` lists the tracks. The first voice pass of a meeting embeds every line once and caches
 it (172 minutes: about 90 s at normal priority); later passes read the cache in about half a second. Its priority and
@@ -297,3 +328,15 @@ The recorded sound (`audio/`, `audio.jsonl` in each meeting folder) is kept for 
 after `global.capture.retentionDays` (30 days), but the sound goes only when `global.capture.audioRetentionDays` is set,
 that many days after the meeting's newest capture file. While it is unset, the `tools rm` cleanup presets also keep the
 recorded sound. Set it when recordings must not stay on disk.
+
+## Measure room and call attribution
+
+For a meeting with a frozen comparison, `await meetings.measure({ meeting })` returns the baseline and candidate
+results, including which held-out lines gained or lost a correct name and whether the room and remote targets passed.
+It reads four files from the `room-call/` folder beside the meeting record. To write the same report from the
+checkout root, set `bundle` to that folder and `report` to a new output path.
+
+```sh
+bun scripts/benchmarks/meetings/room-call.ts --reference "$bundle/reference.json" --holdout "$bundle/holdout.json" \
+  --baseline "$bundle/baseline.json" --candidate "$bundle/candidate.json" --out "$report"
+```

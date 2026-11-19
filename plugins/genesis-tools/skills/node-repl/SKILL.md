@@ -31,6 +31,7 @@ To preview or apply a timed seat, pass `room: [{ name, fromSec: 30, toSec: 90 }]
 | REPL call (await the result) | CLI command |
 | --- | --- |
 | `meetings.lineEligibility({ meeting, line: 3 })` | `tools meetings evidence <meeting> --line-eligibility 3 --json` (fourth transcript line) |
+| `meetings.measure({ meeting })` | `bun scripts/benchmarks/meetings/room-call.ts --reference "$bundle/reference.json" --holdout "$bundle/holdout.json" --baseline "$bundle/baseline.json" --candidate "$bundle/candidate.json" --out "$report"` |
 | `meetings.voices.list({ scope: { kind: "meeting", meeting }, person })` | `tools meetings voices --meeting <meeting> --person <person> --json` |
 | `meetings.voices.samples({ project, person })` | `tools meetings voices samples <person> --project <p> --json` |
 | `meetings.voices.move({ id, person, to: { name } })` | `tools meetings voices move <person> --sample <id> --to <name>` |
@@ -40,6 +41,9 @@ To preview or apply a timed seat, pass `room: [{ name, fromSec: 30, toSec: 90 }]
 | `meetings.voices.sample({ id })` | `tools meetings voices play <person> --sample <id> --no-start --json` |
 | `meetings.voices.play({ id })` | `tools meetings voices play <person> --sample <id>` |
 | `meetings.voices.undo({ token })` | `tools meetings voices undo <correction-token>` |
+
+For `measure`, `bundle` is the meeting record's adjacent `room-call/` folder. The REPL returns the comparison of
+held-out speaker predictions directly. The script takes a new output path in `report` and writes the same JSON there.
 
 Read the `id` from the listed sample. Playback accepts `player` to choose a player or `start: false` to return the verified slice silently.
 To preview a move, rejection or removal in the REPL, add `preview: true`. To confirm, call it again with

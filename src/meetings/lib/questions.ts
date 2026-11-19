@@ -17,7 +17,6 @@ import type { LineSpeakers } from "./speaker-evidence";
 import { needsSpeakerReview, speakerScoresOf } from "./speaker-scores";
 
 export type { HeardContext } from "@genesiscz/utils/transcribe/lines";
-export * from "./question-answers";
 
 /** The answer that rejects every item a question decides. */
 export const NONE_OF_THESE = "none of these";

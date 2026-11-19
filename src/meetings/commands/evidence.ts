@@ -17,7 +17,7 @@ import { localSpeechDuring } from "../lib/local-speech";
 import { OpenedMeeting } from "../lib/opened-meeting";
 import { compactEvidence, rawMeeting } from "../lib/raw";
 import { fail, formatFlag, resolveEnum, TOOL } from "../lib/shared";
-import { rawTerms } from "../lib/suggest";
+import { rawTerms } from "../lib/suggest-terms";
 import { lineDeviceCandidates, meetingVoices } from "../lib/voice";
 import { voiceReadiness } from "../lib/voice-readiness";
 import { DEFAULT_WORD_CHECK, WORD_CHECKS } from "../lib/word-check";

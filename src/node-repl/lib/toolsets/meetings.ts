@@ -47,6 +47,7 @@ import {
     list,
     locate,
     type look,
+    type measure,
     meetingsToolsetApi,
     overview,
     prepareListen,
@@ -235,6 +236,11 @@ export class MeetingsToolset extends ReplToolset {
                 locate: (refText: string) =>
                     locateMeeting({ ref: locate.params.parse({ ref: refText }).ref, root: store.root }) ?? null,
                 look: async (input: z.input<typeof look.params>) => lookMeeting(store, input),
+                measure: async ({ meeting }: z.input<typeof measure.params>) => {
+                    // lazy, like exportMeeting: the room-call scorer loads only for a measurement
+                    const { measureRoomCallMeeting } = await import("@app/meetings/lib/room-call-metrics");
+                    return measureRoomCallMeeting({ meeting, store });
+                },
                 overview: async (input: z.input<typeof overview.params> = {}) => {
                     const { days } = overview.params.parse(input);
                     return meetingsOverview({
