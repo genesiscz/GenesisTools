@@ -11,12 +11,14 @@ import { cpuMeta, profiler } from "@genesiscz/utils/profile";
 import { readDataVersion } from "@genesiscz/utils/workers/sqlite-wake";
 import { hubAgents } from "../agents";
 import type { AgentsTree } from "../agents/types";
+import { listWorkers } from "../agents/workers";
 
 /** The window and parent cap every Widget roster read and refresh uses. */
 export const WIDGET_ROSTER_HOURS = 168;
 export const WIDGET_ROSTER_LIMIT = 150;
 /** The session listing a snapshot or discovery may reuse when another process refreshed it this recently. */
 export const WIDGET_DISCOVERY_REUSE_MS = 15_000;
+let widgetWorkers: { at: number; result: ReturnType<typeof listWorkers> } | undefined;
 
 /**
  * One part of the shared history index the Widget roster reads.
@@ -105,6 +107,18 @@ export function readWidgetParents(
     exact: boolean,
     progress?: (tree: AgentsTree) => void | Promise<void>
 ) {
+    const workers = () => {
+        if (!exact || !widgetWorkers || now < widgetWorkers.at || now - widgetWorkers.at >= WIDGET_DISCOVERY_REUSE_MS) {
+            const result = listWorkers({ now, since: now - WIDGET_ROSTER_HOURS * 3_600_000 });
+            widgetWorkers = { at: now, result };
+            void result.catch(() => {
+                if (widgetWorkers?.result === result) {
+                    widgetWorkers = undefined;
+                }
+            });
+        }
+        return widgetWorkers.result;
+    };
     return hubAgents(
         { now, hours: WIDGET_ROSTER_HOURS, limit: WIDGET_ROSTER_LIMIT, refresh: false },
         {
@@ -116,6 +130,7 @@ export function readWidgetParents(
                     failClosed: true,
                 }),
             exact,
+            workers,
             progress,
         }
     );

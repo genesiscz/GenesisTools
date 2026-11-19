@@ -607,6 +607,7 @@ export class HistoryService {
                 orderBy,
                 mtimeFrom: filters.mtimeFrom,
                 filePaths: filters.filePaths,
+                parentNativeIds: filters.parentNativeIds,
                 withUserText: false,
             })
             .filter(inScope);
@@ -621,6 +622,7 @@ export class HistoryService {
                     orderBy: "mtime",
                     limit: topUpReadLimit(filters.newest),
                     filePaths: filters.filePaths,
+                    parentNativeIds: filters.parentNativeIds,
                     withUserText: false,
                 })
                 .filter((entry) => inScope(entry) && !seen.has(entry.sourceKey))

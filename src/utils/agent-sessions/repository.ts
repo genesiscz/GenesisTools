@@ -296,6 +296,7 @@ export class HistoryRepository {
         boundedOnly?: boolean;
         filePath?: string;
         sessionId?: string;
+        parentNativeIds?: string[];
         project?: string;
         pathPrefix?: string;
         /** Rows whose file mtime is at or after this epoch ms; served by idx_session_metadata_provider_mtime. */
@@ -346,6 +347,10 @@ export class HistoryRepository {
         if (options.sessionId !== undefined) {
             clauses.push("m.session_id = ?");
             params.push(options.sessionId);
+        }
+        if (options.parentNativeIds) {
+            clauses.push("m.parent_native_id IN (SELECT value FROM json_each(?))");
+            params.push(SafeJSON.stringify(options.parentNativeIds));
         }
         if (options.project !== undefined) {
             clauses.push("m.project = ?");
