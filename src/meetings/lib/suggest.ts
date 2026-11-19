@@ -403,7 +403,7 @@ function eligibleRanges(item: NewItem, speakers: LineSpeakers): NewItem[] {
 const AGREEING_MAX = 0.95;
 
 /** One item from two rules that found the same thing: both rules, and 1 - (1 - a)(1 - b) as the confidence. */
-function agreeing(first: NewItem, second: NewItem): NewItem {
+function agreeing(first: NewItem, second: NewItem, applyAbove = DEFAULT_APPLY_ABOVE): NewItem {
     const a = first.confidence;
     const b = second.confidence;
     // The channel and the seat use the same audio. Agreement cannot remove a calibrated seat's confidence limit.
@@ -428,7 +428,13 @@ function agreeing(first: NewItem, second: NewItem): NewItem {
                 item.rules.includes(MeetingRule.Voice) ||
                 item.evidence?.reason === "named" ||
                 !!item.evidence?.voiceSupport ||
-                item.evidence?.decisionGate === "cosine and margin"
+                item.evidence?.decisionGate === "cosine and margin" ||
+                // The platform showing this person speaking does not rest on the roster or mute read behind the review.
+                // When that reading names them alone, a review-only rule that agrees cannot take the name away.
+                (item.evidence?.reviewOnly !== true &&
+                    item.confidence !== undefined &&
+                    item.confidence >= applyAbove &&
+                    (item.rules.includes(MeetingRule.SpeakingIndicator) || item.rules.includes(MeetingRule.LiveName)))
         );
         evidence.reviewOnly = !matched;
         if (!matched) {
@@ -459,6 +465,7 @@ function labeledItems(options: {
     found: NewItem[];
     record: MeetingRecord;
     meeting: SourceMeeting;
+    applyAbove?: number;
 }): NewItem[] {
     const { record, meeting } = options;
     const spans = new TranscriptLines(meeting.transcript);
@@ -637,7 +644,7 @@ function labeledItems(options: {
                     rivals.push(old.speaker);
                 }
             } else if (old.speaker && label.reason !== "exclusion") {
-                item = agreeing(item, old);
+                item = agreeing(item, old, options.applyAbove);
             }
         }
 
@@ -1143,6 +1150,7 @@ function buildSuggestions(options: SuggestInputs): void {
                 found,
                 record,
                 meeting: options.meeting,
+                applyAbove: options.applyAbove,
             })
         );
     }
@@ -1188,7 +1196,7 @@ function buildSuggestions(options: SuggestInputs): void {
     for (const item of found.flatMap((one) => eligibleRanges(one, speakers))) {
         const key = itemKey(item);
         const seen = merged.get(key);
-        merged.set(key, seen ? agreeing(seen, item) : item);
+        merged.set(key, seen ? agreeing(seen, item, options.applyAbove) : item);
     }
 
     // Old recordings can contain an automatic above-threshold attribution for the same elimination.
