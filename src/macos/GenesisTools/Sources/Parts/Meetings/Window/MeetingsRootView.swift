@@ -242,6 +242,7 @@ private struct MeetingsContactsPane: View {
                 setSource: { people.setSource($0, on: $1) },
                 grantContacts: { people.grantContacts() },
                 showMeetings: { people.showMeetings($0) },
+                showVoices: { people.showMeetings($0, voices: true) },
                 mergeSearch: { people.mergeSearch() })
                 .overlay {
                     if answer == nil, people.known.failure == nil {
@@ -256,8 +257,11 @@ private struct MeetingsContactsPane: View {
         }
         .onAppear { people.ensure() }
         .sheet(item: $people.history) { history in
-            PersonMeetingsSheet(history: history, retry: { people.showMeetings(history.person) },
-                                open: { people.openHistoryMeeting($0) }, close: { people.history = nil })
+            if let window = people.window {
+                PersonMeetingsSheet(history: people.history ?? history, library: window.voiceLibrary, retry: { people.showMeetings(history.person) },
+                                    open: { people.openHistoryMeeting($0) }, close: { people.history = nil })
+                    .noticeStack(window.notices, alignment: window.noticePlace.alignment)
+            }
         }
     }
 }

@@ -170,6 +170,7 @@ final class MeetingsWindowModel {
     private(set) var noticePlace: MeetingsPreferences.NoticePlace
     /// The Moment player: every Moment of the window plays here, one at a time, with its context stack (F1b).
     var player = MomentPlayer()
+    @ObservationIgnored private(set) lazy var voiceLibrary = VoiceLibraryModel(window: self)
     /// The window's one notice stack (R31): every meeting's notices, so a notice of a meeting that is not open stays on
     /// screen and names it (G34).
     @ObservationIgnored let notices: NoticeStackModel
@@ -600,6 +601,7 @@ final class MeetingsWindowModel {
             detail?.receive(event)
             receive(event)
         case .resumed:
+            voiceLibrary.refresh()
             setLive(true)
             preparePlayingTimeline()
             // Events between the two connections were not heard: what the window shows reads again once.
@@ -635,7 +637,10 @@ final class MeetingsWindowModel {
 
     /// An event the window itself answers: the sidebar's counts, and a notice for a decision someone else made.
     private func receive(_ event: MeetingsEvent) {
-        if case .peopleChanged = event, place == .contacts { people.load() }
+        if case .peopleChanged = event {
+            voiceLibrary.refresh()
+            if place == .contacts { people.load() }
+        }
         if Self.changesOverview(event) { scheduleOverviewRefresh(event) }
         guard let entry = event.entry, let meeting = event.meeting, entry.actor.kind != DecisionActor.window.kind else { return }
         noteDecision(entry, meeting: meeting)

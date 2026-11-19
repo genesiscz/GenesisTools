@@ -36,13 +36,14 @@ final class MeetingsPeopleModel {
     var pendingAssign: PendingAssign?
     struct History: Identifiable {
         let person: KnownPerson
+        var voices = false
         var meetings: Loadable<MeetingsAPI.PeopleMeetings.Result>
         var id: String { person.id }
     }
     var history: History?
     /// The most people the Contacts view lists at once.
     static let contactsLimit = 500
-    @ObservationIgnored private weak var window: MeetingsWindowModel?
+    @ObservationIgnored private(set) weak var window: MeetingsWindowModel?
     @ObservationIgnored private var loadTask: Task<Void, Never>?
     @ObservationIgnored private var mergeClear: Task<Void, Never>?
 
@@ -93,8 +94,8 @@ final class MeetingsPeopleModel {
         window?.loadSettings(quiet: true)
     }
 
-    func showMeetings(_ person: KnownPerson) {
-        history = History(person: person, meetings: .loading(previous: nil))
+    func showMeetings(_ person: KnownPerson, voices: Bool = false) {
+        history = History(person: person, voices: voices, meetings: .loading(previous: nil))
         Task { [weak self] in
             guard let self else { return }
             do {
