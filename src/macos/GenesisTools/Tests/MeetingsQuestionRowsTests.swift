@@ -358,21 +358,32 @@ extension MeetingsQuestionRowsTests {
         let fresh = ReviewRows(meeting: "copy", rows: [try question(status: "confirmed", token: "next")], hidden: old.hidden)
         var loads = 0
         var release: CheckedContinuation<Void, Never>?
+        let held = expectation(description: "the first load is in flight")
         let first = Task { try await refresh.read(key) {
             loads += 1
-            await withCheckedContinuation { release = $0 }
+            guard loads == 1 else { return fresh }
+            await withCheckedContinuation { release = $0; held.fulfill() }
             return old
         } }
-        while release == nil { await Task.yield() }
+        await fulfillment(of: [held], timeout: 5)
+        guard release != nil else {
+            first.cancel()
+            return XCTFail("The first rows load never started")
+        }
         refresh.beginWrite()
         refresh.endWrite()
         let second = Task { try await refresh.read(key) { loads += 1; return fresh } }
-        let secondValue = try await second.value
+        // A second read that joined the held load would wait for it forever: bound the wait, then free the load.
+        let settled = expectation(description: "the read after the answer settles without the held load")
+        let watch = Task { _ = try? await second.value; settled.fulfill() }
+        await fulfillment(of: [settled], timeout: 5)
         release?.resume()
+        let secondValue = try await second.value
         let firstValue = try await first.value
-        XCTAssertEqual(firstValue, old)
+        _ = await watch.value
         XCTAssertEqual(secondValue, fresh, "The read after the answer must not take rows loaded before it")
-        XCTAssertEqual(loads, 2)
+        XCTAssertEqual(firstValue, fresh, "A load the answer overtook reads again instead of returning pre-answer rows")
+        XCTAssertEqual(loads, 3)
         XCTAssertEqual(refresh.cached(key), fresh, "Rows loaded before a write are never cached")
     }
 
