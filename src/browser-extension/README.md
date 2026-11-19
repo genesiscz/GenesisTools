@@ -96,8 +96,12 @@ tools browser-extension route https://dashboard/
   after symlinks. A branch name with slashes in a file URL is split against the local branch names, longest first.
 - `hub` selects `owner/repo#42` (GitLab: `group/project!42`) in the PRs mode, and `--path` opens that file in the PR's
   review; a PR commit page (`/pull/42/commits/<sha>`) also selects that commit. A commit page (`/commit/<sha>`) opens
-  that commit in the Worktrees diff of its checkout. When the checkout lacks the commit, `hub` runs `git fetch origin`
-  first (30 s deadline); when even that does not bring it, the worktree opens and the reply says why. Any other page
+  that commit in the Worktrees diff of its checkout, by its full id. When the checkout lacks the commit, `hub` fetches
+  it first (`git fetch origin <sha>` for a full id, then `git fetch origin`; 30 s in all, and `--dry-run` never
+  fetches); when even that does not bring it, the worktree opens and the reply says why. A PR commit page selects
+  the commit only while the PR lists it. After a force-push the Hub shows the rewritten commit with the same
+  subject, or the commit's own diff when the checkout still has it, with a notice; when neither exists it shows the
+  whole PR and says the commit is not one of its commits. Any other page
   opens the Worktrees mode on its checkout. It never builds GenesisTools.app: an older app
   still opens, and a missing one says how to build it. It prints `Asked GenesisTools to show ...`, which means the
   app got the request, not that it found the target.

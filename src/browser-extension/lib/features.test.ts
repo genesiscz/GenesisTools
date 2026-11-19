@@ -40,7 +40,7 @@ import {
     type PlainNavigationService,
 } from "./host/messages";
 import { encodeFrame, FrameReader } from "./host/protocol";
-import { openInHub } from "./hub";
+import { hubTarget, openInHub } from "./hub";
 import { allowsPlainNavigation, loopbackPort, loopbackRegex, readPlainNavigationServices } from "./loopback";
 import { openFile } from "./open";
 import { parseForgeUrl, splitRefPath } from "./page-url";
@@ -349,32 +349,103 @@ describe("open in GenesisTools", () => {
 
     describe("a commit page", () => {
         const commitPage = "https://gitlab.internal.example/group/app/-/commit/7b8f8c38";
-        const answer = (codes: Record<string, number[]>) => {
-            const left = Object.fromEntries(Object.entries(codes).map(([verb, list]) => [verb, [...list]]));
-            return (argv: string[]) => ({ code: left[argv[3]]?.shift() ?? 1, stdout: "", stderr: "" });
-        };
+        const fullId = "7b8f8c38".padEnd(40, "a");
+        const fullPage = `https://gitlab.internal.example/group/app/-/commit/${fullId}`;
 
-        it("opens that commit in the checkout's Worktrees diff", async () => {
-            const { deps, calls } = fakeDeps({ run: answer({ "cat-file": [0] }) });
+        /** Git as the checkout shows it: `known` lists the commit ids it holds; a fetch adds `arrives` when it exits `ok`. */
+        const git = ({
+            known,
+            arrives,
+            fetchCodes = [0],
+            keepsObjectsOnFailure = false,
+        }: {
+            known: string[];
+            arrives?: string;
+            fetchCodes?: number[];
+            keepsObjectsOnFailure?: boolean;
+        }) => {
+            const held = [...known];
+            const codes = [...fetchCodes];
+            return (argv: string[]) => {
+                const verb = argv[3];
+
+                if (verb === "rev-parse") {
+                    const prefix = argv[4].replace("--disambiguate=", "");
+                    const ids = held.filter((id) => id.startsWith(prefix));
+                    return { code: 0, stdout: ids.join("\n"), stderr: "" };
+                }
+
+                if (verb === "cat-file") {
+                    return { code: held.includes(argv[5]) ? 0 : 1, stdout: "commit\n", stderr: "" };
+                }
+
+                const code = codes.shift() ?? 1;
+
+                if (arrives && (code === 0 || keepsObjectsOnFailure)) {
+                    held.push(arrives);
+                }
+
+                return { code, stdout: "", stderr: "fetch failed" };
+            };
+        };
+        const verbs = (calls: Calls) => calls.run.map((call) => call.argv[3]);
+        const fetches = (calls: Calls) => calls.run.filter((call) => call.argv[3] === "fetch");
+
+        it("opens that commit by its full id in the checkout's Worktrees diff", async () => {
+            const { deps, calls } = fakeDeps({ run: git({ known: [fullId] }) });
             const result = await openInHub(deps, { url: commitPage });
-            expect(calls.hub).toEqual([{ commit: "7b8f8c38", repo: root }]);
+            expect(calls.hub).toEqual([{ commit: fullId, repo: root }]);
             expect(result.detail).toBe(`Asked GenesisTools to show commit 7b8f8c38 in ${root}`);
-            expect(calls.run.map((call) => call.argv[3])).toEqual(["cat-file"]);
+            expect(verbs(calls)).not.toContain("fetch");
         });
 
-        it("fetches origin once when the checkout lacks the commit", async () => {
-            const { deps, calls } = fakeDeps({ run: answer({ "cat-file": [1, 0], fetch: [0] }) });
+        it("does not trust a prefix that names two commits", async () => {
+            const other = "7b8f8c38".padEnd(40, "b");
+            const { deps, calls } = fakeDeps({ run: git({ known: [fullId, other], fetchCodes: [1] }) });
             const result = await openInHub(deps, { url: commitPage });
-            expect(calls.run.map((call) => call.argv[3])).toEqual(["cat-file", "fetch", "cat-file"]);
-            expect(calls.hub).toEqual([{ commit: "7b8f8c38", repo: root }]);
+            expect(calls.hub).toEqual([{ mode: "worktrees", worktree: root }]);
+            expect(result.detail).toContain("is not in it");
+        });
+
+        it("fetches origin once, without FETCH_HEAD, when an abbreviated commit is missing", async () => {
+            const { deps, calls } = fakeDeps({ run: git({ known: [], arrives: fullId }) });
+            const result = await openInHub(deps, { url: commitPage });
+            expect(fetches(calls).map((call) => call.argv.slice(2))).toEqual([
+                [root, "fetch", "--quiet", "--no-write-fetch-head", "origin"],
+            ]);
+            expect(calls.hub).toEqual([{ commit: fullId, repo: root }]);
+            expect(result.detail).toContain("(fetched from origin first)");
+        });
+
+        it("fetches a full id from origin first, then every branch", async () => {
+            const { deps, calls } = fakeDeps({ run: git({ known: [], fetchCodes: [1, 0], arrives: fullId }) });
+            await openInHub(deps, { url: fullPage });
+            expect(fetches(calls).map((call) => call.argv.slice(6))).toEqual([["origin", fullId], ["origin"]]);
+            expect(calls.hub).toEqual([{ commit: fullId, repo: root }]);
+        });
+
+        it("probes again after a failed fetch, because git may have kept the objects", async () => {
+            const { deps, calls } = fakeDeps({
+                run: git({ known: [], fetchCodes: [1], arrives: fullId, keepsObjectsOnFailure: true }),
+            });
+            const result = await openInHub(deps, { url: commitPage });
+            expect(calls.hub).toEqual([{ commit: fullId, repo: root }]);
             expect(result.detail).toContain("(fetched from origin first)");
         });
 
         it("opens the worktree and says why when even a fetch does not bring the commit", async () => {
-            const { deps, calls } = fakeDeps({ run: answer({ "cat-file": [1, 1], fetch: [0] }) });
+            const { deps, calls } = fakeDeps({ run: git({ known: [] }) });
             const result = await openInHub(deps, { url: commitPage });
             expect(calls.hub).toEqual([{ mode: "worktrees", worktree: root }]);
             expect(result.detail).toContain("commit 7b8f8c38 is not in it, even after git fetch origin");
+        });
+
+        it("never fetches for a preview, even when the commit is missing", async () => {
+            const { deps, calls } = fakeDeps({ run: git({ known: [] }) });
+            const target = await hubTarget(deps, { url: commitPage });
+            expect(fetches(calls)).toEqual([]);
+            expect(target.options).toEqual({ commit: "7b8f8c38", repo: root });
+            expect(target.summary).toContain("opening fetches origin first");
         });
     });
 
