@@ -119,7 +119,7 @@ struct ItemsProjection: Equatable {
         projection.ready = true
         let rows = input.rows
         let items = input.items ?? []
-        let atLine = Set(MeetingDetailModel.confirmable(items, atOrAbove: input.applyAbove).map(\.id))
+        let atLine = MeetingDetailModel.atLine(rows, items: input.items, applyAbove: input.applyAbove)
         for row in rows where row.isOpen {
             projection.open += 1
             if row.isQuestion {
@@ -159,7 +159,9 @@ struct ItemsProjection: Equatable {
                 }
             }
         }
-        projection.suggestionsWait = items.contains { $0.status == "suggested" && $0.kind != "question" }
+        // Before the record arrives, the open rows say whether a suggestion waits, as `atLine` falls back to them.
+        projection.suggestionsWait = input.items.map { items in items.contains { $0.status == "suggested" && $0.kind != "question" } }
+            ?? rows.contains { $0.isOpen && !$0.isQuestion }
         projection.atLine = atLine.count
         projection.spotCheck = SpotCheckRate.of(items)
         return projection
