@@ -82,6 +82,9 @@ struct MeetingsRequest {
     /// step (no run starts).
     var voices: String?
     var voicesProgress: MeetingsCallProgress?
+    /// Open one person's sample disclosure, or replay captured voices.jobs JSON in an offscreen picture.
+    var voiceFocus: String?
+    var voiceJobFile: String?
     /// `--undo-person <name>`: a removal of that person and its notice's Undo, before the picture.
     var undoPerson: String?
     var width: CGFloat = 1280
@@ -119,6 +122,8 @@ struct MeetingsRequest {
             case "--sheet": request.sheet = value()
             case "--suggest-progress": request.suggestProgress = value().map(MeetingsRequest.progress)
             case "--voices": request.voices = value()
+            case "--voice-focus": request.voiceFocus = value()
+            case "--voice-job-file": request.voiceJobFile = value()
             case "--voices-progress": request.voicesProgress = value().map(MeetingsRequest.progress)
             case "--undo-person": request.undoPerson = value()
             case "--snapshot": request.snapshot = value().map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath).path }
@@ -325,6 +330,33 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
 /// A part of the window drawn alone for a snapshot (`--card`, `--sheet`), with its data read first.
 @MainActor
 private func meetingsSnapshotPart(_ request: MeetingsRequest, model: MeetingsWindowModel) async -> AnyView? {
+    if request.sheet == "voice-library-settings" {
+        guard await waitUntil(40, { model.settingsRaw != nil || model.settings.failure != nil }), let raw = model.settingsRaw else { return nil }
+        return AnyView(MeetingsVoiceLibraryCard(config: .init(raw: raw), set: { _, _ in })
+            .padding(24).frame(maxWidth: 850).frame(width: request.width, height: request.height, alignment: .top)
+            .environment(\.nativeSettingsTheme, .graphite))
+    }
+    if let sheet = request.sheet, sheet.hasPrefix("person-voices:") {
+        let query = String(sheet.dropFirst("person-voices:".count))
+        do {
+            let result = try await PeopleCalls.known(.init(query: query, limit: 500)).run(service: model.service)
+            let matches = result.people.filter { $0.email?.caseInsensitiveCompare(query) == .orderedSame ||
+                                                 $0.name.caseInsensitiveCompare(query) == .orderedSame }
+            guard matches.count == 1, let person = matches.first else {
+                FileHandle.standardError.write(Data("meetings snapshot: person-voices requires one exact name or email\n".utf8))
+                return nil
+            }
+            let destination = VoiceDestination.person(.init(name: person.name, email: person.email), project: nil)
+            guard await prepareLibrarySnapshot(destination, model: model) else { return nil }
+            model.people.showMeetings(person, voices: true)
+            guard let history = model.people.history else { return nil }
+            return AnyView(PersonMeetingsSheet(history: history, library: model.voiceLibrary, retry: {}, open: { _ in }, close: {})
+                .frame(width: request.width, height: request.height))
+        } catch {
+            FileHandle.standardError.write(Data("meetings snapshot: person lookup failed: \(error)\n".utf8))
+            return nil
+        }
+    }
     guard let detail = model.detail else { return nil }
     if let id = request.card {
         if case .idle = detail.rows { detail.loadRows() }
@@ -416,6 +448,21 @@ func waitUntil(_ seconds: Double, _ ready: () -> Bool) async -> Bool {
     return ready()
 }
 
+@MainActor
+private func prepareLibrarySnapshot(_ destination: VoiceDestination, model: MeetingsWindowModel) async -> Bool {
+    let library = model.voiceLibrary
+    library.show(destination, doubtfulFirst: model.defaults.object(forKey: MeetingsVoiceCompute.doubtfulFirstKey) as? Bool ?? true)
+    guard await waitUntil(60, { library.rows.value != nil || library.rows.failure != nil }), library.rows.value != nil else {
+        FileHandle.standardError.write(Data("meetings snapshot: \(library.rows.failure?.sentence ?? "voice library read timed out")\n".utf8))
+        return false
+    }
+    if library.snapshotJobs != nil && library.jobs.isEmpty {
+        FileHandle.standardError.write(Data("meetings snapshot: the captured jobs do not belong to this destination\n".utf8))
+        return false
+    }
+    return true
+}
+
 private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) -> Never {
     MainActor.assumeIsolated {
         _ = NSApplication.shared
@@ -424,6 +471,15 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
             let model = MeetingsWindowModel()
             // A picture with the panel open must not change what the real window opens with.
             model.remembersPanel = false
+            model.voiceFocus = request.voiceFocus
+            if let file = request.voiceJobFile {
+                do {
+                    model.voiceLibrary.snapshotJobs = try JSONDecoder().decode([VoiceJob].self, from: Data(contentsOf: URL(fileURLWithPath: file)))
+                } catch {
+                    FileHandle.standardError.write(Data("meetings snapshot: could not read the captured jobs: \(error)\n".utf8))
+                    exit(1)
+                }
+            }
             model.sidePanelOpen = request.sidePanel
             // A picture of a playing Moment (`--play`) makes no sound.
             model.player = MomentPlayer(load: { try AVMomentSound(url: $0, muted: true) }, defaults: model.defaults)
@@ -539,15 +595,21 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
             if model.sidePanelOpen {
                 _ = await waitUntil(30) { model.settingsRaw != nil || model.settings.failure != nil }
             }
+            if case .projectVoices(let name) = model.place {
+                guard await prepareLibrarySnapshot(.project(name), model: model) else { exit(1) }
+            }
             if request.voices != nil || request.voicesProgress != nil, let detail = model.detail {
                 let voices = detail.voices
                 voices.open = true
                 if let project = detail.record.value?.project {
                     if request.voices == "meeting" { voices.meetingOnlyOverride = true }
-                    let only = voices.meetingOnlyOverride ?? model.defaults.bool(forKey: "meetings.voices.meetingOnly")
-                    model.voiceLibrary.show(.inspector(meeting: detail.id, project: project, meetingOnly: only),
-                                            doubtfulFirst: model.defaults.object(forKey: "meetings.voices.doubtfulFirst") as? Bool ?? true)
-                    _ = await waitUntil(60) { model.voiceLibrary.rows.value != nil || model.voiceLibrary.rows.failure != nil }
+                    voices.focus = request.voiceFocus
+                    if request.voices == "project" { voices.meetingOnlyOverride = false }
+                    let only = voices.meetingOnlyOverride ?? model.defaults.bool(forKey: MeetingsVoiceCompute.meetingOnlyKey)
+                    guard await prepareLibrarySnapshot(.inspector(meeting: detail.id, project: project, meetingOnly: only), model: model) else { exit(1) }
+                } else if request.voices == "meeting" || request.voiceJobFile != nil {
+                    FileHandle.standardError.write(Data("meetings snapshot: the selected meeting has no project\n".utf8))
+                    exit(1)
                 }
                 if request.voices == "preview" {
                     voices.runPreview()
