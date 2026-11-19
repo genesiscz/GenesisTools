@@ -6,6 +6,7 @@ import { meetingPeopleNames } from "@genesiscz/utils/meetings/people-directory";
 import { type MeetingItem, type MeetingRecord, MeetingStore, nextId } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { ANSWER_LOG_FILE, readAnswerEvents } from "./answer-log";
 import type { cutClip } from "./audio";
@@ -13,6 +14,7 @@ import { decideItems } from "./decide";
 import { DecisionJournal } from "./decision-journal";
 import { duplicateMeeting } from "./duplicate";
 import { findingItems, findingsFileSchema } from "./findings";
+import { itemLines } from "./listen-answers";
 import { SPEAKER_PAD_SEC, writeQuestionClips } from "./listen-clips";
 import { listenQuestionFindings, roundQuestionIds, selectedQuestionIds } from "./listen-input";
 import {
@@ -431,6 +433,24 @@ describe("listen session", () => {
         });
         expect(fx.item("i4")).toMatchObject({ status: "suggested", choices: [] });
         expect(fx.item("i4")?.evidence).not.toHaveProperty("derivedFrom");
+    });
+
+    test("a term's lines are the lines its anchors name, and nothing when one anchor no longer resolves", async () => {
+        const lines = new TranscriptLines([
+            { speaker: "A", startSec: 10, text: "zorb one" },
+            { speaker: "B", startSec: 20, text: "zorb two" },
+            { speaker: "A", startSec: 30, text: "zorb three" },
+        ]);
+        const fx = await fixture([
+            term("i1", 10, { heard: "zorb", proposed: "sorb", reach: { lines: [{ atSec: 10 }, { atSec: 30 }] } }),
+            term("i2", 10, { heard: "zorb", proposed: "sorb", reach: { lines: [{ atSec: 10 }, { atSec: 40 }] } }),
+            term("i3", 10, { heard: "zorb", proposed: "sorb" }),
+        ]);
+        const indexes = (id: string) => itemLines(fx.item(id)!, lines).map((line) => line.index);
+
+        expect(indexes("i1")).toEqual([0, 2]);
+        expect(indexes("i2")).toEqual([]);
+        expect(indexes("i3")).toEqual([0, 1, 2]);
     });
 
     test("a derived spelling keeps the rest of the heard word when lowercasing changes the stem's length", async () => {
