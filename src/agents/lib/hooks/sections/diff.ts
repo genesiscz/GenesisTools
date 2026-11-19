@@ -13,13 +13,243 @@ import {
 } from "@genesiscz/utils/agents/hooks/config-section";
 import { ACCOUNT_PROVIDER_ALIASES, byHarnessWhere, type SomeHarnesses } from "@genesiscz/utils/ai/providers/alias-list";
 import { harnessHooks } from "@genesiscz/utils/ai/providers/harness-hooks";
+import { isWatchDriverId, WATCH_DRIVER_IDS, type WatchDriverId } from "@genesiscz/utils/fs/watch-driver/registry";
 import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import pc from "picocolors";
 import type { DiffConfig, DiffOverrides, HookDoctorFacts } from "../config";
 import type { DiffCategory } from "../diff/classify";
 import { FULL_DIFF_MODES } from "../diff/full";
+import { type DiffStatusConfig, STATUS_MODE_IDS, type StatusModeId } from "../diff/status/types";
 import { DIFF_THEMES, type DiffThemeName } from "../diff/theme";
+
+const DEFAULT_STATUS: DiffStatusConfig = {
+    active: { read: "git", write: "git" },
+    shadow: { modes: [], every: 1, budgetMs: 400 },
+    modes: {
+        git: {},
+        snapshot: { driver: "watchman", shadowDrivers: [], deadlineMs: 700, fenceMs: 500 },
+        "narrow-git": {},
+    },
+};
+
+function isStatusModeId(value: unknown): value is StatusModeId {
+    return STATUS_MODE_IDS.some((id) => id === value);
+}
+
+/** One stored id; an unknown one is a config problem and takes the default. */
+function idOr<Id extends string>(options: {
+    problems: string[];
+    field: string;
+    value: unknown;
+    fallback: Id;
+    known: (value: string) => value is Id;
+}): Id {
+    if (options.value === undefined) {
+        return options.fallback;
+    }
+
+    if (typeof options.value === "string" && options.known(options.value)) {
+        return options.value;
+    }
+
+    options.problems.push(
+        `${options.field}: unknown id ${SafeJSON.stringify(options.value)}, using ${options.fallback}`
+    );
+    return options.fallback;
+}
+
+/** A stored id list; each unknown id is a problem and is dropped. */
+function idsOr<Id extends string>(options: {
+    problems: string[];
+    field: string;
+    value: unknown;
+    fallback: Id[];
+    known: (value: string) => value is Id;
+}): Id[] {
+    if (options.value === undefined) {
+        return [...options.fallback];
+    }
+
+    if (!Array.isArray(options.value)) {
+        options.problems.push(`${options.field}: expected a list of ids, using the default`);
+        return [...options.fallback];
+    }
+
+    const ids: Id[] = [];
+
+    for (const item of options.value) {
+        if (typeof item === "string" && options.known(item)) {
+            if (!ids.includes(item)) {
+                ids.push(item);
+            }
+        } else {
+            options.problems.push(`${options.field}: unknown id ${SafeJSON.stringify(item)}, dropped`);
+        }
+    }
+
+    return ids;
+}
+
+const knownMode = (value: string): value is StatusModeId => isStatusModeId(value);
+const knownDriver = (value: string): value is WatchDriverId => isWatchDriverId(value);
+
+/** `diff.status`, field by field: an absent key takes its default, a wrong id is a problem. */
+function mergeStatus(value: unknown, problems: string[]): DiffStatusConfig {
+    const base = DEFAULT_STATUS;
+    const stored = storedPart<{
+        active?: { read?: unknown; write?: unknown };
+        shadow?: { modes?: unknown; every?: unknown; budgetMs?: unknown };
+        modes?: { snapshot?: { driver?: unknown; shadowDrivers?: unknown; deadlineMs?: unknown; fenceMs?: unknown } };
+    }>(value);
+    const snapshot = stored?.modes?.snapshot;
+
+    return {
+        active: {
+            read: idOr({
+                problems,
+                field: "diff.status.active.read",
+                value: stored?.active?.read,
+                fallback: base.active.read,
+                known: knownMode,
+            }),
+            write: idOr({
+                problems,
+                field: "diff.status.active.write",
+                value: stored?.active?.write,
+                fallback: base.active.write,
+                known: knownMode,
+            }),
+        },
+        shadow: {
+            modes: idsOr({
+                problems,
+                field: "diff.status.shadow.modes",
+                value: stored?.shadow?.modes,
+                fallback: base.shadow.modes,
+                known: knownMode,
+            }),
+            every: countOr(problems, {
+                field: "diff.status.shadow.every",
+                value: stored?.shadow?.every,
+                fallback: base.shadow.every,
+            }),
+            budgetMs: countOr(problems, {
+                field: "diff.status.shadow.budgetMs",
+                value: stored?.shadow?.budgetMs,
+                fallback: base.shadow.budgetMs,
+                min: 0,
+            }),
+        },
+        modes: {
+            git: {},
+            snapshot: {
+                driver: idOr({
+                    problems,
+                    field: "diff.status.modes.snapshot.driver",
+                    value: snapshot?.driver,
+                    fallback: base.modes.snapshot.driver,
+                    known: knownDriver,
+                }),
+                shadowDrivers: idsOr({
+                    problems,
+                    field: "diff.status.modes.snapshot.shadowDrivers",
+                    value: snapshot?.shadowDrivers,
+                    fallback: base.modes.snapshot.shadowDrivers,
+                    known: knownDriver,
+                }),
+                deadlineMs: countOr(problems, {
+                    field: "diff.status.modes.snapshot.deadlineMs",
+                    value: snapshot?.deadlineMs,
+                    fallback: base.modes.snapshot.deadlineMs,
+                }),
+                fenceMs: countOr(problems, {
+                    field: "diff.status.modes.snapshot.fenceMs",
+                    value: snapshot?.fenceMs,
+                    fallback: base.modes.snapshot.fenceMs,
+                }),
+            },
+            "narrow-git": {},
+        },
+    };
+}
+
+const STATUS_KEYS = [
+    "diff.status.active.read",
+    "diff.status.active.write",
+    "diff.status.shadow.modes",
+    "diff.status.shadow.every",
+    "diff.status.shadow.budgetMs",
+    "diff.status.modes.snapshot.driver",
+    "diff.status.modes.snapshot.shadowDrivers",
+    "diff.status.modes.snapshot.deadlineMs",
+    "diff.status.modes.snapshot.fenceMs",
+] as const;
+
+function asId<Id extends string>(
+    key: string,
+    value: string,
+    known: (value: string) => value is Id,
+    all: readonly string[]
+): Id {
+    if (!known(value)) {
+        throw new Error(`${key} takes ${all.join(", ")}, not ${SafeJSON.stringify(value)}`);
+    }
+
+    return value;
+}
+
+/** A comma list for `set`; an empty value is the empty list. */
+function asIds<Id extends string>(
+    key: string,
+    value: string,
+    known: (value: string) => value is Id,
+    all: readonly string[]
+): Id[] {
+    const ids = value
+        .split(",")
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0)
+        .map((item) => asId(key, item, known, all));
+    return [...new Set(ids)];
+}
+
+function setStatus(current: DiffStatusConfig, key: string, value: string): DiffStatusConfig {
+    const next = structuredClone(current);
+    const drivers = WATCH_DRIVER_IDS;
+
+    switch (key) {
+        case "diff.status.active.read":
+            next.active.read = asId(key, value, knownMode, STATUS_MODE_IDS);
+            return next;
+        case "diff.status.active.write":
+            next.active.write = asId(key, value, knownMode, STATUS_MODE_IDS);
+            return next;
+        case "diff.status.shadow.modes":
+            next.shadow.modes = asIds(key, value, knownMode, STATUS_MODE_IDS);
+            return next;
+        case "diff.status.shadow.every":
+            next.shadow.every = asCount(key, value, 1);
+            return next;
+        case "diff.status.shadow.budgetMs":
+            next.shadow.budgetMs = asCount(key, value, 0);
+            return next;
+        case "diff.status.modes.snapshot.driver":
+            next.modes.snapshot.driver = asId(key, value, knownDriver, drivers);
+            return next;
+        case "diff.status.modes.snapshot.shadowDrivers":
+            next.modes.snapshot.shadowDrivers = asIds(key, value, knownDriver, drivers);
+            return next;
+        case "diff.status.modes.snapshot.deadlineMs":
+            next.modes.snapshot.deadlineMs = asCount(key, value, 1);
+            return next;
+        case "diff.status.modes.snapshot.fenceMs":
+            next.modes.snapshot.fenceMs = asCount(key, value, 1);
+            return next;
+        default:
+            throw new Error(`unknown diff key: ${key}`);
+    }
+}
 
 const DEFAULT_DIFF: DiffConfig = {
     enabled: true,
@@ -35,6 +265,7 @@ const DEFAULT_DIFF: DiffConfig = {
     maxCaptureMB: 8,
     maxCaptureFileMB: 0.256,
     clone: { maxFileMB: 2 },
+    status: DEFAULT_STATUS,
     highlight: "256",
     highlighter: "hljs",
     fill: "block",
@@ -162,6 +393,7 @@ function mergeDiff(value: unknown, problems: string[]): DiffConfig {
         // Same field-by-field reason, one level deeper: a stored override for Codex must not
         // delete the shipped Grok one, which is what turns the diff off there.
         harnesses: mergedHarnesses(stored?.harnesses, problems),
+        status: mergeStatus(stored?.status, problems),
     };
 }
 
@@ -458,6 +690,7 @@ const DIFF_KEYS: ReadonlySet<string> = new Set([
     "diff.fillMax",
     "diff.commandLines",
     "diff.clone.maxFileMB",
+    ...STATUS_KEYS,
     ...NUMERIC_DIFF.map((field) => `diff.${field}`),
 ]);
 const HARNESS_DIFF_KEY = /^diff\.harnesses\.([^.]+)\.(.+)$/;
@@ -482,6 +715,11 @@ function set(current: DiffConfig, key: string, value: string): DiffConfig {
 
     if (perHarness?.[1] && perHarness[2]) {
         return withHarnessDiff(next, key, value, perHarness[1], perHarness[2]);
+    }
+
+    if (key.startsWith("diff.status.")) {
+        next.status = setStatus(current.status, key, value);
+        return next;
     }
 
     switch (key) {
@@ -544,6 +782,7 @@ export const DIFF_HOOK_SECTION: HookConfigSection<DiffConfig, HookDoctorFacts> =
         "diff.enabled",
         ...NUMERIC_DIFF.map((field) => `diff.${field}`),
         "diff.clone.maxFileMB",
+        ...STATUS_KEYS,
         "diff.othersSummary",
         "diff.theme",
         "diff.highlight",
