@@ -407,16 +407,22 @@ struct SpeakerTalkTimeLanes: View {
     /// The marks between the two end labels that keep clear of both. A mark too close to an end label leaves out (at
     /// the narrowest lanes "2:00:00" overlapped "2:26:10"); each end's room is its own label's width, so the short
     /// "00:00" at the start no longer takes the room of a long end label (w_ehvp4b0b: one 80 pt room for both ends
-    /// dropped 0:30:00 beside "00:00" at 900 x 600).
+    /// dropped 0:30:00 beside "00:00" at 900 x 600). A mark also keeps clear of the inner mark kept before it, so two
+    /// long labels on a narrow ruler never overlap each other.
     static func innerRulerMarks(durationSec: Double, width: CGFloat) -> [Double] {
         guard durationSec > 0 else { return [] }
         let startRoom = rulerLabelWidth(MeetingsFormat.clock(0))
         let endRoom = rulerLabelWidth(MeetingsFormat.clock(durationSec))
-        return rulerMarks(durationSec: durationSec).dropFirst().dropLast().filter { sec in
+        var kept: [Double] = []
+        var keptEnd = startRoom
+        for sec in rulerMarks(durationSec: durationSec).dropFirst().dropLast() {
             let x = CGFloat(sec / durationSec) * width
             let half = rulerLabelWidth(MeetingsFormat.clock(sec)) / 2 + rulerGap
-            return x - half > startRoom && x + half < width - endRoom
+            guard x - half > keptEnd, x + half < width - endRoom else { continue }
+            kept.append(sec)
+            keptEnd = x + half
         }
+        return kept
     }
 
     /// The width of a ruler label (10 pt monospaced).
