@@ -71,7 +71,11 @@ export class WidgetRosterReads {
 
 /** Tie equal mtimes by path so a session keeps its place across a cold page and a warm refresh. */
 export function newestRosterRows<T extends Pick<AgentSessionRow, "mtime" | "filePath">>(rows: T[]): T[] {
-    return rows.sort((a, b) => b.mtime - a.mtime || a.filePath.localeCompare(b.filePath));
+    return rows.sort(compareRosterRows);
+}
+
+export function compareRosterRows(a: Pick<AgentSessionRow, "mtime" | "filePath">, b: typeof a): number {
+    return b.mtime - a.mtime || a.filePath.localeCompare(b.filePath);
 }
 
 /** The indexed sessions and their tree, including journal and process changes with no transcript event. */
