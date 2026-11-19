@@ -177,6 +177,14 @@ final class AudioSessionTests: XCTestCase {
             XCTAssertEqual(cutList[channel].mDataByteSize, 4800 * 4)
             XCTAssertTrue((0..<4800).allSatisfy { data[$0] == (channel == 0 ? 0.25 : -0.5) })
         }
+        let planes = copyPCMFrames(input, CFRange(location: 2400, length: 4800), refused: -12700)
+        XCTAssertEqual(planes.status, noErr)
+        let planeCopy = try XCTUnwrap(planes.buffer)
+        XCTAssertTrue(CMSampleBufferDataIsReady(planeCopy), "the per-plane copy is ready before it is returned")
+        XCTAssertEqual(CMSampleBufferGetNumSamples(planeCopy), 4800)
+        XCTAssertEqual(CMTimeCompare(CMSampleBufferGetPresentationTimeStamp(planeCopy),
+            CMTimeAdd(host, CMTime(value: 2400, timescale: 48_000))), 0)
+        XCTAssertEqual(copyPCMFrames(input, CFRange(location: 9000, length: 4800), refused: -12700).status, -12700)
         let silent = try XCTUnwrap(silentCopy(input))
         var block: CMBlockBuffer?
         let list = AudioBufferList.allocate(maximumBuffers: 2)
