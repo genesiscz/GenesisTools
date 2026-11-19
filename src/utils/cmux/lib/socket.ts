@@ -169,11 +169,32 @@ export interface PaneListPane {
     cell_width_px?: number;
     cell_height_px?: number;
     pixel_frame: { x: number; y: number; width: number; height: number };
-    /**
-     * Set only on a Dock pane (the right sidebar terminals cmux builds from `dock.json`), which `paneList` drops.
-     * cmux 0.65.1 lists it beside the splits with no geometry and no tabs, and reports it as the focused pane.
-     */
-    dock_scope?: string;
+}
+
+/**
+ * A Dock pane as `list-panes` reports it (the right sidebar terminals), which `paneList` drops. cmux 0.65.1 lists it
+ * beside the splits with no geometry, `null` selected-surface ids when it has no tab, and as the focused pane.
+ */
+export interface DockPaneListEntry {
+    dock_scope: string;
+    id: string;
+    ref: string;
+    index: number;
+    focused: boolean;
+    surface_count: number;
+    surface_ids: string[];
+    surface_refs: string[];
+    selected_surface_id: string | null;
+    selected_surface_ref: string | null;
+}
+
+/** The CLI's `list-panes` reply before `paneList` drops the Dock: splits and Dock panes side by side. */
+export interface RawPaneListResponse extends Omit<PaneListResponse, "panes"> {
+    panes: Array<PaneListPane | DockPaneListEntry>;
+}
+
+function isDockPane(pane: PaneListPane | DockPaneListEntry): pane is DockPaneListEntry {
+    return "dock_scope" in pane && pane.dock_scope !== undefined;
 }
 
 export interface PaneListResponse {
@@ -189,31 +210,32 @@ export interface PaneListResponse {
 /**
  * Read the split panes of a workspace through the CLI and reject a response belonging to another workspace.
  *
- * Dock panes are dropped: they are not splits, so nothing here can measure, split or rebuild one, and cmux rebuilds
- * the Dock from its config by itself. On 2026-11-18 an empty global Dock pane without `pixel_frame` crashed
- * `restore-after-restart`'s live capture, and as the focused pane it would have taken a launch's anchor.
+ * Dock panes are dropped: they are not splits, so nothing here can measure, split or rebuild one. A saved profile
+ * therefore holds no Dock tab, and a profile restore does not recreate one: cmux restores the Dock from its own
+ * session snapshot, and from `dock.json` only when it has no snapshot. On 2026-11-18 an empty global Dock pane
+ * without `pixel_frame` crashed `restore-after-restart`'s live capture, and as the focused pane it would have taken a
+ * launch's anchor.
  */
 export async function paneList(workspace: string): Promise<PaneListResponse> {
     // Raw pane.list can ignore workspace and return the focused workspace. The
     // CLI honors the target and now preserves the geometry used by restore.
     // `--id-format both` makes it echo the workspace UUID, so a UUID request is checkable too.
-    const raw = await runCmuxJSON<PaneListResponse>(["--id-format", "both", "list-panes", "--workspace", workspace]);
+    const raw = await runCmuxJSON<RawPaneListResponse>(["--id-format", "both", "list-panes", "--workspace", workspace]);
     assertLayoutIsFor(workspace, raw);
 
-    const docks = raw.panes.filter((pane) => pane.dock_scope !== undefined);
-    if (docks.length === 0) {
-        return raw;
+    const docks = raw.panes.filter(isDockPane);
+    const splits = raw.panes.filter((pane): pane is PaneListPane => !isDockPane(pane));
+    if (docks.length > 0) {
+        logger.debug(
+            {
+                workspace,
+                docks: docks.map((pane) => ({ ref: pane.ref, scope: pane.dock_scope, tabs: pane.surface_count })),
+            },
+            "[socket] list-panes: dropped Dock panes, which are not splits"
+        );
     }
 
-    logger.debug(
-        {
-            workspace,
-            docks: docks.map((pane) => ({ ref: pane.ref, scope: pane.dock_scope, tabs: pane.surface_count })),
-        },
-        "[socket] list-panes: dropped Dock panes, which are not splits"
-    );
-
-    return { ...raw, panes: raw.panes.filter((pane) => pane.dock_scope === undefined) };
+    return { ...raw, panes: splits };
 }
 
 /**
