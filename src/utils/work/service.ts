@@ -159,7 +159,7 @@ export async function write(
         return okReply(
             command.verb,
             {
-                items: outcome.items.map((id) => selectItem(ctx.db, id)).filter((i): i is Item => i !== null),
+                items: outcome.projected ?? [],
                 changes: [],
                 ...(outcome.legacy.length > 0
                     ? { legacy: outcome.legacy.map((a) => ({ action: a.action, ok: true })) }
