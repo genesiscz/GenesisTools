@@ -20,6 +20,7 @@ import { formatClock, localTime, parseClock } from "@genesiscz/utils/transcribe/
 import { type Command, Option } from "commander";
 import { collectAndReport } from "../lib/collect";
 import { hasFrameIndex, ocrBacklog, ocrPendingNote } from "../lib/frame-index";
+import { askProjectAtEnd } from "../lib/meeting-end";
 import {
     parseAudioSources,
     parseDisplayPolicy,
@@ -34,7 +35,6 @@ import { screenTimeline } from "../lib/screen-timeline";
 import { type SetSettingsFlags, settingsPatchFromFlags } from "../lib/settings-flags";
 import { errorText, fail, TOOL } from "../lib/shared";
 import { captureCostRead, windowJson } from "../lib/window-reads";
-import { askProjectAtEnd } from "./watch";
 
 const { log } = logger.scoped("meetings-record-cmd");
 

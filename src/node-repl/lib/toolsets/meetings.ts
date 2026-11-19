@@ -191,7 +191,7 @@ export class MeetingsToolset extends ReplToolset {
                         }: z.input<typeof voiceLibraryMethods.play.params>) => {
                             const slice = await resolveSample(selection);
                             if (start !== false) {
-                                const { playSoundSlice } = await import("@app/meetings/commands/play");
+                                const { playSoundSlice } = await import("@app/meetings/lib/sound-playback");
                                 await playSoundSlice({ slice, player });
                             }
                             return slice;

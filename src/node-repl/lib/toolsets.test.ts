@@ -398,7 +398,7 @@ describe("toolset method names", () => {
             fileToSec: 16,
             clock: "source",
         };
-        const meetingPlayback = await import("@app/meetings/commands/play");
+        const meetingPlayback = await import("@app/meetings/lib/sound-playback");
         const call = spyOn(InProcessMeetingsClient.prototype, "call").mockResolvedValue(slice);
         const play = spyOn(meetingPlayback, "playSoundSlice").mockResolvedValue({ pid: 1, player: "ffplay" });
         try {

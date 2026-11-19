@@ -14,6 +14,7 @@ import { collectAndReport } from "../lib/collect";
 import { contextFileRevision } from "../lib/context-file";
 import { duplicateMeeting } from "../lib/duplicate";
 import { linkSource } from "../lib/link";
+import { askProjectAtEnd } from "../lib/meeting-end";
 import { setMeetingFields } from "../lib/meeting-fields";
 import { mergeMeetings } from "../lib/merge";
 import { OpenedMeeting } from "../lib/opened-meeting";
@@ -25,7 +26,6 @@ import { listSoundTracks } from "../lib/sound";
 import { sourceAudioSummary } from "../lib/source-audio";
 import { voiceReadiness } from "../lib/voice-readiness";
 import { windowJson } from "../lib/window-reads";
-import { askProjectAtEnd } from "./watch";
 
 /** A row of `meetings.list` with full: true, which answers the whole records. */
 function isRecord(row: object): row is MeetingRecord {
