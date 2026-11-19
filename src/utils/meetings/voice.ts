@@ -303,6 +303,9 @@ async function embedChunk(options: {
     const { input, backend, onProgress } = options;
     const results: ChunkResults = [];
     const windows = new Map<number, { fromSec: number; samples: Float32Array }>();
+    // A window whose decode failed fails every later line in it for the rest of this chunk, without a second decode.
+    // Its lines answer the same error, which never enters the line cache, so a later pass decodes it again.
+    const failedWindows = new Map<string, unknown>();
     for (const clip of input.clips) {
         options.signal?.throwIfAborted();
         const row: ChunkResults[number] = [];
@@ -320,13 +323,24 @@ async function embedChunk(options: {
                 }
                 let window = windows.get(channel);
                 if (!window || window.fromSec !== clip.windowFromSec) {
-                    const samples = await toFloat32AudioWindow(input.audioPath, {
-                        fromSec: clip.windowFromSec,
-                        toSec: clip.windowFromSec + 60,
-                        channel,
-                        decoderThreads: 1,
-                        timeoutMs: 120_000,
-                    });
+                    const key = `${channel}:${clip.windowFromSec}`;
+                    if (failedWindows.has(key)) {
+                        throw failedWindows.get(key);
+                    }
+
+                    let samples: Float32Array;
+                    try {
+                        samples = await toFloat32AudioWindow(input.audioPath, {
+                            fromSec: clip.windowFromSec,
+                            toSec: clip.windowFromSec + 60,
+                            channel,
+                            decoderThreads: 1,
+                            timeoutMs: 120_000,
+                        });
+                    } catch (error) {
+                        failedWindows.set(key, error);
+                        throw error;
+                    }
                     window = { fromSec: clip.windowFromSec, samples };
                     windows.set(channel, window);
                 }
