@@ -8,12 +8,14 @@ import SwiftUI
 ///
 /// Three states, all cheap:
 /// - rest: nothing drawn, so a row of these does not look like a toolbar of chips
-/// - hover: a soft accent fill, a 1px accent border, a small lift
-/// - pressed: the fill deepens and the lift inverts, so a click reads as a click
+/// - hover: a soft accent fill and a 1px accent border, inside the control's own frame
+/// - pressed: the fill deepens and the control shrinks a little, so a click reads as a click
 ///
-/// The lift is a `scaleEffect` — a transform, never an animated shadow, which profiling in this
-/// repo called out as its single biggest idle-CPU sink (see the `PulseGlow` comment in
-/// `Theme.swift`). Reduce Motion drops the scale and keeps the colour change.
+/// The hover never grows the control. It used to lift it by 4 % (8 % for an icon): the fill and its outline then
+/// drew past the frame into the gap toward the next control, the text scaled with it, and a round icon's outline drew
+/// with corners (owner, 2026-11-19: "the GenesisKit buttons are just somewhat broken with the padding / spacing on the
+/// hover"). `GenHoverButtonStyle.lift` keeps that look for a caller who wants it (`.genHover(scale: .lift)`).
+/// Reduce Motion drops the pressed scale and keeps the colour change.
 ///
 /// In a window with a `KitLook` the fill and the border are the look's wash; an `accent` the caller names (a
 /// destructive red) still tints it.
@@ -25,7 +27,10 @@ public struct GenHoverButtonStyle: ButtonStyle {
     var padding: EdgeInsets = EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6)
     /// Set false for a control that already draws its own container (a filled pill, a card).
     var drawsBackground: Bool = true
-    var scale: CGFloat = 1.04
+    /// The size under the pointer. 1: the control keeps its frame (the default since 2026-11-19).
+    var scale: CGFloat = 1
+    /// `.circular` for a round control: the continuous curve at half the height draws a corner.
+    var corners: RoundedCornerStyle = .continuous
     /// Scale while pressed. A full-width row at 0.97 jumps by several points, so rows use ~1.
     var pressedScale: CGFloat = 0.97
     /// Lightens the label on hover. The only feedback that is safe on ANY label, including one
@@ -47,13 +52,13 @@ public struct GenHoverButtonStyle: ButtonStyle {
             .padding(padding)
             .background {
                 if drawsBackground {
-                    KitSurfaceBackground(surface, radius: cornerRadius)
+                    KitSurfaceBackground(surface, radius: cornerRadius, corners: corners)
                 }
             }
             .brightness(pressed ? brighten * 1.6 : (active ? brighten : 0))
             .scaleEffect(reduceMotion ? 1 : (pressed ? pressedScale : (active ? scale : 1)))
             .opacity(isEnabled ? 1 : 0.4)
-            .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: corners))
             .pointerCursor(isEnabled)
             .onHover { hovering in
                 guard isEnabled else { return }
@@ -66,6 +71,13 @@ public struct GenHoverButtonStyle: ButtonStyle {
     }
 }
 
+public extension GenHoverButtonStyle {
+    /// The hover lift every style had before 2026-11-19: the control grew by 4 % under the pointer.
+    static let lift: CGFloat = 1.04
+    /// The icon style's old lift (8 %).
+    static let iconLift: CGFloat = 1.08
+}
+
 public extension ButtonStyle where Self == GenHoverButtonStyle {
     /// `.buttonStyle(.genHover())` — the default for every button in the app.
     static func genHover(
@@ -73,7 +85,7 @@ public extension ButtonStyle where Self == GenHoverButtonStyle {
         cornerRadius: CGFloat = KitTheme.radiusSmall,
         padding: EdgeInsets = EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6),
         drawsBackground: Bool = true,
-        scale: CGFloat = 1.04
+        scale: CGFloat = 1
     ) -> GenHoverButtonStyle {
         GenHoverButtonStyle(accent: accent, cornerRadius: cornerRadius, padding: padding,
                             drawsBackground: drawsBackground, scale: scale)
@@ -92,11 +104,12 @@ public extension ButtonStyle where Self == GenHoverButtonStyle {
                             drawsBackground: false, scale: scale, brighten: brighten)
     }
 
-    /// A square icon button: circular feedback, no extra padding, for glyph-only controls.
-    static func genHoverIcon(accent: Color? = nil, diameter: CGFloat = 22) -> GenHoverButtonStyle {
+    /// A square icon button: circular feedback, no extra padding, for glyph-only controls. `scale: .iconLift` brings
+    /// back the old hover lift.
+    static func genHoverIcon(accent: Color? = nil, diameter: CGFloat = 22, scale: CGFloat = 1) -> GenHoverButtonStyle {
         GenHoverButtonStyle(accent: accent, cornerRadius: diameter / 2,
                             padding: EdgeInsets(top: 3, leading: 3, bottom: 3, trailing: 3),
-                            drawsBackground: true, scale: 1.08)
+                            drawsBackground: true, scale: scale, corners: .circular)
     }
 
     /// A full-width row or card: the fill and border, no scale (a growing row clips).
@@ -112,7 +125,7 @@ public extension ButtonStyle where Self == GenHoverButtonStyle {
 struct GenHoverEffect: ViewModifier {
     var accent: Color = KitTheme.accent
     var cornerRadius: CGFloat = KitTheme.radiusSmall
-    var scale: CGFloat = 1.04
+    var scale: CGFloat = 1
 
     @State private var isHovering = false
     @GenReduceMotion private var reduceMotion
@@ -139,7 +152,7 @@ struct GenHoverEffect: ViewModifier {
 public extension View {
     /// `.genHoverEffect()` — hover feedback for something that is not a `Button`.
     func genHoverEffect(accent: Color = KitTheme.accent, cornerRadius: CGFloat = KitTheme.radiusSmall,
-                        scale: CGFloat = 1.04) -> some View {
+                        scale: CGFloat = 1) -> some View {
         modifier(GenHoverEffect(accent: accent, cornerRadius: cornerRadius, scale: scale))
     }
 }
