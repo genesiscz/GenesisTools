@@ -86,10 +86,16 @@ export interface Connector<S = unknown> {
 
 /** `gt/pm/{machine}{project}/{id}`: what a person in the tracker sees, and how a lost pairing is found again. */
 export function pairingLabelFor(template: string, values: { machine: string; project: string; id: string }): string {
-    return template
-        .replace("{machine}", values.machine)
-        .replace("{project}", values.project)
-        .replace("{id}", values.id);
+    return template.replaceAll(/\{(machine|project|id)\}/g, (token) => {
+        switch (token) {
+            case "{machine}":
+                return values.machine;
+            case "{project}":
+                return values.project;
+            default:
+                return values.id;
+        }
+    });
 }
 
 export const DEFAULT_LABEL_TEMPLATE = "gt/pm/{machine}{project}/{id}";
