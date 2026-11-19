@@ -209,15 +209,18 @@ struct RoomDeviceOffer: Codable, Equatable, Identifiable {
     var group: String?
     let meetings: [String]
     let question: String
+    var titles: [String: String]? = nil
     var id: String { account }
+
+    func title(_ meeting: String) -> String { titles?[meeting] ?? meeting }
     var device: RoomDevice { .init(account: account, group: group) }
 }
 
-/// An unmap remembers the group locally for Undo. Only the account goes on the wire.
+/// The account identifies an unmap. The service receipt records what Undo can restore.
 enum RoomDeviceChange {
     case map(RoomDevice)
     case unmap(RoomDevice)
-    /// The people book spans meetings. Its answer resolves a supporting record before the write.
+    /// A Contacts answer sends the exact evidence for the service to verify without a selected meeting.
     case answer(RoomDeviceOffer, meeting: String?, yes: Bool)
 
     var params: MeetingsAPI.DecideRoomDevice.Params {
@@ -240,7 +243,7 @@ extension MeetingsAPI {
 
     enum DecideRoomDevice: MeetingsServiceMethod {
         static let name = "people.devices.decide"
-        enum Action: String, Codable { case map, unmap, answer }
+        enum Action: String, Codable { case map, unmap, answer, undo }
         struct Params: Codable, Equatable {
             let action: Action
             let account: String
@@ -248,8 +251,9 @@ extension MeetingsAPI {
             var meetings: [String]?
             var meeting: String?
             var yes: Bool?
+            var reverses: String?
         }
-        struct Result: Decodable, Equatable { let changed: Bool; let device: RoomDevice? }
+        struct Result: Decodable, Equatable { let changed: Bool; let device: RoomDevice?; let token: String? }
     }
 
     /// `people.known`: the ranked people for a query, a meeting and a moment of it. Nothing is preselected.

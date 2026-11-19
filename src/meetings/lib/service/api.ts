@@ -940,11 +940,13 @@ const meetingRows = defineMethod({
         })
         .strict(),
     result: reviewRowsSchema.extend({
-        /** Why the meeting's attendance could not be read; absent when it was read or never tried. */
-        /** A failed attendance lookup in one short sentence; its full text with the fixing commands is the detail. */
+        /**
+         * A failed attendance lookup in one short sentence; its full text with the fixing commands is the detail. Both
+         * are absent when the attendance was read or never tried.
+         */
         attendanceWarning: z.string().optional(),
-        /** One entry per source line; absent when the transcript is unreadable or nothing was measured. */
         attendanceDetail: z.string().optional(),
+        /** One entry per source line; absent when the transcript is unreadable or nothing was measured. */
         lineEvidence: z.array(windowLineEvidenceSchema).optional(),
         /** The decided lines and impact of each question row; absent without a readable transcript or questions. */
         questionDetails: z
@@ -1168,22 +1170,23 @@ export const peopleDevices = defineMethod({
 export const decideRoomDevice = defineMethod({
     name: "people.devices.decide",
     params: z.discriminatedUnion("action", [
-        roomDeviceSchema.extend({ action: z.literal("map") }).strict(),
+        roomDeviceSchema.extend({ action: z.literal("map"), reverses: z.uuid().optional() }).strict(),
+        z.object({ action: z.literal("undo"), account: roomDeviceSchema.shape.account, reverses: z.uuid() }).strict(),
         roomDeviceSchema
             .pick({ account: true })
             .extend({ action: z.literal("unmap") })
             .strict(),
         roomDeviceOfferSchema
-            .omit({ question: true })
+            .omit({ question: true, titles: true })
             .extend({
                 action: z.literal("answer"),
-                meeting: meetingRef,
+                meeting: meetingRef.optional(),
                 yes: z.boolean(),
             })
             .strict(),
     ]),
-    result: z.object({ changed: z.boolean(), device: roomDeviceSchema.nullable() }),
-    doc: "Record the owner's map, unmap or yes/no answer in the people book. Answers name the offer's group and supporting meetings.",
+    result: z.object({ changed: z.boolean(), device: roomDeviceSchema.nullable(), token: z.uuid().optional() }),
+    doc: "Record the owner's map, unmap or yes/no answer in the people book. Answers name the offer's group and supporting meetings. Undo reverses the current decision token.",
     effect: "reversible",
 });
 

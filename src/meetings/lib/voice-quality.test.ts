@@ -91,9 +91,9 @@ test("P2 quality marks overlap, zero centroids and absent compatible neighbors a
     const reed = rows.find((r) => r.owner.name === "Reed Example")!;
     expect(reed.independent).toBe(2);
     expect(reed.samples.every((s) => s.score === null && s.neighbor === null && !s.outlier)).toBe(true);
-    expect(rows.find((r) => r.owner.name === "Vale Example")?.samples.every((s) => s.reason === "zero-centroid")).toBe(
-        true
-    );
+    const vale = rows.find((r) => r.owner.name === "Vale Example")!;
+    expect(vale.meanCosine).toBeNull();
+    expect(vale.samples.map((sample) => sample.score)).toEqual([-1, -1, -1, -1]);
 });
 
 test("P2 correction receipts refuse occupied and rejected destinations, preserve IDs on Undo and block superseded Undo", async () => {

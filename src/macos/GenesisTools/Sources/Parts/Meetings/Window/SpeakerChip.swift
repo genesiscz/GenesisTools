@@ -130,7 +130,7 @@ struct SpeakerChip: View {
 
     /// The chip's menu. A name or a guess offers "Rename <label> for this meeting…" and "Assign this stretch…"; an open
     /// chip asks who it is, so it offers answers and "Somebody else…" and no rename (U7: "Who is this?" listed nothing,
-    /// then "Rename Jan Hora", a person it had just said it did not know). `pick` opens the person picker.
+    /// then "Rename Alice Example", a person it had just said it did not know). `pick` opens the person picker.
     static func menuItems(_ shown: TranscriptSpeaker, speaker: String, startSec: Double?, play: ((Double) -> Void)?,
                           detail: MeetingDetailModel, pick: @escaping (PickerMode) -> Void) -> [MenuButtonItem] {
         var items: [MenuButtonItem] = []
@@ -154,8 +154,9 @@ struct SpeakerChip: View {
                 })
                 items.append(.divider)
             }
-        case .open(_, let candidates):
-            items += answers(speaker: speaker, startSec: startSec, candidates: candidates, detail: detail, pick: pick)
+        case .open(let sourceLabel, let candidates):
+            items += answers(speaker: speaker, label: actingLabel(shown, speaker: speaker, detail: detail),
+                              sourceLabel: sourceLabel, startSec: startSec, candidates: candidates, detail: detail, pick: pick)
         case .name:
             break
         }
@@ -176,18 +177,15 @@ struct SpeakerChip: View {
     /// journal with an Undo (`reviewAnswerItems`), and "Show in Items" leads to its row. Without one, the facts the window
     /// has (`OpenSpeakerOffer`): the covering suggestion with its score, the mark's candidates and the meeting's people.
     /// "Somebody else…" opens the person picker for the stretch.
-    private static func answers(speaker: String, startSec: Double?, candidates: [String], detail: MeetingDetailModel,
-                                pick: @escaping (PickerMode) -> Void) -> [MenuButtonItem] {
+    private static func answers(speaker: String, label: String, sourceLabel: String?, startSec: Double?, candidates: [String],
+                                detail: MeetingDetailModel, pick: @escaping (PickerMode) -> Void) -> [MenuButtonItem] {
         var items: [MenuButtonItem] = [.note("Who said this?")]
         guard let startSec else {
             items.append(.note("This line has no time, so it cannot be given to someone here"))
             return items
         }
         let somebodyElse = MenuButtonItem.action("Somebody else…") { pick(.assign) }
-        let question = detail.record.value?.items.first { item in
-            item.kind == "question" && item.status == "suggested" && item.about == "speaker"
-                && (item.fromSec ?? .infinity) <= startSec && startSec <= (item.toSec ?? -.infinity)
-        }
+        let question = Self.speakerQuestion(in: detail.record.value?.items ?? [], at: startSec, label: label)
         if let question, let row = detail.rows.value?.rows.first(where: { $0.id == question.id }) {
             items += reviewAnswerItems(for: row, detail: detail)
             items.append(somebodyElse)
@@ -195,7 +193,8 @@ struct SpeakerChip: View {
             items.append(.action("Show in Items") { detail.reveal(row: row.id) })
             return items
         }
-        items += OpenSpeakerOffer.items(speaker: speaker, startSec: startSec, candidates: candidates, detail: detail)
+        items += OpenSpeakerOffer.items(speaker: speaker, sourceLabel: sourceLabel, startSec: startSec,
+                                        candidates: candidates, detail: detail)
         items.append(somebodyElse)
         return items
     }

@@ -229,7 +229,7 @@ With `--with-suggested`, proposed terms apply at 70% confidence by default (`ter
 Term and speaker thresholds are global settings in Settings → Meetings. Open Thresholds from a meeting to preview
 which proposals change there before saving a setting for all meetings. In the CLI, `tools meetings thresholds <meeting>`
 lists the names and current values, as does `await meetings.thresholds({ meeting })`. Run `tools meetings thresholds <meeting> --set <name>=<value> --preview` or `await meetings.thresholds({ meeting, set: { [name]: value }, preview: true })` to
-see the changed lines, then omit `--preview` to save the value.
+see the changed lines. To save, repeat the CLI command without `--preview` or the REPL call without `preview: true`.
 
 `listen <meeting> --spot-check 20` samples the 50 to 69 percent band without replacement. Comments leave questions
 open. `listen --long-stretch-words 50` prepares the long-stretch group; `--group rules|spot-check|long-stretch|words|all`

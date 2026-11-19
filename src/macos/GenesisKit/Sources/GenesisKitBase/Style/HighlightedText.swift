@@ -57,7 +57,7 @@ public struct HighlightedText: View {
         let length = string.length
         guard length > 0 else { return [] }
         let clipped = ranges
-            .filter { $0.location != NSNotFound && $0.length > 0 && $0.location < length }
+            .filter { $0.location >= 0 && $0.location < length && $0.length > 0 }
             .map { NSRange(location: $0.location, length: min($0.length, length - $0.location)) }
             .sorted { $0.location < $1.location }
         var merged: [NSRange] = []

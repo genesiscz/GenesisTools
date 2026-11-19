@@ -29,7 +29,7 @@ import {
     nextId,
     type SpellingReach,
 } from "@genesiscz/utils/meetings/record";
-import { MeetingRule } from "@genesiscz/utils/meetings/rules";
+import { MeetingRule, meetingRuleNames } from "@genesiscz/utils/meetings/rules";
 import { seatsFingerprint } from "@genesiscz/utils/meetings/seats";
 import {
     idSchema,
@@ -1627,10 +1627,23 @@ function harnessText(agent: string): string {
     return harness ? harnessLabel(harness) : agent;
 }
 
+/** A rule after "by": its sentence from the rule table, else only "a rule" for an id this build has no words for. */
+function ruleText(rule: string): string {
+    const [sentence] = meetingRuleNames([rule]);
+
+    if (!sentence) {
+        return "a rule";
+    }
+
+    return `a rule (${sentence.charAt(0).toLowerCase()}${sentence.slice(1).replace(/\.$/u, "")})`;
+}
+
 /**
  * An actor in words, after "by" on a row or a journal line (GLOSSARY.md, "Decision journal"): "by you" (the window),
  * "by you in the terminal" (listen), "by you at the command line", "by an agent (Claude Code, session 3f98b772)",
- * "by rule E2", and "by someone, before the history existed" for a decision older than the journal (never "unknown").
+ * "by a rule (the attendance record shows who was there)", and "by someone, before the history existed" for a
+ * decision older than the journal (never "unknown"). A rule reads as what it looked at, never as its id ("RA", "E2"):
+ * the window shows these words, and the saved actor keeps the id.
  */
 export function actorText(actor: DecisionActor): string {
     switch (actor.kind) {
@@ -1645,7 +1658,7 @@ export function actorText(actor: DecisionActor): string {
             return `an agent (${harnessText(actor.harness)}${session})`;
         }
         case "rule":
-            return `rule ${actor.rule}`;
+            return ruleText(actor.rule);
         case "unknown":
             return "someone, before the history existed";
     }

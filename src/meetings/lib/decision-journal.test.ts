@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { withTimeout } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
 import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
 import * as fileLines from "@genesiscz/utils/fs/read-lines";
@@ -79,13 +80,7 @@ import * as voiceLabeler from "./speaker-labels/voice";
 import { correctTranscript } from "./transcript-corrections";
 import { looksLikeOnePerson } from "./voice-backfill";
 import { enrolRemoteVoices, remoteStays, scoreRemoteLines } from "./voice-enrolment";
-import {
-    answeredVoiceTargets,
-    replayAnsweredVoiceSamples,
-    undoAnsweredVoiceSamples,
-    type VoicePrintChange,
-    writeAnsweredVoiceSamples,
-} from "./voice-samples";
+import { answeredVoiceTargets, replayAnsweredVoiceSamples } from "./voice-samples";
 
 const now = "2026-11-09T18:00:00.000Z";
 let stores = 0;
@@ -172,6 +167,10 @@ async function fixture(
 }
 
 const person = { kind: "listen" } as const;
+
+function waitForVoiceJob<T>(promise: Promise<T>, event: string): Promise<T> {
+    return withTimeout(promise, 2_500, new Error(`Timed out waiting for ${event}`));
+}
 
 async function voiceAnswerFixture(
     project = `journal-voice-${++stores}`,
@@ -345,10 +344,13 @@ describe("speaker answers and their project voice prints", () => {
         const decision = fx.journal.apply({ meeting, actor: person, action: { kind: "confirm", items: ["i4", "i5"] } });
         try {
             expect(
-                await Promise.race([
-                    decision.then(() => "decision returned"),
-                    started.promise.then(() => "embedder blocked"),
-                ])
+                await waitForVoiceJob(
+                    Promise.race([
+                        decision.then(() => "decision returned"),
+                        started.promise.then(() => "embedder blocked"),
+                    ]),
+                    "decision confirmation"
+                )
             ).toBe("decision returned");
             const confirm = await decision;
             expect(confirm.entry?.voices).toBeUndefined();
@@ -356,7 +358,18 @@ describe("speaker answers and their project voice prints", () => {
             const { MeetingVoiceJobs } = await import("./service/voice-jobs");
             jobs = new MeetingVoiceJobs({ store: fx.store, notify: (job) => events.push(job) });
             const work = jobs.discover(fx.store.read(meeting)!, "answer-samples", confirm.entry!.token);
-            await started.promise;
+            if (!work) {
+                throw new Error("The confirmed items did not queue work");
+            }
+            await waitForVoiceJob(
+                Promise.race([
+                    started.promise,
+                    work.then(() => {
+                        throw new Error("The voice job finished before embedding");
+                    }),
+                ]),
+                "the embedder to start"
+            );
             expect(events.map((job) => job.state)).toContain("queued");
             expect(events.at(-1)?.state).toBe("running");
             if (interruption === "partial Undo") {
@@ -419,9 +432,12 @@ describe("speaker answers and their project voice prints", () => {
             }
         } finally {
             resume.resolve();
-            await decision;
-            jobs?.stop();
-            fx.restore();
+            try {
+                await waitForVoiceJob(decision, "the decision to finish during cleanup");
+            } finally {
+                jobs?.stop();
+                fx.restore();
+            }
         }
     });
 
@@ -472,7 +488,7 @@ describe("speaker answers and their project voice prints", () => {
                 { timeoutMs: 2500 }
             );
             expect(confirm.entry?.voices).toBeUndefined();
-            await entered.promise;
+            await waitForVoiceJob(entered.promise, "the service to start embedding");
             expect(await client.call("voices.jobs", { project: fx.project })).toEqual([
                 expect.objectContaining({
                     meeting,
@@ -483,7 +499,11 @@ describe("speaker answers and their project voice prints", () => {
             ]);
             await client.call("decision.revert", { meeting, token: confirm.entry!.token, items: ["i4"] });
             resume.resolve();
-            expect(await finished.promise).toMatchObject({ added: 1, skipped: 1, state: "done" });
+            expect(await waitForVoiceJob(finished.promise, "the terminal voice job event")).toMatchObject({
+                added: 1,
+                skipped: 1,
+                state: "done",
+            });
             expect(readVoiceLibrary().library.samples).toEqual([
                 expect.objectContaining({ question: "i5", acquiredBy: "live" }),
             ]);
@@ -567,7 +587,7 @@ describe("speaker answers and their project voice prints", () => {
                         expect(await client.call("voices.jobs", { project: fx.project })).toEqual([
                             expect.objectContaining({ kind: "backfill" }),
                         ]);
-                        await ready.promise;
+                        await waitForVoiceJob(ready.promise, "embedding after restart");
                     }
                     const finished = Promise.withResolvers<void>();
                     await client.subscribe({ project: fx.project, events: ["voices.job"] }, (e) => {
@@ -578,7 +598,7 @@ describe("speaker answers and their project voice prints", () => {
                     const list = () => client.call("voices.jobs", { project: fx.project });
                     if (!(await list()).some((r) => r.state === "done")) {
                         blocked.resolve();
-                        await finished.promise;
+                        await waitForVoiceJob(finished.promise, "the recovered voice job to finish");
                     }
                     expect(await list()).toContainEqual(
                         expect.objectContaining({ state: "done", added, skipped: 2 - added })
@@ -648,7 +668,7 @@ describe("speaker answers and their project voice prints", () => {
             fx.embed.mockClear();
             fx.embed.mockRejectedValue(new Error("stored receipts must suffice"));
             await jobs.discover(fx.store.read(fx.meeting.id)!);
-            await named.promise;
+            await waitForVoiceJob(named.promise, "the naming job to finish");
             expect(passes).toEqual([fx.meeting.id]);
             expect(fx.embed).not.toHaveBeenCalled();
             expect(
@@ -707,7 +727,7 @@ describe("speaker answers and their project voice prints", () => {
                 return fx.embedLines(input);
             });
             await client.call("decision.apply", { meeting, action: { kind: "set", project } });
-            await entered.promise;
+            await waitForVoiceJob(entered.promise, "the service to start embedding");
             const [active] = await client.call("voices.jobs", { project });
             expect(active).toMatchObject({ meeting, kind: "backfill", state: "running" });
             expect(await client.call("voices.jobs.cancel", { id: active!.id })).toMatchObject({ state: "cancelled" });
@@ -771,14 +791,25 @@ describe("speaker answers and their project voice prints", () => {
         try {
             const first = await confirm(["i4"]);
             const work = jobs.discover(fx.store.read(meeting)!, "answer-samples", first.token);
-            await firstStarted.promise;
+            if (!work) {
+                throw new Error("The first set of confirmed items did not queue work");
+            }
+            await waitForVoiceJob(
+                Promise.race([
+                    firstStarted.promise,
+                    work.then(() => {
+                        throw new Error("The voice job finished before embedding");
+                    }),
+                ]),
+                "the first voice job to start"
+            );
             const second = await confirm(["i5", "i6"]);
             const queued = jobs.discover(fx.store.read(meeting)!, "answer-samples", second.token);
             expect(jobs.list(fx.project).map((j) => j.state)).toEqual(["running", "queued"]);
             await fx.journal.revert({ meeting, token: second.token, actor: person, items: ["i5"] });
             resume.resolve();
             await Promise.all([work, queued]);
-            await named.promise;
+            await waitForVoiceJob(named.promise, "the naming job to finish");
             expect(
                 events
                     .filter((r) => r.state === "running" && r.progress.step.startsWith("Naming again"))
@@ -1308,63 +1339,6 @@ describe("speaker answers and their project voice prints", () => {
         }
     });
 
-    test("a batch of answer prints writes each project once, undoes in reverse, and a failed project leaves no print", () => {
-        const base: VoicePrint = {
-            meeting: "batch-fixture",
-            sourceSha: "batch-digest",
-            seat: "mic",
-            track: "source-mic",
-            fromSec: 0,
-            toSec: 4,
-            embedding: [1, 0],
-            confirmedAt: "2026-11-01T10:00:00Z",
-            question: "q-earlier",
-        };
-        const [first, second] = ["voice-batch-first-fixture", "voice-batch-second-fixture"];
-        addVoicePrint(first, "Alice Example", base, "fixture-model");
-        const replaced = { ...base, embedding: [0, 1], question: "q-batch" };
-        const changes: VoicePrintChange[] = [
-            { project: first, person: "Alice Example", model: "fixture-model", before: base, after: replaced },
-            ...[1, 2, 3].map((n) => ({
-                project: first,
-                person: "Alice Example",
-                model: "fixture-model",
-                after: { ...base, fromSec: n * 10, toSec: n * 10 + 4, question: "q-batch" },
-            })),
-            {
-                project: second,
-                person: "Bob Example",
-                model: "fixture-model",
-                after: { ...base, seat: "call", track: "source-call" },
-            },
-        ];
-        const writes = spyOn(atomicFile, "atomicWriteFileSync");
-        try {
-            writeAnsweredVoiceSamples(changes);
-            expect(writes).toHaveBeenCalledTimes(2);
-            expect(readVoiceStore(first).people["Alice Example"]?.samples.map((one) => one.fromSec)).toEqual([
-                0, 10, 20, 30,
-            ]);
-            expect(readVoiceStore(first).people["Alice Example"]?.samples[0]?.embedding).toEqual([0, 1]);
-            undoAnsweredVoiceSamples(changes);
-            expect(writes).toHaveBeenCalledTimes(4);
-            expect(readVoiceStore(first).people["Alice Example"]?.samples).toEqual([base]);
-            expect(readVoiceStore(second).people).toEqual({});
-
-            // A project that keeps another model fails its write: the first project is undone, that one unwritten.
-            const third = "voice-batch-third-fixture";
-            addVoicePrint(third, "Carol Example", { ...base, meeting: "other" }, "other-model");
-            const failing = changes.map((change) =>
-                change.project === second ? { ...change, project: third } : change
-            );
-            expect(() => writeAnsweredVoiceSamples(failing)).toThrow("Voice model changed");
-            expect(readVoiceStore(first).people["Alice Example"]?.samples).toEqual([base]);
-            expect(Object.keys(readVoiceStore(third).people)).toEqual(["Carol Example"]);
-        } finally {
-            writes.mockRestore();
-        }
-    });
-
     test("agent answers, model confirmations, and meetings without a project never seed a voice", async () => {
         for (const mode of ["agent", "confirm", "no-project"] as const) {
             const fx = await voiceAnswerFixture(mode === "no-project" ? "" : undefined);
@@ -1589,6 +1563,31 @@ describe("decision journal", () => {
         expect(actorText({ kind: "agent", harness: "grok", session: null })).toBe("an agent (Grok)");
         expect(actorText({ kind: "agent", harness: "other-agent", session: null })).toBe("an agent (other-agent)");
         expect(actorText({ kind: "unknown" })).toBe("someone, before the history existed");
+    });
+
+    test("a rule's decision reads as what the rule looked at, never its id, in the words a row shows after 'by'", () => {
+        const rule = { kind: "rule", rule: MeetingRule.Attendance } as const;
+        const record = meetingRecord("rule-decided", {
+            items: [
+                term("i1", 10, {
+                    status: "confirmed",
+                    proposed: "Ada",
+                    decision: {
+                        token: "t1",
+                        previous: { status: "suggested" },
+                        actor: rule,
+                        entry: { action: "confirm" },
+                    },
+                }),
+            ],
+        });
+
+        expect(actorText(rule)).toBe("a rule (the attendance record shows who was there)");
+        expect(reviewRow(record, record.items[0]!).decision?.by).toBe(
+            "a rule (the attendance record shows who was there)"
+        );
+        // An id this build has no words for (a record from another build) still never reaches the screen.
+        expect(actorText({ kind: "rule", rule: "E2" })).toBe("a rule");
     });
 
     test("a future journal action remains visible, cannot be undone, and does not block known decisions", async () => {

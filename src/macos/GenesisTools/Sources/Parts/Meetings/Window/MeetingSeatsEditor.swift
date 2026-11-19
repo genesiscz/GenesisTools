@@ -10,8 +10,9 @@ struct MeetingSeatsDraft: Equatable {
     var roomLeaves: [String]
     var joins: [String]
     var leaves: [String]
-    /// The older groups (made another way) that carried room people when the sheet opened. Their seat kind stays with
-    /// the group, so unticking the last member keeps the room's tick boxes instead of turning it into a remote device.
+    /// The groups other than this Mac's microphone that carried room people when the sheet opened. Their seat kind
+    /// stays with the group, so unticking the last member keeps the room's tick boxes instead of turning it into a
+    /// remote device.
     private let roomGroupIDs: Set<String>
 
     init(_ seats: MeetingSeats) {
@@ -20,6 +21,11 @@ struct MeetingSeatsDraft: Equatable {
         roomLeaves = seats.roomRows.map { $0.toSec.map(Self.displayClock) ?? "" }
         joins = seats.remote.map { Self.displayJoin($0.fromSec) }
         leaves = seats.remote.map { $0.toSec.map(Self.displayClock) ?? "" }
+        let remote = seats.remote.map(\.name)
+        roomGroupIDs = Set((seats.microphones ?? []).filter { group in
+            guard Device(group) != .thisMac else { return false }
+            return !group.people.isEmpty && !group.people.allSatisfy { Self.contains(remote, $0) }
+        }.map(\.id))
     }
 
     /// A join this close to the start is the start. The call roster's first read lands a second or so after the
@@ -128,15 +134,15 @@ struct MeetingSeatsDraft: Equatable {
         return Device(groups[index])
     }
 
-    /// Whether the group at `index` holds room people: this Mac's microphone, or an older group whose members sat in
-    /// the room when the sheet opened, whatever is ticked now.
+    /// Whether the group at `index` holds room people: this Mac's microphone, a group that carried room people when
+    /// the sheet opened (whatever is ticked now), or a group whose members are not all remote.
     func carriesRoom(_ index: Int) -> Bool {
         guard let groups = seats.microphones, groups.indices.contains(index) else { return false }
         switch Device(groups[index]) {
         case .thisMac: return true
         case .owner, .other:
             let remote = seats.remote.map(\.name)
-            return !groups[index].people.allSatisfy { Self.contains(remote, $0) }
+            return roomGroupIDs.contains(groups[index].id) || !groups[index].people.allSatisfy { Self.contains(remote, $0) }
         }
     }
 
@@ -346,8 +352,8 @@ struct MeetingSeatChoices {
 
     init(_ suggestion: MeetingsAPI.SeatsSuggest.Suggestion) {
         self.suggestion = suggestion
-        choices = Dictionary(uniqueKeysWithValues: suggestion.people.map { ($0.name, $0.seat) })
-        count = suggestion.people.filter { $0.seat != .unsure }.count
+        choices = Dictionary(suggestion.people.map { ($0.name, $0.seat) }, uniquingKeysWith: { first, _ in first })
+        count = choices.values.filter { $0 != .unsure }.count
     }
 
     mutating func set(_ seat: Seat, for name: String) {
@@ -416,13 +422,14 @@ struct RoomDeviceOfferRow: View {
     let window: MeetingsWindowModel?
     let answer: (Bool) -> Void
     @State private var showingMeetings = false
-    @State private var titles: [String: String] = [:]
+
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
                 Text(verbatim: offer.question).fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
+                // lint-rules-ignore: short list (one row per room device offer; an account needs two supporting meetings to be offered, so a sheet shows a few)
                 Button("Yes") { answer(true) }
                     .accessibilityLabel("Yes, mark \(offer.account) as a room device")
                     .accessibilityIdentifier("meetings.devices.yes.\(offer.account)")
@@ -434,28 +441,17 @@ struct RoomDeviceOfferRow: View {
             GenDisclosure(Plural.count(offer.meetings.count, "meeting"), isExpanded: $showingMeetings, minHeight: 22) {
                 VStack(alignment: .leading, spacing: 3) {
                     ForEach(offer.meetings, id: \.self) { id in
-                        Text(verbatim: titles[id] ?? id)
+                        Text(verbatim: window?.meeting(id)?.displayTitle ?? offer.title(id))
                     }
                 }
-                .task(id: offer.meetings) { await readTitles() }
+
             }
             .font(.callout).foregroundStyle(.secondary)
         }
         .padding(.vertical, 3)
     }
 
-    /// The offer carries stable IDs. Resolve older meetings outside the overview only when the evidence is opened.
-    private func readTitles() async {
-        for id in offer.meetings where titles[id] == nil {
-            guard !Task.isCancelled else { return }
-            if let known = window?.meeting(id) {
-                titles[id] = known.displayTitle
-            } else if let record = try? await MeetingDetailModel.recordRead(id).run(service: window?.service),
-                      !record.title.isEmpty, !Task.isCancelled {
-                titles[id] = record.title
-            }
-        }
-    }
+
 }
 
 /// "Seats and microphones…" from the meeting header's "…" menu: who sat in the room, who joined from elsewhere and
@@ -527,8 +523,7 @@ struct MeetingSeatsEditor: View {
     /// visible, so it can be cleared. An unmeasured meeting (no layout) shows none.
     static func showsLabel(layout: String?, current: String?) -> Bool {
         if current != nil { return true }
-        guard let layout else { return false }
-        return layout != "unknown"
+        return layout == "left-mic" || layout == "right-mic"
     }
 
     init(seats: MeetingSeats?, preview: Loadable<MeetingsAPI.SeatsSuggest.Suggestion> = .idle,

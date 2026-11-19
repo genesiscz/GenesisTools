@@ -363,9 +363,9 @@ final class MomentPlayer {
     nonisolated static func voiceClip(_ slice: MeetingsAPI.VoicesSample.Result) async throws -> URL {
         let file = try AVAudioFile(forReading: URL(fileURLWithPath: slice.path))
         let format = file.processingFormat
-        let first = AVAudioFramePosition((slice.fileFromSec * format.sampleRate).rounded())
-        let end = AVAudioFramePosition((slice.fileToSec * format.sampleRate).rounded())
-        guard first >= 0, end > first, end <= file.length,
+        guard let first = AVAudioFramePosition(exactly: (slice.fileFromSec * format.sampleRate).rounded()),
+              let end = AVAudioFramePosition(exactly: (slice.fileToSec * format.sampleRate).rounded()),
+              first >= 0, end > first, end <= file.length,
               slice.channel.map({ (0..<Int(format.channelCount)).contains($0) }) ?? true,
               let output = AVAudioFormat(standardFormatWithSampleRate: format.sampleRate,
                                          channels: slice.channel == nil ? format.channelCount : 1),

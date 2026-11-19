@@ -370,7 +370,9 @@ private func meetingsSnapshotPart(_ request: MeetingsRequest, model: MeetingsWin
         _ = await waitUntil(60) { detail.rows.value != nil || detail.rows.failure != nil }
         let rows = detail.rows.value?.rows ?? []
         return rows.first { $0.id == id }.map { row in
-            AnyView(PinCard(row: row, reference: { id in rows.first { $0.id == id }.map(ReviewRowView.reference) }))
+            // The window's dock builds the card inside the meeting's view; the picture gives it the same detail.
+            AnyView(PinCard(row: row, reference: { id in rows.first { $0.id == id }.map(ReviewRowView.reference) })
+                .environment(\.meetingDetail, detail))
         }
     }
     if let sheet = request.sheet, sheet == "history" || sheet.hasPrefix("history:") {
@@ -678,7 +680,7 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
             let fullWindow = request.card == nil && (request.sheet == nil || request.sheet == "room-devices")
             if !fullWindow {
                 guard let part = await meetingsSnapshotPart(request, model: model, offers: offers) else {
-                    FileHandle.standardError.write(Data("meetings snapshot: no such part (--card needs a row id of --meeting, --sheet takes history, history:<row id>, voice-tools, word-timings, link-source, seats, selection:<from>-<to> or person:<name>)\n".utf8))
+                    FileHandle.standardError.write(Data("meetings snapshot: no such part (--card needs a row id of --meeting, --sheet takes history, history:<row id>, voice-tools, word-timings, link-source, seats, room-devices, voice-library-settings, selection:<from>-<to>, person:<name> or person-voices:<name or email>)\n".utf8))
                     exit(1)
                 }
                 window = MeetingsWindow.partWindow(part)

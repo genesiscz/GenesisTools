@@ -47,6 +47,9 @@ struct ReviewRowView: View, Equatable {
     /// A question that asks who speaks (`ItemsProjection.speakerQuestions`): it offers "Somebody else…", "Something
     /// else…" and "Two voices…". Passed in, so no row searches the record's items in its body.
     var asksSpeaker = false
+    /// A speaker question's people whose choice score is a voice cosine (`ItemsProjection.voicePeople`): their chips
+    /// read "0.63" as the question's text does, never "63 %".
+    var voicePeople: Set<String> = []
     /// The rows its "It settles" line names, in words (`ItemsProjection.references`).
     var references: [ItemsProjection.Reference] = []
     /// The list selects and focuses itself immediately, while the title still listens for a second click.
@@ -67,7 +70,7 @@ struct ReviewRowView: View, Equatable {
             && lhs.meanwhile == rhs.meanwhile && lhs.choiceKeys == rhs.choiceKeys && lhs.held == rhs.held
             && lhs.play == rhs.play && lhs.draft == rhs.draft && lhs.changingAnswer == rhs.changingAnswer
             && lhs.foldedFit == rhs.foldedFit && lhs.player === rhs.player && lhs.asksSpeaker == rhs.asksSpeaker
-            && lhs.references == rhs.references && lhs.unfolded == rhs.unfolded
+            && lhs.voicePeople == rhs.voicePeople && lhs.references == rhs.references && lhs.unfolded == rhs.unfolded
     }
 
     /// A decided row shown in its open layout because the reader unfolded it.
@@ -489,7 +492,8 @@ struct ReviewRowView: View, Equatable {
     }
 
     private func choiceButton(_ choice: RowChoice, index: Int) -> some View {
-        ChoiceButton(choice: choice, state: DecisionState.of(choice, in: row), stateLook: stateLook, cosine: row.isVoiceModel,
+        ChoiceButton(choice: choice, state: DecisionState.of(choice, in: row), stateLook: stateLook,
+                     cosine: row.scoresByVoice(choice, voicePeople: voicePeople),
                      number: choiceKeys && selected && index < 9 ? index + 1 : nil, enabled: !busy) {
             detail.choose(choice, on: row)
         }
@@ -888,7 +892,7 @@ private struct ChoiceButton: View {
     let state: DecisionState
     /// `meetings.rows.stateLook`, read once by the row.
     let stateLook: MeetingsPreferences.Rows.StateLook
-    /// The row's scores are voice cosines (`ReviewRow.isVoiceModel`): "0.61", never "61 %" (U13).
+    /// The choice's score is a voice cosine (`ReviewRow.scoresByVoice`): "0.61", never "61 %" (U13).
     var cosine = false
     let number: Int?
     let enabled: Bool

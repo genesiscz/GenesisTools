@@ -360,25 +360,6 @@ describe("seat suggestions", () => {
         ]);
     });
 
-    test("a saved decision with no matching lines stays unsure while other speakers have lines", () => {
-        const meeting = meetingRecordSchema.parse({
-            ...record,
-            participants: [{ name: "Wren", from: ["platform-roster"] }],
-        });
-        const ranges = [
-            { label: "Moss", person: "Moss", fromSec: 0, toSec: 10 },
-            { label: "Wren", person: "Wren", fromSec: 20, toSec: 30 },
-        ];
-        const reasonFor = (lines: { startSec: number; label: string; energyMicRaw: number }[]) =>
-            suggestSeats({ record: meeting, ranges, lines }).people.find((person) => person.name === "Wren");
-        const expected = {
-            seat: "unsure",
-            reason: "A speaker decision is saved, but no transcript line counts for it.",
-        };
-        expect(reasonFor([])).toMatchObject(expected);
-        expect(reasonFor([{ startSec: 1, label: "Moss", energyMicRaw: 0.9 }])).toMatchObject(expected);
-    });
-
     test("the remote device's attendance covers its occupants after a personal account disconnects", () => {
         const person = "Pip Example";
         const device = "Shared desk";
@@ -400,6 +381,25 @@ describe("seat suggestions", () => {
         expect(microphoneCandidates(meeting, 4, "desk")).toEqual([]);
         expect(microphoneCandidates(meeting, 20, "desk")).toEqual([person]);
         expect(microphoneCandidates(meeting, 30, "desk")).toEqual([]);
+    });
+
+    test("a saved decision with no matching lines stays unsure while other speakers have lines", () => {
+        const meeting = meetingRecordSchema.parse({
+            ...record,
+            participants: [{ name: "Wren", from: ["platform-roster"] }],
+        });
+        const ranges = [
+            { label: "Moss", person: "Moss", fromSec: 0, toSec: 10 },
+            { label: "Wren", person: "Wren", fromSec: 20, toSec: 30 },
+        ];
+        const reasonFor = (lines: { startSec: number; label: string; energyMicRaw: number }[]) =>
+            suggestSeats({ record: meeting, ranges, lines }).people.find((person) => person.name === "Wren");
+        const expected = {
+            seat: "unsure",
+            reason: "A speaker decision is saved, but no transcript line counts for it.",
+        };
+        expect(reasonFor([])).toMatchObject(expected);
+        expect(reasonFor([{ startSec: 1, label: "Moss", energyMicRaw: 0.9 }])).toMatchObject(expected);
     });
 
     test.each([

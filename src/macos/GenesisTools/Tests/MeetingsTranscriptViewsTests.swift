@@ -602,7 +602,7 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
                        "one question opens its own menu at once")
     }
 
-    /// U7: an open chip that no question covers offered nothing under "Who said this?", and then "Rename Jan Hora for
+    /// U7: an open chip that no question covers offered nothing under "Who said this?", and then "Rename Alice Example for
     /// this meeting…" for a person it had just said it does not know. It now offers the covering suggestion with its
     /// score, the meeting's people from the seats, and "Somebody else…"; a name or a guess keeps its rename.
     func testAnOpenChipWithoutAQuestionOffersTheSuggestionAndThePeopleButNoRename() throws {
@@ -646,6 +646,8 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
       {"id":"i622","kind":"speaker-range","status":"suggested","confidence":0.85,"rules":["agent"],"label":"Speaker 5",
        "fromSec":0,"toSec":40,"speaker":"Alice Example"},
       {"id":"i623","kind":"speaker-range","status":"rejected","confidence":0.95,"rules":["agent"],"label":"Speaker 5",
+       "fromSec":0,"toSec":40,"speaker":"Erin Example"},
+      {"id":"overlap","kind":"speaker-range","status":"suggested","confidence":0.99,"label":"Speaker 6",
        "fromSec":0,"toSec":40,"speaker":"Erin Example"},
       {"id":"i700","kind":"speaker-range","status":"suggested","confidence":0.8,"rules":["voice-embedding"],
        "label":"Speaker 5","fromSec":100,"toSec":140,"speaker":"Dan Example","evidence":{"score":0.61}},

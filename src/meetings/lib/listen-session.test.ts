@@ -25,7 +25,7 @@ import {
     type SessionNote,
 } from "./listen-session";
 import { GivenAnswerAdapter } from "./listen-session-answer";
-import { answerVocabulary } from "./question-answers";
+import { answerVocabulary, siblingChoices } from "./question-answers";
 import {
     askedSpotSec,
     heardClip,
@@ -33,7 +33,6 @@ import {
     type QuestionItem,
     questionView,
     questionWarnings,
-    siblingChoices,
     wordQuestions,
 } from "./questions";
 import { sineToneSound } from "./tone-sound";

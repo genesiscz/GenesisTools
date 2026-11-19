@@ -37,7 +37,9 @@ final class HighlightedTextTests: XCTestCase {
         XCTAssertEqual(cut("Hoho", [NSRange(location: 2, length: 10)]),
                        [.init("Ho", marked: false), .init("ho", marked: true)])
         XCTAssertEqual(cut("Hoho", [NSRange(location: 9, length: 2), NSRange(location: 1, length: 0),
-                                    NSRange(location: NSNotFound, length: 0)]),
+                                    NSRange(location: NSNotFound, length: 0),
+                                    NSRange(location: -1, length: 2),
+                                    NSRange(location: Int.min, length: 1)]),
                        [.init("Hoho", marked: false)])
         XCTAssertEqual(cut("Hoho", []), [.init("Hoho", marked: false)])
         XCTAssertEqual(cut("", [NSRange(location: 0, length: 3)]), [])

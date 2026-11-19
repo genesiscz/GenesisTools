@@ -79,7 +79,10 @@ interface Profile {
     /** The same-meeting windows by their line time, and by their source audio and channel, for the overlap lookups. */
     byTime: IntervalIndex<WindowPrint>;
     byAudio: Map<string, IntervalIndex<WindowPrint>>;
+    /** The windows by their transcript line, and the spans of every window and of the windows without a line key. */
+    byLineKey: Map<string, WindowPrint[]>;
     spans: Set<string>;
+    keylessSpans: Set<string>;
     external: number[][];
 }
 
@@ -116,20 +119,28 @@ function voiceProfiles(options: NamingInputs, people: string[]) {
             windows: [],
             byTime: new IntervalIndex(),
             byAudio: new Map(),
+            byLineKey: new Map(),
             spans: new Set(),
+            keylessSpans: new Set(),
             external: [],
         };
         if (window) {
+            const span = `${window.fromSec}:${window.toSec}`;
+            // Two windows of one transcript line are the same window; without both line keys, the same span is.
             if (
-                profile.windows.some((w) =>
-                    w.lineKey && window.lineKey
-                        ? w.lineKey === window.lineKey
-                        : w.fromSec === window.fromSec && w.toSec === window.toSec
-                )
+                window.lineKey
+                    ? profile.byLineKey.has(window.lineKey) || profile.keylessSpans.has(span)
+                    : profile.spans.has(span)
             ) {
                 return;
             }
             profile.spans.add(span);
+            if (!window.lineKey) {
+                profile.keylessSpans.add(span);
+            }
+            if (window.lineKey !== undefined) {
+                profile.byLineKey.set(window.lineKey, [...(profile.byLineKey.get(window.lineKey) ?? []), window]);
+            }
             profile.windows.push(window);
             profile.byTime.add(window.fromSec, window.toSec, window);
             if (window.voice) {
@@ -152,24 +163,22 @@ function voiceProfiles(options: NamingInputs, people: string[]) {
             const source = options.sources?.get(sample);
             const identity =
                 source && [source.rootMeeting, source.lineKey, sample.track, sample.embedding.length].join("\0");
-            if (identity && seen.has(identity)) {
+            if (!vector || (identity && seen.has(identity))) {
                 continue;
             }
             if (identity) {
                 seen.add(identity);
             }
-            if (vector) {
-                add(name, {
-                    seat: sample.seat,
-                    track: sample.track,
-                    model: options.store.model,
-                    vector,
-                    window:
-                        (source?.rootMeeting ?? sample.meeting) === options.meeting
-                            ? { lineKey: source?.lineKey, fromSec: sample.fromSec, toSec: sample.toSec, vector }
-                            : undefined,
-                });
-            }
+            add(name, {
+                seat: sample.seat,
+                track: sample.track,
+                model: options.store.model,
+                vector,
+                window:
+                    (source?.rootMeeting ?? sample.meeting) === options.meeting
+                        ? { lineKey: source?.lineKey, fromSec: sample.fromSec, toSec: sample.toSec, vector }
+                        : undefined,
+            });
         }
     }
     for (const line of options.lines) {
@@ -204,15 +213,20 @@ function voiceProfiles(options: NamingInputs, people: string[]) {
     return { profiles, enrolled };
 }
 
-function overlapsWindow(w: WindowPrint, { fromSec, toSec, voice, lineKey }: Target): boolean {
-    return (
-        (lineKey !== undefined && w.lineKey === lineKey) ||
-        (w.fromSec < toSec && w.toSec > fromSec) ||
-        (w.voice?.source.audioPath === voice.source.audioPath &&
-            w.voice.channel === voice.channel &&
-            w.voice.fromSec < voice.toSec &&
-            w.voice.toSec > voice.fromSec)
-    );
+/**
+ * The same-meeting windows that overlap the target: the same transcript line (`lineKey`), the line time, or the same
+ * source audio and channel. Looked up in the profile's indexes, so a long meeting does not scan every training window
+ * for every target line.
+ */
+function overlappingWindows(profile: Profile, { fromSec, toSec, voice, lineKey }: Target): Set<WindowPrint> {
+    const found = new Set(profile.byTime.overlapping(fromSec, toSec));
+    for (const window of profile.byAudio.get(audioKey(voice))?.overlapping(voice.fromSec, voice.toSec) ?? []) {
+        found.add(window);
+    }
+    for (const window of lineKey === undefined ? [] : (profile.byLineKey.get(lineKey) ?? [])) {
+        found.add(window);
+    }
+    return found;
 }
 
 export function dot(a: number[], b: number[]): number {

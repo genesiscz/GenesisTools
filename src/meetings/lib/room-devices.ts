@@ -89,7 +89,9 @@ export function roomDeviceOffers(options: {
         return [];
     }
     const candidates = new Map<string, Map<string, { account: string; roots: Set<string> }>>();
-    for (const record of store.list()) {
+    const records = store.list();
+    const titles = new Map(records.map(({ id, title }) => [id, title]));
+    for (const record of records) {
         let root: string | undefined;
         for (const { account, group } of roomJoins(record)) {
             const key = rosterAccountKey(account);
@@ -114,7 +116,19 @@ export function roomDeviceOffers(options: {
             .sort(([a, x], [b, y]) => y.roots.size - x.roots.size || a.localeCompare(b))[0];
         if (strongest) {
             const [group, { account, roots }] = strongest;
-            offers.push({ account, group, meetings: [...roots].sort(), question: `Is ${account} the room's device?` });
+            const meetings = [...roots].sort();
+            offers.push({
+                account,
+                group,
+                meetings,
+                titles: Object.fromEntries(
+                    meetings.flatMap((id) => {
+                        const title = titles.get(id);
+                        return title ? [[id, title]] : [];
+                    })
+                ),
+                question: `Is ${account} the room's device?`,
+            });
         }
     }
     return offers.sort((a, b) => a.account.localeCompare(b.account));

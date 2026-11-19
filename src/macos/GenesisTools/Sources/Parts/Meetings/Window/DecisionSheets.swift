@@ -35,7 +35,7 @@ struct ReachSheet: View {
                 // U12: what changes and where, in place of "Besides i897, this decision also changes:".
                 let lead = Self.spellingLead(heard: spelling.heard, proposed: spelling.proposed,
                                              lines: spellingLines.count, dictionary: teachDictionary)
-                HighlightedText(lead, ranges: Self.spellingLeadRanges(lead, proposed: spelling.proposed))
+                HighlightedText(lead.text, ranges: lead.ranges)
                     .font(.system(size: 13.5)).fixedSize(horizontal: false, vertical: true)
             } else {
                 Text(verbatim: Self.lead(pending))
@@ -83,22 +83,20 @@ struct ReachSheet: View {
 
     /// A spelling's lead (U12): "“Hoho” becomes “HoHo” in 4 lines and in the dictionary." `lines` is the number of
     /// ticked lines and `dictionary` the dictionary box, so the sentence follows the choices below it.
-    static func spellingLead(heard: String, proposed: String, lines: Int, dictionary: Bool) -> String {
-        let change = "“\(heard)” becomes “\(proposed)”"
-        switch (lines > 0, dictionary) {
-        case (true, true): return "\(change) in \(Plural.count(lines, "line")) and in the dictionary."
-        case (true, false): return "\(change) in \(Plural.count(lines, "line"))."
-        case (false, true): return "\(change) in the dictionary."
-        case (false, false): return "“\(heard)” stays as it is: tick a line or the dictionary."
+    static func spellingLead(heard: String, proposed: String, lines: Int, dictionary: Bool) -> (text: String, ranges: [NSRange]) {
+        guard lines > 0 || dictionary else {
+            return ("“\(heard)” stays as it is: tick a line or the dictionary.", [])
         }
-    }
-
-    /// The new spelling inside the lead, the part `HighlightedText` marks; none when the lead does not name it.
-    static func spellingLeadRanges(_ lead: String, proposed: String) -> [NSRange] {
-        guard !proposed.isEmpty else { return [] }
-        let quoted = (lead as NSString).range(of: "“\(proposed)”")
-        guard quoted.location != NSNotFound else { return [] }
-        return [NSRange(location: quoted.location + 1, length: quoted.length - 2)]
+        let prefix = "“\(heard)” becomes “"
+        let change = "\(prefix)\(proposed)”"
+        let suffix: String
+        switch (lines > 0, dictionary) {
+        case (true, true): suffix = " in \(Plural.count(lines, "line")) and in the dictionary."
+        case (true, false): suffix = " in \(Plural.count(lines, "line"))."
+        case (false, _): suffix = " in the dictionary."
+        }
+        let range = NSRange(location: prefix.utf16.count, length: proposed.utf16.count)
+        return (change + suffix, proposed.isEmpty ? [] : [range])
     }
 }
 

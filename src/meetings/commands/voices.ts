@@ -11,9 +11,9 @@ import { callerActor } from "../lib/decision-journal";
 import { type MeetingsParams, type MeetingsResult, voicesReject } from "../lib/service/api";
 import { withMeetingsClient } from "../lib/service/client";
 import { fail, resolveEnum } from "../lib/shared";
+import { playSoundSlice } from "../lib/sound-playback";
 import { addVoiceSample, applyVoices, previewVoices } from "../lib/voices";
 import { registerLegacyVoiceCommands } from "./acoustic";
-import { playSoundSlice } from "./play";
 import { parsePerson } from "./projects";
 
 interface VoiceOptions {

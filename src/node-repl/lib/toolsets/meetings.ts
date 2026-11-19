@@ -29,6 +29,7 @@ import {
     assignAsk,
     audioApply,
     audioPlan,
+    autostartMethod,
     type backfillVoices,
     commentRead,
     commentWithdraw,
@@ -42,6 +43,7 @@ import {
     exportMethod,
     itemsList,
     itemsRows,
+    levels,
     type lineEligibility,
     lines,
     list,
@@ -84,6 +86,8 @@ import { previewSuggestions, runSuggest } from "@app/meetings/lib/suggest-run";
 import { readOrSetThresholds } from "@app/meetings/lib/thresholds";
 import { correctTranscript, outcomeText } from "@app/meetings/lib/transcript-corrections";
 import { voiceReadiness as readVoiceReadiness } from "@app/meetings/lib/voice-readiness";
+import { watchOnce } from "@app/meetings/lib/watch";
+import { recordingAutostart } from "@app/meetings/lib/watcher";
 import { rowsRead } from "@app/meetings/lib/window-reads";
 import { assertReach } from "@genesiscz/utils/api-descriptor";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -147,6 +151,12 @@ export class MeetingsToolset extends ReplToolset {
         const resolveSample = serviceCall("voices.sample");
         return {
             meetings: {
+                levels: async (input: z.input<typeof levels.params> = {}) => {
+                    const { meeting, seconds } = levels.params.parse(input);
+                    return meeting === undefined
+                        ? liveMeetingLevels({ seconds: seconds ?? 3 })
+                        : savedMeetingLevels(store, meeting);
+                },
                 roomDevices: (params: MeetingsParams<"people.devices.list"> = {}) =>
                     withMeetingsClient((client) => client.call("people.devices.list", params)),
                 decideRoomDevice: serviceCall("people.devices.decide"),
@@ -189,7 +199,7 @@ export class MeetingsToolset extends ReplToolset {
                         }: z.input<typeof voiceLibraryMethods.play.params>) => {
                             const slice = await resolveSample(selection);
                             if (start !== false) {
-                                const { playSoundSlice } = await import("@app/meetings/commands/play");
+                                const { playSoundSlice } = await import("@app/meetings/lib/sound-playback");
                                 await playSoundSlice({ slice, player });
                             }
                             return slice;
@@ -233,14 +243,14 @@ export class MeetingsToolset extends ReplToolset {
                         }));
                 },
                 open: (refText: string) => this.meeting(store, ref.parse({ ref: refText }).ref),
-                locate: (refText: string) =>
-                    locateMeeting({ ref: locate.params.parse({ ref: refText }).ref, root: store.root }) ?? null,
                 look: async (input: z.input<typeof look.params>) => lookMeeting(store, input),
                 measure: async ({ meeting }: z.input<typeof measure.params>) => {
                     // lazy, like exportMeeting: the room-call scorer loads only for a measurement
                     const { measureRoomCallMeeting } = await import("@app/meetings/lib/room-call-metrics");
                     return measureRoomCallMeeting({ meeting, store });
                 },
+                locate: (refText: string) =>
+                    locateMeeting({ ref: locate.params.parse({ ref: refText }).ref, root: store.root }) ?? null,
                 overview: async (input: z.input<typeof overview.params> = {}) => {
                     const { days } = overview.params.parse(input);
                     return meetingsOverview({

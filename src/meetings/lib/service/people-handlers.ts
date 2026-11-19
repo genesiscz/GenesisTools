@@ -56,25 +56,27 @@ export async function decideDevice(options: {
     if (params.action !== "answer") {
         return book.decideDevice({ ...params, actor });
     }
-    const meeting = recordOf(store, params.meeting).id;
+    const meeting = params.meeting ? recordOf(store, params.meeting).id : undefined;
     const minimum = await deviceOfferMinimum(deps);
+    const meetings = [...params.meetings].sort();
     return book.decideDevice({
         actor,
         account: params.account,
         group: params.group,
         meeting,
-        meetings: [...params.meetings].sort(),
+        meetings,
         action: params.yes ? "map" : "refuse",
         verifyOffer(history) {
-            const offers = roomDeviceOffers({ store, history, meeting: recordOf(store, meeting), minimum });
+            const offers = roomDeviceOffers({
+                store,
+                history,
+                meeting: meeting ? recordOf(store, meeting) : undefined,
+                minimum,
+            });
             const current = offers.find(
                 (offer) => rosterAccountKey(offer.account) === rosterAccountKey(params.account)
             );
-            if (
-                !current ||
-                current.group !== params.group ||
-                !Bun.deepEquals(current.meetings, [...params.meetings].sort())
-            ) {
+            if (!current || current.group !== params.group || !Bun.deepEquals(current.meetings, meetings)) {
                 throw new Error("This room device offer has changed. Refresh the suggestions.");
             }
         },
@@ -87,13 +89,6 @@ export function voicesHandlers(
     deps: MeetingsHandlerDeps = {}
 ): RpcHandlers<{ methods: typeof VOICES_METHODS }, import("./handlers").MeetingsCallContext> {
     const access = { store, linkedSource: deps.linkedSource, config: deps.config };
-    // A missing or ambiguous meeting answers with the typed refusal `meeting.show` gives (`meeting-not-found`,
-    // `meeting-ref`), not with the voice library's plain error.
-    const knownMeetings = (refs: readonly string[] | undefined) => {
-        for (const ref of refs ?? []) {
-            recordOf(store, ref);
-        }
-    };
     async function correction(
         action: Parameters<typeof editVoice>[0]["action"],
         params: { person?: string; preview?: boolean; planToken?: string },
@@ -114,6 +109,13 @@ export function voicesHandlers(
         }
         return result;
     }
+    // A missing or ambiguous meeting answers with the typed refusal `meeting.show` gives (`meeting-not-found`,
+    // `meeting-ref`), not with the voice library's plain error.
+    const knownMeetings = (refs: readonly string[] | undefined) => {
+        for (const ref of refs ?? []) {
+            recordOf(store, ref);
+        }
+    };
     return {
         "voices.jobs": ({ project }) => deps.voiceJobs?.list(project) ?? [],
         "voices.jobs.cancel": ({ id }) => deps.voiceJobs?.cancel(id) ?? null,
@@ -138,6 +140,7 @@ export function voicesHandlers(
         "voices.quality": (p) => voiceQuality({ ...access, ...p }),
         "voices.list": (params) => listProjectVoices({ ...access, ...params }),
         "voice.backfill": async (params, context) => {
+            knownMeetings(params.meetings);
             const result =
                 deps.voiceJobs && !params.dryRun
                     ? await deps.voiceJobs.backfill(params)

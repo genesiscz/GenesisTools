@@ -492,7 +492,8 @@ function labeledItems(options: {
     const ranges = (items: readonly NewItem[]) => byLabel(items.filter((item) => item.kind === "speaker-range"));
     const confirmed = ranges(record.items.filter((item) => item.status === "confirmed"));
     const assignments = byLabel(record.speakers.assignments ?? []);
-    const suggested = ranges([...options.found, ...record.items.filter((one) => one.status === "suggested")]);
+    const foundByLabel = ranges(options.found);
+    const storedByLabel = ranges(record.items.filter((one) => one.status === "suggested" || one.status === "rejected"));
     // The lines a range covers: a binary search over the lines by start, then its own label.
     const coveredLines = (item: Extract<NewItem, { kind: "speaker-range" }>) =>
         spans.startingBetween(item.fromSec, item.toSec).filter(({ entry }) => entry.speaker === item.label);
@@ -606,7 +607,7 @@ function labeledItems(options: {
                     : {}),
             },
         };
-        const stored = record.items.filter(
+        const stored = (storedByLabel.get(entry.speaker) ?? []).filter(
             (one) =>
                 covers(one, entry.speaker, at) &&
                 (one.status === "suggested" ||
@@ -620,7 +621,10 @@ function labeledItems(options: {
                         one.speaker &&
                         sameName(one.speaker, label.person!)))
         );
-        const older = [...options.found.filter((one) => covers(one, entry.speaker, at)), ...stored];
+        const older = [
+            ...(foundByLabel.get(entry.speaker) ?? []).filter((one) => covers(one, entry.speaker, at)),
+            ...stored,
+        ];
 
         // A rerun keeps this line's item ID. Its confidence and voice support follow the current seat proposal.
         if (label.reason === "seat-of-one") {
@@ -700,10 +704,7 @@ function labeledItems(options: {
             !item.decision &&
             !item.rules.includes(MeetingRule.User) &&
             !item.rules.includes(MeetingRule.Agent) &&
-            ([...strangers.keys()].some((index) => {
-                const entry = meeting.transcript[index];
-                return entry.startSec !== undefined && covers(item, entry.speaker, entry.startSec);
-            }) ||
+            (coveredLines(item).some(({ index }) => strangers.has(index)) ||
                 independent.some(([index, winner]) => {
                     const entry = meeting.transcript[index]!;
                     return (
@@ -1394,10 +1395,13 @@ function buildSuggestions(options: SuggestInputs): void {
             wordLines.add(line);
             return true;
         });
-    // An exclusion (another person's voice on a shared seat) is asked whatever the budget, even a zero one. A stranger
-    // stretch's question is a speaker question of the group rules like any other: it comes first, inside the budget.
-    const exclusions = voiceQuestions.filter((question) => question.evidence.reason === "exclusion");
-    const strangers = voiceQuestions.filter((question) => question.evidence.reason !== "exclusion");
+    // An exclusion (another person's voice on a shared seat) and a review-only range (a roster elimination) are asked
+    // whatever the budget, even a zero one. A stranger stretch's question is a speaker question of the group rules like
+    // any other: it comes first, inside the budget.
+    const isStranger = (question: (typeof voiceQuestions)[number]) =>
+        question.evidence?.reason === "not-the-seat-person";
+    const exclusions = voiceQuestions.filter((question) => !isStranger(question));
+    const strangers = voiceQuestions.filter(isStranger);
     let left = budget;
     const ordered = [
         ...exclusions.map((question) => ({ question, exempt: true })),

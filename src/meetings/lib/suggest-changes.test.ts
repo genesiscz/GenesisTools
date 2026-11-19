@@ -1,8 +1,82 @@
 import { expect, test } from "bun:test";
-import { MeetingStore } from "@genesiscz/utils/meetings/record";
+import type { MeetingItem } from "@genesiscz/utils/meetings/record";
+import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { groupSpeakerQuestions, refreshSpeakerQuestions } from "./questions";
+import { LineSpeakers } from "./speaker-evidence";
 import { applySuggestionChanges, planSuggestions, type SuggestInputs } from "./suggest";
+
+test("a retired speaker range retires its question when no line choices can be rebuilt", () => {
+    const meeting: SourceMeeting = {
+        sourceMeetingId: "fixture",
+        title: "Practice",
+        start: "2026-11-01T09:00:00Z",
+        participants: [],
+        speakers: [],
+        folders: [],
+        transcript: [],
+    };
+    const record = meetingRecordSchema.parse({
+        id: "fixture",
+        title: meeting.title,
+        start: meeting.start,
+        createdAt: meeting.start,
+        createdBy: "new",
+        items: [
+            {
+                kind: "speaker-range",
+                id: "i1",
+                label: "Voice",
+                status: "rejected",
+                fromSec: 0,
+                toSec: 8,
+                evidence: { retired: "seat changed" },
+                suggestedAt: meeting.start,
+                rules: [],
+            },
+            {
+                kind: "question",
+                id: "i2",
+                about: "speaker",
+                status: "suggested",
+                fromSec: 0,
+                toSec: 8,
+                choices: ["Finch Example"],
+                decides: ["i1"],
+                question: "Who spoke?",
+                suggestedAt: meeting.start,
+                rules: [],
+            },
+        ],
+    });
+    refreshSpeakerQuestions(record.items, {
+        speakers: new LineSpeakers({ record, meeting, lines: [] }),
+        listenBelow: 0.7,
+        transcript: [],
+        points: [],
+    });
+    expect(record.items[1]).toMatchObject({ status: "rejected", evidence: { retired: "speaker-eligibility" } });
+});
+
+test("a long imported stretch has one question with the full span", () => {
+    const count = 150_000;
+    const ranges: MeetingItem[] = Array.from({ length: count }, (_, index) => ({
+        id: `i${index}`,
+        kind: "speaker-range",
+        status: "suggested",
+        rules: [],
+        label: "Voice",
+        fromSec: count - index,
+        toSec: count - index,
+        suggestedAt: "2026-11-01T09:00:00Z",
+        evidence: { strangerStretch: 1, endSec: count - index + 2 },
+    }));
+    const questions = groupSpeakerQuestions(ranges, new Set(), { listenBelow: 0.7, transcript: [], points: [] });
+    expect(questions).toHaveLength(1);
+    expect(questions[0]).toMatchObject({ fromSec: 1, toSec: count + 2 });
+    expect(questions[0]?.decides).toHaveLength(count);
+});
 
 function freeze(value: unknown) {
     if (value && typeof value === "object" && !Object.isFrozen(value)) {

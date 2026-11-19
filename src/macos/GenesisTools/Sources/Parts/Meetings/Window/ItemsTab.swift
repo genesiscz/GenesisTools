@@ -306,6 +306,7 @@ struct ItemsTab: View {
                                       held: detail.heldFolds.contains(row.id),
                                       unfolded: detail.unfoldedRows.contains(row.id),
                                       asksSpeaker: projection.speakerQuestions.contains(row.id),
+                                      voicePeople: projection.voicePeople[row.id] ?? [],
                                       references: projection.references[row.id] ?? [],
                                       selectRow: {
                                           detail.selectedRow = row.id

@@ -106,12 +106,12 @@ describe("per-line speaker evidence", () => {
     });
 
     test("a swap produces items first and no second finding for its lines", () => {
-        // One normal five-minute window, then two swapped windows with one contradictory segment.
+        // Two swapped windows bridge an empty window after a normal one. One line contradicts its swapped label.
         const lines = Array.from({ length: 90 }, (_, index) => {
             const selfLabel = index % 2 === 0;
             const mic = selfLabel === index < 30 ? 1 : 0;
             return {
-                ...callLine(index, index * 10),
+                ...callLine(index, index * 10 + (index >= 60 ? 300 : 0)),
                 label: selfLabel ? dana : eli,
                 micShare: index === 36 ? 1 : mic,
                 energyMic: mic,
@@ -122,7 +122,7 @@ describe("per-line speaker evidence", () => {
         });
         const { evidence, items, seeds } = evaluate(scene(lines));
         expect(evidence.swaps).toHaveLength(1);
-        expect(evidence.swaps[0]).toMatchObject({ fromSec: 300, toSec: 890, skipped: [360] });
+        expect(evidence.swaps[0]).toMatchObject({ fromSec: 300, toSec: 1190, skipped: [360] });
         const swapped = evidence.labels.flatMap(({ outcomes }) => outcomes.filter(({ line }) => line.startSec >= 300));
         expect(swapped).toHaveLength(60);
         for (const outcome of swapped) {
@@ -134,6 +134,19 @@ describe("per-line speaker evidence", () => {
         expect(evidence.swapItems).toHaveLength(59);
         expect(items.slice(0, 59)).toEqual(evidence.swapItems);
         expect(seeds.size).toBe(0);
+
+        const timed = scene(lines);
+        timed.record.seats = {
+            room: [
+                { name: dana, fromSec: 0, toSec: 305 },
+                { name: "Finch Example", fromSec: 305 },
+            ],
+            remote: [{ name: eli, fromSec: 0, toSec: 305 }],
+        };
+        const bounded = evaluate(timed).evidence;
+        expect(bounded.swaps).toHaveLength(1);
+        expect(bounded.swapItems.some((item) => item.kind === "speaker-range" && item.fromSec === 300)).toBe(false);
+        expect(bounded.swapItems.some((item) => item.kind === "speaker-range" && item.fromSec === 310)).toBe(false);
     });
 
     test("equal adjacent findings group, and a 200 second gap starts another range", () => {
@@ -177,5 +190,21 @@ describe("per-line speaker evidence", () => {
         ]);
         expect(items[1]).toMatchObject({ rules: [MeetingRule.VoiceEmbedding] });
         expect([...seeds.keys()]).toEqual([0, 2, 4]);
+
+        const confirmed = {
+            id: "i1",
+            kind: "speaker-range",
+            label: "Overlapping label",
+            status: "confirmed",
+            fromSec: 0,
+            toSec: 20,
+            speaker: eli,
+            rules: [],
+            suggestedAt: start,
+        } as const;
+        input.items = [{ ...confirmed, rules: [] }];
+        expect(evaluate(input).evidence.labels[0]?.outcomes[1]?.kind).toBe("direct");
+        input.items = [{ ...confirmed, rules: [], label: dana }];
+        expect(evaluate(input).evidence.labels[0]?.outcomes[1]?.kind).not.toBe("direct");
     });
 });

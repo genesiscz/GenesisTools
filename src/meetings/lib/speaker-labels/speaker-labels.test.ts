@@ -15,6 +15,7 @@ import * as voiceFeatures from "@genesiscz/utils/meetings/voice-features";
 import { addVoicePrint } from "@genesiscz/utils/meetings/voice-store";
 import { PROFILER_SCOPE_NAMES, profiler } from "@genesiscz/utils/profile";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import * as evidenceModule from "@genesiscz/utils/transcribe/evidence";
 import type { WordCheck } from "@genesiscz/utils/transcribe/languages/word-check";
 import { groupTurns, transcriptMarkdown, transcriptTextLines } from "@genesiscz/utils/transcribe/render";
 import * as terms from "@genesiscz/utils/transcribe/terms";
@@ -24,7 +25,7 @@ import { questionView } from "../questions";
 import { rawMeeting } from "../raw";
 import { reviewRow } from "../review-rows";
 import { suggestItems } from "../suggest";
-import { runSuggest } from "../suggest-run";
+import { previewSuggestionRuns, runSuggest } from "../suggest-run";
 import { correctTranscript } from "../transcript-corrections";
 import * as labelers from "./index";
 import { mergeLineLabels, proposeSpeakerLabels } from "./index";
@@ -133,8 +134,10 @@ describe("suggest runner word settings", () => {
         const scope = profiler.scope("meetings-suggest");
         const measured = spyOn(scope, "measureAsync");
         const sections = spyOn(scope, "section");
-        spies.push(measured, sections);
+        const history = spyOn(speechHistory, "localSpeechDuring");
+        spies.push(measured, sections, history);
         await runSuggest({ store, record, rules: ["terms"], wordCheck: "off" });
+        expect(history).not.toHaveBeenCalled();
         expect(PROFILER_SCOPE_NAMES).toContain("meetings-suggest");
         expect(measured.mock.calls.map(([label]) => label)).toContain("collectForSuggest");
         expect(sections.mock.calls.map(([label]) => label)).toEqual(
@@ -258,6 +261,28 @@ describe("suggest runner word settings", () => {
                 rules: [MeetingRule.LocalSpeech],
                 evidence: { reason: "local speech output", transcriptLine: 0 },
             }),
+        ]);
+    });
+
+    test("an evidence-free threshold preview rebuilds measured lines for changed attendance", async () => {
+        const { opened, meeting, config } = await runnerFixture({ sources: { wisprflow: { meetingId: "planning" } } });
+        meeting.transcript = [{ speaker: "Voice", startSec: 5, text: "The supplier joined the call." }];
+        config.global.speakerLabels.seat.enabled = false;
+        config.global.speakerLabels.voice.enabled = false;
+        spies.push(spyOn(opened, "wordCheck").mockResolvedValue({ reason: "fixture" }));
+        const draft = structuredClone(config);
+        draft.global.suggest.leaveSilenceMinutes += 1;
+        const before = [{ name: "Finch Example", fromSec: 0, toSec: 4 }];
+        const after = [{ name: "Finch Example", fromSec: 0, toSec: 10 }];
+        spies.push(spyOn(opened, "presence").mockResolvedValueOnce(before).mockResolvedValue(after));
+        const measure = spyOn(evidenceModule, "lineEvidence");
+        spies.push(measure);
+        await previewSuggestionRuns(opened, config, draft);
+        expect(measure.mock.calls).toContainEqual([
+            meeting.transcript,
+            { segments: [], speaking: [] },
+            after,
+            undefined,
         ]);
     });
 
@@ -584,9 +609,13 @@ describe("suggest runner word settings", () => {
             );
         });
         const suggest = () => runSuggest({ store, record: store.read(record.id)!, rules: ["evidence"] });
-        await suggest();
+        const first = await suggest();
         await suggest();
         const saved = new MeetingStore(store.storage).read(record.id)!;
+        const qualityQuestion = (row: MeetingRecord["items"][number]) =>
+            row.kind === "question" && row.group === "long-stretch";
+        expect(first.fresh.filter(qualityQuestion)).toEqual(saved.items.filter(qualityQuestion));
+        expect(first.fresh.some((row) => row.evidence?.qualitySource)).toBe(false);
         expect(
             saved.items.flatMap((item) =>
                 item.kind === "question" && item.group === "long-stretch" ? [item.fromSec] : []

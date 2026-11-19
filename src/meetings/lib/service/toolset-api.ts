@@ -260,9 +260,10 @@ export const itemsRows = defineMethod({
         .object({ lowPriority: z.enum(["hide", "show"]).optional(), applyAbove: z.number().min(0).max(1).optional() })
         .strict(),
     result: z.unknown(),
-    resultName: "{ meeting, rows: ReviewRow[], hidden, attendanceWarning?, lineEvidence?, questionDetails? }",
+    resultName:
+        "{ meeting, rows: ReviewRow[], hidden, attendanceWarning?, attendanceDetail?, lineEvidence?, questionDetails? }",
     effect: "read",
-    doc: `The review rows, as \`${toolCommand("meetings", "rows", "--json")}\` prints them: each item in the order listen asks, with its question as parts, its typed choices with confidence, its edit kind, sources, Moment and last decision. Optional attendanceWarning, lineEvidence (per source line) and questionDetails (per question); a missing field was not available, never a negative result. lowPriority: "show" keeps the open questions under the priority line.`,
+    doc: `The review rows, as \`${toolCommand("meetings", "rows", "--json")}\` prints them: each item in the order listen asks, with its question as parts, its typed choices with confidence, its edit kind, sources, Moment and last decision. Optional attendanceWarning and attendanceDetail, lineEvidence (per source line) and questionDetails (per question); a missing field was not available, never a negative result. lowPriority: "show" keeps the open questions under the priority line.`,
 });
 export const add = defineMethod({
     name: "items.add",
@@ -706,12 +707,12 @@ const seatsRpc = meetingsMethod("meeting.seats.suggest");
 export const roomDevices = defineMethod({
     ...meetingsMethod("people.devices.list"),
     name: "roomDevices",
-    doc: `Return devices and, with {offers: true} or {meeting}, questions with their supporting meeting IDs. CLI: ${toolCommand("meetings people devices list")} [--offers] [--meeting <id>].`,
+    doc: `Return devices and, with {offers: true} or {meeting}, questions with their supporting meeting IDs and available titles. CLI: ${toolCommand("meetings people devices list")} [--offers] [--meeting <id>].`,
 });
 export const decideRoomDevice = defineMethod({
     ...meetingsMethod("people.devices.decide"),
     name: "decideRoomDevice",
-    doc: `Return {changed, device} for the owner's map, unmap or yes/no answer. Answer with the meeting, account, group and meetings from the offer. Agent callers can read offers. CLI: ${toolCommand("meetings people devices")} map|unmap|answer.`,
+    doc: `Return {changed, device, token?} for the owner's map, unmap, undo or yes/no answer. Answer with account, group and meetings from the offer, and the selected meeting when scoped. Undo sends {action: "undo", account, reverses: token}. Agent callers can read offers. CLI: ${toolCommand("meetings people devices")} map|unmap|answer.`,
 });
 const thresholdsRpc = meetingsMethod("meeting.thresholds.preview");
 export const applySeats = defineMethod({
@@ -862,9 +863,9 @@ export const meetingsToolsetApi = defineApi({
         list,
         levels,
         open,
-        locate,
         look,
         measure,
+        locate,
         overview,
         projectsLabels,
         projectsPair,

@@ -39,7 +39,7 @@ import { decisionActionSchema } from "../lib/decision-actions";
 import { callerActor } from "../lib/decision-journal";
 import { FINDING_KINDS, findingProblems, findingSchema, findingsFileSchema } from "../lib/findings";
 import { setMeetingFields } from "../lib/meeting-fields";
-import { attendanceDetail, attendanceWarning, OpenedMeeting } from "../lib/opened-meeting";
+import { attendanceDetail, attendanceIdRefusal, attendanceWarning, OpenedMeeting } from "../lib/opened-meeting";
 import { MEETING_PLATFORMS } from "../lib/platforms";
 import { missingProjectWarning, projectRequired, resolveProject } from "../lib/project";
 import { questionLabel, questionWarnings } from "../lib/questions";

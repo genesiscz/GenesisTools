@@ -640,12 +640,12 @@ export async function addVoiceSample(
     const evidence = await opened.evidence();
     const { lineEvidence } = await import("@genesiscz/utils/transcribe/evidence");
     const stays = (await opened.presence())?.filter((stay) => sameName(stay.name, options.person)) ?? [];
-    // Only lines inside the interval can be enrolled, so only lines that start in it are measured.
     const seated = record.seats && seatIntervalsFor(record.seats, options.person);
     const hasSavedSeat = Boolean(
         seated?.length || record.seats?.remote.some((row) => sameName(row.name, options.person))
     );
     const self = record.participants.some((person) => person.self && sameName(person.name, options.person));
+    // Only lines inside the interval can be enrolled, so only lines that start in it are measured.
     const eligible = lineEvidence(
         [...lines.entries],
         evidence ?? { segments: [], speaking: [] },

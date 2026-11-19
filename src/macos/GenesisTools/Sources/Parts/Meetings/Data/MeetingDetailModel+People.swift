@@ -32,7 +32,8 @@ struct PresenceGroup: Identifiable, Equatable {
         let remote = Set((record.seats?.remote ?? []).filter { ($0.toSec ?? .infinity) > ($0.fromSec ?? 0) }.map { PeopleText.personKey($0.name) })
         for key in remote { seat[key] = remoteIndex }
         for (index, microphone) in microphones.enumerated() { for name in microphone.people { seat[PeopleText.personKey(name)] = index + 1 } }
-        for name in record.seats?.room ?? [] {
+        let selfMic = (record.seats?.microphones ?? []).filter { $0.id == "self" }.flatMap(\.people)
+        for name in (record.seats?.room ?? []) + selfMic {
             let key = PeopleText.personKey(name)
             seat[key] = remote.contains(key) ? changingIndex : 0
         }
@@ -64,38 +65,14 @@ enum PeopleCalls {
 
     @MainActor
     static func decideDevice(_ change: RoomDeviceChange, service: MeetingsService?) async throws -> MeetingsAPI.DecideRoomDevice.Result {
-        let connection = try deviceService(service)
-        var params = change.params
-        if case let .answer(offer, nil, _) = change {
-            params.meeting = try await supportingMeeting(for: offer, service: connection)
-        }
-        return try await connection.call(MeetingsAPI.DecideRoomDevice.self, params)
+        try await deviceService(service).call(MeetingsAPI.DecideRoomDevice.self, change.params)
     }
 
-    /// The evidence counts original recordings. A duplicate can hold the microphone group even when its original
-    /// doesn't. The service chooses which offers a record supports and rechecks the exact evidence on the write.
     @MainActor
-    private static func supportingMeeting(for offer: RoomDeviceOffer, service: MeetingsService) async throws -> String {
-        func supportsOffer(_ id: String) async throws -> Bool {
-            do {
-                let result = try await service.call(MeetingsAPI.RoomDevices.self, .init(meeting: id))
-                return result.offers.contains {
-                    $0.account.lowercased() == offer.account.lowercased() && $0.group == offer.group && $0.meetings == offer.meetings
-                }
-            } catch let failure as MeetingsCLI.Failure where failure.code == "meeting-not-found" {
-                return false
-            }
-        }
-        for id in offer.meetings {
-            if try await supportsOffer(id) { return id }
-        }
-        let roots = Set(offer.meetings)
-        let history = try await service.call(MeetingsAPI.PeopleMeetings.self, .init(person: offer.account))
-        for appearance in history.meetings where !roots.contains(appearance.meeting) {
-            if try await supportsOffer(appearance.meeting) { return appearance.meeting }
-        }
-        throw MeetingsCLI.Failure(sentence: "The room device offer has changed. Review the refreshed suggestions.",
-                                  detail: "No meeting still supports the offered account, microphone group and evidence.")
+    static func reverseDevice(account: String, token: String, mapTo group: RoomDevice?, service: MeetingsService?) async throws {
+        let params = MeetingsAPI.DecideRoomDevice.Params(action: group == nil ? .undo : .map,
+                                                          account: account, group: group?.group, reverses: token)
+        _ = try await deviceService(service).call(MeetingsAPI.DecideRoomDevice.self, params)
     }
 
     /// `people.known`, or `people list [query] --json`.
@@ -165,28 +142,21 @@ final class RoomDeviceActions {
                 } else {
                     text = "\(account) has no room device mapping."
                 }
-                if receipt.changed {
-                    let inverse: RoomDeviceChange
-                    switch change {
-                    case .map(let device): inverse = .unmap(device)
-                    case .unmap(let device): inverse = .map(device)
-                    case let .answer(offer, _, yes): inverse = yes ? .unmap(offer.device) : .map(offer.device)
-                    }
+                if receipt.changed, let token = receipt.token {
+                    let mapTo: RoomDevice?
+                    if case let .answer(offer, _, false) = change { mapTo = offer.device } else { mapTo = nil }
                     let reverse: @MainActor (StackedNotice.ID) -> Void = { [weak notices] id in
                         guard let notices else { return }
                         guard !self.busy else { notices.release(id); return }
-                        let done: String
-                        switch inverse {
-                        case .map(let device): done = "\(account) is mapped to \(device.group ?? "the room")."
-                        default: done = "\(account) is no longer a room device."
-                        }
+                        let done = mapTo.map { "\(account) is mapped to \($0.group ?? "the room")." }
+                            ?? "Restored the previous room device setting for \(account)."
                         notices.settleUndo(id, done: done) {
                             guard !self.busy else {
                                 throw MeetingsCLI.Failure(sentence: "Wait for the current room device change to finish.", detail: "")
                             }
                             self.busy = true
                             defer { self.busy = false }
-                            _ = try await PeopleCalls.decideDevice(inverse, service: service)
+                            try await PeopleCalls.reverseDevice(account: account, token: token, mapTo: mapTo, service: service)
                             await refresh()
                         }
                     }

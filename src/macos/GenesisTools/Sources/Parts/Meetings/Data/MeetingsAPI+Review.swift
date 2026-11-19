@@ -783,7 +783,8 @@ struct ReviewRow: Decodable, Equatable, Identifiable {
     struct Decision: Decodable, Equatable, Hashable {
         let token: String
         let actor: DecisionActor
-        /// The actor in words: "you", "an agent (Claude Code, session 3f98b772)", "rule E2".
+        /// The actor in words: "you", "an agent (Claude Code, session 3f98b772)", "a rule (the attendance record shows
+        /// who was there)"; never a rule's id.
         let by: String
         let action: String
         let reason: String?
@@ -837,6 +838,13 @@ struct ReviewRow: Decodable, Equatable, Identifiable {
     var isVoiceModel: Bool { kind == "speaker-range" && rules?.contains("voice-embedding") == true }
     var isQuestion: Bool { kind == "question" }
 
+    /// Whether a choice's score is a voice cosine ("0.63") rather than a confidence ("63 %", U13): every choice of a
+    /// range the voice model named, and on a speaker question the people a voice-model range it decides names
+    /// (`voicePeople`, from `VoiceScore.people`).
+    func scoresByVoice(_ choice: RowChoice, voicePeople: Set<String> = []) -> Bool {
+        isVoiceModel || voicePeople.contains(PeopleText.personKey(choice.value))
+    }
+
     /// What a decided item was decided as (`decidedAs` in src/meetings/lib/review-rows.ts): a confirmed question's
     /// answer, a confirmed word's spelling, a confirmed range's speaker; nothing for an open or a rejected item.
     static func decidedAs(_ item: MeetingItem) -> String? {
@@ -879,8 +887,9 @@ struct ReviewRows: Decodable, Equatable {
         self.meeting = meeting; self.rows = rows; self.hidden = hidden
         self.attendanceWarning = attendanceWarning; self.attendanceDetail = attendanceDetail
         self.lineEvidence = lineEvidence; self.questionDetails = questionDetails
-        questionDetailsByID = Dictionary(uniqueKeysWithValues: (questionDetails ?? []).map { ($0.id, $0) })
-        questionDetailsTokens = Dictionary(uniqueKeysWithValues: rows.compactMap { row in row.decision.map { (row.id, $0.token) } })
+        // Decoding refuses repeated ids; a value built in code keeps the first.
+        questionDetailsByID = Dictionary((questionDetails ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        questionDetailsTokens = Dictionary(rows.compactMap { row in row.decision.map { (row.id, $0.token) } }, uniquingKeysWith: { first, _ in first })
     }
 
     func needsQuestionDetails(for row: ReviewRow) -> Bool {

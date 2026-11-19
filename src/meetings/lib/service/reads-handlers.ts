@@ -3,7 +3,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { channelEnergy, ENERGY_BLOCKS_PER_SEC } from "@genesiscz/utils/meetings/energy";
-import type { MeetingStore } from "@genesiscz/utils/meetings/record";
+import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { activeSeatPeople } from "@genesiscz/utils/meetings/seats";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
@@ -85,8 +85,8 @@ export async function readRows(
     const linked = deps.linkedSource?.(record);
     const config = await (deps.config?.() ?? (deps.configStore?.() ?? new MeetingsConfigStore()).read());
     const warning = attendanceWarning(record);
-    const opened = OpenedMeeting.of(store, record, linked);
     const detail = attendanceDetail(record);
+    const opened = OpenedMeeting.of(store, record, linked);
     const result = {
         ...(await rowsRead({
             store,
@@ -194,11 +194,20 @@ export async function readRows(
             },
         ];
     });
-    const facts = await Promise.all([opened.evidence(), opened.energy(), opened.presence()]).catch((error: unknown) => {
-        logger.debug({ error, meeting: record.id }, "line measurements unavailable for review rows");
-        return undefined;
-    });
-    const [evidence, energy, presence] = facts ?? [];
+    // Each measurement is optional on its own: a failed energy read keeps the evidence and presence that did load.
+    const optional = <T>(name: string, read: Promise<T>) =>
+        read.catch((error: unknown) => {
+            logger.debug(
+                { error, meeting: record.id, measurement: name },
+                "a line measurement is unavailable for review rows"
+            );
+            return undefined;
+        });
+    const [evidence, energy, presence] = await Promise.all([
+        optional("evidence", opened.evidence()),
+        optional("energy", opened.energy()),
+        optional("presence", opened.presence()),
+    ]);
     const owners = [
         ...record.participants.filter((person) => person.self).map((person) => person.name),
         ...(evidence?.selfName ? [evidence.selfName] : []),
@@ -214,23 +223,9 @@ export async function readRows(
         presence,
         energy?.share
     ).map((line): WindowLineEvidence => {
-        const skipped = record.items
-            .filter((item) => {
-                const swap = item.evidence?.swap;
-                return (
-                    item.kind === "speaker-range" &&
-                    item.status !== "rejected" &&
-                    typeof swap === "object" &&
-                    swap !== null &&
-                    "skipped" in swap &&
-                    Array.isArray(swap.skipped) &&
-                    swap.skipped.includes(line.startSec) &&
-                    (!("selfLabel" in swap) ||
-                        swap.selfLabel === line.label ||
-                        ("otherLabel" in swap && swap.otherLabel === line.label))
-                );
-            })
-            .map((item) => item.id);
+        const skipped = (swapSkips.get(line.startSec) ?? [])
+            .filter((skip) => skip.labels === undefined || skip.labels.includes(line.label))
+            .map((skip) => skip.id);
         const active = record.seats && activeSeatPeople({ seats: record.seats, atSec: line.startSec });
         const atMic = [...owners, ...(active?.room ?? [])];
         const remotePresent = active

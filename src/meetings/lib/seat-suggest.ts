@@ -213,7 +213,7 @@ export function suggestSeats(options: {
     }
     const byLabel = new Map<string, Range[]>();
     for (const range of ranges) {
-        if (range.person) {
+        if (range.person && human(range.person)) {
             person(range.person).hasRange = true;
         }
 
@@ -234,13 +234,6 @@ export function suggestSeats(options: {
         if (line.energyMicRaw !== undefined) {
             row.mic += Number(line.energyMicRaw > 0.65);
             row.call += Number(line.energyMicRaw < 0.35);
-        }
-    }
-    if (lines.length === 0) {
-        for (const range of ranges) {
-            if (range.person && human(range.person)) {
-                person(range.person).hasRange = true;
-            }
         }
     }
     const manual = new Map<string, "room" | "remote">();

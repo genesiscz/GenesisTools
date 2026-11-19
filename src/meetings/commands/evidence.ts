@@ -4,6 +4,7 @@ import { ui } from "@genesiscz/utils/cli/ui";
 import { formatBytes } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import type { MeetingLevelRow } from "@genesiscz/utils/meetings/levels";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { microphoneCandidates } from "@genesiscz/utils/meetings/room-people";
 import { createBoxTable } from "@genesiscz/utils/table";
@@ -13,6 +14,7 @@ import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { channelEvidence, lineEligibilityFor } from "../lib/channel-operation";
+import { liveMeetingLevels, savedMeetingLevels } from "../lib/levels";
 import { localSpeechDuring } from "../lib/local-speech";
 import { OpenedMeeting } from "../lib/opened-meeting";
 import { compactEvidence, rawMeeting } from "../lib/raw";
@@ -337,6 +339,22 @@ async function evidence(
     } catch (err) {
         fail(err);
     }
+}
+
+function levelLine(row: MeetingLevelRow): string {
+    const source = (one: MeetingLevelRow["mic"]) => {
+        const value = one.sampled ? (one.dbfs === null ? "silent" : `${one.dbfs.toFixed(1)} dBFS`) : "no samples";
+        return `${one.device ?? "unknown device"} · ${value}${one.muted ? " (muted)" : ""}`;
+    };
+    const percent = (n: number | null) => (n === null ? "—" : `${Math.round(100 * n)}%`);
+    return [
+        row.at + (row.paused ? " (paused)" : ""),
+        `mic ${source(row.mic)}`,
+        `system ${source(row.system)}`,
+        `mic share ${percent(row.micShare)}`,
+        `loud mic passages ${percent(row.calibration.sourceMicShare ?? null)}`,
+        `last-minute calibration ${row.calibration.layout}`,
+    ].join("  ");
 }
 
 export function registerEvidenceCommand(program: Command): void {

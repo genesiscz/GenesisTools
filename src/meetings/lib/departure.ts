@@ -304,7 +304,7 @@ export function identifiedDepartures(options: DepartureEvidence): IdentifiedDepa
                 !leaving.length &&
                 !matched &&
                 isLeavePhrase(line.text) &&
-                exchangeDeparture({ options, line, present });
+                exchangeDeparture({ options, pass, line, present });
             if (exchange && allowed(exchange.name)) {
                 departures.push(exchange);
             }

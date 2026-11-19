@@ -5,7 +5,7 @@ import XCTest
 @MainActor
 final class MeetingsPeopleRowsTests: XCTestCase {
     func testT9SeatGroupsAndUnknownIndicatorCoverage() throws {
-        let record = try JSONDecoder().decode(MeetingRecordView.self, from: Data(#"{"id":"copy","title":"Practice","labels":[],"start":"2026-01-01T00:00:00Z","items":[],"context":[],"speakers":{"labels":{}},"sources":{},"participants":[{"name":"Alice Example"},{"name":"Bob Example"},{"name":"Dana Example"}],"seats":{"room":["Alice Example"],"remote":[{"name":"Dana Example"}],"microphones":[{"id":"self","people":["Alice Example"]},{"id":"desk","label":"Desk microphone","people":["Bob Example"]}]},"evidence":{"indicator":[{"tSec":1,"speaking":["Dana Example"],"speakingUnknown":true},{"tSec":2,"speaking":["Bob Example"],"muted":["Dana Example"]}]}}"#.utf8))
+        let record = try JSONDecoder().decode(MeetingRecordView.self, from: Data(#"{"id":"copy","title":"Practice","labels":[],"start":"2026-01-01T00:00:00Z","items":[],"context":[],"speakers":{"labels":{}},"sources":{},"participants":[{"name":"Alice Example"},{"name":"Bob Example"},{"name":"Dana Example"}],"seats":{"room":[],"remote":[{"name":"Dana Example"}],"microphones":[{"id":"self","people":["Alice Example"]},{"id":"desk","label":"Desk microphone","people":["Bob Example"]}]},"evidence":{"indicator":[{"tSec":1,"speaking":["Dana Example"],"speakingUnknown":true},{"tSec":2,"speaking":["Bob Example"],"muted":["Dana Example"]}]}}"#.utf8))
         let groups = PresenceGroup.make(record)
         XCTAssertEqual(groups.map(\.title), ["Room", "Via Desk microphone", "Remote"])
         XCTAssertEqual(groups.flatMap { $0.people.map(\.id) }, ["Alice Example", "Bob Example", "Dana Example"])

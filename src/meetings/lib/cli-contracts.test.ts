@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -324,17 +324,36 @@ test("voices has one tree, the voice alias, and all old and new subcommands", as
     }
 });
 
-test("P6 voices jobs lists the service queue and exposes cancel by id", async () => {
-    const program = new Command().exitOverride();
-    await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "voices" });
-    const jobs = program.commands.find((c) => c.name() === "voices")!.commands.find((c) => c.name() === "jobs");
-    expect(jobs?.commands.map((c) => c.name())).toEqual(["cancel"]);
+test("P6 voices jobs cancel sends the job ID and prints the returned status", async () => {
+    const clients = await import("./service/client");
+    const { MeetingVoiceJobs } = await import("./service/voice-jobs");
+    const store = new MeetingStore(new Storage("voice-jobs-cli"));
+    const voiceJobs = new MeetingVoiceJobs({ store, notify: () => {} });
+    const cancelled = {
+        id: "cancel-fixture",
+        kind: "answer-samples",
+        project: "rehearsal",
+        state: "cancelled",
+        progress: { done: 0, total: 1, step: "Cancelled" },
+        added: 0,
+        skipped: 0,
+    } as const;
+    const cancel = spyOn(voiceJobs, "cancel").mockReturnValue(cancelled);
+    const client = new InProcessMeetingsClient({ deps: { store: () => store, voiceJobs } });
+    const connect = spyOn(clients, "withMeetingsClient").mockImplementation(async (use) => use(client));
     const output = spyOn(out, "result").mockImplementation(() => undefined);
     try {
-        await program.parseAsync(["voices", "jobs", "--project", "empty-rehearsal", "--json"], { from: "user" });
-        expect(SafeJSON.parse(String(output.mock.calls[0]?.[0]))).toEqual([]);
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "voices" });
+        await program.parseAsync(["voices", "jobs", "cancel", cancelled.id, "--json"], { from: "user" });
+        expect(cancel.mock.calls).toEqual([[cancelled.id]]);
+        expect(SafeJSON.parse(String(output.mock.calls[0]?.[0]))).toEqual(cancelled);
     } finally {
         output.mockRestore();
+        connect.mockRestore();
+        cancel.mockRestore();
+        client.close();
+        voiceJobs.stop();
     }
 });
 

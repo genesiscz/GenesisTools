@@ -55,17 +55,6 @@ export function attendanceDetail(record: MeetingRecord): string | undefined {
     return event?.command === "attendance-failed" ? event.change : undefined;
 }
 
-/** Why an `--attendance-id` cannot be used with this `--attendance`, before anything loads; undefined when it can. */
-export function attendanceIdRefusal(spec: string | undefined, attendanceId: string | undefined): string | undefined {
-    const selectedId = attendanceId?.trim();
-
-    if (selectedId !== undefined && (!spec || selectedId.length === 0)) {
-        return "--attendance-id requires --attendance <platform> and a nonempty id.";
-    }
-
-    return undefined;
-}
-
 /** A failed attendance lookup in one short sentence (U3): never a command, an error text or a rule id. */
 export function attendanceSentence(platform: MeetingRecord["platform"]): string {
     const call = platform ? MEETING_PLATFORMS[platform].label : "The call";
@@ -75,6 +64,17 @@ export function attendanceSentence(platform: MeetingRecord["platform"]): string 
 /** The last attendance attempt's failure as a person reads it; its full text is `attendanceDetail`. */
 export function attendanceWarning(record: MeetingRecord): string | undefined {
     return attendanceDetail(record) === undefined ? undefined : attendanceSentence(record.platform);
+}
+
+/** Why an `--attendance-id` cannot be used with this `--attendance`, before anything loads; undefined when it can. */
+export function attendanceIdRefusal(spec: string | undefined, attendanceId: string | undefined): string | undefined {
+    const selectedId = attendanceId?.trim();
+
+    if (selectedId !== undefined && (!spec || selectedId.length === 0)) {
+        return "--attendance-id requires --attendance <platform> and a nonempty id.";
+    }
+
+    return undefined;
 }
 
 /**

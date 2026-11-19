@@ -86,6 +86,13 @@ export function addQualityQuestions(options: {
                 allowed
                     ? allowed.some((other) => sameName(other, name))
                     : !excluded.some((other) => sameName(other, name));
+            const candidates = [
+                ...new Set([
+                    ...part.flatMap((line) => line.speaker ?? []),
+                    ...options.record.participants.map((person) => person.name),
+                    ...(allowed ?? []),
+                ]),
+            ];
             const sharedStart =
                 options.entries[first.index - 1]?.startSec === fromSec ||
                 options.entries[first.index + 1]?.startSec === fromSec;
@@ -141,13 +148,7 @@ export function addQualityQuestions(options: {
                 group,
                 confidence,
                 priority: 1,
-                choices: [
-                    ...new Set([
-                        ...part.flatMap((line) => line.speaker ?? []),
-                        ...options.record.participants.map((person) => person.name),
-                        ...(allowed ?? []),
-                    ]),
-                ].filter(eligible),
+                choices: candidates.filter(eligible),
                 decides,
                 rules: [],
                 suggestedAt: options.now ?? new Date().toISOString(),

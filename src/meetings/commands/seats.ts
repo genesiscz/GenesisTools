@@ -19,7 +19,8 @@ interface Options {
     json?: boolean;
 }
 
-function seatLabels(seats: MeetingSeats | null): Map<string, string> {
+/** Every saved seat of a person, in order: one person can sit remote for several intervals. */
+export function seatLabels(seats: MeetingSeats | null): Map<string, string> {
     const labels = new Map<string, string>();
     for (const side of ["room", "remote"] as const) {
         for (const row of seats?.[side] ?? []) {
@@ -33,8 +34,7 @@ function seatLabels(seats: MeetingSeats | null): Map<string, string> {
             labels.set(key, [labels.get(key), label].filter(Boolean).join(", "));
         }
     }
-
-    return new Map([...labels].map(([key, list]) => [key, list.join(", ")]));
+    return labels;
 }
 
 function handChoice(options: { command: string; opts: Options; name: string; seat: "room" | "remote" }): string {

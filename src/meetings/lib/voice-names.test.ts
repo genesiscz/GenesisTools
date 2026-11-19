@@ -28,6 +28,7 @@ import { embedSeatLines, voiceLabeler } from "./speaker-labels/voice";
 import { suggestItems } from "./suggest";
 import { correctionsOf } from "./transcript-corrections";
 import { nameByVoice, type VoiceLine } from "./voice-names";
+import { voiceReadiness } from "./voice-readiness";
 import { saveAnsweredVoiceSamples, undoAnsweredVoiceSamples } from "./voice-samples";
 import * as voices from "./voices";
 
@@ -257,14 +258,18 @@ test("P2 all-project prediction holds out a retimed duplicate, filters refused t
     const predicted = await run("all");
     expect(predicted[0]?.person).toBeUndefined();
     expect(predicted[1]?.person).toBe(alice.person);
-    correctVoiceSample({ kind: "reject", id: learned.id, reason: "wrong-person" });
     for (const line of lines) {
         const channel = line.channels[0]!;
         if (channel.quality === "ready") {
             channel.source.audioPath = join(store.folder(record.id), "fixture.wav");
         }
     }
-    expect((await run("all", new Map([[0, alice.person]]))).every((row) => !row.person)).toBe(true);
+    const seed = new Map([[0, alice.person]]);
+    const heldOut = (labels: Awaited<ReturnType<typeof run>>) => labels.find((label) => label.index === 1);
+    expect(heldOut(await run("project", seed))?.person).toBe(alice.person);
+    correctVoiceSample({ kind: "reject", id: learned.id, reason: "wrong-person" });
+    expect(heldOut(await run("project", seed))).toMatchObject({ index: 1 });
+    expect(heldOut(await run("project", seed))?.person).toBeUndefined();
     expect(readVoiceLibrary().library.samples).toEqual([]);
 
     const saved = storeOf({ [alice.person]: [[1, 0]], [bob.person]: [[0, 1]] });
@@ -341,6 +346,34 @@ test("mean prototypes beat an outlier single print and never mix tracks or seats
     ];
     expect(name({ store })[0]?.person).toBe(bob.person);
 });
+test("readiness for a projectless meeting does not open the voice library", async () => {
+    const { record } = await sampledMeeting("readiness");
+    const read = spyOn(voiceLibraryModule, "readVoiceLibrary");
+    spies.push(read);
+    expect(voiceReadiness({ ...record, project: undefined })).toMatchObject({ samples: 0, ready: false });
+    expect(read).not.toHaveBeenCalled();
+});
+
+test("a zero print cannot hide a usable print of the same source line", () => {
+    const store = storeOf({
+        [alice.person]: [
+            [0, 0],
+            [1, 0],
+        ],
+    });
+    const prints = store.people[alice.person]!.samples;
+    const source = sourceForVoicePrint(basePrint, "training", "shared-line");
+    const labels = nameByVoice({
+        ...settings,
+        store,
+        attended: [alice],
+        lines: [timedLine(0, 20, [1, 0], "mic")],
+        sources: new Map(prints.map((print) => [print, source])),
+        meeting: "held-out",
+    });
+    expect(labels[0]?.person).toBe(alice.person);
+});
+
 test("short, empty, zero, incompatible and unavailable voice stays unnamed", () => {
     for (const input of [line([1, 0], { toSec: 5.5 }), line([], {}), line([0, 0]), line([1, 0], { channels: [] })]) {
         expect(name({ lines: [{ ...input, fromSec: 5 }] })[0]?.reason).toBe("no-voice");
@@ -770,6 +803,61 @@ test("voice preview uses this meeting's independent seats, indicators and human 
     expect(readVoiceStore(record.project!).people).toEqual({});
 });
 
+test("voice preview names a legacy room occupant before joining and after leaving the call", async () => {
+    const { record, opened } = await sampledMeeting("legacy-room-call-stay-fixture");
+    record.seats = { room: [alice.person, bob.person], remote: [] };
+    addVoicePrint(record.project!, bob.person, { ...basePrint, sourceSha: "legacy-room-training" }, "fixture-model");
+    spies.push(spyOn(voices, "voiceReadMeeting").mockResolvedValue(opened));
+    const { speakerLabels, suggest } = meetingsConfigSchema.parse({}).global;
+    speakerLabels.seat.enabled = false;
+    const preview = await preparePreviewLabels({
+        opened,
+        settings: speakerLabels,
+        presence: [
+            { name: alice.person, fromSec: 0, toSec: 15 },
+            { name: bob.person, fromSec: 5, toSec: 10 },
+        ],
+    });
+    const labels = await preview(speakerLabels.voice, suggest.applyAbove);
+    expect(labels.map(({ index, person, reason }) => [index, person, reason])).toEqual([
+        [0, bob.person, "named"],
+        [1, bob.person, "named"],
+        [2, bob.person, "named"],
+    ]);
+});
+
+test("threshold preview rescores a shared seat from local voice evidence without saving embeddings", async () => {
+    const { opened, record, embed } = await sampledMeeting("threshold-seeds-fixture");
+    // Only Alice appears in the source attendance. Bob shares her saved room seat.
+    record.seats = { room: [alice.person, bob.person], remote: [] };
+    record.items.push({
+        id: "i1",
+        kind: "speaker-range",
+        status: "suggested",
+        suggestedAt: record.start!,
+        label: "Speaker 1",
+        speaker: alice.person,
+        fromSec: 0,
+        toSec: 5,
+        rules: [MeetingRule.SpeakingIndicator],
+        confidence: 0.75,
+        evidence: { transcriptLine: 0 },
+    });
+    spies.push(spyOn(voices, "voiceReadMeeting").mockResolvedValue(opened));
+    const config = meetingsConfigSchema.parse({ global: { speakerLabels: { voice: { compute: { workers: 1 } } } } });
+    spies.push(spyOn(opened, "config").mockResolvedValue(config));
+    const { speakerLabels } = config.global;
+    const enrollment = spyOn(voiceLibraryModule, "readVoiceLibrary");
+    spies.push(enrollment);
+    const score = await preparePreviewLabels({ opened, settings: speakerLabels, presence: await opened.presence() });
+    expect((await score(speakerLabels.voice, 0.8))[1]?.person).toBeUndefined();
+    expect((await score(speakerLabels.voice, 0.7))[1]).toMatchObject({ person: alice.person, reason: "named" });
+    expect((await score(speakerLabels.voice, 0.72))[1]?.person).toBe(alice.person);
+    expect(enrollment).toHaveBeenCalledTimes(1);
+    expect(embed.mock.calls.map(([options]) => options.cachePath)).toEqual([""]);
+    expect(readVoiceStore(record.project!).people).toEqual({});
+});
+
 test("a human-confirmed range seeds a line only when it spans the whole line", async () => {
     const { record, opened } = await sampledMeeting("whole-line-seed-fixture");
     record.seats = { room: [alice.person, bob.person], remote: [] };
@@ -834,61 +922,6 @@ test("a human-confirmed range seeds a line only when it spans the whole line", a
     expect(await preview()).toEqual([]);
     range.toSec = 5;
     expect((await preview())[1]?.person).toBe(alice.person);
-});
-
-test("voice preview names a legacy room occupant before joining and after leaving the call", async () => {
-    const { record, opened } = await sampledMeeting("legacy-room-call-stay-fixture");
-    record.seats = { room: [alice.person, bob.person], remote: [] };
-    addVoicePrint(record.project!, bob.person, { ...basePrint, sourceSha: "legacy-room-training" }, "fixture-model");
-    spies.push(spyOn(voices, "voiceReadMeeting").mockResolvedValue(opened));
-    const { speakerLabels, suggest } = meetingsConfigSchema.parse({}).global;
-    speakerLabels.seat.enabled = false;
-    const preview = await preparePreviewLabels({
-        opened,
-        settings: speakerLabels,
-        presence: [
-            { name: alice.person, fromSec: 0, toSec: 15 },
-            { name: bob.person, fromSec: 5, toSec: 10 },
-        ],
-    });
-    const labels = await preview(speakerLabels.voice, suggest.applyAbove);
-    expect(labels.map(({ index, person, reason }) => [index, person, reason])).toEqual([
-        [0, bob.person, "named"],
-        [1, bob.person, "named"],
-        [2, bob.person, "named"],
-    ]);
-});
-
-test("threshold preview rescores a shared seat from local voice evidence without saving embeddings", async () => {
-    const { opened, record, embed } = await sampledMeeting("threshold-seeds-fixture");
-    // Only Alice appears in the source attendance. Bob shares her saved room seat.
-    record.seats = { room: [alice.person, bob.person], remote: [] };
-    record.items.push({
-        id: "i1",
-        kind: "speaker-range",
-        status: "suggested",
-        suggestedAt: record.start!,
-        label: "Speaker 1",
-        speaker: alice.person,
-        fromSec: 0,
-        toSec: 5,
-        rules: [MeetingRule.SpeakingIndicator],
-        confidence: 0.75,
-        evidence: { transcriptLine: 0 },
-    });
-    spies.push(spyOn(voices, "voiceReadMeeting").mockResolvedValue(opened));
-    const config = meetingsConfigSchema.parse({ global: { speakerLabels: { voice: { compute: { workers: 1 } } } } });
-    spies.push(spyOn(opened, "config").mockResolvedValue(config));
-    const { speakerLabels } = config.global;
-    const enrollment = spyOn(voiceLibraryModule, "readVoiceLibrary");
-    spies.push(enrollment);
-    const score = await preparePreviewLabels({ opened, settings: speakerLabels, presence: await opened.presence() });
-    expect((await score(speakerLabels.voice, 0.8))[1]?.person).toBeUndefined();
-    expect((await score(speakerLabels.voice, 0.7))[1]).toMatchObject({ person: alice.person, reason: "named" });
-    expect((await score(speakerLabels.voice, 0.72))[1]?.person).toBe(alice.person);
-    expect(enrollment).toHaveBeenCalledTimes(1);
-    expect(embed.mock.calls.map(([options]) => options.cachePath)).toEqual([""]);
-    expect(readVoiceStore(record.project!).people).toEqual({});
 });
 
 test("exclusion survives the preview contract and creates a question even for short lines and a zero question budget", async () => {

@@ -8150,8 +8150,11 @@ test("local speech tolerates two word edits inside the clock window and keeps un
     expect(localSpeechLines({ calls, transcript, start: meeting.start }).map((entry) => entry.index)).toEqual([
         0, 1, 2,
     ]);
-    const short = [{ ts: calls[0]!.ts, text: "Waiting" }];
-    expect(localSpeechLines({ calls: short, transcript, start: meeting.start })).toEqual([]);
+    const short = [{ ts: calls[0]!.ts, text: "Build passed" }];
+    const shortLines = [line("Voice", 19, "Build failed."), line("Voice", 20, "Build passed!")];
+    expect(
+        localSpeechLines({ calls: short, transcript: shortLines, start: meeting.start }).map((row) => row.index)
+    ).toEqual([1]);
 });
 
 test("every suggest rule offers the same local speech removals as raw evidence", () => {

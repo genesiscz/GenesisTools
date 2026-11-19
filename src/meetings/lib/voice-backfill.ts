@@ -4,6 +4,7 @@ import { projectNameSchema } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { voiceRootMeeting } from "@genesiscz/utils/meetings/record";
 import { meetingVoiceOwner, readVoiceLibrary, sourceForVoicePrint } from "@genesiscz/utils/meetings/voice-library";
+import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import { DecisionJournal } from "./decision-journal";
 import { recordPeople } from "./listen-answers";
 import { OpenedMeeting } from "./opened-meeting";
@@ -79,12 +80,12 @@ async function prepareDecisions(
         record.items.filter((item) => item.status === "confirmed").map((item) => [item.id, item.decision?.token])
     );
     const people = recordPeople(record);
+    const sourceChanged = job.sourceAtEnqueue && !sameRecording(job.sourceAtEnqueue, record);
     // Only sources independent of the answers: a confirmed speaker may be the very sentence being checked.
     const listed = [
         ...record.participants.map((one) => one.name),
         ...(record.attendance?.people.map((one) => one.name) ?? []),
     ];
-    const sourceChanged = job.sourceAtEnqueue && !sameRecording(job.sourceAtEnqueue, record);
     const decisions: BackfillDecision[] = [];
     for (const entry of journal.read(record.id).reverse()) {
         if (job.tokens && !job.tokens.has(entry.token)) {

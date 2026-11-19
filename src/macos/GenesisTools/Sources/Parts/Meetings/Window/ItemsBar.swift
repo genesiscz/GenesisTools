@@ -89,6 +89,9 @@ struct ItemsProjection: Equatable {
     var dictionaries: [String: ReviewRow] = [:]
     /// The questions that ask who speaks: they offer "Somebody else…", "Something else…" and "Two voices…".
     var speakerQuestions: Set<String> = []
+    /// Per speaker question, the people whose choice score is a voice cosine (`VoiceScore.people`), so no row searches
+    /// the record's items in its body.
+    var voicePeople: [String: Set<String>] = [:]
     var references: [String: [Reference]] = [:]
     /// A suggestion waits: "Confirm all…" shows.
     var suggestionsWait = false
@@ -150,7 +153,11 @@ struct ItemsProjection: Equatable {
                 let dictionary = item.about == "dictionary" ? item.id : item.dictionaryQuestion(in: items)?.id
                 if let dictionary, let question = rowsByID[dictionary] { projection.dictionaries[row.id] = question }
             }
-            if row.isQuestion, item?.about == "speaker" { projection.speakerQuestions.insert(row.id) }
+            if row.isQuestion, let item, item.about == "speaker" {
+                projection.speakerQuestions.insert(row.id)
+                let voice = VoiceScore.people(decidedBy: item) { itemsByID[$0] }
+                if !voice.isEmpty { projection.voicePeople[row.id] = voice }
+            }
             for part in row.parts {
                 guard case .settles(_, let ids) = part else { continue }
                 projection.references[row.id] = ids.map { id in
@@ -171,7 +178,7 @@ struct ItemsProjection: Equatable {
         lhs.ready == rhs.ready && lhs.open == rhs.open && lhs.questions == rhs.questions && lhs.kind == rhs.kind
             && lhs.group == rhs.group && lhs.shown == rhs.shown && lhs.groups == rhs.groups && lhs.wordItems == rhs.wordItems
             && lhs.dictionaries == rhs.dictionaries && lhs.speakerQuestions == rhs.speakerQuestions
-            && lhs.references == rhs.references && lhs.suggestionsWait == rhs.suggestionsWait && lhs.atLine == rhs.atLine
+            && lhs.voicePeople == rhs.voicePeople && lhs.references == rhs.references && lhs.suggestionsWait == rhs.suggestionsWait && lhs.atLine == rhs.atLine
             && lhs.suggestions == rhs.suggestions && lhs.belowLine == rhs.belowLine && lhs.spotCheck == rhs.spotCheck
     }
 }

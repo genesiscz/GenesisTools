@@ -119,6 +119,8 @@ describe("held-out room/call measurement", () => {
         expect(gaming.targets.room.correctNameOrFirst).toBe(167);
         expect(gaming.controls.blanketRoomOffer).toBe(true);
         expect(gaming.qualityPassed).toBe(false);
+        input.candidate.rows[0]!.choices = [];
+        expect(measureRoomCall(input).controls.blanketRoomOffer).toBe(true);
     });
 
     test("six exclusive outcomes sum to the denominator; ties never earn first and unknown truth stays separate", () => {
@@ -171,7 +173,7 @@ describe("held-out room/call measurement", () => {
     });
 
     test("duplicate IDs, missing lines, shifted spans and an altered reference fail the join", () => {
-        for (const defect of ["duplicate", "missing", "shifted", "reference", "cohort"] as const) {
+        for (const defect of ["duplicate", "missing", "shifted", "reference", "cohort", "holdout"] as const) {
             const input = fixture([owner, guest, remote]);
             if (defect === "duplicate") {
                 input.candidate.rows[1]!.id = input.candidate.rows[0]!.id;
@@ -181,6 +183,9 @@ describe("held-out room/call measurement", () => {
                 input.candidate.rows[0]!.endSec += 0.5;
             } else if (defect === "reference") {
                 input.reference.entries[1]!.speaker = owner;
+            } else if (defect === "holdout") {
+                input.holdout.lines.splice(1, 1);
+                input.baseline.holdoutHash = input.candidate.holdoutHash = sha256Json(input.holdout);
             } else {
                 input.holdout.originalRemote[0] = input.holdout.lines[0]!;
                 input.baseline.holdoutHash = input.candidate.holdoutHash = sha256Json(input.holdout);

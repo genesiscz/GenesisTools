@@ -299,4 +299,18 @@ enum VoiceReason {
 /// `by voice 0.71`. It is a cosine of two voices, so it is never written as a percent.
 enum VoiceScore {
     static func text(_ score: Double) -> String { String(format: "%.2f", score) }
+
+    /// The people whose score a speaker question's choices give as a voice cosine (`PeopleText.personKey`): each one an
+    /// open range the question decides names by the voice model, not by exclusion. These are the ranges the question's
+    /// own text names "(by voice 0.63)" (`questionView` in src/meetings/lib/questions.ts), so the chip writes the same
+    /// number the same way and never as "63 %" (w_n3evy8d2).
+    static func people(decidedBy question: MeetingItem, item: (String) -> MeetingItem?) -> Set<String> {
+        guard question.kind == "question", question.about == "speaker" else { return [] }
+        return Set((question.decides ?? []).compactMap(item).compactMap { range -> String? in
+            guard range.kind == "speaker-range", range.status == "suggested", range.rules?.contains("voice-embedding") == true,
+                  let speaker = range.speaker, !speaker.isEmpty else { return nil }
+            if case .string("exclusion")? = range.evidence?["reason"] { return nil }
+            return PeopleText.personKey(speaker)
+        })
+    }
 }

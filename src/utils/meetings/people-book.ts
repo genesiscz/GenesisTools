@@ -194,18 +194,47 @@ export class PeopleBook {
     async decideDevice(input: {
         account: string;
         group?: string;
-        action: DeviceDecision["action"];
+        action: DeviceDecision["action"] | "undo";
         actor: DeviceDecision["actor"];
         meeting?: string;
         meetings?: string[];
+        reverses?: string;
         verifyOffer?: (history: readonly DeviceDecision[]) => void;
     }) {
-        const { verifyOffer, ...decision } = input;
-        const entry = deviceDecisionSchema.parse({ ...decision, at: this.now().toISOString() });
+        const { verifyOffer, reverses, action, ...decision } = input;
+        const token = randomUUID();
+        const at = this.now().toISOString();
         return this.change(
             (data) => {
-                const key = rosterAccountKey(entry.account);
-                const prior = data.devices.findLast((row) => rosterAccountKey(row.account) === key);
+                const key = rosterAccountKey(decision.account);
+                const index = data.devices.findLastIndex((row) => rosterAccountKey(row.account) === key);
+                const prior = data.devices[index];
+                if (reverses && prior?.token !== reverses) {
+                    throw new Error("This room device decision has changed. Refresh the mappings.");
+                }
+                if (action === "undo") {
+                    if (!reverses || !prior) {
+                        throw new Error("Undo requires the current room device decision token.");
+                    }
+                    const previous = data.devices
+                        .slice(0, index)
+                        .findLast((row) => rosterAccountKey(row.account) === key);
+                    const restored = deviceDecisionSchema.parse({
+                        ...previous,
+                        account: previous?.account ?? prior.account,
+                        action: previous?.action ?? "unmap",
+                        actor: decision.actor,
+                        at,
+                        token,
+                    });
+                    data.devices.push(restored);
+                    const device =
+                        restored.action === "map"
+                            ? { account: restored.account, ...(restored.group ? { group: restored.group } : {}) }
+                            : null;
+                    return { changed: true, device, token };
+                }
+                const entry = deviceDecisionSchema.parse({ ...decision, action, at, token });
                 const device =
                     entry.action === "map"
                         ? { account: entry.account, ...(entry.group ? { group: entry.group } : {}) }
@@ -213,12 +242,13 @@ export class PeopleBook {
                 if (
                     prior?.action === entry.action &&
                     prior.group === entry.group &&
-                    (!entry.meeting ||
-                        (entry.meeting === prior.meeting && isDeepStrictEqual(entry.meetings, prior.meetings)))
+                    (!verifyOffer ||
+                        ((!entry.meeting || entry.meeting === prior.meeting) &&
+                            isDeepStrictEqual(entry.meetings, prior.meetings)))
                 ) {
                     return { changed: false, device };
                 }
-                if (entry.meeting && prior && prior.action !== "unmap") {
+                if (verifyOffer && prior && prior.action !== "unmap") {
                     throw new Error("This room device offer was already decided. Refresh the suggestions.");
                 }
                 if (entry.action === "unmap" && prior?.action !== "map") {
@@ -226,7 +256,7 @@ export class PeopleBook {
                 }
                 verifyOffer?.(data.devices);
                 data.devices.push(entry);
-                return { changed: true, device };
+                return { changed: true, device, token };
             },
             (result) => result.changed
         );

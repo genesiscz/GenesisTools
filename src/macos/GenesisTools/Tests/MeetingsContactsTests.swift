@@ -39,19 +39,20 @@ final class MeetingsContactsTests: XCTestCase {
     func testRoomDeviceReceiptsReverseTheAnswerOrRestoreTheUnmappedGroup() async throws {
         let fake = try FakeMeetingsService()
         let offer = RoomDeviceOffer(account: "Boardroom PC", group: "north", meetings: ["planning", "review"], question: "Shared?")
+        let token = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa"
         fake.fixtureMethods = ["people.devices.decide"]
         fake.fixtureReply = { [weak fake] _, params in
             let mapped = params["yes"] as? Bool == true || params["action"] as? String == "map"
             // An identical Yes replay has no new decision to undo.
             let changed = params["yes"] as? Bool != true || fake?.count("people.devices.decide") == 1
-            return ["changed": changed, "device": mapped ? ["account": "Boardroom PC", "group": "north"] as Any : NSNull()]
+            return ["changed": changed, "token": token, "device": mapped ? ["account": "Boardroom PC", "group": "north"] as Any : NSNull()]
         }
         try await fake.withVoiceWindow { window in
             let actions = RoomDeviceActions()
             let changes: [(RoomDeviceChange, String, [String: String])] = [
-                (.answer(offer, meeting: "review", yes: true), "Undo", ["action": "unmap", "account": "Boardroom PC"]),
-                (.answer(offer, meeting: "review", yes: false), "Change to Yes", ["action": "map", "account": "Boardroom PC", "group": "north"]),
-                (.unmap(offer.device), "Undo", ["action": "map", "account": "Boardroom PC", "group": "north"]),
+                (.answer(offer, meeting: "review", yes: true), "Undo", ["action": "undo", "account": "Boardroom PC", "reverses": token]),
+                (.answer(offer, meeting: "review", yes: false), "Change to Yes", ["action": "map", "account": "Boardroom PC", "group": "north", "reverses": token]),
+                (.unmap(offer.device), "Undo", ["action": "undo", "account": "Boardroom PC", "reverses": token]),
             ]
             for (change, label, inverse) in changes {
                 var reads = 0
@@ -75,31 +76,25 @@ final class MeetingsContactsTests: XCTestCase {
         }
     }
 
-    func testPeopleBookAnswersFromTheCopyThatHasTheRosterEvidence() async throws {
+    func testContactsAnswersAnOfferWithOneDecisionRequest() async throws {
         let fake = try FakeMeetingsService()
         let evidence = ["planning", "review"]
-        let offer = RoomDeviceOffer(account: "Boardroom PC", group: "north", meetings: evidence, question: "Shared?")
-        fake.fixtureMethods = ["people.devices.list", "people.meetings", "people.devices.decide"]
-        fake.fixtureReply = { method, params in
-            if method == "people.meetings" {
-                return ["person": ["id": "name:boardroom pc", "name": "Boardroom PC", "rank": "meetings", "sources": ["meetings"]],
-                        "meetings": [["meeting": "planning-copy", "title": "Planning copy", "start": "2026-01-12T10:00:00Z",
-                                      "as": ["participant"], "present": [], "labels": []]]] as [String: Any]
-            }
-            if method == "people.devices.list" {
-                let matches = params["meeting"] as? String == "planning-copy"
-                return ["devices": [], "offers": matches ? [try MeetingsService.paramsObject(offer)] : []]
-            }
-            return ["changed": true, "device": NSNull()] as [String: Any]
-        }
+        let offer = RoomDeviceOffer(account: "Boardroom PC", group: "north", meetings: evidence, question: "Shared?",
+                                    titles: ["planning": "Project planning"])
+        XCTAssertEqual(offer.title("planning"), "Project planning")
+        XCTAssertEqual(offer.title("review"), "review")
+        fake.fixtureMethods = ["people.devices.decide"]
+        fake.fixtureReply = { _, _ in ["changed": true, "device": NSNull()] }
         try await fake.withVoiceWindow { window in
             _ = try await PeopleCalls.decideDevice(.answer(offer, meeting: nil, yes: false), service: window.service)
             let answer = try fake.line { $0["method"] as? String == "people.devices.decide" }
             XCTAssertEqual(answer["params"] as? NSDictionary, [
                 "action": "answer", "account": "Boardroom PC", "group": "north",
-                "meeting": "planning-copy", "meetings": evidence, "yes": false,
+                "meetings": evidence, "yes": false,
             ] as NSDictionary)
             XCTAssertEqual(fake.count("people.devices.decide"), 1)
+            XCTAssertEqual(fake.count("people.devices.list"), 0)
+            XCTAssertEqual(fake.count("people.meetings"), 0)
         }
     }
 

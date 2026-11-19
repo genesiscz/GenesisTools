@@ -306,12 +306,7 @@ final class VoiceLibraryModel {
 
     private func prepareJobs() {
         guard let destination else { return }
-        var finished = 0
-        allJobs = allJobs.reversed().filter { job in
-            if job.canCancel { return true }
-            finished += 1
-            return finished <= 50
-        }.reversed()
+
         var meetings = rows.value?.meetings ?? []
         if destination.owner != nil, destination.owner == historyOwner { meetings.formUnion(historyMeetings) }
         let matching = allJobs.reversed().filter { $0.matches(destination, meetings: meetings) }
@@ -441,6 +436,10 @@ struct VoiceSampleRows: View {
             }
             if model.destination == destination, let failure = model.rows.failure {
                 FailureInline(failure.report(outcome: "Voice samples did not load", action: "Read voice samples"), form: .compact) { model.refresh() }
+                // A failed refresh keeps the last read's samples below, and says they are old (eve t105).
+                if let note = VoicesPane.staleNote(model.rows) {
+                    Text(note).font(.system(size: 11)).foregroundStyle(.secondary).padding(.bottom, 4)
+                }
             }
             if model.destination == destination, let rows = model.rows.value {
                 ForEach(rows.conflicts, id: \.file) { conflict in
