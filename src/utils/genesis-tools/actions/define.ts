@@ -54,6 +54,11 @@ export type ActionOutcome<R> =
     | { status: "ran"; via: WayName; value: R; skipped: SkippedWay[] }
     | { status: "unreachable"; skipped: SkippedWay[]; manual: string | null };
 
+export interface ActionNotice {
+    title: string;
+    message: string;
+}
+
 /** The brand of `ctx.pass(why)`: a symbol no JSON result can carry, so a result shaped `{ pass, reason }` stays a result. */
 const PASS: unique symbol = Symbol("genesis-tools.actions.pass");
 
@@ -155,6 +160,11 @@ export interface ActionSpec<TArgs extends z.ZodType, TResult extends z.ZodType, 
     fix?: (ctx: FixContext<z.output<TArgs>, z.output<TConfig>>) => FixDecision;
     /** The text an unreachable outcome carries for a person to do by hand. */
     manual?: (args: z.output<TArgs>) => string | null;
+    /** A notice for a caller that cannot show its unreachable outcome. */
+    failureNotice?: (
+        args: z.output<TArgs>,
+        outcome: Extract<ActionOutcome<never>, { status: "unreachable" }>
+    ) => ActionNotice | null;
 }
 
 export interface ActionDef<TArgs extends z.ZodType, TResult extends z.ZodType, TConfig extends z.ZodObject>

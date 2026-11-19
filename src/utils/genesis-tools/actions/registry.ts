@@ -1,10 +1,20 @@
 import { type AppBuilder, appBuilder as registeredAppBuilder } from "@genesiscz/utils/genesis-tools/app-builder";
 import { type Facts, LIVE_FACTS } from "@genesiscz/utils/genesis-tools/capability/facts";
 import { genesisAppRpc } from "@genesiscz/utils/macos/genesis-app-rpc";
+import { refuseHostEffectInTest } from "@genesiscz/utils/test-process";
 import type { z } from "zod";
 import type { ServiceDoor } from "../service/clients";
 import { type ConfigStore, createConfigStore } from "./config";
-import type { ActionOutcome, AnyActionDef, AppDoor, AreaDef, ArgsOf, ResultOf, RunOptions } from "./define";
+import type {
+    ActionNotice,
+    ActionOutcome,
+    AnyActionDef,
+    AppDoor,
+    AreaDef,
+    ArgsOf,
+    ResultOf,
+    RunOptions,
+} from "./define";
 import { type AreaEventBus, createAreaEventBus } from "./events";
 import { runAreaAction } from "./run";
 import { createStateStore, type StateStore } from "./state";
@@ -55,7 +65,18 @@ export interface EngineDeps {
     builder: AppBuilder | null;
     events: AreaEventBus;
     now: () => Date;
+    postNotice?: (notice: ActionNotice) => Promise<void>;
     service?: ServiceDoor | null;
+}
+
+async function postActionNotice(notice: ActionNotice): Promise<void> {
+    refuseHostEffectInTest("action failure notice", "Inject a notification sender in tests.");
+    const { dispatchNotificationReport } = await import("@genesiscz/utils/notifications");
+    const report = await dispatchNotificationReport({ app: "genesis-tools", ...notice });
+
+    if (!report.sent.length) {
+        throw new Error("No notification channel sent the action failure notice.");
+    }
 }
 
 export const LIVE_APP_DOOR: AppDoor = {
@@ -74,6 +95,7 @@ export function liveEngineDeps(registry: Record<string, Area>, overrides: Partia
         builder: overrides.builder !== undefined ? overrides.builder : registeredAppBuilder(),
         events: overrides.events ?? AREA_EVENTS,
         now: overrides.now ?? (() => new Date()),
+        postNotice: overrides.postNotice ?? postActionNotice,
         service: overrides.service ?? null,
     };
 }

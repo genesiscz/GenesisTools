@@ -377,12 +377,25 @@ export async function runAreaAction(
                 skip(way, "threw", messageOf(error));
             }
         }
+
+        const outcome = { status: "unreachable" as const, skipped, manual: action.manual?.(parsedArgs.data) ?? null };
+        logger.debug({ id, skipped }, "genesis-tools actions: no way could run");
+
+        if (action.failureNotice && deps.postNotice && !deadline.signal.aborted && !deps.facts.isTest()) {
+            const notice = action.failureNotice(parsedArgs.data, outcome);
+            if (notice) {
+                try {
+                    await untilAborted(deps.postNotice(notice), deadline.signal);
+                } catch (error) {
+                    logger.warn({ id, error }, "genesis-tools actions: could not post the failure notice");
+                }
+            }
+        }
+
+        return outcome;
     } finally {
         deadline.dispose();
     }
-
-    logger.debug({ id, skipped }, "genesis-tools actions: no way could run");
-    return { status: "unreachable", skipped, manual: action.manual?.(parsedArgs.data) ?? null };
 }
 
 export interface ActionExplain {
