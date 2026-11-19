@@ -101,6 +101,28 @@ test("a reopened line cache reuses every ready, quiet, short and speechless span
     expect(f.compute).not.toHaveBeenCalled();
 });
 
+test("a failed window decode is tried once per chunk, and a later pass decodes it again", async () => {
+    const f = await fixture();
+    f.decode.mockRejectedValueOnce(new Error("decoder deadline passed"));
+    const options = {
+        ...f.options,
+        spans: [
+            { index: 0, fromSec: 0, toSec: 2 },
+            { index: 1, fromSec: 2, toSec: 4 },
+            { index: 2, fromSec: 5, toSec: 7 },
+        ],
+    };
+    const first = await voice.embedVoiceLines(options);
+    expect(f.decode).toHaveBeenCalledTimes(1);
+    expect(first.map((line) => line.channels[0])).toEqual(
+        first.map(() => expect.objectContaining({ quality: "unknown", reason: "decoder deadline passed" }))
+    );
+    f.decode.mockClear();
+    const second = await voice.embedVoiceLines(options);
+    expect(f.decode).toHaveBeenCalledTimes(1);
+    expect(second[0]?.channels[0]?.quality).toBe("ready");
+});
+
 // A stand-in executable speaks the real worker protocol, including stderr progress. Its vector makes a
 // shifted decode window visible even if the same transcript lines reach the runner.
 function fakeVoicePrefix(options: { failFrom?: number; requestLog?: string; hangFrom?: number } = {}): string[] {
