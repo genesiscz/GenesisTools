@@ -151,7 +151,7 @@ public final class WorkScreenModel: ObservableObject {
         guard !active else { return }
         active = true
         if projectsLoaded { projectsLoaded = false }
-        if itemRef != nil, companionReadNeeded { reload() }
+        if itemRef != nil, stale || companionReadNeeded { reload() }
         openingCandidates = projects
         if visible { listen() }
         wake = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification,
