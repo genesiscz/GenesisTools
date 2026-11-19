@@ -745,6 +745,7 @@ public final class WorkScreenModel: ObservableObject {
         if case .stopped = live { return }
         let layer = scope == .global ? "config.global" : "config.project"
         var previews: [String: String] = [:]
+        var exposesRepository = Set<String>()
         for row in notifyRows where type == "*" || type == row.type {
             for cell in row.cells where cell.writable && (action == "*" || action == cell.action) {
                 let key = "notify:\(row.type):\(cell.action)"
@@ -754,7 +755,9 @@ public final class WorkScreenModel: ObservableObject {
                 } else if let level {
                     previews[key] = level
                 } else {
-                    previews[key] = cell.inheriting(scope).level
+                    let inherited = cell.inheriting(scope)
+                    previews[key] = inherited.level
+                    if inherited.layer == "config.repo" { exposesRepository.insert(key) }
                 }
             }
         }
@@ -796,7 +799,10 @@ public final class WorkScreenModel: ObservableObject {
                     message = "Rules saved. The updated rules could not be read."
                 }
             }
-            let fixes: [StackedNotice.Action] = result.changes.isEmpty ? [] : [
+            let canRestore = !result.changes.isEmpty && !result.changes.contains {
+                exposesRepository.contains("notify:\($0.type):\($0.action)")
+            }
+            let fixes: [StackedNotice.Action] = !canRestore ? [] : [
                 .undo { [weak self] id in Task {
                     await self?.undoNotify(project: project, scope: scope, changes: result.changes, noticeID: id)
                 } }

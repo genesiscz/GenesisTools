@@ -155,6 +155,19 @@ final class WorkNotifyTests: XCTestCase {
         XCTAssertEqual(applied, [.global])
     }
 
+    func testResetThatExposesARepositoryRuleDoesNotOfferUndo() async throws {
+        let source = NotifyFixtureSource()
+        let repo = try XCTUnwrap(source.rows[0].cells[0].layers.firstIndex { $0.layer == "config.repo" })
+        source.rows[0].cells[0].layers[repo].rule = .level("off")
+        source.rows[0].cells[0].layers[repo].level = "off"
+        let screen = try await ready(source)
+        defer { screen.deactivate() }
+        await screen.setNotify(scope: .project, type: "bug", action: "spotted", level: nil)
+        XCTAssertEqual(screen.notifyRows.first?.cells.first?.from, "config.repo")
+        let notice = try XCTUnwrap(screen.noticeStack.notices.last)
+        XCTAssertFalse(notice.actions.contains { $0.label == "Undo" })
+    }
+
     func testBulkMenuMakesOneWriteAndTheNoticeRestoresEveryRawValue() async throws {
         let source = NotifyFixtureSource()
         let screen = try await ready(source)
