@@ -33,6 +33,8 @@ public struct WorkItemsView: View {
     let snapshot: WorkSnapshotValue
     let pending: Set<String>
     let perform: (WorkScreenAction) -> Void
+    private let openHandoffs: [WorkContainerValue]
+    private let handoffsByMember: [String: Set<String>]
     @State private var expanded: Set<String> = []
 
     public init(snapshot: WorkSnapshotValue, pending: Set<String>, expandAll: Bool = false,
@@ -40,6 +42,14 @@ public struct WorkItemsView: View {
         self.snapshot = snapshot
         self.pending = pending
         self.perform = perform
+        openHandoffs = snapshot.openHandoffs
+        var index: [String: Set<String>] = [:]
+        for handoff in openHandoffs {
+            for member in handoff.members {
+                index[member.ref, default: []].insert(handoff.ref)
+            }
+        }
+        handoffsByMember = index
         _expanded = State(initialValue: expandAll ? Set(snapshot.containers.map(\.ref)) : [])
     }
 
@@ -238,9 +248,10 @@ public struct WorkItemsView: View {
                     }
                 }
                 if state != "dropped" && state != "done" {
-                    if !handoffs(excluding: ref).isEmpty {
+                    let currentHandoffs = handoffsByMember[ref] ?? []
+                    if currentHandoffs.count < openHandoffs.count {
                         MenuButton(items: {
-                            handoffs(excluding: ref).map { handoff in
+                            openHandoffs.filter { !currentHandoffs.contains($0.ref) }.map { handoff in
                                 .action("\(handoff.title) (\(handoff.ref))") { perform(.addMember(ref: ref, handoff: handoff.ref)) }
                             }
                         }) {
@@ -258,9 +269,7 @@ public struct WorkItemsView: View {
         }
     }
 
-    private func handoffs(excluding ref: String) -> [WorkContainerValue] {
-        snapshot.openHandoffs.filter { handoff in !handoff.members.contains { $0.ref == ref } }
-    }
+
 }
 
 private extension WorkPairingValue {
