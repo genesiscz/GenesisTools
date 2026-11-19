@@ -94,7 +94,9 @@ test("an App write schedules sync when it changes an item in Other with a connec
     const loadRules = projectRuleLoader({ project: "App", configPath });
     const sync = connectorPort(db, loadRules).syncDeps();
     const seq = journalHead(db);
-    await write(app, { verb: "spot", type: "bug", title: "app bug", fields: {} });
+    const spotted = await write(app, { verb: "spot", type: "bug", title: "app bug", fields: {} });
+    expect(spotted.ok).toBe(true);
+    expect(journalHead(db)).toBeGreaterThan(seq);
     expect(await syncNeededAfter({ ...sync, seq })).toBe(false);
     await write(app, { verb: "comment", ref: other.data.items[0].id, text: "changed from App" });
     expect(await syncNeededAfter({ ...sync, seq })).toBe(true);
@@ -170,11 +172,15 @@ describe("doors", () => {
         const { toolGroup } = await import("./mcp/genesis-tools");
         const group = toolGroup();
         expect(Object.keys(group.entries).sort()).toEqual([
+            "work_config",
             "work_context",
             "work_list",
+            "work_projects",
             "work_reopen",
             "work_show",
             "work_spot",
+            "work_tree",
+            "work_triage",
             "work_write",
         ]);
         const spotted = await group.entries.work_spot.handler({
