@@ -30,6 +30,7 @@ struct TimelineView: View {
     let viewportWidth: CGFloat
     @AppStorage(EditorModel.lanesShownKey) private var lanesShown = 4
     @AppStorage(EditorModel.soundLanesShownKey) private var soundsShown = true
+    @AppStorage(EditorModel.displaySwitchLinesKey) private var switchLinesEverywhere = true
 
     static let rulerHeight: CGFloat = 26
     static let clipLaneHeight: CGFloat = 64
@@ -37,7 +38,6 @@ struct TimelineView: View {
     static let sourceRowHeight: CGFloat = 34
     static let musicLaneHeight: CGFloat = 14
     static let marksLaneHeight: CGFloat = 16
-    static let displayLaneHeight: CGFloat = 20
     static let laneGap: CGFloat = 8
     /// First row below the ruler (the effects begin here on a recording with no picture layers).
     static let effectsTop: CGFloat = rulerHeight + 10
@@ -70,9 +70,8 @@ struct TimelineView: View {
                 EffectLanesArea(model: model, lanes: layout.lanes, scale: scale, width: contentWidth, height: layout.effectsHeight)
                     .offset(y: layout.effectRowsTop)
                 if let plan = model.displayPlan, layout.displays {
-                    DisplayLaneView(model: model, plan: plan, scale: scale)
-                        .accessibilityElement(children: .contain)
-                        .accessibilityLabel("Displays shown")
+                    DisplayRowsView(model: model, plan: plan, scale: scale)
+                        .frame(width: contentWidth, alignment: .topLeading)
                         .offset(y: layout.displaysTop)
                 }
                 ClipLaneView(model: model, scale: scale)
@@ -103,6 +102,12 @@ struct TimelineView: View {
                     MusicLaneView(model: model, music: music, scale: scale)
                         .offset(y: layout.musicTop)
                 }
+                // Over every lane (it takes no clicks), so the frames show where the picture changes display too.
+                if let plan = model.displayPlan, layout.displays, switchLinesEverywhere {
+                    DisplaySwitchLines(model: model, plan: plan, scale: scale)
+                        .frame(width: contentWidth, height: layout.lanesBottom - Self.rulerHeight, alignment: .topLeading)
+                        .offset(y: Self.rulerHeight)
+                }
                 if let part = model.exportPart {
                     PartBand(model: model, scale: scale, part: part, layout: layout)
                 }
@@ -126,8 +131,9 @@ struct TimelineLayout: Equatable {
     var effectsHeight: CGFloat
     var layerHeight: CGFloat
     var soundHeight: CGFloat
-    /// A frames recording's proxy with a display plan: the lane that says which display shows when.
+    /// A frames recording's proxy with a display plan: one row per display, saying which display shows when.
     var displays: Bool
+    var displayRows: Int
     var marks: Bool
     var audio: Bool
     var music: Bool
@@ -141,6 +147,7 @@ struct TimelineLayout: Equatable {
         layerHeight = CGFloat(model.layerRows.count) * TimelineView.sourceRowHeight
         soundHeight = soundsShown ? CGFloat(model.soundRows.count) * TimelineView.sourceRowHeight : 0
         displays = !(model.displayPlan?.ranges.isEmpty ?? true)
+        displayRows = displays ? model.displayPlan?.rows.count ?? 0 : 0
         marks = !model.markers.isEmpty || !model.reviewComments.isEmpty
             || (project.captions?.show == true && !model.zoom.captionLines.isEmpty)
             || (project.keys?.show == true && !(model.cursor?.keys ?? []).isEmpty)
@@ -151,7 +158,7 @@ struct TimelineLayout: Equatable {
 
     var effectRowsTop: CGFloat { TimelineView.effectsTop + layerHeight }
     var displaysTop: CGFloat { effectRowsTop + effectsHeight + TimelineView.laneGap }
-    var clipTop: CGFloat { displaysTop + (displays ? TimelineView.displayLaneHeight + 4 : 0) }
+    var clipTop: CGFloat { displaysTop + DisplayRowsView.height(rows: displayRows) }
     var marksTop: CGFloat { clipTop + TimelineView.clipLaneHeight + 4 }
     var audioTop: CGFloat { marksTop + (marks ? TimelineView.marksLaneHeight + 4 : 0) }
     var soundTop: CGFloat { audio ? audioTop + TimelineView.audioLaneHeight + 4 : audioTop }
@@ -762,75 +769,25 @@ private struct CommentPopover: View {
     }
 }
 
-/// Which display the proxy movie of a frames recording shows when (its display plan): one band per range with the
-/// display's name. Right-click a band to show another display there; the range popover over the frames does the same
-/// for any range. Either runs `tools recorder proxy --keep-plan --switch` and loads the new movie.
-private struct DisplayLaneView: View {
+/// The display switches as faint lines through every lane, so a cut, a zoom or a sound can be lined up with the moment
+/// the picture changes display (setting "Switch lines through every lane"; off: only through the display rows).
+private struct DisplaySwitchLines: View {
     @Bindable var model: EditorModel
     let plan: DisplayPlan
     let scale: TimelineScale
 
-    /// A colour per display, in the recording's order.
-    static let tints: [Color] = [Color(red: 0.4, green: 0.72, blue: 1), Color(red: 0.95, green: 0.55, blue: 0.85),
-                                 Color(red: 0.55, green: 0.85, blue: 0.6), Color(red: 1, green: 0.7, blue: 0.4)]
-
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            ForEach(Array(plan.ranges.enumerated()), id: \.offset) { _, range in
-                DisplayBand(model: model, plan: plan, range: range, scale: scale,
-                            tint: Self.tints[(plan.displays.firstIndex { $0.id == range.displayId } ?? 0) % Self.tints.count])
+        Canvas { context, size in
+            var path = Path()
+            for atUs in plan.switches {
+                guard let out = TimelineMap.outputTime(ofSource: atUs, in: model.project) else { continue }
+                let x = scale.x(out)
+                path.addRect(CGRect(x: x - 0.5, y: 0, width: 1, height: size.height))
             }
+            context.fill(path, with: .color(.white.opacity(0.35)))
         }
-        .frame(height: TimelineView.displayLaneHeight, alignment: .topLeading)
-        .opacity(model.isSwitchingDisplay ? 0.5 : 1)
-    }
-}
-
-private struct DisplayBand: View {
-    @Bindable var model: EditorModel
-    let plan: DisplayPlan
-    let range: DisplayPlan.Range
-    let scale: TimelineScale
-    let tint: Color
-
-    var body: some View {
-        let spans = TimelineMap.outputSpans(fromUs: range.fromUs, toUs: range.toUs, in: model.project)
-        if let first = spans.first, let last = spans.last {
-            let width = max(3, scale.x(last.toUs) - scale.x(first.fromUs) - 2)
-            let name = plan.name(of: range.displayId)
-            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .fill(tint.opacity(0.28))
-                .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(tint.opacity(0.6), lineWidth: 1))
-                .overlay(alignment: .leading) {
-                    if width > 50 {
-                        Label(name, systemImage: "display")
-                            .font(.system(size: 10.5, weight: .semibold))
-                            .foregroundStyle(tint)
-                            .lineLimit(1)
-                            .padding(.horizontal, 6)
-                            .allowsHitTesting(false)
-                    }
-                }
-                .frame(width: width, height: TimelineView.displayLaneHeight)
-                .contentShape(Rectangle())
-                .contextMenu {
-                    ForEach(plan.displays.filter { $0.id != range.displayId }, id: \.id) { display in
-                        Button("Show \(display.name) Here") {
-                            model.switchDisplay(fromUs: range.fromUs, toUs: range.toUs, displayId: display.id)
-                        }
-                    }
-                }
-                .instantTooltip("\(name) from \(formatClock(first.fromUs, tenths: true)) to \(formatClock(last.toUs, tenths: true)): right-click to show another display here")
-                .accessibilityElement()
-                .accessibilityLabel("\(name), \(formatClock(first.fromUs, tenths: true)) to \(formatClock(last.toUs, tenths: true))")
-                .accessibilityActions {
-                    ForEach(plan.displays.filter { $0.id != range.displayId }, id: \.id) { display in
-                        Button("Show \(display.name)") { model.switchDisplay(fromUs: range.fromUs, toUs: range.toUs, displayId: display.id) }
-                    }
-                }
-                .liveRow()
-                .offset(x: scale.x(first.fromUs) + 1)
-        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
