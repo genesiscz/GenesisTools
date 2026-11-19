@@ -152,8 +152,7 @@ struct MeetingsVoicePassCard: View {
                                      symbol: "hare"),
                 NativeSettingsOption(MeetingsVoiceCompute.Priority.background.rawValue, "In the background",
                                      detail: Self.backgroundDetail, symbol: "tortoise"),
-            ], selection: Binding(get: { compute.priority.rawValue },
-                                  set: { set(MeetingsVoiceCompute.path + ["priority"], $0) }))
+            ], selection: Binding(get: { compute.priority.rawValue }, set: choosePriority))
             Divider()
             NativeSettingsPicker("Workers", detail: "Processes that compare lines side by side.", identifier: "meetings.voice.workers",
                                  options: [
@@ -170,6 +169,11 @@ struct MeetingsVoicePassCard: View {
                 }
             }
         }
+    }
+
+    /// The priority picker's choice, written as the config spells it (`normal`, `background`).
+    func choosePriority(_ choice: String) {
+        set(MeetingsVoiceCompute.path + ["priority"], choice)
     }
 
     /// Auto writes `"auto"`; a fixed number starts at what auto means now, so the next pass does not change by the switch.
