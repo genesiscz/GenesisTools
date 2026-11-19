@@ -61,6 +61,8 @@ final class AudioSessionTests: XCTestCase {
     private func directory() throws -> URL {
         let result = FileManager.default.temporaryDirectory.appendingPathComponent("audio-session-judge-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: result, withIntermediateDirectories: true)
+        // Removed after the test, also when it throws.
+        addTeardownBlock { try? FileManager.default.removeItem(at: result) }
         return result
     }
 
