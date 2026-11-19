@@ -1,3 +1,4 @@
+import { CAPTURE_SYSTEM_AUDIO_SCOPES } from "@app/control/lib/native-record";
 import { ensureBinaryAsync } from "@app/control/lib/runner";
 import {
     framesDoneLine,
@@ -35,9 +36,17 @@ const FRAMES_ENUM_FLAGS = [
     { key: "ocrSink", flag: "--ocr-sink", values: OCR_SINK_KINDS },
 ] as const;
 
+/** The enumerated flags of a movie recording. */
+const MOVIE_ENUM_FLAGS = [
+    { key: "systemAudioScope", flag: "--system-audio-scope", values: CAPTURE_SYSTEM_AUDIO_SCOPES },
+] as const;
+
 /** False when a bare or unknown enumerated flag was answered with its values, or the question was cancelled. */
-async function settleFramesEnumFlags(flags: StartFlags): Promise<boolean> {
-    for (const { key, flag, values } of FRAMES_ENUM_FLAGS) {
+async function settleEnumFlags(
+    flags: StartFlags,
+    enumFlags: typeof FRAMES_ENUM_FLAGS | typeof MOVIE_ENUM_FLAGS
+): Promise<boolean> {
+    for (const { key, flag, values } of enumFlags) {
         const given = flags[key];
 
         if (given === undefined || values.some((one) => one === given)) {
@@ -78,7 +87,7 @@ function printCountdownEvent(seconds: number): void {
 
 /** `tools recorder start --frames`: the REPL's `recorder.start()` from the command line. */
 async function startFrames(flags: StartFlags): Promise<void> {
-    if (!(await settleFramesEnumFlags(flags))) {
+    if (!(await settleEnumFlags(flags, FRAMES_ENUM_FLAGS))) {
         return;
     }
 
@@ -126,6 +135,11 @@ export function register(program: Command): void {
             }
 
             refuseOtherKindFlags(flags);
+
+            if (!(await settleEnumFlags(flags, MOVIE_ENUM_FLAGS))) {
+                return;
+            }
+
             const request = parseStartFlags(flags);
             // A fresh checkout compiles the native recorder first (up to a minute): say so before the silence.
             await ensureBinaryAsync({
