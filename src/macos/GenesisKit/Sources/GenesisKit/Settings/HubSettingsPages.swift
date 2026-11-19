@@ -33,6 +33,7 @@ public enum HubSettingsPages {
                     } classic: {
                         HubPaneSettings(preferences: preferences)
                     }
+                    .environmentObject(preferences)
                 },
                 NativeSettingsPage(id: inboxPageID, title: "Inbox", symbol: "tray", tint: .indigo,
                                    subtitle: "Choose what the hub and widget show and count.") {
@@ -114,21 +115,34 @@ private struct HubAppearanceSettings: View {
 
 @MainActor
 struct HubWorkOpeningProjectPicker: View {
+    @EnvironmentObject private var preferences: HubPreferences
     @AppStorage(HubWorkOpeningProject.key) private var choice: HubWorkOpeningProject = .recentSession
     @AppStorage(HubWorkSections.foldLongListsKey) private var foldLongLists = true
 
     var body: some View {
-        NativeSettingsPicker(
-            "Opening project", detail: "Work opens the first project in the list if your choice is unavailable.",
-            identifier: HubWorkOpeningProject.key,
-            options: [
-                NativeSettingsOption(.recentSession, "Most recently active session’s project"),
-                NativeSettingsOption(.lastOpened, "Project I opened last"),
-                NativeSettingsOption(.firstInList, "First in the list"),
-            ],
-            selection: $choice, width: 245)
-        NativeSettingsToggle("Fold long handoff lists", detail: "When more than ten handoffs and epics precede items needing attention, start with the group folded.",
-                             identifier: HubWorkSections.foldLongListsKey, isOn: $foldLongLists)
+        VStack(alignment: .leading, spacing: 16) {
+            NativeSettingsPicker(
+                "Opening project", detail: "Work opens the first project in the list if your choice is unavailable.",
+                identifier: HubWorkOpeningProject.key,
+                options: [
+                    NativeSettingsOption(.recentSession, "Most recently active session’s project"),
+                    NativeSettingsOption(.lastOpened, "Project I opened last"),
+                    NativeSettingsOption(.firstInList, "First in the list"),
+                ],
+                selection: $choice, width: 245)
+            Divider()
+            NativeSettingsPicker(
+                "Item details", detail: "Beside the list, or in place of the list",
+                identifier: HubPreferences.Key.workDetailPlacement,
+                options: [
+                    NativeSettingsOption("beside", "Beside the list"),
+                    NativeSettingsOption("replace", "In place of the list"),
+                ],
+                selection: $preferences.workDetailPlacement, width: 245)
+            Divider()
+            NativeSettingsToggle("Fold long handoff lists", detail: "When more than ten handoffs and epics precede items needing attention, start with the group folded.",
+                                 identifier: HubWorkSections.foldLongListsKey, isOn: $foldLongLists)
+        }
     }
 }
 

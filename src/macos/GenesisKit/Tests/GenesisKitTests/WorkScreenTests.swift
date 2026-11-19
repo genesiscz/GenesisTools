@@ -17,11 +17,12 @@ private final class FakeWorkSource: WorkSource {
     var resumeRead: CheckedContinuation<Void, Never>?
     var subscriptions = 0
     var serviceDown = false
+    var projectNames = ["App", "Other"]
     private var continuation: AsyncStream<Void>.Continuation?
 
     init(_ snapshot: WorkSnapshotValue) { snapshotValue = snapshot }
 
-    func projects() async throws -> [String] { ["App", "Other"] }
+    func projects() async throws -> [String] { projectNames }
     func detail(ref: String) async throws -> WorkItemDetail { throw WorkSourceError("No fixture item \(ref)") }
     func snapshot(project: String) async throws -> WorkSnapshotValue {
         reads += 1
@@ -139,6 +140,7 @@ final class WorkScreenTests: XCTestCase {
         XCTAssertEqual(model.snapshot?.reopened.count, 1)
 
         let before = source.reads
+        source.snapshotValue.triage.removeAll { $0.group == "reopened-no-worker" }
         await awaitSnapshot(model) { source.tick() }
         XCTAssertGreaterThan(source.reads, before, "a change of the store reloads the screen")
 
@@ -156,6 +158,8 @@ final class WorkScreenTests: XCTestCase {
         let model = WorkScreenModel(source: source, reloadInterval: 0.4, settle: 0.1)
         await awaitSnapshot(model) { model.activate() }
         let first = source.reads
+        source.projectNames.append("Third")
+        source.snapshotValue.triage.removeAll { $0.group == "reopened-no-worker" }
 
         await awaitSnapshot(model) {
             for _ in 0..<20 { source.tick() }
@@ -163,14 +167,20 @@ final class WorkScreenTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(600))
         XCTAssertEqual(source.reads - first, 1, "twenty changes in 0.1 s are one reload")
         XCTAssertEqual(model.changeReloads, 1)
+        XCTAssertEqual(model.projects, ["App", "Other", "Third"])
+        XCTAssertEqual(model.project, "App")
 
         model.setVisible(false)
         let hidden = source.reads
+        source.projectNames.removeLast()
+        source.snapshotValue = fixture()
         for _ in 0..<5 { source.tick() }
         try await Task.sleep(for: .milliseconds(700))
         XCTAssertEqual(source.reads, hidden, "nothing reloads while nobody can see the screen")
 
+        XCTAssertEqual(model.projects, ["App", "Other", "Third"])
         await awaitSnapshot(model) { model.setVisible(true) }
+        XCTAssertEqual(model.projects, ["App", "Other"])
         try await Task.sleep(for: .milliseconds(600))
         XCTAssertEqual(source.reads - hidden, 1, "the first look reads what changed meanwhile, once")
 
@@ -281,13 +291,13 @@ final class WorkScreenTests: XCTestCase {
         defer { model.deactivate() }
         await settle { model.snapshot != nil }
         source.writeResult = WorkActionOutcome(ok: false, message: "Fixture backend refused the write")
-        let refused = await model.submit(.drop(ref: "w_spot0001", why: "Superseded by a new design"))
+        let refused = await model.write(.drop(ref: "w_spot0001", why: "Superseded by a new design"))
         XCTAssertFalse(refused)
         let first = try XCTUnwrap(model.notices.first)
         XCTAssertEqual(first.failure?.log, source.writeResult?.message)
         XCTAssertFalse(first.outcome.message.contains("Fixture backend"))
         source.writeResult = nil
-        let saved = await model.submit(.accept(ref: "w_spot0002"))
+        let saved = await model.write(.accept(ref: "w_spot0002"))
         XCTAssertTrue(saved)
         XCTAssertEqual(model.notices.map(\.ref), ["w_spot0001", "w_spot0002"])
         model.clearNotice(first.id)

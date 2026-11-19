@@ -159,13 +159,32 @@ struct WorkProjectRow: View, Equatable {
 
 /// The main view: the header in the title bar, then the Items or the Notifications pane.
 struct WorkMain: View {
+    @State private var findRequest = 0
+    @State private var focusAfterReturn = false
+    @FocusState private var workFocus: Bool
+    @GenReduceMotion private var reduceMotion
+    /// One draft store for the rows and the inspector, outside the beside/replace branches.
+    @StateObject private var drafts = WorkItemInspectorDrafts()
     @ObservedObject var screen: WorkScreenModel
     /// A section a title bar count asked for; the Items scroll view brings its header to the top.
     @State private var jump: String?
     @State private var foldedSections: Set<String> = []
-    @State private var reasonDrafts: [String: String] = [:]
     @AppStorage(HubWorkSections.foldLongListsKey, store: HubDefaults.store) private var foldLongLists = true
-    @GenReduceMotion private var reduceMotion
+
+    @ObservedObject var preferences: HubPreferences
+    var mainCheckout: String?
+    let openCommit: (String, String?) -> Void
+    let openPullRequest: (String) -> Void
+
+    init(screen: WorkScreenModel, preferences: HubPreferences? = nil, mainCheckout: String? = nil,
+         openCommit: @escaping (String, String?) -> Void = { _, _ in },
+         openPullRequest: @escaping (String) -> Void = { _ in }) {
+        self.screen = screen
+        self.preferences = preferences ?? HubDefaults.preferences
+        self.mainCheckout = mainCheckout
+        self.openCommit = openCommit
+        self.openPullRequest = openPullRequest
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -188,102 +207,208 @@ struct WorkMain: View {
             if project != nil { resetSectionFolds() }
         }
         .onChange(of: foldLongLists) { _, _ in resetSectionFolds() }
+        // A match inside a folded section would be a match nobody sees.
+        .onChange(of: screen.filter) { _, filter in
+            if filter.isActive, !foldedSections.isEmpty { foldedSections = [] }
+        }
     }
 
     private func resetSectionFolds() {
         guard let snapshot = screen.snapshot else { return }
-        foldedSections = HubWorkSections.startsFolded(snapshot, preference: foldLongLists) ? [WorkItemsView.containersTitle] : []
+        foldedSections = HubWorkSections.startsFolded(snapshot, preference: foldLongLists) && !screen.filter.isActive
+            ? [WorkItemsView.containersTitle] : []
     }
 
     private var header: some View {
-        WorkHeader(screen: screen, onJump: { section in foldedSections.remove(section); jump = section })
+        WorkHeader(screen: screen, onJump: { section in
+            // A count opens what it counts: a state filter that hides the open sections gives way to it.
+            if !WorkItemsView.showsOpenSections(screen.filter) { screen.filter = .default }
+            foldedSections.remove(section)
+            jump = section
+        })
+    }
+
+    private var inspector: some View {
+        WorkItemInspector(model: screen, drafts: drafts, projectRoot: mainCheckout, openCommit: { sha in
+            openCommit(sha, mainCheckout ?? screen.itemDetail?.item.project)
+        }, openPullRequest: openPullRequest, externalLink: { text, url in
+            AnyView(ExternalLink(text: text, url: url))
+        })
+    }
+
+    /// No project is open and no item is routed: the project list failed, is still being read, or holds nothing to open.
+    @ViewBuilder
+    private var noProject: some View {
+        if let failure = screen.failure {
+            FailureInline(.unexpected(failure, outcome: "The projects did not load", action: "Read the Work projects"),
+                          form: .pane) { Task { await screen.loadProjects() } }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if !screen.projectsLoaded {
+            EmptyState(symbol: "checklist", text: "Reading projects…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if screen.projects.isEmpty {
+            EmptyState(symbol: "checklist", text: "No projects with work items",
+                       detail: "Projects appear here when they have a work item.")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            EmptyState(symbol: "checklist", text: "Pick a project", detail: "The projects with work items are on the left.")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
     }
 
     @ViewBuilder
     private var content: some View {
-        if let ref = screen.itemRef {
-            VStack(alignment: .leading, spacing: 12) {
-                Button(action: screen.closeItem) { Label("All items", systemImage: "chevron.left") }
-                    .buttonStyle(.genHoverPlain())
-                if let failure = screen.failure {
-                    FailureInline(.unexpected(failure, outcome: "Could not open \(ref)", action: "Read the item"),
-                                  form: .pane) { screen.reload() }
-                } else if let detail = screen.itemDetail {
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 10) {
-                            Text(detail.item.title).font(.title3.weight(.semibold)).textSelection(.enabled)
-                            Text(verbatim: "\(detail.item.type.capitalized) · \(detail.item.state.capitalized) · \(detail.item.id)")
-                                .font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
-                            if let body = detail.item.body, !body.isEmpty, body != detail.item.title {
-                                Text(verbatim: body).textSelection(.enabled)
-                            }
-                            if let acceptance = detail.item.acceptance, !acceptance.isEmpty {
-                                Text("Acceptance").font(.headline)
-                                Text(verbatim: acceptance).textSelection(.enabled)
-                            }
-                            if let members = detail.members {
-                                Text("Tasks").font(.headline)
-                                if members.isEmpty { EmptyState(text: "This handoff has no tasks") }
-                                ForEach(members) { member in
-                                    Button { screen.openItem(member.ref) } label: {
-                                        Label(member.title, systemImage: WorkStateLook.symbol(member.state))
-                                            .frame(maxWidth: .infinity, minHeight: 26, alignment: .leading).contentShape(Rectangle())
-                                    }
-                                    .buttonStyle(RowButtonStyle())
-                                    .accessibilityValue(member.state)
-                                }
-                            }
-                        }
+        if screen.pane == .notify {
+            if screen.project == nil {
+                noProject
+            } else if let failure = screen.failure, screen.snapshot == nil {
+                FailureInline(.unexpected(failure, outcome: "The work items did not load", action: "Read the work items"),
+                              form: .pane) { screen.reload() }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let project = screen.project {
+                ScrollView {
+                    WorkNotifyGridView(project: project, rows: screen.notifyRows)
+                        .padding(.horizontal, 18).padding(.vertical, 14)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .accessibilityIdentifier("work.detail.\(detail.item.id)")
-                    }
-                    .id(detail.item.id)
-                } else {
-                    Text("Opening \(ref)…").foregroundStyle(.secondary)
+                        .genScrollBars()
                 }
             }
-            .padding(18)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        } else if let failure = screen.failure, screen.project == nil {
-            FailureInline(.unexpected(failure, outcome: "The projects did not load", action: "Read the Work projects"),
-                          form: .pane) { Task { await screen.loadProjects() } }
-        } else if let failure = screen.failure, screen.snapshot == nil {
-            FailureInline(.unexpected(failure, outcome: "The work items did not load", action: "Read the work items"),
-                          form: .pane) { screen.reload() }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if screen.project == nil {
-            EmptyState(symbol: "checklist", text: screen.projectsLoaded ? "No projects with work items" : "Reading projects…",
-                       detail: screen.projectsLoaded ? "Projects appear here when they have a work item." : nil)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            ScrollViewReader { proxy in
-            ScrollView {
+            GeometryReader { geometry in
+                // Work fills the trailing edge. The sidebar contributes to window width, even when folded.
+                let beside = geometry.frame(in: .global).maxX >= 900 && preferences.workDetailPlacement == "beside"
                 Group {
-                    switch screen.pane {
-                    case .items:
-                        if let snapshot = screen.snapshot {
-                            WorkItemsView(snapshot: snapshot, pending: screen.pending, foldedSections: $foldedSections,
-                                          reasonDrafts: $reasonDrafts, submitReason: { await screen.submit($0) }) { action in
-                                Task { await screen.perform(action) }
-                            }
+                    if beside {
+                        HStack(spacing: 0) {
+                            itemList
+                            ResizableSidePanel(key: "work.inspector", edge: .trailing, title: "Item details",
+                                               defaultWidth: 420, minWidth: 320,
+                                               maxWidth: min(640, max(320, geometry.size.width - 270)),
+                                               collapsedStore: HubDefaults.store) { inspector }
                         }
-                    case .notify:
-                        WorkNotifyGridView(project: screen.project ?? "", rows: screen.notifyRows)
+                    } else if screen.selection != nil {
+                        VStack(alignment: .leading, spacing: 0) {
+                            Button(action: screen.closeItem) { Label("All items", systemImage: "chevron.left") }
+                                .buttonStyle(.genHoverPlain())
+                                .accessibilityIdentifier("work.detail.allItems")
+                                .padding(.leading, 14).padding(.vertical, 6)
+                            Divider()
+                            inspector
+                        }
+                    } else { itemList }
+                }
+                .focusable()
+                .focused($workFocus)
+                .onKeyPress(keys: [.upArrow, .downArrow, .return, .escape]) { press in
+                    guard press.modifiers.isEmpty,
+                          !(NSApp.keyWindow?.firstResponder is NSTextView) else { return .ignored }
+                    switch press.key {
+                    case .upArrow: screen.moveSelection(-1)
+                    case .downArrow: screen.moveSelection(1)
+                    case .return:
+                        guard let ref = screen.selection,
+                              screen.results?.containers.contains(where: { $0.ref == ref }) == true else { return .ignored }
+                        screen.toggleContainer(ref)
+                    case .escape:
+                        guard screen.selection != nil else { return .ignored }
+                        screen.closeItem()
+                    default: return .ignored
+                    }
+                    return .handled
+                }
+                .panelFindNative("work.items") {
+                    if !beside, screen.selection != nil {
+                        focusAfterReturn = true
+                        screen.closeItem()
+                    } else { findRequest += 1 }
+                }
+            }
+        }
+    }
+
+    private var itemList: some View {
+        VStack(spacing: 0) {
+            WorkFindBar(filter: $screen.filter,
+                        matchedCount: screen.results?.matchedCount ?? 0,
+                        totalCount: screen.results?.totalCount ?? 0,
+                        focusRequest: findRequest, filterNotice: screen.filterNotice,
+                        onClear: { screen.filter = .default },
+                        onSubmit: { if let ref = screen.filter.fullRef { screen.select(ref) } })
+                .id(screen.project)
+                .disabled(screen.snapshot == nil)
+            Divider()
+            if let snapshot = screen.snapshot, let rows = screen.results {
+                ScrollViewReader { reader in
+                    ScrollView {
+                        WorkItemsView(snapshot: snapshot, projection: rows, filter: screen.filter,
+                                      selection: screen.selection, pending: screen.pending,
+                                      indexLoading: screen.indexLoading, indexFailure: screen.indexFailure,
+                                      foldedSections: $foldedSections, drafts: drafts,
+                                      select: { workFocus = true; screen.select($0) }, toggleExpansion: { ref, _ in screen.toggleContainer(ref) },
+                                      showMore: screen.showMore, clearFilters: { screen.filter = .default },
+                                      retryIndex: screen.loadIndexIfNeeded, perform: screen.write)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .genScrollBars()
+                    }
+                    .onChange(of: screen.selection) { _, ref in
+                        guard let ref else { return }
+                        unfold(ref, in: rows)
+                        if reduceMotion { reader.scrollTo(ref, anchor: nil) }
+                        else { withAnimation(.easeOut(duration: 0.12)) { reader.scrollTo(ref, anchor: nil) } }
+                    }
+                    .onChange(of: screen.selection.map { screen.visibleRefs.contains($0) } ?? false, initial: true) { old, nowVisible in
+                        guard nowVisible, let ref = screen.selection else { return }
+                        unfold(ref, in: screen.results ?? rows)
+                        // A routed item can already be in the list when the list first appears (an archive row far
+                        // below the fold). On that first value the rows are not laid out yet, so the scroll waits one
+                        // turn. A row already on screen does not move.
+                        if old == nowVisible {
+                            DispatchQueue.main.async { reader.scrollTo(ref, anchor: nil) }
+                        } else {
+                            reader.scrollTo(ref, anchor: nil)
+                        }
+                    }
+                    .onChange(of: jump) { _, section in
+                        guard let section else { return }
+                        GenMotion.perform(expanding: true, reduceMotion: reduceMotion) {
+                            reader.scrollTo(WorkItemsView.sectionID(section), anchor: .top)
+                        }
+                        jump = nil
                     }
                 }
-                .padding(.horizontal, 18)
-                .padding(.vertical, 14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .genScrollBars()
+            } else if screen.project == nil, screen.selection == nil {
+                noProject
+            } else if let failure = screen.listFailure ?? (screen.selection == nil ? screen.failure : nil) {
+                FailureInline(.unexpected(failure, outcome: "The work items did not load", action: "Read the work items"),
+                              form: .pane) { if screen.selection == nil { screen.reload() } else { screen.readListBesideDetail() } }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ProgressView("Reading work items").controlSize(.small)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .onChange(of: jump) { _, section in
-                guard let section else { return }
-                GenMotion.perform(expanding: true, reduceMotion: reduceMotion) {
-                    proxy.scrollTo(WorkItemsView.sectionID(section), anchor: .top)
-                }
-                jump = nil
+        }
+        .onAppear {
+            if focusAfterReturn {
+                focusAfterReturn = false
+                findRequest += 1
             }
-            }
+        }
+        .task(id: screen.filter.fullRef) {
+            guard let ref = screen.filter.fullRef else { return }
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled, screen.filter.fullRef == ref, let snapshot = screen.snapshot,
+                  !snapshot.containers.contains(where: { $0.ref == ref || $0.members.contains(where: { $0.ref == ref && $0.isOpen }) }),
+                  !snapshot.triage.contains(where: { $0.ref == ref }) else { return }
+            screen.select(ref)
+        }
+    }
+
+    /// A row selected by the keyboard or a route opens the folded section that holds it, so the scroll has a target.
+    private func unfold(_ ref: String, in rows: WorkItemsProjection) {
+        if let section = WorkItemsView.sectionTitle(of: ref, in: rows), foldedSections.contains(section) {
+            foldedSections.remove(section)
         }
     }
 }
@@ -363,5 +488,33 @@ struct WorkHeader: View {
         return [(Plural.count(snapshot.containers.count, "container"), WorkItemsView.containersTitle, snapshot.containers.count, "tray.full"),
                 (Plural.count(snapshot.spotted.count, "spotted item"), WorkItemsView.spottedTitle, snapshot.spotted.count, "eye"),
                 (Plural.count(snapshot.reopened.count, "reopened item"), WorkItemsView.reopenedTitle, snapshot.reopened.count, "arrow.uturn.backward")]
+    }
+}
+
+/// Resolve application routes here so the shared inspector stays usable in a standalone kit host.
+struct HubWorkContent: View {
+    let model: HubModel
+    @ObservedObject var screen: WorkScreenModel
+    @State private var resolvedCheckout: (origin: String, main: String)?
+
+    var body: some View {
+        let origin = screen.itemDetail?.item.checkoutPath
+        let known = screen.project.flatMap { name in
+            model.worktrees.first { $0.isMain && $0.repo.caseInsensitiveCompare(name) == .orderedSame }?.path
+                ?? PRsModel.projectRoot(name, in: model.prs.allProjects)
+        }
+        WorkMain(screen: screen, mainCheckout: (resolvedCheckout?.origin == origin ? resolvedCheckout?.main : nil) ?? known,
+                 openCommit: { sha, repo in model.openCommitLink(sha, repo: repo) },
+                 openPullRequest: { ref in _ = model.apply(HubRequest(["--pr", ref])) })
+            .task(id: origin) {
+                guard let origin, resolvedCheckout?.origin != origin else { return }
+                let main = await Task.detached(priority: .utility) { () -> String? in
+                    let source = GitWorkingTreeSource(repo: URL(fileURLWithPath: origin))
+                    guard let layout = try? source.repositoryLayout(), layout.commonDirectory.lastPathComponent == ".git"
+                    else { return nil }
+                    return layout.commonDirectory.deletingLastPathComponent().path
+                }.value
+                if let main, !Task.isCancelled { resolvedCheckout = (origin, main) }
+            }
     }
 }

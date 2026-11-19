@@ -174,6 +174,9 @@ public struct WorkNotifyRow: Identifiable, Equatable, Sendable {
 
 /// A write the screen offers on one item.
 public enum WorkScreenAction: Equatable, Sendable {
+    case claim(ref: String)
+    case release(ref: String)
+    case comment(ref: String, text: String)
     case accept(ref: String)
     case drop(ref: String, why: String)
     case finish(ref: String, proof: String)
@@ -185,7 +188,7 @@ public enum WorkScreenAction: Equatable, Sendable {
 
     public var ref: String {
         switch self {
-        case let .accept(ref), let .drop(ref, _), let .finish(ref, _), let .reopen(ref, _),
+        case let .claim(ref), let .release(ref), let .comment(ref, _), let .accept(ref), let .drop(ref, _), let .finish(ref, _), let .reopen(ref, _),
              let .addMember(ref, _), let .unpair(ref, _, _), let .sync(ref, _): return ref
         }
     }
@@ -193,6 +196,9 @@ public enum WorkScreenAction: Equatable, Sendable {
     /// The past tense for the notice after the write.
     public var done: String {
         switch self {
+        case .claim: return "Claimed"
+        case .release: return "Released"
+        case .comment: return "Comment added"
         case .accept: return "Accepted"
         case .drop: return "Dropped"
         case .finish: return "Finished"
@@ -205,6 +211,9 @@ public enum WorkScreenAction: Equatable, Sendable {
 
     var verb: String {
         switch self {
+        case .claim: return "claim"
+        case .release: return "release"
+        case .comment: return "comment on"
         case .accept: return "accept"
         case .drop: return "drop"
         case .finish: return "finish"
@@ -248,6 +257,7 @@ public struct WorkSourceError: LocalizedError, Equatable, Sendable {
 public protocol WorkSource: AnyObject {
     func projects() async throws -> [String]
     func snapshot(project: String) async throws -> WorkSnapshotValue
+    func list(project: String) async throws -> [WorkRowValue]
     func detail(ref: String) async throws -> WorkItemDetail
     func notify(project: String) async throws -> [WorkNotifyRow]
     func perform(_ action: WorkScreenAction, project: String) async throws -> WorkActionOutcome
@@ -305,6 +315,12 @@ public extension WorkSource {
     }
 }
 
+extension WorkSource {
+    public func list(project: String) async throws -> [WorkRowValue] {
+        throw WorkSourceError("This source cannot read the project index.")
+    }
+}
+
 /// The `work` area through the generated client. Each answer is an `ActionOutcome` around the method's reply; it is
 /// encoded once and read into the screen's own small models, so the views never name the generated types.
 @MainActor
@@ -337,6 +353,8 @@ public final class LiveWorkSource: WorkSource {
     }
 
     public func detail(ref: String) async throws -> WorkItemDetail {
+        let span = PerfSpans.begin("work.detail.load", awaits: true)
+        defer { span.end() }
         if ref.hasPrefix("t_") {
             // An older listing, or a TODO before its first import, has only the id used by question show.
             struct Todo: Decodable {
@@ -355,6 +373,18 @@ public final class LiveWorkSource: WorkSource {
                                               body: todo.prompt, acceptance: nil))
         }
         return try reply(await rpc.work.show(WorkShowParams(ref: ref)))
+    }
+
+    // MARK: - Find
+
+    public func list(project: String) async throws -> [WorkRowValue] {
+        let span = PerfSpans.begin("work.index.load", awaits: true)
+        defer { span.end() }
+        let fields = ["ref", "state", "type", "severity", "worker", "title", "project", "slot"]
+        let rows: [WorkRowValue] = try reply(await rpc.work.list(.init(project: project, fields: fields, limit: 5000,
+                                                                       call: .init(project: project))))
+        // work.list orders by ascending creation time. The archive reads from newest to oldest.
+        return Array(rows.reversed())
     }
 
     public func notify(project: String) async throws -> [WorkNotifyRow] {
@@ -405,6 +435,12 @@ public final class LiveWorkSource: WorkSource {
     public func perform(_ action: WorkScreenAction, project: String) async throws -> WorkActionOutcome {
         let outcome: Envelope<IgnoredData>
         switch action {
+        case let .claim(ref):
+            outcome = try decode(await rpc.work.claim(.init(ref: ref, call: .init(project: project))))
+        case let .release(ref):
+            outcome = try decode(await rpc.work.release(.init(ref: ref, call: .init(project: project))))
+        case let .comment(ref, text):
+            outcome = try decode(await rpc.work.comment(.init(ref: ref, text: text, call: .init(project: project))))
         case let .accept(ref):
             outcome = try decode(await rpc.work.accept(WorkAcceptParams(refs: [ref], call: .init(project: project))))
         case let .drop(ref, why):

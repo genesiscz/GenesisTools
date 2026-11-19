@@ -2538,7 +2538,7 @@ struct HubRootView: View {
                 UsageMain(model: model, usage: model.usage)
                     .flexiblePane(neighbourOf: "hub.sidebar")
             case .work:
-                WorkMain(screen: model.work.screen)
+                HubWorkContent(model: model, screen: model.work.screen)
                     .flexiblePane(neighbourOf: "hub.sidebar")
             case .agents:
                 // Held like Sessions: the transcript keeps its layout while the sidebar drags.

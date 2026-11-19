@@ -24,8 +24,19 @@ public final class WorkScreenModel: ObservableObject {
     @Published public var project: String? {
         didSet {
             openingCandidates = nil // A row click or history navigation takes precedence over the pending opening choice.
-            if adoptingItemProject { return }
+            if adoptingItemProject {
+                // A later read can discover a move. Keep the reader in the original list until they follow it.
+                if let movedFrom, project == movedFrom { return }
+                if let oldValue, project != oldValue, itemDetail?.item.project == oldValue || movedFrom == oldValue {
+                    movedFrom = oldValue
+                    project = oldValue
+                } else if project != oldValue {
+                    resetFind()
+                }
+                return
+            }
             if project != oldValue || itemRef != nil {
+                resetFind()
                 itemRef = nil
                 itemDetail = nil
                 snapshot = nil
@@ -47,9 +58,16 @@ public final class WorkScreenModel: ObservableObject {
         }
     }
     @Published public private(set) var itemRef: String?
-    @Published public private(set) var itemDetail: WorkItemDetail?
+    @Published public private(set) var itemDetail: WorkItemDetail? {
+        didSet { if let itemDetail { receivedDetail(itemDetail) } }
+    }
     private var adoptingItemProject = false
-    @Published public private(set) var snapshot: WorkSnapshotValue?
+    @Published public private(set) var snapshot: WorkSnapshotValue? {
+        didSet {
+            updateResults()
+            if snapshot != nil { loadIndexIfNeeded(); revealRouteIfReady() }
+        }
+    }
     private var confirmedSnapshot: WorkSnapshotValue?
     private var pendingItemStates: [String: String] = [:]
     public private(set) var rowAnimation: Bool?
@@ -131,6 +149,7 @@ public final class WorkScreenModel: ObservableObject {
         guard !active else { return }
         active = true
         if projectsLoaded { projectsLoaded = false }
+        if itemRef != nil, companionReadNeeded { reload() }
         openingCandidates = projects
         if visible { listen() }
         wake = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification,
@@ -147,6 +166,8 @@ public final class WorkScreenModel: ObservableObject {
     public func deactivate() {
         active = false
         if let wake { NSWorkspace.shared.notificationCenter.removeObserver(wake); self.wake = nil }
+        listTask?.cancel()
+        invalidateFindReads()
         opening?.cancel()
         opening = nil
         stopListening()
@@ -237,21 +258,271 @@ public final class WorkScreenModel: ObservableObject {
         if !projectsLoaded { projectsLoaded = true }
     }
 
-    public func openItem(_ ref: String) {
+    // MARK: - Find and select
+
+    @Published public var filter = WorkFilter.default {
+        didSet {
+            guard oldValue != filter else { return }
+            collapsedMatches.removeAll()
+            archiveLimit = 200
+            filterNotice = nil
+            updateResults()
+            loadIndexIfNeeded()
+        }
+    }
+    @Published public private(set) var index: [WorkRowValue] = []
+    @Published public private(set) var results: WorkItemsProjection?
+    @Published public private(set) var indexLoading = false
+    @Published public private(set) var indexFailure: String?
+    @Published public private(set) var listFailure: String?
+    @Published public private(set) var movedFrom: String?
+    @Published public private(set) var filterNotice: String?
+    public var selection: String? { itemRef }
+    public var visibleRefs: [String] { results?.visibleRefs ?? [] }
+
+    private var indexedProject: String?
+    private var indexTask: Task<Void, Never>?
+    private var listTask: Task<Void, Never>?
+    private var expanded: Set<String> = []
+    private var collapsedMatches: Set<String> = []
+    private var archiveLimit = 200
+    private var cachedDetails: [String: WorkItemDetail] = [:]
+    private var recentRefs: [String] = []
+    private var companionReadNeeded = false
+
+    private func resetFind() {
+        parentRef = nil
+        indexTask?.cancel()
+        listTask?.cancel()
+        indexTask = nil
+        listTask = nil
+        indexedProject = nil
+        indexLoading = false
+        indexFailure = nil
+        listFailure = nil
+        index = []
+        expanded.removeAll()
+        collapsedMatches.removeAll()
+        filter = .default
+        filterNotice = nil
+        movedFrom = nil
+    }
+
+    private func updateResults() {
+        results = snapshot.map { WorkItemsProjection(snapshot: $0, filter: filter, index: index,
+                                                     archiveLimit: archiveLimit, expanded: expanded,
+                                                     collapsed: collapsedMatches) }
+    }
+
+    public func toggleContainer(_ ref: String) {
+        guard let container = results?.containers.first(where: { $0.value.ref == ref }) else { return }
+        if container.isExpanded {
+            expanded.remove(ref)
+            collapsedMatches.insert(ref)
+        } else {
+            expanded.insert(ref)
+            collapsedMatches.remove(ref)
+        }
+        updateResults()
+    }
+
+    public func showMore() {
+        archiveLimit += 200
+        updateResults()
+    }
+
+    public func loadIndexIfNeeded() {
+        guard let project, filter.requiresIndex, indexedProject != project, indexTask == nil else { return }
+        indexLoading = true
+        indexFailure = nil
+        indexTask = Task {
+            do {
+                let rows = try await source.list(project: project)
+                guard !Task.isCancelled, self.project == project else { return }
+                index = rows
+                indexedProject = project
+                updateResults()
+                revealRouteIfReady()
+            } catch {
+                guard !Task.isCancelled, self.project == project else { return }
+                indexFailure = error.localizedDescription
+            }
+            indexLoading = false
+            indexTask = nil
+        }
+    }
+
+    private func receivedDetail(_ detail: WorkItemDetail) {
+        guard let ref = itemRef else { return }
+        recentRefs.removeAll { $0 == ref }
+        recentRefs.append(ref)
+        cachedDetails[ref] = detail
+        if recentRefs.count > 20 { cachedDetails.removeValue(forKey: recentRefs.removeFirst()) }
+        if snapshot == nil || companionReadNeeded { readListBesideDetail() }
+        revealRouteIfReady()
+    }
+
+    public func readListBesideDetail() {
+        guard let project else { return }
+        companionReadNeeded = false
+        listTask?.cancel()
+        listFailure = nil
+        listTask = Task {
+            do {
+                let value = try await source.snapshot(project: project)
+                guard !Task.isCancelled, self.project == project else { return }
+                adopt(value)
+            } catch {
+                guard !Task.isCancelled, self.project == project else { return }
+                listFailure = error.localizedDescription
+            }
+        }
+    }
+
+    private func invalidateFindReads() {
+        cachedDetails.removeAll()
+        recentRefs.removeAll()
+        indexedProject = nil
+        indexTask?.cancel()
+        indexTask = nil
+        // An equal live read publishes nothing, so only a real change of this flag may publish.
+        if indexLoading { indexLoading = false }
+        companionReadNeeded = true
+    }
+
+    @Published public private(set) var parentRef: String?
+
+    public func selectMember(_ ref: String) {
+        let container = selection
+        select(ref)
+        parentRef = container
+    }
+
+    public func returnToContainer() {
+        if let parentRef { select(parentRef) }
+    }
+
+    public func openMovedItem() {
+        guard movedFrom != nil, let ref = itemRef, let destination = itemDetail?.item.project else { return }
+        project = destination
+        select(ref)
+    }
+
+    public func pairings(for ref: String) -> [WorkPairingValue] {
+        guard let snapshot else { return [] }
+        for container in snapshot.containers {
+            if container.ref == ref { return container.pairings ?? [] }
+            if let member = container.members.first(where: { $0.ref == ref }) { return member.pairings ?? [] }
+        }
+        return snapshot.triage.first { $0.ref == ref }?.pairings ?? []
+    }
+
+    public func title(for ref: String) -> String? {
+        if let title = cachedDetails[ref]?.item.title { return title }
+        if let snapshot {
+            for container in snapshot.containers {
+                if container.ref == ref { return container.title }
+                if let row = container.members.first(where: { $0.ref == ref }) { return row.title }
+            }
+            if let row = snapshot.triage.first(where: { $0.ref == ref }) { return row.title }
+        }
+        return index.first { $0.ref == ref }?.title
+    }
+
+    public func select(_ ref: String?) {
+        guard let ref else { closeItem(); return }
+        guard ref != itemRef else { return }
+        routeToReveal = nil
+        movedFrom = nil
+        parentRef = nil
         itemRef = ref
-        itemDetail = nil
+        let cached = cachedDetails[ref]
+        itemDetail = cached
         failure = nil
-        if pane == .items { reload() } else { pane = .items }
+        if pane != .items { pane = .items }
+        else if cached == nil || isLoading || cached?.item.project != project { reload() }
+    }
+
+    public func moveSelection(_ step: Int) {
+        guard step != 0, !visibleRefs.isEmpty else { return }
+        let refs = visibleRefs
+        let current = itemRef.flatMap { refs.firstIndex(of: $0) }
+        let next = current.map { min(max(0, $0 + (step > 0 ? 1 : -1)), refs.count - 1) }
+            ?? (step > 0 ? 0 : refs.count - 1)
+        select(refs[next])
+    }
+
+    private var routeToReveal: String?
+    private var routeHadFilter = false
+
+    public func openItem(_ ref: String) {
+        let hadFilter = filter.isActive
+        select(ref)
+        routeToReveal = ref
+        routeHadFilter = hadFilter
+        revealRouteIfReady()
+    }
+
+    private func revealRouteIfReady() {
+        guard let ref = routeToReveal, ref == itemRef, let detail = itemDetail,
+              let snapshot, snapshot.project == detail.item.project else { return }
+        guard let results else { return }
+        if results.visibleRefs.contains(ref) { routeToReveal = nil; return }
+        if let parent = results.containers.first(where: { !$0.isExpanded && $0.members.contains(where: { $0.ref == ref }) }) {
+            routeToReveal = nil
+            toggleContainer(parent.ref)
+            return
+        }
+        let indexed = indexedProject == project
+        if filter.requiresIndex && !indexed { return }
+        routeToReveal = nil
+        let wasFiltered = routeHadFilter
+        let onTree = snapshot.containers.contains { $0.ref == ref || $0.members.contains { $0.ref == ref } }
+            || snapshot.spotted.contains { $0.ref == ref } || snapshot.reopened.contains { $0.ref == ref }
+        let next: WorkFilter
+        if onTree {
+            next = .default
+        } else if detail.item.state == "done" {
+            next = WorkFilter(states: [.done])
+        } else if detail.item.state == "dropped" {
+            next = WorkFilter(states: [.dropped])
+        } else {
+            next = WorkFilter(states: [])
+        }
+        if let container = snapshot.containers.first(where: { $0.members.contains { $0.ref == ref } }) {
+            expanded.insert(container.ref)
+            collapsedMatches.remove(container.ref)
+        }
+        // A closed item's archive page is part of its route. Reveal it even beyond the first 200.
+        if let position = index.firstIndex(where: { $0.ref == ref }), ["done", "dropped"].contains(detail.item.state) {
+            if !results.archive.contains(where: { $0.ref == ref }) && filter != next {
+                filter = next
+            }
+            archiveLimit = max(archiveLimit, ((position / 200) + 1) * 200)
+        } else {
+            filter = next
+        }
+        updateResults()
+        if wasFiltered { filterNotice = "Filter cleared to show \(ref)" }
+        if !indexed, filter.requiresIndex {
+            routeToReveal = ref
+            routeHadFilter = false
+            loadIndexIfNeeded()
+        }
     }
 
     public func closeItem() {
         guard itemRef != nil else { return }
+        routeToReveal = nil
+        parentRef = nil
         itemRef = nil
         itemDetail = nil
         failure = nil
         if project == nil, let first = projects.first { project = first }
         else { reload() }
     }
+
+    // MARK: - Reload
 
     public func reload() {
         read(explicit: true)
@@ -298,19 +569,7 @@ public final class WorkScreenModel: ObservableObject {
                 } else if let project, pane == .items {
                     let confirmed = try await self.source.snapshot(project: project)
                     guard !Task.isCancelled, self.project == project else { return }
-                    PerfSpans.measure("work.reload") {
-                        self.confirmedSnapshot = confirmed
-                        let next = confirmed.previewing(self.pendingItemStates)
-                        if self.snapshot != next {
-                            PerfMainBusy.measure("work.reload")
-                            self.rowAnimation = self.snapshot.flatMap { previous in
-                                let old = previous.rowRefs, new = next.rowRefs
-                                let count = old.symmetricDifference(new).count
-                                return (1...GenMotion.maxAnimatedRows).contains(count) ? new.count >= old.count : nil
-                            }
-                            self.snapshot = next
-                        }
-                    }
+                    self.adopt(confirmed)
                 } else if let project {
                     let rows = try await self.source.notify(project: project)
                     guard !Task.isCancelled, self.project == project else { return }
@@ -332,9 +591,30 @@ public final class WorkScreenModel: ObservableObject {
         }
     }
 
+    /// The one way a read list reaches the screen: beside an open item too, so a pending state change previews over
+    /// the newest confirmed list and a small change animates its rows.
+    private func adopt(_ confirmed: WorkSnapshotValue) {
+        PerfSpans.measure("work.reload") {
+            confirmedSnapshot = confirmed
+            let next = confirmed.previewing(pendingItemStates)
+            if snapshot != next {
+                PerfMainBusy.measure("work.reload")
+                rowAnimation = snapshot.flatMap { previous in
+                    let old = previous.rowRefs, new = next.rowRefs
+                    let count = old.symmetricDifference(new).count
+                    return (1...GenMotion.maxAnimatedRows).contains(count) ? new.count >= old.count : nil
+                }
+                snapshot = next
+            }
+        }
+        // An unchanged list sets no snapshot, so a store change that dropped the index reads it here.
+        loadIndexIfNeeded()
+    }
+
     /// A change of the store: the screen is stale, and one reload follows by the rules above.
     func changed() {
         PerfSpans.measure("work.live.tick") {
+            invalidateFindReads()
             stale = true
             projectsStale = true
             schedule()
@@ -366,10 +646,13 @@ public final class WorkScreenModel: ObservableObject {
         }
     }
 
-    public func perform(_ action: WorkScreenAction) async { _ = await submit(action) }
+    public func perform(_ action: WorkScreenAction) async { _ = await write(action) }
 
-    /// The reason editor keeps its draft until the service acknowledges this specific write.
-    public func submit(_ action: WorkScreenAction) async -> Bool {
+    /// The one write of the screen. It acts on the item's own project and previews the new state at once. It answers
+    /// true only when the service acknowledged this specific write, so a reason editor keeps its draft until then.
+    @discardableResult
+    public func write(_ action: WorkScreenAction) async -> Bool {
+        let project = itemRef == action.ref ? (itemDetail?.item.project ?? self.project) : self.project
         guard let project, !pending.contains(action.ref) else { return false }
         let item = rowInfo(for: action.ref)
         let itemTitle = item?.title ?? (itemDetail?.item.id == action.ref ? itemDetail?.item.title : nil) ?? "Work item"
@@ -403,7 +686,7 @@ public final class WorkScreenModel: ObservableObject {
                 shown.message = "\(result.message) “\(itemTitle)” from \(name)"
             case .sync, .reopen:
                 shown.message = "“\(itemTitle)” · \(result.message)"
-            case .accept, .drop, .finish:
+            case .accept, .drop, .finish, .claim, .release, .comment:
                 shown.message = "\(action.done): \(itemTitle)"
             }
         } else if result.partial {
@@ -428,6 +711,7 @@ public final class WorkScreenModel: ObservableObject {
                                replacing: replacing)
         pendingItemStates[action.ref] = nil
         if !result.ok { showPendingItemStates() }
+        invalidateFindReads()
         await readAfterWrite()
         return result.ok
     }
@@ -438,6 +722,8 @@ public final class WorkScreenModel: ObservableObject {
             if container.ref == ref { return (container.title, container.pairings) }
             if let row = container.members.first(where: { $0.ref == ref }) { return (row.title, row.pairings) }
         }
+        // A done or dropped row of the find results is only in the index.
+        if let row = index.first(where: { $0.ref == ref }) { return (row.title, row.pairings) }
         return nil
     }
 
