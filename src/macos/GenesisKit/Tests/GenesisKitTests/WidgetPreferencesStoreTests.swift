@@ -90,7 +90,7 @@ final class WidgetPreferencesStoreTests: XCTestCase {
             let preferences = try JSONDecoder().decode(WidgetPreferences.self, from: data)
             XCTAssertEqual(preferences.inboxGrouping, order ?? "feed")
             XCTAssertEqual(preferences.inboxFeedRuns, "session")
-            XCTAssertEqual(preferences.inboxFeedHeaders, "groups")
+            XCTAssertEqual(preferences.inboxFeedHeaders, "all")
             XCTAssertEqual(preferences.previewView, "sessions")
             XCTAssertEqual(preferences.previewFilter, "active")
         }

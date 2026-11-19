@@ -146,7 +146,7 @@ export const widgetPreferencesSchema = z.object({
     /** The newest-first feed, all entries of each session together, or one waiting-first list. */
     inboxGrouping: z.enum(["feed", "session", "list"]).default("feed"),
     inboxFeedRuns: z.enum(["session", "project"]).default("session"),
-    inboxFeedHeaders: z.enum(["groups", "all"]).default("groups"),
+    inboxFeedHeaders: z.enum(["groups", "all"]).default("all"),
     /** The filter a session's inbox opens with: every entry ("all"), the inbox entries, or the decisions. */
     inboxFilter: z.enum(["all", "inbox", "decisions"]).default("all"),
     /** The filter the inbox of every session opens with: every entry ("all"), the ones that need you, or unread. */
