@@ -3,7 +3,13 @@
  * compile. A table shape gives md, json-compact and toon with no more code.
  */
 import { SafeJSON } from "@genesiscz/utils/json";
-import { defineFormatter, type Formatter, type TableShape } from "@genesiscz/utils/output/formatter";
+import {
+    defineFormatter,
+    type FormatContext,
+    type Formatter,
+    nextActionLine,
+    type TableShape,
+} from "@genesiscz/utils/output/formatter";
 import type { Reply } from "@genesiscz/utils/output/reply";
 import type { ContextFact } from "./context";
 import type { ConfigResult, ContextResult, ListResult, TreeResult, WorkResults } from "./handlers";
@@ -154,7 +160,7 @@ function factLine(fact: ContextFact, explain: boolean): string {
         : `${fact.path} = ${fact.value}  (${how})`;
 }
 
-function triageText(rows: TriageRow[]): string[] {
+function triageText(rows: TriageRow[], ctx: FormatContext): string[] {
     if (rows.length === 0) {
         return ["nothing dangles"];
     }
@@ -184,6 +190,9 @@ function triageText(rows: TriageRow[]): string[] {
             if (value !== undefined) {
                 lines.push(`      ${label}: ${value}`);
             }
+        }
+        for (const action of row.next) {
+            lines.push(`      ${nextActionLine(action, ctx.door)}`);
         }
     }
 
