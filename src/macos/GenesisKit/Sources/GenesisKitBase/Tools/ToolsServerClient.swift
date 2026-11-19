@@ -138,8 +138,9 @@ public final class ToolsServerClient: @unchecked Sendable {
     private let startEvery: TimeInterval
     private let queue = DispatchQueue(label: "dev.foltyn.genesis.tools-server", qos: .userInitiated)
     private let controlWrites = DispatchQueue(label: "dev.foltyn.genesis.tools-server.control", qos: .userInitiated)
-    // scripts/benchmarks/hub/health-latency.ts, 2026-11-18: 100 probes per condition, p99 3.35 ms
-    // at load 18.9, max 3.62 ms, all 200 answered. Give a slow call one probe and the server time to reply.
+    // `bun scripts/benchmarks/hub/health-latency.ts normal|loaded` against a running hub, 2026-11-18: 100 probes
+    // per condition, p99 3.35 ms at load 18.9, max 3.62 ms, all 200 answered. Give a slow call one probe and the
+    // server time to reply.
     private static let healthProbeDelay: DispatchTimeInterval = .seconds(5)
     private static let healthReplyTimeout: DispatchTimeInterval = .seconds(2)
     /// Only the read queue handles health replies and their deadlines.
