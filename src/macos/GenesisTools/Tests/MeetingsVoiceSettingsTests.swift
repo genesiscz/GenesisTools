@@ -14,6 +14,11 @@ final class MeetingsVoiceSettingsTests: XCTestCase {
         try JSONDecoder().decode(JSONValue.self, from: Data(json.utf8))
     }
 
+    func testSampleScopeAndOutlierThresholdComeFromTheSameSpeakerConfig() throws {
+        let custom = try raw(#"{"global":{"speakerLabels":{"voice":{"sampleScope":"project","outlierBelow":0.63}}}}"#)
+        XCTAssertNotEqual(MeetingsVoiceCompute(raw: custom), MeetingsVoiceCompute(raw: nil))
+    }
+
     func testTheCardReadsTheConfigAndADefaultForAMissingBlock() throws {
         XCTAssertEqual(MeetingsVoiceCompute(raw: nil), MeetingsVoiceCompute(priority: .normal, workers: nil),
                        "no settings read yet: normal and auto")

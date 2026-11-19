@@ -28,6 +28,12 @@ final class MeetingsVoicesTests: XCTestCase {
         return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
     }
 
+    func testExclusionReasonsReadAsWords() {
+        for reason in ["exclusion", "exclusion-not-one-voice", "exclusion-too-few-lines"] {
+            XCTAssertNotEqual(VoiceReason.words(reason, person: nil, next: nil), reason)
+        }
+    }
+
     // MARK: The service's replies
 
     func testTheVoicesRepliesOfTheProtocolFixtureDecode() throws {
