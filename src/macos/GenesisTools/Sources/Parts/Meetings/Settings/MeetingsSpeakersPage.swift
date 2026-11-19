@@ -5,6 +5,11 @@ import SwiftUI
 struct MeetingsVoiceCompute: Equatable {
     enum Priority: String { case normal, background }
 
+    static let libraryPath = ["global", "speakerLabels", "voice"]
+    static let doubtfulFirstKey = "meetings.voices.doubtfulFirst"
+    static let meetingOnlyKey = "meetings.voices.meetingOnly"
+    var sampleScope = "all"
+    var outlierBelow = 0.5
     var priority: Priority = .normal
     /// nil is `auto`.
     var workers: Int?
@@ -19,6 +24,9 @@ struct MeetingsVoiceCompute: Equatable {
     }
 
     init(raw: JSONValue?) {
+        let voice = raw?.at(Self.libraryPath) ?? .null
+        if case .string("project") = voice.at(["sampleScope"]) { sampleScope = "project" }
+        if case .number(let score) = voice.at(["outlierBelow"]), (-1...1).contains(score) { outlierBelow = score }
         let block = raw?.at(Self.path) ?? .null
         if case .string(let text) = block.at(["priority"]), let read = Priority(rawValue: text) { priority = read }
         // Clamped as a Double first: `Int(_:)` traps on a hand-written 1e300 in the config.
@@ -43,6 +51,8 @@ struct MeetingsSpeakersPage: View {
 
     var body: some View {
         MeetingsSettingsFrame(model: model) { _ in
+            MeetingsVoiceLibraryCard(config: MeetingsVoiceCompute(raw: model.settingsRaw)) { path, value in model.set(path, value) }
+                .nativeSettingsAnchor("voiceLibrary")
             MeetingsVoicePassCard(compute: MeetingsVoiceCompute(raw: model.settingsRaw), autoNow: autoNow) { path, value in
                 model.set(path, value)
             }
@@ -50,6 +60,41 @@ struct MeetingsSpeakersPage: View {
         }
         .task { autoNow = await MeetingsVoiceCompute.autoWorkersNow(service: model.service) }
     }
+}
+
+struct MeetingsVoiceLibraryCard: View {
+    let config: MeetingsVoiceCompute
+    let set: ([String], Any) -> Void
+    @State private var draftThreshold: Double?
+    @AppStorage(MeetingsVoiceCompute.doubtfulFirstKey) private var doubtfulFirst = true
+    @AppStorage(MeetingsVoiceCompute.meetingOnlyKey) private var meetingOnly = false
+
+    var body: some View {
+        NativeSettingsCard("Voice library", subtitle: "Each person has one voice library across projects.") {
+            NativeSettingsPicker("Samples used to suggest names", detail: "Choose which confirmed samples the voice pass compares.",
+                                 identifier: "meetings.voice.sampleScope", options: [
+                                    NativeSettingsOption("all", "All projects"),
+                                    NativeSettingsOption("project", "Current project"),
+                                 ], selection: Binding(get: { config.sampleScope }, set: chooseScope))
+            Divider()
+            NativeSettingsSlider("Flag a sample below", detail: "A cosine below this value marks a sample for review. The sample stays in the library.",
+                                 identifier: "meetings.voice.outlierBelow",
+                                 value: Binding(get: { draftThreshold ?? config.outlierBelow }, set: { draftThreshold = $0 }),
+                                 in: -1...1, step: 0.01, format: VoiceScore.text, onCommit: { value in
+                draftThreshold = nil
+                chooseThreshold(value)
+            })
+            Divider()
+            NativeSettingsToggle("Doubtful samples first", detail: "Show people and samples that need a listen first.",
+                                 identifier: MeetingsVoiceCompute.doubtfulFirstKey, isOn: $doubtfulFirst)
+            Divider()
+            NativeSettingsToggle("Open inspector on this meeting only", detail: "When off, the inspector starts with samples from the whole project.",
+                                 identifier: MeetingsVoiceCompute.meetingOnlyKey, isOn: $meetingOnly)
+        }
+    }
+
+    func chooseScope(_ choice: String) { set(MeetingsVoiceCompute.libraryPath + ["sampleScope"], choice) }
+    func chooseThreshold(_ value: Double) { set(MeetingsVoiceCompute.libraryPath + ["outlierBelow"], value) }
 }
 
 /// The voice pass card: its priority and its worker count, each choice explained with what it costs on a real meeting.

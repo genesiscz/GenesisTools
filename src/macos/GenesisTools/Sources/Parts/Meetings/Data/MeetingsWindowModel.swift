@@ -129,12 +129,15 @@ final class MeetingsWindowModel {
         case needs
         case all
         case project(String)
+        case projectVoices(String)
         /// Every person the directory knows (R24, G-PPL-5): a view of the window, not of a meeting.
         case contacts
     }
 
     var place: Place
     var selectedMeetingID: String?
+    var voiceFocus: String?
+    var voiceSampleFocus: String?
     private(set) var overview: Loadable<MeetingsOverview> = .idle
     /// How often an answer replaced the list. Each set redraws every view of it, so an unchanged answer must not set it
     /// (the perf tests read this).
@@ -170,6 +173,7 @@ final class MeetingsWindowModel {
     private(set) var noticePlace: MeetingsPreferences.NoticePlace
     /// The Moment player: every Moment of the window plays here, one at a time, with its context stack (F1b).
     var player = MomentPlayer()
+    @ObservationIgnored private(set) lazy var voiceLibrary = VoiceLibraryModel(window: self)
     /// The window's one notice stack (R31): every meeting's notices, so a notice of a meeting that is not open stays on
     /// screen and names it (G34).
     @ObservationIgnored let notices: NoticeStackModel
@@ -266,7 +270,7 @@ final class MeetingsWindowModel {
         guard let overview = overview.value else { return [] }
         switch place {
         case .all: return overview.meetings
-        case .contacts: return []
+        case .contacts, .projectVoices: return []
         case .project(let name): return overview.meetings.filter { $0.project == name }
         case .needs:
             let waiting = Set(overview.needsYou.noProject + overview.needsYou.questions.map(\.id) + overview.needsYou.suggestions.map(\.id))
@@ -364,6 +368,8 @@ final class MeetingsWindowModel {
                     if settingsRaw?.at(["global", "playback", "listen"]) != shown.raw.at(["global", "playback", "listen"]) {
                         player.invalidateClipCache()
                     }
+                    let qualityPath = MeetingsVoiceCompute.libraryPath + ["outlierBelow"]
+                    if settingsRaw != nil, settingsRaw?.at(qualityPath) != shown.raw.at(qualityPath) { voiceLibrary.refresh() }
                     settingsRaw = shown.raw
                 }
                 next = .loaded(shown.value)
@@ -445,6 +451,7 @@ final class MeetingsWindowModel {
             people.ensure()
             return
         }
+        if case .projectVoices = place { return }
         if let id = selectedMeetingID, visibleMeetings.contains(where: { $0.id == id }) { return }
         select(visibleMeetings.first?.id)
     }
@@ -508,6 +515,8 @@ final class MeetingsWindowModel {
         // Config edits outside this process do not emit meeting events.
         loadSettings(quiet: true)
         guard !liveUpdates else { return }
+        voiceLibrary.refresh()
+        voiceLibrary.loadJobs()
         HubMainBusy.measure("meetings.refresh", window: 1.5)
         loadOverview(quiet: true)
         detail?.refreshLoaded()
@@ -595,6 +604,7 @@ final class MeetingsWindowModel {
 
     /// One signal of the subscription.
     func receive(_ signal: MeetingsServiceSignal) {
+        voiceLibrary.receive(signal)
         switch signal {
         case .event(let event):
             detail?.receive(event)
@@ -648,7 +658,7 @@ final class MeetingsWindowModel {
         switch event {
         case .meetingChanged(let changed): changed.parts.contains("show")
         case .decisionApplied, .decisionReverted, .commentSent: true
-        case .peopleChanged, .commentChanged, .wordTimingsChanged: false
+        case .peopleChanged, .commentChanged, .wordTimingsChanged, .voiceJob: false
         }
     }
 

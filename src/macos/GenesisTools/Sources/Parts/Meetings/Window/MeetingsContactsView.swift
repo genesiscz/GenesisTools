@@ -113,6 +113,7 @@ struct MeetingsContactsView: View {
     var grantContacts: () -> Void = {}
     /// Optional: show a person's meetings (the meetings list filtered to them).
     var showMeetings: ((KnownPerson) -> Void)?
+    var showVoices: ((KnownPerson) -> Void)?
     /// The search "Merge with…" asks: the whole directory (`people.known`), not the list's query or its limit.
     var mergeSearch: () -> PeopleSearch = { PeopleSearch(meeting: nil, limit: 50, service: MeetingsService.shared) }
 
@@ -122,6 +123,7 @@ struct MeetingsContactsView: View {
     @State private var mergeFrom: KnownPerson?
     @State private var mergeQuery = ""
     @State private var mergeSearching: PeopleSearch?
+    @State private var mergeChoices: [KnownPerson] = []
 
     private var access: ContactsAccessState { switches.contacts ? ContactsAccessState.from(sources) : .off }
 
@@ -275,17 +277,21 @@ struct MeetingsContactsView: View {
                             mergeWith: { startMerge(from: person) },
                             setHidden: { setHidden(person, $0) },
                             unmerge: person.merge.map { token in { unmerge(token) } },
-                            showMeetings: showMeetings.map { show in { show(person) } })
+                            showMeetings: showMeetings.map { show in { show(person) } },
+                            showVoices: showVoices.map { show in { show(person) } })
                         .equatable()
                         .popover(isPresented: Binding(get: { mergeFrom?.id == person.id },
                                                       set: { if !$0 { endMerge() } }), arrowEdge: .trailing) {
                             PersonPicker(
-                                people: Self.mergeCandidates(mergeSearching?.people ?? [], except: person, query: ""),
+                                people: mergeChoices,
                                 query: $mergeQuery, sources: mergeSearching?.sources ?? [],
                                 title: "Merge \(person.name) with", prompt: "Search people",
                                 addRule: .noResults,
                                 pick: { other in endMerge(); requestMerge(person, other) },
                                 cancel: { endMerge() })
+                            .onChange(of: mergeSearching?.people, initial: true) { _, found in
+                                mergeChoices = Self.mergeCandidates(found ?? [], except: person, query: "")
+                            }
                             .onChange(of: mergeQuery) { _, now in mergeSearching?.ask(now) }
                         }
                         Divider().padding(.leading, 52)
@@ -310,6 +316,7 @@ struct MeetingsContactsView: View {
         mergeSearching?.cancel()
         mergeSearching = nil
         mergeFrom = nil
+        mergeChoices = []
     }
 
     /// The people "Merge with…" offers: everyone else whose name, alias or address holds the text.
@@ -358,6 +365,7 @@ struct ContactsPersonRow: View {
     /// Split a merged person again; nil when they are not a merge.
     var unmerge: (() -> Void)?
     var showMeetings: (() -> Void)?
+    var showVoices: (() -> Void)?
 
     @State private var hovering = false
 
@@ -423,6 +431,7 @@ struct ContactsPersonRow: View {
         var items: [MenuButtonItem] = [.action("Merge with…", run: mergeWith)]
         if let unmerge { items.append(.action("Split Merge", run: unmerge)) }
         if let showMeetings { items.append(.action("Show Meetings", run: showMeetings)) }
+        if let showVoices { items.append(.action("Voice samples…", run: showVoices)) }
         items.append(.divider)
         items.append(person.hidden ? .action("Show Again") { setHidden(false) } : .action("Hide") { setHidden(true) })
         return items
@@ -433,6 +442,7 @@ struct ContactsPersonRow: View {
         Button("Merge with…", systemImage: "arrow.triangle.merge", action: mergeWith)
         if let unmerge { Button("Split Merge", systemImage: "arrow.triangle.branch", action: unmerge) }
         if let showMeetings { Button("Show Meetings", systemImage: "calendar", action: showMeetings) }
+        if let showVoices { Button("Voice samples…", systemImage: "waveform", action: showVoices) }
         Divider()
         if person.hidden {
             Button("Show Again", systemImage: "eye") { setHidden(false) }
@@ -447,7 +457,7 @@ struct ContactsPersonRow: View {
 extension ContactsPersonRow: Equatable {
     static func == (lhs: ContactsPersonRow, rhs: ContactsPersonRow) -> Bool {
         lhs.person == rhs.person && (lhs.unmerge == nil) == (rhs.unmerge == nil)
-            && (lhs.showMeetings == nil) == (rhs.showMeetings == nil)
+            && (lhs.showMeetings == nil) == (rhs.showMeetings == nil) && (lhs.showVoices == nil) == (rhs.showVoices == nil)
     }
 }
 
@@ -543,6 +553,10 @@ struct ContactsMergeSheet: View {
 /// All known appearances, including meetings outside the window's current date filter.
 struct PersonMeetingsSheet: View {
     let history: MeetingsPeopleModel.History
+    let library: VoiceLibraryModel
+    @State private var showsVoices: Bool?
+    @State private var project: String?
+    @State private var projects: [String] = []
     let retry: () -> Void
     let open: (String) -> Void
     let close: () -> Void
@@ -550,11 +564,42 @@ struct PersonMeetingsSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Meetings with \(history.person.name)").font(.headline)
+                Text(history.person.name).font(.headline)
                 Spacer()
                 Button("Close", action: close).keyboardShortcut(.cancelAction)
             }
-            LoadablePane(state: history.meetings, reading: "Reading meeting history…", retry: retry) { result in
+            Picker("Person history", selection: Binding(get: { showsVoices ?? history.voices }, set: { showsVoices = $0 })) {
+                Text("Meetings").tag(false)
+                Text("Voice samples").tag(true)
+            }
+            .labelsHidden().pickerStyle(.segmented)
+            if showsVoices ?? history.voices {
+                MenuButton(items: {
+                    [.action("All projects", checked: project == nil) { project = nil }] + projects.map { name in
+                        .action(name, checked: project == name) { project = name }
+                    }
+                }) { Label(project ?? "All projects", systemImage: "line.3.horizontal.decrease") }
+                .instantTooltip("Filter this person's samples by project")
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VoiceSampleRows(model: library, destination: .person(.init(name: history.person.name, email: history.person.email), project: project),
+                                        reveal: { id in Task { @MainActor in proxy.scrollTo(id, anchor: .top) } })
+                            .padding(.horizontal, 4)
+                    }
+                }
+                .onChange(of: library.rows.value?.projects, initial: true) { _, names in
+                    if project == nil { projects = Set((names ?? []) + history.person.projects).sorted() }
+                }
+            } else {
+                meetingList
+            }
+        }
+        .padding(16)
+        .frame(minWidth: 540, idealWidth: 680, minHeight: 400, idealHeight: 600)
+    }
+
+    private var meetingList: some View {
+        LoadablePane(state: history.meetings, reading: "Reading meeting history…", retry: retry) { result in
                 if result.meetings.isEmpty {
                     Text("No meeting names this person yet.").foregroundStyle(.secondary)
                 } else {
@@ -572,9 +617,6 @@ struct PersonMeetingsSheet: View {
                         .accessibilityHint("Open this meeting")
                     }
                 }
-            }
         }
-        .padding(16)
-        .frame(minWidth: 520, minHeight: 360)
     }
 }

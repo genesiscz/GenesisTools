@@ -609,7 +609,7 @@ extension MeetingDetailModel {
             if changed.parts.contains("timeline"), timeline != .idle { readTimeline(quiet: true) }
         case .wordTimingsChanged:
             transcriptChanged()
-        case .commentSent, .commentChanged, .peopleChanged:
+        case .commentSent, .commentChanged, .peopleChanged, .voiceJob:
             break
         }
     }

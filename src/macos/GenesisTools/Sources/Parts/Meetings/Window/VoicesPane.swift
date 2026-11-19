@@ -6,26 +6,15 @@ import SwiftUI
 // The pane calls the voices methods of the Meetings service (MeetingsAPI+Voices.swift), the same functions as
 // `tools meetings voices`.
 
-/// The pane's state for one meeting. Every list it shows is made once when its read lands (`VoicesPeople`,
-/// `VoicesPreviewSummary`), never in a view body.
+/// The preview and suggestion actions for one meeting. The window owns its scoped sample library separately.
 @Observable
 @MainActor
 final class VoicesModel {
     enum Run: Equatable { case preview, apply }
 
-    /// What a removal changes, asked before it runs: the samples it removes and the suggested lines that lose the name.
-    struct PendingRemoval: Equatable, Identifiable {
-        /// The project the plan was read for: the removal deletes from this one, never from the project shown later.
-        let project: String
-        let person: String
-        let sample: Int?
-        let plan: MeetingsAPI.VoicesRemove.Result
-        var id: String { "\(person)#\(sample ?? 0)" }
-    }
-
     let meeting: String
     @ObservationIgnored weak var detail: MeetingDetailModel?
-    private(set) var people: Loadable<VoicesPeople> = .idle
+    var meetingOnlyOverride: Bool?
     private(set) var preview: Loadable<VoicesPreviewSummary> = .idle
     /// The pane is open in the meeting's trailing slot ("…" → "Voices…").
     var open = false
@@ -34,12 +23,9 @@ final class VoicesModel {
     /// The long call that runs now, and its newest step from the service's `$/progress`.
     var running: Run?
     var progress: MeetingsCallProgress?
-    var pendingRemoval: PendingRemoval?
+
     var busy: Set<String> = []
-    /// The project the people were read for; a changed project reads them again.
-    @ObservationIgnored private var listedProject: String?
-    /// Counts the reads of the people list; a read publishes its answer only while it is the newest one.
-    @ObservationIgnored private var listGeneration = 0
+
     /// The running Preview or Apply, so Cancel can stop it.
     @ObservationIgnored private var runTask: Task<Void, Never>?
 
@@ -49,38 +35,6 @@ final class VoicesModel {
     }
 
     private var service: MeetingsService? { detail?.service }
-
-    /// The project's people and samples (`voices.list`). A meeting without a project has no voices to show.
-    func load(project: String?, quiet: Bool = false) {
-        guard let project else {
-            listGeneration += 1
-            listedProject = nil
-            pendingRemoval = nil
-            people = .idle
-            return
-        }
-        guard quiet || project != listedProject || people == .idle else { return }
-        if project != listedProject { pendingRemoval = nil }
-        listedProject = project
-        listGeneration += 1
-        let generation = listGeneration
-        guard let service else {
-            people = .failed(Self.noService, previous: people.value)
-            return
-        }
-        people = .loading(previous: people.value)
-        let meeting = meeting
-        Task {
-            do {
-                let result = try await service.call(MeetingsAPI.VoicesList.self, .init(project: project))
-                guard generation == listGeneration else { return }
-                people = .loaded(VoicesPeople(result.people, meeting: meeting))
-            } catch {
-                guard generation == listGeneration else { return }
-                people = .failed(asFailure(error), previous: people.value)
-            }
-        }
-    }
 
     /// The lines the voice model would name now (`voices.preview`): saves nothing. A cold voice pass reports its steps.
     func runPreview() {
@@ -149,66 +103,6 @@ final class VoicesModel {
         runTask = nil
     }
 
-    /// First the plan: which samples go and which suggested lines lose the name. The removal runs from the question.
-    func askRemoval(person: String, sample: Int?) {
-        guard let project = listedProject, let service, !busy.contains("remove") else { return }
-        busy.insert("remove")
-        Task {
-            defer { busy.remove("remove") }
-            do {
-                let plan = try await service.call(MeetingsAPI.VoicesRemove.self,
-                                                  .init(project: project, person: person, sample: sample, preview: true))
-                // A plan read for a project the pane no longer shows is not asked about.
-                guard listedProject == project else { return }
-                pendingRemoval = PendingRemoval(project: project, person: person, sample: sample, plan: plan)
-            } catch {
-                detail?.notices.push(.meetingsFailure(error))
-            }
-        }
-    }
-
-    /// Removes what the question showed, from the project it was asked for. A project that changed since the question
-    /// removes nothing.
-    func remove(_ removal: PendingRemoval) {
-        pendingRemoval = nil
-        guard let service, !busy.contains("remove") else { return }
-        let project = removal.project
-        guard listedProject == project else {
-            detail?.notices.push(StackedNotice(text: "The meeting's project changed; nothing was removed"))
-            return
-        }
-        busy.insert("remove")
-        Task {
-            defer { busy.remove("remove") }
-            do {
-                let result = try await service.call(MeetingsAPI.VoicesRemove.self,
-                                                    .init(project: project, person: removal.person, sample: removal.sample))
-                if listedProject == project { load(project: project, quiet: true) }
-                if !result.affected.isEmpty { detail?.refreshAfterDecision() }
-                detail?.notices.push(StackedNotice(text: Self.removedText(result)))
-            } catch {
-                detail?.notices.push(.meetingsFailure(error))
-            }
-        }
-    }
-
-    static func removalQuestion(_ removal: PendingRemoval) -> String {
-        let what = removal.sample.map { "sample \($0) of \(removal.person)" } ?? "every sample of \(removal.person)"
-        let lines = removal.plan.affected.count
-        return lines == 0 ? "Remove \(what)? No suggested line loses its name."
-            : "Remove \(what)? \(Plural.count(lines, "suggested line")) lose\(lines == 1 ? "s" : "") the name \(removal.person)."
-    }
-
-    static func removedText(_ result: MeetingsAPI.VoicesRemove.Result) -> String {
-        "Removed \(Plural.count(result.removed, "sample")) of \(result.person)"
-            + (result.affected.isEmpty ? "" : "; \(Plural.count(result.affected.count, "suggested line")) lost the name")
-    }
-
-    /// A sample plays as a Moment of its meeting at its own seconds.
-    func play(_ sample: VoiceSample) {
-        detail?.window?.player.play(.range(from: sample.fromSec, to: sample.toSec), in: sample.meeting, from: .row)
-    }
-
     func play(from: Double, to: Double) {
         detail?.window?.player.play(.range(from: from, to: max(from, to)), in: meeting, from: .row)
     }
@@ -250,24 +144,13 @@ final class VoicesModel {
     }
 
     static func decidedText(count: Int, confirm: Bool) -> String {
-        confirm ? "Confirmed \(Plural.count(count, "line")) by ear; kept as voice samples"
+        confirm ? "Confirmed \(Plural.count(count, "line")) by ear. Eligible samples will be learned in the background."
             : "Marked \(Plural.count(count, "line")) as not this person; the voice model will not name \(count == 1 ? "it" : "them") so again"
     }
 
     static let noService = MeetingsCLI.Failure(
         sentence: "Voices need the Meetings service, and it does not answer yet. Try again in a moment.",
         detail: "voices.* has no command form in the window")
-}
-
-/// The project's people split once per read: who attended this meeting first, then the others who have samples.
-struct VoicesPeople: Equatable {
-    let inMeeting: [VoicePerson]
-    let others: [VoicePerson]
-
-    init(_ people: [VoicePerson], meeting: String) {
-        inMeeting = people.filter { $0.meetings.contains(meeting) }
-        others = people.filter { !$0.meetings.contains(meeting) && !$0.samples.isEmpty }
-    }
 }
 
 /// A preview's lines with their counts, made once when it lands.
@@ -357,10 +240,9 @@ struct VoicesPane: View {
     let detail: MeetingDetailModel
     let close: () -> Void
     @State private var namedLines: [VoiceNamedLine] = []
-    @State private var expanded: Set<String> = []
+    @AppStorage(MeetingsVoiceCompute.meetingOnlyKey) private var preferredMeetingOnly = false
     @State private var showAllPreview = false
     @State private var showAllNamed = false
-    @State private var othersOpen = false
 
     private var model: VoicesModel { detail.voices }
     private var project: String? { detail.record.value?.project }
@@ -375,7 +257,7 @@ struct VoicesPane: View {
             Divider()
             if project == nil, detail.record.value != nil {
                 EmptyState(symbol: "person.wave.2", text: "Choose a project first",
-                           detail: "Voice samples are kept per project, so the voice model names people of the meeting's project.")
+                           detail: "Choose a project for this meeting to learn from confirmed voices.")
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -384,27 +266,30 @@ struct VoicesPane: View {
                             // The preview answers the button above it, so it shows right under it.
                             previewSection
                             Divider().padding(.vertical, 6)
-                            peopleSection
+                            if let project, let window = detail.window {
+                                let only = model.meetingOnlyOverride ?? preferredMeetingOnly
+                                Picker("Samples from", selection: Binding(get: { only }, set: { model.meetingOnlyOverride = $0 })) {
+                                    Text("This project").tag(false)
+                                    Text("This meeting").tag(true)
+                                }
+                                .pickerStyle(.segmented)
+                                .accessibilityIdentifier("meetings.voices.scope")
+                                VoiceSampleRows(model: window.voiceLibrary,
+                                                destination: .inspector(meeting: model.meeting, project: project, meetingOnly: only),
+                                                focus: model.focus, reveal: { id in
+                                                    model.focus = nil
+                                                    Task { @MainActor in proxy.scrollTo(id, anchor: .top) }
+                                                }, waiting: model.preview.value)
+                            }
                             namedSection
-                            othersSection
                         }
                         .padding(.horizontal, 14).padding(.vertical, 10)
                     }
-                    .onChange(of: model.focus, initial: true) { _, _ in reveal(proxy) }
-                    .onChange(of: model.people.value != nil) { _, _ in reveal(proxy) }
                 }
             }
         }
-        .onAppear { model.load(project: project) }
-        .onChange(of: project) { _, project in model.load(project: project) }
         .onChange(of: NamedInput(items: detail.record.value?.items, entries: detail.transcript.value?.entries), initial: true) { _, input in
             namedLines = VoiceNamedLine.of(items: input.items ?? [], entries: input.entries)
-        }
-        .alert(item: Binding(get: { model.pendingRemoval }, set: { model.pendingRemoval = $0 })) { removal in
-            Alert(title: Text(VoicesModel.removalQuestion(removal)),
-                  message: Text("A removed sample cannot be brought back; confirm a line of this person again to add one."),
-                  primaryButton: .destructive(Text("Remove")) { model.remove(removal) },
-                  secondaryButton: .cancel())
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Voices")
@@ -415,17 +300,6 @@ struct VoicesPane: View {
         let entries: [TranscriptLine]?
     }
 
-    /// Opens the focused person's samples and scrolls to them once the people are read; a person the list does not
-    /// hold leaves the pane as it is.
-    private func reveal(_ proxy: ScrollViewProxy) {
-        guard let name = model.focus, let people = model.people.value else { return }
-        model.focus = nil
-        guard let person = (people.inMeeting + people.others).first(where: { $0.person == name }) else { return }
-        if people.others.contains(where: { $0.id == person.id }) { othersOpen = true }
-        expanded.insert(person.id)
-        Task { @MainActor in proxy.scrollTo(person.id, anchor: .top) }
-    }
-
     private var header: some View {
         HStack(spacing: 8) {
             Text("Voices").font(.system(size: 13, weight: .semibold))
@@ -433,8 +307,7 @@ struct VoicesPane: View {
                 Text(verbatim: project).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             }
             Spacer(minLength: 6)
-            IconButton(systemName: "arrow.clockwise", tooltip: "Read the samples again") { model.load(project: project, quiet: true) }
-                .accessibilityLabel("Read the voice samples again")
+
             IconButton(systemName: "xmark", tooltip: "Close the Voices pane", action: close)
                 .accessibilityLabel("Close the Voices pane")
                 .accessibilityIdentifier("meetings.voices.close")
@@ -469,126 +342,12 @@ struct VoicesPane: View {
         }
     }
 
-    // MARK: People
-
-    @ViewBuilder
-    private var peopleSection: some View {
-        sectionTitle("In this meeting")
-        switch model.people {
-        case .idle, .loading(previous: nil):
-            HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Reading the samples…").font(.system(size: 11.5)).foregroundStyle(.secondary) }
-                .padding(.vertical, 6)
-        default:
-            // A failed read shows with Retry also over the last read's samples, which stay and say they are old (eve t105).
-            if let failure = model.people.failure {
-                FailureInline(FailureReport.unexpected(failure.detail ?? failure.sentence, outcome: failure.sentence,
-                                                       action: "Read the voice samples", title: "Voices did not load", area: "meetings"),
-                              form: .compact) { model.load(project: project, quiet: true) }
-                staleNote(model.people)
-            }
-            if let people = model.people.value {
-                if people.inMeeting.isEmpty {
-                    Text("Nobody of this meeting is known to the project yet.").font(.system(size: 11.5)).foregroundStyle(.secondary)
-                        .padding(.vertical, 4)
-                }
-                ForEach(people.inMeeting) { person in personRow(person).id(person.id) }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var othersSection: some View {
-        if let others = model.people.value?.others, !others.isEmpty {
-            Divider().padding(.vertical, 6)
-            GenDisclosure(isExpanded: $othersOpen, identifier: "meetings.voices.others",
-                          accessibilityTitle: "Other people of the project with samples") {
-                VStack(alignment: .leading, spacing: 0) { ForEach(others) { person in personRow(person).id(person.id) } }
-            } label: {
-                Text("Other people of \(project ?? "the project") (\(others.count))").font(.system(size: 11.5, weight: .semibold))
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func personRow(_ person: VoicePerson) -> some View {
-        let open = Binding(get: { expanded.contains(person.id) },
-                           set: { if $0 { expanded.insert(person.id) } else { expanded.remove(person.id) } })
-        if person.samples.isEmpty {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(verbatim: person.person).font(.system(size: 12.5, weight: .medium)).lineLimit(1)
-                    Badge("No sample yet", color: KitHue.care.ink, look: .tone, symbol: "waveform.slash")
-                    Spacer(minLength: 0)
-                }
-                Text(Self.waitingText(person.person, preview: model.preview.value))
-                    .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.vertical, 5)
-            .accessibilityElement(children: .combine)
-        } else {
-            GenDisclosure(isExpanded: open, identifier: "meetings.voices.person", accessibilityTitle: person.person) {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(person.samples.prefix(expanded.contains(person.id + "#all") ? person.samples.count : Self.shownRows)) { sample in
-                        sampleRow(sample, person: person.person)
-                    }
-                    if person.samples.count > Self.shownRows, !expanded.contains(person.id + "#all") {
-                        Button { expanded.insert(person.id + "#all") } label: { Text(verbatim: "Show all \(person.samples.count)") }
-                            .buttonStyle(.genHoverPlain()).font(.system(size: 11.5)).foregroundStyle(Color.accentColor)
-                            .padding(.vertical, 4)
-                    }
-                    Button("Remove every sample of \(person.person)…") { model.askRemoval(person: person.person, sample: nil) }
-                        .buttonStyle(.genHoverPlain()).font(.system(size: 11.5)).foregroundStyle(KitHue.danger.ink)
-                        .disabled(model.busy.contains("remove"))
-                        .padding(.vertical, 4)
-                }
-                .padding(.leading, 4)
-            } label: {
-                HStack(spacing: 6) {
-                    Text(verbatim: person.person).font(.system(size: 12.5, weight: .medium)).lineLimit(1)
-                    Text(Plural.count(person.samples.count, "sample")).font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
-                    Spacer(minLength: 0)
-                }
-            }
-        }
-    }
-
     /// "12 lines wait for one sample of Dana" once a preview counted them; before, how to count them.
     static func waitingText(_ person: String, preview: VoicesPreviewSummary?) -> String {
         guard let preview else { return "Preview counts the lines that wait for one." }
         let count = preview.waiting[person] ?? 0
         return count == 0 ? "No line waits for a sample of this person."
             : "\(Plural.count(count, "line")) wait\(count == 1 ? "s" : "") for one. Confirm one line of this person to add a sample."
-    }
-
-    private func sampleRow(_ sample: VoiceSample, person: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            IconButton(systemName: "play.fill", tooltip: sample.available ? "Play this sample" : "Its sound is not on this Mac") {
-                model.play(sample)
-            }
-            .disabled(!sample.available)
-            .accessibilityLabel("Play sample \(sample.sample) of \(person)")
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 4) {
-                    Image(systemName: sample.seat == "mic" ? "mic" : "phone").font(.system(size: 9.5)).foregroundStyle(.tertiary)
-                        .accessibilityHidden(true)
-                    Text(verbatim: "\(MeetingsFormat.clock(sample.fromSec))–\(MeetingsFormat.clock(sample.toSec))")
-                        .font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
-                    if sample.meeting != model.meeting {
-                        Text(verbatim: detail.window?.meeting(sample.meeting)?.displayTitle ?? sample.meeting)
-                            .font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
-                    }
-                }
-                if !sample.words.isEmpty {
-                    Text(verbatim: sample.words).font(.system(size: 11.5)).lineLimit(2).foregroundStyle(.primary)
-                }
-            }
-            Spacer(minLength: 0)
-            IconButton(systemName: "trash", tooltip: "Remove this sample") { model.askRemoval(person: person, sample: sample.sample) }
-                .disabled(model.busy.contains("remove"))
-                .accessibilityLabel("Remove sample \(sample.sample) of \(person)")
-        }
-        .padding(.vertical, 3)
     }
 
     // MARK: Lines the voice model named on the record
@@ -624,7 +383,7 @@ struct VoicesPane: View {
                 HStack(spacing: 6) {
                     Button("Confirm") { model.decide([line.id], confirm: true) }
                         .buttonStyle(.kit(.tinted, hue: .done, size: .small))
-                        .instantTooltip("It is \(line.speaker): keep the name and keep this line as a voice sample")
+                        .instantTooltip("Confirm \(line.speaker) by ear. Eligible audio is learned in the background.")
                     Button("Not this person") { model.decide([line.id], confirm: false) }
                         .buttonStyle(.kit(.ghost, size: .small))
                         .instantTooltip("It is not \(line.speaker): remove the name; the voice model will not give this line that name again")

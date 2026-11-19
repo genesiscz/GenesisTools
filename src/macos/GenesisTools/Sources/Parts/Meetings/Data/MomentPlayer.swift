@@ -146,6 +146,7 @@ struct MomentLayer: Identifiable, Equatable {
     let target: MomentTarget
     let source: MomentSource
     var kind: Kind
+    var voiceSampleID: String?
     /// The Moment the engine answered; nil while it is cut and for a file play.
     var moment: Moment?
     /// The meeting seconds at the sound's start and end.
@@ -219,6 +220,13 @@ final class MomentPlayer {
     @ObservationIgnored private let load: MomentSoundLoader
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var sounds: [UUID: MomentSound] = [:]
+    @ObservationIgnored private var voiceClips: [UUID: TemporaryClip] = [:]
+
+    private final class TemporaryClip {
+        let url: URL
+        init(_ url: URL) { self.url = url }
+        deinit { try? FileManager.default.removeItem(at: url) }
+    }
     @ObservationIgnored private var cutTask: Task<Void, Never>?
     @ObservationIgnored private var cutKey: String?
     @ObservationIgnored private var inFlight: [String: Task<MomentClip, Error>] = [:]
@@ -309,12 +317,85 @@ final class MomentPlayer {
     /// Plays the Moment of `target`, placed on the stack as its source says. A row's button that names the Moment that
     /// plays pauses or plays it again instead (R14: a second click no longer starts over); on a failed cut it cuts again.
     func play(_ target: MomentTarget, in meeting: String, from source: MomentSource, lengthSec: Double? = nil) {
-        if source == .row, let top, top.meeting == meeting, top.target == target, top.kind == .moment, !isFailed {
+        if source == .row, let top, top.meeting == meeting, top.target == target, top.kind == .moment, top.voiceSampleID == nil, !isFailed {
             togglePause()
             return
         }
         play(MeetingsAPI.MomentParams(meeting: meeting, target: target,
                                      tone: source == .outside ? false : nil, lengthSec: lengthSec), from: source)
+    }
+
+    /// Resolve the stored print before cutting. A recording can have a separate clock and one usable channel.
+    func playVoiceSample(_ sample: VoiceSample, person: String, resolve: @escaping () async throws -> MeetingsAPI.VoicesSample.Result) {
+        let key = sample.playbackKey(person: person)
+        if top?.voiceSampleID == key, !isFailed {
+            togglePause()
+            return
+        }
+        var layer = MomentLayer(meeting: sample.meeting, target: .range(from: sample.fromSec, to: sample.toSec),
+                                source: .row, kind: .moment, label: "\(person) · \(MeetingsFormat.clock(sample.fromSec))")
+        layer.voiceSampleID = key
+        layer.endSec = sample.toSec
+        place(layer, .replaceAll)
+        let id = layer.id
+        phase = .cutting(since: Date())
+        cutTask = Task {
+            do {
+                let slice = try await resolve()
+                try Task.checkCancellation()
+                guard slice.meeting == sample.meeting, slice.track == sample.track,
+                      slice.fromSec == sample.fromSec, slice.toSec == sample.toSec else {
+                    throw MeetingsCLI.Failure(sentence: "This sample changed. Read the voice library again.", detail: sample.id)
+                }
+                let clip = TemporaryClip(try await Self.voiceClip(slice))
+                guard !Task.isCancelled, top?.id == id else { return }
+                let sound = try load(clip.url)
+                voiceClips[id] = clip
+                start(sound, for: id, at: slice.fromSec)
+            } catch {
+                guard !Task.isCancelled, top?.id == id else { return }
+                phase = .failed(asFailure(error))
+            }
+        }
+    }
+
+    /// Decode just the verified interval to a seekable clip. When a channel is specified the other channel never plays.
+    nonisolated static func voiceClip(_ slice: MeetingsAPI.VoicesSample.Result) async throws -> URL {
+        let file = try AVAudioFile(forReading: URL(fileURLWithPath: slice.path))
+        let format = file.processingFormat
+        let first = AVAudioFramePosition((slice.fileFromSec * format.sampleRate).rounded())
+        let end = AVAudioFramePosition((slice.fileToSec * format.sampleRate).rounded())
+        guard first >= 0, end > first, end <= file.length,
+              slice.channel.map({ (0..<Int(format.channelCount)).contains($0) }) ?? true,
+              let output = AVAudioFormat(standardFormatWithSampleRate: format.sampleRate,
+                                         channels: slice.channel == nil ? format.channelCount : 1),
+              let input = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8192),
+              let buffer = AVAudioPCMBuffer(pcmFormat: output, frameCapacity: 8192) else {
+            throw MeetingsCLI.Failure(sentence: "The recording does not cover this sample.", detail: slice.path)
+        }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("voice-\(UUID().uuidString).caf")
+        do {
+            let clip = try AVAudioFile(forWriting: url, settings: output.settings)
+            file.framePosition = first
+            var left = end - first
+            while left > 0 {
+                try Task.checkCancellation()
+                try file.read(into: input, frameCount: AVAudioFrameCount(min(left, 8192)))
+                guard input.frameLength > 0, let source = input.floatChannelData, let channels = buffer.floatChannelData else {
+                    throw MeetingsCLI.Failure(sentence: "The recording ended before the sample did.", detail: slice.path)
+                }
+                buffer.frameLength = input.frameLength
+                for channel in 0..<Int(output.channelCount) {
+                    channels[channel].update(from: source[slice.channel ?? channel], count: Int(input.frameLength))
+                }
+                try clip.write(from: buffer)
+                left -= AVAudioFramePosition(input.frameLength)
+            }
+            return url
+        } catch {
+            try? FileManager.default.removeItem(at: url)
+            throw error
+        }
     }
 
     func play(_ params: MeetingsAPI.MomentParams, from source: MomentSource) {
@@ -496,6 +577,8 @@ final class MomentPlayer {
             let paused = below.pausedAt ?? below.startSec
             sound.currentTime = resumeOffset(for: below, pausedAt: paused)
             run(sound, for: below.id)
+        } else if below.voiceSampleID != nil {
+            phase = .failed(.init(sentence: "Play the sample again to hear its original track.", detail: below.label))
         } else {
             cut(below.id, MeetingsAPI.MomentParams(meeting: below.meeting, target: below.target))
         }
@@ -731,7 +814,7 @@ final class MomentPlayer {
             return
         }
         // A whole-meeting file played to the recording's end: no repeat, and nothing past the end to offer or cut.
-        if top.kind == .file {
+        if top.kind == .file || top.voiceSampleID != nil {
             phase = .ended(offerMore: false)
             return
         }
@@ -757,6 +840,7 @@ final class MomentPlayer {
     private func drop(_ id: UUID) {
         sounds[id]?.stop()
         sounds[id] = nil
+        voiceClips[id] = nil
         repeated.remove(id)
     }
 

@@ -21,7 +21,9 @@ struct MeetingsRootView: View {
         // The dock floats over the columns with a bottom inset (G-LAYOUT-1). As the second child of a VStack it took its
         // height from the columns, so starting a Moment shrank the list under the pointer.
         Group {
-            if model.place == .contacts {
+            if case .projectVoices(let project) = model.place {
+                projectVoices(project)
+            } else if model.place == .contacts {
                 contactsPanes
             } else if Self.panelHidesList(width: windowWidth, panelOpen: model.sidePanelOpen && model.detail != nil) {
                 meetingWithPanel
@@ -155,6 +157,24 @@ struct MeetingsRootView: View {
         }
     }
 
+    private func projectVoices(_ project: String) -> some View {
+        NavigationSplitView {
+            MeetingsSidebar(model: model)
+                .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 300)
+        } detail: {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VoiceSampleRows(model: model.voiceLibrary, destination: .project(project), focus: model.voiceFocus,
+                                    reveal: { id in Task { @MainActor in proxy.scrollTo(id, anchor: .top) } })
+                        .padding()
+                }
+            }
+            .navigationTitle("\(project) · Voices")
+            .safeAreaPadding(.bottom, dockHeight)
+            .noticeStack(model.notices, alignment: model.noticePlace.alignment)
+        }
+    }
+
     private var contactsPanes: some View {
         NavigationSplitView {
             MeetingsSidebar(model: model)
@@ -256,6 +276,7 @@ private struct MeetingsContactsPane: View {
                 setSource: { people.setSource($0, on: $1) },
                 grantContacts: { people.grantContacts() },
                 showMeetings: { people.showMeetings($0) },
+                showVoices: { people.showMeetings($0, voices: true) },
                 mergeSearch: { people.mergeSearch() })
                 .overlay {
                     if answer == nil, people.known.failure == nil {
@@ -270,8 +291,11 @@ private struct MeetingsContactsPane: View {
         }
         .onAppear { people.ensure() }
         .sheet(item: $people.history) { history in
-            PersonMeetingsSheet(history: history, retry: { people.showMeetings(history.person) },
-                                open: { people.openHistoryMeeting($0) }, close: { people.history = nil })
+            if let window = people.window {
+                PersonMeetingsSheet(history: people.history ?? history, library: window.voiceLibrary, retry: { people.showMeetings(history.person) },
+                                    open: { people.openHistoryMeeting($0) }, close: { people.history = nil })
+                    .noticeStack(window.notices, alignment: window.noticePlace.alignment)
+            }
         }
     }
 }
@@ -329,6 +353,11 @@ private struct MeetingsSidebar: View {
                 ForEach(overview?.projects ?? [], id: \.name) { project in
                     row(project.name, symbol: "folder", count: project.meetings, place: .project(project.name),
                         tooltip: "The \(project.name) project: its rules, labels, people and meetings")
+                    if model.place == .project(project.name) || model.place == .projectVoices(project.name) {
+                        row("Voices", symbol: "waveform", count: nil, place: .projectVoices(project.name),
+                            tooltip: "Voice samples learned in \(project.name)")
+                            .padding(.leading, 14)
+                    }
                 }
             }
         }
@@ -376,6 +405,9 @@ private struct MeetingsListPane: View {
                     ProjectSummary(name: name, settings: settings.projects[name], wispr: settings.wispr,
                                    meetingID: model.selectedMeetingID)
                 }
+                GhostButton("Voices", symbol: "waveform", tooltip: "Open voice samples for \(name)") {
+                    model.go(.projectVoices(name))
+                }.padding(.bottom, 6)
                 Divider()
             }
             if let failure = model.overview.failure {
@@ -415,6 +447,7 @@ private struct MeetingsListPane: View {
         case .all: return "All meetings"
         case .contacts: return "People"
         case .project(let name): return name
+        case .projectVoices(let name): return "\(name) · Voices"
         }
     }
 
@@ -488,6 +521,7 @@ private struct MeetingsPlacesMenu: View {
         case .all: return "calendar"
         case .contacts: return "person.crop.circle"
         case .project: return "folder"
+        case .projectVoices: return "waveform"
         }
     }
 
