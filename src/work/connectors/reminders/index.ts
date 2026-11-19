@@ -30,10 +30,10 @@ export const remindersConnector: Connector<unknown> = {
                 continue;
             }
 
-            const found = await TodoStore.findByItem(intent.item.id);
+            const found = (await TodoStore.findByItem(intent.item.id)) ?? TodoStore.adoptWorkTodo(intent.item.id);
 
             if (found === null) {
-                results.push({ ok: false, error: `no todo holds ${intent.item.id}` });
+                results.push({ ok: false, error: `Todo ${intent.item.id} is missing or dropped` });
                 continue;
             }
 
