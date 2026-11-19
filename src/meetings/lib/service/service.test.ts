@@ -440,6 +440,78 @@ function scratchStore(): {
     };
 }
 
+test("J7 offers a room device only for distinct roster joins and persists the owner's answer", async () => {
+    const { store, config } = scratchStore();
+    const deps = { store: () => store, configStore: () => config };
+    const client = new InProcessMeetingsClient({ deps, hello: { role: "window", protocol: 1 } });
+    const account = "Boardroom PC";
+    const guest = "Pip Example";
+    const group = "table";
+    async function addMeeting(id: string, copyOf?: string) {
+        const record = meetingRecordSchema.parse({
+            id,
+            title: id,
+            start: NOW.toISOString(),
+            createdAt: NOW.toISOString(),
+            createdBy: "new",
+            voiceRootMeeting: copyOf,
+            participants: [account, guest].map((name) => ({
+                name,
+                from: ["platform-roster"],
+                stays: [
+                    { fromSec: 0, toSec: 10, source: "platform-roster" },
+                    { fromSec: 20, source: "platform-roster" },
+                ],
+            })),
+            seats: {
+                room: ["Quill Example"],
+                remote: [],
+                microphones: [{ id: group, deviceId: account, people: ["Quill Example"] }],
+            },
+        });
+        mkdirSync(store.folder(id), { recursive: true });
+        writeFileSync(store.path(id), SafeJSON.stringify(record));
+    }
+    const view = () => client.call("meeting.seats.suggest", { meeting: "first-room" });
+    await addMeeting("first-room");
+    await addMeeting("copy-room", "first-room");
+    expect((await view()).suggestion.deviceOffers ?? []).toEqual([]);
+    await addMeeting("second-room");
+    const offer = {
+        account,
+        group,
+        meetings: ["first-room", "second-room"],
+        question: "Is Boardroom PC the room's device?",
+    };
+    expect((await view()).suggestion.deviceOffers).toEqual([offer]);
+    expect((await view()).suggestion.people.map((row) => row.name)).toContain(account);
+    const answer = {
+        action: "answer",
+        account,
+        meeting: "first-room",
+        yes: true,
+        group,
+        meetings: offer.meetings,
+    } as const;
+    const agent = new InProcessMeetingsClient({ deps, hello: agentHello });
+    await expect(agent.call("people.devices.decide", answer)).rejects.toThrow("owner");
+    expect(await client.call("people.devices.decide", answer)).toMatchObject({
+        changed: true,
+        device: { account, group },
+    });
+    const mapped = await view();
+    expect(mapped.suggestion.deviceOffers ?? []).toEqual([]);
+    expect(mapped.suggestion.people.map((row) => row.name)).not.toContain(account);
+    expect(mapped.suggestion.people.map((row) => row.name)).toContain(guest);
+    await client.call("people.devices.decide", { action: "unmap", account });
+    expect((await view()).suggestion.people.map((row) => row.name)).toContain(account);
+    expect((await view()).suggestion.deviceOffers).toEqual([offer]);
+    await client.call("people.devices.decide", { ...answer, yes: false });
+    expect((await view()).suggestion.deviceOffers ?? []).toEqual([]);
+    expect((await view()).suggestion.people.map((row) => row.name)).toContain(account);
+    await expect(client.call("people.devices.decide", answer)).rejects.toThrow("offer");
+});
+
 test("P2 scoped voice selection pins legacy numbers, rolls back failed corrections and refuses an occupied destination", async () => {
     const home = env.tools.getHome();
     env.testing.set("GENESIS_TOOLS_HOME", mkdtempSync(join(tmpdir(), "voices-service-")));

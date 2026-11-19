@@ -273,6 +273,8 @@ type VoiceDoors = {
 
 /** The meetings toolset's global, as the meetings tests call it. */
 interface MeetingsHandle {
+    roomDevices(input?: unknown): Promise<unknown>;
+    decideRoomDevice(input: unknown): Promise<unknown>;
     applySeats(input: unknown): Promise<unknown>;
     backfillVoices(input: unknown): Promise<unknown>;
     voiceJobs(): Promise<unknown>;
@@ -456,6 +458,27 @@ describe("toolset method names", () => {
         await expect(meetings.backfillVoices({ meetings: [meeting], project })).rejects.toThrow(
             "Choose meetings or a project"
         );
+    });
+
+    test("J7 REPL exposes the device list and the explicit owner decision with their CLI twins", async () => {
+        const meetings = await loadMeetings();
+        expect(await meetings.roomDevices()).toHaveProperty("devices");
+        const input = { action: "unmap", account: "Boardroom PC" };
+        const call = spyOn(InProcessMeetingsClient.prototype, "call").mockResolvedValue({
+            changed: false,
+            device: null,
+        });
+        try {
+            expect(await meetings.decideRoomDevice(input)).toEqual({ changed: false, device: null });
+            expect(call.mock.calls).toEqual([["people.devices.decide", input]]);
+        } finally {
+            call.mockRestore();
+        }
+        for (const method of ["roomDevices", "decideRoomDevice"]) {
+            expect(describeMethod([new MeetingsToolset().api], `meetings.${method}`)).toContain(
+                "meetings people devices"
+            );
+        }
     });
 
     test("P6 REPL lists voice jobs and cancels by positional id", async () => {
