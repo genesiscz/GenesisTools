@@ -40,7 +40,9 @@ export function inboxKind(
     owner?: string
 ) {
     if (kind === "todo") {
-        return owner?.trim().toLowerCase() === "human" ? kinds.todo.forHuman : kinds.todo.forAgent;
+        const assigned = owner?.trim().toLowerCase();
+        // Ownerless legacy tasks include composer items. Keep them visible until an assignee is recorded.
+        return !assigned || assigned === "human" ? kinds.todo.forHuman : kinds.todo.forAgent;
     }
     return kinds[kind === "dialog" ? "form" : kind];
 }

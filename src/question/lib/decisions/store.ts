@@ -1922,7 +1922,7 @@ export function readDecisionsWithIntegrity(
     const rows = stored.length === 0 ? logged : [...logged.filter((row) => !byId.has(row.id)), ...byId.values()];
 
     return {
-        rows: rows.map((row) => (kindOf(row) === "todo" && !row.for?.trim() ? { ...row, for: "agent" } : row)),
+        rows,
         complete: !missing && torn === 0 && malformed === 0,
         ...(missing && stored.length === 0 ? { missing: true } : {}),
     };

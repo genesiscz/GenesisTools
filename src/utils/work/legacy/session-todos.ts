@@ -129,7 +129,7 @@ export function readSessionTodos(db: Database, sessionId?: string): { rows: Stor
                     r.title !== mirrorTitle({ prompt: r.body ?? "", number: rest.number })
                         ? { title: r.title }
                         : {}),
-                    for: r.owner ?? rest.for ?? "agent",
+                    for: r.owner ?? rest.for,
                     updatedTs: r.updatedTs > rest.updatedTs ? r.updatedTs : rest.updatedTs,
                     prompt: r.body ?? "",
                     state,
