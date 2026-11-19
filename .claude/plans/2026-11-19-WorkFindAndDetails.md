@@ -364,8 +364,8 @@ restores the first rendering's text exactly. The picture pair `work-find-before.
      "Claim" and "Release" when the state allows them (`rpc.work.claim`, `rpc.work.release`).
    - "Where": a `PathLabel` when the value is `path` or `path:line` and the file exists under the project's main
      checkout; plain selectable text otherwise.
-   - "Why", "What a user sees", "Acceptance", other fields: label plus selectable text; the body as markdown through
-     the host's markdown renderer (the same one the transcript uses), clamped to 20 lines with "Show all".
+   - "Why", "What a user sees", "Acceptance", other fields: label plus selectable text. The host's Markdown renderer
+     displays the body, clamped to 20 lines with "Show all".
    - "Tasks" (a container): each member as a row with its state glyph and title; a click selects it (the inspector
      moves to the member; a back chevron in the inspector head returns to the container).
    - "References": grouped by kind in words ("Spotted in", "Member of", "Blocks", "Blocked by"); each one shows the
@@ -445,7 +445,7 @@ every pair exists, and Progress lists each checklist item that did not apply wit
 - A package is done when its "Done when" holds and the gate passes. Tick its handoff task with the command, where
   it ran and the commit. Then start the next package.
 - A number shows a direction. It is a gate only where the package says `gate: yes` (none here).
-- When a measurement shows a target is out of reach, write the number and the reason into Progress and go on. Ask
+- When a measurement misses a target, record the number and the reason in Progress. Ask
   the owner about all such limits in ONE question at the end.
 - While you verify, fix a new thing only when it loses data, shows an invented fact or blocks the package. Each other
   thing is one line under "Seen, not fixed", and a `tools work spot` item when it is outside this spec's views.
@@ -492,7 +492,7 @@ every pair exists, and Progress lists each checklist item that did not apply wit
 - The filter is not saved across launches.
 - No match highlighting in this round.
 - Comments are added from the inspector; editing an item's fields (title, severity, type) is not in this spec
-  (`rpc.work.edit` exists; it is a later step and goes under "Seen, not fixed" if the pass asks for it).
+  (record requests to add `rpc.work.edit` under "Seen, not fixed").
 - The detail cache keeps 20 items.
 - Keys: ↑ ↓ Return Esc ⌘F, list and inspector focus only.
 

@@ -435,7 +435,7 @@ struct WorkNotifyFrozenGrid: View {
                 .contentShape(Rectangle())
                 .focusable().focused($gridFocused)
                 .onKeyPress(keys: [.leftArrow, .rightArrow, .upArrow, .downArrow, .space, .return, .escape]) { press in
-                    guard press.modifiers.intersection([.command, .control, .option]).isEmpty else { return .ignored }
+                    guard press.modifiers.isDisjoint(with: [.command, .control, .option]) else { return .ignored }
                     return key(press.key, reader: reader, viewport: geometry.size)
                 }
                 .onChange(of: gridFocused) { _, focused in

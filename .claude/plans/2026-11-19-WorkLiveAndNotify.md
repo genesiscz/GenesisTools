@@ -442,7 +442,7 @@ back. After this package:
 - A package is done when its "Done when" holds and the gate passes. Tick its handoff task with the command, where
   it ran and the commit. Then start the next package.
 - A number shows a direction. It is a gate only where the package says `gate: yes` (none here).
-- When a measurement shows a target is out of reach, write the number and the reason into Progress and go on. Ask
+- When a measurement misses a target, record the number and the reason in Progress. Ask
   the owner about all such limits in ONE question at the end.
 - While you verify, fix a new thing only when it loses data, shows an invented fact or blocks the package. Each other
   thing is one line under "Seen, not fixed", and a `tools work spot` item when it is outside this spec's views.
