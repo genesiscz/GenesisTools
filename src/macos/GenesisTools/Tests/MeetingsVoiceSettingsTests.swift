@@ -45,7 +45,7 @@ final class MeetingsVoiceSettingsTests: XCTestCase {
         XCTAssertFalse(source.contains("getloadavg"), "the page keeps no copy of the engine's rule")
     }
 
-    func testEachChoiceWritesTheConfigPathItShows() {
+    func testEachChoiceWritesTheConfigPathItShows() throws {
         var writes: [(String, String)] = []
         func card(_ compute: MeetingsVoiceCompute) -> MeetingsVoicePassCard {
             MeetingsVoicePassCard(compute: compute, autoNow: 2) { path, value in writes.append((path.joined(separator: "."), "\(value)")) }
@@ -59,6 +59,15 @@ final class MeetingsVoiceSettingsTests: XCTestCase {
         card(MeetingsVoiceCompute(workers: 5)).chooseWorkers("auto")
         XCTAssertEqual(writes.last?.0, path)
         XCTAssertEqual(writes.last?.1, "auto")
+        let priority = "global.speakerLabels.voice.compute.priority"
+        card(MeetingsVoiceCompute()).choosePriority(MeetingsVoiceCompute.Priority.background.rawValue)
+        XCTAssertEqual(writes.last?.0, priority)
+        XCTAssertEqual(writes.last?.1, "background")
+        card(MeetingsVoiceCompute(priority: .background)).choosePriority(MeetingsVoiceCompute.Priority.normal.rawValue)
+        XCTAssertEqual(writes.last?.0, priority)
+        XCTAssertEqual(writes.last?.1, "normal")
+        XCTAssertEqual(MeetingsVoiceCompute(raw: try raw(#"{"global":{"speakerLabels":{"voice":{"compute":{"priority":"background"}}}}}"#)).priority,
+                       .background, "what the choice writes reads back as the choice")
         XCTAssertEqual(MeetingsVoicePassCard.autoDetail(now: 1),
                        "Auto uses the cores that are idle when the pass starts (at most 4), so a busy Mac gets one worker. "
                            + "Right now that is 1 worker; it changes with the load.")
