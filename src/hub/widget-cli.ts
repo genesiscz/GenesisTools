@@ -1,4 +1,5 @@
 import { decisionFindArgv } from "@app/claude/lib/cmux/transcript-find";
+import { readInboxGroupEntries } from "@app/question/lib/inbox/unread";
 import { untilAborted } from "@genesiscz/utils/async";
 import { CODE_CHANGED_EXIT, onLoadedCodeChange } from "@genesiscz/utils/bun/loaded-modules";
 import { execToolInteractive, runTool } from "@genesiscz/utils/cli";
@@ -25,8 +26,8 @@ import {
     stageShelfImage,
     stageShelfMedia,
 } from "./lib/widget/shelf";
-import { discoverWidgetCatalog, widgetSnapshot } from "./lib/widget/snapshot";
-import { mutateWidgetState } from "./lib/widget/storage";
+import { discoverWidgetCatalog, widgetInboxWindow, widgetSnapshot } from "./lib/widget/snapshot";
+import { mutateWidgetState, readWidgetState } from "./lib/widget/storage";
 import { StdinLines, watchWidget, widgetDecisionLine, widgetSelectionLine } from "./lib/widget/watch";
 import { registerWidgetTasks } from "./widget-tasks-cli";
 import { registerWidgetVoiceNotes } from "./widget-voice-notes-cli";
@@ -50,10 +51,22 @@ widget
     .option("--limit <n>", "Maximum earlier answers (1 to 20)", "5")
     .action(async (id: string, options: { limit: string }, command) => {
         const root = command.optsWithGlobals().stateRoot;
+        const request = { id, limit: Number(options.limit) };
+        const now = Date.now();
+        const window = widgetInboxWindow((await readWidgetState(root)).inboxClearedAt, now);
+        const entries = readInboxGroupEntries({ ...request, window: { ...window, staleBefore: 0 } });
+
+        // When all candidates qualify by age alone, the roster cannot affect membership.
+        if (entries.every((entry) => entry.at >= window.staleBefore)) {
+            out.result({ entries });
+            return;
+        }
+
         const snapshot = await widgetSnapshot({
             root,
+            now,
             sources: await oneShotWidgetSources(root),
-            answerGroup: { id, limit: Number(options.limit) },
+            answerGroup: request,
         });
         out.result({ entries: snapshot.groupEntries ?? [] });
     });
