@@ -500,6 +500,36 @@ test("a matched voice resolves a goodbye after attendance, indicator and sole-re
     ).toBe("indicator");
 });
 
+test("a goodbye takes its voice from the call seat, never from a mic-seat match on the same line", () => {
+    const lines = lineEvidence([{ speaker: "Speaker 1", startSec: 0, text: "Goodbye." }], {
+        segments: [{ startSec: 0, endSec: 5, channel: "system" }],
+        speaking: [],
+    });
+    const named = (seat: "mic" | "call", person: string) => ({
+        labeler: "voice" as const,
+        index: 0,
+        seat,
+        person,
+        score: 0.8,
+        reason: "named" as const,
+    });
+    const departures = identifiedDepartures({
+        hints: [
+            {
+                kind: "leave-then-continues" as const,
+                label: "Speaker 1",
+                strength: "normal" as const,
+                leaves: [{ atSec: 0, continuesAtSec: 40, text: "Goodbye." }],
+            },
+        ],
+        lines,
+        selfName: alice.person,
+        presence: [bob.person, "Carol Example"].map((name) => ({ name, fromSec: 0, toSec: 100, leftAtExact: false })),
+        labels: [named("mic", "Carol Example"), named("call", bob.person)],
+    });
+    expect(departures).toEqual([{ name: bob.person, atSec: 0, reason: "voice" }]);
+});
+
 const spies: Array<{ mockRestore(): void }> = [];
 afterEach(() => {
     for (const mock of spies.splice(0).reverse()) {
