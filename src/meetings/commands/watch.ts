@@ -1,39 +1,11 @@
 import { ui } from "@genesiscz/utils/cli/ui";
-import { logger } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { claimPidFile, clearPidFile, inspectPidFile } from "@genesiscz/utils/process/pidfile";
 import type { Command } from "commander";
-import { askAtMeetingEnd, hasOpenAssignSteps } from "../lib/assign";
 import { fail, resolveEnum } from "../lib/shared";
-import { hasSourceAudioToWatch, watchLoop, watchOnce } from "../lib/watch";
-import { ensureWatcher, shouldStartWatcherForRecording, watcherPidPath } from "../lib/watcher";
-
-const { log } = logger.scoped("meetings-watch-cmd");
-
-/**
- * "Ask each time" at the end of a meeting (the recorder's stop, a source link that ends it), then the watcher, so the
- * answer is read back even while autoRecord is off. A scratch store with autostart off gets no watcher, as at
- * `record start` (`shouldStartWatcherForRecording`). Never throws; every failure is a warning naming the meeting.
- */
-export async function askProjectAtEnd(store: MeetingStore, meetingId: string): Promise<void> {
-    const asked = await askAtMeetingEnd(store, meetingId);
-
-    if (!asked.formId && !hasOpenAssignSteps(store) && !hasSourceAudioToWatch(store)) {
-        return;
-    }
-
-    try {
-        if (!(await shouldStartWatcherForRecording())) {
-            log.info({ meeting: meetingId }, "no watcher at the meeting end: a scratch store with autostart off");
-            return;
-        }
-
-        await ensureWatcher();
-    } catch (err) {
-        log.warn({ err, meeting: meetingId }, "the watcher that reads the project answer back did not start");
-    }
-}
+import { watchLoop, watchOnce } from "../lib/watch";
+import { ensureWatcher, watcherPidPath } from "../lib/watcher";
 
 /**
  * Claims the watcher's pidfile: a dead or foreign owner is taken over, a live one is refused. An empty file follows the

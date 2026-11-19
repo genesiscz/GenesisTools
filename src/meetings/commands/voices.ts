@@ -7,6 +7,7 @@ import { formatClock, parseClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
 import { callerActor } from "../lib/decision-journal";
 import { fail } from "../lib/shared";
+import { playSoundSlice } from "../lib/sound-playback";
 import { backfillVoices } from "../lib/voice-backfill";
 import {
     addVoiceSample,
@@ -18,7 +19,6 @@ import {
     voiceSample,
 } from "../lib/voices";
 import { registerLegacyVoiceCommands } from "./acoustic";
-import { playSoundSlice } from "./play";
 
 interface VoiceOptions {
     project?: string;

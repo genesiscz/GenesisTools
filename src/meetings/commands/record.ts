@@ -29,6 +29,7 @@ import { collectAndReport } from "../lib/collect";
 import { hasFrameIndex, ocrBacklog, ocrPendingNote } from "../lib/frame-index";
 import { ensureScreenRecording } from "../lib/grants";
 import { linkSource } from "../lib/link";
+import { askProjectAtEnd } from "../lib/meeting-end";
 import { resolveProject } from "../lib/project";
 import { runRecorder, stateDisplays } from "../lib/recorder";
 import {
@@ -44,7 +45,6 @@ import { type SetSettingsFlags, settingsPatchFromFlags } from "../lib/settings-f
 import { errorText, fail, TOOL } from "../lib/shared";
 import { ensureWatcher, shouldStartWatcherForRecording } from "../lib/watcher";
 import { captureCostRead, windowJson } from "../lib/window-reads";
-import { askProjectAtEnd } from "./watch";
 
 const { log } = logger.scoped("meetings-record-cmd");
 
