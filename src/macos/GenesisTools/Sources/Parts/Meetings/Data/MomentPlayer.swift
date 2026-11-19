@@ -220,6 +220,13 @@ final class MomentPlayer {
     @ObservationIgnored private let load: MomentSoundLoader
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var sounds: [UUID: MomentSound] = [:]
+    @ObservationIgnored private var voiceClips: [UUID: TemporaryClip] = [:]
+
+    private final class TemporaryClip {
+        let url: URL
+        init(_ url: URL) { self.url = url }
+        deinit { try? FileManager.default.removeItem(at: url) }
+    }
     @ObservationIgnored private var cutTask: Task<Void, Never>?
     @ObservationIgnored private var cutKey: String?
     @ObservationIgnored private var inFlight: [String: Task<MomentClip, Error>] = [:]
@@ -320,13 +327,14 @@ final class MomentPlayer {
 
     /// Resolve the stored print before cutting. A recording can have a separate clock and one usable channel.
     func playVoiceSample(_ sample: VoiceSample, person: String, resolve: @escaping () async throws -> MeetingsAPI.VoicesSample.Result) {
-        if top?.voiceSampleID == sample.id, !isFailed {
+        let key = sample.playbackKey(person: person)
+        if top?.voiceSampleID == key, !isFailed {
             togglePause()
             return
         }
         var layer = MomentLayer(meeting: sample.meeting, target: .range(from: sample.fromSec, to: sample.toSec),
                                 source: .row, kind: .moment, label: "\(person) · \(MeetingsFormat.clock(sample.fromSec))")
-        layer.voiceSampleID = sample.id
+        layer.voiceSampleID = key
         layer.endSec = sample.toSec
         place(layer, .replaceAll)
         let id = layer.id
@@ -339,10 +347,11 @@ final class MomentPlayer {
                       slice.fromSec == sample.fromSec, slice.toSec == sample.toSec else {
                     throw MeetingsCLI.Failure(sentence: "This sample changed. Read the voice library again.", detail: sample.id)
                 }
-                let clip = try await Self.voiceClip(slice)
-                defer { try? FileManager.default.removeItem(at: clip) }
+                let clip = TemporaryClip(try await Self.voiceClip(slice))
                 guard !Task.isCancelled, top?.id == id else { return }
-                start(try load(clip), for: id, at: slice.fromSec)
+                let sound = try load(clip.url)
+                voiceClips[id] = clip
+                start(sound, for: id, at: slice.fromSec)
             } catch {
                 guard !Task.isCancelled, top?.id == id else { return }
                 phase = .failed(asFailure(error))
@@ -831,6 +840,7 @@ final class MomentPlayer {
     private func drop(_ id: UUID) {
         sounds[id]?.stop()
         sounds[id] = nil
+        voiceClips[id] = nil
         repeated.remove(id)
     }
 

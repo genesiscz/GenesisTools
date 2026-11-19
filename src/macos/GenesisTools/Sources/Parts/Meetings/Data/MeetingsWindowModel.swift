@@ -137,6 +137,7 @@ final class MeetingsWindowModel {
     var place: Place
     var selectedMeetingID: String?
     var voiceFocus: String?
+    var voiceSampleFocus: String?
     private(set) var overview: Loadable<MeetingsOverview> = .idle
     /// How often an answer replaced the list. Each set redraws every view of it, so an unchanged answer must not set it
     /// (the perf tests read this).
@@ -514,6 +515,8 @@ final class MeetingsWindowModel {
         // Config edits outside this process do not emit meeting events.
         loadSettings(quiet: true)
         guard !liveUpdates else { return }
+        voiceLibrary.refresh()
+        voiceLibrary.loadJobs()
         HubMainBusy.measure("meetings.refresh", window: 1.5)
         loadOverview(quiet: true)
         detail?.refreshLoaded()

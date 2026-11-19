@@ -143,10 +143,7 @@ struct VoiceJob: Decodable, Equatable, Identifiable {
     }
 }
 
-struct VoiceOwner: Codable, Equatable, Hashable {
-    let name: String
-    var email: String?
-}
+typealias VoiceOwner = PeopleMergeRecord.Person
 
 struct VoiceBrowseScope: Codable, Equatable, Hashable {
     let kind: String
@@ -240,6 +237,7 @@ struct VoiceSample: Decodable, Equatable, Hashable, Identifiable {
         case sample, meeting, seat, track, fromSec, toSec, confirmedAt, words, available
     }
     var id: String { stableID ?? "legacy/\(meeting)/\(sample)" }
+    func playbackKey(person: String) -> String { stableID ?? "\(id)/\(person)/\(track)/\(fromSec)" }
 }
 
 /// One line of `voices.preview`: the voice model's name for it with the score, or the reason it gives none.

@@ -84,6 +84,7 @@ struct MeetingsRequest {
     var voicesProgress: MeetingsCallProgress?
     /// Open one person's sample disclosure, or replay captured voices.jobs JSON in an offscreen picture.
     var voiceFocus: String?
+    var voiceSample: String?
     var voiceJobFile: String?
     /// `--undo-person <name>`: a removal of that person and its notice's Undo, before the picture.
     var undoPerson: String?
@@ -123,6 +124,7 @@ struct MeetingsRequest {
             case "--suggest-progress": request.suggestProgress = value().map(MeetingsRequest.progress)
             case "--voices": request.voices = value()
             case "--voice-focus": request.voiceFocus = value()
+            case "--voice-sample": request.voiceSample = value()
             case "--voice-job-file": request.voiceJobFile = value()
             case "--voices-progress": request.voicesProgress = value().map(MeetingsRequest.progress)
             case "--undo-person": request.undoPerson = value()
@@ -456,6 +458,10 @@ private func prepareLibrarySnapshot(_ destination: VoiceDestination, model: Meet
         FileHandle.standardError.write(Data("meetings snapshot: \(library.rows.failure?.sentence ?? "voice library read timed out")\n".utf8))
         return false
     }
+    if let sample = model.voiceSampleFocus, library.rows.value?.location(of: sample) == nil {
+        FileHandle.standardError.write(Data("meetings snapshot: the selected sample is absent from this scope\n".utf8))
+        return false
+    }
     if library.snapshotJobs != nil && library.jobs.isEmpty {
         FileHandle.standardError.write(Data("meetings snapshot: the captured jobs do not belong to this destination\n".utf8))
         return false
@@ -472,6 +478,7 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
             // A picture with the panel open must not change what the real window opens with.
             model.remembersPanel = false
             model.voiceFocus = request.voiceFocus
+            model.voiceSampleFocus = request.voiceSample
             if let file = request.voiceJobFile {
                 do {
                     model.voiceLibrary.snapshotJobs = try JSONDecoder().decode([VoiceJob].self, from: Data(contentsOf: URL(fileURLWithPath: file)))

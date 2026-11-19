@@ -24,6 +24,7 @@ enum VoiceDestination: Hashable {
 struct VoiceLibraryRows: Equatable {
     struct Row: Identifiable, Equatable {
         let sample: VoiceSample
+        let owner: String
         let quality: LearntVoice.Sample?
         var id: String { sample.id }
     }
@@ -38,6 +39,15 @@ struct VoiceLibraryRows: Equatable {
     let projects: [String]
     let meetings: Set<String>
     let conflicts: [MeetingsAPI.VoicesList.Result.Conflict]
+
+    func location(of sample: String) -> (group: Person, isOther: Bool, index: Int)? {
+        for (groups, isOther) in [(people, false), (others, true)] {
+            for group in groups {
+                if let index = group.rows.firstIndex(where: { $0.id == sample }) { return (group, isOther, index) }
+            }
+        }
+        return nil
+    }
 
     init(_ response: MeetingsAPI.VoicesList.Result, destination: VoiceDestination, doubtfulFirst: Bool) {
         let learnt = response.learnt ?? []
@@ -54,7 +64,9 @@ struct VoiceLibraryRows: Equatable {
         }
         var primary: [Person] = [], other: [Person] = []
         var projects = Set<String>(), meetings = Set<String>()
-        let sameNameCount = response.people.count
+        let sameNameCount = destination.owner.map { owner in
+            response.people.filter { PeopleText.personKey($0.person) == PeopleText.personKey(owner.name) }.count
+        } ?? 0
         for person in response.people {
             if let owner = destination.owner {
                 let address = person.owner?.email?.lowercased()
@@ -62,10 +74,15 @@ struct VoiceLibraryRows: Equatable {
                     guard address == owner.email?.lowercased() else { continue }
                 } else {
                     guard PeopleText.personKey(person.person) == PeopleText.personKey(owner.name),
-                          owner.email == nil || sameNameCount == 1 else { continue }
+                          owner.email == nil || sameNameCount == 1 || person.owner == nil else { continue }
                 }
             }
-            var rows = person.samples.map { Row(sample: $0, quality: quality[$0.id]) }
+            var samples = person.samples
+            if person.owner == nil, let meeting = destination.scope.meeting {
+                guard person.meetings.contains(meeting) else { continue }
+                samples = samples.filter { $0.meeting == meeting }
+            }
+            var rows = samples.map { Row(sample: $0, owner: $0.owner?.name ?? person.person, quality: quality[$0.id]) }
             if doubtfulFirst {
                 rows = rows.filter { $0.quality?.outlier == true } + rows.filter { $0.quality?.outlier != true }
             }
@@ -143,10 +160,13 @@ final class VoiceLibraryModel {
         let action: LibraryCorrection
         let plan: String
         let message: String
+        let ids: [String]
+        let affected: [MeetingsAPI.VoicesRemove.Affected]
     }
     @ObservationIgnored weak var window: MeetingsWindowModel?
     private(set) var destination: VoiceDestination?
     private(set) var rows: Loadable<VoiceLibraryRows> = .idle
+    private(set) var rowsVersion = 0
     var confirmation: Confirmation?
     var busy = false
     @ObservationIgnored private var read: Task<Void, Never>?
@@ -160,6 +180,8 @@ final class VoiceLibraryModel {
     @ObservationIgnored private var duringRead: [String: VoiceJob] = [:]
     /// Offscreen snapshots can replay one recorded service response at a specific point in the job.
     @ObservationIgnored var snapshotJobs: [VoiceJob]?
+    @ObservationIgnored private var historyOwner: VoiceOwner?
+    @ObservationIgnored private var historyMeetings: Set<String> = []
 
     init(window: MeetingsWindowModel) { self.window = window }
 
@@ -201,11 +223,12 @@ final class VoiceLibraryModel {
             let span = HubPerf.begin("meetings.voices.list", destination.scope.kind)
             defer { span.end() }
             do {
-                let result = try await service.call(MeetingsAPI.VoicesList.self, .init(scope: destination.scope, person: destination.owner?.name))
+                let result = try await service.listVoiceLibrary(destination)
                 guard !Task.isCancelled, self.destination == destination else { return }
                 if response != result || rows.failure != nil {
                     response = result
                     rows = .loaded(.init(result, destination: destination, doubtfulFirst: doubtfulFirst))
+                    rowsVersion += 1
                     prepareJobs()
                 }
             } catch {
@@ -246,6 +269,7 @@ final class VoiceLibraryModel {
     func receive(_ job: VoiceJob) {
         guard snapshotJobs == nil, let destination,
               destination.project == nil || destination.project == job.project else { return }
+        if destination.scope.kind == "meeting", job.meeting != destination.meeting { return }
         if jobRead != nil { duringRead[job.id] = job }
         if let index = allJobs.firstIndex(where: { $0.id == job.id }) {
             allJobs[index] = job
@@ -253,14 +277,28 @@ final class VoiceLibraryModel {
             allJobs.append(job)
         }
         prepareJobs()
-        if !job.canCancel, job.added > 0, destination.meeting == nil || destination.meeting == job.meeting || destination.scope.kind == "project" {
+        if !job.canCancel, job.added > 0 {
             refresh()
         }
     }
 
+    func rememberMeetings(_ history: MeetingsAPI.PeopleMeetings.Result) {
+        historyOwner = .init(name: history.person.name, email: history.person.email)
+        historyMeetings = Set(history.meetings.map(\.meeting))
+        if destination?.owner == historyOwner { prepareJobs() }
+    }
+
     private func prepareJobs() {
         guard let destination else { return }
-        let matching = allJobs.reversed().filter { $0.matches(destination, meetings: rows.value?.meetings ?? []) }
+        var finished = 0
+        allJobs = allJobs.reversed().filter { job in
+            if job.canCancel { return true }
+            finished += 1
+            return finished <= 50
+        }.reversed()
+        var meetings = rows.value?.meetings ?? []
+        if destination.owner != nil, destination.owner == historyOwner { meetings.formUnion(historyMeetings) }
+        let matching = allJobs.reversed().filter { $0.matches(destination, meetings: meetings) }
         let next = matching.filter(\.canCancel) + Array(matching.filter { !$0.canCancel }.prefix(50))
         if jobs != next { jobs = next }
     }
@@ -282,13 +320,12 @@ final class VoiceLibraryModel {
     }
 
     func play(_ sample: VoiceSample, person: String, project: String) {
-        guard let window, let service = window.service, let scope = destination?.scope else { return }
-        guard sample.available else { return }
+        guard let window, let service = window.service, let scope = destination?.scope, sample.available else { return }
         let params: MeetingsAPI.VoicesSample.Params
         if let id = sample.stableID {
             params = .init(scope: scope, id: id)
         } else {
-            guard !project.isEmpty, scope == .project(project) else { return }
+            guard !project.isEmpty else { return }
             params = .init(project: project, person: person, sample: sample.sample)
         }
         window.player.playVoiceSample(sample, person: person) { try await service.call(MeetingsAPI.VoicesSample.self, params) }
@@ -311,7 +348,7 @@ final class VoiceLibraryModel {
                 let impact = affected.isEmpty ? "No suggested names change."
                     : "\(Plural.count(affected.count, "suggested line")) will be reconsidered across \(Plural.count(Set(affected.map(\.meeting)).count, "meeting"))."
                 confirmation = .init(id: token, action: action, plan: plan,
-                                     message: "\(Plural.count(ids.count, "sample")) affected. \(impact) \(action.effect)")
+                                     message: "\(Plural.count(ids.count, "sample")) affected. \(impact) \(action.effect)", ids: ids, affected: affected)
             } catch { window?.notices.push(.meetingsFailure(error)) }
         }
     }
@@ -329,8 +366,8 @@ final class VoiceLibraryModel {
                     throw MeetingsCLI.Failure(sentence: "The service returned no correction receipt. Read the library again.", detail: choice.action.title)
                 }
                 let undoRequest = UUID().uuidString
-                window.notices.push(StackedNotice(text: "Voice library updated", detail: choice.action.title, actions: [.undo { [weak self] notice in
-                    window.notices.settleUndo(notice, done: "Voice correction undone") {
+                window.notices.push(StackedNotice(text: "Voice library updated", detail: choice.action.title, actions: [.undo { [weak self, weak notices = window.notices] notice in
+                    notices?.settleUndo(notice, done: "Voice correction undone") {
                         let reply = try await service.call(MeetingsAPI.VoicesUndo.self, .init(token: receipt, requestToken: undoRequest))
                         try reply.require("applied")
                         self?.refresh()
@@ -356,6 +393,7 @@ struct VoiceSampleRows: View {
     @State private var moving: VoiceLibraryRows.Row?
     @State private var search: PeopleSearch?
     @State private var query = ""
+    @State private var revealedInitialFocus = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -394,35 +432,45 @@ struct VoiceSampleRows: View {
         }
         .onChange(of: destination, initial: true) { _, next in
             expanded = []; full = []; othersOpen = false
+            revealedInitialFocus = false
             model.show(next, doubtfulFirst: doubtfulFirst)
+            revealFocus()
         }
         .onChange(of: doubtfulFirst) { _, first in model.show(destination, doubtfulFirst: first) }
-        .onChange(of: model.rows.value?.people.first?.id, initial: true) { _, _ in revealFocus() }
+        .onChange(of: model.rowsVersion, initial: true) { _, _ in revealFocus() }
         .onChange(of: focus) { _, _ in revealFocus() }
         .onDisappear { model.hide(destination); search?.cancel() }
         .sheet(item: $moving, onDismiss: { search?.cancel(); search = nil }) { row in
             PersonPicker(people: search?.people ?? [], query: $query, sources: search?.sources ?? [],
                          title: "Move this sample to", prompt: "Search people", pick: { person in
                 moving = nil
-                guard let id = row.sample.stableID, let owner = row.sample.owner else { return }
-                model.preview(.move(id: id, person: owner.name, to: .init(name: person.name, email: person.email)))
+                guard let id = row.sample.stableID else { return }
+                model.preview(.move(id: id, person: row.owner, to: .init(name: person.name, email: person.email)))
             }, cancel: { moving = nil })
             .onChange(of: query) { _, value in search?.ask(value) }
             .padding()
         }
-        .alert(item: Bindable(model).confirmation) { choice in
-            Alert(title: Text(choice.action.title + "?"), message: Text(choice.message),
-                  primaryButton: .destructive(Text("Confirm")) { model.apply(choice) }, secondaryButton: .cancel())
+        .sheet(item: Bindable(model).confirmation) { choice in
+            VoiceCorrectionSheet(choice: choice, cancel: { model.confirmation = nil }, confirm: { model.apply(choice) })
         }
     }
 
     private func revealFocus() {
-        guard model.destination == destination, let rows = model.rows.value else { return }
+        guard model.destination == destination, let rows = model.rows.value, focus != nil || !revealedInitialFocus else { return }
+        if let id = model.window?.voiceSampleFocus, let match = rows.location(of: id) {
+            if match.isOther { othersOpen = true }
+            expanded.insert(match.group.id)
+            if match.index >= VoicesPane.shownRows { full.insert(match.group.id) }
+            revealedInitialFocus = true
+            reveal(id)
+            return
+        }
         guard let name = focus ?? destination.owner?.name else { return }
         let primary = rows.people.first { $0.person.person == name }
         guard let group = primary ?? rows.others.first(where: { $0.person.person == name }) else { return }
         if primary == nil { othersOpen = true }
         expanded.insert(group.id)
+        revealedInitialFocus = true
         reveal(group.id)
     }
 
@@ -448,6 +496,7 @@ struct VoiceSampleRows: View {
                         lookup.ask("", after: .zero)
                         moving = row
                     })
+                    .id(row.id)
                     Divider()
                 }
                 if group.rows.count > VoicesPane.shownRows, !full.contains(group.id) {
@@ -470,6 +519,35 @@ struct VoiceSampleRows: View {
     }
 }
 
+private struct VoiceCorrectionSheet: View {
+    let choice: VoiceLibraryModel.Confirmation
+    let cancel: () -> Void
+    let confirm: () -> Void
+    @State private var details = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(choice.action.title + "?").font(.headline)
+            Text(choice.message)
+            GenDisclosure("Affected samples and suggestions", isExpanded: $details) {
+                ScrollView {
+                    LazyVStack(alignment: .leading) {
+                        ForEach(choice.ids, id: \.self) { Text(verbatim: $0).textSelection(.enabled) }
+                        ForEach(choice.affected, id: \.self) { line in
+                            Text("\(line.meeting) · \(MeetingsFormat.clock(line.fromSec))–\(MeetingsFormat.clock(line.toSec))")
+                        }
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }.frame(maxHeight: 180)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
+                Button("Confirm correction", role: .destructive, action: confirm).buttonStyle(.borderedProminent)
+            }
+        }.padding(18).frame(width: 460)
+    }
+}
+
 private struct VoiceClipRow: View {
     let row: VoiceLibraryRows.Row
     let person: String
@@ -480,9 +558,10 @@ private struct VoiceClipRow: View {
 
     var body: some View {
         let sample = row.sample
-        let canPlay = sample.available && (sample.stableID != nil || (!project.isEmpty && scope == .project(project)))
+        let canPlay = sample.available && (sample.stableID != nil || !project.isEmpty)
         let player = model.window?.player
-        let active = player?.top?.voiceSampleID == sample.id && player?.phase == .playing
+        let selected = player?.top?.voiceSampleID == sample.playbackKey(person: person)
+        let active = selected && player?.phase == .playing
         HStack(alignment: .top, spacing: 8) {
             IconButton(systemName: active ? "pause.fill" : "play.fill",
                        tooltip: canPlay ? (active ? "Pause this sample" : "Play this sample’s recorded track") : "Original audio unavailable") {
@@ -496,10 +575,18 @@ private struct VoiceClipRow: View {
                     .filter { !$0.isEmpty }.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
                 if !sample.words.isEmpty { Text(sample.words).textSelection(.enabled) }
                 Text(provenance(sample)).font(.caption).foregroundStyle(.secondary)
+                if let owner = sample.owner, owner.name != person {
+                    Text("Filed under \(owner.name)").font(.caption).foregroundStyle(.secondary)
+                }
                 if let date = PeopleDates.date(sample.confirmedAt) {
                     LiveAgo(date: date, style: .brief) { "Confirmed \($0)" }.font(.caption).foregroundStyle(.secondary)
                 }
                 if !canPlay { Label("Original audio unavailable", systemImage: "speaker.slash").font(.caption) }
+                if selected, case .failed(let error)? = player?.phase {
+                    FailureInline(error.report(outcome: "Sample could not play", action: "Play original track"), form: .compact) {
+                        model.play(sample, person: person, project: project)
+                    }
+                }
                 Label(row.quality?.explanation ?? "No compatible comparison",
                       systemImage: row.quality?.outlier == true ? "exclamationmark.triangle" : "waveform")
                     .font(.caption).foregroundStyle(row.quality?.outlier == true ? Color.orange : Color.secondary)
@@ -518,6 +605,7 @@ private struct VoiceClipRow: View {
             }
         }
         .font(.callout).padding(.vertical, 4).liveRow()
+        .accessibilityIdentifier("meetings.voices.sample.\(sample.id)")
     }
 
     private func provenance(_ sample: VoiceSample) -> String {
@@ -545,7 +633,9 @@ private struct VoiceClipRow: View {
          .action("Unusable audio…") { model.preview(.reject(id: id, person: owner, reason: "bad-audio")) },
          .action("Several voices…") { model.preview(.reject(id: id, person: owner, reason: "several-voices")) },
          .divider,
-         .action("Remove sample…") { model.preview(.remove(id: id, person: owner, scope: scope)) }]
+         .action("Remove sample…") { model.preview(.remove(id: id, person: owner, scope: scope)) },
+         .divider,
+         .action("Copy sample ID") { Clipboard.copy(id, what: "sample ID") }]
     }
 }
 

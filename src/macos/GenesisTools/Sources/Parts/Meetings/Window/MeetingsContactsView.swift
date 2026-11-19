@@ -123,6 +123,7 @@ struct MeetingsContactsView: View {
     @State private var mergeFrom: KnownPerson?
     @State private var mergeQuery = ""
     @State private var mergeSearching: PeopleSearch?
+    @State private var mergeChoices: [KnownPerson] = []
 
     private var access: ContactsAccessState { switches.contacts ? ContactsAccessState.from(sources) : .off }
 
@@ -282,12 +283,15 @@ struct MeetingsContactsView: View {
                         .popover(isPresented: Binding(get: { mergeFrom?.id == person.id },
                                                       set: { if !$0 { endMerge() } }), arrowEdge: .trailing) {
                             PersonPicker(
-                                people: Self.mergeCandidates(mergeSearching?.people ?? [], except: person, query: ""),
+                                people: mergeChoices,
                                 query: $mergeQuery, sources: mergeSearching?.sources ?? [],
                                 title: "Merge \(person.name) with", prompt: "Search people",
                                 addRule: .noResults,
                                 pick: { other in endMerge(); requestMerge(person, other) },
                                 cancel: { endMerge() })
+                            .onChange(of: mergeSearching?.people, initial: true) { _, found in
+                                mergeChoices = Self.mergeCandidates(found ?? [], except: person, query: "")
+                            }
                             .onChange(of: mergeQuery) { _, now in mergeSearching?.ask(now) }
                         }
                         Divider().padding(.leading, 52)
@@ -312,6 +316,7 @@ struct MeetingsContactsView: View {
         mergeSearching?.cancel()
         mergeSearching = nil
         mergeFrom = nil
+        mergeChoices = []
     }
 
     /// The people "Merge with…" offers: everyone else whose name, alias or address holds the text.
@@ -575,9 +580,12 @@ struct PersonMeetingsSheet: View {
                     }
                 }) { Label(project ?? "All projects", systemImage: "line.3.horizontal.decrease") }
                 .instantTooltip("Filter this person's samples by project")
-                ScrollView {
-                    VoiceSampleRows(model: library, destination: .person(.init(name: history.person.name, email: history.person.email), project: project))
-                        .padding(.horizontal, 4)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VoiceSampleRows(model: library, destination: .person(.init(name: history.person.name, email: history.person.email), project: project),
+                                        reveal: { id in Task { @MainActor in proxy.scrollTo(id, anchor: .top) } })
+                            .padding(.horizontal, 4)
+                    }
                 }
                 .onChange(of: library.rows.value?.projects, initial: true) { _, names in
                     if project == nil { projects = Set((names ?? []) + history.person.projects).sorted() }

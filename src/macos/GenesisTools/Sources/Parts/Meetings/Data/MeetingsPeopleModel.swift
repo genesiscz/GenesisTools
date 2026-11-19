@@ -101,7 +101,10 @@ final class MeetingsPeopleModel {
             do {
                 let result = try await MeetingsRead.service(MeetingsAPI.PeopleMeetings.self, .init(person: person.id),
                                                             orRun: ["people", "meetings", person.id, "--json"]).run(service: service)
-                if history?.id == person.id { history?.meetings = .loaded(result) }
+                if history?.id == person.id {
+                    history?.meetings = .loaded(result)
+                    window?.voiceLibrary.rememberMeetings(result)
+                }
             } catch {
                 if history?.id == person.id { history?.meetings = .failed(asFailure(error), previous: nil) }
             }
