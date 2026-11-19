@@ -7,9 +7,11 @@
  * It prints three tables:
  *   1. gaps: per recorder source, each piece's second 0 (`zeroAt`, else `at`), its length, and the gap to the end of
  *      the piece before it. A gap above 100 ms is sound that no file holds.
- *   2. mic level: per microphone piece, the microphone's median level while the call is loud (the recorder's own
- *      system track of the same capture, else the source's call channel, at or above --loud-db). Above -45 dB the
- *      call's sound is on the microphone track, so the engine's microphone is raw (no echo cancelling).
+ *   2. mic level: per microphone piece, the microphone's median level while the call is loud (the recorder's system
+ *      track that overlaps it in time, else the source's call channel, at or above --loud-db), and how closely the
+ *      microphone's level follows the call's (a correlation of the two 100 ms level curves on their shared seconds).
+ *      Loudness alone can be local speech or noise: the microphone counts as raw (no echo cancelling) only when it is
+ *      above -45 dB while the call is loud AND its level follows the call's.
  *   3. clock: per piece, the stamp, the second 0 matched against the source's sound, the offset and whether the peak
  *      was clear. Needs the source's own recording; without it the table is empty.
  */
@@ -35,8 +37,10 @@ const RATE = 16_000;
 const FRAME = RATE / 10;
 /** A gap above this is sound that no file holds (the spec's target). */
 const GAP_LIMIT_MS = 100;
-/** A microphone this loud while the call is loud hears the call: it is raw. */
+/** A microphone this loud while the call is loud may hear the call… */
 const RAW_MIC_DB = -45;
+/** …and it does when its level curve follows the call's at least this closely (Pearson r of the dB curves). */
+const RAW_MIC_MATCH = 0.4;
 
 interface GapRow {
     source: string;
@@ -53,6 +57,8 @@ interface MicRow {
     reference: "recorder-system" | "source-call";
     loudFrames: number;
     micDb?: number;
+    /** How closely the microphone's level follows the call's: 1 is the same curve, 0 is unrelated. */
+    callMatch?: number;
 }
 
 /** The level in dBFS of each 100 ms frame. */
@@ -71,6 +77,39 @@ function levels(samples: Float32Array): number[] {
     }
 
     return out;
+}
+
+/** Pearson correlation of two equally long curves; undefined when either is flat or too short. */
+function correlation(a: readonly number[], b: readonly number[]): number | undefined {
+    const length = Math.min(a.length, b.length);
+
+    if (length < 2) {
+        return undefined;
+    }
+
+    let meanA = 0;
+    let meanB = 0;
+
+    for (let index = 0; index < length; index++) {
+        meanA += a[index] ?? 0;
+        meanB += b[index] ?? 0;
+    }
+
+    meanA /= length;
+    meanB /= length;
+    let cross = 0;
+    let spreadA = 0;
+    let spreadB = 0;
+
+    for (let index = 0; index < length; index++) {
+        const da = (a[index] ?? 0) - meanA;
+        const db = (b[index] ?? 0) - meanB;
+        cross += da * db;
+        spreadA += da * da;
+        spreadB += db * db;
+    }
+
+    return spreadA > 0 && spreadB > 0 ? cross / Math.sqrt(spreadA * spreadB) : undefined;
 }
 
 function median(values: number[]): number | undefined {
@@ -125,47 +164,71 @@ async function micRows(inputs: SoundInputs, loudDb: number): Promise<MicRow[]> {
     const mics = inputs.rows.filter((row) => row.source === "mic" && row.durationMs > 0);
 
     for (const mic of mics) {
-        const durationSec = Math.min(mic.durationMs / 1000, 60);
         const micZero = audioRowZeroMs(mic);
-        const system = inputs.rows.find((row) => row.source === "system" && row.at === mic.at);
-        let reference: Float32Array | undefined;
+        const micEnd = micZero + Math.min(mic.durationMs, 60_000);
+        // Each source's track starts on its own first sample, so the system piece of the same seconds is the one
+        // that overlaps the microphone's time the most, not one with the same stamp.
+        const system = inputs.rows
+            .filter((row) => row.source === "system" && row.durationMs > 0)
+            .map((row) => {
+                const zero = audioRowZeroMs(row);
+                return { row, zero, overlapMs: Math.min(micEnd, zero + row.durationMs) - Math.max(micZero, zero) };
+            })
+            .filter((one) => one.overlapMs > 0)
+            .toSorted((a, b) => b.overlapMs - a.overlapMs)[0];
+        // Both curves cover the same wall-clock seconds: `from`/`to` are ms on the wall clock.
+        let window: { from: number; to: number; reference: (fromSec: number, toSec: number) => Promise<Float32Array> };
         let kind: MicRow["reference"] = "recorder-system";
 
         if (system) {
-            const offsetSec = (micZero - audioRowZeroMs(system)) / 1000;
-            const fromSec = Math.max(0, offsetSec);
-            reference = await toFloat32AudioWindow(join(inputs.folder, system.file), {
-                fromSec,
-                toSec: fromSec + durationSec,
-            });
+            window = {
+                from: Math.max(micZero, system.zero),
+                to: Math.min(micEnd, system.zero + system.row.durationMs),
+                reference: (fromSec, toSec) =>
+                    toFloat32AudioWindow(join(inputs.folder, system.row.file), {
+                        fromSec: fromSec - (system.zero - micZero) / 1000,
+                        toSec: toSec - (system.zero - micZero) / 1000,
+                    }),
+            };
         } else if (inputs.source) {
+            const source = inputs.source;
             kind = "source-call";
-            const stampSec = (micZero - inputs.timelineZeroMs) / 1000;
-
-            if (stampSec >= 0) {
-                reference = await toFloat32AudioWindow(inputs.source.path, {
-                    fromSec: stampSec,
-                    toSec: stampSec + durationSec,
-                    channel: inputs.source.layout === "right-mic" ? 0 : 1,
-                });
-            }
-        }
-
-        if (!reference) {
+            window = {
+                from: Math.max(micZero, inputs.timelineZeroMs),
+                to: Math.min(micEnd, inputs.timelineZeroMs + source.durationSec * 1000),
+                reference: (fromSec, toSec) =>
+                    toFloat32AudioWindow(source.path, {
+                        fromSec: fromSec + (micZero - inputs.timelineZeroMs) / 1000,
+                        toSec: toSec + (micZero - inputs.timelineZeroMs) / 1000,
+                        channel: source.layout === "right-mic" ? 0 : 1,
+                    }),
+            };
+        } else {
             continue;
         }
 
-        const micLevels = levels(
-            await toFloat32AudioWindow(join(inputs.folder, mic.file), { fromSec: 0, toSec: durationSec })
-        );
+        if (window.to - window.from < 1000) {
+            continue;
+        }
+
+        // Seconds of the microphone file; the reference reader maps them to its own file.
+        const fromSec = (window.from - micZero) / 1000;
+        const toSec = (window.to - micZero) / 1000;
+        const [micSamples, reference] = await Promise.all([
+            toFloat32AudioWindow(join(inputs.folder, mic.file), { fromSec, toSec }),
+            window.reference(fromSec, toSec),
+        ]);
+        const micLevels = levels(micSamples);
         const callLevels = levels(reference);
         const loud = micLevels.filter((_level, index) => (callLevels[index] ?? -Infinity) >= loudDb);
         const micDb = median(loud);
+        const callMatch = correlation(micLevels, callLevels);
         result.push({
             file: mic.file,
             reference: kind,
             loudFrames: loud.length,
             ...(micDb !== undefined ? { micDb: Math.round(micDb * 10) / 10 } : {}),
+            ...(callMatch !== undefined ? { callMatch: Math.round(callMatch * 100) / 100 } : {}),
         });
     }
 
@@ -220,11 +283,13 @@ async function main(): Promise<void> {
         };
     });
     const micDb = median(mic.flatMap((row) => (row.micDb !== undefined ? [row.micDb] : [])));
+    const callMatch = median(mic.flatMap((row) => (row.callMatch !== undefined ? [row.callMatch] : [])));
     const summary = {
         meeting: record.id,
         gaps: gapSummary,
         micDb,
-        micRaw: micDb === undefined ? undefined : micDb > RAW_MIC_DB,
+        callMatch,
+        micRaw: micDb === undefined ? undefined : micDb > RAW_MIC_DB && (callMatch ?? 0) >= RAW_MIC_MATCH,
         clock: measured?.clock,
     };
 
@@ -268,15 +333,16 @@ async function main(): Promise<void> {
                 row.reference,
                 String(row.loudFrames),
                 row.micDb?.toString() ?? "(call never loud)",
+                row.callMatch?.toString() ?? "",
             ]),
-            ["mic piece", "loud call from", "loud 100 ms frames", "mic dB while loud"],
-            { alignRight: [2, 3] }
+            ["mic piece", "loud call from", "loud 100 ms frames", "mic dB while call loud", "follows call (r)"],
+            { alignRight: [2, 3, 4] }
         )
     );
     out.println(
         micDb === undefined
             ? "mic level: no microphone piece with a loud call"
-            : `mic level: median ${micDb} dB while the call is loud; ${micDb > RAW_MIC_DB ? "the call is on the microphone track (raw)" : `below ${RAW_MIC_DB} dB (processed, or the call was quiet)`}`
+            : `mic level: median ${micDb} dB while the call is loud, follows the call r=${callMatch ?? "?"}; ${summary.micRaw ? "the call is on the microphone track (raw)" : micDb > RAW_MIC_DB ? `loud, but its level does not follow the call (r below ${RAW_MIC_MATCH}): local speech or noise, not proven raw` : `below ${RAW_MIC_DB} dB (processed, or the call was quiet)`}`
     );
     out.println(
         clock.length === 0
