@@ -115,4 +115,11 @@ final class MeetingsWindowReviewSwiftUITests: XCTestCase {
         projection.refilter("")
         XCTAssertEqual(projection.blocks, built, "an empty query shows every block again")
     }
+
+    /// eve t92: the progress strip reads out the step it shows, not only a fixed label.
+    func testTheSuggestStripSaysItsStep() {
+        XCTAssertEqual(SuggestRunStrip.label(nil), "Running the rules again…")
+        XCTAssertEqual(SuggestRunStrip.label(MeetingsCallProgress(fraction: 0.4, label: "Reading the transcript")),
+                       "Reading the transcript (40 %)")
+    }
 }

@@ -663,13 +663,19 @@ struct SuggestRunStrip: View {
                 }
             }
             .frame(height: 14)
-            Text(verbatim: progress == nil ? "Running the rules again…" : SuggestRunView.label(progress))
+            Text(verbatim: Self.label(progress))
                 .font(.system(size: 11.5).monospacedDigit()).foregroundStyle(.secondary).lineLimit(1)
                 .accessibilityLabel("Running the rules")
+                .accessibilityValue(Self.label(progress))
             Spacer(minLength: 6)
             GhostButton("Cancel", symbol: "xmark", tooltip: "Stop the rules; nothing is saved", height: 22,
                         identifier: "meetings.items.suggestCancel", action: cancel)
         }
         .padding(.horizontal, 14).padding(.vertical, 6)
+    }
+
+    /// The step in words, shown and read out (eve t92): the same words as the full-size run once a step arrives.
+    static func label(_ progress: MeetingsCallProgress?) -> String {
+        progress == nil ? "Running the rules again…" : SuggestRunView.label(progress)
     }
 }
