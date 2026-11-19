@@ -1,5 +1,14 @@
 import { describe, expect, mock, test } from "bun:test";
-import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
+import {
+    closeSync,
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    openSync,
+    readFileSync,
+    readSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createConfigStore, resolveConfig } from "@genesiscz/utils/genesis-tools/actions/config";
@@ -713,6 +722,50 @@ describe("the real areas", () => {
         expect(explain.first).toBeNull();
         expect(explain.config).toEqual({ fix: "offer" });
         expect(SafeJSON.stringify(state.read())).toBe(before);
+    });
+
+    test("the review diff viewer need explains the hub fix and rechecks the bundle after a build", async () => {
+        const bundle = mkdtempSync(join(tmpdir(), "gt-review-app-"));
+        const viewer = join(bundle, "Contents", "Resources", "diff-viewer");
+        const build = mock(async (_part: string | null) => {
+            mkdirSync(viewer, { recursive: true });
+            writeFileSync(join(viewer, "index.html"), "<html></html>");
+        });
+        const engine = deps({
+            facts: fakeFacts({
+                appBundle: () => ({ installed: true, launcher: true, routingOff: false, path: bundle }),
+                appManifest: () => ({ buildId: "b1", parts: ["hub"], rpcMethods: null }),
+                hasTerminal: () => true,
+            }),
+            builder: { build, offerBuild: async () => false, buildCommand: (part) => `build-it ${part}` },
+        });
+        await engine.config.set("windows.fix", "build");
+        const args = { window: "--review" };
+        const explain = () => explainAction(AREAS, "windows.open", engine, { args });
+        const missing = await explain();
+        expect(missing.first).toBeNull();
+        expect(missing.ways[0]?.needs).toContainEqual({
+            need: "app.diffViewer",
+            ok: false,
+            code: "app-stale",
+            reason: "GenesisTools.app has no bundled diff viewer.",
+            fix: { command: "build-it hub", sentence: "Rebuilds the hub part with its diff viewer." },
+            from: "probe",
+        });
+        const hub = await explainAction(AREAS, "windows.open", engine, { args: { window: "--hub" } });
+        expect(hub.first).toBe("native");
+        expect(build).not.toHaveBeenCalled();
+
+        // With no display the real native way cannot launch a window even after the repair succeeds.
+        const headless = { ...engine, facts: { ...engine.facts, hasDisplay: async () => false } };
+        const click = await runAreaAction(AREAS, "windows.open", { ...args, fix: "skip" }, headless);
+        expect(click.skipped[0]).toMatchObject({ code: "app-stale", fix: { command: "build-it hub" } });
+        expect(build).not.toHaveBeenCalled();
+
+        const repaired = await runAreaAction(AREAS, "windows.open", args, headless);
+        expect(build.mock.calls).toEqual([["hub"]]);
+        expect(repaired.skipped[0]?.code).toBe("no-display");
+        expect((await explain()).first).toBe("native");
     });
 });
 
