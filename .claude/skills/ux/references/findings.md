@@ -3,6 +3,11 @@
 Newest first. Each entry: date, symptom as the user saw it, cause, fix, commit. Generic lessons go to
 checklist.md or motion.md as well.
 
+- 2026-11-19 — **Hiding a form emptied its answers and deleted its staged picture.** The client used absence from
+  a filtered, capped inbox response as its signal to discard the draft. Keep the draft and pending imports by form
+  ID until submission succeeds. To test it, hide a form while a picture is loading, restore it, and read the saved
+  picture bytes before sending. Commit: `1ee3412ff4`.
+
 - 2026-11-10 19:56 — **A transcript that did not load showed a red triangle and "tools call exceeded 30s", with nothing to
   click (the owner: "this definitely deserves 1. details 2. a button to bug report").**
   - *The pane drew the error's own words.* `TranscriptLoadState.failed(String)` carried `localizedDescription`, and the
