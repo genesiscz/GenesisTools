@@ -228,7 +228,14 @@ export async function mixScore(options: { score: Score; folder: string; soundfon
     const context: StemContext = { ...options, samples, files: new Map() };
     const mix = stereo(samples);
     const send = stereo(samples);
-    const starts = new Map(score.parts.map((part) => [part.name, part.notes.map((note) => note.at)]));
+    // Two parts may share a name: a duck by that name hears the notes of both.
+    const starts = new Map<string, number[]>();
+
+    for (const part of score.parts) {
+        const times = starts.get(part.name) ?? [];
+        times.push(...part.notes.map((note) => note.at));
+        starts.set(part.name, times);
+    }
 
     for (const [index, part] of score.parts.entries()) {
         const lanes = new Map((part.lanes ?? []).map((lane) => [lane.target, new Curve(lane.points, lane.hold)]));
