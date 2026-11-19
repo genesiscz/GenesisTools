@@ -3,6 +3,7 @@ import type { Reply } from "@genesiscz/utils/output/reply";
 import { workMethods } from "./api";
 import { originFor, type Pairing } from "./connectors/types";
 import { callWork, type WorkSession } from "./handlers";
+import { mirrorSessionTodos } from "./legacy/session-todos";
 import type { Actor } from "./model/item";
 import { resolveWorkRules } from "./rules/resolve";
 import { type WorkContext, write } from "./service";
@@ -65,6 +66,41 @@ function recordPairing(
 }
 
 describe("the wire schemas of the read methods match what the handlers return", () => {
+    test("show resolves old session-task IDs through the Work door before and after import", async () => {
+        const db = openWorkDb(":memory:");
+        try {
+            const row = {
+                id: "t_1_fixture",
+                sessionId: "fixture",
+                number: 1,
+                prompt: "Check the export",
+                state: "implemented",
+                project: "Orchard",
+                updatedTs: "2026-11-19T06:00:00.000Z",
+            };
+            const session: WorkSession = {
+                ctx: ctx(db),
+                call: {},
+                alive: async () => null,
+                context: async () => {
+                    throw new Error("Unexpected request for context");
+                },
+                legacySessionTodo: (ref) => (ref === row.id ? row : undefined),
+            };
+
+            expect(data(await callWork("show", { ref: row.id }, session))).toMatchObject({
+                item: { id: row.id, state: "done", title: row.prompt, project: "Orchard" },
+                log: [],
+            });
+            mirrorSessionTodos(db, [row], () => "fixture1");
+            expect(data(await callWork("show", { ref: row.id }, session))).toMatchObject({
+                item: { id: "w_fixture1", state: "done" },
+                log: [{ kind: "created" }, { kind: "pointed" }],
+            });
+        } finally {
+            db.close();
+        }
+    });
     test("list, tree and triage parse with the result schema of the method table", async () => {
         const db = openWorkDb(":memory:");
 

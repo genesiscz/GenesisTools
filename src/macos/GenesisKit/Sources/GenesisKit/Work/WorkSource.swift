@@ -6,7 +6,7 @@ private let workSourceLog = Logger(subsystem: "genesiskit", category: "work.sour
 
 // The hub's Work screen (work-items P8): the open handoffs of a project with their tasks, the spotted items, the items
 // reopened with nobody working on them, and who hears about each kind of change. The data comes from the `work` area of
-// the actions service through the generated client. A session TODO still in the old ledger has its own read door.
+// the actions service through the generated client.
 
 public struct WorkPairingValue: Identifiable, Equatable, Sendable, Decodable {
     public enum State: String, Decodable, Sendable {
@@ -322,23 +322,6 @@ public final class LiveWorkSource: WorkSource {
     public func detail(ref: String) async throws -> WorkItemDetail {
         let span = PerfSpans.begin("work.detail.load", awaits: true)
         defer { span.end() }
-        if ref.hasPrefix("t_") {
-            // An older listing, or a TODO before its first import, has only the id used by question show.
-            struct Todo: Decodable {
-                var id: String
-                var title: String?
-                var prompt: String
-                var state: String
-                var project: String?
-            }
-            let result = try await ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath())
-                .run(subcommand: "question", args: ["show", ref, "--json"])
-            guard result.exitCode == 0 else { throw WorkSourceError(result.stderr) }
-            let todo = try JSONDecoder().decode(Todo.self, from: Data(result.stdout.utf8))
-            return WorkItemDetail(item: .init(id: todo.id, title: todo.title ?? todo.prompt, type: "task",
-                                              state: WidgetTask.label(for: todo.state), project: todo.project,
-                                              body: todo.prompt, acceptance: nil))
-        }
         return try reply(await rpc.work.show(WorkShowParams(ref: ref)))
     }
 

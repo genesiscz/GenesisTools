@@ -17,6 +17,7 @@ import {
 } from "./connectors/sync";
 import { originFor, type Pairing } from "./connectors/types";
 import { type ContextReport, stampOf } from "./context";
+import { legacySessionTodoItem, SESSION_TODO_POINTER, type SessionTodoRow } from "./legacy/session-todos";
 import type { Item } from "./model/item";
 import { ITEM_TYPES, type ItemType, isOpenState, OPEN_STATES, type Severity } from "./model/vocab";
 import { defaultNotify, type ResolvedNotify, resolveNotify } from "./notify";
@@ -68,6 +69,8 @@ export interface WorkSession {
     loadRules?: LoadProjectRules;
     /** The machine file this session edits; tests supply a temporary file. */
     configPath?: string;
+    /** Compatibility lookup for a ledger row that has yet to be imported. */
+    legacySessionTodo?(ref: string): SessionTodoRow | undefined;
     /** The preflight context; the door builds it (git, the forge, T3 state). */
     context(network: boolean): Promise<ContextReport>;
 }
@@ -326,7 +329,24 @@ export const workHandlers: WorkHandlers = {
     },
 
     async show(p, session) {
-        const shown = showItem(session.ctx.db, p.ref);
+        const db = session.ctx.db;
+        const ref = p.ref.trim();
+        let shown = showItem(db, ref);
+        if (shown === null && ref.startsWith("t_")) {
+            const imported = db
+                .query<{ item: string }, [string, string]>(
+                    "SELECT item FROM pointers WHERE kind = ? AND json_extract(meta, '$.id') = ? LIMIT 1"
+                )
+                .get(SESSION_TODO_POINTER, ref);
+            if (imported) {
+                shown = showItem(db, imported.item);
+            } else {
+                const row = session.legacySessionTodo?.(ref);
+                if (row) {
+                    shown = { item: legacySessionTodoItem(row), refs: { out: [], in: [] }, pointers: [], log: [] };
+                }
+            }
+        }
         return shown === null
             ? failReply("show", [errorDiagnostic("NOT_FOUND", `No item ${p.ref}.`)])
             : okReply("show", shown);
