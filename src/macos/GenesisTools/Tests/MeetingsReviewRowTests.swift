@@ -23,18 +23,28 @@ final class MeetingsReviewRowTests: XCTestCase {
         panel.contentView = hosting
         panel.orderInForSnapshot()
         defer { panel.orderOut(nil); panel.close() }
-        try await Task.sleep(for: .milliseconds(900))
-        let captured = await WindowSnapshot.capture(panel)
-        let capture = try XCTUnwrap(captured)
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .fast
-        try VNImageRequestHandler(cgImage: XCTUnwrap(capture.image.cgImage)).perform([request])
-        let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        // Capture until the sheet shows its words (a slow runner draws later), at most 10 s, instead of one fixed sleep.
+        let expected = ["This also affects", "zorb", "Done"]
+        let deadline = ContinuousClock.now + .seconds(10)
+        var shot: NSBitmapImageRep?
+        var text = ""
+        repeat {
+            if let captured = await WindowSnapshot.capture(panel), let image = captured.image.cgImage {
+                let request = VNRecognizeTextRequest()
+                request.recognitionLevel = .fast
+                try VNImageRequestHandler(cgImage: image).perform([request])
+                shot = captured.image
+                text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+                if expected.allSatisfy(text.contains) { break }
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        } while ContinuousClock.now < deadline
+        let capture = try XCTUnwrap(shot, "the window server never captured the sheet")
         XCTAssertTrue(text.contains("This also affects"), text)
         XCTAssertTrue(text.contains("zorb"), text)
         XCTAssertTrue(text.contains("Done"), text)
         if let folder = ProcessInfo.processInfo.environment["MEETINGS_UI_SNAPSHOTS"] {
-            let png = try XCTUnwrap(capture.image.representation(using: .png, properties: [:]))
+            let png = try XCTUnwrap(capture.representation(using: .png, properties: [:]))
             try png.write(to: URL(fileURLWithPath: folder).appendingPathComponent("2026-11-17-P3-occurrence-sheet-fixture.png"))
         }
     }
