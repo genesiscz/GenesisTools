@@ -163,6 +163,15 @@ describe("sessions range flags", () => {
                 "claude-session-two.context-sources.json",
                 "claude-session-two.context-sources.txt",
             ]);
+
+            const otherHome = join(dir, "other-home");
+            mkdirSync(otherHome);
+            const twin = join(otherHome, "session-one.jsonl");
+            writeFileSync(twin, readFileSync(path, "utf8"));
+            const twins = join(dir, "twins");
+            const twinArgs = ["sessions", "context", one, one, twin, "--provider", "claude", "--json", "--out", twins];
+            expect((await run(twinArgs)).errors).toEqual([]);
+            expect(readdirSync(twins).filter((name) => name.endsWith(".json"))).toHaveLength(2);
         } finally {
             result.mockRestore();
         }
