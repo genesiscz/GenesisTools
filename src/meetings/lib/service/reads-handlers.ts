@@ -3,7 +3,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { channelEnergy, ENERGY_BLOCKS_PER_SEC } from "@genesiscz/utils/meetings/energy";
-import type { MeetingStore } from "@genesiscz/utils/meetings/record";
+import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { DEFAULT_SPAN_GAP_SEC, sameName } from "@genesiscz/utils/transcribe/speakers";
@@ -29,6 +29,44 @@ import { type MeetingsHandlerDeps, recordOf, refusal } from "./handlers";
  * The Meetings service's reads for the timeline and the settings (`meeting.speakers`, `meeting.screen`,
  * `meeting.waveform`, `meetings.overview`, `config.*`). Loaded by handlers.ts only when a call asks for one of them.
  */
+
+interface SwapSkip {
+    id: string;
+    /** The labels a skip applies to; absent when the swap names no label, so every label at that time matches. */
+    labels?: unknown[];
+}
+
+/** Every open swap item's skipped line starts, indexed once so each transcript line is one lookup. */
+function swapSkipIndex(record: MeetingRecord): Map<number, SwapSkip[]> {
+    const index = new Map<number, SwapSkip[]>();
+    for (const item of record.items) {
+        const swap = item.evidence?.swap;
+        if (
+            item.kind !== "speaker-range" ||
+            item.status === "rejected" ||
+            typeof swap !== "object" ||
+            swap === null ||
+            !("skipped" in swap) ||
+            !Array.isArray(swap.skipped)
+        ) {
+            continue;
+        }
+
+        const labels =
+            "selfLabel" in swap ? [swap.selfLabel, ...("otherLabel" in swap ? [swap.otherLabel] : [])] : undefined;
+        for (const startSec of new Set(swap.skipped)) {
+            if (typeof startSec !== "number") {
+                continue;
+            }
+
+            const skips = index.get(startSec) ?? [];
+            skips.push({ id: item.id, ...(labels ? { labels } : {}) });
+            index.set(startSec, skips);
+        }
+    }
+
+    return index;
+}
 
 export async function readRows(
     params: MeetingsParsedParams<"meeting.rows">,
@@ -166,29 +204,16 @@ export async function readRows(
         record.attendance !== undefined ||
         record.seats !== undefined ||
         record.participants.some((person) => !person.self && person.stays !== undefined);
+    const swapSkips = swapSkipIndex(record);
     const perLine = lineEvidence(
         transcript.transcript,
         evidence ?? { segments: [], speaking: [] },
         presence,
         energy?.share
     ).map((line): WindowLineEvidence => {
-        const skipped = record.items
-            .filter((item) => {
-                const swap = item.evidence?.swap;
-                return (
-                    item.kind === "speaker-range" &&
-                    item.status !== "rejected" &&
-                    typeof swap === "object" &&
-                    swap !== null &&
-                    "skipped" in swap &&
-                    Array.isArray(swap.skipped) &&
-                    swap.skipped.includes(line.startSec) &&
-                    (!("selfLabel" in swap) ||
-                        swap.selfLabel === line.label ||
-                        ("otherLabel" in swap && swap.otherLabel === line.label))
-                );
-            })
-            .map((item) => item.id);
+        const skipped = (swapSkips.get(line.startSec) ?? [])
+            .filter((skip) => skip.labels === undefined || skip.labels.includes(line.label))
+            .map((skip) => skip.id);
         const remotePresent = record.seats
             ? record.seats.remote.some(
                   (person) =>
