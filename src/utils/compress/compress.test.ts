@@ -2549,7 +2549,9 @@ describe.skipIf(process.platform !== "darwin")("transparent APFS compression", (
     it("excludes compressible binary content behind a text extension from estimates", () => {
         const c = fixture("misnamed");
         expect(hasTextHeader(c)).toBe(true);
-        const padding = Buffer.alloc(64 * 1024);
+        // Printable padding, so only the signature can turn the ZIP and GIF samples away (the SQLite magic holds a NUL).
+        const padding = Buffer.from(logText(4000)).subarray(0, 64 * 1024);
+        expect(sniffSample(padding).kind).toBe("text");
         for (const magic of ["SQLite format 3\0", "PK\x03\x04", "GIF89a"]) {
             const bytes = Buffer.concat([Buffer.from(magic), padding]);
             writeFileSync(c.path, bytes);
