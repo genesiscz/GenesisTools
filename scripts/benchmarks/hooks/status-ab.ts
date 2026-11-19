@@ -352,7 +352,7 @@ async function benchmark(): Promise<void> {
 
         callCounter += 1;
 
-        const payload: Payload = {
+        const payload = {
             event: "PreToolUse",
             tool: "Bash",
             cwd: ROOT,
@@ -364,7 +364,7 @@ async function benchmark(): Promise<void> {
             caller: "claude",
             nativeDiffFiles: [],
             raw: {},
-        };
+        } satisfies Payload;
         const call = {
             harness: payload.harness,
             sessionId: SESSION,
