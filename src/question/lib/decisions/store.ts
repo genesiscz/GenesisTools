@@ -980,10 +980,12 @@ function patched(
 
     // The stage time moves only when the staged pick or note changes: a comment, a state move or the same pick again
     // leaves it, so the widget's "Staged · 3m ago" is the stage and not the decision's last write.
-    const stagedBefore = `${row.draftOption ?? ""}\u0000${row.draft ?? ""}`;
+    // A blank note is no note: the hub omits it, so saving "   " beside a pick is not a new stage.
+    const staged = (decision: Pick<DecisionRecord, "draft" | "draftOption">) =>
+        `${decision.draftOption ?? ""}\u0000${decision.draft?.trim() ?? ""}`;
     if (!next.draftOption && !next.draft?.trim()) {
         delete next.draftedTs;
-    } else if (stagedBefore !== `${next.draftOption ?? ""}\u0000${next.draft ?? ""}`) {
+    } else if (staged(row) !== staged(next)) {
         next.draftedTs = ts;
     }
 

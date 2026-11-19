@@ -82,30 +82,36 @@ describe("draftDecision", () => {
         expect(readDecisions(file)).toHaveLength(1);
     });
 
-    test("the stage time moves with the pick or note, never with a comment, and leaves with the draft", async () => {
+    test("the stage time moves with the pick or note, never with a comment or a blank note, and leaves with the draft", async () => {
         const { file, events } = scratch();
         await postDecisions(file, events, {
             sessionId: "s",
             decisions: [{ prompt: "Keep?", options: ["keep", "drop"] }],
         });
-        const deps = { file, events, block: async () => block() };
+        const at = (minute: number) => () => `2026-11-17T10:0${minute}:00.000Z`;
+        const deps = (minute: number) => ({ file, events, block: async () => block(), now: at(minute) });
 
-        const picked = await draftDecision({ session: "s", number: 1, option: "a" }, deps);
+        const picked = await draftDecision({ session: "s", number: 1, option: "a" }, deps(1));
         const stagedAt = picked?.draftedTs;
-        expect(stagedAt).toBeString();
+        expect(stagedAt).toBe(at(1)());
 
-        await Bun.sleep(5);
-        const [commented] = await updateDecisions(file, events, { updates: [{ id: picked?.id ?? "", comment: "x" }] });
+        const [commented] = await updateDecisions(
+            file,
+            events,
+            { updates: [{ id: picked?.id ?? "", comment: "x" }] },
+            at(2)
+        );
         expect(commented?.draftedTs).toBe(stagedAt);
-        expect(commented?.updatedTs).not.toBe(stagedAt);
-        const same = await draftDecision({ session: "s", number: 1, option: "a" }, deps);
+        expect(commented?.updatedTs).toBe(at(2)());
+        const same = await draftDecision({ session: "s", number: 1, option: "a" }, deps(3));
         expect(same?.draftedTs).toBe(stagedAt);
+        const blank = await draftDecision({ session: "s", number: 1, option: "a", text: "   " }, deps(4));
+        expect(blank?.draftedTs).toBe(stagedAt);
 
-        const noted = await draftDecision({ session: "s", number: 1, text: "with a caveat" }, deps);
-        expect(noted?.draftedTs).toBe(noted?.updatedTs);
-        expect(noted?.draftedTs).not.toBe(stagedAt);
+        const noted = await draftDecision({ session: "s", number: 1, text: "with a caveat" }, deps(5));
+        expect(noted?.draftedTs).toBe(at(5)());
 
-        const cleared = await draftDecision({ session: "s", number: 1, option: "", text: "" }, deps);
+        const cleared = await draftDecision({ session: "s", number: 1, option: "", text: "" }, deps(6));
         expect(cleared).toMatchObject({ state: "open" });
         expect(cleared?.draftedTs).toBeUndefined();
     });
