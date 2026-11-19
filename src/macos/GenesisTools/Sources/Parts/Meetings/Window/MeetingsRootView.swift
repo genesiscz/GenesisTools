@@ -626,7 +626,9 @@ struct MeetingBadgesView: View {
         // every meeting and took a place in its one chip line.
         if let audio = meeting.sourceAudio, open == nil {
             Badge("Audio preserved", color: KitPalette.added, symbol: "waveform")
-                .instantTooltip("Permanent source audio: \(audio.bytes) bytes")
+                // Permanent is the fact: audio retention removes only the recorder's own sound, never `source-audio/`
+                // (src/utils/meetings/source-audio-paths.ts, src/meetings/lib/retention.ts).
+                .instantTooltip("Permanent source audio, \(ByteFormat.file(audio.bytes)). Audio retention never removes it.")
                 .accessibilityIdentifier("meetings.sourceAudio.preserved")
         }
         if meeting.live { Badge("Recording", color: KitPalette.removed, symbol: "record.circle") }
