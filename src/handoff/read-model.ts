@@ -458,7 +458,7 @@ export function listHandoffEvents({
  * the offset it landed on, not that it reached THIS read's end, so each file
  * is retried from the freshly committed offset until it is fully caught up.
  */
-export function catchUpHandoffs(db: Database, base?: string, rebuilding = false): void {
+export function catchUpHandoffs(db: Database, base?: string, replayPrefix?: ReadonlyMap<string, number>): void {
     const dir = handoffLogDir(base);
 
     if (!existsSync(dir)) {
@@ -476,7 +476,8 @@ export function catchUpHandoffs(db: Database, base?: string, rebuilding = false)
             let size: number;
 
             try {
-                size = statSync(file).size;
+                const currentSize = statSync(file).size;
+                size = replayPrefix === undefined ? currentSize : Math.min(currentSize, replayPrefix.get(file) ?? 0);
             } catch (err) {
                 log.warn({ err, file }, "skipping handoff log file — stat failed (likely removed concurrently)");
                 break;
@@ -515,7 +516,15 @@ export function catchUpHandoffs(db: Database, base?: string, rebuilding = false)
                 break;
             }
 
-            const applied = applyHandoffBatch({ db, file, prevOffset: prev, events, consumed, base, rebuilding });
+            const applied = applyHandoffBatch({
+                db,
+                file,
+                prevOffset: prev,
+                events,
+                consumed,
+                base,
+                rebuilding: replayPrefix !== undefined,
+            });
 
             if (applied) {
                 break;
@@ -599,8 +608,12 @@ export function applyHandoffBatch({
                 file
             );
         } else {
-            foldEvents(db, events, base, file);
-            recordReplay(db, events, null);
+            const outcomes = foldEvents(db, events, base, file);
+            recordReplay(
+                db,
+                events.filter((event) => outcomes.has(event.uid)),
+                null
+            );
         }
         setOff.run(file, prevOffset + consumed);
         applied = true;
@@ -768,7 +781,9 @@ export function flushHandoffCopies(db: Database): void {
                     const batch = nextFile < 0 ? rows : rows.slice(0, nextFile);
                     appendHandoffEvents(
                         batch.map((row) => SafeJSON.parse(row.payload, { strict: true }) as HandoffEvent),
-                        file
+                        file,
+                        // The legacy reader walks files by day. Copies use drain time even when an event was backdated.
+                        new Date().toISOString()
                     );
                     db.run("UPDATE handoff_replay SET copy_to = NULL WHERE seq <= ?", [batch[batch.length - 1].seq]);
                     return false;
@@ -786,12 +801,17 @@ export function flushHandoffCopies(db: Database): void {
 /** Rebuild from the older log prefix and the private journal in committed order. */
 export function rebuildHandoffModel(db: Database, base?: string): void {
     db.transaction(() => {
+        catchUpHandoffs(db, base);
+        const offsets = db
+            .query<{ file: string; byte_offset: number }, []>("SELECT file, byte_offset FROM handoff_ingest_offsets")
+            .all();
+        const prefix = new Map(offsets.map((entry) => [entry.file, entry.byte_offset]));
         db.exec("DROP TABLE IF EXISTS handoffs;");
         db.exec("DROP TABLE IF EXISTS handoff_ingest_offsets;");
         db.exec("DROP TABLE IF EXISTS handoff_event_results;");
         db.exec("DROP TABLE IF EXISTS handoff_events;");
         createTables(db);
-        catchUpHandoffs(db, base, true);
+        catchUpHandoffs(db, base, prefix);
         let seq = 0;
         for (;;) {
             const rows = db
