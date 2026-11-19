@@ -125,7 +125,7 @@ export function readSessionTodos(db: Database, sessionId?: string): { rows: Stor
             return [
                 {
                     ...rest,
-                    for: r.owner ?? rest.for ?? "agent",
+                    for: r.owner ?? rest.for,
                     ...(rest.title !== undefined ||
                     r.title !== mirrorTitle({ prompt: r.body ?? "", number: rest.number })
                         ? { title: r.title }
