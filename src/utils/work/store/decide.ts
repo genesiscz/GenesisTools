@@ -909,7 +909,21 @@ function decideClaim(
         };
     }
 
-    const to = TRANSITIONS[cmd.verb][item.state];
+    let to = TRANSITIONS[cmd.verb][item.state];
+
+    if (cmd.verb === "release") {
+        const session = env.actor.sessionId ?? `${env.actor.harness}:unknown`;
+        const own = view.claims({ item: item.id, sessionIds: [session], active: true });
+
+        if (own.length === 0) {
+            return { ok: true, changes: [], legacy: [], items: [item.id], diagnostics: [], next: [], noop: true };
+        }
+
+        if (view.claims({ item: item.id, active: true }).length > own.length) {
+            to = undefined;
+        }
+    }
+
     const changes: NewChange[] = [
         { ...base(env, item.id), kind: cmd.verb === "claim" ? "claimed" : "released", payload: {} },
     ];
