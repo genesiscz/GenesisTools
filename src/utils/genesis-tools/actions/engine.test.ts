@@ -705,6 +705,35 @@ describe("the real areas", () => {
         expect(postNotice).toHaveBeenCalledTimes(1);
     });
 
+    test("a notice that fails to format or to send leaves the unreachable outcome as it was", async () => {
+        const args = { window: "--hub", fix: "skip" };
+        const open = AREAS.windows.actions.open;
+        const throwingFormat = {
+            windows: {
+                ...AREAS.windows,
+                actions: {
+                    open: {
+                        ...open,
+                        failureNotice: () => {
+                            throw new Error("the notice text could not be built");
+                        },
+                    },
+                },
+            },
+        };
+        const sent = mock<NonNullable<EngineDeps["postNotice"]>>(async () => {});
+        const formatFailed = await runAreaAction(throwingFormat, "windows.open", args, deps({ postNotice: sent }));
+        expect(formatFailed).toMatchObject({ status: "unreachable", skipped: [{ code: "part-missing" }] });
+        expect(sent).not.toHaveBeenCalled();
+
+        const failingSend = mock<NonNullable<EngineDeps["postNotice"]>>(async () => {
+            throw new Error("no notification channel");
+        });
+        const sendFailed = await runAreaAction(AREAS, "windows.open", args, deps({ postNotice: failingSend }));
+        expect(sendFailed).toMatchObject({ status: "unreachable", skipped: [{ code: "part-missing" }] });
+        expect(failingSend).toHaveBeenCalledTimes(1);
+    });
+
     test("explain windows.open names the ways and changes no state without --fresh", async () => {
         const state = memoryStateStore();
         const before = SafeJSON.stringify(state.read());
