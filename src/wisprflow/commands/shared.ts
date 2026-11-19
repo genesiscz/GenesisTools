@@ -8,6 +8,7 @@ export const SOURCE_CHOICES = ["auto", "local", "mcp"] as const;
 
 const SOURCE_LABEL: Record<SourceName, string> = {
     local: "local Wispr Flow app data on this Mac",
+    imported: "an export imported with 'meetings import', recorded on another Mac",
     mcp: "Wispr Flow MCP (api.wisprflow.ai through the local gateway)",
 };
 

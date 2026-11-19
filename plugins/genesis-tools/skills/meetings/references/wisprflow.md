@@ -14,6 +14,7 @@ polisher needs from it and where it falls short. Checked 2026-11-02 19:30.
 | Candidate term errors | `tools meetings new --source wisprflow:<id> --project <name>`, then the seats and voices step in pass 1 and `tools meetings suggest <meeting>` |
 | Per-label stats, spans and "several people" hints | `tools meetings speakers stats <meeting> --attendance teams` (`--gap 2m`, `--json`). The spans come from silences, not from goodbyes, so still scan for leave phrases (R1) |
 | Renames not yet on the server | `tools wisprflow doctor`, `--cross-check` |
+| A meeting recorded on another Mac and account, delivered as an export folder | `tools wisprflow meetings import <folder>` first (raw files beside it or in `wispr-raw/`), then `tools meetings new --source wisprflow:<id>` |
 
 `<id>` is the meeting id, a share link or its slug.
 

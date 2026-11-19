@@ -85,7 +85,7 @@ const participantSchema = z.object({
     from: z.array(z.string()).default([]),
 });
 
-const calendarSchema = z.object({
+export const calendarSchema = z.object({
     /** "apple-calendar", or the id of the source that named the event. */
     from: z.string(),
     eventId: z.string().optional(),

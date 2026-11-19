@@ -19,7 +19,8 @@ import { applyFixes, buildVocabulary, findSuspectTerms, selectFixes } from "@gen
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { Command } from "commander";
 import { registerMeetingsCommand } from "../commands/meetings";
-import { parseObservations, parseRoster, participantName } from "./evidence";
+import { parseObservations, parseRoster, participantName, readEvidence } from "./evidence";
+import { ImportConflictError, importExport, importedMeetingFolder } from "./imported";
 import { completeTranscript, parseLive } from "./live";
 import * as local from "./local";
 import * as mcp from "./mcp";
@@ -1006,7 +1007,7 @@ describe("local Wispr audio", () => {
         db.run("INSERT INTO Meetings VALUES ('m1', 'Fixture standup', '2026-11-02 09:00:00', NULL, 0)");
         db.run("INSERT INTO Meetings VALUES ('m2', 'Fixture gone', '2026-11-02 10:00:00', NULL, 1)");
         db.close();
-        const access = wisprAudioAccess(dir);
+        const access = wisprAudioAccess({ dir });
 
         expect(localAudioMeeting(dir, "m1")).toMatchObject({ sourceMeetingId: "m1", title: "Fixture standup" });
         expect(await access.load("m1")).toMatchObject({ sourceMeetingId: "m1", participants: [], transcript: [] });
@@ -1038,5 +1039,93 @@ describe("the platform roster of a Wispr meeting", () => {
 
         expect(roster).toHaveLength(1);
         expect("self" in (roster[0] ?? {})).toBe(false);
+    });
+});
+
+describe("an export imported from another Mac", () => {
+    const meetingId = "imported-fixture-1";
+
+    /** An export folder as `meetings export` writes it, with the raw Wispr files in `wispr-raw/`. */
+    function exportFolder(title = "Fixture sync"): string {
+        const folder = mkdtempSync(join(tmpdir(), "wispr-export-"));
+        const meeting: Meeting = {
+            id: meetingId,
+            title,
+            start: "2026-11-02T09:00:00.000Z",
+            end: "2026-11-02T09:30:00.000Z",
+            hasTranscript: true,
+            folders: [],
+            summary: "",
+            notes: "",
+            participants: [
+                { speakerId: 1, name: "Alice Example", origin: "self", isSelf: true },
+                { speakerId: 2, name: "Bob Example", origin: "llm" },
+            ],
+            transcript: [entry("Alice Example", 1, "Hello Bob."), entry("Bob Example", 3, "Hi Alice.")],
+        };
+        writeFileSync(join(folder, "meeting.json"), SafeJSON.stringify({ source: "local", meeting, calendar: null }));
+        writeFileSync(join(folder, "Summary.md"), "# Fixture sync\n");
+        writeFileSync(join(folder, "Transcript.md"), "# Fixture sync\n");
+        writeFileSync(join(folder, "upload.ogg"), "ogg");
+        mkdirSync(join(folder, "wispr-raw"));
+        const live = [
+            { meta: { v: 3 } },
+            { text: "Hello Bob.", speaker: { id: 1, source: "mic" }, startRecordingMs: 1000, endRecordingMs: 2000 },
+            { text: "Hi Alice.", speaker: { id: 2, source: "system" }, startRecordingMs: 3000, endRecordingMs: 4000 },
+        ];
+        writeFileSync(
+            join(folder, "wispr-raw", "live.ndjson"),
+            `${live.map((line) => SafeJSON.stringify(line)).join("\n")}\n`
+        );
+        return folder;
+    }
+
+    test("import, then the reader answers from the store and the evidence carries the channel of each line", async () => {
+        const result = importExport({ folder: exportFolder() });
+
+        expect(result.status).toBe("imported");
+        expect(result.copied.map((file) => file.name)).toEqual(
+            expect.arrayContaining(["meeting.json", "Summary.md", "Transcript.md", "live.ndjson", "upload.ogg"])
+        );
+        expect(result.missing).toContain("refined.ndjson");
+
+        const folder = importedMeetingFolder(meetingId);
+        expect(folder).toBe(result.folder);
+
+        const available = spyOn(local, "localAvailable").mockReturnValue(false);
+
+        try {
+            const loaded = await loadMeeting(meetingId, { source: "local", transcript: true });
+            expect(loaded.source).toBe("imported");
+            expect(loaded.notes).toContain("The meeting was imported from an export.");
+            expect(loaded.data.transcript).toHaveLength(2);
+
+            const audio = await wisprAudioAccess({ dir: join(folder!, "no-wispr-app") }).files();
+            expect(audio).toContainEqual({ sourceMeetingId: meetingId, path: join(folder!, "upload.ogg") });
+            expect(await wisprAudioAccess({ dir: join(folder!, "no-wispr-app") }).load(meetingId)).toMatchObject({
+                sourceMeetingId: meetingId,
+                title: "Fixture sync",
+            });
+        } finally {
+            available.mockRestore();
+        }
+
+        const evidence = readEvidence(folder!, "Alice Example");
+        expect(evidence.segments.map((segment) => [segment.channel, segment.text])).toEqual([
+            ["mic", "Hello Bob."],
+            ["system", "Hi Alice."],
+        ]);
+        expect(evidence.audioPath).toBe(join(folder!, "upload.ogg"));
+    });
+
+    test("the same export again changes nothing, and a different one is refused until --force", () => {
+        importExport({ folder: exportFolder() });
+
+        expect(importExport({ folder: exportFolder() })).toMatchObject({ status: "unchanged", copied: [] });
+
+        const renamed = exportFolder("Fixture sync, renamed");
+        expect(() => importExport({ folder: renamed })).toThrow(ImportConflictError);
+        expect(importExport({ folder: renamed, force: true }).status).toBe("replaced");
+        expect(readFileSync(join(importedMeetingFolder(meetingId)!, "meeting.json"), "utf8")).toContain("renamed");
     });
 });

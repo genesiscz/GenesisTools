@@ -1,5 +1,6 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
+import { readImportedExport } from "./imported";
 import { getLocalMeeting, localAvailable, localMeetingIdForShareSlug } from "./local";
 import { getMcpMeeting, McpUnavailableError, resolveMcpShareLink } from "./mcp";
 import { transcriptGapNote } from "./render";
@@ -61,8 +62,9 @@ function speakerDrift(local: Meeting, remote: Meeting): string[] {
 
 /**
  * `auto`: the local copy when the meeting is on this Mac (it alone has renames not yet on the
- * server, timestamps, and transcript corrections), else the MCP. `crossCheck` also asks the MCP
- * and reports where the two disagree.
+ * server, timestamps, and transcript corrections), else an export imported with `meetings import`
+ * (a meeting recorded on another Mac and account, which the MCP cannot see), else the MCP.
+ * `local` stops before the MCP. `crossCheck` also asks the MCP and reports where the two disagree.
  */
 export async function loadMeeting(
     id: string,
@@ -93,11 +95,24 @@ export async function loadMeeting(
             return { source: "local", data: local, notes };
         }
 
+        const imported = readImportedExport(id)?.meeting;
+
+        if (imported) {
+            notes.push("The meeting was imported from an export.");
+
+            if (imported.transcriptGap) {
+                notes.push(transcriptGapNote(imported.transcriptGap));
+            }
+
+            log.debug({ id, notes }, "meeting answered by an imported export");
+            return { source: "imported", data: imported, notes };
+        }
+
         if (options.source === "local") {
             throw new Error(
                 localAvailable()
-                    ? `meeting ${id} is not in the local Wispr Flow database`
-                    : "the Wispr Flow app data is not on this Mac"
+                    ? `meeting ${id} is not in the local Wispr Flow database or the imported exports`
+                    : `the Wispr Flow app data is not on this Mac, and meeting ${id} is not an imported export`
             );
         }
 

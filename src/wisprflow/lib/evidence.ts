@@ -6,7 +6,6 @@ import type { MeetingEvidence } from "@genesiscz/utils/meetings/sources";
 import type { EvidenceSegment, SpeakingObservation } from "@genesiscz/utils/transcribe/evidence";
 import { z } from "zod";
 import { parseLive } from "./live";
-import { WISPR_DIR } from "./local";
 
 const { log } = logger.scoped("wisprflow-evidence");
 
@@ -132,12 +131,11 @@ function readJson(path: string): unknown {
 }
 
 /**
- * The raw evidence in the app's meeting folder: the channel of every live segment (\`live.ndjson\`, on the same
- * recording clock as the refined transcript), Teams' speaking indicator, the token count per channel and the audio
- * setup. Read-only; a missing file leaves its part empty.
+ * The raw evidence in a Wispr meeting folder (the app's own \`meetings/<id>\`, or an imported export): the channel of
+ * every live segment (\`live.ndjson\`, on the same recording clock as the refined transcript), Teams' speaking
+ * indicator, the token count per channel and the audio setup. Read-only; a missing file leaves its part empty.
  */
-export function readEvidence(meetingId: string, selfName: string | undefined): MeetingEvidence {
-    const folder = join(WISPR_DIR, "meetings", meetingId);
+export function readEvidence(folder: string, selfName: string | undefined): MeetingEvidence {
     const files = existsSync(folder)
         ? readdirSync(folder).map((name) => ({ name, bytes: statSync(join(folder, name)).size }))
         : [];
@@ -171,7 +169,7 @@ export function readEvidence(meetingId: string, selfName: string | undefined): M
     const tokens = tokensSchema.safeParse(readJson(join(folder, "native-language-evidence.json")));
     const devices = z.record(z.string(), z.unknown()).safeParse(readJson(join(folder, "audio-devices.json")));
     log.debug(
-        { meetingId, segments: segments.length, observations: speaking.length, files: files.length },
+        { folder, segments: segments.length, observations: speaking.length, files: files.length },
         "evidence read"
     );
 
