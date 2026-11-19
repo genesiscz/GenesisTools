@@ -311,7 +311,9 @@ struct TranscriptBlocksPane: View {
         var items: [MenuButtonItem] = [.note("Show a suggested speaker as the name from")]
         for value in values {
             let bands = BandCount(Self.shownLines(entries, applyAbove: value))
-            let questions = ListenTranscriptQuality.probe(entries, percent: Int(value)).questions
+            // The saved value is the config's own number; bounded before `Int(_:)`, which traps past Int's range (any
+            // percent outside -1000...1000 counts the same lines as the bound).
+            let questions = ListenTranscriptQuality.probe(entries, percent: Int(min(1_000, max(-1_000, value)))).questions
             items.append(.action("\(Self.percentText(value)): \(bands.words), \(Plural.count(questions, "long-stretch question"))",
                                  checked: value == saved) {
                 Task { await threshold.set(value) }
