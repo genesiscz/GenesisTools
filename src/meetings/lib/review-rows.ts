@@ -17,6 +17,7 @@ import {
     askedRank,
     heardTimes,
     inputNeeded,
+    itemsNamed,
     NONE_OF_THESE,
     type QuestionItem,
     questionLabel,
@@ -384,7 +385,7 @@ function plainChoices(item: MeetingItem, words: { confirm: string; reject?: stri
  * question, and "Skip".
  */
 function questionChoices(record: MeetingRecord, question: QuestionItem): RowChoice[] {
-    const decided = record.items.filter((item) => question.decides.includes(item.id));
+    const decided = itemsNamed(record, question.decides);
     const term = decided.find((item): item is TermItem => item.kind === "term");
     const range = decided.find(
         (item): item is Extract<MeetingItem, { kind: "speaker-range" }> => item.kind === "speaker-range"
@@ -514,9 +515,8 @@ function partsOf(record: MeetingRecord, item: MeetingItem, lines: TranscriptLine
 
     if (item.kind === "question") {
         const view = lines ? questionView(record, item, lines, SAID_CHARS) : undefined;
-        const ranges = record.items.filter(
-            (one): one is Extract<MeetingItem, { kind: "speaker-range" }> =>
-                one.kind === "speaker-range" && item.decides.includes(one.id)
+        const ranges = itemsNamed(record, item.decides).filter(
+            (one): one is Extract<MeetingItem, { kind: "speaker-range" }> => one.kind === "speaker-range"
         );
         const who = [...new Set(ranges.map((range) => range.label))].join(", ") || line?.entry.speaker;
 

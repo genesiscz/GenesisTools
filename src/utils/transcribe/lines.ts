@@ -97,6 +97,41 @@ export class TranscriptLines {
         return ends;
     }
 
+    /** The timed lines' indexes in start order, built on the first range lookup. */
+    private byStart?: number[];
+
+    /**
+     * The lines that start from `fromSec` up to `toSec` (both included), in transcript order. A binary search over the
+     * lines sorted by start, so a batch of range lookups does not scan the whole transcript for each one.
+     */
+    startingBetween(fromSec: number, toSec: number): Array<{ entry: TranscriptEntry; index: number }> {
+        const entries = this.entries;
+        this.byStart ??= entries
+            .flatMap((entry, index) => (entry.startSec === undefined ? [] : [index]))
+            .sort((a, b) => entries[a]!.startSec! - entries[b]!.startSec! || a - b);
+        const order = this.byStart;
+        let low = 0;
+        let high = order.length;
+
+        while (low < high) {
+            const mid = (low + high) >> 1;
+
+            if (entries[order[mid]!]!.startSec! < fromSec) {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+
+        const found: number[] = [];
+
+        for (let at = low; at < order.length && entries[order[at]!]!.startSec! <= toSec; at++) {
+            found.push(order[at]!);
+        }
+
+        return found.sort((a, b) => a - b).map((index) => ({ entry: entries[index]!, index }));
+    }
+
     address(index: number): LineAddress | undefined {
         const startSec = this.entries[index]?.startSec;
         return startSec === undefined ? undefined : { index, startSec };
