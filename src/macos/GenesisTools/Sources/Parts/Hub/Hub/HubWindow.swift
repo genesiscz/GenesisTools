@@ -1225,8 +1225,8 @@ final class HubModel {
     @MainActor
     private func restorePlace(_ entry: HubNavEntry, commit: String?, repo: String?) {
         setMode(entry.mode)
-        if entry.mode == .work, let ref = entry.workItem {
-            work.screen.openItem(ref)
+        if entry.mode == .work {
+            restoreWorkItem(entry.workItem)
             return
         }
         guard let id = entry.selection else { return }
@@ -2076,11 +2076,7 @@ final class HubModel {
         }
         if request.mode == .work {
             MainActor.assumeIsolated {
-                if let ref = request.workItem { work.screen.openItem(ref) }
-                else {
-                    work.screen.closeItem()
-                    work.screen.pane = .items
-                }
+                restoreWorkItem(request.workItem)
             }
         }
         if let text = request.filter {
@@ -2138,6 +2134,15 @@ final class HubModel {
         }
         if let id = request.timelineOpen {
             MainActor.assumeIsolated { openTimelineRequest(id, action: request.timelineAction) }
+        }
+    }
+
+    @MainActor
+    private func restoreWorkItem(_ ref: String?) {
+        if let ref { work.screen.openItem(ref) }
+        else {
+            work.screen.closeItem()
+            work.screen.pane = .items
         }
     }
 

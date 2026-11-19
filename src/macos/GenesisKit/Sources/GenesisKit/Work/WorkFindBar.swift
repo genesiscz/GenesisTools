@@ -132,7 +132,7 @@ public struct WorkFindBar: View {
     }
 
     private var typeMenu: some View {
-        facet("Type", value: summary(WorkWords.types.filter { filter.types.contains($0) }.map(WorkWords.type)),
+        facet("Type", values: WorkWords.types.filter { filter.types.contains($0) }.map(WorkWords.type),
               active: !filter.types.isEmpty, identifier: "work.find.type") {
             [.action("Any", checked: filter.types.isEmpty) { filter.types = [] }, .divider]
                 + WorkWords.types.map { type in
@@ -148,7 +148,8 @@ public struct WorkFindBar: View {
         let labels = choices.map { state in
             state == .open && choices.count > 1 ? WorkWords.state("open") : WorkWords.stateGroup(state)
         }
-        return facet("State", value: summary(labels), active: !filter.states.isEmpty, identifier: "work.find.state") {
+        return facet("State", values: labels, spokenValues: choices.map(WorkWords.stateGroup),
+                     active: !filter.states.isEmpty, identifier: "work.find.state") {
             [.action("Any", checked: filter.states.isEmpty) { filter.states = [] }, .divider]
                 + WorkFilter.StateGroup.allCases.map { state in
                     .action(WorkWords.stateGroup(state), checked: filter.states.contains(state)) {
@@ -159,8 +160,8 @@ public struct WorkFindBar: View {
     }
 
     private var severityMenu: some View {
-        facet("Severity", value: summary(WorkWords.severities.filter { filter.severities.contains($0) }
-            .map { WorkWords.severity($0) }), active: !filter.severities.isEmpty,
+        facet("Severity", values: WorkWords.severities.filter { filter.severities.contains($0) }
+            .map { WorkWords.severity($0) }, active: !filter.severities.isEmpty,
               identifier: "work.find.severity") {
             [.action("Any", checked: filter.severities.isEmpty) { filter.severities = [] }, .divider]
                 + WorkWords.severities.map { severity in
@@ -189,9 +190,10 @@ public struct WorkFindBar: View {
         .accessibilityIdentifier("work.find.mine")
     }
 
-    private func facet(_ title: String, value: String, active: Bool, identifier: String,
+    private func facet(_ title: String, values: [String], spokenValues: [String]? = nil, active: Bool, identifier: String,
                        items: @escaping () -> [MenuButtonItem]) -> some View {
-        let label = value.isEmpty ? title : "\(title): \(value)"
+        let label = values.isEmpty ? title : "\(title): \(summary(values))"
+        let spoken = (spokenValues ?? values).joined(separator: ", ")
         return MenuButton(items: items) {
             HStack(spacing: 4) {
                 Text(verbatim: label).lineLimit(1).truncationMode(.tail)
@@ -205,7 +207,7 @@ public struct WorkFindBar: View {
         .foregroundStyle(active ? Color.accentColor : Color.primary)
         .instantTooltip(label)
         .accessibilityLabel(title)
-        .accessibilityValue(value.isEmpty ? "Any" : value)
+        .accessibilityValue(spoken.isEmpty ? "Any" : spoken)
         .accessibilityIdentifier(identifier)
     }
 

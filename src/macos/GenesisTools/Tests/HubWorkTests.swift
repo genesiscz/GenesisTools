@@ -519,8 +519,8 @@ private func headerRGBA(_ rep: NSBitmapImageRep) throws -> [UInt8] {
 
 private func changedHeaderPixels(_ first: NSBitmapImageRep, _ second: NSBitmapImageRep,
                                  ignoringTrailingPoints: CGFloat = 0) throws -> Int {
-    XCTAssertEqual(first.pixelsWide, second.pixelsWide)
-    XCTAssertEqual(first.pixelsHigh, second.pixelsHigh)
+    _ = try XCTUnwrap(first.pixelsWide == second.pixelsWide && first.pixelsHigh == second.pixelsHigh ? second : nil,
+                      "Capture sizes differ: \(first.pixelsWide)×\(first.pixelsHigh) and \(second.pixelsWide)×\(second.pixelsHigh)")
     let width = first.pixelsWide
     let height = first.pixelsHigh
     let lhs = try headerRGBA(first)
@@ -628,14 +628,7 @@ extension HubWorkTests {
             let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
                 context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0))
-            NSApp.postEvent(event, atStart: false)
-        }
-        let deadline = Date().addingTimeInterval(0.25)
-        while Date() < deadline {
-            if let event = NSApp.nextEvent(matching: [.leftMouseDown, .leftMouseUp], until: deadline,
-                                           inMode: .default, dequeue: true) {
-                NSApp.sendEvent(event)
-            }
+            window.sendEvent(event)
         }
     }
 
@@ -817,6 +810,11 @@ extension HubWorkTests {
         await waitForDetail(hub.work.screen, ref: second)
         XCTAssertEqual(HubPlace(entry: hub.navEntry, tab: .transcript).arguments, ["--work", second])
         hub.goBack()
+        await waitForDetail(hub.work.screen, ref: first)
+        hub.goBack()
+        XCTAssertNil(hub.work.screen.itemRef)
+        XCTAssertEqual(hub.work.screen.pane, .items)
+        hub.goForward()
         await waitForDetail(hub.work.screen, ref: first)
         hub.goForward()
         await waitForDetail(hub.work.screen, ref: second)

@@ -328,14 +328,6 @@ struct WorkMain: View {
                 findRequest += 1
             }
         }
-        .task(id: screen.filter.fullRef) {
-            guard let ref = screen.filter.fullRef else { return }
-            try? await Task.sleep(for: .milliseconds(350))
-            guard !Task.isCancelled, screen.filter.fullRef == ref, let snapshot = screen.snapshot,
-                  !snapshot.containers.contains(where: { $0.ref == ref || $0.members.contains(where: { $0.ref == ref && $0.isOpen }) }),
-                  !snapshot.triage.contains(where: { $0.ref == ref }) else { return }
-            screen.select(ref)
-        }
     }
 }
 
