@@ -6,7 +6,7 @@ import { type ResolvedTranscript, resolveTranscript } from "@genesiscz/utils/ai/
 import { formatDuration } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import { formatTable } from "@genesiscz/utils/table";
-import { addColdEvidence, type ColdEvidence, renderCold } from "./cold-resumes";
+import { addColdEvidence, type ColdEvidence, coldComparison, renderCold } from "./cold-resumes";
 
 const MINUTE = 60_000;
 const edges = [1, 4, 5, 6, 15, 55, 60, 65];
@@ -123,7 +123,7 @@ export async function printResumes(ids: string[], opts: ResumeOptions): Promise<
             loop.pauses = loop.pauses.filter((pause) => pause.gapMs >= opts.minGapMs);
         }
         addLifetimeEvidence(table, facts.items);
-        if (opts.cold && !opts.json) {
+        if (opts.cold) {
             addColdEvidence(cold, facts.items, session.provider, opts.idleSeconds);
             continue;
         }
@@ -179,19 +179,21 @@ export async function printResumes(ids: string[], opts: ResumeOptions): Promise<
     }
 
     const ttl = [...table.values()];
+    const comparison = opts.cold ? coldComparison(cold, opts) : null;
     if (opts.json) {
         out.result({
             schema: "sessions.resumes@1",
             scanned: selected.length,
             unavailable,
-            ...(opts.ttlOnly ? {} : { sessions }),
+            ...(opts.ttlOnly || comparison ? {} : { sessions }),
+            ...(comparison ? { cold: comparison } : {}),
             ttl,
         });
         return;
     }
 
-    if (opts.cold) {
-        out.println(renderCold(cold, opts));
+    if (comparison) {
+        out.println(renderCold(comparison));
         for (const reason of new Set(unavailable.map((item) => item.reason))) {
             out.println(reason);
         }

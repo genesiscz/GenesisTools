@@ -83,7 +83,7 @@ export function registerSessionAnalysis(sessions: Command): void {
         .option("--price-model <id>", "Model to price the fresh-agent comparison", "opus")
         .option("--min-gap <seconds>", "Shortest pause to include", "60")
         .option("--no-main", "Leave out the main loop")
-        .option("--json", "Print sessions.resumes@1")
+        .option("--json", "Print sessions.resumes@1; with --cold, a cold comparison replaces the session list")
         .action(
             async (
                 ids: string[],

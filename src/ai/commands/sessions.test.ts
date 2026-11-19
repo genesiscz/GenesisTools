@@ -77,6 +77,29 @@ describe("sessions range flags", () => {
         } finally {
             output.mockRestore();
         }
+
+        const result = spyOn(out, "result").mockImplementation(() => {});
+        try {
+            const args = ["sessions", "resumes", path, "--provider", "claude", "--no-main", "--cold", "--json"];
+            expect((await run([...args, "--idle-seconds", "600", "--price-model", "fixture-unpriced"])).errors).toEqual(
+                []
+            );
+            expect(result.mock.calls[0]?.[0]).toMatchObject({
+                cold: { idleSeconds: 600, resumes: 0, bands: [], fresh: null },
+            });
+            expect(result.mock.calls[0]?.[0]).not.toHaveProperty("sessions");
+            expect((await run([...args, "--price-model", "fixture-unpriced"])).errors).toEqual([]);
+            expect(result.mock.calls[1]?.[0]).toMatchObject({
+                cold: {
+                    idleSeconds: 295,
+                    resumes: 1,
+                    bands: [{ from: 0, resumes: 1 }],
+                    fresh: { priced: false, reason: "no price for fixture-unpriced" },
+                },
+            });
+        } finally {
+            result.mockRestore();
+        }
     });
     test("context exposes the five report sections and exports queryable source and carry dimensions", async () => {
         const dir = mkdtempSync(join(tmpdir(), "context-cli-"));
