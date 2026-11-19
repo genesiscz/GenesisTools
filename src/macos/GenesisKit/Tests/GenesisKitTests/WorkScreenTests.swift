@@ -10,20 +10,35 @@ private final class FakeWorkSource: WorkSource {
     var notifyRows: [WorkNotifyRow] = []
     var performed: [WorkScreenAction] = []
     var reads = 0
+    var holdNextRead = false
+    var resumeRead: CheckedContinuation<Void, Never>?
+    var subscriptions = 0
     private var continuation: AsyncStream<Void>.Continuation?
 
     init(_ snapshot: WorkSnapshotValue) { snapshotValue = snapshot }
 
     func projects() async throws -> [String] { ["App", "Other"] }
     func detail(ref: String) async throws -> WorkItemDetail { throw WorkSourceError("No fixture item \(ref)") }
-    func snapshot(project: String) async throws -> WorkSnapshotValue { reads += 1; return snapshotValue }
+    func snapshot(project: String) async throws -> WorkSnapshotValue {
+        reads += 1
+        if holdNextRead {
+            holdNextRead = false
+            await withCheckedContinuation { resumeRead = $0 }
+            resumeRead = nil
+        }
+        return snapshotValue
+    }
     func notify(project: String) async throws -> [WorkNotifyRow] { notifyRows }
     func perform(_ action: WorkScreenAction, project: String) async throws -> WorkActionOutcome {
         performed.append(action)
         return WorkActionOutcome(ok: true, message: "\(action.done): \(action.ref)")
     }
-    func changes() -> AsyncStream<Void> { AsyncStream { continuation = $0 } }
+    func changes() -> AsyncStream<Void> {
+        subscriptions += 1
+        return AsyncStream { continuation = $0 }
+    }
     func tick() { continuation?.yield(()) }
+    func end() { continuation?.finish() }
 }
 
 @MainActor
@@ -118,8 +133,67 @@ final class WorkScreenTests: XCTestCase {
         model.setVisible(false)
         model.setVisible(true)
         try await Task.sleep(for: .milliseconds(600))
-        XCTAssertEqual(source.reads - hidden, 1, "a look after no change reads nothing")
+        XCTAssertEqual(source.reads - hidden, 2, "the stream was stopped while hidden, so each return reads once")
         model.deactivate()
+    }
+
+    func testAnEqualLiveReadPublishesNothingAndKeepsTheSnapshot() async {
+        let source = FakeWorkSource(fixture())
+        let model = WorkScreenModel(source: source, reloadInterval: 0, settle: 0)
+        model.activate()
+        defer { model.deactivate() }
+        await settle { model.snapshot != nil }
+        var publications = 0
+        let observer = model.objectWillChange.sink { publications += 1 }
+        defer { observer.cancel() }
+        source.holdNextRead = true
+        source.tick()
+        await settle { source.resumeRead != nil }
+        XCTAssertFalse(model.isFirstLoad)
+        XCTAssertFalse(model.isLoading)
+        source.resumeRead?.resume()
+        await settle { source.resumeRead == nil }
+        XCTAssertEqual(publications, 0)
+    }
+
+    func testEndedStreamReconnectsAndReadsOnce() async {
+        let source = FakeWorkSource(fixture())
+        let model = WorkScreenModel(source: source, reloadInterval: 0, settle: 0, retryDelays: [])
+        model.activate()
+        defer { model.deactivate() }
+        await settle { model.snapshot != nil }
+        let reads = source.reads
+        source.end()
+        let stopped = WorkLiveState.stopped(reason: "The GenesisTools service stopped.")
+        await settle { model.live == stopped }
+        XCTAssertEqual(model.live, stopped)
+        model.reconnect()
+        XCTAssertEqual(model.live, .live)
+        await settle { source.reads > reads }
+        XCTAssertEqual(source.subscriptions, 2)
+        XCTAssertEqual(source.reads, reads + 1)
+    }
+
+    func testSlowTickAndPendingWriteWaitForTheirOwnRead() async {
+        let source = FakeWorkSource(fixture())
+        let model = WorkScreenModel(source: source, reloadInterval: 0, settle: 0, catchUpDelay: 0.01)
+        model.activate()
+        defer { model.deactivate() }
+        await settle { model.snapshot != nil }
+        source.holdNextRead = true
+        source.tick()
+        await settle { model.live == .catchingUp }
+        XCTAssertEqual(model.live, .catchingUp)
+        XCTAssertFalse(model.isLoading)
+        source.resumeRead?.resume()
+        await settle { model.live == .live }
+        source.holdNextRead = true
+        let write = Task { await model.perform(.accept(ref: "w_spot0002")) }
+        await settle { source.resumeRead != nil }
+        XCTAssertTrue(model.pending.contains("w_spot0002"))
+        source.resumeRead?.resume()
+        await write.value
+        XCTAssertTrue(model.pending.isEmpty)
     }
 
     func testTheItemsPaneShowsHandoffsSpottedByTypeAndReopened() throws {
