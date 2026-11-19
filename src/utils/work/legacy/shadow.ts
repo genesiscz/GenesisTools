@@ -480,7 +480,7 @@ function seen(db: Database, uid: string): boolean {
  * Brings one handoff of the old store into the work store. Safe to repeat: each event is applied once (by its uid),
  * and the reconcile step only writes when a row differs from the folded handoff.
  */
-export function ingestLegacyHandoff(db: Database, handoff: LegacyHandoff, events: readonly LegacyEventRef[]): void {
+export function ingestLegacyHandoff(db: Database, handoff: LegacyHandoff, events: Iterable<LegacyEventRef>): void {
     const own = !db.inTransaction;
 
     if (own) {

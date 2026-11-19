@@ -116,7 +116,20 @@ function findHandoffsByName(db: Database, name: string): Handoff[] {
         .map(rowToHandoff);
 }
 
-function listHandoffRows(db: Database, { project, statuses }: HandoffListFilter = {}): Handoff[] {
+export function listHandoffPage(
+    db: Database,
+    {
+        project,
+        statuses,
+        limit,
+        offset,
+        matches,
+    }: HandoffListFilter & {
+        limit: number;
+        offset: number;
+        matches?: (handoff: Handoff) => boolean;
+    }
+): { page: Handoff[]; total: number } {
     const filters: string[] = [];
     const params: string[] = [];
 
@@ -131,10 +144,30 @@ function listHandoffRows(db: Database, { project, statuses }: HandoffListFilter 
     }
 
     const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
-    return db
-        .query<HandoffRow, string[]>(`SELECT * FROM handoffs ${where} ORDER BY updated_ts DESC`)
-        .all(...params)
-        .map(rowToHandoff);
+    const order = "ORDER BY updated_ts DESC";
+    if (matches === undefined) {
+        return db.transaction(() => ({
+            page: db
+                .query<HandoffRow, (string | number)[]>(`SELECT * FROM handoffs ${where} ${order} LIMIT ? OFFSET ?`)
+                .all(...params, limit, offset)
+                .map(rowToHandoff),
+            total:
+                db.query<{ n: number }, string[]>(`SELECT COUNT(*) AS n FROM handoffs ${where}`).get(...params)?.n ?? 0,
+        }))();
+    }
+
+    const page: Handoff[] = [];
+    let total = 0;
+    for (const row of db.query<HandoffRow, string[]>(`SELECT * FROM handoffs ${where} ${order}`).iterate(...params)) {
+        const handoff = rowToHandoff(row);
+        if (matches(handoff)) {
+            if (total >= offset && page.length < limit) {
+                page.push(handoff);
+            }
+            total++;
+        }
+    }
+    return { page, total };
 }
 
 interface EventRow {
@@ -246,4 +279,4 @@ export function findHandoffAttachment(db: Database, attachmentId: string): Store
 }
 
 /** The handoff compatibility tables in work.db retain fields the item view cannot represent. */
-export const handoffQueries = { getHandoffById, findHandoffsByName, listHandoffRows, listHandoffEvents };
+export const handoffQueries = { getHandoffById, findHandoffsByName, listHandoffEvents };
