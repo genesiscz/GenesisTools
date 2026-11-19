@@ -72,7 +72,7 @@ let kitTargets: [Target] = [
     // Widget/: the golden widget snapshots src/hub/lib/widget/snapshot-golden.test.ts writes from the real builder.
     .target(
         name: "GenesisKitFixtures", path: "Sources/GenesisKitFixtures",
-        resources: [.copy("Disk"), .copy("Git"), .copy("Widget")]),
+        resources: [.copy("Disk"), .copy("Git"), .copy("Recording"), .copy("Widget")]),
     // Tests only: a window asked to become key is only ordered front, and the app never activates, so a test run
     // never takes the user's keyboard focus.
     .target(name: "GenesisKitTestHooks", path: "Sources/GenesisKitTestHooks", linkerSettings: [.linkedFramework("AppKit")]),

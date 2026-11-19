@@ -20,19 +20,9 @@ enum WindowClickPicker {
         return window
     }
 
-    static func windows() -> [RecordingWindow] {
-        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
-        let rows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] ?? []
-        return rows.compactMap { row in
-            guard row[kCGWindowLayer as String] as? Int == 0, (row[kCGWindowAlpha as String] as? Double ?? 1) > 0,
-                  let id = row[kCGWindowNumber as String] as? UInt32, let pid = row[kCGWindowOwnerPID as String] as? Int32,
-                  let raw = row[kCGWindowBounds as String] as? NSDictionary,
-                  let frame = CGRect(dictionaryRepresentation: raw), !frame.isEmpty else { return nil }
-            return RecordingWindow(id: id, pid: pid, app: row[kCGWindowOwnerName as String] as? String ?? "App",
-                                   title: row[kCGWindowName as String] as? String ?? "",
-                                   bounds: .init(x: frame.minX, y: frame.minY, width: frame.width, height: frame.height))
-        }
-    }
+    /// The windows a click can pick, front to back: real app windows only (`RecordableWindow`), never an overlay
+    /// such as a dimmer laid over the whole display, a palette, a menu bar extra or the picker's own panels.
+    static func windows() -> [RecordingWindow] { RecordableWindow.onScreen() }
 
     static func begin(overlays: RecordingPickerOverlays, parent: NSWindow?, hover: @escaping (RecordingWindow?) -> Void,
                       completion: @escaping (RecordingTarget?) -> Void) {

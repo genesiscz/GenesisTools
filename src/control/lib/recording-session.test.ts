@@ -1728,6 +1728,52 @@ describe("recording commands and targets", () => {
         });
     });
 
+    it("leaves a dimmer over a whole display out of the windows and keeps its app's settings window", () => {
+        const display = { x: 0, y: 0, width: 1440, height: 900 };
+        const raw = {
+            ok: true,
+            windows: [
+                {
+                    pid: 20,
+                    app: "Editor",
+                    windowId: 7,
+                    title: "a.txt",
+                    bounds: { x: 10, y: 40, width: 600, height: 400 },
+                },
+                {
+                    pid: 40,
+                    app: "Dimmer",
+                    windowId: 8,
+                    bounds: display,
+                    alpha: 0.63,
+                    sharingState: 1,
+                    ownerKind: "accessory",
+                },
+                {
+                    pid: 40,
+                    app: "Dimmer",
+                    windowId: 9,
+                    title: "Dimmer Settings",
+                    bounds: { x: 300, y: 200, width: 632, height: 412 },
+                    alpha: 1,
+                    sharingState: 1,
+                    ownerKind: "accessory",
+                },
+                {
+                    pid: 50,
+                    app: "Recorder",
+                    windowId: 10,
+                    title: "Choose what to record",
+                    bounds: { x: 300, y: 200, width: 380, height: 420 },
+                    sharingState: 0,
+                },
+            ],
+        };
+        expect(parseRecordingWindows(raw, [display]).map((window) => window.id)).toEqual([7, 9]);
+        // Without the displays' frames the dimmer cannot be told from a window; the unreadable panel still goes.
+        expect(parseRecordingWindows(raw).map((window) => window.id)).toEqual([7, 8, 9]);
+    });
+
     it("lists windows without system chrome or slivers, groups apps and picks the frontmost app's window", () => {
         const raw = {
             ok: true,

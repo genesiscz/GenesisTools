@@ -60,6 +60,7 @@ import {
 } from "./native";
 import { blockInFrame, changedAreas, mergeAreaRead, planRead } from "./ocr-region";
 import { peekabooCaptureError } from "./peekaboo";
+import { type ScreenRect, type UnrecordableReason, unrecordableReason, type WindowFacts } from "./recordable-window";
 import type { SessionCapture } from "./session";
 import { LibraryRecording, startRecording } from "./start";
 import {
@@ -2726,5 +2727,38 @@ describe("frame recordings with continuous sound", () => {
         expect(notes?.filter((note) => note.includes("The continuous sound did not start at"))).toHaveLength(1);
         expect(notes?.some((note) => note.includes("seconds are missing"))).toBe(false);
         expect(readRecordingManifest(recording.folder)?.settings?.tracks).toHaveLength(3);
+    });
+});
+
+describe("unrecordableReason", () => {
+    // The one copy of the cases, shared with GenesisKit's RecordableWindowTests.
+    const contract = SafeJSON.parse(
+        readFileSync(
+            join(
+                moduleDir(import.meta),
+                "../../macos/GenesisKit/Sources/GenesisKitFixtures/Recording/contract-recordable-windows.json"
+            ),
+            "utf8"
+        ),
+        { strict: true }
+    ) as {
+        displays: ScreenRect[];
+        cases: { name: string; window: WindowFacts; reason: UnrecordableReason | null }[];
+    };
+
+    test("has the cases GenesisKit also passes", () => {
+        expect(contract.cases.length).toBeGreaterThanOrEqual(20);
+    });
+
+    for (const item of contract.cases) {
+        test(item.name, () => {
+            expect(unrecordableReason(item.window, contract.displays) ?? null).toBe(item.reason);
+        });
+    }
+
+    test("an overlay is told apart only when the displays are known", () => {
+        const dimmer = contract.cases.find((item) => item.reason === "overlay")?.window;
+        expect(dimmer).toBeDefined();
+        expect(unrecordableReason(dimmer as WindowFacts)).toBeUndefined();
     });
 });
