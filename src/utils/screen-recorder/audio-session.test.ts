@@ -6,7 +6,13 @@ import { withTimeout } from "@genesiscz/utils/async";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { z } from "zod";
-import { type AudioSegment, AudioSession, audioSegmentSchema, salvagedAudioTiming } from "./audio-session";
+import {
+    type AudioSegment,
+    AudioSession,
+    audioSegmentSchema,
+    finishAudioHandoffs,
+    salvagedAudioTiming,
+} from "./audio-session";
 import type { AudioSource } from "./control";
 
 const fake = join(moduleDir(import.meta), "__fixtures__", "fake-ax-tool.ts");
@@ -245,5 +251,46 @@ describe("continuous sound over the fake tool", () => {
         }
         expect(existsSync(join(dir, ".piece", "sound", "audio-000001-mic.m4a"))).toBe(true);
         expect(readdirSync(join(dir, "audio"))).toEqual([]);
+        expect(readdirSync(join(dir, ".piece", "sound")).filter((name) => name.endsWith(".handoff.json"))).toEqual([]);
+    });
+
+    test("a handoff cut off by a process death is finished once, after the move or before it", () => {
+        const dir = folder();
+        const pieces = join(dir, ".piece");
+        const handoff = (sub: string, from: string, file: string): AudioSegment => {
+            const row: AudioSegment = {
+                file,
+                source: "mic",
+                at: "2026-11-03T12:00:00.000Z",
+                durationMs: 60_000,
+                mutedSpans: [],
+                zeroAt: "2026-11-03T12:00:00.000Z",
+                kept: "normal",
+            };
+            mkdirSync(join(pieces, sub), { recursive: true });
+            writeFileSync(join(pieces, sub, `${from}.handoff.json`), SafeJSON.stringify({ from, row }));
+            return row;
+        };
+        mkdirSync(join(dir, "audio"));
+        // Killed before the move: the segment is still in its capture folder.
+        const unmoved = handoff("d1-1", "audio-000001-mic.m4a", "audio/a-audio-000001-mic.m4a");
+        writeFileSync(join(pieces, "d1-1", "audio-000001-mic.m4a"), "sound");
+        // Killed after the move, before the ledger row.
+        const moved = handoff("d1-2", "audio-000002-mic.m4a", "audio/a-audio-000002-mic.m4a");
+        writeFileSync(join(dir, moved.file), "sound");
+        // Killed after the ledger row, before the marker was removed.
+        const indexed = handoff("d1-3", "audio-000003-mic.m4a", "audio/a-audio-000003-mic.m4a");
+        writeFileSync(join(dir, indexed.file), "sound");
+        writeFileSync(join(dir, "audio.jsonl"), `${SafeJSON.stringify(indexed)}\n`);
+
+        expect(finishAudioHandoffs(pieces, dir)).toEqual([unmoved, moved]);
+        expect(rows(dir)).toEqual([indexed, unmoved, moved]);
+        expect(existsSync(join(dir, unmoved.file))).toBe(true);
+        expect(existsSync(join(pieces, "d1-1", "audio-000001-mic.m4a"))).toBe(false);
+        expect(
+            readdirSync(pieces, { recursive: true }).filter((name) => String(name).endsWith(".handoff.json"))
+        ).toEqual([]);
+        expect(finishAudioHandoffs(pieces, dir)).toEqual([]);
+        expect(finishAudioHandoffs(join(dir, "missing"), dir)).toEqual([]);
     });
 });

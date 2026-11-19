@@ -15,7 +15,11 @@ import {
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type MeetingsConfig, recorderSettings } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord, MeetingStore, RecordingBlock } from "@genesiscz/utils/meetings/record";
-import { type AudioSegment, salvagedAudioTiming } from "@genesiscz/utils/screen-recorder/audio-session";
+import {
+    type AudioSegment,
+    finishAudioHandoffs,
+    salvagedAudioTiming,
+} from "@genesiscz/utils/screen-recorder/audio-session";
 import type { AudioState, RecorderSettings } from "@genesiscz/utils/screen-recorder/control";
 import { PolicyDisplays } from "@genesiscz/utils/screen-recorder/display-choice";
 import type { FrameOutput, KeptFrame } from "@genesiscz/utils/screen-recorder/frame-output";
@@ -288,24 +292,26 @@ export class MeetingRun {
      * Moves every sound file a capture left in `dir` (a crash, a kill, a failed capture) to the meeting's `audio/`,
      * so clearing `dir` loses no sound. A file named as ax-tool names a track (`audio-<source>.m4a`) gets a row with
      * `kept: "salvaged"`, its saved sample clock and decoded length (file times only as a marked fallback).
-     * Any other `.m4a` is moved without a row.
+     * Any other `.m4a` is moved without a row. A continuous segment whose move or ledger row a process death cut
+     * off is finished first, with the row it was closed with (`finishAudioHandoffs`).
      * Answers how many files it kept.
      */
     async salvageTracks(dir: string): Promise<number> {
+        const handedOver = finishAudioHandoffs(dir, this.folder).length;
         let names: string[];
 
         try {
             names = readdirSync(dir, { recursive: true, encoding: "utf8" }).filter((name) => name.endsWith(".m4a"));
         } catch (err) {
             if (err instanceof Error && "code" in err && err.code === "ENOENT") {
-                return 0;
+                return handedOver;
             }
 
             throw err;
         }
 
         const audioDir = join(this.folder, AUDIO_FOLDER);
-        let kept = 0;
+        let kept = handedOver;
 
         for (const relative of names) {
             const path = join(dir, relative);
