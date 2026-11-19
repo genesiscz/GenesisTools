@@ -63,21 +63,31 @@ export async function pairingsForRows(ctx: WorkContext, refs: string[]) {
         : [];
 
     // An unfiltered triage can contain several projects with different names for the same connector.
-    for (const [project, projectRows] of Map.groupBy(rows, (row) => row.project)) {
+    const projects = new Map<string, StoredRow[]>();
+    for (const row of rows) {
+        const projectRows = projects.get(row.project) ?? [];
+        projectRows.push(row);
+        projects.set(row.project, projectRows);
+    }
+
+    for (const [project, projectRows] of projects) {
         const current = project === ctx.project;
         const layers =
             current && ctx.rules !== undefined
                 ? ctx.rules.layers
                 : (await loadWorkRules({ project, repoRoot: current ? ctx.actor.repoRoot : null })).rules.layers;
 
-        for (const [connector, connectorRows] of Map.groupBy(projectRows, (row) => row.connector)) {
-            const details = connectorDetails(layers, connector);
-
-            for (const row of connectorRows) {
-                const pairings = byItem.get(row.item) ?? [];
-                pairings.push(pairingRow(row, details));
-                byItem.set(row.item, pairings);
+        const details = new Map<string, ConnectorDetails>();
+        for (const row of projectRows) {
+            let connector = details.get(row.connector);
+            if (connector === undefined) {
+                connector = connectorDetails(layers, row.connector);
+                details.set(row.connector, connector);
             }
+
+            const pairings = byItem.get(row.item) ?? [];
+            pairings.push(pairingRow(row, connector));
+            byItem.set(row.item, pairings);
         }
     }
 
