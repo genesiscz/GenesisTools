@@ -196,6 +196,20 @@ final class MeetingsPersonStayTests: XCTestCase {
         XCTAssertEqual(draft.parsed, seats)
     }
 
+    func testAnOlderRoomMicrophoneStaysARoomMicrophoneWhenItsLastMemberIsUnticked() {
+        let seats = MeetingSeats(room: ["Alex Example", "Casey Example"], remote: [.init(name: "Dana Example")],
+                                 microphones: [.init(id: "desk", people: ["Alex Example"], deviceId: nil)])
+        var draft = MeetingSeatsDraft(seats)
+        XCTAssertTrue(draft.carriesRoom(0))
+        draft.toggle("Alex Example", inMicrophone: 0)
+        XCTAssertEqual(draft.seats.microphones?.first?.people, [])
+        XCTAssertTrue(draft.carriesRoom(0), "the seat kind belongs to the group, not to what is ticked")
+        XCTAssertEqual(draft.members(0), ["Alex Example", "Casey Example"], "the room's people stay tickable")
+        draft.toggle("Casey Example", inMicrophone: 0)
+        XCTAssertEqual(draft.parsed.microphones?.first?.people, ["Casey Example"])
+        XCTAssertEqual(draft.device(at: 0), .other(id: "desk", owner: nil), "the device did not change")
+    }
+
     // MARK: Undo ends its notice (w_o8fbzbq8)
 
     func testAnUndoThatWorkedEndsItsNoticeAsUndoneAndTheNoticeFades() async throws {

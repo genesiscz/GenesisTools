@@ -10,6 +10,10 @@ struct MeetingSeatsDraft: Equatable {
     var roomLeaves: [String]
     var joins: [String]
     var leaves: [String]
+    /// The groups other than this Mac's microphone that carried room people when the sheet opened. Their seat kind
+    /// stays with the group, so unticking the last member keeps the room's tick boxes instead of turning it into a
+    /// remote device.
+    private let roomGroupIDs: Set<String>
 
     init(_ seats: MeetingSeats) {
         self.seats = seats
@@ -17,6 +21,11 @@ struct MeetingSeatsDraft: Equatable {
         roomLeaves = seats.roomRows.map { $0.toSec.map(Self.displayClock) ?? "" }
         joins = seats.remote.map { Self.displayJoin($0.fromSec) }
         leaves = seats.remote.map { $0.toSec.map(Self.displayClock) ?? "" }
+        let remote = seats.remote.map(\.name)
+        roomGroupIDs = Set((seats.microphones ?? []).filter { group in
+            guard Device(group) != .thisMac else { return false }
+            return !group.people.isEmpty && !group.people.allSatisfy { Self.contains(remote, $0) }
+        }.map(\.id))
     }
 
     /// A join this close to the start is the start. The call roster's first read lands a second or so after the
@@ -125,15 +134,15 @@ struct MeetingSeatsDraft: Equatable {
         return Device(groups[index])
     }
 
-    /// Whether the group at `index` holds room people: this Mac's microphone, or an older group whose members sit in
-    /// the room.
+    /// Whether the group at `index` holds room people: this Mac's microphone, a group that carried room people when
+    /// the sheet opened (whatever is ticked now), or a group whose members are not all remote.
     func carriesRoom(_ index: Int) -> Bool {
         guard let groups = seats.microphones, groups.indices.contains(index) else { return false }
         switch Device(groups[index]) {
         case .thisMac: return true
         case .owner, .other:
             let remote = seats.remote.map(\.name)
-            return !groups[index].people.allSatisfy { Self.contains(remote, $0) }
+            return roomGroupIDs.contains(groups[index].id) || !groups[index].people.allSatisfy { Self.contains(remote, $0) }
         }
     }
 
