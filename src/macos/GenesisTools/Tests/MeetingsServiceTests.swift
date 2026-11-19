@@ -817,12 +817,7 @@ final class MeetingsServiceTests: XCTestCase {
         guard #available(macOS 14.4, *) else { throw XCTSkip("NSHostingMenu needs macOS 14.4") }
         // Duplicate alone starts a tools process. Use the runner's scratch home if supplied, otherwise this case's.
         let environment = ProcessInfo.processInfo.environment
-        let scratchHome = environment[GenesisToolsHome.variable].flatMap { home -> String? in
-            guard !home.isEmpty, canonicalHome(home) != canonicalHome(NSHomeDirectory()) else { return nil }
-            return ["/tmp", FileManager.default.temporaryDirectory.path].contains(where: {
-                  canonicalHome(home).hasPrefix(canonicalHome($0) + "/")
-            }) ? home : nil
-        } ?? folder.path
+        let scratchHome = environment[GenesisToolsHome.variable].flatMap { ScratchHome.isDisposable($0) ? $0 : nil } ?? folder.path
         let tools = MeetingsFixture.checkout.appendingPathComponent("tools")
         let overrides = [GenesisToolsHome.variable: scratchHome, "GENESIS_TOOLS_BIN": tools.path]
         defer {
