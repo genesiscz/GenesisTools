@@ -187,7 +187,7 @@ describe("the sync consumer", () => {
     test("a pull in Other can use the same outside key as App without updating App's item", async () => {
         const sync = deps();
         fake.remote.set("R-1", { remoteKey: "R-1", title: "app task" });
-        const app = await pullRemote(sync, "fake", ["R-1"]);
+        const app = await pullRemote(sync, { connector: "fake", remoteKeys: ["R-1"] });
         const set = await setWorkConfigValue({
             configPath,
             path: "projects.Other.rules.connectors.fake.settings",
@@ -196,7 +196,7 @@ describe("the sync consumer", () => {
         expect(set.ok).toBe(true);
 
         fake.remote.set("R-1", { remoteKey: "R-1", title: "other task" });
-        const other = await pullRemote({ ...sync, project: "Other" }, "fake", ["R-1"]);
+        const other = await pullRemote({ ...sync, project: "Other" }, { connector: "fake", remoteKeys: ["R-1"] });
         expect(other.made).toHaveLength(1);
         expect(selectItem(db, other.made[0])).toMatchObject({ title: "other task", project: "Other" });
         expect(selectItem(db, app.made[0])).toMatchObject({ title: "app task", project: "App" });
@@ -240,13 +240,13 @@ describe("the sync consumer", () => {
 
     test("a pull makes an unknown outside item a local one born outside; a change of a local fact is drift, never applied", async () => {
         fake.remote.set("R-9", { remoteKey: "R-9", title: "from outside", state: "open" });
-        const made = await pullRemote(deps(), "fake", ["R-9"]);
+        const made = await pullRemote(deps(), { connector: "fake", remoteKeys: ["R-9"] });
         const local = made.made[0];
         expect(selectItem(db, local)?.title).toBe("from outside");
         expect(selectPairings(db, { item: local })[0]).toMatchObject({ born: "remote", remoteKey: "R-9" });
 
         fake.remote.set("R-9", { remoteKey: "R-9", title: "renamed outside", state: "done" });
-        const second = await pullRemote(deps(), "fake", ["R-9"]);
+        const second = await pullRemote(deps(), { connector: "fake", remoteKeys: ["R-9"] });
         expect(second.updated).toEqual([local]);
         expect(second.drift).toEqual([local]);
         expect(selectItem(db, local)?.title).toBe("renamed outside");
@@ -258,7 +258,7 @@ describe("the sync consumer", () => {
 describe("drift in the other direction", () => {
     test("a local edit of a fact the outside owns is not pushed and marks the pairing drift", async () => {
         fake.remote.set("R-5", { remoteKey: "R-5", title: "made outside", state: "open" });
-        const made = await pullRemote(deps(), "fake", ["R-5"]);
+        const made = await pullRemote(deps(), { connector: "fake", remoteKeys: ["R-5"] });
         const id = made.made[0];
         await runSyncOnce(deps());
         await write(ctx("s1"), { verb: "edit", ref: id, title: "renamed here" });

@@ -586,7 +586,7 @@ export const workHandlers: WorkHandlers = {
             });
         }
 
-        const pairing = pairItem(sync.deps, found.item.id, p.connector, p.key);
+        const pairing = pairItem(sync.deps, { item: found.item.id, connector: p.connector, remoteKey: p.key });
         const push = await pushPairing({ deps: sync.deps, item: found.item.id, connector: p.connector });
         return okReply("pair", { pairing, push });
     },
@@ -607,7 +607,7 @@ export const workHandlers: WorkHandlers = {
             return okReply("unpair", { removed: false });
         }
 
-        return okReply("unpair", { removed: unpairItem(sync.deps, found.item.id, p.connector) });
+        return okReply("unpair", { removed: unpairItem(sync.deps, { item: found.item.id, connector: p.connector }) });
     },
 
     async pull(p, session) {
@@ -644,8 +644,7 @@ export const workHandlers: WorkHandlers = {
         try {
             const report = await pullRemote(
                 { ...sync.deps, project, newId: () => newItemId(random) },
-                p.connector,
-                p.keys
+                { connector: p.connector, remoteKeys: p.keys }
             );
             return okReply("pull", report);
         } catch (error) {
