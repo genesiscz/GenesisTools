@@ -112,3 +112,20 @@ test("dry run, no change and three invalid requests leave config alone", async (
     expect(existsSync(absent)).toBe(false);
     expect(readFileSync(configPath, "utf8")).toBe(before);
 });
+
+test("restore refuses a repository rule without writing any part of the undo", async () => {
+    const before = readFileSync(configPath, "utf8");
+    expect(
+        await setWorkNotifyConfig({
+            scope: "project",
+            project,
+            configPath,
+            lockedCells: new Set(["bug:reopened"]),
+            restore: [
+                { type: "bug", action: "spotted", from: null, to: "inbox" },
+                { type: "bug", action: "reopened", from: "off", to: { level: "banner", minSeverity: "high" } },
+            ],
+        })
+    ).toMatchObject({ ok: false, code: "REPO_RULE_LOCKED" });
+    expect(readFileSync(configPath, "utf8")).toBe(before);
+});

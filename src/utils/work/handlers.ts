@@ -280,9 +280,22 @@ function notifyForConfig({
 }
 
 function rulesForConfig(session: WorkSession, project: string): Promise<LoadedRules> {
+    const repoRoot = project === session.ctx.project ? session.ctx.actor.repoRoot : null;
+    const itemRoots = repoRoot
+        ? []
+        : session.ctx.db
+              .query<{ root: string }, [string]>(
+                  `SELECT json_extract(created_by, '$.repoRoot') AS root
+                   FROM items WHERE project = ?1 AND json_extract(created_by, '$.project') = ?1
+                     AND typeof(json_extract(created_by, '$.repoRoot')) = 'text'
+                   GROUP BY root ORDER BY MAX(updated_ts) DESC, root`
+              )
+              .all(project)
+              .map(({ root }) => root);
     const location = {
         project,
-        repoRoot: project === session.ctx.project ? session.ctx.actor.repoRoot : null,
+        repoRoot,
+        itemRoots,
     };
     return session.loadRules
         ? session.loadRules(location)
@@ -429,10 +442,11 @@ export const workHandlers: WorkHandlers = {
         const project = p.project ?? session.ctx.project;
         const loaded = await rulesForConfig(session, project);
         const lockedCells = new Set<string>();
+        const repoNotify = loaded.notifyLayers.find((layer) => layer.layer === "config.repo")?.rules?.notify;
 
         for (const type of ITEM_TYPES) {
             for (const action of NOTIFY_ACTIONS) {
-                if (notifyForConfig({ loaded, type, action }).from === "config.repo") {
+                if ((repoNotify?.[type]?.[action] ?? repoNotify?.["*"]?.[action]) !== undefined) {
                     lockedCells.add(`${type}:${action}`);
                 }
             }
