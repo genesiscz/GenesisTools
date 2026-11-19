@@ -3,8 +3,9 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { EMPTY_HOLDER_GRACE_MS, serializePidRecord } from "@genesiscz/utils/process/pidfile";
-import { LockTimeoutError, withFileLock, withQueuedFileLock } from "./file-lock";
+import { LockTimeoutError, withFileLock, withQueuedFileLock, withRecoverablePathArbitrationSync } from "./file-lock";
 
 // The race cases (N racers, a fresh claim during arbitration, a steal that finds new bytes) are in
 // src/utils/process/claim-takeover.test.ts, with every other caller of the shared takeover.
@@ -26,6 +27,37 @@ describe("file-lock: stale/orphaned lock handling", () => {
 
         expect(result).toBe("ok");
         expect(existsSync(lockPath)).toBe(false);
+    });
+
+    it("takes over immediately after SIGKILL inside a synchronous write", async () => {
+        const target = join(dir, "document");
+        const child = Bun.spawn(
+            [
+                process.execPath,
+                "-e",
+                `import { withRecoverablePathArbitrationSync } from "@genesiscz/utils/storage/file-lock";
+                 withRecoverablePathArbitrationSync(await Bun.stdin.text(), () => process.kill(process.pid, "SIGKILL"));`,
+            ],
+            {
+                stdin: new Blob([target]),
+                stdout: "ignore",
+                stderr: "pipe",
+                env: { ...env.getProcessEnv(), GENESIS_TOOLS_HOME: dir },
+            }
+        );
+        const [, errors] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+        expect({ signal: child.signalCode, errors: child.signalCode ? "" : errors }).toEqual({
+            signal: "SIGKILL",
+            errors: "",
+        });
+
+        const result = withRecoverablePathArbitrationSync(target, () => {
+            expect(() => withRecoverablePathArbitrationSync(target, () => "second writer")).toThrow(
+                /already being held/
+            );
+            return "published";
+        });
+        expect(result).toBe("published");
     });
 
     it("steals a 0-byte orphaned lock (owner killed between open and write)", async () => {

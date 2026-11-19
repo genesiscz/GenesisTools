@@ -1,15 +1,31 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+    existsSync,
+    lstatSync,
+    mkdirSync,
+    readdirSync,
+    readFileSync,
+    renameSync,
+    unlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { type ArbitrationResult, tryWithPathArbitration } from "@genesiscz/utils/process/path-arbitration";
+import {
+    type ArbitrationResult,
+    arbitrationPath,
+    isArbitrationBusy,
+    tryWithPathArbitration,
+    withPathArbitrationSync,
+} from "@genesiscz/utils/process/path-arbitration";
 import {
     buildPidRecord,
     classifyPidRecord,
     type PidRecord,
     parsePidRecord,
     serializePidRecord,
+    takeOverStaleClaim,
     takeOverStaleClaimAsync,
 } from "@genesiscz/utils/process/pidfile";
 import { isProcessAliveSince } from "@genesiscz/utils/process-identity";
@@ -80,6 +96,67 @@ function holderIsGone(lockPath: string, holder: PidRecord): boolean {
 
     logger.debug({ lockPath, pid: holder.pid, status: identity.status }, "taking over a stale lock");
     return true;
+}
+
+export class PathLockBusyError extends Error {
+    readonly code = "ELOCKED";
+
+    constructor(readonly targetPath: string) {
+        super(`Lock file is already being held: ${targetPath}`);
+        this.name = "PathLockBusyError";
+    }
+}
+
+/**
+ * A synchronous writer shares the exact lock name with older proper-lockfile writers, but its
+ * exclusive create records the process identity. The short takeover arbiter never spans fn.
+ */
+export function withRecoverablePathArbitrationSync<T>(targetPath: string, fn: () => T): T {
+    const lockPath = `${arbitrationPath(targetPath)}.lock`;
+    mkdirSync(dirname(lockPath), { recursive: true });
+    const record = serializePidRecord(buildPidRecord());
+    const create = () => {
+        try {
+            writeFileSync(lockPath, record, { flag: "wx", mode: 0o600 });
+            return true;
+        } catch (err) {
+            if (!isEexist(err)) {
+                throw err;
+            }
+            return false;
+        }
+    };
+
+    if (!create()) {
+        if (lstatSync(lockPath, { throwIfNoEntry: false })?.isDirectory()) {
+            // A legacy directory has no PID. Only its heartbeat protocol may retire it.
+            try {
+                withPathArbitrationSync(targetPath, () => {});
+            } catch (error) {
+                if (!isArbitrationBusy(error)) {
+                    throw error;
+                }
+                throw new PathLockBusyError(targetPath);
+            }
+        } else {
+            const verdict = takeOverStaleClaim(lockPath, {
+                arbiter: lockPath,
+                holderIsStale: (holder) => holderIsGone(lockPath, holder),
+            });
+            if (verdict === "held") {
+                throw new PathLockBusyError(targetPath);
+            }
+        }
+        if (!create()) {
+            throw new PathLockBusyError(targetPath);
+        }
+    }
+
+    try {
+        return fn();
+    } finally {
+        unlinkIfOwned(lockPath);
+    }
 }
 
 /**
