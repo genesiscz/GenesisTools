@@ -1186,7 +1186,8 @@ struct MeetingsRead<Value: Decodable> {
 /// Only rows reads are shared. A cancelled pane cannot cancel another pane's evidence request; writes keep their
 /// own replies and patches. The quiet wait uses write completion, so a slow answer does not start a full rows read
 /// in the middle of the next answer. Failed reads are never cached. A read joins a pending one only while that one
-/// still waits or loads after the latest write: rows loaded before an answer would show the answered row open again.
+/// still waits or loads after the latest write: rows loaded before an answer would show the answered row open again,
+/// and a load a write overtook loads again for the callers already waiting on it.
 @MainActor
 final class MeetingsRowsRefresh {
     typealias Key = MeetingsAPI.MeetingRows.Params
@@ -1233,25 +1234,31 @@ final class MeetingsRowsRefresh {
         }
         let entry = Pending()
         let task = Task { @MainActor in
+            // A load that a write overtook is read again once the writes settle: its rows predate the answer, and
+            // the callers waiting on it would draw the answered row open again.
             while true {
-                if self.writes > 0 { await withCheckedContinuation { self.writeWaiters.append($0) } }
-                let turn = self.generation
-                if let last = self.lastWrite {
-                    let remaining = self.quietWindow - last.duration(to: .now)
-                    if remaining > .zero { try await Task.sleep(for: remaining) }
+                while true {
+                    if self.writes > 0 { await withCheckedContinuation { self.writeWaiters.append($0) } }
+                    let turn = self.generation
+                    if let last = self.lastWrite {
+                        let remaining = self.quietWindow - last.duration(to: .now)
+                        if remaining > .zero { try await Task.sleep(for: remaining) }
+                    }
+                    if self.writes == 0 && turn == self.generation { break }
                 }
-                if self.writes == 0 && turn == self.generation { break }
-            }
-            let turn = self.generation
-            entry.loadedAt = turn
-            let rows = try await load()
-            self.completedReadCount += 1
-            if turn == self.generation {
+                let turn = self.generation
+                entry.loadedAt = turn
+                let rows = try await load()
+                self.completedReadCount += 1
+                guard turn == self.generation else {
+                    entry.loadedAt = nil
+                    continue
+                }
                 self.snapshots[key] = rows
                 self.recent.removeAll { $0 == key }; self.recent.append(key)
                 if self.recent.count > 8 { self.snapshots[self.recent.removeFirst()] = nil }
+                return rows
             }
-            return rows
         }
         entry.task = task
         pending[key] = entry
