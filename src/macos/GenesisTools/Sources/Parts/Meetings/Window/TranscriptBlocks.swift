@@ -499,9 +499,9 @@ private struct TranscriptBlockLineView: View {
 
 extension TranscriptLine.Indicator {
     /// True when the indicator says something the block's speaker does not: it is stuck and ignored, or it names
-    /// someone else (window audit M12).
+    /// someone else (window audit M12), also beside the speaker ("Alex, Sam" on Alex's block names Sam).
     func addsTo(speaker: String) -> Bool {
-        ignored != nil || (!names.isEmpty && !names.contains(speaker))
+        ignored != nil || names.contains { $0 != speaker }
     }
 
     /// The indicator's names, and when the engine ignores it, why in words (C2): the engine sends a code.
