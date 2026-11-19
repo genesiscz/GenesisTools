@@ -1,5 +1,16 @@
 import SwiftUI
 
+private struct CompactWorkRowsKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+private extension EnvironmentValues {
+    var compactWorkRows: Bool {
+        get { self[CompactWorkRowsKey.self] }
+        set { self[CompactWorkRowsKey.self] = newValue }
+    }
+}
+
 /// How an item state looks: each state has its own glyph and hue, never only a shade (ux genesiscz 12a).
 public enum WorkStateLook {
     public static func symbol(_ state: String) -> String {
@@ -44,6 +55,7 @@ public struct WorkItemsView: View {
     let retryIndex: () -> Void
     let perform: (WorkScreenAction) -> Void
     @State private var expanded: Set<String>
+    @State private var compact = false
 
     public init(snapshot: WorkSnapshotValue, pending: Set<String>, expandAll: Bool = false,
                 perform: @escaping (WorkScreenAction) -> Void) {
@@ -86,6 +98,8 @@ public struct WorkItemsView: View {
             } else { sections(items) }
         }
         .accessibilityIdentifier("work-items")
+        .environment(\.compactWorkRows, compact)
+        .onGeometryChange(for: Bool.self) { $0.size.width < 510 } action: { compact = $0 }
     }
 
     /// The scroll ID of a section's header, so a count elsewhere (the hub's title bar) can bring that section into view.
@@ -251,6 +265,7 @@ public struct WorkItemsView: View {
     }
 
     private struct ItemRow: View, Equatable {
+        @Environment(\.compactWorkRows) private var compact
         let value: WorkRowValue
         let detail: String?
         let summary: String?
@@ -282,8 +297,10 @@ public struct WorkItemsView: View {
                     } else { label }
                     if showActions { actions(ref: value.ref, state: value.state, accept: accept) }
                 }
-                pairingRows(ref: value.ref, pairings: archive ? nil : value.pairings, project: value.project)
-                    .padding(.leading, 24)
+                if !archive, let pairings = value.pairings, !pairings.isEmpty {
+                    WorkPairingActions(ref: value.ref, pairings: pairings, project: value.project,
+                                       pending: pending, perform: perform).padding(.leading, 24)
+                }
                 if let detail, !detail.isEmpty {
                     Text(detail).font(.system(size: 11)).foregroundStyle(KitPalette.dim).lineLimit(2)
                         .padding(.leading, 24)
@@ -296,7 +313,18 @@ public struct WorkItemsView: View {
             .liveRow(selected: selected)
         }
 
-        private var label: some View {
+        @ViewBuilder private var label: some View {
+            if compact, selectable, summary == nil {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(verbatim: value.title).font(.system(size: 12)).lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(spacing: 6) {
+                        stateGlyph(value.state)
+                        rowFacts
+                    }
+                }
+                .padding(.vertical, 4).contentShape(Rectangle())
+            } else {
             HStack(spacing: 8) {
                 if summary != nil {
                     Image(systemName: value.type == "epic" ? "square.stack.3d.up" : "tray.full")
@@ -305,22 +333,27 @@ public struct WorkItemsView: View {
                 Text(value.title).font(.system(size: summary == nil ? 12 : 12.5,
                                                weight: summary == nil ? .regular : .medium)).lineLimit(1)
                     .foregroundStyle(value.isOpen ? KitPalette.text : KitPalette.dim)
-                if let severity = value.severity {
-                    Badge(WorkWords.severity(severity),
-                          color: severity == "critical" || severity == "high" ? KitPalette.removed : KitPalette.dim,
-                          look: .tone)
-                }
-                Text(verbatim: value.slot ?? value.ref).font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(KitPalette.faint)
-                Spacer()
-                if let summary {
-                    Text(verbatim: summary).font(.system(size: 11)).foregroundStyle(KitPalette.dim)
-                } else if let worker = value.worker {
-                    Text(worker).font(.system(size: 11)).foregroundStyle(KitPalette.faint).lineLimit(1)
-                }
+                rowFacts
             }
             .frame(maxWidth: .infinity, minHeight: 26, alignment: .leading)
             .contentShape(Rectangle())
+            }
+        }
+
+        @ViewBuilder private var rowFacts: some View {
+            if let severity = value.severity {
+                Badge(WorkWords.severity(severity),
+                      color: severity == "critical" || severity == "high" ? KitPalette.removed : KitPalette.dim,
+                      look: .tone)
+            }
+            Text(verbatim: value.slot ?? value.ref).font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(KitPalette.faint).lineLimit(1).truncationMode(.middle)
+            Spacer(minLength: 0)
+            if let summary {
+                Text(verbatim: summary).font(.system(size: 11)).foregroundStyle(KitPalette.dim)
+            } else if let worker = value.worker {
+                Text(worker).font(.system(size: 11)).foregroundStyle(KitPalette.faint).lineLimit(1)
+            }
         }
 
         private func stateGlyph(_ state: String) -> some View {
@@ -330,42 +363,6 @@ public struct WorkItemsView: View {
                 .instantTooltip(WorkWords.state(state))
                 .accessibilityLabel(WorkWords.state(state))
         }
-        @ViewBuilder
-        private func pairingRows(ref: String, pairings: [WorkPairingValue]?, project: String? = nil) -> some View {
-            if let pairings, !pairings.isEmpty {
-                HStack(alignment: .top, spacing: 8) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        ForEach(pairings) { pairing in
-                            let look = pairing.look
-                            let name = pairing.displayName ?? pairing.connector
-                            let key = pairing.remoteKey.isEmpty ? "No remote key yet" : pairing.remoteKey
-                            let disabledReason = pairing.enabled ? nil : "Sync is turned off for this connector."
-                            HStack(spacing: 5) {
-                                Badge(look.label, color: look.color, look: .tone, symbol: look.symbol,
-                                      tooltip: [look.detail, pairing.note, disabledReason].compactMap { $0 }.joined(separator: "\n"))
-                                Text(verbatim: "\(name) · \(key)")
-                                    .font(.system(size: 11)).lineLimit(1).truncationMode(.middle)
-                                    .instantTooltip("\(name) · \(key)")
-                                IconButton(systemName: "minus.circle", tooltip: "Unpair \(name) · \(key). Removes the link and keeps both items.") {
-                                    perform(.unpair(ref: ref, connector: pairing.connector, project: project))
-                                }
-                            }
-                        }
-                    }
-                    Spacer(minLength: 0)
-                    if pairings.contains(where: \.enabled) {
-                        let syncTip = "Sync now. Push this item's local fields to enabled connectors and release held changes."
-                        let driftTip = " A successful push clears the drift flag without pulling remote fields."
-                        IconButton(systemName: "arrow.triangle.2.circlepath",
-                                   tooltip: syncTip + (pairings.contains { $0.enabled && $0.state == .drift } ? driftTip : "")) {
-                            perform(.sync(ref: ref, project: project))
-                        }
-                    }
-                }
-                .disabled(pending.contains(ref))
-            }
-        }
-
         @ViewBuilder
         private func actions(ref: String, state: String, accept: Bool) -> some View {
             if pending.contains(ref) {
@@ -416,6 +413,47 @@ public struct WorkItemsView: View {
     }
 }
 
+struct WorkPairingActions: View {
+    let ref: String
+    let pairings: [WorkPairingValue]
+    let project: String?
+    let pending: Set<String>
+    let perform: (WorkScreenAction) -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(pairings) { pairing in
+                    let look = pairing.look
+                    let name = pairing.displayName ?? pairing.connector
+                    let key = pairing.remoteKey.isEmpty ? "No remote key yet" : pairing.remoteKey
+                    let disabledReason = pairing.enabled ? nil : "Sync is turned off for this connector."
+                    HStack(spacing: 5) {
+                        Badge(look.label, color: look.color, look: .tone, symbol: look.symbol,
+                              tooltip: [look.detail, pairing.note, disabledReason].compactMap { $0 }.joined(separator: "\n"))
+                        Text(verbatim: "\(name) · \(key)")
+                            .font(.system(size: 11)).lineLimit(1).truncationMode(.middle)
+                            .instantTooltip("\(name) · \(key)")
+                        IconButton(systemName: "minus.circle", tooltip: "Unpair \(name) · \(key). Removes the link and keeps both items.") {
+                            perform(.unpair(ref: ref, connector: pairing.connector, project: project))
+                        }
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+            if pairings.contains(where: \.enabled) {
+                let syncTip = "Sync now. Push this item's local fields to enabled connectors and release held changes."
+                let driftTip = " A successful push clears the drift flag without pulling remote fields."
+                IconButton(systemName: "arrow.triangle.2.circlepath",
+                           tooltip: syncTip + (pairings.contains { $0.enabled && $0.state == .drift } ? driftTip : "")) {
+                    perform(.sync(ref: ref, project: project))
+                }
+            }
+        }
+        .disabled(pending.contains(ref))
+    }
+}
+
 private extension WorkPairingValue {
     var look: (label: String, symbol: String, color: Color, detail: String) {
         switch state {
@@ -442,44 +480,120 @@ private extension WorkPairingValue {
 
 /// An icon button that asks for one line of text (a reason, a proof) in a popover before it acts.
 struct WorkReasonButton: View {
-    let symbol: String
-    let tooltip: String
-    let prompt: String
-    let action: (String) -> Void
+    private let symbol: String
+    private let tooltip: String
+    private let prompt: String
+    private let title: String?
+    private let externalText: Binding<String>?
+    private let isPending: Bool
+    private let identifier: String
+    private let action: @MainActor (String) async -> Bool
     @State private var asking = false
-    @State private var text = ""
-    @FocusState private var typing: Bool
+    @State private var localText = ""
+    @State private var localRevision = UUID()
+    @State private var sending = false
+    @State private var presentation = UUID()
+    @FocusState private var focused: Bool
+
+    /// Compatibility initializer for the existing row actions.
+    init(symbol: String, tooltip: String, prompt: String, action: @escaping (String) -> Void) {
+        self.symbol = symbol
+        self.tooltip = tooltip
+        self.prompt = prompt
+        self.title = nil
+        self.externalText = nil
+        self.isPending = false
+        self.identifier = "work.reason.\(symbol)"
+        self.action = { value in action(value); return true }
+    }
+
+    /// Labelled inspector action. Success is true only after the write is confirmed by the model.
+    init(title: String, symbol: String, tooltip: String, prompt: String, text: Binding<String>,
+         isPending: Bool = false, identifier: String,
+         action: @escaping @MainActor (String) async -> Bool) {
+        self.symbol = symbol
+        self.tooltip = tooltip
+        self.prompt = prompt
+        self.title = title
+        self.externalText = text
+        self.isPending = isPending
+        self.identifier = identifier
+        self.action = action
+    }
+
+    private var text: Binding<String> {
+        externalText ?? Binding(get: { localText }, set: { localText = $0; localRevision = UUID() })
+    }
+    private var verb: String { title ?? tooltip.components(separatedBy: ",").first ?? "Save" }
+    private var empty: Bool { text.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     var body: some View {
-        IconButton(systemName: symbol, tooltip: tooltip) { asking = true }
-            .popover(isPresented: $asking, arrowEdge: .bottom) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(prompt).font(.system(size: 12, weight: .medium))
-                    TextField("", text: $text, axis: .vertical)
-                        .textFieldStyle(.roundedBorder)
-                        .lineLimit(2...5)
-                        .frame(width: 320)
-                        .focused($typing)
-                        .onSubmit(confirm)
-                        // The popover only asks for this text: it takes the keys at once, no second click.
-                        .onAppear { typing = true }
-                    HStack {
-                        Spacer()
-                        Button("Cancel") { asking = false }.keyboardShortcut(.cancelAction)
-                        Button(tooltip.components(separatedBy: ",").first ?? "Save", action: confirm)
-                            .keyboardShortcut(.defaultAction)
-                            .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                }
-                .padding(14)
+        Group {
+            if let title {
+                Button(action: toggle) { Label(title, systemImage: symbol) }
+                    .buttonStyle(.genHoverPlain())
+                    .instantTooltip(tooltip)
+            } else {
+                IconButton(systemName: symbol, tooltip: tooltip, action: toggle)
             }
+        }
+        .accessibilityLabel(verb)
+        .accessibilityIdentifier(identifier)
+        .disabled(isPending || sending)
+        .popover(isPresented: $asking, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(prompt).font(.system(size: 12, weight: .medium))
+                    .fixedSize(horizontal: false, vertical: true)
+                TextField("", text: text, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(2...6)
+                    .focused($focused)
+                    .accessibilityLabel(prompt)
+                    .accessibilityIdentifier("\(identifier).text")
+                Text("Return adds a line. ⌘Return saves.").font(.system(size: 11)).foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    if sending {
+                        ProgressView().controlSize(.small)
+                        Text("Saving").font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                    Button("Cancel") { asking = false }
+                        .buttonStyle(.genHoverPlain())
+                        .keyboardShortcut(.cancelAction)
+                        .accessibilityIdentifier("\(identifier).cancel")
+                    Button(verb, action: confirm)
+                        .buttonStyle(.genHoverPlain())
+                        .keyboardShortcut(.return, modifiers: .command)
+                        .disabled(empty || sending || isPending)
+                        .accessibilityIdentifier("\(identifier).save")
+                }
+            }
+            .frame(width: 288)
+            .padding(14)
+            // The popover only asks for this text: it takes the keys at once, no second click.
+            .onAppear { focused = true }
+        }
+    }
+
+    private func toggle() {
+        guard !isPending, !sending else { return }
+        if !asking { presentation = UUID() }
+        asking.toggle()
     }
 
     private func confirm() {
-        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty else { return }
-        asking = false
-        text = ""
-        action(value)
+        let value = text.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, !isPending, !sending else { return }
+        let submittedRevision = localRevision
+        let shown = presentation
+        sending = true
+        Task {
+            let ok = await action(value)
+            sending = false
+            if externalText == nil, ok, localRevision == submittedRevision { localText = "" }
+            // External-draft clearing is owned by the caller's revision check. A failed write stays open;
+            // a new draft, typed during the write, also stays open. Cancel/dismiss never erases text.
+            if ok, text.wrappedValue.isEmpty, presentation == shown { asking = false }
+        }
     }
 }

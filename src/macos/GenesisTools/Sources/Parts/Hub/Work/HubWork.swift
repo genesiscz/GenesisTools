@@ -145,10 +145,26 @@ struct WorkProjectRow: View, Equatable {
 /// The main view: the header in the title bar, then the Items or the Notifications pane.
 struct WorkMain: View {
     @State private var findRequest = 0
+    @StateObject private var inspectorDrafts = WorkItemInspectorDrafts()
     @ObservedObject var screen: WorkScreenModel
     /// A section a title bar count asked for; the Items scroll view brings its header to the top.
     @State private var jump: String?
     @GenReduceMotion private var reduceMotion
+
+    @ObservedObject var preferences: HubPreferences
+    var mainCheckout: String?
+    let openCommit: (String, String?) -> Void
+    let openPullRequest: (String) -> Void
+
+    init(screen: WorkScreenModel, preferences: HubPreferences? = nil, mainCheckout: String? = nil,
+         openCommit: @escaping (String, String?) -> Void = { _, _ in },
+         openPullRequest: @escaping (String) -> Void = { _ in }) {
+        self.screen = screen
+        self.preferences = preferences ?? HubDefaults.preferences
+        self.mainCheckout = mainCheckout
+        self.openCommit = openCommit
+        self.openPullRequest = openPullRequest
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -171,69 +187,52 @@ struct WorkMain: View {
 
     private var header: some View { WorkHeader(screen: screen, onJump: { jump = $0 }) }
 
+    private var inspector: some View {
+        WorkItemInspector(model: screen, drafts: inspectorDrafts, projectRoot: mainCheckout, openCommit: { sha in
+            openCommit(sha, mainCheckout ?? screen.itemDetail?.item.project)
+        }, openPullRequest: openPullRequest, externalLink: { text, url in
+            AnyView(ExternalLink(text: text, url: url))
+        })
+    }
+
     @ViewBuilder
     private var content: some View {
-        if let ref = screen.itemRef {
-            VStack(alignment: .leading, spacing: 12) {
-                Button(action: screen.closeItem) { Label("All items", systemImage: "chevron.left") }
-                    .buttonStyle(.genHoverPlain())
-                if let failure = screen.failure {
-                    FailureInline(.unexpected(failure, outcome: "Could not open \(ref)", action: "Read the item"),
-                                  form: .pane) { screen.reload() }
-                } else if let detail = screen.itemDetail {
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 10) {
-                            Text(detail.item.title).font(.title3.weight(.semibold)).textSelection(.enabled)
-                            Text(verbatim: "\(detail.item.type.capitalized) · \(detail.item.state.capitalized) · \(detail.item.id)")
-                                .font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
-                            if let body = detail.item.body, !body.isEmpty, body != detail.item.title {
-                                Text(verbatim: body).textSelection(.enabled)
-                            }
-                            if let acceptance = detail.item.acceptance, !acceptance.isEmpty {
-                                Text("Acceptance").font(.headline)
-                                Text(verbatim: acceptance).textSelection(.enabled)
-                            }
-                            if let members = detail.members {
-                                Text("Tasks").font(.headline)
-                                if members.isEmpty { EmptyState(text: "This handoff has no tasks") }
-                                ForEach(members) { member in
-                                    Button { screen.openItem(member.ref) } label: {
-                                        Label(member.title, systemImage: WorkStateLook.symbol(member.state))
-                                            .frame(maxWidth: .infinity, minHeight: 26, alignment: .leading).contentShape(Rectangle())
-                                    }
-                                    .buttonStyle(RowButtonStyle())
-                                    .accessibilityValue(member.state)
-                                }
-                            }
-                        }
+        if screen.pane == .notify {
+            if let failure = screen.failure, screen.snapshot == nil {
+                FailureInline(.unexpected(failure, outcome: "The work items did not load", action: "Read the work items"),
+                              form: .pane) { screen.reload() }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let project = screen.project {
+                ScrollView {
+                    WorkNotifyGridView(project: project, rows: screen.notifyRows)
+                        .padding(.horizontal, 18).padding(.vertical, 14)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .accessibilityIdentifier("work.detail.\(detail.item.id)")
-                    }
-                    .id(detail.item.id)
-                } else {
-                    Text("Opening \(ref)…").foregroundStyle(.secondary)
+                        .genScrollBars()
                 }
+            } else {
+                EmptyState(symbol: "checklist", text: "Pick a project", detail: "The projects with work items are on the left.")
             }
-            .padding(18)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        } else if screen.pane == .items {
-            itemList
-        } else if let failure = screen.failure, screen.snapshot == nil {
-            FailureInline(.unexpected(failure, outcome: "The work items did not load", action: "Read the work items"),
-                          form: .pane) { screen.reload() }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if screen.project == nil {
-            EmptyState(symbol: "checklist", text: "Pick a project", detail: "The projects with work items are on the left.")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            ScrollView {
-                Group {
-                    WorkNotifyGridView(project: screen.project ?? "", rows: screen.notifyRows)
-                }
-                .padding(.horizontal, 18)
-                .padding(.vertical, 14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .genScrollBars()
+            GeometryReader { geometry in
+                // Work fills the trailing edge. The sidebar contributes to window width, even when folded.
+                if geometry.frame(in: .global).maxX >= 900 {
+                    HStack(spacing: 0) {
+                        itemList
+                        ResizableSidePanel(key: "work.inspector", edge: .trailing, title: "Item details",
+                                           defaultWidth: 420, minWidth: 320,
+                                           maxWidth: min(640, max(320, geometry.size.width - 270)),
+                                           collapsedStore: HubDefaults.store) { inspector }
+                    }
+                } else if screen.selection != nil {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Button(action: screen.closeItem) { Label("All items", systemImage: "chevron.left") }
+                            .buttonStyle(.genHoverPlain())
+                            .accessibilityIdentifier("work.detail.allItems")
+                            .padding(.leading, 14).padding(.vertical, 6)
+                        Divider()
+                        inspector
+                    }
+                } else { itemList }
             }
         }
     }
@@ -363,5 +362,33 @@ struct WorkHeader: View {
         return [(Plural.count(snapshot.containers.count, "container"), WorkItemsView.containersTitle),
                 (Plural.count(snapshot.spotted.count, "spotted item"), WorkItemsView.spottedTitle),
                 (Plural.count(snapshot.reopened.count, "reopened item"), WorkItemsView.reopenedTitle)]
+    }
+}
+
+/// Resolve application routes here so the shared inspector stays usable in a standalone kit host.
+struct HubWorkContent: View {
+    let model: HubModel
+    @ObservedObject var screen: WorkScreenModel
+    @State private var resolvedCheckout: (origin: String, main: String)?
+
+    var body: some View {
+        let origin = screen.itemDetail?.item.checkoutPath
+        let known = screen.project.flatMap { name in
+            model.worktrees.first { $0.isMain && $0.repo.caseInsensitiveCompare(name) == .orderedSame }?.path
+                ?? PRsModel.projectRoot(name, in: model.prs.allProjects)
+        }
+        WorkMain(screen: screen, mainCheckout: (resolvedCheckout?.origin == origin ? resolvedCheckout?.main : nil) ?? known,
+                 openCommit: { sha, repo in model.openCommitLink(sha, repo: repo) },
+                 openPullRequest: { ref in _ = model.apply(HubRequest(["--pr", ref])) })
+            .task(id: origin) {
+                guard let origin, resolvedCheckout?.origin != origin else { return }
+                let main = await Task.detached(priority: .utility) { () -> String? in
+                    let source = GitWorkingTreeSource(repo: URL(fileURLWithPath: origin))
+                    guard let layout = try? source.repositoryLayout(), layout.commonDirectory.lastPathComponent == ".git"
+                    else { return nil }
+                    return layout.commonDirectory.deletingLastPathComponent().path
+                }.value
+                if let main, !Task.isCancelled { resolvedCheckout = (origin, main) }
+            }
     }
 }

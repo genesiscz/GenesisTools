@@ -26,6 +26,7 @@ public final class WorkScreenModel: ObservableObject {
             openingCandidates = nil // A row click or history navigation takes precedence over the pending opening choice.
             if adoptingItemProject {
                 // A later read can discover a move. Keep the reader in the original list until they follow it.
+                if let movedFrom, project == movedFrom { return }
                 if let oldValue, project != oldValue, itemDetail?.item.project == oldValue || movedFrom == oldValue {
                     movedFrom = oldValue
                     project = oldValue
@@ -263,6 +264,7 @@ public final class WorkScreenModel: ObservableObject {
     private var companionReadNeeded = false
 
     private func resetFind() {
+        parentRef = nil
         indexTask?.cancel()
         listTask?.cancel()
         indexTask = nil
@@ -358,10 +360,50 @@ public final class WorkScreenModel: ObservableObject {
         companionReadNeeded = true
     }
 
+    @Published public private(set) var parentRef: String?
+
+    public func selectMember(_ ref: String) {
+        let container = selection
+        select(ref)
+        parentRef = container
+    }
+
+    public func returnToContainer() {
+        if let parentRef { select(parentRef) }
+    }
+
+    public func openMovedItem() {
+        guard movedFrom != nil, let ref = itemRef, let destination = itemDetail?.item.project else { return }
+        project = destination
+        select(ref)
+    }
+
+    public func pairings(for ref: String) -> [WorkPairingValue] {
+        guard let snapshot else { return [] }
+        for container in snapshot.containers {
+            if container.ref == ref { return container.pairings ?? [] }
+            if let member = container.members.first(where: { $0.ref == ref }) { return member.pairings ?? [] }
+        }
+        return snapshot.triage.first { $0.ref == ref }?.pairings ?? []
+    }
+
+    public func title(for ref: String) -> String? {
+        if let title = cachedDetails[ref]?.item.title { return title }
+        if let snapshot {
+            for container in snapshot.containers {
+                if container.ref == ref { return container.title }
+                if let row = container.members.first(where: { $0.ref == ref }) { return row.title }
+            }
+            if let row = snapshot.triage.first(where: { $0.ref == ref }) { return row.title }
+        }
+        return index.first { $0.ref == ref }?.title
+    }
+
     public func select(_ ref: String?) {
         guard let ref else { closeItem(); return }
         guard ref != itemRef else { return }
         movedFrom = nil
+        parentRef = nil
         itemRef = ref
         let cached = cachedDetails[ref]
         itemDetail = cached
@@ -374,6 +416,7 @@ public final class WorkScreenModel: ObservableObject {
 
     public func closeItem() {
         guard itemRef != nil else { return }
+        parentRef = nil
         itemRef = nil
         itemDetail = nil
         failure = nil
@@ -487,7 +530,13 @@ public final class WorkScreenModel: ObservableObject {
     }
 
     public func perform(_ action: WorkScreenAction) async {
-        guard let project, !pending.contains(action.ref) else { return }
+        await write(action)
+    }
+
+    @discardableResult
+    public func write(_ action: WorkScreenAction) async -> Bool {
+        let project = itemRef == action.ref ? (itemDetail?.item.project ?? self.project) : self.project
+        guard let project, !pending.contains(action.ref) else { return false }
         pending.insert(action.ref)
         defer { pending.remove(action.ref) }
         switch action {
@@ -498,24 +547,25 @@ public final class WorkScreenModel: ObservableObject {
         default: break
         }
         showPendingItemStates()
+        let outcome: WorkActionOutcome
         do {
-            notice = try await source.perform(action, project: project)
+            outcome = try await source.perform(action, project: project)
         } catch {
-            notice = WorkActionOutcome(ok: false, message: error.localizedDescription)
+            outcome = WorkActionOutcome(ok: false, message: error.localizedDescription)
         }
-        if let notice {
-            if notice.ok {
-                itemNoticeID = noticeStack.push(.init(text: notice.message))
-            } else {
-                let outcome = "The work item could not be changed"
-                let report = FailureReport.unexpected(notice.message, outcome: outcome, action: "Change the work item")
-                itemNoticeID = noticeStack.push(.init(text: outcome, tone: .error, actions: [.details(report)]))
-            }
+        notice = outcome
+        if outcome.ok {
+            itemNoticeID = noticeStack.push(.init(text: outcome.message))
+        } else {
+            let failed = "The work item could not be changed"
+            let report = FailureReport.unexpected(outcome.message, outcome: failed, action: "Change the work item")
+            itemNoticeID = noticeStack.push(.init(text: failed, tone: .error, actions: [.details(report)]))
         }
         pendingItemStates[action.ref] = nil
-        if notice?.ok != true { showPendingItemStates() }
+        if !outcome.ok { showPendingItemStates() }
         invalidateFindReads()
         await readAfterWrite()
+        return outcome.ok
     }
 
     private func showPendingItemStates() {

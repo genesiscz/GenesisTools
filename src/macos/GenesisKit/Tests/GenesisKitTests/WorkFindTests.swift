@@ -109,6 +109,8 @@ enum WorkFindFixture {
 
 @MainActor
 private final class WorkFindSource: WorkSource {
+    var itemProject = WorkFindFixture.project
+    var writeOutcome: WorkActionOutcome?
     var listedProjects: [String] = []
     var detailRefs: [String] = []
     var delayedRef: String?
@@ -140,11 +142,11 @@ private final class WorkFindSource: WorkSource {
         return detailValue(ref: ref)
     }
     func detailValue(ref: String) -> WorkItemDetail {
-        WorkItemDetail(item: .init(id: ref, title: "Fixture \(ref)", type: "task", state: "open", project: WorkFindFixture.project))
+        WorkItemDetail(item: .init(id: ref, title: "Fixture \(ref)", type: "task", state: "open", project: itemProject))
     }
     func notify(project: String) async throws -> [WorkNotifyRow] { [] }
     func perform(_ action: WorkScreenAction, project: String) async throws -> WorkActionOutcome {
-        WorkActionOutcome(ok: true, message: action.done)
+        writeOutcome ?? WorkActionOutcome(ok: true, message: action.done)
     }
     func changes() -> AsyncStream<Void> { AsyncStream { changesContinuation = $0 } }
     func tick() { changesContinuation?.yield(()) }
@@ -312,10 +314,10 @@ final class WorkFindTests: XCTestCase {
     }
 
     @MainActor
-    private func settle(_ condition: () -> Bool) async {
+    private func settle(file: StaticString = #filePath, line: UInt = #line, _ condition: () -> Bool) async {
         let deadline = Date().addingTimeInterval(3)
         while !condition() && Date() < deadline { try? await Task.sleep(for: .milliseconds(10)) }
-        XCTAssertTrue(condition(), "the fixture load did not settle")
+        XCTAssertTrue(condition(), "the fixture load did not settle", file: file, line: line)
     }
 
     @MainActor
@@ -378,6 +380,32 @@ final class WorkFindTests: XCTestCase {
         var matched = 0
         measure { matched = rows.filter { filter.matches($0) }.count }
         XCTAssertEqual(matched, 500)
+    }
+
+    @MainActor
+    func testTheInspectorKeepsAMovedItemUntilTheReaderFollowsIt() async {
+        let source = WorkFindSource()
+        let model = WorkScreenModel(source: source, reloadInterval: 0.02, settle: 0.01)
+        model.activate()
+        defer { model.deactivate() }
+        await settle { model.snapshot != nil }
+        let ref = WorkFindFixture.basketTaskRef
+        model.select(ref)
+        await settle { model.itemDetail?.item.id == ref }
+        source.itemProject = "Meadow"
+        source.tick()
+        await settle { model.movedFrom == WorkFindFixture.project && model.itemDetail?.item.project == "Meadow" }
+        XCTAssertEqual(model.project, WorkFindFixture.project)
+        model.openMovedItem()
+        await settle { model.project == "Meadow" && model.snapshot?.project == "Meadow" && !model.isLoading }
+        XCTAssertEqual(model.selection, ref)
+        XCTAssertNil(model.movedFrom)
+        source.writeOutcome = .init(ok: false, message: "Could not save this comment")
+        let saved = await model.write(.comment(ref: ref, text: "Keep the draft for retry"))
+        XCTAssertFalse(saved)
+        XCTAssertEqual(model.notice, source.writeOutcome)
+        XCTAssertEqual(model.itemDetail?.item.id, ref)
+        XCTAssertTrue(model.pending.isEmpty)
     }
 }
 
