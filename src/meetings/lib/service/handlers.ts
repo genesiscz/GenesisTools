@@ -251,7 +251,12 @@ function changedPeople<T>(value: T, context: MeetingsCallContext): T {
 /** The handlers of every method but `hello`'s own work, which the context's adapter does. */
 export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<typeof meetingsApi, MeetingsCallContext> {
     const storeOf = deps.store ?? (() => new MeetingStore());
-    const acousticTarget = () => ({ store: storeOf(), linkedSource: deps.linkedSource });
+    // A missing meeting answers with the typed `meeting-not-found`, as `meeting.show` does, before the reader opens it.
+    const acousticTarget = (meeting: string) => {
+        const store = storeOf();
+        recordOf(store, meeting);
+        return { store, linkedSource: deps.linkedSource };
+    };
 
     return {
         hello: (params, context) => context.hello(params),
@@ -609,19 +614,26 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         "meeting.audio": async (params) => (await moments()).readMeetingAudio(params, storeOf(), deps),
         // The acoustic reads open the meeting with the service's source, as every other read does.
         "acoustic.inspect": async (params) =>
-            (await import("../acoustic")).inspectAcoustic({ ...acousticTarget(), ...params }),
+            (await import("../acoustic")).inspectAcoustic({ ...acousticTarget(params.meeting), ...params }),
         "acoustic.clip": async (params) =>
-            (await import("../acoustic")).acousticClip({ ...acousticTarget(), ...params }),
-        "voice.score": async (params) => (await import("../acoustic")).voiceMeeting({ ...acousticTarget(), ...params }),
+            (await import("../acoustic")).acousticClip({ ...acousticTarget(params.meeting), ...params }),
+        "voice.score": async (params) =>
+            (await import("../acoustic")).voiceMeeting({ ...acousticTarget(params.meeting), ...params }),
         "voice.prepare": async () => ({
             path: await (await import("@genesiscz/utils/meetings/voice")).prepareVoiceModel(),
         }),
         "voice.enroll": async (params) =>
-            (await import("../acoustic")).voiceMeeting({ ...acousticTarget(), ...params }),
+            (await import("../acoustic")).voiceMeeting({ ...acousticTarget(params.meeting), ...params }),
         "acoustic.collect": async (params) =>
-            (await import("../acoustic")).collectAcoustic({ ...acousticTarget(), meeting: params.meeting }),
+            (await import("../acoustic")).collectAcoustic({
+                ...acousticTarget(params.meeting),
+                meeting: params.meeting,
+            }),
         "voice.collect": async (params) =>
-            (await import("../acoustic")).collectVoiceEvidence({ ...acousticTarget(), meeting: params.meeting }),
+            (await import("../acoustic")).collectVoiceEvidence({
+                ...acousticTarget(params.meeting),
+                meeting: params.meeting,
+            }),
         "meeting.speakers": async (params) => (await reads()).readSpeakers(params, storeOf(), deps),
         "meeting.screen": async (params) => (await reads()).readScreen(params, storeOf()),
         "meeting.timeline": async (params) => (await reads()).readTimeline(params, storeOf()),
