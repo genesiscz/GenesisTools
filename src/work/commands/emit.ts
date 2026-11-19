@@ -1,18 +1,15 @@
 /** How the CLI door prints a next action: as the `tools work` command line that runs it. */
 import type { Door } from "@genesiscz/utils/output/formatter";
 import type { NextAction } from "@genesiscz/utils/output/reply";
+import { shellWord } from "@genesiscz/utils/shell/quote";
 import { WORK_CLI_POSITIONAL } from "@genesiscz/utils/work/api";
 
 function kebab(key: string): string {
     return key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
 }
 
-function quote(value: string): string {
-    return /^[\w:./@#,-]+$/.test(value) ? value : `"${value.replace(/"/g, '\\"')}"`;
-}
-
 function text(value: unknown): string {
-    return quote(Array.isArray(value) ? value.join(",") : String(value));
+    return shellWord(Array.isArray(value) ? value.join(",") : String(value));
 }
 
 export function commandOf(call: NonNullable<NextAction["call"]>): string {
