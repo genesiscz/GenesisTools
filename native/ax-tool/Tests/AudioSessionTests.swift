@@ -373,6 +373,23 @@ final class AudioSessionTests: XCTestCase {
         return try closedRows(lines).sorted { ($0["file"] as? String ?? "") < ($1["file"] as? String ?? "") }
     }
 
+    func testAJumpPastTheSegmentEndRotatesBeforeTheResumedBuffer() async throws {
+        // Three minutes after a 100 ms start: the first file keeps only its own samples.
+        let jumped = try await sessionRows(seconds: 60, buffers: [(0, 4800), (180_000, 4800)])
+        XCTAssertEqual(jumped.compactMap { $0["durationMs"] as? Int }, [100, 100])
+        XCTAssertEqual(jumped.compactMap { $0["zeroAt"] as? String }, ["2023-11-14T22:13:20.000Z", "2023-11-14T22:16:20.000Z"])
+        XCTAssertEqual(jumped.first?["lostSpans"] as? [[Int]], [])
+        // Five seconds inside a 60 s segment is longer than one callback may fill: the next file starts there.
+        let stalled = try await sessionRows(seconds: 60, buffers: [(0, 4800), (5000, 4800)])
+        XCTAssertEqual(stalled.compactMap { $0["durationMs"] as? Int }, [100, 100])
+        XCTAssertEqual(stalled.last?["zeroAt"] as? String, "2023-11-14T22:13:25.000Z")
+        // A short gap across the boundary fills the first file to its end and opens the next at the resumed sample.
+        let crossing = try await sessionRows(seconds: 0.1, buffers: [(0, 4320), (150, 4800)])
+        XCTAssertEqual(crossing.compactMap { $0["durationMs"] as? Int }, [100, 100])
+        XCTAssertEqual(crossing.first?["lostSpans"] as? [[Int]], [[90, 100]])
+        XCTAssertEqual(crossing.last?["zeroAt"] as? String, "2023-11-14T22:13:20.150Z")
+    }
+
     func testASmallOverlapWithTheRetiredFileIsTrimmedToItsLastSample() async throws {
         // The second buffer starts 3 ms (144 samples) before the first file's end.
         let rows = try await sessionRows(seconds: 0.1, buffers: [(0, 4800), (97, 4800)])

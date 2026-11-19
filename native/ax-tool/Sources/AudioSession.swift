@@ -88,6 +88,9 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
         }
         while offset < count && !closed {
             let time = CMTimeAdd(CMSampleBufferGetPresentationTimeStamp(buffer), CMTime(seconds: Double(offset) / rate, preferredTimescale: 1_000_000_000))
+            if let open = tracks[source], rotatesBeforeGap(open, source: source, at: time) {
+                continue
+            }
             let opening = tracks[source] == nil
             let track: AudioTrack
             if let open = tracks[source] {
@@ -161,6 +164,25 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
                 retire(source)
             }
         }
+    }
+
+    /// A gap that reaches the segment's end, or is longer than one callback may fill, ends the open file first:
+    /// it gets silence up to its boundary when that fits the fill limit (encoded while it finishes, off this
+    /// queue), and the resumed buffer opens the next file at its own time. Anything longer is the time between
+    /// the two files. Answers whether the file was retired.
+    private func rotatesBeforeGap(_ track: AudioTrack, source: CaptureAudioSource, at time: CMTime) -> Bool {
+        guard let next = track.sidecarNextTime, let first = track.first else { return false }
+        let gap = CMTimeGetSeconds(CMTimeSubtract(time, next))
+        let boundary = CMTimeAdd(first, CMTime(seconds: segmentSeconds, preferredTimescale: 1_000_000_000))
+        let crosses = CMTimeCompare(time, boundary) >= 0
+        guard gap > 0.005, crosses || gap > AudioTrack.fillSecondsPerAppend else { return false }
+        let stop = crosses ? boundary : time
+        if CMTimeGetSeconds(CMTimeSubtract(stop, next)) <= AudioTrack.fillSecondsPerAppend {
+            track.extendSidecar(to: stop)
+            if track.end == nil || CMTimeCompare(stop, track.end!) > 0 { track.end = stop }
+        }
+        retire(source)
+        return true
     }
 
     private func fail(_ message: String) {
