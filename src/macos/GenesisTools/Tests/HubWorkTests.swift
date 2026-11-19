@@ -50,7 +50,7 @@ private final class FakeWorkSource: WorkSource {
         if ref == "h_build001:t1" {
             return WorkItemDetail(item: .init(id: ref, title: "The store", type: "task", state: "done", project: "App",
                 acceptance: "A reopened store contains the saved receipt."),
-                refs: [.init(kind: "member_of", other: "h_build001", outgoing: true)],
+                refs: [.init(kind: "member", other: "h_build001", outgoing: false)],
                 log: [.init(seq: 1, ts: Date(timeIntervalSince1970: 1_795_050_000), kind: "created", actor: "Build agent"),
                       .init(seq: 2, ts: Date(timeIntervalSince1970: 1_795_050_060), kind: "moved", actor: "Build agent",
                             summary: "Reopened fixture store contains the receipt.", action: "finished it")])

@@ -286,8 +286,7 @@ struct WorkMain: View {
                                       indexLoading: screen.indexLoading, indexFailure: screen.indexFailure,
                                       select: { workFocus = true; screen.select($0) }, toggleExpansion: { ref, _ in screen.toggleContainer(ref) },
                                       showMore: screen.showMore, clearFilters: { screen.filter = .default },
-                                      retryIndex: screen.loadIndexIfNeeded,
-                                      perform: { action in Task { await screen.perform(action) } })
+                                      retryIndex: screen.loadIndexIfNeeded, perform: screen.write)
                             .padding(.horizontal, 16)
                             .padding(.vertical, 12)
                             .frame(maxWidth: .infinity, alignment: .leading)

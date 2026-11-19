@@ -144,15 +144,20 @@ public struct WorkItemsProjection: Equatable, Sendable {
                 archiveLimit: Int = 200, expanded: Set<String> = [], collapsed: Set<String> = []) {
         let words = WorkFilter.words(filter.text)
         let exactRef = WorkFilter.fold(filter.text.trimmingCharacters(in: .whitespacesAndNewlines))
-        func matches(_ row: WorkFilter.Row) -> Bool { filter.matches(row, words: words, exactRef: exactRef) }
-        func ranked<T>(_ rows: [T], row: (T) -> WorkFilter.Row) -> [T] {
-            guard filter.fullRef != nil else { return rows }
-            var exact: [T] = [], rest: [T] = []
-            for value in rows {
-                if WorkFilter.fold(row(value).ref) == exactRef { exact.append(value) }
-                else { rest.append(value) }
-            }
-            return exact + rest
+        let containerFacts = filter.mine || !filter.severities.isEmpty
+            ? Dictionary(index.map { ($0.ref, $0) }, uniquingKeysWith: { first, _ in first }) : [:]
+        // Keep the section order when a title mentions the full ref of an item in a later section.
+        // A known exact hit is the result; the container around a matching member supplies context.
+        let hasExact: Bool = filter.fullRef != nil && (
+            index.contains { $0.ref == exactRef && filter.matches(.init($0)) }
+            || snapshot.triage.contains { $0.ref == exactRef && filter.matches(.init($0)) }
+            || snapshot.containers.contains { container in
+                (container.ref == exactRef && (!filter.mine || containerFacts[container.ref] != nil)
+                    && filter.matches(containerFacts[container.ref].map(WorkFilter.Row.init) ?? .init(container)))
+                    || container.members.contains { $0.ref == exactRef && filter.matches(.init($0)) }
+            })
+        func matches(_ row: WorkFilter.Row) -> Bool {
+            (!hasExact || row.ref == exactRef) && filter.matches(row, words: words, exactRef: exactRef)
         }
         var matched = Set<String>()
         var all = Set<String>()
@@ -162,10 +167,11 @@ public struct WorkItemsProjection: Equatable, Sendable {
             all.insert(container.ref)
             represented.insert(container.ref)
             for member in container.members { all.insert(member.ref); represented.insert(member.ref) }
-            let members = ranked(container.members.filter {
+            let members = container.members.filter {
                 !filter.isActive || (!["done", "dropped"].contains($0.state) && matches(.init($0)))
-            }, row: { .init($0) })
-            let ownMatch = matches(.init(container))
+            }
+            let facts = containerFacts[container.ref]
+            let ownMatch = (!filter.mine || facts != nil) && matches(facts.map(WorkFilter.Row.init) ?? .init(container))
             guard ownMatch || !members.isEmpty else { continue }
             if ownMatch { matched.insert(container.ref) }
             matched.formUnion(members.map(\.ref))
@@ -174,27 +180,24 @@ public struct WorkItemsProjection: Equatable, Sendable {
                                        isExpanded: !collapsed.contains(container.ref)
                                            && (expanded.contains(container.ref) || opensForMatch)))
         }
-        containers = ranked(projected, row: { .init($0.value) })
+        containers = projected
         for row in snapshot.triage { all.insert(row.ref) }
         represented.formUnion(snapshot.spotted.map(\.ref))
         represented.formUnion(snapshot.reopened.map(\.ref))
-        let spotted = ranked(snapshot.spotted.filter { matches(.init($0)) }, row: { .init($0) })
+        let spotted = snapshot.spotted.filter { matches(.init($0)) }
         spottedGroups = Dictionary(grouping: spotted, by: \.type).map { TriageGroup(type: $0.key, rows: $0.value) }
-            .sorted { left, right in
-                let leftRank = left.rows.map { filter.rank(.init($0)) }.min() ?? 1
-                let rightRank = right.rows.map { filter.rank(.init($0)) }.min() ?? 1
-                return leftRank == rightRank ? left.type < right.type : leftRank < rightRank
-            }
-        reopened = ranked(snapshot.reopened.filter { matches(.init($0)) }, row: { .init($0) })
+            .sorted { $0.type < $1.type }
+        reopened = snapshot.reopened.filter { matches(.init($0)) }
         matched.formUnion(spotted.map(\.ref)); matched.formUnion(reopened.map(\.ref))
         var indexed = Set<String>()
         var archived: [WorkRowValue] = []
         var others: [WorkRowValue] = []
         // The index owns newest-first order. Closed members fill any rows it has not returned yet.
         let closedMembers = snapshot.containers.flatMap(\.members).filter { ["done", "dropped"].contains($0.state) }
+        let triageContext = Dictionary(snapshot.triage.map { ($0.ref, $0) }, uniquingKeysWith: { first, _ in first })
         for row in index + closedMembers {
             all.insert(row.ref)
-            guard indexed.insert(row.ref).inserted, matches(.init(row)) else { continue }
+            guard indexed.insert(row.ref).inserted, matches(triageContext[row.ref].map(WorkFilter.Row.init) ?? .init(row)) else { continue }
             if ["done", "dropped"].contains(row.state) {
                 // Closed members belong to the archive, not to a second copy beneath their container.
                 if !matched.contains(row.ref) { archived.append(row) }
@@ -202,10 +205,9 @@ public struct WorkItemsProjection: Equatable, Sendable {
                 others.append(row)
             }
         }
-        other = ranked(others, row: { .init($0) })
-        let rankedArchive = ranked(archived, row: { .init($0) })
-        archiveCount = rankedArchive.count
-        archive = Array(rankedArchive.prefix(max(0, archiveLimit)))
+        other = others
+        archiveCount = archived.count
+        archive = Array(archived.prefix(max(0, archiveLimit)))
         matched.formUnion(others.map(\.ref)); matched.formUnion(archived.map(\.ref))
         matchedCount = matched.count
         totalCount = all.count

@@ -53,13 +53,14 @@ public struct WorkItemsView: View {
     let showMore: () -> Void
     let clearFilters: () -> Void
     let retryIndex: () -> Void
-    let perform: (WorkScreenAction) -> Void
+    let perform: @MainActor (WorkScreenAction) -> Task<Bool, Never>
     @State private var expanded: Set<String>
     @State private var compact = false
 
     public init(snapshot: WorkSnapshotValue, pending: Set<String>, expandAll: Bool = false,
                 perform: @escaping (WorkScreenAction) -> Void) {
-        self.snapshot = snapshot; self.pending = pending; self.perform = perform
+        self.snapshot = snapshot; self.pending = pending
+        self.perform = { action in perform(action); return Task { true } }
         projection = nil; filter = .default; selection = nil
         indexLoading = false; indexFailure = nil
         select = { _ in }; toggleExpansion = nil; showMore = {}; clearFilters = {}; retryIndex = {}
@@ -70,12 +71,13 @@ public struct WorkItemsView: View {
                 selection: String?, pending: Set<String>, indexLoading: Bool = false, indexFailure: String? = nil,
                 select: @escaping (String) -> Void, toggleExpansion: @escaping (String, Bool) -> Void,
                 showMore: @escaping () -> Void, clearFilters: @escaping () -> Void,
-                retryIndex: @escaping () -> Void, perform: @escaping (WorkScreenAction) -> Void) {
+                retryIndex: @escaping () -> Void, perform: @escaping @MainActor (WorkScreenAction) async -> Bool) {
         self.snapshot = snapshot; self.projection = projection; self.filter = filter
         self.selection = selection; self.pending = pending
         self.indexLoading = indexLoading; self.indexFailure = indexFailure
         self.select = select; self.toggleExpansion = toggleExpansion; self.showMore = showMore
-        self.clearFilters = clearFilters; self.retryIndex = retryIndex; self.perform = perform
+        self.clearFilters = clearFilters; self.retryIndex = retryIndex
+        self.perform = { action in Task { await perform(action) } }
         _expanded = State(initialValue: [])
     }
 
@@ -221,7 +223,7 @@ public struct WorkItemsView: View {
         let selectable: Bool
         let select: (String) -> Void
         let toggle: (Bool) -> Void
-        let perform: (WorkScreenAction) -> Void
+        let perform: @MainActor (WorkScreenAction) -> Task<Bool, Never>
 
         static func == (lhs: Self, rhs: Self) -> Bool {
             lhs.container == rhs.container && lhs.filtered == rhs.filtered && lhs.snapshot == rhs.snapshot
@@ -277,7 +279,7 @@ public struct WorkItemsView: View {
         let selected: Bool
         let selectable: Bool
         let select: (String) -> Void
-        let perform: (WorkScreenAction) -> Void
+        let perform: @MainActor (WorkScreenAction) -> Task<Bool, Never>
 
         static func == (lhs: Self, rhs: Self) -> Bool {
             lhs.value == rhs.value && lhs.detail == rhs.detail && lhs.summary == rhs.summary
@@ -299,7 +301,7 @@ public struct WorkItemsView: View {
                 }
                 if !archive, let pairings = value.pairings, !pairings.isEmpty {
                     WorkPairingActions(ref: value.ref, pairings: pairings, project: value.project,
-                                       pending: pending, perform: perform).padding(.leading, 24)
+                                       pending: pending) { _ = perform($0) }.padding(.leading, 24)
                 }
                 if let detail, !detail.isEmpty {
                     Text(detail).font(.system(size: 11)).foregroundStyle(KitPalette.dim).lineLimit(2)
@@ -325,18 +327,18 @@ public struct WorkItemsView: View {
                 }
                 .padding(.vertical, 4).contentShape(Rectangle())
             } else {
-            HStack(spacing: 8) {
-                if summary != nil {
-                    Image(systemName: value.type == "epic" ? "square.stack.3d.up" : "tray.full")
-                        .foregroundStyle(KitPalette.dim)
-                } else { stateGlyph(value.state) }
-                Text(value.title).font(.system(size: summary == nil ? 12 : 12.5,
-                                               weight: summary == nil ? .regular : .medium)).lineLimit(1)
-                    .foregroundStyle(value.isOpen ? KitPalette.text : KitPalette.dim)
-                rowFacts
-            }
-            .frame(maxWidth: .infinity, minHeight: 26, alignment: .leading)
-            .contentShape(Rectangle())
+                HStack(spacing: 8) {
+                    if summary != nil {
+                        Image(systemName: value.type == "epic" ? "square.stack.3d.up" : "tray.full")
+                            .foregroundStyle(KitPalette.dim)
+                    } else { stateGlyph(value.state) }
+                    Text(value.title).font(.system(size: summary == nil ? 12 : 12.5,
+                                                   weight: summary == nil ? .regular : .medium)).lineLimit(1)
+                        .foregroundStyle(value.isOpen ? KitPalette.text : KitPalette.dim)
+                    rowFacts
+                }
+                .frame(maxWidth: .infinity, minHeight: 26, alignment: .leading)
+                .contentShape(Rectangle())
             }
         }
 
@@ -371,7 +373,7 @@ public struct WorkItemsView: View {
                 HStack(spacing: 4) {
                     if accept && state == "spotted" {
                         IconButton(systemName: "checkmark.circle", tooltip: "Accept: it becomes open work") {
-                            perform(.accept(ref: ref))
+                            _ = perform(.accept(ref: ref))
                         }
                     }
                     if ["open", "active", "reopened"].contains(state) {
@@ -390,7 +392,7 @@ public struct WorkItemsView: View {
                         if !handoffs(excluding: ref).isEmpty {
                             MenuButton(items: {
                                 handoffs(excluding: ref).map { handoff in
-                                    .action("\(handoff.title) (\(handoff.ref))") { perform(.addMember(ref: ref, handoff: handoff.ref)) }
+                                    .action("\(handoff.title) (\(handoff.ref))") { _ = perform(.addMember(ref: ref, handoff: handoff.ref)) }
                                 }
                             }) {
                                 Image(systemName: "tray.and.arrow.down").frame(width: 20, height: 20)
@@ -487,7 +489,7 @@ struct WorkReasonButton: View {
     private let externalText: Binding<String>?
     private let isPending: Bool
     private let identifier: String
-    private let action: @MainActor (String) async -> Bool
+    private let action: @MainActor (String) -> Task<Bool, Never>?
     @State private var asking = false
     @State private var localText = ""
     @State private var localRevision = UUID()
@@ -496,7 +498,7 @@ struct WorkReasonButton: View {
     @FocusState private var focused: Bool
 
     /// Compatibility initializer for the existing row actions.
-    init(symbol: String, tooltip: String, prompt: String, action: @escaping (String) -> Void) {
+    init(symbol: String, tooltip: String, prompt: String, action: @escaping @MainActor (String) -> Task<Bool, Never>?) {
         self.symbol = symbol
         self.tooltip = tooltip
         self.prompt = prompt
@@ -504,13 +506,13 @@ struct WorkReasonButton: View {
         self.externalText = nil
         self.isPending = false
         self.identifier = "work.reason.\(symbol)"
-        self.action = { value in action(value); return true }
+        self.action = action
     }
 
     /// Labelled inspector action. Success is true only after the write is confirmed by the model.
     init(title: String, symbol: String, tooltip: String, prompt: String, text: Binding<String>,
          isPending: Bool = false, identifier: String,
-         action: @escaping @MainActor (String) async -> Bool) {
+         action: @escaping @MainActor (String) -> Task<Bool, Never>?) {
         self.symbol = symbol
         self.tooltip = tooltip
         self.prompt = prompt
@@ -586,9 +588,10 @@ struct WorkReasonButton: View {
         guard !value.isEmpty, !isPending, !sending else { return }
         let submittedRevision = localRevision
         let shown = presentation
+        guard let submitted = action(value) else { return }
         sending = true
         Task {
-            let ok = await action(value)
+            let ok = await submitted.value
             sending = false
             if externalText == nil, ok, localRevision == submittedRevision { localText = "" }
             // External-draft clearing is owned by the caller's revision check. A failed write stays open;

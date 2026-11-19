@@ -4,25 +4,32 @@ import SwiftUI
 /// Owned by WorkMain, outside the beside/replace branches. Selection and resizing do not discard drafts.
 @MainActor
 public final class WorkItemInspectorDrafts: ObservableObject {
-    fileprivate struct Key: Hashable { var ref: String; var purpose: String }
-    fileprivate struct Draft { var text = ""; var revision = UUID() }
+    struct Key: Hashable { var ref: String; var purpose: String }
+    private struct Draft { var text = ""; var revision = UUID() }
     @Published private var values: [Key: Draft] = [:]
     @Published fileprivate var sending: Set<Key> = []
 
     public init() {}
 
-    fileprivate func binding(_ key: Key) -> Binding<String> {
+    func binding(_ key: Key) -> Binding<String> {
         Binding(get: { self.values[key]?.text ?? "" }, set: {
             self.values[key] = Draft(text: $0, revision: UUID())
         })
     }
 
-    fileprivate func value(_ key: Key) -> Draft { values[key] ?? Draft() }
-
-    /// A success consumes exactly the submitted revision. Even an edit back to the same text is a new draft.
-    fileprivate func consume(_ key: Key, revision: UUID) {
-        guard values[key]?.revision == revision else { return }
-        values[key] = Draft()
+    /// Capture both text and revision at the press, before the task or a newer edit can run.
+    @discardableResult
+    func submit(_ key: Key, write: @escaping @MainActor (String) async -> Bool) -> Task<Bool, Never>? {
+        guard let draft = values[key], !sending.contains(key) else { return nil }
+        let text = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        sending.insert(key)
+        return Task {
+            defer { sending.remove(key) }
+            let ok = await write(text)
+            if ok, values[key]?.revision == draft.revision { values[key] = nil }
+            return ok
+        }
     }
 }
 
@@ -171,6 +178,7 @@ public struct WorkItemInspector: View {
                           look: .tone)
                 }
                 CopyChip(label: ref, value: ref, tooltip: "Copy item reference", what: "item reference")
+                    .accessibilityIdentifier("work.detail.copyRef")
                 if let project = item.project { Text(verbatim: project).foregroundStyle(.secondary) }
                 if let revision = item.rev {
                     Text("Revision \(revision)").foregroundStyle(.secondary).monospacedDigit()
@@ -268,14 +276,8 @@ public struct WorkItemInspector: View {
         let key = WorkItemInspectorDrafts.Key(ref: ref, purpose: purpose)
         return WorkReasonButton(title: title, symbol: symbol, tooltip: "\(title), with \(purpose == "finish" ? "the proof" : "the reason")",
                                 prompt: prompt, text: drafts.binding(key), isPending: pending,
-                                identifier: "work.detail.action.\(purpose)") { value in
-            let submitted = drafts.value(key)
-            guard !drafts.sending.contains(key) else { return false }
-            drafts.sending.insert(key)
-            defer { drafts.sending.remove(key) }
-            let ok = await model.write(action(value))
-            if ok { drafts.consume(key, revision: submitted.revision) }
-            return ok
+                                identifier: "work.detail.action.\(purpose)") { _ in
+            drafts.submit(key) { value in await model.write(action(value)) }
         }
         .id(key)
     }
@@ -337,6 +339,7 @@ public struct WorkItemInspector: View {
             } else if ["pr", "url"].contains(pointer.kind), let url = URL(string: pointer.target),
                       ["https", "http"].contains(url.scheme?.lowercased() ?? ""), url.host != nil {
                 externalLink(pointer.target, url)
+                    .accessibilityIdentifier("work.detail.link.\(pointer.id)")
             } else if pointer.kind == "pr",
                       pointer.target.range(of: #"^[^\s#!]+/[^\s/#!]+[#!][1-9][0-9]*$"#,
                                            options: .regularExpression) != nil {
@@ -380,14 +383,8 @@ public struct WorkItemInspector: View {
     }
 
     private func sendComment(_ key: WorkItemInspectorDrafts.Key) {
-        let submitted = drafts.value(key)
-        let text = submitted.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !model.pending.contains(key.ref), !drafts.sending.contains(key) else { return }
-        drafts.sending.insert(key)
-        Task {
-            defer { drafts.sending.remove(key) }
-            if await model.write(.comment(ref: key.ref, text: text)) { drafts.consume(key, revision: submitted.revision) }
-        }
+        guard !model.pending.contains(key.ref) else { return }
+        drafts.submit(key) { text in await model.write(.comment(ref: key.ref, text: text)) }
     }
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
