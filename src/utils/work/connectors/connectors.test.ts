@@ -53,6 +53,7 @@ class FakeConnector implements Connector<unknown> {
     readonly settings = z.unknown();
     readonly can = { create: true, pull: true, labels: true, comments: false, parents: false };
     pushed: PushIntent[] = [];
+    unavailable = false;
     batches: { context: ConnectorContext; titles: string[] }[] = [];
     pulls: ConnectorContext[] = [];
     remote = new Map<string, RemoteItem>();
@@ -64,6 +65,11 @@ class FakeConnector implements Connector<unknown> {
     async push(intents: readonly PushIntent[], context: ConnectorContext) {
         this.batches.push({ context, titles: intents.map(({ item }) => item.title) });
         this.pushed.push(...intents);
+
+        if (this.unavailable) {
+            return intents.map(() => ({ ok: false as const, error: "temporarily unavailable" }));
+        }
+
         return intents.map((intent) => {
             const key = intent.pairing?.remoteKey || `R-${intent.item.id}`;
             this.remote.set(key, {
@@ -119,6 +125,23 @@ async function spot(sessionId: string, type: "bug" | "epic" | "task", title = "x
 }
 
 describe("the sync consumer", () => {
+    test("a later pass retries only failed pairings after their cooldown", async () => {
+        await spot("s1", "bug", "already synced");
+        const start = deps();
+        await runSyncOnce(start);
+
+        const id = await spot("s1", "bug", "retry this");
+        fake.unavailable = true;
+        const now = Date.parse(start.now());
+        expect((await runSyncOnce({ ...start, now: () => new Date(now).toISOString() })).failed).toBe(1);
+        expect(selectPairings(db, { item: id })[0].state).toBe("failed");
+
+        fake.unavailable = false;
+        expect((await runSyncOnce({ ...start, now: () => new Date(now + 1).toISOString() })).pushed).toBe(0);
+        expect((await runSyncOnce({ ...start, now: () => new Date(now + 31_000).toISOString() })).pushed).toBe(1);
+        expect(fake.pushed.map(({ item }) => item.title)).toEqual(["already synced", "retry this", "retry this"]);
+    });
+
     test("a pass from App loads each project once and pushes each batch with that project's settings", async () => {
         for (const [project, type] of [
             ["App", "bug"],
