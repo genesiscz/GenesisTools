@@ -65,12 +65,13 @@ export type WidgetTaskSource = Pick<
 >;
 
 export function widgetTask(row: WidgetTaskSource): WidgetTask {
+    const title = row.title || row.prompt;
     return {
         id: row.id,
         number: row.number,
-        title: (row.title || row.prompt).slice(0, TASK_TITLE_CHARS),
+        title: title.slice(0, TASK_TITLE_CHARS),
         summary: row.prompt.slice(0, TASK_DETAILS_CHARS),
-        truncated: row.prompt.length > TASK_DETAILS_CHARS || (row.title?.length ?? 0) > TASK_TITLE_CHARS,
+        truncated: row.prompt.length > TASK_DETAILS_CHARS || title.length > TASK_TITLE_CHARS,
         revision: row.revision ?? 1,
         state: row.state,
         updatedTs: row.updatedTs,
