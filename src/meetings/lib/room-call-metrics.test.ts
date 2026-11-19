@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { sha256Json } from "@genesiscz/utils/hash";
 import {
+    freezeRoomCall,
     type HoldoutManifest,
     measureRoomCall,
     type RoomCallPrediction,
@@ -75,6 +76,29 @@ function offer(names: string[], scores: Array<number | null> = []) {
 }
 
 describe("held-out room/call measurement", () => {
+    test("freezes the archived remote loss before the candidate exists, including equal-time siblings", () => {
+        const { reference, holdout } = fixture([remote, remote, guest]);
+        const question = {
+            ...reference.entries[0]!,
+            speaker: "[open]",
+            band: "open",
+            confidence: 0.4,
+            unclear: { readings: [remote, guest] },
+        };
+        const head = { ...reference, entries: [reference.entries[2], question, reference.entries[1]] };
+        const result = freezeRoomCall({
+            reference,
+            scenario: holdout,
+            remote,
+            archives: [
+                { revision: "old", transcript: reference },
+                { revision: "lost", transcript: head },
+                { revision: "recovered", transcript: reference },
+            ],
+        });
+        expect(result.originalRemote).toEqual([holdout.lines[0]!]);
+        expect(result.history.map((run) => run.correctOnOriginalRemote)).toEqual([1, 0, 1]);
+    });
     test("offering the room guest on all 1518 lines fails the blanket-offer control", () => {
         const input = fixture(Array.from({ length: 1518 }, (_, i) => (i < 167 ? guest : i < 800 ? remote : owner)));
         for (const row of input.candidate.rows) {
