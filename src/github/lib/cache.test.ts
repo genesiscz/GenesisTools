@@ -380,6 +380,18 @@ describe("github cache database", () => {
         expect(embedded).toBe(4);
     });
 
+    test("omitted totals survive refresh and null explicitly resets one total", () => {
+        const repo = getOrCreateRepo("acme", "widgets");
+        upsertIssue(issueFields(repo.id, { reaction_total: 7, comment_total: 10 }));
+        const kept = upsertIssue(issueFields(repo.id));
+        const reset = upsertIssue(issueFields(repo.id, { comment_total: null }));
+        closeDatabase();
+        getDatabase(dir);
+        expect(kept).toMatchObject({ reaction_total: 7, comment_total: 10 });
+        expect(reset).toMatchObject({ reaction_total: 7, comment_total: null });
+        expect(getIssue(repo.id, 12)).toEqual(reset);
+    });
+
     test("semantic synonyms and keyword matches both contribute to hybrid rank", async () => {
         const repo = getOrCreateRepo("acme", "widgets");
         upsertIssue(issueFields(repo.id, { number: 1, title: "Gray screen", body: "" }));

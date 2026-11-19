@@ -169,40 +169,19 @@ export function getIssue(repoId: number, number: number): IssueRecord | null {
 
 export function upsertIssue(data: Omit<IssueRecord, "id">): IssueRecord {
     const db = getDatabase();
-
-    const existing = getIssue(data.repo_id, data.number);
-    if (existing) {
-        const reactions = data.reaction_total === undefined ? (existing.reaction_total ?? null) : data.reaction_total;
-        const comments = data.comment_total === undefined ? (existing.comment_total ?? null) : data.comment_total;
-        db.query(`
-      UPDATE issues SET
-        type = ?, title = ?, body = ?, state = ?, author = ?,
-        created_at = ?, updated_at = ?, closed_at = ?,
-        last_fetched = ?, last_comment_cursor = ?, reaction_total = ?, comment_total = ?
-      WHERE id = ?
-    `).run(
-            data.type,
-            data.title,
-            data.body,
-            data.state,
-            data.author,
-            data.created_at,
-            data.updated_at,
-            data.closed_at,
-            data.last_fetched,
-            data.last_comment_cursor,
-            reactions,
-            comments,
-            existing.id
-        );
-        return { ...existing, ...data, reaction_total: reactions, comment_total: comments };
-    }
-
-    const stmt = db.query(`
+    const stmt = db.query<IssueRecord, Array<string | number | null>>(`
     INSERT INTO issues (
       repo_id, number, type, title, body, state, author,
       created_at, updated_at, closed_at, last_fetched, last_comment_cursor, reaction_total, comment_total
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(repo_id, number) DO UPDATE SET
+      type = excluded.type, title = excluded.title, body = excluded.body, state = excluded.state,
+      author = excluded.author, created_at = excluded.created_at, updated_at = excluded.updated_at,
+      closed_at = excluded.closed_at, last_fetched = excluded.last_fetched,
+      last_comment_cursor = excluded.last_comment_cursor,
+      reaction_total = CASE WHEN ? THEN excluded.reaction_total ELSE issues.reaction_total END,
+      comment_total = CASE WHEN ? THEN excluded.comment_total ELSE issues.comment_total END
+    RETURNING *
   `);
     const result = stmt.get(
         data.repo_id,
@@ -218,15 +197,14 @@ export function upsertIssue(data: Omit<IssueRecord, "id">): IssueRecord {
         data.last_fetched,
         data.last_comment_cursor,
         data.reaction_total ?? null,
-        data.comment_total ?? null
-    ) as { id: number };
-
-    return {
-        id: result.id,
-        ...data,
-        reaction_total: data.reaction_total ?? null,
-        comment_total: data.comment_total ?? null,
-    };
+        data.comment_total ?? null,
+        Number(data.reaction_total !== undefined),
+        Number(data.comment_total !== undefined)
+    );
+    if (!result) {
+        throw new Error("Issue upsert returned no row");
+    }
+    return result;
 }
 
 // Comment operations
