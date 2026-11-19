@@ -10,7 +10,7 @@ import { type LineEvidence, presentAt, SELF } from "@genesiscz/utils/transcribe/
 import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
 import { callMutes } from "./call-mutes";
 import type { NewItem } from "./new-item";
-import { type Eligibility, isStrongCallForNaming, speakersFor } from "./speaker-eligibility";
+import { type Eligibility, isStrongCallForNaming, type SpeakerFacts, speakersFor } from "./speaker-eligibility";
 import { assessIndicator } from "./speaker-indicator";
 import { ATTENDANCE_CONFIDENCE, ENERGY_CALL_LEANS, ENERGY_MIC_LEANS, seatConfidence } from "./speaker-labels/seat";
 import { addPolish, lineTallies, type SamePerson, type SpeakerScore, scoreCandidates } from "./speaker-scores";
@@ -23,6 +23,7 @@ type SourceRange = { label: string; fromSec: number; toSec: number; evidence?: R
 export class LineSpeakers {
     private readonly rows = new Map<number, LineEvidence>();
     private readonly byLabel = new Map<string, LineEvidence[]>();
+    private readonly facts: Pick<SpeakerFacts, "seats" | "people" | "selfName" | "callStays">;
     readonly eligibility = new Map<number, Eligibility>();
     readonly assessment: ReturnType<typeof assessIndicator>;
 
@@ -41,13 +42,15 @@ export class LineSpeakers {
             roomPeople: wholeMeetingRoomPeople(record.seats),
         });
         const selfStays = presence?.map((stay) => (stay.self && selfName ? { ...stay, name: selfName } : stay));
+        const transcriptLabels = new Set(lines.map((line) => line.label));
         const people = [
             ...new Set([
                 ...record.participants.map((p) => p.name),
                 ...meeting.participants.map((p) => p.name),
-                ...(!presence?.length
-                    ? meeting.speakers.filter((p) => p.origin === "platform").map((p) => p.name)
-                    : []),
+                // Attendance may list only the joiner. R20 also knows the platform labels actually used in the call.
+                ...meeting.speakers
+                    .filter((p) => p.origin === "platform" && (!presence?.length || transcriptLabels.has(p.name)))
+                    .map((p) => p.name),
                 ...Object.values(record.speakers.labels),
                 ...(options.people ?? []),
                 ...record.items.flatMap((item) =>
@@ -64,26 +67,32 @@ export class LineSpeakers {
                 ]),
             ]),
         ];
+        this.facts = { seats: record.seats, people, selfName, callStays: selfStays };
         for (const line of lines) {
             this.rows.set(line.index, line);
             const group = this.byLabel.get(line.label) ?? [];
             group.push(line);
             this.byLabel.set(line.label, group);
-            this.eligibility.set(
-                line.index,
-                speakersFor(
-                    { index: line.index, fromSec: line.startSec, toSec: line.endSec },
-                    {
-                        ...line,
-                        seats: record.seats,
-                        people,
-                        selfName,
-                        callStays: selfStays,
-                        ignoredIndicator: this.assessment.ignored.has(line.index),
-                    }
-                )
-            );
+            this.eligibility.set(line.index, this.resolve(line));
         }
+    }
+
+    private resolve(line: LineEvidence): Eligibility {
+        return speakersFor(
+            { index: line.index, fromSec: line.startSec, toSec: line.endSec },
+            { ...line, ...this.facts, ignoredIndicator: this.assessment.ignored.has(line.index) }
+        );
+    }
+
+    allowsMatchedVoice(line: LineEvidence, person: string): boolean {
+        const eligible = this.eligibility.get(line.index)!;
+        // A positive embedding comes from an audio track. On a disagreement, check its calibrated side's
+        // occupants, attendance and transmitting-account mute across the full span.
+        const track =
+            eligible.channel.side === "mixed" && line.energyMic !== undefined
+                ? this.resolve({ ...line, micShare: undefined })
+                : eligible;
+        return track.channel.strong && track.choices.some((name) => sameName(name, person));
     }
 
     linesFor(range: SourceRange): LineEvidence[] {
@@ -313,7 +322,7 @@ function findingFor(options: {
     const mixed = line.micShare > 1 - CHANNEL_SHARE && line.micShare < CHANNEL_SHARE;
     const micSure = energy !== undefined && energy >= ENERGY_MIC_SURE;
     const micLeans = mixed && energy !== undefined && energy >= ENERGY_MIC_LEANS;
-    const callSure = energy !== undefined && (energy <= ENERGY_CALL_SURE || (mixed && energy < ENERGY_CALL_LEANS));
+    const callMajority = energy !== undefined && energy < ENERGY_CALL_LEANS;
 
     // The platform's label and its speaking indicator agree on the label's person: a microphone lean does not win.
     const shown = speakingNames(line).filter((name) => !sameName(name, selfName) && !muted(name));
@@ -337,7 +346,7 @@ function findingFor(options: {
 
     // Wispr records the microphone itself, so a user muted in the call can still be heard on it: RM never overrules a
     // line the microphone won, only one the call's sound won.
-    if (line.winner === SELF && !callSure) {
+    if (line.winner === SELF && !callMajority) {
         if (isSelfLabel) {
             return undefined;
         }
@@ -758,6 +767,8 @@ function localVoiceFinding(options: {
     indicatorIgnored: boolean;
     eligible: Eligibility;
     mappedCall: boolean;
+    hasSeats: boolean;
+    observedCallPeople: () => string[];
 }): EvidenceFinding | undefined {
     const { line, selfName, voices, found } = options;
 
@@ -777,6 +788,11 @@ function localVoiceFinding(options: {
         line.energyMic !== undefined &&
         (line.micShare - 0.5) * (line.energyMic - 0.5) < 0
     ) {
+        // Without a seat or another platform identity to reconcile, a coarse segment adds no speaker evidence
+        // against R4.3's calibrated reply. Full-line eligibility still filters the result.
+        if (!options.hasSeats && (!options.platformLabel || options.isSelfLabel)) {
+            return found;
+        }
         return {
             candidates: options.eligible.choices,
             rules: [MeetingRule.Channel, MeetingRule.Energy],
@@ -823,16 +839,20 @@ function localVoiceFinding(options: {
         };
     }
     if (
-        (options.indicatorIgnored ||
-            (line.speakingUnknown && Object.keys(line.speaking).length === 0 && choices.length >= 2)) &&
-        isStrongCallForNaming(options.eligible.channel)
+        isStrongCallForNaming(options.eligible.channel) &&
+        (options.indicatorIgnored || (line.speakingUnknown && Object.keys(line.speaking).length === 0))
     ) {
-        return {
-            candidates: choices,
-            rules: [MeetingRule.Channel],
-            confidence: 0.4,
-            listen: true,
-        };
+        // A platform label can be eligible for review without proving that several people shared the call.
+        const observed = options.observedCallPeople();
+        const remote = choices.filter((name) => observed.some((person) => sameName(name, person)));
+        if (options.indicatorIgnored || remote.length >= 2) {
+            return {
+                candidates: options.indicatorIgnored ? choices : remote,
+                rules: [MeetingRule.Channel],
+                confidence: 0.4,
+                listen: true,
+            };
+        }
     }
 
     if (options.unusable) {
@@ -932,6 +952,8 @@ export function evidenceItems(options: {
             ? options.lines.map((line) => ({ ...line, present: presentAt(presence, line.startSec) }))
             : options.lines;
     const speakers = options.speakers ?? new LineSpeakers({ ...options, presence, selfName, lines: measured });
+    const seats = options.record.seats;
+    const hasSeats = !!(seats?.room.length || seats?.remote.length || seats?.microphones?.length);
     const unusable = unusableChannelSpans(measured, options.energyMicShare, selfName);
     const assessment = speakers.assessment;
     const stuck = assessment.ignored;
@@ -1151,8 +1173,7 @@ export function evidenceItems(options: {
                 !confirmed &&
                 voice?.quality === "matched" &&
                 voice.person &&
-                eligible.choices.some((name) => sameName(name, voice.person!)) &&
-                eligible.channel.strong
+                speakers.allowsMatchedVoice(line, voice.person)
             ) {
                 close();
                 items.push({
@@ -1199,6 +1220,7 @@ export function evidenceItems(options: {
                       isSelfLabel,
                       voices,
                       eligible,
+                      hasSeats,
                       platformLabel: platformLabels.has(label),
                       mappedCall:
                           eligible.channel.side === "call" &&
@@ -1207,7 +1229,11 @@ export function evidenceItems(options: {
                               (group) => group.deviceId && sameName(group.deviceId, speakingNames(line)[0]!)
                           ),
                       indicatorIgnored: stuck.has(line.index),
-
+                      observedCallPeople: () => [
+                          ...(line.present ??
+                              assessment.candidates.filter((p) => p.fromSec <= line.startSec).map((p) => p.name)),
+                          ...(options.record.seats?.remote.map((seat) => seat.name) ?? []),
+                      ],
                       unusable: within(unusable, line.startSec),
                       found,
                   });
@@ -1246,6 +1272,12 @@ export function evidenceItems(options: {
             }
 
             close();
+            const micFinding =
+                eligible.channel.side === "mic" ||
+                (eligible.channel.side === "mixed" &&
+                    !finding.conflict &&
+                    finding.rules.includes(MeetingRule.Energy) &&
+                    (line.energyMic ?? 0) > ENERGY_CALL_LEANS);
             open = {
                 key,
                 shares: [finding.confidence],
@@ -1264,7 +1296,7 @@ export function evidenceItems(options: {
                     confidence: finding.confidence,
                     rules: finding.rules,
                     evidence: {
-                        channel: eligible.channel.side === "mic" ? "mic" : "system",
+                        channel: micFinding ? "mic" : "system",
                         ...(finding.elimination ? { reviewOnly: true, reason: "mute-elimination" } : {}),
                         ...(eligible.channel.side === "call" &&
                         !finding.speaker &&

@@ -3,8 +3,7 @@ import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { LineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import { z } from "zod";
-import { callMutes } from "./call-mutes";
-import type { Eligibility } from "./speaker-eligibility";
+import { channelFor, type Eligibility, mutedAccountsFor } from "./speaker-eligibility";
 
 /**
  * Typed confidence for the people a speaker range could be (G31, the speaker half of R49). The suggest pipeline writes
@@ -219,20 +218,30 @@ export function lineTallies(options: {
 
     for (const line of options.lines) {
         const eligibility = options.eligibility?.get(line.index);
+        const channel = eligibility?.channel ?? channelFor(line);
+        const micHolds = options.micHolds(line);
         const allows = (name: string) => !eligibility || eligibility.choices.some((other) => sameName(name, other));
-        const mutedAccounts = callMutes(line).filter((name) => !eligibility || !allows(name));
-        const muted = (name: string) => mutedAccounts.some((person) => sameName(person, name));
+        // Legacy callers can supply call-indicator counts and micHolds without measured shares.
+        const mutes =
+            !eligibility && channel.side === "unknown" && !micHolds
+                ? (line.muted ?? [])
+                : mutedAccountsFor(channel, line.muted);
+        const mutedAccounts = mutes.filter((name) => !eligibility || !allows(name));
+        const muted = (name: string) =>
+            mutedAccounts.some(
+                (person) => sameName(person, name) || (!eligibility && options.samePerson?.(person, name))
+            );
 
-        if (options.micHolds(line) && allows(options.selfName) && (!eligibility || eligibility.choices.length === 1)) {
+        if (micHolds && allows(options.selfName) && (!eligibility || eligibility.choices.length === 1)) {
             const rule = line.energyMic !== undefined ? MeetingRule.Energy : MeetingRule.Channel;
             const self = tallies.of(options.selfName);
             self.mic.set(rule, (self.mic.get(rule) ?? 0) + 1);
         }
 
+        // lineEvidence counts only successful observations. The start can be unknown even when a later read
+        // shows a speaker. That read contributes to the score without establishing full-line identity.
         const shown = Object.entries(line.speaking).flatMap(([name, readings]) =>
-            !line.speakingUnknown && readings > 0 && allows(name) && !muted(name) && !sameName(name, options.selfName)
-                ? [name]
-                : []
+            readings > 0 && allows(name) && !muted(name) && !sameName(name, options.selfName) ? [name] : []
         );
 
         for (const tally of once(shown)) {

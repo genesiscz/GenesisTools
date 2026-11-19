@@ -509,10 +509,7 @@ function labeledItems(options: {
                 one.speaker &&
                 (one.rules.includes(MeetingRule.Voice) || one.evidence?.decisionGate === "cosine and margin")
         );
-        if (
-            matched?.kind === "speaker-range" &&
-            (label.reason !== "named" || !label.person || !sameName(label.person, matched.speaker!))
-        ) {
+        if (matched?.kind === "speaker-range" && (label.reason !== "named" || !label.person)) {
             proposed.set(label.index, {
                 ...matched,
                 fromSec: at,
@@ -1531,5 +1528,10 @@ export function applySuggestionChanges(current: MeetingRecord, changes: SuggestC
 }
 
 export function suggestItems(options: SuggestInputs): MeetingItem[] {
-    return planSuggestions(options).fresh;
+    const changes = planSuggestions(options);
+    // Legacy callers append the returned items themselves and save the edited ranges and stays in the same update.
+    if (changes.updated.length || changes.stays.length) {
+        applySuggestionChanges(options.record, { ...changes, fresh: [] });
+    }
+    return changes.fresh;
 }

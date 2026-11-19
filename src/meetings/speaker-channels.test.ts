@@ -1139,7 +1139,7 @@ test("an identified remote departure removes that person after a goodbye under t
     expect(later?.candidates).not.toContain("Carol Example");
 });
 
-test("a linear echo residual does not turn a mixed microphone line into a remote identity", () => {
+test("R3 an echo residual leaves a strong call line unnamed and its choices on the call", () => {
     const sample = scene([{ label: "Bob Example", mic: 0.02 }]);
     const audio = Float32Array.from({ length: 1000 }, (_, i) => Math.sin(i / 12));
     const acoustic = correlateEcho({ mic: audio, call: audio, rate: 1000 });
@@ -1147,8 +1147,50 @@ test("a linear echo residual does not turn a mixed microphone line into a remote
     const found = ranges(suggestItems({ ...base, ...sample, energyMicShare: share }));
     expect(found).toHaveLength(1);
     expect(found[0]?.speaker).toBeUndefined();
-    expect(found[0]?.candidates?.[0]).toBe(USER);
+    expect(found[0]?.candidates).toEqual(["Bob Example", "Carol Example"]);
     expect(found[0]?.rules).toContain("R18");
+});
+
+test("a matched call voice under a microphone tag still needs an eligible call input throughout the line", () => {
+    const guest = "Fern Example";
+    const visitor = "Pip Example";
+    const fixture = scene(Array.from({ length: 4 }, () => ({ label: "Voice", mic: 1 })));
+    fixture.evidence.speaking = [
+        { tSec: 0, speaking: [], muted: [guest] },
+        { tSec: 10, speaking: [], muted: [] },
+    ];
+    const match = (person: string) => ({
+        person,
+        model: "fixture",
+        quality: "matched",
+        candidates: [{ person, score: 0.85 }],
+        reason: "cosine and margin passed",
+    });
+    const seated = meetingRecordSchema.parse({
+        ...record,
+        seats: { room: [USER, visitor], remote: [{ name: guest }] },
+        evidence: {
+            voice: {
+                version: 1,
+                source: "fixture.wav",
+                enrolment: "fixture.json",
+                lines: { 0: match(guest), 1: match(guest), 2: match(visitor), 3: match(guest) },
+            },
+        },
+    });
+    const found = ranges(
+        suggestItems({
+            ...base,
+            ...fixture,
+            record: seated,
+            presence: [{ name: guest, fromSec: 0, toSec: 32 }],
+            energyMicShare: () => 0.1,
+        })
+    );
+    // Muted at 0, eligible at 10, room-only at 20, and a call stay ending inside the last line.
+    expect(
+        found.filter((item) => item.rules.includes(MeetingRule.VoiceEmbedding)).map((r) => [r.fromSec, r.speaker])
+    ).toEqual([[10, guest]]);
 });
 
 test("R20 does not override a line when tagged channel and calibrated energy disagree", () => {
