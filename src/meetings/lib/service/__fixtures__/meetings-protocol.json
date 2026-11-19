@@ -483,7 +483,7 @@
     {
       "method": "voices.list",
       "direction": "client→service",
-      "note": "A project with no voice samples: an empty list.",
+      "note": "A project with no voice samples still lists its attended people, each with an empty samples array.",
       "request": {
         "jsonrpc": "2.0",
         "id": 10,

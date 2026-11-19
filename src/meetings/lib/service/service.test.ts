@@ -3112,7 +3112,12 @@ async function captureExamples(): Promise<Example[]> {
     await ask(window, "meeting.suggest", { meeting: "nope" });
     await ask(window, "meeting.listen.prepare", { meeting: "nope", group: "spot-check" });
     await ask(window, "meeting.voice.enrol", { meeting: "nope" });
-    await ask(window, "voices.list", { project: "Atlas" }, "A project with no voice samples: an empty list.");
+    await ask(
+        window,
+        "voices.list",
+        { project: "Atlas" },
+        "A project with no voice samples still lists its attended people, each with an empty samples array."
+    );
     await ask(window, "voices.preview", { meeting: "nope" });
     await ask(window, "voices.apply", { meeting: "nope" });
     await ask(window, "voices.sample", { project: "Atlas", person: "Alice Example", sample: 0 });
