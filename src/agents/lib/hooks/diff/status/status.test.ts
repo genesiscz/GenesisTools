@@ -1,17 +1,34 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { appendFileSync, closeSync, fsyncSync, openSync, writeFileSync, writeSync } from "node:fs";
+import {
+    appendFileSync,
+    closeSync,
+    fsyncSync,
+    mkdtempSync,
+    openSync,
+    readFileSync,
+    realpathSync,
+    rmSync,
+    writeFileSync,
+    writeSync,
+} from "node:fs";
 import { join } from "node:path";
 import { withSpawnCounter } from "@app/benchmark/lib";
+import { fakeDriver } from "@genesiscz/utils/fs/watch-driver/fake";
+import { startGenesisToolsService } from "@genesiscz/utils/genesis-tools/service/host";
+import { createWorktreeService } from "@genesiscz/utils/genesis-tools/worktree/service";
 import { TestRepo } from "@genesiscz/utils/git/test-repo";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { MetricsRecorder } from "@genesiscz/utils/metrics";
 import { DEFAULT_HOOKS_CONFIG, HOOK_CONFIG_SECTIONS } from "../../config";
 import { statusOf } from "../../git";
+import { callDir } from "../../paths";
 import { applySetting } from "../../set-config";
 import { gitMode } from "./git";
 import { armsFor, STATUS_MODES } from "./modes";
 import { narrowGitMode } from "./narrow-git";
 import { gitReads, prepareStatus, statusEligible } from "./prepare";
 import { compareToReference, PARITY_CLASSES } from "./shadow";
+import { snapshotArm } from "./snapshot";
 import { type StatusArm, unbuiltArm } from "./types";
 
 /** A fake shadow arm that drops the first entry of the Git view. */
@@ -296,5 +313,98 @@ describe("the narrow-git mode", () => {
         } finally {
             closeSync(fd);
         }
+    });
+});
+
+describe("the snapshot mode", () => {
+    let repo: TestRepo;
+    let dir: string;
+    let stop: () => Promise<void> = async () => {};
+    const settings = {
+        driver: "watchman" as const,
+        shadowDrivers: ["parcel" as const],
+        deadlineMs: 3_000,
+        fenceMs: 500,
+    };
+
+    beforeAll(async () => {
+        repo = await TestRepo.create({ prefix: "hook-status-snapshot-" });
+        await repo.commitMany({ files: { "a.txt": "a\n" }, message: "base" });
+        appendFileSync(join(repo.dir, "a.txt"), "edit\n");
+        dir = realpathSync(mkdtempSync("/tmp/gtst-"));
+        const started = await startGenesisToolsService({
+            dir,
+            idleMs: 60_000,
+            worktree: createWorktreeService({ drivers: { watchman: fakeDriver(), parcel: fakeDriver() } }),
+        });
+
+        if (started.status !== "started") {
+            throw new Error("the isolated service did not start");
+        }
+
+        stop = async () => {
+            started.host.stop("test over");
+            await started.host.stopped;
+        };
+    });
+
+    afterAll(async () => {
+        await stop();
+        repo.cleanup();
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("pre writes a mark per arm, post sends it, and a stopped service gives the Git view", async () => {
+        const watchman = snapshotArm("watchman", settings, { serviceDir: dir });
+        const parcel = snapshotArm("parcel", settings, { serviceDir: dir });
+        const warm = { phase: "pre" as const, root: repo.dir, need: "all" as const, head: null, mark: null };
+
+        for (const arm of [watchman, parcel]) {
+            let answer = await arm.observe(warm);
+
+            for (let tries = 0; tries < 50 && answer.state !== "ok"; tries++) {
+                await Bun.sleep(100);
+                answer = await arm.observe(warm);
+            }
+
+            expect(answer.state).toBe("ok");
+        }
+
+        const snapshotCall = { ...call, toolUseId: "toolu_snapshot_1" };
+        const arms = { active: watchman, reference: gitMode.primary({}), shadow: [parcel] };
+        const config = statusConfig((value) => {
+            value.active.write = "snapshot";
+        });
+        const roots = [{ root: repo.dir, head: null }];
+        const pre = await prepareStatus({ phase: "pre", roots, need: "all", call: snapshotCall, config, arms });
+        expect(pre.read(repo.dir).entries).toEqual(statusOf(repo.dir).entries);
+        const marksPath = join(callDir("claude", snapshotCall.sessionId, snapshotCall.toolUseId), "status-marks.json");
+        const marks = SafeJSON.parse(readFileSync(marksPath, "utf8"), { strict: true });
+        expect(marks.v).toBe(1);
+        expect(marks.arms["snapshot:watchman"][0].startsWith("v1:watchman:")).toBe(true);
+
+        const recorder = memoryRecorder();
+        const post = await prepareStatus({
+            phase: "post",
+            roots,
+            need: "all",
+            call: snapshotCall,
+            config,
+            arms,
+            recorder,
+        });
+        expect(post.read(repo.dir).entries).toEqual(statusOf(repo.dir).entries);
+        // The active arm answered at post, so it had its mark from pre (without one it falls back with `no-mark`).
+        const active = recorder.events.find(
+            (event) => event.metric === "hook.status.cpu_ms" && event.dims.role === "active"
+        );
+        expect([active?.dims.outcome, active?.dims.parity]).toEqual(["answered", "same"]);
+
+        await stop();
+        stop = async () => {};
+        const stopped = await watchman.observe({ ...warm, phase: "post" });
+        expect(stopped.state === "unavailable" && stopped.reason).toBe("no-service");
+        const fallback = await prepareStatus({ phase: "post", roots, need: "all", call: snapshotCall, config, arms });
+        expect(fallback.read(repo.dir).entries).toEqual(statusOf(repo.dir).entries);
     });
 });
