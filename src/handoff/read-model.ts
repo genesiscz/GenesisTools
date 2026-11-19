@@ -555,7 +555,7 @@ export function foldEvents(
     );
     const states = new Map<string, Handoff | null>();
     const outcomes = new Map<string, FoldOutcome>();
-    const folded: { event: HandoffEvent; outcome: FoldOutcome }[] = [];
+    const folded = new Map<string, { event: HandoffEvent; outcome: FoldOutcome }[]>();
 
     for (const event of events) {
         if (getEventOutcome(db, event.uid) !== null) {
@@ -570,7 +570,12 @@ export function foldEvents(
         const { state, outcome } = applyHandoffEvent(previous, event, { base });
         states.set(event.id, state);
         outcomes.set(event.uid, outcome);
-        folded.push({ event, outcome });
+        const bucket = folded.get(event.id);
+        if (bucket === undefined) {
+            folded.set(event.id, [{ event, outcome }]);
+        } else {
+            bucket.push({ event, outcome });
+        }
         const publicEvent =
             event.ev === "modify_handoff" && event.project !== undefined
                 ? { ...event, fromProject: previous?.project ?? null }
@@ -623,11 +628,7 @@ export function foldEvents(
     if (tableExists(db, "items")) {
         for (const [id, state] of states) {
             if (state !== null) {
-                ingestLegacyHandoff(
-                    db,
-                    state,
-                    folded.filter((f) => f.event.id === id)
-                );
+                ingestLegacyHandoff(db, state, folded.get(id) ?? []);
             }
         }
     }
