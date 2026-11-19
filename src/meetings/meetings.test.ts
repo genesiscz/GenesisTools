@@ -84,18 +84,9 @@ import { appliedLine, itemWhat } from "./lib/item-text";
 import { localSpeechDuring, localSpeechLines } from "./lib/local-speech";
 import { MEETING_PLATFORMS, platformOfSourceName, speakingEvidence } from "./lib/platforms";
 import { teamsAttendanceFromJson } from "./lib/platforms/teams";
+import { answerQuestion, propagateAnswer, skipQuestion, splitQuestion } from "./lib/question-answers";
 import { selectQuestions } from "./lib/question-select";
-import {
-    answerQuestion,
-    heardContext,
-    openQuestions,
-    propagateAnswer,
-    type QuestionContext,
-    questionFor,
-    questionRank,
-    skipQuestion,
-    splitQuestion,
-} from "./lib/questions";
+import { heardContext, openQuestions, type QuestionContext, questionFor, questionRank } from "./lib/questions";
 import { compactEvidence, rawMeeting } from "./lib/raw";
 import { runRecorder } from "./lib/recorder";
 import { RecordingRecord } from "./lib/recorder-adapters";

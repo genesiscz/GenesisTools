@@ -68,20 +68,22 @@ import { appendLines, parseJsonLine } from "./ndjson-lines";
 import { projectRequired } from "./project";
 import {
     answerQuestion,
-    DEFAULT_LISTEN_BELOW,
     dictionaryQuestion,
+    learnedEntry,
+    settleLookAlikes,
+    siblingChoices,
+    skipQuestion,
+    splitQuestion,
+} from "./question-answers";
+import {
+    DEFAULT_LISTEN_BELOW,
     heardTimes,
     inputNeeded,
-    learnedEntry,
     NONE_OF_THESE,
     openQuestions,
     type QuestionItem,
     questionIdOf,
     questionLabel,
-    settleLookAlikes,
-    siblingChoices,
-    skipQuestion,
-    splitQuestion,
 } from "./questions";
 import { type RejectFilter, rejectFilterIds } from "./reject-filter";
 import type { ReviewRow } from "./review-row-schema";
