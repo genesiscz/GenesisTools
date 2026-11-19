@@ -41,8 +41,9 @@ final class WorkScreenLiveBench: XCTestCase {
 
         let readsBefore = source.reads
         let cpuBefore = Self.cpuSeconds()
-        let marker = URL(fileURLWithPath: env["WORK_LIVE_MARKER"] ?? "/dev/null")
-        try? "start".write(to: marker, atomically: true, encoding: .utf8)
+        let markerPath = try XCTUnwrap(env["WORK_LIVE_MARKER"], "The live writer needs a marker path.")
+        let marker = URL(fileURLWithPath: markerPath)
+        try "start".write(to: marker, atomically: true, encoding: .utf8)
         try await Task.sleep(for: .seconds(seconds))
         let cpu = Self.cpuSeconds() - cpuBefore
         print(String(format: "work-live-bench arm=%@ seconds=%.0f reloads=%d changeReloads=%d appCPU=%.2f",
