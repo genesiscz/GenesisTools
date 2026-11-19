@@ -272,6 +272,19 @@ describe("sources, synth and stems", () => {
         expect(refused({ effects: { reverb: 0.3 } })).toBe(false);
         expect(refused({ lanes: [{ target: "cutoff", points: [[0, 1]] }] })).toBe(false);
         expect(refused({ lanes: [{ target: "level", points: [[0, -6]] }] })).toBe(true);
+        expect(
+            refused({
+                lanes: [
+                    {
+                        target: "level",
+                        points: [
+                            [1, -6],
+                            [0, 0],
+                        ],
+                    },
+                ],
+            })
+        ).toBe(false);
     });
 
     test("a lane's area runs on score time, so a free LFO knows its phase at any onset", () => {

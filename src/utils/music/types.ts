@@ -163,7 +163,13 @@ export const SYNTH_LANES = ["cutoff", "pitch", "vowel", "fm", "lfoRate"] as cons
  */
 export const laneSchema = z.object({
     target: z.enum([...SYNTH_LANES, "level", "lowpass", "highpass"]),
-    points: z.array(z.tuple([z.number().finite().min(0), z.number().finite()])).min(1),
+    /** Breakpoints `[seconds, value]`, in time order: a lane reads them from the front. */
+    points: z
+        .array(z.tuple([z.number().finite().min(0), z.number().finite()]))
+        .min(1)
+        .refine((points) => points.every((point, index) => index === 0 || points[index - 1][0] <= point[0]), {
+            message: "Lane points must be in time order",
+        }),
     /** Keep each value until the next point instead of a straight line between them. */
     hold: z.boolean().optional(),
 });
