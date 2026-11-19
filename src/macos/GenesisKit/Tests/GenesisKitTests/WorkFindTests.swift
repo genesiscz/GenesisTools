@@ -142,7 +142,8 @@ private final class WorkFindSource: WorkSource {
         return detailValue(ref: ref)
     }
     func detailValue(ref: String) -> WorkItemDetail {
-        WorkItemDetail(item: .init(id: ref, title: "Fixture \(ref)", type: "task", state: "open", project: itemProject))
+        let state = WorkFindFixture.index.first { $0.ref == ref }?.state ?? "open"
+        return WorkItemDetail(item: .init(id: ref, title: "Fixture \(ref)", type: "task", state: state, project: itemProject))
     }
     func notify(project: String) async throws -> [WorkNotifyRow] { [] }
     func perform(_ action: WorkScreenAction, project: String) async throws -> WorkActionOutcome {
@@ -290,6 +291,46 @@ final class WorkFindTests: XCTestCase {
         XCTAssertFalse(WorkFilter(mine: true).matches(claimed))
     }
 
+    func testMineUsesKnownOwnershipAndAHiddenTriageRowsFieldsRemainSearchable() {
+        let container = WorkContainerValue(ref: "h_orchard1", type: "handoff", state: "active",
+                                           title: "Check the checkout", open: 0, total: 0, members: [])
+        let triage = WorkTriageValue(ref: "w_stalled1", group: "active-worker-gone", type: "task",
+                                    state: "active", title: "Review the receipt", why: "The thumbnail expired")
+        let snapshot = WorkSnapshotValue(project: "Orchard", containers: [container], triage: [triage])
+        var indexedContainer = WorkRowValue(ref: container.ref, state: container.state, type: container.type,
+                                           worker: "helper ab123456", title: container.title)
+        let mine = WorkFilter(mine: true)
+        XCTAssertTrue(WorkItemsProjection(snapshot: snapshot, filter: mine).containers.isEmpty)
+        XCTAssertTrue(WorkItemsProjection(snapshot: snapshot, filter: mine, index: [indexedContainer]).containers.isEmpty)
+        indexedContainer.worker = "hub ?"
+        XCTAssertEqual(WorkItemsProjection(snapshot: snapshot, filter: mine, index: [indexedContainer]).containers.map(\.ref), [container.ref])
+        let row = WorkRowValue(ref: triage.ref, state: triage.state, type: triage.type, title: triage.title)
+        XCTAssertEqual(WorkItemsProjection(snapshot: snapshot, filter: .init(text: "thumbnail"), index: [row]).other, [row])
+    }
+
+    @MainActor
+    func testFailedSavesAndLaterEditsKeepTheirOwnDraft() async throws {
+        let drafts = WorkItemInspectorDrafts()
+        let key = WorkItemInspectorDrafts.Key(ref: "w_receipt1", purpose: "finish")
+        let text = drafts.binding(key)
+        text.wrappedValue = "Archive read back"
+        let saving = try XCTUnwrap(drafts.submit(key) { submitted in
+            XCTAssertEqual(submitted, "Archive read back")
+            return true
+        })
+        XCTAssertNil(drafts.submit(key) { _ in XCTFail("Duplicate write"); return true })
+        text.wrappedValue = "Second proof"
+        _ = await saving.value
+        XCTAssertEqual(text.wrappedValue, "Second proof")
+        let failed = try XCTUnwrap(drafts.submit(key) { _ in false })
+        let ok = await failed.value
+        XCTAssertFalse(ok)
+        XCTAssertEqual(text.wrappedValue, "Second proof")
+        let retried = try XCTUnwrap(drafts.submit(key) { _ in true })
+        _ = await retried.value
+        XCTAssertEqual(text.wrappedValue, "")
+    }
+
     func testAFullRefRanksBeforeAnIncidentalTextMatch() {
         let exact = WorkFilter.Row(ref: "w_target01", title: "Receipt repair", type: "bug", state: "spotted")
         let incidental = WorkFilter.Row(ref: "w_other001", title: "Recheck w_target01 after export", type: "task", state: "spotted")
@@ -302,6 +343,11 @@ final class WorkFindTests: XCTestCase {
             WorkTriageValue(ref: exact.ref, group: "spotted", type: "bug", state: "spotted", title: exact.title),
         ])
         XCTAssertEqual(WorkItemsProjection(snapshot: snapshot, filter: filter).visibleRefs.first, exact.ref)
+        let archiveHit = WorkRowValue(ref: exact.ref, state: "done", type: "bug", title: exact.title)
+        let onlyMention = WorkSnapshotValue(project: "Orchard", containers: [], triage: [snapshot.triage[0]])
+        let acrossSections = WorkItemsProjection(snapshot: onlyMention, filter: filter, index: [archiveHit])
+        XCTAssertEqual(acrossSections.visibleRefs, [exact.ref])
+        XCTAssertEqual(acrossSections.archive.map(\.ref), [exact.ref])
     }
 
     func testTextSearchIncludesArchivedRowsWithoutShowingUnrelatedArchive() {
@@ -407,6 +453,21 @@ final class WorkFindTests: XCTestCase {
         XCTAssertEqual(model.itemDetail?.item.id, ref)
         XCTAssertTrue(model.pending.isEmpty)
     }
+
+    @MainActor
+    func testReturningToWorkRefreshesTheSelectedItemAfterTimeAway() async {
+        let source = WorkFindSource()
+        let screen = WorkScreenModel(source: source)
+        screen.activate()
+        defer { screen.deactivate() }
+        await settle { screen.snapshot != nil }
+        screen.select(WorkFindFixture.basketTaskRef)
+        await settle { screen.itemDetail != nil && !screen.isLoading }
+        screen.deactivate()
+        screen.activate()
+        await settle { source.detailRefs.count == 2 && !screen.isLoading }
+        XCTAssertEqual(screen.selection, WorkFindFixture.basketTaskRef)
+    }
 }
 
 @MainActor
@@ -452,7 +513,7 @@ private final class WorkFindRenderInput {
                                   self.expanded.remove(ref)
                                   self.collapsed.insert(ref)
                               }
-                          }, showMore: {}, clearFilters: clear, retryIndex: {}, perform: { _ in })
+                          }, showMore: {}, clearFilters: clear, retryIndex: {}, perform: { _ in true })
                 .padding(12)
             Spacer(minLength: 0)
         }
@@ -652,5 +713,6 @@ extension WorkFindTests {
         model.openItem("w_finished1")
         await settle { model.visibleRefs.contains("w_finished1") }
         XCTAssertEqual(model.selection, "w_finished1")
+        XCTAssertEqual(model.filter.states, [.done])
     }
 }

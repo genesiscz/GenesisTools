@@ -144,8 +144,11 @@ public struct WorkFindBar: View {
     }
 
     private var stateMenu: some View {
-        facet("State", value: summary(WorkFilter.StateGroup.allCases.filter { filter.states.contains($0) }
-            .map(WorkWords.stateGroup)), active: !filter.states.isEmpty, identifier: "work.find.state") {
+        let choices = WorkFilter.StateGroup.allCases.filter { filter.states.contains($0) }
+        let labels = choices.map { state in
+            state == .open && choices.count > 1 ? WorkWords.state("open") : WorkWords.stateGroup(state)
+        }
+        return facet("State", value: summary(labels), active: !filter.states.isEmpty, identifier: "work.find.state") {
             [.action("Any", checked: filter.states.isEmpty) { filter.states = [] }, .divider]
                 + WorkFilter.StateGroup.allCases.map { state in
                     .action(WorkWords.stateGroup(state), checked: filter.states.contains(state)) {
@@ -224,7 +227,7 @@ private struct WorkFindControlsLayout: Layout {
 
     private func frames(width: CGFloat) -> [CGRect] {
         if width >= 525 {
-            let facets: [CGFloat] = [66, 134, 84, 55]
+            let facets: [CGFloat] = [60, 116, 76, 50]
             let searchWidth = width - facets.reduce(0, +) - CGFloat(facets.count) * gap
             var frames = [CGRect(x: 0, y: 0, width: searchWidth, height: rowHeight)]
             for facetWidth in facets {

@@ -145,6 +145,7 @@ public final class WorkScreenModel: ObservableObject {
         guard !active else { return }
         active = true
         if projectsLoaded { projectsLoaded = false }
+        if itemRef != nil, companionReadNeeded { reload() }
         openingCandidates = projects
         if visible { listen() }
         wake = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification,
@@ -161,6 +162,8 @@ public final class WorkScreenModel: ObservableObject {
     public func deactivate() {
         active = false
         if let wake { NSWorkspace.shared.notificationCenter.removeObserver(wake); self.wake = nil }
+        listTask?.cancel()
+        invalidateFindReads()
         opening?.cancel()
         opening = nil
         stopListening()
@@ -470,7 +473,16 @@ public final class WorkScreenModel: ObservableObject {
         let wasFiltered = routeHadFilter
         let onTree = snapshot.containers.contains { $0.ref == ref || $0.members.contains { $0.ref == ref } }
             || snapshot.spotted.contains { $0.ref == ref } || snapshot.reopened.contains { $0.ref == ref }
-        let next = onTree ? WorkFilter.default : WorkFilter(states: [])
+        let next: WorkFilter
+        if onTree {
+            next = .default
+        } else if detail.item.state == "done" {
+            next = WorkFilter(states: [.done])
+        } else if detail.item.state == "dropped" {
+            next = WorkFilter(states: [.dropped])
+        } else {
+            next = WorkFilter(states: [])
+        }
         if let container = snapshot.containers.first(where: { $0.members.contains { $0.ref == ref } }) {
             expanded.insert(container.ref)
             collapsedMatches.remove(container.ref)
