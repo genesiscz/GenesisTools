@@ -152,51 +152,53 @@ export function softClip(buffer: Stereo, threshold = 0.7): void {
 
 /**
  * A look-ahead peak limiter. The gain reaches its lowest value when the peak arrives, because the audio waits
- * `lookahead` milliseconds while the gain falls. No sample leaves above `ceiling`.
+ * `lookahead` milliseconds while the gain falls. No sample leaves above `ceiling`. Its working memory is two
+ * lookahead windows, whatever the length of the track.
  */
 export function limit(buffer: Stereo, ceiling: number, lookahead = 4, release = 90): void {
     const total = buffer.left.length;
     const window = Math.max(1, Math.round((lookahead / 1000) * RATE));
-    const need = new Float32Array(total);
-
-    for (let n = 0; n < total; n++) {
-        const peak = Math.max(Math.abs(buffer.left[n]), Math.abs(buffer.right[n]));
-        need[n] = peak > ceiling ? ceiling / peak : 1;
-    }
-
-    // The lowest gain needed in the next `window` samples (a monotonic queue, read from the end).
-    const queue = new Int32Array(total);
-    const held = new Float32Array(total);
-    let head = 0;
-    let tail = 0;
-
-    for (let n = total - 1; n >= 0; n--) {
-        while (tail > head && need[queue[tail - 1]] >= need[n]) {
-            tail--;
-        }
-
-        queue[tail++] = n;
-
-        while (queue[head] > n + window - 1) {
-            head++;
-        }
-
-        held[n] = need[queue[head]];
-    }
-
-    // Fall at once, rise slowly. Then average over the window, so the fall is a ramp and not a step.
     const rise = 1 - Math.exp(-1 / ((release / 1000) * RATE));
-    const sums = new Float64Array(total + 1);
+    // The lowest gain needed in the next `window` samples: a monotonic queue of (sample, gain) in a ring.
+    const queueAt = new Int32Array(window);
+    const queueNeed = new Float32Array(window);
+    let head = 0;
+    let size = 0;
+    let ahead = 0;
+    // The last `window` gains and their sum, so the fall is a ramp and not a step.
+    const levels = new Float64Array(window);
+    let sum = 0;
     let level = 1;
 
     for (let n = 0; n < total; n++) {
-        level = Math.min(held[n], level + (1 - level) * rise);
-        sums[n + 1] = sums[n] + level;
-    }
+        while (size > 0 && queueAt[head] < n) {
+            head = (head + 1) % window;
+            size--;
+        }
 
-    for (let n = 0; n < total; n++) {
-        const start = Math.max(0, n - window + 1);
-        const smooth = (sums[n + 1] - sums[start]) / (n + 1 - start);
+        const last = Math.min(total - 1, n + window - 1);
+
+        while (ahead <= last) {
+            const peak = Math.max(Math.abs(buffer.left[ahead]), Math.abs(buffer.right[ahead]));
+            const need = Math.fround(peak > ceiling ? ceiling / peak : 1);
+
+            while (size > 0 && queueNeed[(head + size - 1) % window] >= need) {
+                size--;
+            }
+
+            const slot = (head + size) % window;
+            queueAt[slot] = ahead;
+            queueNeed[slot] = need;
+            size++;
+            ahead++;
+        }
+
+        // Fall at once, rise slowly. Then average over the window.
+        level = Math.min(queueNeed[head], level + (1 - level) * rise);
+        const slot = n % window;
+        sum += level - (n >= window ? levels[slot] : 0);
+        levels[slot] = level;
+        const smooth = sum / Math.min(n + 1, window);
         buffer.left[n] *= smooth;
         buffer.right[n] *= smooth;
     }
