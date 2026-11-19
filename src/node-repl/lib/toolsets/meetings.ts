@@ -243,6 +243,7 @@ export class MeetingsToolset extends ReplToolset {
                 open: (refText: string) => this.meeting(store, ref.parse({ ref: refText }).ref),
                 look: async (input: z.input<typeof look.params>) => lookMeeting(store, input),
                 measure: async ({ meeting }: z.input<typeof measure.params>) => {
+                    // lazy, like exportMeeting: the room-call scorer loads only for a measurement
                     const { measureRoomCallMeeting } = await import("@app/meetings/lib/room-call-metrics");
                     return measureRoomCallMeeting({ meeting, store });
                 },
