@@ -154,6 +154,24 @@ describe("the config file", () => {
 });
 
 describe("the write rules", () => {
+    test("a released worker and a child with only its lead's session cannot edit", async () => {
+        const made = await write(ctx("worker"), { verb: "add", type: "task", title: "work" });
+        const id = made.ok ? made.data.items[0].id : "";
+        expect((await write(ctx("worker"), { verb: "claim", ref: id })).ok).toBe(true);
+        const rules = resolveWorkRules([
+            { layer: "config.project", rules: { types: { task: { writes: { edit: ["worker"] } } } } },
+        ]);
+        const child = ctx("child", { rules });
+        child.actor.sessionId = null;
+        const { decide } = await import("../store/decide");
+        const { sqlView } = await import("../store/view");
+        const { envOf } = await import("../service");
+        const edit = { verb: "edit", ref: id, title: "child edit" } as const;
+        expect(decide(edit, sqlView(db), { ...(await envOf(child)), lineage: ["worker"] }).ok).toBe(false);
+        expect((await write(ctx("worker"), { verb: "release", ref: id })).ok).toBe(true);
+        expect((await write(ctx("worker", { rules }), edit)).diagnostics[0].code).toBe("ROLE_REFUSED");
+    });
+
     const strict = resolveWorkRules([
         {
             layer: "config.project",

@@ -1159,7 +1159,7 @@ function decideHandoff(cmd: Extract<WorkCommand, { verb: "handoff" }>, view: Sto
 /** The role check of each write (P3): the rule of the item's type, against the roles the rows give the caller. */
 function guard(command: WorkCommand, view: StoreView, env: WriteEnv): Decision | null {
     const rules = env.rules ?? DEFAULT_RULES;
-    const ask = { lineage: env.lineage, ownerKind: env.actor.kind === "owner" };
+    const ask = { lineage: env.lineage, ownerKind: env.actor.kind === "owner", sessionId: env.actor.sessionId };
     const check = (ref: string, verb: WriteVerb, workerMay = false): Decision | null => {
         const resolved = view.resolve(ref);
 
