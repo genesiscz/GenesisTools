@@ -135,7 +135,7 @@ Rebase-Cascade Options:
 Rebranch Options:
   (no subcommand) [--dry-run]  Interactive: group by commit scope or ticket, pick into new branches
   plan --groups <name=paths>   Classify commits IN / OUTSIDE / MIXED per path group (repeatable; --json for the plan file)
-  apply --plan <file|->        Build one branch per group with cherry-pick -x, then verify; --dry-run | --yes
+  apply --plan <file|->        Build one branch per group with cherry-pick, then verify; --dry-run | --yes
   apply --continue | --abort   Resume after a resolved conflict, or remove the branches this run created
   verify --plan <file|->       Prove the group branches hold every change of the source; exit 1 naming each loss
 

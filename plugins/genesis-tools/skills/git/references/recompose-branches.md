@@ -30,7 +30,7 @@ into a group, or under the top-level `skip` list; otherwise `verify` reports its
 The schema is in `src/git/README.md` (`rebranch`).
 
 A merge commit in the range stops the plan: `git log --name-only` shows nothing for it, and
-`git cherry-pick -x <merge>` refuses without a mainline parent. Ask the user to linearise the
+`git cherry-pick <merge>` refuses without a mainline parent. Ask the user to linearise the
 source first (`git rebase "$BASE"` in a worktree, or `recommit.md`) and start over. Do not pick
 merges with `-m 1`: the resolution then travels as an unlabelled diff.
 
@@ -65,10 +65,15 @@ Manual equivalent, per group:
 
 ```bash
 git switch -c <group-branch> --no-track "$BASE"
-git cherry-pick -x <sha> <sha> …                          # in original order
 ```
 
-For a `paths-only` commit, after its pick:
+Pick one commit at a time in source order. Plain picks preserve existing commit messages and append no provenance trailer.
+
+```bash
+git cherry-pick <sha>
+```
+
+For a `paths-only` commit, run the restore and amend immediately after its pick, before picking the next commit:
 
 ```bash
 git restore --source=HEAD~1 --staged --worktree -- <outside paths>

@@ -63,7 +63,8 @@ function main(): void {
             continue;
         }
 
-        if (git(["cherry-pick", "-x", sha]).code === 0) {
+        // No -x: each -x pick appended another "(cherry picked from commit …)" line that GitHub then showed (Martin, 2026-11-19).
+        if (git(["cherry-pick", sha]).code === 0) {
             console.log(`✔ ${sha} → ${git(["rev-parse", "--short", "HEAD"]).out.trim()}: ${subject}`);
             continue;
         }
