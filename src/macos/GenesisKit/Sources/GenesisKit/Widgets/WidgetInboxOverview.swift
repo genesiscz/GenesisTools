@@ -202,7 +202,7 @@ struct WidgetInboxOverview: View {
             Spacer(minLength: 4)
             orderMenu
             if model.inboxCount > 0 {
-                IconButton(systemName: "checkmark.circle", tooltip: "Mark all read", action: model.markAllRead)
+                WidgetMarkAllReadButton(model: model)
             }
         }
     }

@@ -99,9 +99,7 @@ struct AgentWidgetPreview: View {
                     Text(model.snapshot == nil ? "Loading inbox" : model.inbox.complete ? "All caught up" : "Inbox status unavailable")
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                 } else {
-                    IconButton(systemName: "checkmark.circle", tooltip: "Mark all read. Nothing is deleted.",
-                               size: 11, action: model.markAllRead)
-                        .accessibilityLabel("Mark all inbox items read")
+                    WidgetMarkAllReadButton(model: model)
                 }
             }.padding(.horizontal, 5)
 
@@ -177,8 +175,10 @@ struct AgentWidgetPreview: View {
                     Image(systemName: "rectangle.stack").font(.system(size: 10))
                     Text("Projects & sessions").font(.system(size: 11, weight: .medium))
                     Spacer()
-                    Text(Plural.count(model.previewList.count, "session")).font(.system(size: 11)).monospacedDigit()
-                    Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold))
+                    if let sessions = model.snapshot?.sessions {
+                        Text(Plural.count(sessions.count, "session")).font(.system(size: 11)).monospacedDigit()
+                    }
+                    Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold)).accessibilityHidden(true)
                 }
                 .foregroundStyle(.white.opacity(0.6)).padding(.horizontal, 5).padding(.vertical, 5)
                 .contentShape(Rectangle())
@@ -217,9 +217,12 @@ struct AgentWidgetPreview: View {
             HStack(spacing: 12) {
                 GenesisWidgetMark()
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Nothing new in the inbox.").font(.system(size: 13, weight: .medium))
-                    Text("Questions, answers and finished work from every session land here.")
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text(model.inbox.complete ? "Nothing new in the inbox." : "Inbox status unavailable.")
+                        .font(.system(size: 13, weight: .medium))
+                    if model.inbox.complete {
+                        Text("Questions, answers and finished work from every session land here.")
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
                 }
             }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 5).padding(.vertical, 6)
         } else {
@@ -397,11 +400,11 @@ struct WidgetSessionTimes: View {
             if session.visualStatus == .working {
                 Text("working now")
             } else if session.activityAt > 0 {
-                LiveAgo(date: Date(timeIntervalSince1970: session.activityAt / 1000), style: .brief) { "active " + $0 }
+                LiveAgo(date: Date(timeIntervalSince1970: session.activityAt / 1000), style: .spelled) { "active " + $0 }
             }
             if let entry = Self.latest(inbox) {
                 Text("·")
-                LiveAgo(date: Date(timeIntervalSince1970: entry.at / 1000), style: .brief) { entry.verb + " " + $0 }
+                LiveAgo(date: Date(timeIntervalSince1970: entry.at / 1000), style: .spelled) { entry.verb + " " + $0 }
                     .foregroundStyle(entry.waiting ? Color.orange.opacity(0.8) : .white.opacity(0.6))
             }
         }
@@ -437,7 +440,7 @@ struct WidgetSessionFacts: View {
                 WidgetActivityIndicator(status: .working, animate: animate)
                 Text("working").foregroundStyle(session.visualStatus.color)
             } else if session.activityAt > 0 {
-                LiveAgo(date: Date(timeIntervalSince1970: session.activityAt / 1000), style: .brief) { "idle " + $0 }
+                LiveAgo(date: Date(timeIntervalSince1970: session.activityAt / 1000), style: .spelled) { "idle " + $0 }
             } else {
                 Text(session.visualStatus.label)
             }

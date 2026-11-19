@@ -9,6 +9,29 @@ enum WidgetOutgoingControls {
     }
 }
 
+struct WidgetMarkAllReadButton: View {
+    @ObservedObject var model: WidgetModel
+    var showsTitle = false
+
+    var body: some View {
+        let held = model.readThrough != nil
+        let title = held ? "Undo mark all read" : "Mark all inbox items read"
+        let tip = held ? "Undo before the inbox is marked read" : "Mark items in every session read. Questions stay answerable."
+        let act = held ? model.undoMarkAllRead : model.markAllRead
+        Group {
+            if showsTitle {
+                Button(held ? "Undo mark all read" : "Mark all read", action: act)
+                    .buttonStyle(.genHover()).font(.system(size: 11, weight: .medium))
+                    .instantTooltip(tip)
+            } else {
+                IconButton(systemName: held ? "arrow.uturn.backward.circle" : "checkmark.circle", tooltip: tip, size: 11, action: act)
+            }
+        }
+        .disabled(model.markingRead)
+        .accessibilityLabel(title)
+    }
+}
+
 private struct WidgetOutgoingPosition: Equatable {
     let session: String
     let messageID: String?
@@ -496,15 +519,20 @@ public struct LiveWidgetView: View {
                     markAllReadButton
                 }.padding(.bottom, 4)
                 ForEach(model.inbox.sessions, id: \.key) { entry in
-                    let session = model.snapshot?.sessions.first { $0.key == entry.key }
+                    let session = model.session(forKey: entry.key)
+                    let source = session?.title ?? entry.latest?.message?.origin ?? "Unknown session"
                     Button {
-                        model.select(entry.key, edge: edge)
-                        section = "Inbox"
+                        if let session {
+                            model.openSessionInbox(session)
+                        } else {
+                            model.overviewFilterPick = "all"
+                            model.inboxOverview = true
+                        }
                     } label: {
                         HStack(spacing: 9) {
                             AIProviderGlyph(meta: AIProviders.meta(for: session?.target.provider ?? "unknown"), size: 18)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(session?.title ?? entry.key).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                                Text(source).font(.system(size: 12, weight: .medium)).lineLimit(1)
                                 Text(inboxSummary(entry)).font(.system(size: 10)).foregroundStyle(.secondary)
                             }
                             Spacer(minLength: 4)
@@ -517,7 +545,7 @@ public struct LiveWidgetView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(RowButtonStyle(cornerRadius: 10))
-                    .accessibilityLabel("Open " + (session?.title ?? "session") + ", " + inboxSummary(entry))
+                    .accessibilityLabel("Open " + (session == nil ? "inbox overview" : source) + ", " + inboxSummary(entry))
                 }
             }
             .padding(.vertical, 2)
@@ -533,9 +561,7 @@ public struct LiveWidgetView: View {
 
     @ViewBuilder private var markAllReadButton: some View {
         if model.inboxCount > 0 {
-            Button("Mark all read", action: model.markAllRead)
-                .buttonStyle(.genHover()).font(.system(size: 11, weight: .medium))
-                .instantTooltip("Answers become read; older questions and decisions stop counting. Nothing is deleted.")
+            WidgetMarkAllReadButton(model: model, showsTitle: true)
                 .accessibilityIdentifier("widget.inbox.markAllRead")
         }
     }
