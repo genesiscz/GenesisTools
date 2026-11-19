@@ -68,6 +68,23 @@ describe("the line at a time", () => {
     test("one rule for the end: the next timed line's start, at least one second on; the last line five", () => {
         expect([0, 1, 2, 3].map((index) => lines.end(index))).toEqual([12, 13, 20, 25]);
     });
+
+    test("the lines starting in a range come in transcript order, both ends included, untimed lines never", () => {
+        const unordered = new TranscriptLines([
+            line("Alice Example", 30, "late"),
+            line("Bob Example", undefined, "no time"),
+            line("Alice Example", 10, "first"),
+            line("Bob Example", 20, "middle"),
+            line("Alice Example", 12, "second"),
+        ]);
+        const between = (fromSec: number, toSec: number) =>
+            unordered.startingBetween(fromSec, toSec).map(({ index }) => index);
+
+        expect(between(10, 20)).toEqual([2, 3, 4]);
+        expect(between(11, 29.9)).toEqual([3, 4]);
+        expect(between(30, 30)).toEqual([0]);
+        expect(between(31, 40)).toEqual([]);
+    });
 });
 
 describe("corrections on two lines in one second", () => {

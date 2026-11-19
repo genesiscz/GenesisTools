@@ -85,6 +85,39 @@ function linesOf(transcript: readonly TranscriptEntry[] | TranscriptLines): Tran
     return lines;
 }
 
+const itemIndexes = new WeakMap<readonly MeetingItem[], Map<string, number>>();
+
+/**
+ * The items of `record` that `ids` name, in the record's order, through an id index kept per items array, so rendering
+ * a batch of questions does not scan every item for each one. A position that no longer holds its id rebuilds it.
+ */
+export function itemsNamed(record: MeetingRecord, ids: readonly string[]): MeetingItem[] {
+    const items = record.items;
+    const build = () => {
+        const index = new Map(items.map((item, at) => [item.id, at]));
+        itemIndexes.set(items, index);
+        return index;
+    };
+    let index = itemIndexes.get(items) ?? build();
+
+    const found = new Set<number>();
+
+    for (const id of ids) {
+        let at = index.get(id);
+
+        if (at === undefined || items[at]?.id !== id) {
+            index = build();
+            at = index.get(id);
+        }
+
+        if (at !== undefined) {
+            found.add(at);
+        }
+    }
+
+    return [...found].sort((a, b) => a - b).map((at) => items[at]!);
+}
+
 /** The lines of a label from `fromSec` to `toSec`, each with its end (`TranscriptLines.end`). */
 function rangeLines(context: QuestionContext, label: string, fromSec: number, toSec: number) {
     const lines = linesOf(context.transcript);
@@ -1104,13 +1137,9 @@ function spokenIn(
     }
 
     const text = linesOf(transcript)
-        .entries.filter(
-            (entry) =>
-                entry.startSec !== undefined &&
-                entry.startSec >= question.fromSec - 0.5 &&
-                (entry.startSec <= question.toSec || entry.startSec === question.fromSec)
-        )
-        .map((entry) => entry.text)
+        .startingBetween(question.fromSec - 0.5, Math.max(question.toSec, question.fromSec))
+        .filter(({ entry }) => entry.startSec! <= question.toSec || entry.startSec === question.fromSec)
+        .map(({ entry }) => entry.text)
         .join(" ");
     return text.length > maxChars ? `${text.slice(0, maxChars)}…` : text || undefined;
 }
@@ -1144,18 +1173,15 @@ export function questionView(
     const voiceSources =
         question.about === "speaker"
             ? [
-                  ...linesOf(transcript).entries.filter(
-                      (line) =>
-                          line.nameSource === "voice" &&
-                          line.startSec !== undefined &&
-                          line.startSec >= question.fromSec &&
-                          line.startSec < question.toSec
-                  ),
-                  ...record.items.flatMap((item) =>
+                  ...linesOf(transcript)
+                      .startingBetween(question.fromSec, question.toSec)
+                      .flatMap(({ entry }) =>
+                          entry.nameSource === "voice" && entry.startSec! < question.toSec ? [entry] : []
+                      ),
+                  ...itemsNamed(record, question.decides).flatMap((item) =>
                       item.kind === "speaker-range" &&
                       item.status === "suggested" &&
                       item.speaker &&
-                      question.decides.includes(item.id) &&
                       item.evidence?.reason !== "exclusion" &&
                       item.rules.includes(MeetingRule.VoiceEmbedding)
                           ? [
