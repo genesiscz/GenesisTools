@@ -386,12 +386,14 @@ const SESSION_AGENTS_LOOKBACK_MS = 14 * 24 * 3_600_000;
 async function codexAgentRecords({
     since,
     refresh,
+    parentNativeIds,
 }: {
     since: number;
     refresh?: boolean;
+    parentNativeIds?: string[];
 }): Promise<CodexAgentRecord[]> {
     try {
-        return await recentCodexAgentRecords({ since, refresh });
+        return await recentCodexAgentRecords({ since, refresh, parentNativeIds });
     } catch (error) {
         logger.warn({ error }, "[hub agents] codex sub-agent listing unavailable; codex sessions list without agents");
         return [];
@@ -403,6 +405,7 @@ interface TreeListing {
     parents: () => Promise<AgentSessionRow[]>;
     /** Rebuild just these already-listed parents, with their current children and workers. */
     exact?: boolean;
+    workers?: () => Promise<WorkerAgent[]>;
     progress?: (tree: AgentsTree) => void | Promise<void>;
 }
 
@@ -414,38 +417,43 @@ async function buildTree(options: HubAgentsOptions, listing?: TreeListing): Prom
     const since = now - hours * 3_600_000;
     const openSessions = readOpenSessions(options);
 
+    const parentsJob = prof.measureAsync(
+        "parents",
+        () =>
+            listing
+                ? listing.parents()
+                : options.session
+                  ? Promise.resolve([])
+                  : listAgentSessionRows({
+                        providers: AGENT_HARNESSES,
+                        refresh: options.refresh,
+                        hours,
+                        limit,
+                        maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS,
+                    }),
+        cpuMeta()
+    );
     const [rows, workers, codexRecords] = await Promise.all([
+        parentsJob,
         prof.measureAsync(
-            "parents",
-            () =>
-                listing
-                    ? listing.parents()
-                    : options.session
-                      ? Promise.resolve([])
-                      : listAgentSessionRows({
-                            providers: AGENT_HARNESSES,
-                            refresh: options.refresh,
-                            hours,
-                            limit,
-                            maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS,
-                        }),
-            cpuMeta()
+            "workers",
+            () => listing?.workers?.() ?? listWorkers({ now, since, promptChars: options.promptChars })
         ),
-        prof.measureAsync("workers", () => listWorkers({ now, since, promptChars: options.promptChars })),
-        prof.measureAsync("codex-agents", () =>
-            codexAgentRecords({
-                since: options.session ? now - SESSION_AGENTS_LOOKBACK_MS : since,
-                refresh: options.refresh,
-            })
-        ),
+        prof.measureAsync("codex-agents", async () => {
+            const ids = listing?.exact
+                ? (await parentsJob).filter((row) => row.provider === "codex").map((row) => row.sessionId)
+                : undefined;
+            return ids?.length === 0
+                ? []
+                : codexAgentRecords({
+                      since: options.session ? now - SESSION_AGENTS_LOOKBACK_MS : since,
+                      refresh: options.refresh,
+                      parentNativeIds: ids,
+                  });
+        }),
     ]);
     const codexTops = await prof.measureAsync("codex-tree", () =>
-        attachCodexAgents(
-            listing?.exact
-                ? codexRecords.filter((record) => rows.some((row) => row.sessionId === record.rootId))
-                : codexRecords,
-            { now, model: null, readOnly: options.refresh === false }
-        )
+        attachCodexAgents(codexRecords, { now, model: null, readOnly: options.refresh === false })
     );
     const open = await openSessions;
 
