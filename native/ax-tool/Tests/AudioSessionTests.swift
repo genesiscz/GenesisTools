@@ -344,6 +344,30 @@ final class AudioSessionTests: XCTestCase {
         }
     }
 
+    private func sessionRows(seconds: Double, buffers: [(offsetMs: Int, samples: Int)]) async throws -> [[String: Any]] {
+        let directory = try directory()
+        var lines: [Data] = []
+        var failures: [String] = []
+        let host = CMTime(value: 123, timescale: 1)
+        let audio = SegmentedAudio(directory: directory, seconds: seconds, emit: { lines.append($0) },
+            clock: { (host, Date(timeIntervalSince1970: 1_700_000_000)) })
+        audio.failed = { failures.append($0) }
+        for (offsetMs, samples) in buffers {
+            let buffer = try pcm(samples: samples, at: CMTimeAdd(host, CMTime(value: Int64(offsetMs), timescale: 1000)))
+            audio.queue.sync { audio.append(buffer, source: .mic) }
+        }
+        try await audio.finish()
+        XCTAssertEqual(failures, [])
+        return try closedRows(lines).sorted { ($0["file"] as? String ?? "") < ($1["file"] as? String ?? "") }
+    }
+
+    func testASmallOverlapWithTheRetiredFileIsTrimmedToItsLastSample() async throws {
+        // The second buffer starts 3 ms (144 samples) before the first file's end.
+        let rows = try await sessionRows(seconds: 0.1, buffers: [(0, 4800), (97, 4800)])
+        XCTAssertEqual(rows.compactMap { $0["zeroAt"] as? String }, ["2023-11-14T22:13:20.000Z", "2023-11-14T22:13:20.100Z"])
+        XCTAssertEqual(rows.compactMap { $0["durationMs"] as? Int }, [100, 97])
+    }
+
     func testALongGapIsFilledAtMostTwoSecondsPerCallbackAndKeepsFileTime() async throws {
         let url = try directory().appendingPathComponent("mic.m4a")
         let track = AudioTrack(source: .mic, movieInput: nil, sidecarURL: url)

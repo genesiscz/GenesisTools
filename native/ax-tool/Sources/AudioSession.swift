@@ -76,7 +76,8 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
         var offset = 0
         if let end = retiredEnd[source] {
             let overlap = CMTimeGetSeconds(CMTimeSubtract(end, CMSampleBufferGetPresentationTimeStamp(buffer)))
-            if overlap > 0.005 { offset = min(count, Int((overlap * rate).rounded())) }
+            // Trim to the retired file's last sample, so no sample is in two files.
+            offset = min(count, max(0, Int((overlap * rate).rounded())))
         }
         while offset < count && !closed {
             let time = CMTimeAdd(CMSampleBufferGetPresentationTimeStamp(buffer), CMTime(seconds: Double(offset) / rate, preferredTimescale: 1_000_000_000))
