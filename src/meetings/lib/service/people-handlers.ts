@@ -16,20 +16,36 @@ export function voicesHandlers(
     deps: MeetingsHandlerDeps = {}
 ): RpcHandlers<{ methods: typeof VOICES_METHODS }, import("./handlers").MeetingsCallContext> {
     const access = { store, linkedSource: deps.linkedSource, config: deps.config };
+    // A missing or ambiguous meeting answers with the typed refusal `meeting.show` gives (`meeting-not-found`,
+    // `meeting-ref`), not with the voice library's plain error.
+    const knownMeetings = (refs: readonly string[] | undefined) => {
+        for (const ref of refs ?? []) {
+            recordOf(store, ref);
+        }
+    };
     return {
         "voices.list": (params) => listProjectVoices({ ...access, ...params }),
         "voice.backfill": async (params, context) => {
+            knownMeetings(params.meetings);
             const result = await backfillVoices({ ...access, ...params });
             if (!result.dryRun && result.added) {
                 context.emit?.("people.changed", {});
             }
             return result;
         },
-        "voices.preview": (params, context) =>
-            previewVoices({ ...access, ...params, onProgress: voicePassProgress(context), signal: context.signal }),
+        "voices.preview": (params, context) => {
+            knownMeetings([params.meeting]);
+            return previewVoices({
+                ...access,
+                ...params,
+                onProgress: voicePassProgress(context),
+                signal: context.signal,
+            });
+        },
         "voices.sample": (params) => voiceSample({ ...access, ...params }),
         "voices.workers": () => autoVoiceWorkers(deps.freeCores),
         "voices.apply": async (params, context) => {
+            knownMeetings([params.meeting]);
             const result = await applyVoices({
                 ...access,
                 ...params,
