@@ -13,6 +13,7 @@ tools genesis-tools logs show <id>                 # one failure in full (an id 
 tools genesis-tools logs stats --by tool,model     # which tools fail most, and under which models
 tools genesis-tools logs day --tool ai --since 2h  # warnings and errors one tool wrote to the day log
 tools genesis-tools probe md finder                # do note and folder links open here? exit 1 and the fix if not
+tools genesis-tools worktree snapshot .            # the Git status of this worktree, kept current by the service
 ```
 
 ## Commands
@@ -131,6 +132,35 @@ and a missing target of a link other than `md`, print no fix command. `browser-r
 needs cmux installed.
 
 The presets are `genesis-md`, `finder`, `genesis-hub` and `claude-find`, one per link kind.
+
+### worktree: the Git status the service keeps current
+
+The GenesisTools service can keep the Git status of a worktree in memory and update it from a file watcher, so a
+caller (the `snapshot` status mode of the Bash diff hooks) gets the status without a `git status` process of its own.
+Every entry is still printed by Git: the watcher only names the paths to ask Git about again.
+
+| Command | What it does |
+|---|---|
+| `worktree snapshot <root>` | Ask the service for the Git status of one worktree. The first call opens the watch and answers `opening`; a later call answers `ok` with the entries. |
+| `worktree watchers` | List the worktrees the running service watches. Opens no root. |
+
+`worktree snapshot` flags: `--driver <id>` (the watch driver: `watchman` or `parcel`; default `watchman`),
+`--since <mark>` (the mark of an earlier answer: the answer then also lists the paths that changed since) and
+`--json`. `worktree watchers` takes `--json`.
+
+```bash
+tools genesis-tools worktree snapshot . --driver watchman --json   # opening, then ok on the next call
+tools genesis-tools worktree watchers
+```
+
+The two service methods behind them are `worktree.snapshot` (params `{ root, driver, since?, fenceMs? }`) and
+`worktree.watchers` (no params). Both only read. An answer is `ok` with `mark`, `head`, `entries`, `source`
+(`inventory`, `seed` or `reseed`), `changed` and `cost`, or `unavailable` with a reason: `no-driver`,
+`unsupported-root`, `opening`, `fence-timeout`, `not-a-worktree`, `over-capacity` or `git-failed`. A caller treats
+every `unavailable` as "read Git yourself now", never as an empty status. The service keeps at most 16 roots per
+driver (the least recently used one closes first), answers `fence-timeout` for 30 s after a fence timed out, and still
+exits after ten idle minutes. The Parcel driver refuses a linked worktree (`unsupported-root`). Nothing is saved to
+disk: a new service seeds each root again with one full status.
 
 ## How it works
 
