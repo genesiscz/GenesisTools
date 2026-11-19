@@ -1,7 +1,7 @@
 // Irreversible operations: data that is gone with no snapshot to restore, or a live session that is broken.
 
 import { constants } from "node:os";
-import { commandTokenIndex, commandWord, originalSlice, splitPipeline, tokenize, wordsFrom } from "../scan";
+import { commandTokenIndex, commandWord, originalSlice, type Span, splitPipeline, tokenize, wordsFrom } from "../scan";
 import type { ShellMatch, ShellRule, ShellScan } from "./types";
 
 /** Docker global options that consume the next token, in their separate-value spelling. */
@@ -104,10 +104,16 @@ export const dockerVolumeDestroy: ShellRule = {
 /** `kill`'s options that take the signal as the next word. */
 const KILL_SIGNAL_OPTIONS = new Set(["-s", "-n", "--signal"]);
 
+/** A decimal number as the shell and `kill` read it: `019` is 19, so `-019` and `-19` name one signal. */
+function decimal(word: string): string | null {
+    return /^\d+$/.test(word) ? String(Number.parseInt(word, 10)) : null;
+}
+
 /** True when `signal` is one of `names`, by name in any case, with or without `SIG`, or by this platform's number. */
 function isSignal(signal: string, names: readonly (keyof typeof constants.signals)[]): boolean {
     const name = signal.toUpperCase().replace(/^SIG/, "");
-    return names.some((n) => name === n.slice(3) || signal === String(constants.signals[n]));
+    const number = decimal(signal);
+    return names.some((n) => name === n.slice(3) || number === String(constants.signals[n]));
 }
 
 /** The signals that end a process once it runs again. SIGKILL is not one: it ends a stopped process at once. */
@@ -123,26 +129,44 @@ function isSignalWord(word: string): boolean {
 
 /**
  * The signal of a `pkill` or `killall` word list: `-<signal>`, `--signal <signal>`, `--signal=<signal>`, and Linux's
- * `killall -s <signal>` (on macOS `killall -s` is a dry run). No signal option means SIGTERM.
+ * `killall -s <signal>`. No signal option means SIGTERM; "" means the call sends no signal at all: outside Linux,
+ * `killall -s` only shows what it would do and `killall -d` only describes it. Options end at `--`. `killall` takes
+ * its last signal option (macOS's `-TERM -CONT` sends CONT); `pkill` reads only its first.
  */
 function nameKillerSignal(program: string, args: readonly string[]): string {
+    const linux = process.platform === "linux";
+    let signal: string | null = null;
+    let preview = false;
+
     for (let k = 0; k < args.length; k++) {
         const arg = args[k];
+        let found: string | null = null;
 
-        if (arg === "--signal" || (arg === "-s" && program === "killall" && process.platform === "linux")) {
-            return args[k + 1] ?? "";
+        if (arg === "--") {
+            break;
         }
 
-        if (arg.startsWith("--signal=")) {
-            return arg.slice("--signal=".length);
+        if (program === "killall" && !linux && (arg === "-s" || arg === "-d")) {
+            preview = true;
+        } else if (arg === "--signal" || (arg === "-s" && program === "killall" && linux)) {
+            found = args[k + 1] ?? "";
+            k++;
+        } else if (arg.startsWith("--signal=")) {
+            found = arg.slice("--signal=".length);
+        } else if (arg.startsWith("-") && !arg.startsWith("--") && isSignalWord(arg.slice(1))) {
+            found = arg.slice(1);
         }
 
-        if (arg.startsWith("-") && !arg.startsWith("--") && isSignalWord(arg.slice(1))) {
-            return arg.slice(1);
+        if (found !== null && (signal === null || program === "killall")) {
+            signal = found;
         }
     }
 
-    return "TERM";
+    if (preview) {
+        return "";
+    }
+
+    return signal ?? "TERM";
 }
 
 interface KillCall {
@@ -157,34 +181,84 @@ interface KillCall {
     matched: string;
 }
 
-/** Every `kill`, `pkill` and `killall` call of the command, in order, with its words as the shell splits them. */
+/** `>`, `2>>`, `&>`, `>&2`, `<<<`: the operator of a redirection and the target glued to it, if any. */
+const REDIRECTION = /^(?:\d*|&)(?:>>|>&|>\||<<<|<<-?|<&|<>|>|<)(.*)$/s;
+
+/** The words without their redirections: the shell takes `>/dev/null` and `2> err` out of the command's argv. */
+function withoutRedirections(words: readonly string[]): string[] {
+    const argv: string[] = [];
+
+    for (let k = 0; k < words.length; k++) {
+        const m = REDIRECTION.exec(words[k]);
+
+        if (!m) {
+            argv.push(words[k]);
+            continue;
+        }
+
+        if (m[1] === "") {
+            k++;
+        }
+    }
+
+    return argv;
+}
+
+/**
+ * Where the element's simple command starts in the original command. The scan blanks a quoted word, so an element
+ * whose first word is quoted (`'/bin/kill' -CONT 0`) starts at its second word; walk back over the blanks to the
+ * separator before it, without leaving the `-c` or backtick body that holds the element.
+ */
+function elementStart(scan: ShellScan, element: { start: number }): number {
+    const floor = scan.executableRanges
+        .filter((range) => element.start >= range.start && element.start <= range.end)
+        .reduce((best, range) => Math.max(best, range.start), 0);
+    let start = element.start;
+
+    while (start > floor && /[ \t]/.test(scan.cleaned[start - 1] ?? "")) {
+        start--;
+    }
+
+    return start;
+}
+
+/**
+ * Every `kill`, `pkill` and `killall` call of the command, in order. The program and its arguments are the words
+ * the shell passes as argv, read from the original command: quotes removed (`'/bin/kill'` is kill, and the `kill` of
+ * `'/bin/echo' kill` is an argument), redirections dropped.
+ */
 function killCalls(scan: ShellScan): KillCall[] {
     const calls: KillCall[] = [];
 
+    if (!scan.command.includes("kill")) {
+        return calls;
+    }
+
     for (const statements of scan.units) {
         for (const statement of statements) {
-            if (!statement.text.includes("kill")) {
-                continue;
-            }
-
             for (const element of splitPipeline(statement)) {
-                const tokens = tokenize(element);
-                const cmd = commandTokenIndex(tokens, scan.command);
-                const program = cmd === -1 ? "" : commandWord(tokens[cmd].text);
+                const from = elementStart(scan, element);
+
+                if (!scan.command.slice(from, element.start + element.text.length).includes("kill")) {
+                    continue;
+                }
+
+                const words = withoutRedirections(wordsFrom(scan, from).words);
+                const cmd = commandTokenIndex(words.map((text) => ({ text, start: 0 })));
+                const program = cmd === -1 ? "" : commandWord(words[cmd]);
 
                 if (program !== "kill" && !NAME_KILLERS.has(program)) {
                     continue;
                 }
 
-                const start = tokens[cmd].start;
-                // The scan blanks quotes, so `-"$g"` tokenizes as `-` and `$g`; the shell's own words keep it whole.
-                const args = wordsFrom(scan, start).words.slice(1);
+                const args = words.slice(cmd + 1);
+                const start = programOffset(scan, element, from, program);
                 const { signal, targets } =
                     program === "kill" ? killArguments(args) : { signal: nameKillerSignal(program, args), targets: [] };
                 calls.push({
                     program,
                     signal,
-                    targets: targets.filter((target) => target !== "--"),
+                    targets,
                     start,
                     matched: originalSlice(scan, start, element.start + element.text.length),
                 });
@@ -195,19 +269,110 @@ function killCalls(scan: ShellScan): KillCall[] {
     return calls.sort((a, b) => a.start - b.start);
 }
 
-/** The signal and the targets of `kill`'s arguments; no signal option means SIGTERM. */
+/**
+ * The offset of the program word in the original command: its scanned token when the scan kept it, else the first
+ * character of the element's command (the word is quoted, so the scan blanked it).
+ */
+function programOffset(scan: ShellScan, element: Span, from: number, program: string): number {
+    const tokens = tokenize(element);
+    const cmd = commandTokenIndex(tokens, scan.command);
+
+    if (cmd !== -1 && commandWord(tokens[cmd].text) === program) {
+        return tokens[cmd].start;
+    }
+
+    return from + (/^\s*/.exec(scan.command.slice(from))?.[0].length ?? 0);
+}
+
+/**
+ * The signal and the targets of `kill`'s arguments; no signal option means SIGTERM. The signal is the first word
+ * only: `-<signal>`, `-s <signal>`, `-n <number>`, `--signal <signal>`, `--signal=<signal>`, or bash's glued
+ * `-s<signal>` and `-n<number>`. `--` ends the options.
+ */
 function killArguments(args: readonly string[]): { signal: string; targets: string[] } {
     const [first, second] = args;
+    const rest = (from: number) => args.slice(from).filter((target, k) => !(k === 0 && target === "--"));
 
-    if (first !== undefined && KILL_SIGNAL_OPTIONS.has(first)) {
-        return { signal: second ?? "", targets: args.slice(2) };
+    if (first === undefined || first === "--" || !first.startsWith("-")) {
+        return { signal: "TERM", targets: first === "--" ? args.slice(1) : [...args] };
     }
 
-    if (first?.startsWith("-") && first !== "--") {
-        return { signal: first.slice(1), targets: args.slice(1) };
+    if (KILL_SIGNAL_OPTIONS.has(first)) {
+        return { signal: second ?? "", targets: rest(2) };
     }
 
-    return { signal: "TERM", targets: [...args] };
+    if (first.startsWith("--signal=")) {
+        return { signal: first.slice("--signal=".length), targets: rest(1) };
+    }
+
+    const glued = /^-[sn](.+)$/.exec(first);
+
+    if (glued && !isSignalWord(first.slice(1)) && isSignalWord(glued[1])) {
+        return { signal: glued[1], targets: rest(1) };
+    }
+
+    return { signal: first.slice(1), targets: rest(1) };
+}
+
+/**
+ * True when a `kill` target names a process group, not one process: `-<pgid>`, `0` (the caller's own group), or a
+ * job spec such as `%1` (the job's group, in a shell with job control).
+ */
+function isGroupTarget(target: string): boolean {
+    return target.startsWith("-") || decimal(target) === "0" || target.startsWith("%");
+}
+
+/** A simple assignment statement: `p=1`, `export p=1`, `local p=1`. The names it binds, else none. */
+const DECLARE_WORDS = new Set(["export", "local", "declare", "typeset", "readonly"]);
+
+function assignedNames(words: readonly string[]): string[] {
+    const rest = DECLARE_WORDS.has(words[0] ?? "") ? words.slice(1).filter((word) => !word.startsWith("-")) : words;
+    const names = rest.map((word) => /^([A-Za-z_][A-Za-z0-9_]*)=/.exec(word)?.[1]);
+
+    if (rest.length === 0 || names.some((name) => name === undefined)) {
+        return [];
+    }
+
+    return names.filter((name): name is string => name !== undefined);
+}
+
+/** Every simple assignment of the command with the offset of its statement, in order. */
+function assignments(scan: ShellScan): { name: string; at: number }[] {
+    const out: { name: string; at: number }[] = [];
+
+    for (const statements of scan.units) {
+        for (const statement of statements) {
+            const from = elementStart(scan, statement);
+
+            for (const name of assignedNames(withoutRedirections(wordsFrom(scan, from).words))) {
+                out.push({ name, at: from });
+            }
+        }
+    }
+
+    return out;
+}
+
+/**
+ * The key two `kill` targets share when the shell gives them one pid: a literal pid by its number (`01234` is 1234),
+ * and a `$p` or `${p}` by its name and the last assignment to it before the call, so `p=2; kill -CONT "$p"` after
+ * `kill -TERM "$p"` is a different pid.
+ */
+function targetKey(target: string, at: number, binds: readonly { name: string; at: number }[]): string {
+    const number = decimal(target);
+
+    if (number !== null) {
+        return number;
+    }
+
+    const variable = /^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$/.exec(target)?.[1];
+
+    if (variable === undefined) {
+        return target;
+    }
+
+    const bound = binds.filter((bind) => bind.name === variable && bind.at < at).at(-1);
+    return `$${variable}@${bound?.at ?? -1}`;
 }
 
 // kill -CONT to a process group, or to a pid the same command also sends TERM: the end of the usual "TERM, then
@@ -236,8 +401,13 @@ export const stoppedJobWake: ShellRule = {
         "in another pane after its stopped launcher was killed.",
     detect(scan): ShellMatch | null {
         const calls = killCalls(scan);
+        const binds = calls.some((call) => call.targets.some((target) => target.includes("$")))
+            ? assignments(scan)
+            : [];
         const ended = new Set(
-            calls.filter((call) => isSignal(call.signal, ENDING_SIGNALS)).flatMap((call) => call.targets)
+            calls
+                .filter((call) => isSignal(call.signal, ENDING_SIGNALS))
+                .flatMap((call) => call.targets.map((target) => targetKey(target, call.start, binds)))
         );
 
         for (const call of calls) {
@@ -255,8 +425,10 @@ export const stoppedJobWake: ShellRule = {
                 };
             }
 
-            const groups = call.targets.filter((target) => target.startsWith("-"));
-            const pids = call.targets.filter((target) => !target.startsWith("-") && ended.has(target));
+            const groups = call.targets.filter(isGroupTarget);
+            const pids = call.targets.filter(
+                (target) => !isGroupTarget(target) && ended.has(targetKey(target, call.start, binds))
+            );
 
             if (groups.length > 0) {
                 return {
