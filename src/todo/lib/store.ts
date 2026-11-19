@@ -454,7 +454,7 @@ export class TodoStore {
     async getForRemoval(id: string): Promise<Todo | null> {
         const row = readRows(this.dbPath, { projectRoot: this.projectRoot, todoId: id })[0];
         if (row?.item.state === "dropped") {
-            const todo = SafeJSON.parse<Todo>(row.meta.todo, { strict: true });
+            const todo: Todo = SafeJSON.parse(row.meta.todo, { strict: true });
             return this.attachmentDirectories(todo).length > 0 ? todo : null;
         }
         return this.get(id);
@@ -471,7 +471,7 @@ export class TodoStore {
                     return null;
                 }
 
-                const todo = SafeJSON.parse<Todo>(row.meta.todo, { strict: true });
+                const todo: Todo = SafeJSON.parse(row.meta.todo, { strict: true });
                 if (row.item.state === "dropped") {
                     return this.attachmentDirectories(todo).length > 0 ? todo : null;
                 }
@@ -612,7 +612,7 @@ export class TodoStore {
                         "SELECT actor FROM changes WHERE item = ? AND kind = 'created' ORDER BY seq LIMIT 1"
                     )
                     .get(itemId);
-                const creator = created === null ? null : SafeJSON.parse<Actor>(created.actor, { strict: true });
+                const creator: Actor | null = created === null ? null : SafeJSON.parse(created.actor, { strict: true });
                 const repoRoot = creator?.repoRoot;
                 const projectRoot =
                     repoRoot && isAbsolute(repoRoot)

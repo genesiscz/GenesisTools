@@ -78,7 +78,7 @@ describe("work store handoff reads", () => {
         expect(existsSync(store.base)).toBe(false);
         const get = SafeJSON.parse(await handleHandoffGet({ id }, deps));
         expect(get).toHaveProperty("handoff.id", id);
-        const list = SafeJSON.parse<{ handoffs: { id: string }[] }>(await handleHandoffList({}, deps));
+        const list: { handoffs: { id: string }[] } = SafeJSON.parse(await handleHandoffList({}, deps));
         expect(list.handoffs.map((handoff) => handoff.id)).toEqual([id]);
         expect(existsSync(store.base)).toBe(false);
     });

@@ -163,15 +163,16 @@ export function membersByContainer(db: Database, containers: readonly string[]):
         SELECT * FROM ranked WHERE position <= 500 ORDER BY container, position
     `)
         .all(SafeJSON.stringify(containers));
-    const groups = Map.groupBy(rows, (row) => row.container);
-    return new Map(
-        Array.from(groups, ([container, members]) => [
-            container,
-            members
-                .map((row) => toRow(rowToItem(row), row.slot ?? undefined))
-                .sort((a, b) => slotOrder(a.slot) - slotOrder(b.slot)),
-        ])
-    );
+    const groups = new Map<string, ItemRow[]>();
+    for (const row of rows) {
+        const members = groups.get(row.container) ?? [];
+        members.push(toRow(rowToItem(row), row.slot ?? undefined));
+        groups.set(row.container, members);
+    }
+    for (const members of groups.values()) {
+        members.sort((a, b) => slotOrder(a.slot) - slotOrder(b.slot));
+    }
+    return groups;
 }
 
 function slotOrder(slot: string | undefined): number {
