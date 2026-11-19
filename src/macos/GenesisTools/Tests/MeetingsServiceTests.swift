@@ -47,7 +47,7 @@ private enum MeetingsFixture {
 /// A Meetings service in the test: a Unix socket server that answers `hello` (with `helloAnswer`), answers every other
 /// call with the fixture's reply for the same method and params, answers `$/cancel` with 1013, leaves the methods in
 /// `silent` unanswered, and keeps every line the window wrote. It accepts again after a hang-up.
-private final class FakeMeetingsService: @unchecked Sendable {
+final class FakeMeetingsService: @unchecked Sendable {
     let path = "/tmp/ms-\(UUID().uuidString.prefix(8)).sock"
     var helloAnswer: [String: Any]
     var silent: Set<String> = []
@@ -55,6 +55,7 @@ private final class FakeMeetingsService: @unchecked Sendable {
     var answers: [String: [String: Any]] = [:]
     /// Some interaction tests need successive replies from the journal they actually changed.
     var fixtureReply: ((String, [String: Any]) throws -> Any)?
+    var fixtureMethods: Set<String> = ["decision.apply", "meeting.show", "meeting.rows"]
     /// The `$/progress` params (without the id) a method sends for each call before its reply, also when it is silent.
     var progress: [String: [[String: Any]]] = [:]
     private var listener: Int32 = -1
@@ -185,7 +186,7 @@ private final class FakeMeetingsService: @unchecked Sendable {
         guard !silent.contains(method) else { return }
         if method == "hello" {
             send(["jsonrpc": "2.0", "id": id].merging(helloAnswer) { $1 })
-        } else if let fixtureReply, ["decision.apply", "meeting.show", "meeting.rows"].contains(method) {
+        } else if let fixtureReply, fixtureMethods.contains(method) {
             do {
                 send(["jsonrpc": "2.0", "id": id, "result": try fixtureReply(method, params)])
             } catch {
