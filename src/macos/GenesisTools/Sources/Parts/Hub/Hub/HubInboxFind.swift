@@ -75,8 +75,7 @@ struct InboxFindHost: View {
                   let entry = ListsSketchB.entries(inbox, filter: model.filter).first(where: { $0.id == match.row }) else { return false }
             inbox.selectedID = entry.session.id
             inbox.keyCardID = entry.item.id
-            pick.bucket = nil
-            pick.project = nil
+            pick.clearFilters()
             pick.open = entry.item.id
             return true
         default:

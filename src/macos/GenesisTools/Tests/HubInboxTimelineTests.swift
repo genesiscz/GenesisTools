@@ -91,6 +91,19 @@ final class HubInboxTimelineTests: XCTestCase {
             + JSONDecoder().decode(InboxEnvelope.self, from: Data(labJSON.utf8)).sessions
     }
 
+    @MainActor
+    func testClearingTableFiltersReturnsKeyboardSelectionToEverything() {
+        let pick = ListsSketchB.InboxPick()
+        pick.select(.bucket(.staged))
+        pick.select(.project("Orchard"))
+        pick.open = "fixture"
+        pick.clearFilters()
+        XCTAssertNil(pick.bucket)
+        XCTAssertNil(pick.project)
+        XCTAssertNil(pick.open)
+        XCTAssertEqual(pick.railSelection, ListsSketchB.RailRow.bucket(nil).id)
+    }
+
     /// Closing the open line of the compact table leaves every line closed; the first line no longer opens instead.
     @MainActor
     func testTheCompactTableKeepsEveryLineClosedAfterTheReaderClosesOne() {

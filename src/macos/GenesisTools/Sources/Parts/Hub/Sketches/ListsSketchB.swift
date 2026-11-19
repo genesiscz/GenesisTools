@@ -419,7 +419,7 @@ extension ListsSketchB {
 
         var title: String {
             switch self {
-            case .needsAnswer: return "Needs your answer"
+            case .needsAnswer: return "Waiting for you"
             case .staged: return "Staged, not sent"
             case .toSend: return "Waiting to send"
             case .quiet: return "Quiet for 3+ days"
@@ -446,10 +446,10 @@ extension ListsSketchB {
 
         var tooltip: String {
             switch self {
-            case .needsAnswer: return "Questions nobody answered yet: the ones an agent waits on first, then the newest"
+            case .needsAnswer: return "Open questions and tasks, with blocking items first."
             case .staged: return "Answers you picked and did not send yet"
             case .toSend: return "Answered, not taken by the session yet. Nothing here waits for you."
-            case .quiet: return "Open questions in sessions where nothing moved for three days"
+            case .quiet: return "Open items in sessions that have been quiet for three days."
             }
         }
     }
@@ -484,6 +484,11 @@ extension ListsSketchB {
             case .project(let value): project = value
             }
             open = nil
+        }
+
+        func clearFilters() {
+            project = nil
+            select(.bucket(nil))
         }
 
         /// The open line of the table; nil opens the first one, `allClosed` none.
@@ -612,7 +617,7 @@ extension ListsSketchB {
                 symbolColor: ReviewPalette.dim,
                 count: "\(count)",
                 selected: pick.bucket == nil,
-                tooltip: "Every question in triage order",
+                tooltip: "All questions and tasks in triage order",
                 select: { pick.select(.bucket(nil)) }
             )
             .equatable()
@@ -627,7 +632,7 @@ extension ListsSketchB {
                 symbolColor: ReviewPalette.dim,
                 count: "\(count)",
                 selected: pick.project == name,
-                tooltip: name.map { "Only \($0); the count is its questions that need an answer" } ?? "Questions of every project",
+                tooltip: name.map { "Show \($0). The count includes its waiting questions and tasks." } ?? "Show questions and tasks from every project",
                 select: { pick.select(.project(name)) }
             )
             .equatable()
@@ -662,6 +667,7 @@ extension ListsSketchB {
             let open = InboxPick.openLine(pick.open, shown: shown.map(\.id))
             VStack(spacing: 0) {
                 header(all: all, shown: shown.count)
+                InboxTaskFeedback(store: inbox.tasks, saved: inbox.load)
                 PanelFindBarSlot()
                 if let failure = inbox.error {
                     ListVariantLoadFailure(failure) { inbox.load() }
@@ -670,10 +676,17 @@ extension ListsSketchB {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                         if shown.isEmpty, inbox.loading {
-                            PaneSkeleton("Looking for waiting questions")
-                        } else if shown.isEmpty {
-                            EmptyState(symbol: "tray", text: "No question in this section.")
-                                .padding(.top, 40)
+                            PaneSkeleton("Loading questions and tasks")
+                        } else if shown.isEmpty, inbox.error == nil, inbox.loadedAt != nil {
+                            if pick.bucket != nil || pick.project != nil || !model.filter.trimmed.isEmpty {
+                                EmptyState(symbol: "magnifyingglass", text: "No matching questions or tasks.", actionTitle: "Clear filters") {
+                                    pick.clearFilters()
+                                    model.filter = ""
+                                }.padding(.top, 40)
+                            } else {
+                                EmptyState(symbol: "tray", text: "No questions or tasks are waiting.")
+                                    .padding(.top, 40)
+                            }
                         }
                         ForEach(Bucket.allCases, id: \.self) { bucket in
                             let rows = shown.filter { $0.bucket == bucket }
@@ -698,8 +711,7 @@ extension ListsSketchB {
                 // when the line is open already, after the layout that the filter change causes.
                 .onChange(of: inbox.focusRequest, initial: true) { _, _ in
                     guard let id = inbox.focusedItemID, all.contains(where: { $0.id == id }) else { return }
-                    pick.bucket = nil
-                    pick.project = nil
+                    pick.clearFilters()
                     pick.open = id
                     DispatchQueue.main.async { proxy.scrollTo(id, anchor: .center) }
                 }
@@ -721,7 +733,9 @@ extension ListsSketchB {
             .equatable()
             if open {
                 VStack(alignment: .leading, spacing: 8) {
-                    if entry.item.isForm {
+                    if let task = entry.item.task {
+                        InboxTaskCard(store: inbox.tasks, task: task, session: entry.session)
+                    } else if entry.item.isForm {
                         InboxFormCard(inbox: inbox, item: entry.item).id(entry.item.id)
                     } else {
                         InboxDecisionCard(model: model, inbox: inbox, session: entry.session, item: entry.item, keyed: keys)
@@ -761,8 +775,8 @@ extension ListsSketchB {
             let open = all.filter { $0.bucket == .needsAnswer }.count
             let blocking = all.filter { $0.bucket == .needsAnswer && $0.blocking }.count
             let staged = all.filter { $0.bucket == .staged }.count
-            var summary = "\(open) need an answer"
-            if blocking > 0 { summary += " (\(blocking) block an agent)" }
+            var summary = "\(open) waiting"
+            if blocking > 0 { summary += blocking == 1 ? " (1 blocks an agent)" : " (\(blocking) block an agent)" }
             if staged > 0 { summary += " · \(staged) staged" }
             return TitlebarHeader {
                 HStack(spacing: 10) {
@@ -770,16 +784,10 @@ extension ListsSketchB {
                         Image(systemName: "tray.full").foregroundColor(InboxStyle.accent)
                             .accessibilityHidden(true)
                         Text("Waiting for you").font(.system(size: 14, weight: .semibold))
-                        Text(verbatim: summary)
-                            .font(.system(size: 12))
-                            .foregroundColor(ReviewPalette.dim)
                     }
                     .titlebarLabel()
                     Spacer()
-                    Text(verbatim: "\(Plural.count(shown, "question")) shown")
-                        .font(.system(size: 11))
-                        .foregroundColor(ReviewPalette.dim)
-                        .titlebarLabel()
+                    InboxAddTaskButton(model: model, tasks: inbox.tasks)
                     if inbox.stagedCount > 0 {
                         Button {
                             inbox.sendAllStaged()
@@ -793,6 +801,15 @@ extension ListsSketchB {
                         .instantTooltip("Send every staged decision of every session; each session gets one message")
                     }
                     IconButton(systemName: "arrow.clockwise", tooltip: "Look for waiting sessions again") { inbox.load() }
+                        .disabled(inbox.loading)
+                }
+            } details: {
+                if !all.isEmpty {
+                    HStack {
+                        Text(verbatim: summary)
+                        Spacer()
+                        Text(verbatim: Plural.count(shown, "item") + " shown")
+                    }.font(.system(size: 11)).foregroundStyle(.secondary)
                 }
             }
         }
@@ -838,7 +855,9 @@ extension ListsSketchB {
                 // Fixed columns, as in a table: a long session title or project name moved every cell left of it, so
                 // "3 options" started at a different x on each line.
                 Group {
-                    if let recommended, let count = entry.item.choices?.count, count > 0 {
+                    if let task = entry.item.task {
+                        Text(task.addressee + " · " + task.statusLabel)
+                    } else if let recommended, let count = entry.item.choices?.count, count > 0 {
                         Text(verbatim: "\(Plural.count(count, "option")) · \(recommended) recommended")
                     } else {
                         Text(verbatim: "")
@@ -849,7 +868,7 @@ extension ListsSketchB {
                 .lineLimit(1)
                 .frame(width: Self.optionsWidth, alignment: .trailing)
                 HStack(spacing: 6) {
-                    ProviderBadge(provider: entry.session.provider ?? "?", size: 13)
+                    if let provider = entry.session.displayProvider { ProviderBadge(provider: provider, size: 13) }
                     Text(verbatim: entry.session.displayTitle)
                         .font(.system(size: 11.5))
                         .foregroundColor(ReviewPalette.dim)
@@ -868,7 +887,7 @@ extension ListsSketchB {
                     .background(Capsule().fill(Color.white.opacity(0.07)))
                     .frame(width: Self.projectWidth, alignment: .trailing)
                     .instantTooltip(entry.session.projectName)
-                LiveAgo(date: entry.item.date, style: .brief)
+                LiveAgo(date: entry.item.date, style: .spelled)
                     .font(.system(size: 10.5))
                     .foregroundColor(ReviewPalette.dim)
                     .fixedSize()
