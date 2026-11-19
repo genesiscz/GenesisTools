@@ -943,7 +943,14 @@ final class HubModel {
             prs.$selectedID.map { _ in () }.eraseToAnyPublisher(),
             inbox.$selectedID.map { _ in () }.eraseToAnyPublisher(),
             agents.$selectedID.map { _ in () }.eraseToAnyPublisher(),
-            work.screen.$itemRef.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            work.screen.$itemRef.dropFirst().handleEvents(receiveOutput: { [weak self] next in
+                // The publisher still sees the list here. The deferred recorder would only see the open item
+                // if the list and its first keyboard selection happened in the same main-queue turn.
+                guard let self, next != nil, !self.navRestoring, self.mode == .work,
+                      self.work.screen.itemRef == nil, self.work.screen.project != nil,
+                      self.work.screen.pane == .items else { return }
+                self.recordPlace()
+            }).map { _ in () }.eraseToAnyPublisher(),
             work.screen.$project.dropFirst().map { _ in () }.receive(on: DispatchQueue.main).eraseToAnyPublisher(),
         ]
         navRecorder = Publishers.MergeMany(changes).sink { [weak self] in
@@ -1129,7 +1136,7 @@ final class HubModel {
             return mode == .sessions && (selectedID == session || selected?.sessionId.hasPrefix(session) == true)
         }
         if let wanted = asked.mode {
-            return mode == wanted
+            return mode == wanted && (wanted != .work || work.screen.itemRef == nil)
         }
         return false
     }
