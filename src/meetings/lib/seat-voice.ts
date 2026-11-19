@@ -20,6 +20,7 @@ import {
     embedSeatLines,
     localVoiceDecisions,
     meetingPredictionVoices,
+    meetingVoiceCachePath,
 } from "./speaker-labels/voice";
 import { nameByVoice, type VoiceLine } from "./voice-names";
 
@@ -296,7 +297,13 @@ export async function readSeatVoiceHints(options: {
         );
         const sound = await discoverySound({ opened, config, calibration, enrolled });
         try {
-            lines = await embedSeatLines({ lines: spans, config, sound, cachePath: "" });
+            lines = await embedSeatLines({
+                lines: spans,
+                config,
+                sound,
+                cachePath: meetingVoiceCachePath(opened),
+                readOnlyCache: true,
+            });
         } catch (error) {
             if (!(error instanceof VoiceUnavailableError)) {
                 throw error;

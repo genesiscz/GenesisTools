@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import * as voice from "@genesiscz/utils/meetings/voice";
 import {
@@ -17,6 +18,7 @@ import { duplicateMeeting } from "./duplicate";
 import { OpenedMeeting } from "./opened-meeting";
 import { InProcessMeetingsClient } from "./service/client";
 import * as sound from "./sound";
+import { voiceLabeler } from "./speaker-labels/voice";
 
 const finch = "Finch Example";
 const lark = "Lark Example";
@@ -184,17 +186,65 @@ test("seat preview finds both unseated voices in one read-only batch per channel
         expect.stringContaining("2 microphone, 0 call"),
         expect.stringContaining("0 microphone, 2 call"),
     ]);
-    expect(
-        f.embed.mock.calls.map(([batch]) => [batch.cachePath, batch.channels[0]!.channel, batch.spans.length]).sort()
-    ).toEqual([
-        ["", 0, 2],
-        ["", 1, 2],
+    expect(f.embed.mock.calls.map(([batch]) => [batch.channels[0]!.channel, batch.spans.length]).sort()).toEqual([
+        [0, 2],
+        [1, 2],
     ]);
     expect(new MeetingStore().read(f.record.id)?.seats).toBeUndefined();
     expect(readFileSync(f.store.path(f.record.id))).toEqual(before.record);
     expect(readVoiceLibrary()).toEqual(before.library);
     expect(readFileSync(join(f.store.root, "voice-library", "library.json"))).toEqual(before.bytes);
     expect(f.evidenceFiles()).toEqual(before.evidence);
+});
+
+test("seat preview reuses the suggestion cache and sends only uncached clips to a worker", async () => {
+    const embed = voice.embedVoiceLines;
+    const f = await fixture([mic, mic, call]);
+    sample(finch, { seat: "mic" });
+    sample(lark, { seat: "call" });
+    const backend = spyOn(voice, "localVoiceBackend").mockReturnValue({ model, embed: () => ({ embedding: [1, 0] }) });
+    restore.push(() => backend.mockRestore());
+    const log = join(f.store.folder(f.record.id), "worker-requests.txt");
+    writeFileSync(log, "");
+    const worker = `
+        import { appendFileSync } from "node:fs";
+        const { request } = await Bun.stdin.json();
+        const clips = request.input.clips;
+        appendFileSync(${SafeJSON.stringify(log)}, clips.map(clip => clip.fromSec).join(",") + "\\n");
+        const rows = clips.map(clip => clip.channels.map(channel => ({
+            quality: "ready", model: ${SafeJSON.stringify(model)}, embedding: channel === 1 ? [1, 0] : [0, 1]
+        })));
+        process.stdout.write(await Response.json(rows).text());
+    `;
+    f.embed.mockImplementation((batch) =>
+        embed({ ...batch, workers: 1, workerPrefix: [process.execPath, "-e", worker, "--"] })
+    );
+    const opened = OpenedMeeting.of(f.store, f.record);
+    const labeler = voiceLabeler({ opened, settings: (await opened.config()).global.speakerLabels.voice });
+    const context = {
+        project: f.record.project,
+        attended: [
+            { person: finch, seat: "mic" as const, fromSec: 0, toSec: 30 },
+            { person: lark, seat: "call" as const, fromSec: 0, toSec: 30 },
+        ],
+    };
+    const first = { index: 0, seat: "mic" as const, fromSec: 0, toSec: 4 };
+    const second = { index: 1, seat: "mic" as const, fromSec: 4, toSec: 8 };
+    const last = { index: 2, seat: "call" as const, fromSec: 8, toSec: 13 };
+    await labeler.propose({ ...context, lines: [first, last] });
+    expect(readFileSync(log, "utf8")).toBe("0\n8\n");
+    const partialCache = f.evidenceFiles();
+    const preview = await f.preview();
+    expect(preview.suggestion.seats.room).toEqual([finch]);
+    expect(readFileSync(log, "utf8")).toBe("0\n8\n4\n");
+    expect(f.evidenceFiles()).toEqual(partialCache);
+
+    await labeler.propose({ ...context, lines: [second] });
+    const fullCache = f.evidenceFiles();
+    expect(readFileSync(log, "utf8")).toBe("0\n8\n4\n4\n");
+    expect(await f.preview()).toEqual(preview);
+    expect(readFileSync(log, "utf8")).toBe("0\n8\n4\n4\n");
+    expect(f.evidenceFiles()).toEqual(fullCache);
 });
 
 test("a personal mute and a partial call stay leave room speech eligible and only one eligible call line", async () => {

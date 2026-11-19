@@ -114,6 +114,7 @@ export async function embedSeatLines(
     context: Pick<LabelContext, "lines"> & {
         sound: MeetingSound;
         cachePath?: string;
+        readOnlyCache?: boolean;
         config?: MeetingsConfig;
         onProgress?: VoiceProgress;
         signal?: AbortSignal;
@@ -156,6 +157,7 @@ export async function embedSeatLines(
         const embeddings = await embedVoiceLines({
             audioPath: group.path,
             cachePath: context.cachePath,
+            readOnlyCache: context.readOnlyCache,
             workerPrefix: worker.prefix,
             clearBackground: worker.clearBackground,
             workers: worker.workers,
@@ -214,6 +216,10 @@ function comparedSamples(options: {
     ).length;
 }
 
+export function meetingVoiceCachePath(opened: OpenedMeeting): string {
+    return join(opened.store.folder(opened.record.id), "evidence", "voice-lines.json");
+}
+
 async function meetingVoiceLines(opened: OpenedMeeting, context: LabelContext): Promise<VoiceLine[]> {
     let sound = context.sound ?? (await prof.measureAsync("speakers.sound-inputs", () => opened.sound()));
     {
@@ -241,7 +247,7 @@ async function meetingVoiceLines(opened: OpenedMeeting, context: LabelContext): 
         config: await opened.config(),
         onProgress: voiceProgressForMeeting.get(opened),
         signal: voiceSignalForMeeting.get(opened),
-        cachePath: join(opened.store.folder(opened.record.id), "evidence", "voice-lines.json"),
+        cachePath: meetingVoiceCachePath(opened),
     });
 }
 
