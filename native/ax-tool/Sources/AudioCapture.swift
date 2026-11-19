@@ -231,8 +231,13 @@ func copyAudioRange(_ buffer: CMSampleBuffer, _ range: CFRange) -> (status: OSSt
     let status = CMSampleBufferCopySampleBufferForRange(allocator: kCFAllocatorDefault, sampleBuffer: buffer,
         sampleRange: range, sampleBufferOut: &copy)
     if status == noErr, let copy { return (status, copy) }
-    // Some PCM buffers refuse CoreMedia's range copy. Copy each plane's frames, never a contiguous
-    // byte range across channels: ScreenCaptureKit's stereo output is non-interleaved.
+    return copyPCMFrames(buffer, range, refused: status)
+}
+
+/// Some PCM buffers refuse CoreMedia's range copy. Copy each plane's frames, never a contiguous byte range
+/// across channels: ScreenCaptureKit's stereo output is non-interleaved. A failure answers `refused`.
+func copyPCMFrames(_ buffer: CMSampleBuffer, _ range: CFRange, refused status: OSStatus) -> (status: OSStatus, buffer: CMSampleBuffer?) {
+    var copy: CMSampleBuffer?
     let count = CMSampleBufferGetNumSamples(buffer)
     guard range.location >= 0, range.length > 0, range.location <= count - range.length,
           let format = CMSampleBufferGetFormatDescription(buffer),
@@ -263,6 +268,11 @@ func copyAudioRange(_ buffer: CMSampleBuffer, _ range: CFRange) -> (status: OSSt
         CMSampleBufferSetDataBufferFromAudioBufferList(copy, blockBufferAllocator: kCFAllocatorDefault,
             blockBufferMemoryAllocator: kCFAllocatorDefault, flags: 0,
             bufferList: list.unsafeMutablePointer) == noErr else { return (status, nil) }
+    // The buffer was created not ready: it is a success only once its data is marked ready.
+    if !CMSampleBufferDataIsReady(copy) {
+        let ready = CMSampleBufferSetDataReady(copy)
+        guard ready == noErr, CMSampleBufferDataIsReady(copy) else { return (ready == noErr ? status : ready, nil) }
+    }
     return (noErr, copy)
 }
 
