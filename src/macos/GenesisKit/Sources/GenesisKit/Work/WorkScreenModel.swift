@@ -112,6 +112,7 @@ public final class WorkScreenModel: ObservableObject {
     private var trailing: Task<Void, Never>?
     /// A change arrived that no reload has read yet.
     private var stale = false
+    private var projectsStale = false
     public private(set) var visible = true
     /// Reloads that a change of the store started, for tests and the bench.
     private(set) var changeReloads = 0
@@ -136,7 +137,9 @@ public final class WorkScreenModel: ObservableObject {
         if next {
             reconnect()
         } else {
+            opening?.cancel()
             stopListening()
+            cancelRead()
         }
     }
 
@@ -152,7 +155,8 @@ public final class WorkScreenModel: ObservableObject {
             object: nil, queue: .main) { [weak self] _ in Task { @MainActor in self?.reconnect() } }
         let previousLoad = loadToken
         opening = Task {
-            guard !Task.isCancelled else { return }
+            guard visible, !Task.isCancelled else { return }
+            projectsStale = false
             await loadProjects()
             if !Task.isCancelled && loadToken == previousLoad && itemRef == nil { read() }
         }
@@ -167,6 +171,17 @@ public final class WorkScreenModel: ObservableObject {
         opening?.cancel()
         opening = nil
         stopListening()
+        cancelRead()
+    }
+
+    private func cancelRead() {
+        loading?.cancel()
+        loading = nil
+        loadToken = UUID()
+        if isLoading { isLoading = false }
+        if live == .catchingUp { live = .live }
+        stale = true
+        projectsStale = true
     }
 
     private func stopListening() {
@@ -187,7 +202,11 @@ public final class WorkScreenModel: ObservableObject {
 
     private func restart() {
         PerfSpans.measure("work.live.reconnect") { listen() }
-        read()
+        if projectsStale {
+            schedule()
+        } else {
+            read()
+        }
     }
 
     private func listen() {
@@ -509,7 +528,11 @@ public final class WorkScreenModel: ObservableObject {
         read(explicit: true)
     }
 
-    private func read(explicit: Bool = false, change: Bool = false) {
+    private func read(explicit: Bool = false, change: Bool = false, retryOnFailure: Bool = true) {
+        guard active, visible else {
+            stale = true
+            return
+        }
         loading?.cancel()
         if live == .catchingUp { live = .live }
         let project = project
@@ -529,6 +552,7 @@ public final class WorkScreenModel: ObservableObject {
         loading = Task { [weak self] in
             guard let self else { return }
             let span = PerfSpans.begin("work.live.reload", awaits: true)
+            var failed = false
             let slow = change ? Task { [weak self, catchUpDelay] in
                 try? await Task.sleep(for: .seconds(catchUpDelay))
                 guard !Task.isCancelled, let self, self.loadToken == token, self.live == .live else { return }
@@ -561,6 +585,7 @@ public final class WorkScreenModel: ObservableObject {
                 if self.failure != nil { self.failure = nil }
             } catch {
                 guard !Task.isCancelled else { return }
+                failed = true
                 if self.failure != error.localizedDescription { self.failure = error.localizedDescription }
             }
             guard self.loadToken == token else { return }
@@ -568,7 +593,13 @@ public final class WorkScreenModel: ObservableObject {
             if self.live == .catchingUp { self.live = .live }
             self.loading = nil
             // Changes that came during this reload get one more, by the same rules.
-            if self.stale { self.schedule() }
+            if self.stale || self.projectsStale {
+                self.schedule()
+            } else if failed, change, retryOnFailure, self.active {
+                // A failed read after a store change retries once. A second failure waits for the next change.
+                self.stale = true
+                self.schedule(retryOnFailure: false)
+            }
         }
     }
 
@@ -597,22 +628,33 @@ public final class WorkScreenModel: ObservableObject {
         PerfSpans.measure("work.live.tick") {
             invalidateFindReads()
             stale = true
+            projectsStale = true
             schedule()
         }
     }
 
     /// One reload after the burst settles, no sooner than `reloadInterval` after the last one, never beside a running
     /// one, never while hidden. A burst that keeps going still reloads once per interval.
-    private func schedule() {
+    private func schedule(retryOnFailure: Bool = true) {
         guard active, visible, trailing == nil, loading == nil else { return }
         let wait = max(settle, reloadInterval - Date().timeIntervalSince(lastReload))
         trailing = Task { [weak self] in
             try? await Task.sleep(for: .seconds(wait))
             guard let self, !Task.isCancelled else { return }
-            self.trailing = nil
-            guard self.visible, self.stale, self.loading == nil else { return }
+            guard self.active, self.visible, self.stale || self.projectsStale, self.loading == nil else {
+                self.trailing = nil
+                return
+            }
             self.changeReloads += 1
-            self.read(change: true)
+            let previousLoad = self.loadToken
+            if self.projectsStale {
+                self.projectsStale = false
+                await self.loadProjects()
+            }
+            guard !Task.isCancelled else { return }
+            self.trailing = nil
+            guard self.active, self.visible, self.loadToken == previousLoad else { return }
+            self.read(change: true, retryOnFailure: retryOnFailure)
         }
     }
 
