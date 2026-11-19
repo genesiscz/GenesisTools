@@ -194,7 +194,7 @@ struct MeetingDetailView: View {
                         .instantTooltip("The screen recording stopped by itself (\(reason)); the frames until then are kept.")
                 }
                 if let source = record?.copySource { copyChip(source, title: copyTitle ?? source) }
-                if record?.project != nil || detail.tab != .items { projectPicker(record) }
+                if Self.headerShowsProjectPicker(project: record?.project, tab: detail.tab) { projectPicker(record) }
                 labelsPicker(record)
                 MeetingPeopleChip(detail: detail)
                 if let record, record.seats == nil {
@@ -278,39 +278,14 @@ struct MeetingDetailView: View {
     }
 
     private func projectPicker(_ record: MeetingRecordView?) -> some View {
-        let current = record?.project
-        let proposed = detail.proposals.value?.proposals.projects ?? []
-        let known = window.settings.value?.projectNames ?? []
-        return MenuButton(items: {
-            var items: [MenuButtonItem] = []
-            // A meeting with a project reads its proposals only now (or on the hover before): say so in the menu.
-            detail.ensureProposals()
-            if proposed.isEmpty, detail.proposals.isLoading {
-                items.append(.note("Reading the proposed projects…"))
-                items.append(.divider)
-            }
-            if !proposed.isEmpty {
-                items.append(.note("Proposed"))
-                items += proposed.map { proposal in
-                    .action("\(proposal.project)  (\(Int(proposal.score.rounded())) points)", checked: proposal.project == current) {
-                        detail.setProject(proposal.project)
-                    }
-                }
-                items.append(.divider)
-            }
-            items += known.filter { name in !proposed.contains { $0.project == name } }.map { name in
-                .action(name, checked: name == current) { detail.setProject(name) }
-            }
-            items.append(.divider)
-            items.append(.action("No project", checked: current == nil) { detail.setProject(nil) })
-            return items
-        }) {
-            Self.pickerLabel(symbol: "folder", text: current ?? "No project", warn: current == nil)
-        }
-        .disabled(record == nil || detail.isBusy("project"))
-        .onHover { if $0 { detail.ensureProposals() } }
-        .instantTooltip("The meeting's project: its dictionary, labels and export folder apply")
-        .accessibilityLabel("Project: \(current ?? "none")")
+        MeetingProjectPicker(detail: detail, record: record, known: window.settings.value?.projectNames ?? [],
+                             select: { [detail] in detail.setProject($0) })
+    }
+
+    /// The header holds the project menu, except on the Items tab of a meeting without one: that tab's empty state
+    /// holds it instead, so the menu shows once.
+    static func headerShowsProjectPicker(project: String?, tab: MeetingDetailModel.Tab) -> Bool {
+        project != nil || tab != .items
     }
 
     private func labelsPicker(_ record: MeetingRecordView?) -> some View {
@@ -372,6 +347,55 @@ struct MeetingDetailView: View {
         case .speakers: SpeakersTab(detail: detail)
         case .context: ContextTab(detail: detail)
         }
+    }
+}
+
+/// The meeting's project menu, in the header and in the Items tab's no-project state. `select` writes the pick.
+struct MeetingProjectPicker: View {
+    let detail: MeetingDetailModel
+    let record: MeetingRecordView?
+    let known: [String]
+    let select: (String?) -> Void
+
+    var body: some View {
+        let current = record?.project
+        MenuButton(items: {
+            // A meeting with a project reads its proposals only now (or on the hover before): say so in the menu.
+            detail.ensureProposals()
+            return Self.items(current: current, proposed: detail.proposals.value?.proposals.projects ?? [],
+                              reading: detail.proposals.isLoading, known: known, select: select)
+        }) {
+            MeetingDetailView.pickerLabel(symbol: "folder", text: current ?? "No project", warn: current == nil)
+        }
+        .disabled(record == nil || detail.isBusy("project"))
+        .onHover { if $0 { detail.ensureProposals() } }
+        .instantTooltip("The meeting's project: its dictionary, labels and export folder apply")
+        .accessibilityLabel("Project: \(current ?? "none")")
+    }
+
+    /// The menu at the click: the proposed projects with their points, the other known projects, then "No project".
+    static func items(current: String?, proposed: [AssignProposals.Project], reading: Bool, known: [String],
+                      select: @escaping (String?) -> Void) -> [MenuButtonItem] {
+        var items: [MenuButtonItem] = []
+        if proposed.isEmpty, reading {
+            items.append(.note("Reading the proposed projects…"))
+            items.append(.divider)
+        }
+        if !proposed.isEmpty {
+            items.append(.note("Proposed"))
+            items += proposed.map { proposal in
+                .action("\(proposal.project)  (\(Int(proposal.score.rounded())) points)", checked: proposal.project == current) {
+                    select(proposal.project)
+                }
+            }
+            items.append(.divider)
+        }
+        items += known.filter { name in !proposed.contains { $0.project == name } }.map { name in
+            .action(name, checked: name == current) { select(name) }
+        }
+        items.append(.divider)
+        items.append(.action("No project", checked: current == nil) { select(nil) })
+        return items
     }
 }
 
