@@ -1,5 +1,6 @@
 import { logger } from "@genesiscz/utils/logger";
 import { median, silentCallSpans } from "@genesiscz/utils/meetings/energy";
+import { type RoomDevice, roomDeviceAccountKeys, rosterAccountKey } from "@genesiscz/utils/meetings/people";
 import type { MeetingItem, MeetingRecord } from "@genesiscz/utils/meetings/record";
 
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
@@ -23,11 +24,13 @@ type SourceRange = { label: string; fromSec: number; toSec: number; evidence?: R
 export class LineSpeakers {
     private readonly rows = new Map<number, LineEvidence>();
     private readonly byLabel = new Map<string, LineEvidence[]>();
-    private readonly facts: Pick<SpeakerFacts, "seats" | "people" | "selfName" | "callStays">;
+    private readonly facts: Pick<SpeakerFacts, "seats" | "people" | "selfName" | "callStays" | "devices">;
+    private readonly deviceAccounts: Set<string>;
     readonly eligibility = new Map<number, Eligibility>();
     readonly assessment: ReturnType<typeof assessIndicator>;
 
     constructor(options: {
+        devices?: readonly RoomDevice[];
         lines: LineEvidence[];
         record: MeetingRecord;
         meeting: SourceMeeting;
@@ -36,6 +39,7 @@ export class LineSpeakers {
         people?: string[];
     }) {
         const { lines, record, meeting, presence, selfName } = options;
+        this.deviceAccounts = roomDeviceAccountKeys(options.devices);
         this.assessment = assessIndicator({
             lines,
             selfName: selfName ?? "",
@@ -67,7 +71,7 @@ export class LineSpeakers {
                 ]),
             ]),
         ];
-        this.facts = { seats: record.seats, people, selfName, callStays: selfStays };
+        this.facts = { seats: record.seats, people, selfName, callStays: selfStays, devices: options.devices };
         for (const line of lines) {
             this.rows.set(line.index, line);
             const group = this.byLabel.get(line.label) ?? [];
@@ -84,7 +88,14 @@ export class LineSpeakers {
         );
     }
 
+    isRoomDevice(name: string): boolean {
+        return this.deviceAccounts.has(rosterAccountKey(name));
+    }
+
     allowsMatchedVoice(line: LineEvidence, person: string): boolean {
+        if (this.isRoomDevice(person)) {
+            return false;
+        }
         const eligible = this.eligibility.get(line.index)!;
         // A positive embedding comes from an audio track. On a disagreement, check its calibrated side's
         // occupants, attendance and transmitting-account mute across the full span.
@@ -1174,9 +1185,10 @@ export function speakerEvidence(options: EvidenceInput): EvaluatedEvidence {
                       mappedCall:
                           eligible.channel.side === "call" &&
                           speakingNames(line).length === 1 &&
-                          !!options.record.seats?.microphones?.some(
-                              (group) => group.deviceId && sameName(group.deviceId, speakingNames(line)[0]!)
-                          ),
+                          (speakers.isRoomDevice(speakingNames(line)[0]!) ||
+                              !!options.record.seats?.microphones?.some(
+                                  (group) => group.deviceId && sameName(group.deviceId, speakingNames(line)[0]!)
+                              )),
                       indicatorIgnored: stuck.has(line.index),
                       observedCallPeople: () => [
                           ...(line.present ??
@@ -1192,13 +1204,17 @@ export function speakerEvidence(options: EvidenceInput): EvaluatedEvidence {
                 continue;
             }
 
-            if (finding.speaker && !eligible.choices.some((name) => sameName(name, finding.speaker!))) {
+            if (
+                finding.speaker &&
+                (speakers.isRoomDevice(finding.speaker) ||
+                    !eligible.choices.some((name) => sameName(name, finding.speaker!)))
+            ) {
                 outcomes.push({ kind: "none", line, reason: "ineligible-speaker" });
                 continue;
             }
             if (finding.candidates) {
-                finding.candidates = finding.candidates.filter((name) =>
-                    eligible.choices.some((other) => sameName(name, other))
+                finding.candidates = finding.candidates.filter(
+                    (name) => !speakers.isRoomDevice(name) && eligible.choices.some((other) => sameName(name, other))
                 );
             }
 

@@ -98,6 +98,9 @@ async function seats(ref: string, opts: Options): Promise<void> {
             out.println("Current seats: not set");
         }
         out.println(table.toString());
+        for (const offer of report.suggestion.deviceOffers ?? []) {
+            out.println(`${offer.question} (${offer.meetings.join(", ")})`);
+        }
         for (const mic of report.current?.microphones ?? []) {
             out.println(`Current microphone ${mic.label ?? mic.id}: ${mic.people.join(", ")}`);
         }

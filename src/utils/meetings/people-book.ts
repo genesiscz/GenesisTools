@@ -1,13 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { z } from "zod";
-import { samePerson } from "./people";
+import { type DeviceDecision, deviceDecisionSchema, rosterAccountKey, samePerson } from "./people";
 
 const { log } = logger.scoped("meetings-people");
 
@@ -57,9 +58,11 @@ export interface PeopleBookData {
     entries: OwnEntry[];
     merges: PeopleMerge[];
     hidden: HiddenPerson[];
+    /** Append-only owner decisions; the last entry for an account determines its state. */
+    devices: DeviceDecision[];
 }
 
-type ListName = "entries" | "merges" | "hidden";
+type ListName = "entries" | "merges" | "hidden" | "devices";
 
 /** The file as it was read: the parsed lists, and every value this build could not read, kept for the next write. */
 interface ReadBook {
@@ -72,8 +75,8 @@ interface ReadBook {
 
 function emptyBook(): ReadBook {
     return {
-        data: { version: PEOPLE_BOOK_VERSION, entries: [], merges: [], hidden: [] },
-        kept: { top: {}, lists: { entries: [], merges: [], hidden: [] } },
+        data: { version: PEOPLE_BOOK_VERSION, entries: [], merges: [], hidden: [], devices: [] },
+        kept: { top: {}, lists: { entries: [], merges: [], hidden: [], devices: [] } },
     };
 }
 
@@ -97,16 +100,17 @@ export function parsePeopleBook(text: string, path = PEOPLE_FILE): ReadBook {
         return { ...book, broken: "the file is not a JSON object" };
     }
 
-    const { version, entries, merges, hidden, ...top } = raw;
+    const { version, entries, merges, hidden, devices, ...top } = raw;
     book.kept.top = top;
     book.data.version = typeof version === "number" && version > PEOPLE_BOOK_VERSION ? version : PEOPLE_BOOK_VERSION;
     const read = { path, kept: book.kept.lists };
     book.data.entries = readList(ownEntrySchema, entries, "entries", read);
     book.data.merges = readList(peopleMergeSchema, merges, "merges", read);
     book.data.hidden = readList(hiddenPersonSchema, hidden, "hidden", read);
+    book.data.devices = readList(deviceDecisionSchema, devices, "devices", read);
     // A list a hand edit turned into another value reads no element, and the next write would put an array in its
     // place: the file is moved aside first, as torn text is.
-    const notLists = Object.entries({ entries, merges, hidden })
+    const notLists = Object.entries({ entries, merges, hidden, devices })
         .filter(([, value]) => value !== undefined && !Array.isArray(value))
         .map(([name]) => name);
 
@@ -152,6 +156,9 @@ function bookText(book: ReadBook): string {
         entries: [...book.data.entries, ...book.kept.lists.entries],
         merges: [...book.data.merges, ...book.kept.lists.merges],
         hidden: [...book.data.hidden, ...book.kept.lists.hidden],
+        ...(book.data.devices.length || book.kept.lists.devices.length
+            ? { devices: [...book.data.devices, ...book.kept.lists.devices] }
+            : {}),
     };
     return `${SafeJSON.stringify(value, null, 4)}\n`;
 }
@@ -181,6 +188,48 @@ export class PeopleBook {
 
     read(): PeopleBookData {
         return this.load().data;
+    }
+
+    /** The mapping and its journal are one atomic write. An old offer cannot override a subsequent owner decision. */
+    async decideDevice(input: {
+        account: string;
+        group?: string;
+        action: DeviceDecision["action"];
+        actor: DeviceDecision["actor"];
+        meeting?: string;
+        meetings?: string[];
+        verifyOffer?: (history: readonly DeviceDecision[]) => void;
+    }) {
+        const { verifyOffer, ...decision } = input;
+        const entry = deviceDecisionSchema.parse({ ...decision, at: this.now().toISOString() });
+        return this.change(
+            (data) => {
+                const key = rosterAccountKey(entry.account);
+                const prior = data.devices.findLast((row) => rosterAccountKey(row.account) === key);
+                const device =
+                    entry.action === "map"
+                        ? { account: entry.account, ...(entry.group ? { group: entry.group } : {}) }
+                        : null;
+                if (
+                    prior?.action === entry.action &&
+                    prior.group === entry.group &&
+                    (!entry.meeting ||
+                        (entry.meeting === prior.meeting && isDeepStrictEqual(entry.meetings, prior.meetings)))
+                ) {
+                    return { changed: false, device };
+                }
+                if (entry.meeting && prior && prior.action !== "unmap") {
+                    throw new Error("This room device offer was already decided. Refresh the suggestions.");
+                }
+                if (entry.action === "unmap" && prior?.action !== "map") {
+                    return { changed: false, device: null };
+                }
+                verifyOffer?.(data.devices);
+                data.devices.push(entry);
+                return { changed: true, device };
+            },
+            (result) => result.changed
+        );
     }
 
     /** Adds a person by hand; one the book knows (same email, or same name tokens) gains the email and note instead. */
@@ -262,11 +311,15 @@ export class PeopleBook {
         return parsePeopleBook(readFileSync(this.path, "utf8"), this.path);
     }
 
-    private async change<T>(mutate: (data: PeopleBookData) => T): Promise<T> {
+    private async change<T>(mutate: (data: PeopleBookData) => T, shouldWrite?: (result: T) => boolean): Promise<T> {
         return this.storage.withFileLock({
             file: this.path,
             fn: async () => {
                 const book = this.load();
+                const result = mutate(book.data);
+                if (shouldWrite && !shouldWrite(result)) {
+                    return result;
+                }
 
                 if (book.broken) {
                     // Kept beside the new file, so a hand edit with a typo is never lost.
@@ -275,7 +328,6 @@ export class PeopleBook {
                     log.warn({ path: this.path, aside, reason: book.broken }, "people book moved aside before a write");
                 }
 
-                const result = mutate(book.data);
                 atomicWriteFileSync(this.path, bookText(book), { mode: 0o600 });
                 log.debug({ path: this.path }, "people book written");
                 return result;

@@ -1,7 +1,7 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import type { ChannelCalibration } from "@genesiscz/utils/meetings/energy";
-import { nameKey } from "@genesiscz/utils/meetings/people";
+import { nameKey, type RoomDevice } from "@genesiscz/utils/meetings/people";
 import { type MeetingRecord, voiceRootMeeting } from "@genesiscz/utils/meetings/record";
 import { withoutEmptyRemoteSeats } from "@genesiscz/utils/meetings/room-people";
 import { type MeetingSeats, seatSpan, wholeMeetingRoomPeople } from "@genesiscz/utils/meetings/seats";
@@ -156,11 +156,13 @@ export function suggestSeatByVoice(input: SeatVoiceInput): ReadonlyArray<SeatVoi
 
 /** Test room occupancy as a possibility for every unseated guest, even before that guest joined the call. */
 function discoverySpans({
+    devices,
     record,
     people,
     evidence,
     seats,
 }: {
+    devices: readonly RoomDevice[];
     record: MeetingRecord;
     people: readonly string[];
     evidence: LineEvidence[];
@@ -181,7 +183,7 @@ function discoverySpans({
         selfName: selfName ?? "",
         roomPeople: wholeMeetingRoomPeople(saved),
     });
-    const callStays = people.flatMap((name) => {
+    const callStays = [...people, ...devices.map(({ account }) => account)].flatMap((name) => {
         const stays = baselineStays(record, name);
         // An explicit empty stay list provides zero coverage. Missing attendance leaves an open candidate.
         if (stays?.length === 0) {
@@ -203,6 +205,7 @@ function discoverySpans({
         const span = { index: line.index, fromSec: line.startSec, toSec: line.endSec };
         const { choices } = speakersFor(span, {
             ...line,
+            devices,
             micShare,
             energyMic,
             selfName,
@@ -286,9 +289,13 @@ export async function readSeatVoiceHints(options: {
     if (!meeting) {
         return [];
     }
-    const spans = discoverySpans({ record, people, evidence: measured, seats: options.seats }).filter(
-        (line) => line.toSec - line.fromSec >= settings.minSeconds
-    );
+    const spans = discoverySpans({
+        record,
+        people,
+        evidence: measured,
+        seats: options.seats,
+        devices: opened.roomDevices,
+    }).filter((line) => line.toSec - line.fromSec >= settings.minSeconds);
     let lines: VoiceLine[] = [];
     if (spans.length) {
         const enrolled = new Set(

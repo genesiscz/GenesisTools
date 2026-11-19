@@ -5,6 +5,8 @@ import { logger } from "@genesiscz/utils/logger";
 import { type MeetingsConfig, MeetingsConfigStore, resolveDictionary } from "@genesiscz/utils/meetings/config";
 import { collectEcho } from "@genesiscz/utils/meetings/echo";
 import { type ChannelCalibration, channelEnergy, type SilentCallSpan } from "@genesiscz/utils/meetings/energy";
+import { type DeviceDecision, mappedRoomDevices, type RoomDevice } from "@genesiscz/utils/meetings/people";
+import { PeopleBook } from "@genesiscz/utils/meetings/people-book";
 import { AttendanceUnavailableError } from "@genesiscz/utils/meetings/platform";
 import { MEETING_UNCHANGED, type MeetingRecord, type MeetingStore } from "@genesiscz/utils/meetings/record";
 import { wholeMeetingRoomPeople } from "@genesiscz/utils/meetings/seats";
@@ -83,6 +85,8 @@ export function attendanceWarning(record: MeetingRecord): string | undefined {
  */
 export class OpenedMeeting {
     private current: MeetingRecord;
+    private deviceHistoryOnce?: DeviceDecision[];
+    private devicesOnce?: RoomDevice[];
     private linkedOnce?: Promise<LinkedSource>;
     private meetingOnce?: Promise<SourceMeeting>;
     private evidenceOnce?: Promise<MeetingEvidence | null>;
@@ -123,6 +127,16 @@ export class OpenedMeeting {
     /** The record as the last explicit step left it. */
     get record(): MeetingRecord {
         return this.current;
+    }
+
+    get deviceHistory(): DeviceDecision[] {
+        this.deviceHistoryOnce ??= new PeopleBook({ storage: this.store.storage }).read().devices;
+        return this.deviceHistoryOnce;
+    }
+
+    get roomDevices(): RoomDevice[] {
+        this.devicesOnce ??= mappedRoomDevices(this.deviceHistory);
+        return this.devicesOnce;
     }
 
     /** The linked source meeting, without loading the source; undefined when no source names one. */
@@ -240,6 +254,7 @@ export class OpenedMeeting {
             const matchedVoices = matchedCallVoices(record, lines);
             const hints = speakerStats(meeting.transcript, { participants: meeting.speakers, presence: roster }).hints;
             const departures = identifiedDepartures({
+                devices: this.roomDevices,
                 record,
                 hints,
                 lines: lines.map((line) => (line.speakingUnknown ? { ...line, speaking: {} } : line)),
@@ -285,6 +300,7 @@ export class OpenedMeeting {
         const lines = lineEvidence(meeting.transcript, evidence, presence, (await this.energy()).share);
         const matchedVoices = matchedCallVoices(this.current, lines);
         const departures = identifiedDepartures({
+            devices: this.roomDevices,
             record: this.current,
             hints,
             lines: lines.map((line) => (line.speakingUnknown ? { ...line, speaking: {} } : line)),

@@ -106,6 +106,7 @@ export async function applyDecision(
             ? {
                   rows: reviewRowsPatch({
                       ...captured.value,
+                      devices: opened.roomDevices,
                       ...(transcript ? { transcript } : {}),
                       minPriority: config.global.playback.listen.minPriority,
                       ...(params.lowPriority ? { lowPriority: params.lowPriority } : {}),

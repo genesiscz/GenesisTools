@@ -107,6 +107,45 @@ test("occluded and ignored speaking observations are distinct from known silence
     expect(speakingStateFor({ speaking: { [remote]: 2 } })).toEqual({ kind: "speaking", names: [remote] });
 });
 
+test("J7 routes a book-mapped account to the room occupants and never treats its mute as a personal mute", async () => {
+    const { speakersFor } = await eligibility();
+    const account = "Boardroom PC";
+    const input: SpeakerFacts = {
+        ...facts,
+        people: [room, account, guest],
+        seats: {
+            room: [room, account],
+            remote: [{ name: guest }],
+            microphones: [{ id: "table", people: [room, account] }],
+        },
+        devices: [{ account, group: "table" }],
+        speaking: { [account]: 1 },
+        micShare: 0,
+    };
+    expect(speakersFor(line, { ...input, muted: [room] }).choices).toEqual([room]);
+    expect(speakersFor(line, { ...input, muted: [account] }).choices).toEqual([]);
+    expect(speakersFor(line, { ...input, micShare: 1, muted: [account] }).choices).toEqual([room]);
+    expect(
+        speakersFor(line, { ...input, devices: [{ account }], seats: { room: [room], remote: [] } }).choices
+    ).toEqual([room]);
+    expect(speakersFor(line, { ...input, devices: [{ account, group: "absent" }] }).choices).toEqual([]);
+    expect(speakersFor(line, { ...input, devices: [], seats: undefined }).choices).toContain(account);
+    const otherAccount = "Boardroom PC (Guest)";
+    expect(
+        speakersFor(line, {
+            ...input,
+            people: [account, otherAccount],
+            speaking: {},
+            muted: [account],
+            seats: {
+                room: [room],
+                remote: [{ name: otherAccount }],
+                microphones: [{ id: "table", deviceId: account, people: [room] }],
+            },
+        }).choices
+    ).toContain(otherAccount);
+});
+
 test("room and call choices use the whole half-open seat and attendance intervals", async () => {
     const { speakersFor } = await eligibility();
     const input: SpeakerFacts = {

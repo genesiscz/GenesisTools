@@ -12,6 +12,7 @@ import {
     MeetingsConfigStore,
     resolveDictionary,
 } from "@genesiscz/utils/meetings/config";
+import { roomDeviceAccountKeys, rosterAccountKey } from "@genesiscz/utils/meetings/people";
 import { meetingPeopleNames } from "@genesiscz/utils/meetings/people-directory";
 import {
     type DecisionActor,
@@ -595,12 +596,17 @@ class TerminalAdapter implements ListenAdapter {
             return "stop";
         }
         const { transcript, clips, audioPath, player, vocabulary } = playback;
+        const deviceAccounts =
+            asked.question.about === "speaker"
+                ? roomDeviceAccountKeys(OpenedMeeting.of(store, asked.record).roomDevices)
+                : undefined;
+        const human = (name: string) => !deviceAccounts?.has(rosterAccountKey(name));
         const question =
             asked.question.about === "speaker"
                 ? {
                       ...asked.question,
-                      choices: asked.question.choices.filter((name) =>
-                          personPresent(asked.record, name, asked.question.fromSec)
+                      choices: asked.question.choices.filter(
+                          (name) => human(name) && personPresent(asked.record, name, asked.question.fromSec)
                       ),
                   }
                 : asked.question;
@@ -637,14 +643,14 @@ class TerminalAdapter implements ListenAdapter {
             clip,
             plan,
             player,
-            vocabulary: [...new Set([...question.choices, ...vocabulary])].filter((name) =>
-                personPresent(asked.record, name, question.fromSec)
+            vocabulary: [...new Set([...question.choices, ...vocabulary])].filter(
+                (name) => human(name) && personPresent(asked.record, name, question.fromSec)
             ),
             delayMs: listen.delaySec * 1000,
             ...(listen.repeat.enabled ? { repeatGapMs: listen.repeat.gapSec * 1000 } : {}),
             ...(view.said ? { said: view.said } : {}),
             ...(view.context ? { context: view.context } : {}),
-            ...(asked.earlier ? { earlier: asked.earlier } : {}),
+            ...(asked.earlier && human(asked.earlier.answer) ? { earlier: asked.earlier } : {}),
             scores: speakerAnswerScores(asked.record, question),
             header: `${choiceChip(view.label)} ${pc.dim(`${asked.position}/${asked.total}${part} · ${view.range}${priority}`)}`,
         });

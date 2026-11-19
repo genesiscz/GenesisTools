@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import { logger } from "@genesiscz/utils/logger";
+import { type RoomDevice, roomDeviceAccountKeys, rosterAccountKey } from "@genesiscz/utils/meetings/people";
 import type { MeetingItem, MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { MeetingRule, meetingRuleNames } from "@genesiscz/utils/meetings/rules";
 import { predictionScope, readVoiceLibrary, type VoiceScope, voicesIn } from "@genesiscz/utils/meetings/voice-library";
@@ -855,7 +856,7 @@ export function reviewRow(
     record: MeetingRecord,
     item: MeetingItem,
     transcript?: Transcript,
-    context: { voices?: VoiceSamplesOf } = {}
+    context: { voices?: VoiceSamplesOf; deviceAccounts?: ReadonlySet<string> } = {}
 ): ReviewRow {
     const lines = transcript ? linesOf(transcript) : undefined;
     const parts = partsOf(record, item, lines);
@@ -864,6 +865,7 @@ export function reviewRow(
     const actor = decision?.actor ?? { kind: "unknown" as const };
     const answer = decidedAs(item);
     const voice = voiceOf(item, context.voices ?? voiceSamplesOfRecord(record));
+    const speakerChoice = item.kind === "speaker-range" || (item.kind === "question" && item.about === "speaker");
     return {
         id: item.id,
         label: item.kind === "question" ? questionLabel(record, item.id) : item.id,
@@ -881,9 +883,14 @@ export function reviewRow(
         parts,
         choices: choicesOf(record, item).filter(
             (choice) =>
-                item.kind !== "question" ||
-                item.about !== "speaker" ||
-                personPresent(record, choice.value, item.fromSec)
+                !(
+                    item.status === "suggested" &&
+                    speakerChoice &&
+                    context.deviceAccounts?.has(rosterAccountKey(choice.value))
+                ) &&
+                (item.kind !== "question" ||
+                    item.about !== "speaker" ||
+                    personPresent(record, choice.value, item.fromSec))
         ),
         edit: EDITS[item.kind],
         ...(needs ? { needs } : {}),
@@ -948,10 +955,17 @@ function rowOrder(a: MeetingItem, b: MeetingItem): number {
  */
 export function reviewRows(
     record: MeetingRecord,
-    options: { transcript?: Transcript; minPriority: number; lowPriority?: "hide" | "show"; voices?: VoiceSamplesOf }
+    options: {
+        transcript?: Transcript;
+        minPriority: number;
+        lowPriority?: "hide" | "show";
+        voices?: VoiceSamplesOf;
+        devices?: readonly RoomDevice[];
+    }
 ): ReviewRows {
     const lines = options.transcript ? linesOf(options.transcript) : undefined;
     const voices = options.voices ?? lazyVoiceSamples(record);
+    const deviceAccounts = roomDeviceAccountKeys(options.devices);
     const low = (item: MeetingItem) =>
         item.kind === "question" &&
         item.status === "suggested" &&
@@ -959,7 +973,7 @@ export function reviewRows(
     const shown = record.items.filter((item) => options.lowPriority === "show" || !low(item));
     return {
         meeting: record.id,
-        rows: [...shown].sort(rowOrder).map((item) => reviewRow(record, item, lines, { voices })),
+        rows: [...shown].sort(rowOrder).map((item) => reviewRow(record, item, lines, { voices, deviceAccounts })),
         hidden: {
             lowPriority: options.lowPriority === "show" ? 0 : record.items.filter(low).length,
             minPriority: options.minPriority,
@@ -969,6 +983,7 @@ export function reviewRows(
 
 /** Compare every rendered row: a decision can change another row's choices without changing that item's status. */
 export function reviewRowsPatch(options: {
+    devices?: readonly RoomDevice[];
     before: MeetingRecord;
     after: MeetingRecord;
     transcript?: Transcript;

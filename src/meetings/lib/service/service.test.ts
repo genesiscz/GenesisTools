@@ -18,6 +18,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { MeetingsConflictError, MeetingsStateError } from "@genesiscz/utils/meetings/conflict";
+import { PeopleBook } from "@genesiscz/utils/meetings/people-book";
 import { ContactsPeopleSource } from "@genesiscz/utils/meetings/people-contacts";
 import { MEETING_FILE, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
@@ -594,6 +595,118 @@ function scratchStore(): {
         linkedSource: (record) => (record.id === REVIEW.id ? { source, sourceMeetingId: "wf-2041" } : undefined),
     };
 }
+
+test("J7 offers a room device only for distinct roster joins and persists the owner's answer", async () => {
+    const { store, config } = scratchStore();
+    const settings = await config.read();
+    const deps = { store: () => store, config: async () => settings, configStore: () => config };
+    const client = new InProcessMeetingsClient({ deps, hello: { role: "window", protocol: 1 } });
+    const account = "Boardroom PC";
+    const guest = "Pip Example";
+    const group = "table";
+    async function addMeeting(id: string, copyOf?: string) {
+        const record = meetingRecordSchema.parse({
+            id,
+            title: id,
+            start: NOW.toISOString(),
+            createdAt: NOW.toISOString(),
+            createdBy: "new",
+            voiceRootMeeting: copyOf,
+            items: [
+                {
+                    id: "i1",
+                    kind: "speaker-range",
+                    label: "Voice 1",
+                    status: "suggested",
+                    fromSec: 1,
+                    toSec: 4,
+                    candidates: [account, guest],
+                    rules: [],
+                    suggestedAt: NOW.toISOString(),
+                },
+            ],
+            participants: [account, guest].map((name) => ({
+                name,
+                self: id === "second-room" && name === account,
+                from: ["platform-roster"],
+                stays: [
+                    { fromSec: 0, toSec: 10, source: "platform-roster" },
+                    { fromSec: 20, source: "platform-roster" },
+                ],
+            })),
+            seats: {
+                room: ["Quill Example"],
+                remote: [],
+                microphones: [{ id: group, deviceId: account, people: ["Quill Example"] }],
+            },
+        });
+        mkdirSync(store.folder(id), { recursive: true });
+        writeFileSync(store.path(id), SafeJSON.stringify(record));
+    }
+    const view = () => client.call("meeting.seats.suggest", { meeting: "first-room" });
+    await addMeeting("first-room");
+    await addMeeting("copy-room", "first-room");
+    expect((await view()).suggestion.deviceOffers ?? []).toEqual([]);
+    await addMeeting("second-room");
+    const offer = {
+        account,
+        group,
+        meetings: ["first-room", "second-room"],
+        question: "Is Boardroom PC the room's device?",
+    };
+    expect((await view()).suggestion.deviceOffers).toEqual([offer]);
+    settings.global.speakerLabels.seat.deviceOfferMinMeetings = 3;
+    expect((await view()).suggestion.deviceOffers ?? []).toEqual([]);
+    settings.global.speakerLabels.seat.deviceOfferMinMeetings = 2;
+    expect((await view()).suggestion.people.map((row) => row.name)).toContain(account);
+    const answer = {
+        action: "answer",
+        account,
+        meeting: "first-room",
+        yes: true,
+        group,
+        meetings: offer.meetings,
+    } as const;
+    const agent = new InProcessMeetingsClient({ deps, hello: agentHello });
+    await expect(agent.call("people.devices.decide", answer)).rejects.toThrow("owner");
+    await expect(client.call("people.devices.decide", { ...answer, meetings: ["not-the-offer"] })).rejects.toThrow(
+        "offer"
+    );
+    expect(await client.call("people.devices.decide", answer)).toMatchObject({
+        changed: true,
+        device: { account, group },
+    });
+    const mapped = await view();
+    const rows = await client.call("meeting.rows", { meeting: "first-room" });
+    const choices = rows.rows.find((row) => row.id === "i1")?.choices.map((choice) => choice.value);
+    expect(choices).toContain(guest);
+    expect(choices).not.toContain(account);
+    expect(await client.call("people.devices.decide", answer)).toMatchObject({ changed: false });
+    expect(mapped.suggestion.deviceOffers ?? []).toEqual([]);
+    expect(mapped.suggestion.people.map((row) => row.name)).not.toContain(account);
+    expect(mapped.suggestion.people.map((row) => row.name)).toContain(guest);
+    await expect(client.call("meeting.seats.suggest", { meeting: "first-room", room: [account] })).rejects.toThrow(
+        "device"
+    );
+    await client.call("people.devices.decide", { action: "unmap", account });
+    expect((await view()).suggestion.people.map((row) => row.name)).toContain(account);
+    expect((await view()).suggestion.deviceOffers).toEqual([offer]);
+    await client.call("people.devices.decide", { ...answer, yes: false });
+    const history = new PeopleBook({ storage: store.storage }).read().devices;
+    expect(history.map((entry) => entry.action)).toEqual(["map", "unmap", "refuse"]);
+    for (const entry of [history[0], history[2]]) {
+        expect(entry).toMatchObject({
+            actor: "window",
+            account,
+            group,
+            meeting: "first-room",
+            meetings: offer.meetings,
+        });
+    }
+    expect((await view()).suggestion.deviceOffers ?? []).toEqual([]);
+    expect((await view()).suggestion.people.map((row) => row.name)).toContain(account);
+    await expect(client.call("people.devices.decide", answer)).rejects.toThrow("offer");
+});
 
 test("P2 scoped voice selection pins legacy numbers, rolls back failed corrections and refuses an occupied destination", async () => {
     const home = env.tools.getHome();
@@ -3738,6 +3851,8 @@ async function captureExamples(): Promise<Example[]> {
         direction: "service→client",
         notification: window.lines.find((line) => line.method === "voices.job"),
     });
+    await ask(window, "people.devices.decide", { action: "map", account: "Boardroom PC", group: "table" });
+    await ask(window, "people.devices.list", {});
     return examples;
 }
 

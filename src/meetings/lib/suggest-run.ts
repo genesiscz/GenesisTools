@@ -5,6 +5,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { languageSettings, type MeetingsConfig, resolveDictionary } from "@genesiscz/utils/meetings/config";
 import { type AcousticShare, collectEcho, echoForRange, readEchoCache } from "@genesiscz/utils/meetings/echo";
+import type { RoomDeviceOffer } from "@genesiscz/utils/meetings/people";
 import { peopleDirectory } from "@genesiscz/utils/meetings/people-directory";
 import type { DecisionActor, MeetingItem, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
@@ -25,6 +26,7 @@ import { indicatorGaps } from "./indicator-facts";
 import { localSpeechDuring } from "./local-speech";
 import { OpenedMeeting } from "./opened-meeting";
 import { type MeetingReviewDoor, requestMeetingQuestionReview } from "./person-door";
+import { roomDeviceOffers } from "./room-devices";
 import { errorText } from "./shared";
 import { preparePreviewLabels, proposeSpeakerLabels } from "./speaker-labels";
 import { directoryMatcher, type SamePerson } from "./speaker-scores";
@@ -129,7 +131,7 @@ export async function runSuggest(options: {
     actor?: DecisionActor;
     /** The person area; tests pass a fake. */
     gt?: MeetingReviewDoor;
-}): Promise<{ fresh: MeetingItem[]; retired: string[]; warnings: string[] }> {
+}): Promise<{ fresh: MeetingItem[]; retired: string[]; warnings: string[]; deviceOffers?: RoomDeviceOffer[] }> {
     const { store, record } = options;
     using _run = prof.section("run");
     const warnings: string[] = [];
@@ -199,7 +201,19 @@ export async function runSuggest(options: {
         }
     }
 
-    return { fresh, retired, warnings };
+    return { fresh, retired, warnings, ...suggestDeviceOffers(opened, options.rules, config) };
+}
+
+function suggestDeviceOffers(opened: OpenedMeeting, rules: SuggestRule[], config: MeetingsConfig) {
+    const deviceOffers = rules.some((rule) => rule !== "terms")
+        ? roomDeviceOffers({
+              store: opened.store,
+              meeting: opened.record,
+              history: opened.deviceHistory,
+              minimum: config.global.speakerLabels.seat.deviceOfferMinMeetings,
+          })
+        : [];
+    return deviceOffers.length ? { deviceOffers } : {};
 }
 
 // Retain the much smaller per-line features while editing, never the whole recording's pitch frames.
@@ -336,6 +350,7 @@ async function readSuggestInputs(
     }
 
     const inputs: SuggestInputs = {
+        devices: needsSpeakerInputs ? opened.roomDevices : undefined,
         measuredLines: needsSpeakerInputs
             ? prof.measure("rules.line-evidence", () =>
                   lineEvidence(meeting.transcript, evidence ?? { segments: [], speaking: [] }, presence, share)
@@ -545,7 +560,11 @@ export async function previewSuggestions(options: {
             });
             inputs.labels = await score(config.global.speakerLabels.voice, config.global.suggest.applyAbove);
         }
-        return { changes: configuredPlan(inputs, config, features), warnings };
+        return {
+            changes: configuredPlan(inputs, config, features),
+            warnings,
+            ...suggestDeviceOffers(opened, options.rules, config),
+        };
     } finally {
         inputs.wordCheck?.dispose();
     }

@@ -183,9 +183,11 @@ export function presenceAt(presence: Presence[] | undefined, atSec: number): { p
 function speakerChoices(
     names: readonly string[],
     allowed: string[] | undefined,
-    excluded: readonly string[]
+    excluded: readonly string[],
+    speakers?: LineSpeakers
 ): string[] {
-    return [...names, ...(allowed ?? [])].filter(
+    const humans = [...names, ...(allowed ?? [])].filter((name) => !speakers?.isRoomDevice(name));
+    return humans.filter(
         (name, index, all) =>
             name &&
             (allowed
@@ -240,7 +242,8 @@ export function groupSpeakerQuestions(
                 ...(context.candidates ?? []),
             ],
             context.speakers?.choices(indices),
-            presenceAt(context.presence, fromSec).absent
+            presenceAt(context.presence, fromSec).absent,
+            context.speakers
         );
         return {
             kind: "question",
@@ -302,7 +305,7 @@ export function refreshSpeakerQuestions(items: MeetingItem[], context: QuestionC
             question.evidence = { ...question.evidence, retired: "speaker-eligibility" };
             continue;
         }
-        const choices = speakerChoices(question.choices, allowed, []);
+        const choices = speakerChoices(question.choices, allowed, [], speakers);
         if (!Bun.deepEquals(choices, question.choices)) {
             question.choices = choices;
             delete question.signature;
@@ -356,7 +359,8 @@ export function questionFor(item: MeetingItem, context: QuestionContext): NewQue
                 ...speakerScoresOf(item).map((score) => score.speaker),
             ],
             context.speakers?.choices(indices),
-            excluded
+            excluded,
+            context.speakers
         );
 
         if (choices.length < 2) {

@@ -1,3 +1,4 @@
+import { type RoomDevice, rosterAccountKey } from "@genesiscz/utils/meetings/people";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import type { LineEvidence, SpeakingObservation } from "@genesiscz/utils/transcribe/evidence";
 import {
@@ -61,6 +62,7 @@ export function matchedCallVoices(
 }
 
 interface DepartureEvidence {
+    devices?: readonly RoomDevice[];
     record?: MeetingRecord;
     hints: SpeakerHint[];
     lines: LineEvidence[];
@@ -228,7 +230,9 @@ export function identifiedDepartures(options: DepartureEvidence): IdentifiedDepa
         )
     );
     const remote = (name: string) =>
-        !sameName(name, options.selfName) && !options.roomPeople?.some((person) => sameName(name, person));
+        !sameName(name, options.selfName) &&
+        !options.roomPeople?.some((person) => sameName(name, person)) &&
+        !options.devices?.some(({ account }) => rosterAccountKey(account) === rosterAccountKey(name));
     for (const line of options.lines) {
         const atSec = line.startSec;
         const label = hinted.get(atSec);
@@ -247,6 +251,7 @@ export function identifiedDepartures(options: DepartureEvidence): IdentifiedDepa
                 { index: line.index, fromSec: atSec, toSec: line.endSec },
                 {
                     ...line,
+                    devices: options.devices,
                     selfName: options.selfName,
                     seats: options.record.seats,
                     people: options.record.participants.map((p) => p.name),

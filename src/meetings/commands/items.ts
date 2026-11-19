@@ -282,7 +282,7 @@ async function suggest(
     let voiceLabel: string | undefined;
     hintIfSeatsUnset(record);
     try {
-        const { fresh, retired, warnings } = await runSuggest({
+        const { fresh, retired, warnings, deviceOffers } = await runSuggest({
             store,
             record,
             rules,
@@ -318,6 +318,9 @@ async function suggest(
             }
         }
         voiceReadiness(saved, { seatsHint: false }).hints.forEach(ui.info);
+        for (const offer of deviceOffers ?? []) {
+            ui.info(`${offer.question} (${offer.meetings.join(", ")})`);
+        }
 
         if (opts.json) {
             out.result(SafeJSON.stringify(fresh, null, 2));
@@ -331,7 +334,9 @@ async function suggest(
         }
 
         if (fresh.length === 0) {
-            ui.info("Nothing new to suggest.");
+            if (!deviceOffers?.length) {
+                ui.info("Nothing new to suggest.");
+            }
             return;
         }
 

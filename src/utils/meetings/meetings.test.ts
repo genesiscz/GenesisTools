@@ -291,7 +291,7 @@ describe("meetings config", () => {
         expect(config.global.suggest.words).toEqual({ minOccurrences: 2 });
         expect(config.global.speakerLabels).toEqual({
             channels: { minSeparation: 0.3 },
-            seat: { enabled: true },
+            seat: { enabled: true, deviceOfferMinMeetings: 2 },
             voice: {
                 enabled: true,
                 gate: { score: 0.45, margin: 0.1, loneScore: 0.7, unsampledScore: 0.55, strangerScore: 0.3 },

@@ -73,6 +73,7 @@ A missing meeting names only the store that was searched. To find which store ho
      marked unsure sat. Use `--room` and `--remote` for corrections. Use `--replace` to change saved seats.
      Both REPL calls also accept timed entries, e.g. `room: [{ name, fromSec: 30, toSec: 90 }]`. Supply the person's
      room and remote intervals together when they move. Omitting the end keeps the seat through the rest of the meeting.
+   - `tools meetings people devices list --offers --json` and `await meetings.roomDevices({ offers: true })` list confirmed devices and the meetings behind each question. The owner uses `people devices map <account> [--group <id>]`, `unmap <account>` or `answer <meeting> <account> yes|no`. The REPL twin is `meetings.decideRoomDevice({ action: "answer", meeting, account, group, meetings, yes })`. Pass the group and meeting IDs shown in the offer. A no keeps the account eligible as a person and closes its offer.
    - Check the top-level `voice` in `tools meetings evidence <meeting> --raw` or `tools meetings show <meeting> --json`, or call `await meetings.voiceReadiness({ meeting })`.
      `people` counts project samples per attendee. `ready` means seats are set and each occupied side of the recording
      has samples from at least one person on that side. Without seats or usable samples, voice naming is off and

@@ -1,4 +1,4 @@
-import { nameKey } from "@genesiscz/utils/meetings/people";
+import { nameKey, type RoomDevice, rosterAccountKey } from "@genesiscz/utils/meetings/people";
 import { mappedMicrophone, withoutEmptyRemoteSeats } from "@genesiscz/utils/meetings/room-people";
 import { type MeetingSeats, microphoneSide, type SeatSpan, seatSpan } from "@genesiscz/utils/meetings/seats";
 import type { LineEvidence } from "@genesiscz/utils/transcribe/evidence";
@@ -72,6 +72,8 @@ export interface SpeakerFacts extends Shares, SpeakingFacts {
     selfName?: string;
     /** Meeting-local candidates, including guests with no people-book entry. */
     people?: readonly string[];
+    /** Owner-confirmed roster accounts in the people book, including devices with no seat in this meeting. */
+    devices?: readonly RoomDevice[];
     callStays?: ReadonlyArray<Stay & { name: string }>;
     /** Explicitly identified input for this line, by saved group id or device account. */
     endpoint?: string;
@@ -130,35 +132,72 @@ export function speakersFor(line: LineSpan, facts: SpeakerFacts): Eligibility {
     const channel = channelFor(facts);
     const speaking = speakingStateFor(facts);
     const shown = speaking.kind === "speaking" ? speaking.names : [];
-    const room = coverageByPerson(line, seats?.room ?? []);
-    const remote = coverageByPerson(line, seats?.remote ?? []);
-    const call = coverageByPerson(line, callStays);
-    const muted = new Set(mutedAccountsFor(channel, facts.muted).map(nameKey));
+    const mappings = new Map(facts.devices?.map((row) => [rosterAccountKey(row.account), row]));
+    const human = (name: string) => !mappings.has(rosterAccountKey(name));
+    const roomSeats = (seats?.room ?? []).filter((row) => human(seatSpan(row).name));
+    const room = coverageByPerson(line, roomSeats);
+    const remote = coverageByPerson(
+        line,
+        (seats?.remote ?? []).filter((row) => human(row.name))
+    );
+    const call = coverageByPerson(
+        line,
+        callStays.filter((row) => human(row.name))
+    );
+    const mutedAccounts = mutedAccountsFor(channel, facts.muted);
+    const muted = new Set(mutedAccounts.filter(human).map(nameKey));
     const people = new Set(facts.people?.map(nameKey));
-    const speakingKeys = new Set(shown.map(nameKey));
+    const speakingKeys = new Set(shown.filter(human).map(nameKey));
     const micId = channel.side === "mic" ? (facts.endpoint ?? "self") : "self";
-    const mic = mappedMicrophone(seats, micId);
+    const micMapping = mappings.get(rosterAccountKey(micId));
+    const mic = micMapping
+        ? seats?.microphones?.find((row) => row.id === micMapping.group)
+        : mappedMicrophone(seats, micId);
     const micMembers = mic && new Set(mic.people.map(nameKey));
-    const roomInput = seats && mic ? microphoneSide(seats, mic) === "room" : micId === "self";
+    const roomInput =
+        seats && mic ? microphoneSide(seats, mic) === "room" : micMapping ? !micMapping.group : micId === "self";
     // A group id identifies a selected input. Only deviceId maps a roster account to that input.
     const deviceAccounts = new Map(
         (seats?.microphones ?? []).flatMap((group) =>
-            group.deviceId ? [[nameKey(group.deviceId), group] as const] : []
+            group.deviceId ? [[rosterAccountKey(group.deviceId), group] as const] : []
         )
     );
-    const device =
+    const indicated = facts.endpoint ?? (shown.length === 1 ? shown[0] : undefined);
+    const localGroup =
         facts.endpoint !== undefined
             ? mappedMicrophone(seats, facts.endpoint)
-            : shown.length === 1
-              ? deviceAccounts.get(nameKey(shown[0]!))
+            : indicated
+              ? deviceAccounts.get(rosterAccountKey(indicated))
               : undefined;
+    const groupMappings = facts.endpoint ? facts.devices?.filter((row) => row.group === facts.endpoint) : undefined;
+    const mapping =
+        (indicated ? mappings.get(rosterAccountKey(indicated)) : undefined) ??
+        (localGroup?.deviceId ? mappings.get(rosterAccountKey(localGroup.deviceId)) : undefined) ??
+        (groupMappings?.length === 1 ? groupMappings[0] : undefined);
+    const group = mapping?.group ? seats?.microphones?.find((row) => row.id === mapping.group) : undefined;
+    const device = mapping
+        ? {
+              deviceId: mapping.account,
+              people: mapping.group
+                  ? group && seats && microphoneSide(seats, group) === "room"
+                      ? group.people
+                      : []
+                  : roomSeats.map((row) => seatSpan(row).name),
+          }
+        : localGroup;
     const account = device?.deviceId;
-    const deviceMuted = account !== undefined && muted.has(nameKey(account));
-    const accountStay = account ? call.get(nameKey(account)) : undefined;
+    const deviceMuted =
+        account !== undefined && mutedAccounts.some((other) => rosterAccountKey(other) === rosterAccountKey(account));
+    const deviceStays = account
+        ? callStays.filter((row) => rosterAccountKey(row.name) === rosterAccountKey(account))
+        : [];
+    const accountStay = deviceStays.length ? coverage(line, deviceStays) : undefined;
     const deviceAway = accountStay !== undefined && accountStay !== "full";
-    const deviceSide = seats && device ? microphoneSide(seats, device) : undefined;
+    const deviceSide = mapping ? "room" : seats && localGroup ? microphoneSide(seats, localGroup) : undefined;
     const occupants = new Set(device?.people.map(nameKey));
     const names = new Map<string, string>();
+    const excluded: Eligibility["excluded"] = [];
+    const listedDevices = new Set<string>();
     for (const name of [
         ...(facts.people ?? []),
         ...(seats?.room ?? []).map((row) => seatSpan(row).name),
@@ -168,13 +207,20 @@ export function speakersFor(line: LineSpan, facts: SpeakerFacts): Eligibility {
         ...(selfName ? [selfName] : []),
     ]) {
         const key = nameKey(name);
+        if (!human(name)) {
+            const id = rosterAccountKey(name);
+            if (!listedDevices.has(id)) {
+                listedDevices.add(id);
+                excluded.push({ person: name, reason: "Mapped room device account." });
+            }
+            continue;
+        }
         if (key && !names.has(key)) {
             names.set(key, name);
         }
     }
 
     const choices: string[] = [];
-    const excluded: Eligibility["excluded"] = [];
     let boundary = false;
     for (const [key, person] of names) {
         const roomCover = room.get(key);
@@ -183,7 +229,7 @@ export function speakersFor(line: LineSpan, facts: SpeakerFacts): Eligibility {
         const self = !!selfName && key === nameKey(selfName);
         const atMic = roomCover === "full" || (self && !room.size && !remoteCover);
         const micEligible = atMic && roomInput && (!micMembers || micMembers.has(key));
-        const mappedAccount = deviceAccounts.get(key);
+        const mappedAccount = deviceAccounts.get(rosterAccountKey(person));
         const onlyDevice = mappedAccount && !mappedAccount.people.some((member) => nameKey(member) === key);
         let callReason: string | undefined;
         if (device) {

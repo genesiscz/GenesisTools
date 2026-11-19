@@ -143,6 +143,7 @@ async function labelContext(
         voiceEnabled ? energy : energy && ((from, to) => energy(from, to) ?? energy.raw?.(from, to))
     );
     const speakers = new LineSpeakers({
+        devices: opened.roomDevices,
         lines: measured,
         record,
         meeting,
@@ -178,7 +179,7 @@ async function labelContext(
                 ];
             })
         ),
-        attended,
+        attended: attended.filter((row) => !speakers.isRoomDevice(row.person)),
         project: record.project,
     };
     async function forVoice(seats: LineLabel[], applyAbove: number): Promise<LabelContext> {

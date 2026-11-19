@@ -278,7 +278,7 @@ export const suggest = defineMethod({
         })
         .strict(),
     result: z.unknown(),
-    resultName: "{ fresh: items.list rows, retired: string[], warnings: string[] }",
+    resultName: "{ fresh: items.list rows, retired: string[], warnings: string[], deviceOffers? }",
     effect: "reversible",
     doc: `Run ${toolCommand("meetings", "suggest")} with any of ${SUGGEST_RULES.join(", ")} (default all). Returns fresh items, retired item IDs and warnings, including an unavailable word check. With attendance "teams", a warning lists up to three matching chats by last call. Pass attendanceId to select one.`,
 });
@@ -695,6 +695,16 @@ export const commentWithdraw = defineMethod({
 });
 
 const seatsRpc = meetingsMethod("meeting.seats.suggest");
+export const roomDevices = defineMethod({
+    ...meetingsMethod("people.devices.list"),
+    name: "roomDevices",
+    doc: `Return devices and, with {offers: true} or {meeting}, questions with their supporting meeting IDs. CLI: ${toolCommand("meetings people devices list")} [--offers] [--meeting <id>].`,
+});
+export const decideRoomDevice = defineMethod({
+    ...meetingsMethod("people.devices.decide"),
+    name: "decideRoomDevice",
+    doc: `Return {changed, device} for the owner's map, unmap or yes/no answer. Answer with the meeting, account, group and meetings from the offer. Agent callers can read offers. CLI: ${toolCommand("meetings people devices")} map|unmap|answer.`,
+});
 const thresholdsRpc = meetingsMethod("meeting.thresholds.preview");
 export const applySeats = defineMethod({
     name: "applySeats",
@@ -829,6 +839,8 @@ export const meetingsToolsetApi = defineApi({
     summary:
         "List and open meetings; read their corrected transcript, evidence and items; suggest, confirm and reject items; name speakers.",
     methods: [
+        roomDevices,
+        decideRoomDevice,
         applySeats,
         backfillVoices,
         voiceJobs,

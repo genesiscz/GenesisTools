@@ -1,7 +1,7 @@
 import { sha256Json } from "@genesiscz/utils/hash";
 import { DEFAULT_APPLY_ABOVE } from "@genesiscz/utils/meetings/config";
+import type { RoomDevice } from "@genesiscz/utils/meetings/people";
 import { type MeetingItem, type MeetingRecord, meetingItemSchema, nextId } from "@genesiscz/utils/meetings/record";
-
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { activeSeatPeople, roomSeatNames, wholeMeetingRoomPeople } from "@genesiscz/utils/meetings/seats";
 import type { DictionaryCandidate, MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
@@ -351,7 +351,12 @@ function eligibleRanges(item: NewItem, speakers: LineSpeakers): NewItem[] {
     }
     const lines = speakers.linesFor(item);
     if (!lines.length) {
-        return [item];
+        if (item.speaker && speakers.isRoomDevice(item.speaker)) {
+            return [];
+        }
+        return item.candidates?.some((name) => speakers.isRoomDevice(name))
+            ? [{ ...item, candidates: item.candidates.filter((name) => !speakers.isRoomDevice(name)) }]
+            : [item];
     }
     const parts: LineEvidence[][] = [];
     for (const line of lines) {
@@ -366,7 +371,8 @@ function eligibleRanges(item: NewItem, speakers: LineSpeakers): NewItem[] {
         const first = part[0]!;
         const last = part.at(-1)!;
         const eligible = speakers.eligibility.get(first.index)!;
-        const allows = (name: string) => eligible.choices.some((other) => sameName(name, other));
+        const allows = (name: string) =>
+            !speakers.isRoomDevice(name) && eligible.choices.some((other) => sameName(name, other));
         const candidates = item.candidates?.filter(allows);
         const scores = speakerScoresOf(item);
         const evidence = {
@@ -747,6 +753,7 @@ function labeledItems(options: {
  * suggested again, so a rejected one stays rejected.
  */
 export interface SuggestInputs {
+    devices?: readonly RoomDevice[];
     localSpeech?: LocalSpeech[];
     record: MeetingRecord;
     meeting: SourceMeeting;
@@ -896,6 +903,7 @@ function buildSuggestions(options: SuggestInputs): void {
     const departures =
         selfNameForDeparture && initialStats && departureLines.length
             ? identifiedDepartures({
+                  devices: options.devices,
                   record,
                   hints: initialStats.hints,
                   lines: departureLines.map((line) => (line.speakingUnknown ? { ...line, speaking: {} } : line)),
@@ -987,6 +995,7 @@ function buildSuggestions(options: SuggestInputs): void {
         };
     }
     const speakers = new LineSpeakers({
+        devices: options.devices,
         lines: sourceLines,
         record,
         meeting: options.meeting,
@@ -1283,7 +1292,7 @@ function buildSuggestions(options: SuggestInputs): void {
             ...(options.evidence?.speaking.flatMap((reading) => [...reading.speaking, ...(reading.muted ?? [])]) ?? []),
             ...(record.attendance?.people.map((person) => person.name) ?? []),
             ...Object.values(record.speakers.labels),
-        ],
+        ].filter((name) => !speakers.isRoomDevice(name)),
         points: options.points ?? [],
     };
     if (options.rules.some((rule) => rule !== "terms")) {

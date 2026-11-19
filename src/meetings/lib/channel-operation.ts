@@ -27,6 +27,7 @@ export async function lineEligibilityFor(opened: OpenedMeeting, index: number) {
         { index, fromSec: line.startSec, toSec: line.endSec },
         {
             ...line,
+            devices: opened.roomDevices,
             seats,
             callStays,
             selfName,
@@ -71,8 +72,9 @@ export async function attributeByChannel(options: {
     input: ByChannelOptions;
 }) {
     const input = byChannelOptionsSchema.parse(options.input);
-    const lines = await channelLines(OpenedMeeting.of(options.store, options.record));
-    const plan = planByChannel({ lines, seats: options.record.seats, input });
+    const opened = OpenedMeeting.of(options.store, options.record);
+    const lines = await channelLines(opened);
+    const plan = planByChannel({ lines, seats: options.record.seats, input, devices: opened.roomDevices });
     if (input.dryRun) {
         return { ...plan, dryRun: true };
     }
