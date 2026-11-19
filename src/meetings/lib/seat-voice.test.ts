@@ -41,6 +41,7 @@ interface Example {
     embedding: number[];
     at?: number;
     model?: string;
+    unavailable?: string;
 }
 
 async function fixture(examples: Example[], fields: Partial<MeetingRecord> = {}) {
@@ -101,18 +102,22 @@ async function fixture(examples: Example[], fields: Partial<MeetingRecord> = {})
         },
     });
     const embed = spyOn(voice, "embedVoiceLines").mockImplementation(async ({ spans, channels, audioPath }) =>
-        spans.map(({ index, fromSec, toSec }) => ({
-            index,
-            channels: channels.map((channel) => ({
-                ...channel,
-                fromSec,
-                toSec,
-                source: { audioPath, size: 1, mtimeMs: 1 },
-                quality: "ready",
-                model: examples[index]!.model ?? model,
-                embedding: examples[index]!.embedding,
-            })),
-        }))
+        spans.map(({ index, fromSec, toSec }) => {
+            const example = examples[index]!;
+            const result = example.unavailable
+                ? { quality: "unknown" as const, reason: example.unavailable }
+                : { quality: "ready" as const, model: example.model ?? model, embedding: example.embedding };
+            return {
+                index,
+                channels: channels.map((channel) => ({
+                    ...channel,
+                    fromSec,
+                    toSec,
+                    source: { audioPath, size: 1, mtimeMs: 1 },
+                    ...result,
+                })),
+            };
+        })
     );
     const client = new InProcessMeetingsClient({ deps: { store: () => new MeetingStore() } });
     restore.push(...[transcript, reads, energy, inputs, embed].map((spy) => () => spy.mockRestore()), () =>
@@ -231,9 +236,41 @@ test("a source with unknown channel order cannot support a seat from its default
     const { suggestion } = await f.preview();
     expect(suggestion.people[0]).toMatchObject({
         seat: "unsure",
-        reason: expect.stringContaining("0 microphone, 0 call"),
+        reason: expect.stringContaining("no compatible audio track"),
     });
     expect(f.embed).not.toHaveBeenCalled();
+});
+
+test("missing speaker model explains unavailable voice matches without reporting zero", async () => {
+    const unavailable = "Speaker model unavailable; run meetings voice prepare explicitly";
+    const f = await fixture([
+        { ...mic, unavailable },
+        { ...call, unavailable },
+    ]);
+    sample(finch, { seat: "mic" });
+    sample(lark, { seat: "call" });
+    f.embed.mockRejectedValueOnce(new voice.VoiceUnavailableError(unavailable));
+    const thrown = await f.preview();
+    const perChannel = await f.preview();
+    for (const person of [...thrown.suggestion.people, ...perChannel.suggestion.people]) {
+        expect(person.seat).toBe("unsure");
+        expect(person.reason).toContain(
+            "Voice matches unavailable: the speaker model is not installed (tools meetings voice prepare)."
+        );
+        expect(person.reason).not.toContain("Independent voice matches");
+    }
+});
+
+test("unavailable call embeddings leave the microphone count visible and the call count unknown", async () => {
+    const f = await fixture([mic, mic, { ...call, unavailable: "Not enough speech for a speaker embedding" }]);
+    sample(finch, { seat: "mic" });
+    sample(finch, { seat: "call" });
+    const { suggestion } = await f.preview();
+    const person = suggestion.people[0]!;
+    expect(person.seat).toBe("unsure");
+    expect(person.reason).toContain("2 microphone");
+    expect(person.reason).toContain("Call voice matches unavailable: Not enough speech for a speaker embedding.");
+    expect(person.reason).not.toContain("0 call");
 });
 
 test("one opposite-side match keeps the whole seat unsure and incompatible tracks, models and dimensions cannot vote", async () => {
@@ -266,9 +303,10 @@ test("a copied target and a refused line cannot supply independent votes", async
     const { suggestion } = await f.preview(copy.id);
     expect(suggestion.seats).toEqual({ room: [], remote: [] });
     expect(suggestion.people).toMatchObject([
-        { name: finch, seat: "unsure", reason: expect.stringContaining("0 microphone, 0 call") },
-        { name: lark, seat: "unsure", reason: expect.stringContaining("0 microphone, 1 call") },
+        { name: finch, seat: "unsure", reason: expect.stringContaining("0 call") },
+        { name: lark, seat: "unsure", reason: expect.stringContaining("1 call") },
     ]);
+    expect(suggestion.people[0]?.reason).toContain("Microphone voice matches unavailable");
 });
 
 test("overlapping positives count once and a weak microphone or tied rival contributes no vote", async () => {
@@ -283,9 +321,10 @@ test("overlapping positives count once and a weak microphone or tied rival contr
     sample(lark, { seat: "mic", fromSec: 50, toSec: 54 });
     const { suggestion } = await f.preview();
     expect(suggestion.people).toMatchObject([
-        { seat: "unsure", reason: expect.stringContaining("1 microphone, 0 call") },
-        { seat: "unsure", reason: expect.stringContaining("0 microphone, 0 call") },
+        { seat: "unsure", reason: expect.stringContaining("1 microphone") },
+        { seat: "unsure", reason: expect.stringContaining("0 microphone") },
     ]);
+    expect(suggestion.people[0]?.reason).toContain("Call voice matches unavailable: no eligible lines.");
 });
 
 test("saved seats and five decided lines take precedence over a new voice suggestion", async () => {

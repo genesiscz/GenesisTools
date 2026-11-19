@@ -5,6 +5,7 @@ import { type MeetingRecord, voiceRootMeeting } from "@genesiscz/utils/meetings/
 import { withoutEmptyRemoteSeats } from "@genesiscz/utils/meetings/room-people";
 import { type MeetingSeats, seatSpan, wholeMeetingRoomPeople } from "@genesiscz/utils/meetings/seats";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
+import { VoiceUnavailableError } from "@genesiscz/utils/meetings/voice";
 import { type SampleSource, voiceLineKeys } from "@genesiscz/utils/meetings/voice-library";
 import type { LineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { OpenedMeeting } from "./opened-meeting";
@@ -25,8 +26,8 @@ import { nameByVoice, type VoiceLine } from "./voice-names";
 export interface SeatVoiceHint {
     person: string;
     seat: "room" | "remote" | "unsure";
-    mic: number;
-    call: number;
+    mic?: number;
+    call?: number;
     reason: string;
     confidence: number;
 }
@@ -39,6 +40,14 @@ export interface SeatVoiceInput {
     prediction: Pick<ReturnType<typeof meetingPredictionVoices>, "store" | "sources">;
     settings: Pick<MeetingsConfig["global"]["speakerLabels"]["voice"], "gate" | "minSeconds">;
     allows: (person: string, index: number) => boolean;
+}
+
+function unavailableText(reason: string): string {
+    return reason === "Speaker model unavailable; run meetings voice prepare explicitly"
+        ? "the speaker model is not installed (tools meetings voice prepare)."
+        : reason.endsWith(".")
+          ? reason
+          : `${reason}.`;
 }
 
 /** Compare all eligible voices on the recorded track. No saved seat, temporary seed or exclusion is a vote. */
@@ -58,7 +67,20 @@ export function suggestSeatByVoice(input: SeatVoiceInput): ReadonlyArray<SeatVoi
     });
     type Vote = { fromSec: number; toSec: number; score: number; key: string };
     const votes = new Map<string, Record<Seat, Vote[]>>(input.people.map((person) => [person, { mic: [], call: [] }]));
+    const compared = new Set<Seat>();
+    const failures: Partial<Record<Seat, string>> = {};
     for (const [position, label] of labels.entries()) {
+        const line = input.lines[position]!;
+        if (label.score !== undefined) {
+            compared.add(line.seat);
+        } else {
+            const unknown = line.channels.find((channel) => channel.quality === "unknown");
+            failures[line.seat] ??=
+                unknown?.reason ??
+                (line.channels.length
+                    ? "no compatible independent voice sample could be compared"
+                    : "no compatible audio track covers the eligible lines");
+        }
         if (
             label.reason !== "named" ||
             !label.person ||
@@ -67,13 +89,25 @@ export function suggestSeatByVoice(input: SeatVoiceInput): ReadonlyArray<SeatVoi
         ) {
             continue;
         }
-        const line = input.lines[position]!;
         const key = input.lineKeys[line.index];
         if (key !== undefined && line.fromSec !== undefined && line.toSec !== undefined) {
             const side = votes.get(label.person)![line.seat];
             side.push({ fromSec: line.fromSec, toSec: line.toSec, score: label.score, key });
         }
     }
+    const missing = sides.filter((side) => !compared.has(side));
+    const unavailable = (side: Seat) => unavailableText(failures[side] ?? "no eligible lines");
+    const coverage =
+        missing.length === 2 && unavailable("mic") === unavailable("call")
+            ? `Voice matches unavailable: ${unavailable("mic")}`
+            : missing
+                  .map(
+                      (side) =>
+                          `${side === "mic" ? "Microphone" : "Call"} voice matches unavailable: ${unavailable(side)}`
+                  )
+                  .join(" ");
+    // An opposite side with eligible but unscored lines could still carry conflicting matches.
+    const incomplete = missing.some((side) => failures[side] !== undefined);
     return Array.from(votes, ([person, bySide]) => {
         const count = { mic: 0, call: 0 };
         let weakest = 1;
@@ -91,20 +125,31 @@ export function suggestSeatByVoice(input: SeatVoiceInput): ReadonlyArray<SeatVoi
             }
         }
         const { mic, call } = count;
-        const seat: SeatVoiceHint["seat"] = mic >= 2 && !call ? "room" : call >= 2 && !mic ? "remote" : "unsure";
+        const seat: SeatVoiceHint["seat"] = incomplete
+            ? "unsure"
+            : mic >= 2 && !call
+              ? "room"
+              : call >= 2 && !mic
+                ? "remote"
+                : "unsure";
+        const counts = sides
+            .filter((side) => compared.has(side))
+            .map((side) => `${count[side]} ${side === "mic" ? "microphone" : "call"}`);
         const detail =
             mic && call
-                ? " Voice matches occur on both sides."
-                : seat === "unsure"
-                  ? " Two lines on one side are needed."
+                ? "Voice matches occur on both sides."
+                : seat === "unsure" && !incomplete && counts.length
+                  ? "Two lines on one side are needed."
                   : "";
         return {
             person,
             seat,
-            mic,
-            call,
+            ...(compared.has("mic") ? { mic } : {}),
+            ...(compared.has("call") ? { call } : {}),
             confidence: seat === "unsure" ? 0 : weakest,
-            reason: `Independent voice matches (${mic} microphone, ${call} call).${detail}`,
+            reason: [counts.length ? `Independent voice matches (${counts.join(", ")}).` : "", coverage, detail]
+                .filter(Boolean)
+                .join(" "),
         };
     });
 }
@@ -250,7 +295,15 @@ export async function readSeatVoiceHints(options: {
             Object.values(prediction.store.people).flatMap((person) => person.samples.map((sample) => sample.track))
         );
         const sound = await discoverySound({ opened, config, calibration, enrolled });
-        lines = await embedSeatLines({ lines: spans, config, sound, cachePath: "" });
+        try {
+            lines = await embedSeatLines({ lines: spans, config, sound, cachePath: "" });
+        } catch (error) {
+            if (!(error instanceof VoiceUnavailableError)) {
+                throw error;
+            }
+            const reason = `Voice matches unavailable: ${unavailableText(error.message)}`;
+            return people.map((person) => ({ person, seat: "unsure", confidence: 0, reason }));
+        }
     }
     const root = voiceRootMeeting(opened.store, record);
     const lineKeys = voiceLineKeys(meeting);
