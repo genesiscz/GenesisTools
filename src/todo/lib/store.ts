@@ -4,7 +4,7 @@
  * the sync ids) ride in one pointer `todo:<id>`. The `todos.json` files are imported one time and stay as an archive;
  * a file that is newer than the import (an old checkout wrote it) is imported again by the same key.
  */
-import type { Database } from "bun:sqlite";
+import { Database } from "bun:sqlite";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
@@ -271,18 +271,11 @@ export class TodoStore {
         const db = openWorkDb(this.dbPath);
 
         try {
-            importFiles(db, this.dbPath, [
-                fileOf(this.storageRoot, this.askedRoot),
-                fileOf(this.storageRoot, this.projectRoot),
-            ]);
+            importFiles(db, this.dbPath, projectArchives(this.storageRoot, this.projectRoot, this.askedRoot));
             return fn(db);
         } finally {
             db.close();
         }
-    }
-
-    private rows(): Row[] {
-        return this.withDb((db) => rowsOf(db, { projectRoot: this.projectRoot }));
     }
 
     async add(input: AddTodoInput): Promise<Todo> {
@@ -326,17 +319,23 @@ export class TodoStore {
     }
 
     async list(filters?: TodoFilters): Promise<Todo[]> {
-        const todos = this.rows()
-            .map((row) => todoOf(row.item, row.meta))
-            .filter((t): t is Todo => t !== null);
+        const todos = readTodos({
+            dbPath: this.dbPath,
+            archives: projectArchives(this.storageRoot, this.projectRoot, this.askedRoot),
+            projectRoot: this.projectRoot,
+        }).map(({ todo }) => todo);
         return filters ? applyFilters(todos, filters) : todos;
     }
 
     async get(id: string): Promise<Todo | null> {
-        return this.withDb((db) => {
-            const row = rowsOf(db, { projectRoot: this.projectRoot, todoId: id })[0];
-            return row ? todoOf(row.item, row.meta) : null;
-        });
+        return (
+            readTodos({
+                dbPath: this.dbPath,
+                archives: projectArchives(this.storageRoot, this.projectRoot, this.askedRoot),
+                projectRoot: this.projectRoot,
+                todoId: id,
+            })[0]?.todo ?? null
+        );
     }
 
     /** One native side effect per todo at a time, without holding the store's own write. */
@@ -441,34 +440,24 @@ export class TodoStore {
         );
     }
 
-    private static allRows(storageRoot?: string, where: Parameters<typeof rowsOf>[1] = {}): Row[] {
+    private static allTodos(storageRoot?: string, todoId?: string): LocatedTodo[] {
         const root = storageRoot ?? defaultStorageRoot();
-        const dbPath = storageRoot !== undefined ? join(root, "work.db") : workDbPath();
-        mkdirSync(dirname(dbPath), { recursive: true });
-        const db = openWorkDb(dbPath);
-
-        try {
-            importAllFiles(db, root, dbPath);
-            return rowsOf(db, where);
-        } finally {
-            db.close();
-        }
+        return readTodos({
+            dbPath: storageRoot !== undefined ? join(root, "work.db") : workDbPath(),
+            archives: archiveFiles(root),
+            todoId,
+        });
     }
 
     static async listAllProjects(storageRoot?: string): Promise<ProjectMeta[]> {
         const byRoot = new Map<string, ProjectMeta>();
 
-        for (const row of TodoStore.allRows(storageRoot)) {
-            if (row.item.state === "dropped") {
-                continue;
-            }
-
-            const known = byRoot.get(row.meta.projectRoot);
-            byRoot.set(row.meta.projectRoot, {
-                projectRoot: row.meta.projectRoot,
-                name: basename(row.meta.projectRoot),
-                lastAccessed:
-                    known && known.lastAccessed > row.item.updatedTs ? known.lastAccessed : row.item.updatedTs,
+        for (const row of TodoStore.allTodos(storageRoot)) {
+            const known = byRoot.get(row.projectRoot);
+            byRoot.set(row.projectRoot, {
+                projectRoot: row.projectRoot,
+                name: basename(row.projectRoot),
+                lastAccessed: known && known.lastAccessed > row.updatedTs ? known.lastAccessed : row.updatedTs,
                 todoCount: (known?.todoCount ?? 0) + 1,
             });
         }
@@ -479,7 +468,9 @@ export class TodoStore {
     /** Locates a todo by id in every project, so a command can name the project that holds it. */
     /** The todo an item of the work store holds, for the reminders connector. */
     static async findByItem(itemId: string, storageRoot?: string): Promise<{ todo: Todo; projectRoot: string } | null> {
-        for (const row of TodoStore.allRows(storageRoot, { itemId })) {
+        const dbPath = storageRoot !== undefined ? join(storageRoot, "work.db") : workDbPath();
+
+        for (const row of readRows(dbPath, { itemId })) {
             const todo = todoOf(row.item, row.meta);
 
             if (todo !== null) {
@@ -504,21 +495,12 @@ export class TodoStore {
     }
 
     static async findTodo(id: string, storageRoot?: string): Promise<{ todo: Todo; projectRoot: string } | null> {
-        for (const row of TodoStore.allRows(storageRoot, { todoId: id })) {
-            const todo = todoOf(row.item, row.meta);
-
-            if (todo !== null) {
-                return { todo, projectRoot: row.meta.projectRoot };
-            }
-        }
-
-        return null;
+        const row = TodoStore.allTodos(storageRoot, id)[0];
+        return row ? { todo: row.todo, projectRoot: row.projectRoot } : null;
     }
 
     static async listAll(filters?: TodoFilters, storageRoot?: string): Promise<Todo[]> {
-        const todos = TodoStore.allRows(storageRoot)
-            .map((row) => todoOf(row.item, row.meta))
-            .filter((t): t is Todo => t !== null);
+        const todos = TodoStore.allTodos(storageRoot).map(({ todo }) => todo);
         return filters ? applyFilters(todos, filters) : todos;
     }
 }
@@ -585,15 +567,17 @@ function fileOf(storageRoot: string, root: string): { root: string; path: string
     return { root, path: join(storageRoot, "projects", projectHash(root), "todos.json") };
 }
 
-/** Every project folder of the old files: its `meta.json` names the root; a folder without one keeps none. */
-function importAllFiles(db: Database, storageRoot: string, dbPath: string): void {
+type ArchiveFile = ReturnType<typeof fileOf>;
+
+/** Every old project folder. A missing metadata file leaves the per-todo context to name the project. */
+function archiveFiles(storageRoot: string): ArchiveFile[] {
     const projectsDir = join(storageRoot, "projects");
 
     if (!existsSync(projectsDir)) {
-        return;
+        return [];
     }
 
-    const entries: { root: string; path: string }[] = [];
+    const entries: ArchiveFile[] = [];
 
     for (const entry of readdirSync(projectsDir, { withFileTypes: true })) {
         const metaPath = join(projectsDir, entry.name, "meta.json");
@@ -607,5 +591,98 @@ function importAllFiles(db: Database, storageRoot: string, dbPath: string): void
         }
     }
 
-    importFiles(db, dbPath, entries);
+    return entries;
+}
+
+function projectArchives(storageRoot: string, projectRoot: string, askedRoot: string): ArchiveFile[] {
+    const files = archiveFiles(storageRoot).filter(
+        (entry) => !entry.root || canonicalTodoRoot(entry.root) === projectRoot
+    );
+
+    for (const root of new Set([askedRoot, projectRoot])) {
+        const own = fileOf(storageRoot, root);
+        const match = files.find((entry) => entry.path === own.path);
+
+        if (match === undefined) {
+            files.push(own);
+        } else if (!match.root) {
+            match.root = root;
+        }
+    }
+
+    return files;
+}
+
+function readRows(path: string, where: Parameters<typeof rowsOf>[1]): Row[] {
+    if (!existsSync(path)) {
+        return [];
+    }
+
+    const db = new Database(path, { readonly: true });
+
+    try {
+        return rowsOf(db, where);
+    } finally {
+        db.close();
+    }
+}
+
+interface LocatedTodo {
+    todo: Todo;
+    projectRoot: string;
+    updatedTs: string;
+}
+
+function readTodos({
+    dbPath,
+    archives,
+    projectRoot,
+    todoId,
+}: {
+    dbPath: string;
+    archives: ArchiveFile[];
+    projectRoot?: string;
+    todoId?: string;
+}): LocatedTodo[] {
+    const rows = new Map<string, { todo: Todo | null; projectRoot: string; updatedTs: string }>();
+    const keyOf = (root: string, id: string) => `${root}\0${id}`;
+
+    for (const row of readRows(dbPath, { projectRoot, todoId })) {
+        rows.set(keyOf(row.meta.projectRoot, row.todoId), {
+            todo: todoOf(row.item, row.meta),
+            projectRoot: row.meta.projectRoot,
+            updatedTs: row.item.updatedTs,
+        });
+    }
+
+    for (const { root, path } of archives) {
+        if (!existsSync(path)) {
+            continue;
+        }
+
+        const archived = SafeJSON.parse(readFileSync(path, "utf8")) as Todo[];
+
+        for (const todo of archived) {
+            if (todoId !== undefined && todo.id !== todoId) {
+                continue;
+            }
+
+            const recordedRoot = root || todo.context?.projectRoot || "";
+            const target = recordedRoot ? canonicalTodoRoot(recordedRoot) : "";
+
+            if (projectRoot !== undefined && projectRoot !== target) {
+                continue;
+            }
+
+            const key = keyOf(target, todo.id);
+            const held = rows.get(key);
+            const updatedTs = updatedAtOf(todo);
+
+            if (held === undefined || (held.todo !== null && updatedTs > held.updatedTs)) {
+                rows.set(key, { todo, projectRoot: target, updatedTs });
+            }
+        }
+    }
+
+    return Array.from(rows.values()).flatMap((row) => (row.todo === null ? [] : [{ ...row, todo: row.todo }]));
 }
