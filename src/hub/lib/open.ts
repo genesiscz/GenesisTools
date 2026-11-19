@@ -47,6 +47,7 @@ export interface OpenHubOptions {
     /** Opens the Worktrees mode on this checkout folder. */
     worktree?: string;
     work?: string;
+    workProject?: string;
     /** Opens the Inbox at this decision or todo card (`d_3_<session>`). */
     decision?: string;
     /** Opens the Inbox at this pending form (`ask_…`). */
@@ -111,6 +112,7 @@ export type HubLinkOptions = Pick<
     | "filter"
     | "worktree"
     | "work"
+    | "workProject"
     | "decision"
     | "question"
     | "usageSection"
@@ -186,6 +188,7 @@ export function hubArgs(options: OpenHubOptions): string[] {
 
     for (const [flag, value] of [
         ["--work", options.work],
+        ["--work-project", options.workProject],
         ["--decision", options.decision],
         ["--question", options.question],
     ] as const) {
@@ -298,6 +301,7 @@ function hubLinkData(options: HubLinkOptions): HubLinkQuery {
         filter: options.filter,
         worktree: options.worktree ? worktreeTarget(options.worktree) : undefined,
         work: options.work,
+        "work-project": options.workProject,
         decision: options.decision,
         question: options.question,
         "usage-section": options.usageSection,

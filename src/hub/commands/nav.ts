@@ -149,6 +149,7 @@ async function navOpen(input: string | undefined, flags: NavOpenFlags): Promise<
         tab,
         worktree: target.worktree,
         work: target.work,
+        workProject: target["work-project"],
         actor,
         note,
         from,
