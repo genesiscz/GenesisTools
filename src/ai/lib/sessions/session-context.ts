@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { LoopContext } from "@genesiscz/utils/agent-sessions/analysis-types";
@@ -235,6 +235,7 @@ function renderContext(report: ReturnType<typeof contextReport>, opts: ContextOp
 export async function printContext(ids: string[], opts: ContextOptions): Promise<void> {
     const reports = [];
     const combined: LoopContext[] = [];
+    const written = new Map<string, string>();
     for (const id of ids) {
         const session = await resolveTranscript(id, {}, opts.provider);
         const facts =
@@ -271,7 +272,15 @@ export async function printContext(ids: string[], opts: ContextOptions): Promise
         }
         if (opts.out) {
             await mkdir(opts.out, { recursive: true });
-            const base = join(opts.out, basename(session.sessionId).slice(0, 8));
+            const id = basename(session.sessionId).replace(/[^A-Za-z0-9._-]+/g, "_");
+            let name = `${session.provider}-${id}`;
+            if ((written.get(name) ?? session.filePath) !== session.filePath) {
+                // The same id in another home (a legacy Codex profile): the file path tells the two apart.
+                name += `-${createHash("sha256").update(session.filePath).digest("hex").slice(0, 8)}`;
+            }
+
+            written.set(name, session.filePath);
+            const base = join(opts.out, name);
             await Bun.write(`${base}.context-sources.json`, SafeJSON.stringify(result));
             await Bun.write(`${base}.context-sources.txt`, `${rendered}\n`);
         }

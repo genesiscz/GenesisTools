@@ -82,6 +82,13 @@ test("resumes join a workflow revival, time streamed calls, and distinguish wait
         },
     ]);
     expect(claudeHistoryReader.analysis.lastContext(revived)).toBe(175);
+    const asText = call("five", 20, 300, 0, 0, "end_turn");
+    expect(
+        claudeHistoryReader.analysis.lastContext([
+            ...revived,
+            { ...asText, message: SafeJSON.stringify(asText.message) },
+        ])
+    ).toBe(300);
     expect(
         claudeHistoryReader.analysis.lastContext([
             ...revived,
@@ -173,7 +180,7 @@ describe("the analysis members of the three readers", () => {
             calls: 1,
             firstCallContext: 222,
         });
-        expect(main.items[0]).toMatchObject({ source: "system-prompt+tools", line: 0, tokens: 899, carryCalls: 2 });
+        expect(main.items[0]).toMatchObject({ source: "system-prompt+tools", line: 0, tokens: 899, carryCalls: 3 });
         expect(main.items.filter((i) => i.source === "tool_result")).toMatchObject([
             { line: 6, path, key: "Bash", tokens: 10, carryCalls: 1 },
             { line: 6, key: "Bash (images)", tokens: 2000, carryCalls: 1 },

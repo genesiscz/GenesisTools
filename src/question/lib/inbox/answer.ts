@@ -49,6 +49,20 @@ export interface InboxAnswerResult {
 }
 
 /**
+ * The answers were stored as answered, then their delivery or the record of it failed. They are no longer drafted, so
+ * a staged retry has nothing to send: only a Send again or the session's next prompt delivers them. The message is the
+ * delivery's own; the original error is the `cause`.
+ */
+export class AnswersStoredError extends Error {
+    readonly stored = true;
+
+    constructor(cause: unknown) {
+        super(cause instanceof Error ? cause.message : String(cause), { cause });
+        this.name = "AnswersStoredError";
+    }
+}
+
+/**
  * Answers decisions of one session and delivers them as ONE message (the hub's Decisions pane
  * sends every drafted answer at once; the inbox sends one). Every answer is checked before
  * anything is written. A decision read from the transcript only is stored first through the
@@ -89,15 +103,22 @@ export async function answerInboxDecisions(
         cwd: input.cwd,
         checked,
     });
-    const sent = await sendAnsweredDecisions({
-        ids,
-        session: input.session,
-        ...(input.provider ? { provider: input.provider } : {}),
-        ...(input.sourceHome ? { sourceHome: input.sourceHome } : {}),
-        ...(input.deliveryKey ? { deliveryKey: input.deliveryKey } : {}),
-        files: deps,
-        deps: deps.deliver ?? {},
-    });
+    let sent: Awaited<ReturnType<typeof sendAnsweredDecisions>>;
+
+    try {
+        sent = await sendAnsweredDecisions({
+            ids,
+            session: input.session,
+            ...(input.provider ? { provider: input.provider } : {}),
+            ...(input.sourceHome ? { sourceHome: input.sourceHome } : {}),
+            ...(input.deliveryKey ? { deliveryKey: input.deliveryKey } : {}),
+            files: deps,
+            deps: deps.deliver ?? {},
+        });
+    } catch (error) {
+        throw new AnswersStoredError(error);
+    }
+
     log.info({ session: input.session, numbers: sent.numbers, channel: sent.channel }, "inbox answers sent");
     // `detail` is the one line the hub and /qa show: where it went, else why it did not.
     const detail = sent.target ?? sent.error;

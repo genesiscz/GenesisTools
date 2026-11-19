@@ -10,6 +10,8 @@ from _run import KINDS, require_corpus
 
 def distribution(values):
     ordered = sorted(values)
+    if not ordered:
+        return '0: n/a'
     quantiles = []
     for fraction in (0.1, 0.5, 0.9):
         position = fraction * (len(ordered) - 1)
@@ -42,10 +44,14 @@ def report(root):
                 def timings(key, arm=None):
                     return distribution([v['elapsed_ms'] for r in sample for v in r[key]
                                          if arm is None or v['arm'] == arm])
+                # A sparse file can have no allocated bytes: it has no retained share and stays out of the ratios.
+                ratios = [100 * after / before for after, before in zip(packed, plain) if before > 0]
                 print(kind, sum(r['plain']['size'] for r in sample), sum(plain), sum(packed),
-                      distribution([100 * after / before for after, before in zip(packed, plain)]),
+                      distribution(ratios),
                       timings('compression'), timings('cmp'), timings('reads', 'plain'),
                       timings('reads', 'compressed'), timings('append'), sep='\t')
+                if len(ratios) < len(sample):
+                    print(f'{kind}: {len(sample) - len(ratios)} input(s) had no allocated bytes and no retained %')
             for arm in ('plain', 'compressed'):
                 timings = [v['elapsed_ms'] for v in data['search']
                            if v.get('algorithm', 'ditto') == writer and v['arm'] == arm]

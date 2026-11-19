@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import * as cli from "@genesiscz/utils/cmux/lib/cli";
+import type { DockPaneListEntry, RawPaneListResponse } from "@genesiscz/utils/cmux/lib/socket";
 import * as socket from "@genesiscz/utils/cmux/lib/socket";
 
 describe("cmux socket RPC params", () => {
@@ -38,7 +39,7 @@ describe("cmux socket RPC params", () => {
             pixel_frame: { x: 0, y: 0, width: 1600, height: 1000 },
         };
         // cmux 0.65.1, 2026-11-18: the global Dock pane, field for field.
-        const dock = {
+        const dock: DockPaneListEntry = {
             dock_scope: "global",
             focused: true,
             id: "8A3C2B10-0000-4000-8000-000000000002",
@@ -50,7 +51,7 @@ describe("cmux socket RPC params", () => {
             surface_ids: [],
             surface_refs: [],
         };
-        const layout = {
+        const layout: RawPaneListResponse = {
             workspace_ref: "workspace:5",
             window_ref: "window:2",
             panes: [split, dock],

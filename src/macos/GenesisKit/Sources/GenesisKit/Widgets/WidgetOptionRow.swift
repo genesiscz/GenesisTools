@@ -59,9 +59,10 @@ public enum WidgetOptionText {
         return verb + letter + ": " + text + (recommended ? ", recommended" : "")
     }
 
-    /// What VoiceOver reads as an option's state: a set's check box says ticked or not, a one-letter pick "Staged".
-    public static func accessibilityValue(picked: Bool, multiple: Bool) -> String {
-        multiple ? (picked ? "Ticked" : "Not ticked") : (picked ? "Staged" : "")
+    /// What VoiceOver reads as an option's state: a set's check box says ticked or not, a one-letter pick where its
+    /// send is (`pickedWord`: "Staged", "Sending", "Sent", "Waiting"), as its badge says.
+    public static func accessibilityValue(picked: Bool, multiple: Bool, pickedWord: String = "Staged") -> String {
+        multiple ? (picked ? "Ticked" : "Not ticked") : (picked ? pickedWord : "")
     }
 }
 
@@ -215,13 +216,13 @@ struct WidgetItemOptionButton: View {
         let recommended = WidgetOptionText.isRecommended(option, at: index, item.recommended)
         let stages = item.kind == "decision" && model.decisionClickStages
         let multiple = item.takesSeveral
+        let pickedWord = model.stagePhase(item.sourceId, draftedAt: item.draftedAt).word
         Button {
             model.choose(item, option: letter)
             chosen()
         } label: {
             WidgetOptionLabel(badge: letter, text: text, picked: picked, recommended: recommended, focused: focused,
-                              multiple: multiple,
-                              pickedWord: model.stagePhase(item.sourceId, draftedAt: item.draftedAt).word)
+                              multiple: multiple, pickedWord: pickedWord)
         }
         .buttonStyle(RowButtonStyle(cornerRadius: WidgetOptionLabel.cornerRadius))
         .disabled(model.sendingDecisionIDs.contains(item.sourceId) || model.dialogSendingIDs.contains(item.sourceId))
@@ -231,7 +232,8 @@ struct WidgetItemOptionButton: View {
         .accessibilityLabel(WidgetOptionText.accessibilityLabel(letter: letter, text: text, stages: stages,
                                                                 recommended: recommended, multiple: multiple,
                                                                 picked: picked))
-        .accessibilityValue(WidgetOptionText.accessibilityValue(picked: picked, multiple: multiple))
+        .accessibilityValue(WidgetOptionText.accessibilityValue(picked: picked, multiple: multiple,
+                                                                pickedWord: pickedWord))
         .accessibilityAddTraits(picked ? .isSelected : [])
         .accessibilityHint(picked && stages && !multiple ? "Click again to unstage" : "")
     }
@@ -271,7 +273,8 @@ struct WidgetSetSendBar: View {
     let letters: String?
     /// The set the agent recommends (`DecisionAnswering.recommendedSet`), nil when it names one option or none.
     let recommended: String?
-    let sending: Bool
+    /// Where the set's send is (`WidgetModel.stagePhase`): while a send took it, Send says so and cannot send again.
+    let phase: WidgetStagePhase
     let identifier: String
     let pick: (String) -> Void
     let send: () -> Void
@@ -285,10 +288,10 @@ struct WidgetSetSendBar: View {
                 }
                 Spacer(minLength: 0)
                 if let letters {
-                    Button(sending ? "Sending…" : DecisionAnswering.sendTitle(letters, multiple: true), action: send)
+                    Button(phase.sendTitle(letters, multiple: true), action: send)
                         .buttonStyle(.genPrimary())
                         .font(.system(size: 11.5))
-                        .disabled(sending)
+                        .disabled(phase.onItsWay)
                         .instantTooltip(DecisionAnswering.setSendTooltip(letters))
                         .accessibilityIdentifier(identifier)
                 }

@@ -141,7 +141,8 @@ stop that, and the render result names them under `master`:
   down, by 9 dB at most.
 - `limiterLossDb` and `shortOfTargetDb`: the clipper and the limiter may take away 3 dB of loudness and no more.
   A mix that needs more ships under its target by `shortOfTargetDb`. Make the mix itself denser or lower the
-  target; do not push the limiter.
+  target; do not push the limiter. When a lossy encoder lifts the peaks over the cap, the file ships that much
+  quieter again, and `shortOfTargetDb` counts that too.
 
 `"guard": false` in `master` switches the three off.
 
@@ -167,7 +168,7 @@ for a note, and `parts(setup)` for the part list.
 tools music mix demo.mp4 --music out/pulse-light.m4a --end 91.5 --out demo-music.mp4
 ~~~
 
-The four sampled built-in scores have a written end of 91.5 s and a file duration of 95 s. Orbit ends at 87.5 s
+Pulse, PulseLight, Calm and Piano have a written end of 91.5 s and a file duration of 95 s. Orbit ends at 87.5 s
 in a 89.5 s file, Tremor ends at 115.1 s in a 117.1 s file, and Halo ends at 159.1 s in a 161.1 s file. A shorter movie trims the track's
 opening; a longer movie delays the track with silence. The written ending lands at the movie ending. --end takes
 the score's end, not its file duration.

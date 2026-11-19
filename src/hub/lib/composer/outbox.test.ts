@@ -773,6 +773,34 @@ describe("widget source and delivery contracts", () => {
         expect(readDecisions(files.file).find((entry) => entry.id === row.id)?.state).toBe("sent");
     });
 
+    test("an error after the answer was stored says stored, so the widget does not offer a staged retry", async () => {
+        const directory = await root();
+        const files = { file: join(directory, "decisions.jsonl"), events: join(directory, "events.jsonl") };
+        const [stored] = await postDecisions(
+            files.file,
+            files.events,
+            { sessionId: "stored-a", provider: "codex", decisions: [{ prompt: "Ship?", options: ["yes", "no"] }] },
+            { env: {} }
+        );
+        await updateDecisions(files.file, files.events, {
+            updates: [{ id: stored.id, state: "drafted", draftOption: "a" }],
+        });
+        const result = await sendStagedDecisions({
+            ids: [stored.id],
+            files,
+            deliver: {
+                codexWorkerFor: () => "fixture-worker",
+                runTool: async () => {
+                    throw new DeliveryUnknownError("The transport stopped after it typed.");
+                },
+            },
+        });
+        expect(result).toMatchObject({ sent: 0, queued: 1, failed: 0 });
+        expect(result.sessions[0]).toMatchObject({ session: "stored-a", stored: true, numbers: [stored.number] });
+        expect(result.sessions[0]?.error).toContain("stopped after it typed");
+        expect(readDecisions(files.file).find((entry) => entry.id === stored.id)?.state).not.toBe("drafted");
+    });
+
     test("a Cancel after the agent got the message lets the send record it, so Send again types nothing twice", async () => {
         const directory = await root();
         await env.testing.withOverrides({ GENESIS_TOOLS_HOME: directory }, async () => {

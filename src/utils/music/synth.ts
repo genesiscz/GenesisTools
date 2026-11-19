@@ -1,7 +1,10 @@
 import { Adsr, Curve, gain, hertz, RATE, random, type Stereo, Svf, stereo } from "./dsp";
+import { musicCheckpoint } from "./process";
 import type { Lane, Lfo, Note, Oscillator, Patch } from "./types";
 
 const CONTROL = 8;
+/** How often a voice asks for a cancellation checkpoint, in samples (about 85 ms of audio). */
+const CHECKPOINT_SAMPLES = 4096;
 const TAU = Math.PI * 2;
 const VOWELS = [
     [730, 1090, 2440],
@@ -109,13 +112,13 @@ class OscState {
     }
 }
 
-function renderVoice(options: {
+async function renderVoice(options: {
     patch: Patch;
     events: VoiceEvent[];
     out: Stereo;
     seed: number;
     lanes: Map<string, Curve>;
-}): void {
+}): Promise<void> {
     const { patch, events, out, lanes } = options;
     const rand = random(options.seed);
     const oscs = patch.oscillators.map((spec) => new OscState(spec, rand));
@@ -145,8 +148,12 @@ function renderVoice(options: {
     let lfoLevel = 1;
     let fmNow = 1;
 
+    // A free-running LFO runs on score time: its phase at the onset is its rate, with the lfoRate lane, summed from 0.
+    const rateLane = lanes.get("lfoRate");
+    const elapsed = rateLane ? rateLane.integral(start / RATE) : start / RATE;
+
     for (const lfo of lfos) {
-        lfo.phase = lfo.spec.retrigger ? 0 : ((start / RATE) * lfo.spec.rate) % 1;
+        lfo.phase = lfo.spec.retrigger ? 0 : (elapsed * lfo.spec.rate) % 1;
     }
 
     for (let n = start; n < total; n++) {
@@ -192,6 +199,11 @@ function renderVoice(options: {
             for (const osc of oscs) {
                 osc.envelope?.gate(false);
             }
+        }
+
+        // A mono voice can run for the whole track, so it lets a signal handler in on its own.
+        if ((n - start) % CHECKPOINT_SAMPLES === 0) {
+            await musicCheckpoint();
         }
 
         if ((n - start) % CONTROL === 0) {
@@ -388,14 +400,17 @@ function renderVoice(options: {
     }
 }
 
-/** Render every note of one part. A mono patch is one voice; any other patch gets a voice per note. */
-export function renderSynth(options: {
+/**
+ * Render every note of one part. A mono patch is one voice; any other patch gets a voice per note, with a
+ * cancellation checkpoint between voices.
+ */
+export async function renderSynth(options: {
     patch: Patch;
     notes: Note[];
     lanes?: Lane[];
     samples: number;
     seed: number;
-}): Stereo {
+}): Promise<Stereo> {
     const out = stereo(options.samples);
     const lanes = new Map((options.lanes ?? []).map((lane) => [lane.target, new Curve(lane.points, lane.hold)]));
     const events = [...options.notes]
@@ -412,12 +427,14 @@ export function renderSynth(options: {
     }
 
     if (options.patch.mono) {
-        renderVoice({ patch: options.patch, events, out, seed: options.seed, lanes });
+        await renderVoice({ patch: options.patch, events, out, seed: options.seed, lanes });
         return out;
     }
 
-    events.forEach((event, index) => {
-        renderVoice({ patch: options.patch, events: [event], out, seed: options.seed + index * 7919, lanes });
-    });
+    for (const [index, event] of events.entries()) {
+        await musicCheckpoint();
+        await renderVoice({ patch: options.patch, events: [event], out, seed: options.seed + index * 7919, lanes });
+    }
+
     return out;
 }

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
+import { median } from "@genesiscz/utils/math";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 
 const { log } = logger.scoped("meetings-energy");
@@ -173,16 +174,7 @@ const CALIBRATION_MIN_SEC = 1.5;
 const CALIBRATION_MIN_SEGMENTS = 20;
 export const DEFAULT_CHANNEL_MIN_SEPARATION = 0.3;
 
-/** The middle value (the mean of the two middle ones for an even count); undefined for none. */
-export function median(values: number[]): number | undefined {
-    if (values.length === 0) {
-        return undefined;
-    }
-
-    const sorted = [...values].sort((a, b) => a - b);
-    const middle = Math.floor(sorted.length / 2);
-    return sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1]! + sorted[middle]!) / 2;
-}
+export { median } from "@genesiscz/utils/math";
 
 type TaggedSpan = { startSec: number; endSec: number; channel: string };
 

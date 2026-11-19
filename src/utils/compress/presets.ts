@@ -193,7 +193,10 @@ export function entropyBitsPerByte(sample: Uint8Array): number {
     return bits;
 }
 
-/** True when the sample reads as text: no NUL bytes and almost no other control bytes. */
+/**
+ * True when the sample reads as text: no NUL bytes and almost no other control bytes. ESC (0x1b) counts as text, so
+ * a log with ANSI colour codes (`\x1b[32mINFO\x1b[0m`) is text for presets and cold compression.
+ */
 function looksLikeText(sample: Uint8Array): boolean {
     let control = 0;
 
@@ -202,7 +205,7 @@ function looksLikeText(sample: Uint8Array): boolean {
             return false;
         }
 
-        if (byte < 9 || (byte > 13 && byte < 32)) {
+        if (byte < 9 || (byte > 13 && byte < 32 && byte !== 0x1b)) {
             control += 1;
         }
     }

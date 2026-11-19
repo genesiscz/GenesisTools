@@ -141,6 +141,8 @@ python3 -B scripts/benchmarks/compress/transparent.py --scratch "$bench_dir/corp
 
 The first script copies five real files of each kind with `ditto --noclone`: plain and image-bearing Claude
 transcripts, tool results, Codex sessions, Grok sessions, GenesisTools logs and JSON files. It requires all 35.
+The daily pass keeps only today's and yesterday's day logs plain, so a finished `.log.zst` day log is a log candidate
+too when the `zstd` CLI is installed: its seek table gives the decoded size, and `zstd -d` writes the plain copy.
 Each writer gets three copies per input. The supplementary script times the installed afsctool codecs after staging
 the plain copy. Ditto's time includes the copy. If applesauce is installed, pass its in-place compression arguments
 last with `--applesauce-args`, using the literal `'{file}'` for the scratch copy. The scripts install nothing.
@@ -358,9 +360,9 @@ folder archive.
 
 `--preset auto` (the default) picks by the data. A folder is `tree`, or `binary` when its name ends in `.app`. A file
 is sniffed: magic bytes first (zstd, gzip, xz, bzip2, zip, 7z, JPEG, PNG, GIF, WebP, HEIC/MP4/MOV/M4A, Matroska are
-`media`; SQLite is `database`; Mach-O, ELF and PE are `binary`), then text (no NUL byte, almost no control bytes),
-then entropy (over 7.5 bits per byte is `media`, else `binary`). A trial that saves under 3% turns any guess into
-`media`.
+`media`; SQLite is `database`; Mach-O, ELF and PE are `binary`), then text (no NUL byte, almost no control bytes;
+the ESC of ANSI colour codes counts as text, so a coloured log is text), then entropy (over 7.5 bits per byte is
+`media`, else `binary`). A trial that saves under 3% turns any guess into `media`.
 
 | Preset | Level | Long | Frame | Threads | For |
 |---|---|---|---|---|---|

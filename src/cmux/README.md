@@ -19,7 +19,7 @@ tools cmux restore-after-restart --in-place --enter -y
 # Is cmux healthy, starved or gone? Read-only.
 tools cmux doctor
 
-# Save the whole layout as a named profile.
+# Save the whole layout (the split panes and their tabs; not the Dock) as a named profile.
 tools cmux profiles save work --scope all
 
 # Rebuild that profile later as new workspaces.
@@ -95,7 +95,8 @@ cannot honor (a scope other than `all`, `--no-cwd` or `--no-history`).
 
 ### Restore after a restart: `restore-after-restart`
 
-Puts every tab back after cmux crashed or restarted: each agent tab gets its Claude, Grok or Codex session (found by
+Puts every split-pane tab back after cmux crashed or restarted (cmux restores the Dock's tabs itself, from its own
+session snapshot): each agent tab gets its Claude, Grok or Codex session (found by
 the tab's surface UUID), and each shell tab gets its last command. `--in-place` types into the tabs cmux reopened;
 without it, the layout is rebuilt as new workspaces. The details are in
 [How restore-after-restart works](#how-restore-after-restart-works).

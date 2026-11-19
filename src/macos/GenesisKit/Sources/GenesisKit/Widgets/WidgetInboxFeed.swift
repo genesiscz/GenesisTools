@@ -130,7 +130,7 @@ struct WidgetFeedRunHeader: View, Equatable {
         let sessionTitle = run.items.count == 1 && session?.title == first.map(WidgetInboxOverview.title)
             ? nil : session?.title
         subtitle = sessions > 1 ? Plural.count(sessions, "session") : (project.isEmpty ? nil : sessionTitle)
-        let count = run.items.reduce(0) { $0 + ($1.needsAnswer ? $1.representedCount : 0) }
+        let count = run.items.reduce(0) { $0 + (model.waitsForAnswer($1) ? $1.representedCount : 0) }
         let total = run.items.reduce(0) { $0 + $1.representedCount }
         waiting = count > 0
         // One item says what it is in its own row (kind, waiting, time); a count only adds words.

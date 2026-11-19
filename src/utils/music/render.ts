@@ -29,7 +29,10 @@ const RUMBLE_HZ = 25;
 export interface MasterReport {
     /** Loudness the clipper and the limiter took away, in dB. */
     limiterLossDb: number;
-    /** How far under the loudness target the file ships because of the loss cap. 0 when it reached the target. */
+    /**
+     * How far under the loudness target the file ships: because of the loss cap, and because of the peak backoff
+     * after a lossy encode. 0 when it reached the target.
+     */
     shortOfTargetDb: number;
     /** The deepest cut of the low end by the guard, in dB. */
     lowCutDb: number;
@@ -263,7 +266,8 @@ export async function renderScore(options: {
                 goal = Math.min(targetLufs, reached.lufs + 0.15);
                 report = {
                     limiterLossDb: Number(reached.lossDb.toFixed(2)),
-                    shortOfTargetDb: Number(Math.max(0, targetLufs - reached.lufs - 0.15).toFixed(2)),
+                    // The file ships at the goal minus the peak backoff of the earlier encodes.
+                    shortOfTargetDb: Number((targetLufs - goal + trimDb).toFixed(2)),
                     lowCutDb: Number(lowCutDb.toFixed(2)),
                 };
             }

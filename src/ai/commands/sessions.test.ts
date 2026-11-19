@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -7,6 +7,7 @@ import { out } from "@genesiscz/utils/logger";
 import { drainSpool } from "@genesiscz/utils/metrics/spool";
 import { MetricsStore } from "@genesiscz/utils/metrics/store";
 import { Command } from "commander";
+import { coldComparison } from "../lib/sessions/cold-resumes";
 import { spoolContextItems } from "../lib/sessions/session-context";
 import { registerSessionsCommands, resumeAdvice } from "./sessions";
 
@@ -31,6 +32,22 @@ afterEach(() => {
 });
 
 describe("sessions range flags", () => {
+    test("cold comparison medians average the two middle values of an even count", () => {
+        const sample = { expected: 10, gapMs: 600_000, hit: false, rewriteUsd: null, followUsd: null };
+        const comparison = coldComparison(
+            { edges: new Map(), samples: [1, 9].map((calls) => ({ ...sample, calls })) },
+            { priceModel: "fixture-unpriced", freshStart: 0, idleSeconds: 295 }
+        );
+        expect(comparison.bands).toMatchObject([{ resumes: 2, medianCalls: 5, medianRewriteUsd: null }]);
+    });
+    test("context and resumes list the harnesses for an unknown --provider", async () => {
+        for (const sub of ["context", "resumes"]) {
+            const { exitCode, errors } = await run(["sessions", sub, "some-id", "--provider", "nope"]);
+            expect(exitCode).toBe(1);
+            expect(errors.join("\n")).toContain('does not accept "nope"');
+            expect(errors.join("\n")).toContain("claude");
+        }
+    });
     test("cold comparison reads the resumed agent and makes an unknown comparison price explicit", async () => {
         const root = mkdtempSync(join(tmpdir(), "cold-cli-"));
         const path = join(root, "session.jsonl");
@@ -77,6 +94,29 @@ describe("sessions range flags", () => {
         } finally {
             output.mockRestore();
         }
+
+        const result = spyOn(out, "result").mockImplementation(() => {});
+        try {
+            const args = ["sessions", "resumes", path, "--provider", "claude", "--no-main", "--cold", "--json"];
+            expect((await run([...args, "--idle-seconds", "600", "--price-model", "fixture-unpriced"])).errors).toEqual(
+                []
+            );
+            expect(result.mock.calls[0]?.[0]).toMatchObject({
+                cold: { idleSeconds: 600, resumes: 0, bands: [], fresh: null },
+            });
+            expect(result.mock.calls[0]?.[0]).not.toHaveProperty("sessions");
+            expect((await run([...args, "--price-model", "fixture-unpriced"])).errors).toEqual([]);
+            expect(result.mock.calls[1]?.[0]).toMatchObject({
+                cold: {
+                    idleSeconds: 295,
+                    resumes: 1,
+                    bands: [{ from: 0, resumes: 1 }],
+                    fresh: { priced: false, reason: "no price for fixture-unpriced" },
+                },
+            });
+        } finally {
+            result.mockRestore();
+        }
     });
     test("context exposes the five report sections and exports queryable source and carry dimensions", async () => {
         const dir = mkdtempSync(join(tmpdir(), "context-cli-"));
@@ -105,11 +145,33 @@ describe("sessions range flags", () => {
                 startByType: [],
                 agentsByCacheRead: [],
                 largestItems: [
+                    { line: 0, carry: 9 },
                     { loop: "session", line: 1, carry: 1 },
-                    { line: 0, carry: 0 },
                 ],
             });
             expect(result.mock.calls[0]?.[0]).not.toHaveProperty("metrics");
+
+            const [one, two] = ["session-one", "session-two"].map((name) => join(dir, `${name}.jsonl`));
+            writeFileSync(one, readFileSync(path, "utf8"));
+            writeFileSync(two, readFileSync(path, "utf8"));
+            const exported = join(dir, "exported");
+            const args = ["sessions", "context", one, two, "--provider", "claude", "--json", "--out", exported];
+            expect((await run(args)).errors).toEqual([]);
+            expect(readdirSync(exported).sort()).toEqual([
+                "claude-session-one.context-sources.json",
+                "claude-session-one.context-sources.txt",
+                "claude-session-two.context-sources.json",
+                "claude-session-two.context-sources.txt",
+            ]);
+
+            const otherHome = join(dir, "other-home");
+            mkdirSync(otherHome);
+            const twin = join(otherHome, "session-one.jsonl");
+            writeFileSync(twin, readFileSync(path, "utf8"));
+            const twins = join(dir, "twins");
+            const twinArgs = ["sessions", "context", one, one, twin, "--provider", "claude", "--json", "--out", twins];
+            expect((await run(twinArgs)).errors).toEqual([]);
+            expect(readdirSync(twins).filter((name) => name.endsWith(".json"))).toHaveLength(2);
         } finally {
             result.mockRestore();
         }

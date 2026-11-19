@@ -65,3 +65,14 @@ export function cosineDistance(a: Float32Array, b: Float32Array): number {
 
     return 1 - dot / denom;
 }
+
+/** The middle value (the mean of the two middle ones for an even count); undefined for none. */
+export function median(values: number[]): number | undefined {
+    if (values.length === 0) {
+        return undefined;
+    }
+
+    const sorted = [...values].sort((a, b) => a - b);
+    const middle = Math.floor(sorted.length / 2);
+    return sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1]! + sorted[middle]!) / 2;
+}

@@ -46,6 +46,8 @@ export interface DraftDeps {
     events: string;
     /** The `❓ DECISION N` block of the last reply, so a transcript-only decision gets a row to draft on. */
     block: (session: string, number: number) => Promise<HarvestedDecision | null>;
+    /** The write time of the update; the store's own clock when absent. */
+    now?: () => string;
 }
 
 function normalize(option: string | undefined): string | undefined {
@@ -114,17 +116,22 @@ export async function draftDecision(input: DraftInput, deps: DraftDeps) {
     const state = empty ? "open" : "drafted";
     // The state moves only when it changes: `open` to `open` is no transition, and clearing an
     // untouched decision used to fail with "cannot move ... from open to open".
-    const [updated] = await updateDecisions(deps.file, deps.events, {
-        updates: [
-            {
-                id: row.id,
-                ...(state === row.state ? {} : { state }),
-                draftOption,
-                draft,
-                ...(input.expectedRevision !== undefined ? { expectedRevision: input.expectedRevision } : {}),
-            },
-        ],
-    });
+    const [updated] = await updateDecisions(
+        deps.file,
+        deps.events,
+        {
+            updates: [
+                {
+                    id: row.id,
+                    ...(state === row.state ? {} : { state }),
+                    draftOption,
+                    draft,
+                    ...(input.expectedRevision !== undefined ? { expectedRevision: input.expectedRevision } : {}),
+                },
+            ],
+        },
+        deps.now
+    );
 
     return updated;
 }

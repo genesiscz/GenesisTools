@@ -257,7 +257,8 @@ export function collectContext(loop: SessionLoop): LoopCollector<LoopContext> {
         finish() {
             closeSegment();
             if (baseline) {
-                baseline.carryCalls = Math.max(0, seen.size - 1);
+                // The system prompt and tool definitions ride every call, the first one and those after a compaction.
+                baseline.carryCalls = seen.size;
                 items.unshift(baseline);
             }
             return {

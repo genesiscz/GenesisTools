@@ -146,24 +146,26 @@ export function compress(buffer: Stereo, options: NonNullable<Effects["compresso
 
 export function delay(buffer: Stereo, options: NonNullable<Effects["delay"]>): void {
     const length = Math.max(1, Math.round(options.time * RATE));
-    const lines = [new Float32Array(length), new Float32Array(length)];
+    const leftLine = new Float32Array(length);
+    const rightLine = new Float32Array(length);
     const damp = options.lowpass ? 1 - Math.exp((-2 * Math.PI * options.lowpass) / RATE) : 1;
-    const state = [0, 0];
+    let leftState = 0;
+    let rightState = 0;
 
     for (let n = 0; n < buffer.left.length; n++) {
         const at = n % length;
-        const outs = [lines[0][at], lines[1][at]];
-        const ins = options.pingPong
-            ? [(buffer.left[n] + buffer.right[n]) * 0.5 + outs[1] * options.feedback, outs[0] * options.feedback]
-            : [buffer.left[n] + outs[0] * options.feedback, buffer.right[n] + outs[1] * options.feedback];
-
-        for (let c = 0; c < 2; c++) {
-            state[c] += (ins[c] - state[c]) * damp;
-            lines[c][at] = state[c];
-        }
-
-        buffer.left[n] += outs[0] * options.mix;
-        buffer.right[n] += outs[1] * options.mix;
+        const leftOut = leftLine[at];
+        const rightOut = rightLine[at];
+        const leftIn = options.pingPong
+            ? (buffer.left[n] + buffer.right[n]) * 0.5 + rightOut * options.feedback
+            : buffer.left[n] + leftOut * options.feedback;
+        const rightIn = options.pingPong ? leftOut * options.feedback : buffer.right[n] + rightOut * options.feedback;
+        leftState += (leftIn - leftState) * damp;
+        rightState += (rightIn - rightState) * damp;
+        leftLine[at] = leftState;
+        rightLine[at] = rightState;
+        buffer.left[n] += leftOut * options.mix;
+        buffer.right[n] += rightOut * options.mix;
     }
 }
 

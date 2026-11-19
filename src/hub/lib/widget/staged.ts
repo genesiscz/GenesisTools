@@ -10,7 +10,7 @@ import {
     readDecisions,
     updateDecisions,
 } from "@app/question/lib/decisions/store";
-import { answerInboxDecisions, type InboxAnswerResult } from "@app/question/lib/inbox/answer";
+import { AnswersStoredError, answerInboxDecisions, type InboxAnswerResult } from "@app/question/lib/inbox/answer";
 import { waitingBlock } from "@app/question/lib/inbox/load";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -25,19 +25,23 @@ export interface StagedSendResult {
     /**
      * One entry per session, in the order the sessions first appear in `ids`. `deliversLater`: answers no receiver
      * took still reach the session by themselves (the decisions hook injects queued answers at its next prompt, or a
-     * session-queue entry was saved); false means only a later send delivers them.
+     * session-queue entry was saved); false means only a later send delivers them. `stored` beside `error`: the
+     * answers were saved as answered before the error (their delivery or its receipt failed), so they are no longer
+     * staged and a staged retry has nothing to send; without it the error refused the answers and they stay staged.
      */
     sessions: Array<{
         session: string;
         numbers: number[];
         result?: InboxAnswerResult;
         error?: string;
+        stored?: boolean;
         deliversLater?: boolean;
     }>;
     /** Answers a receiver took. */
     sent: number;
-    /** Answers stored and waiting for the session's next prompt: no receiver took them. */
+    /** Answers stored and waiting for the session's next prompt: no receiver took them, or none was confirmed. */
     queued: number;
+    /** Answers refused before they were stored: they stay staged. */
     failed: number;
 }
 
@@ -144,8 +148,23 @@ export async function sendStagedDecisions({
                 result.queued += rows.length;
             }
         } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+
+            if (error instanceof AnswersStoredError) {
+                logger.warn({ session, numbers, error }, "widget send-staged: stored, delivery not confirmed");
+                result.sessions.push({
+                    session,
+                    numbers,
+                    error: message,
+                    stored: true,
+                    deliversLater: deliversLater(undefined),
+                });
+                result.queued += rows.length;
+                continue;
+            }
+
             logger.warn({ session, numbers, error }, "widget send-staged: failed");
-            result.sessions.push({ session, numbers, error: error instanceof Error ? error.message : String(error) });
+            result.sessions.push({ session, numbers, error: message });
             result.failed += rows.length;
         }
     }

@@ -10,14 +10,18 @@
  * `tools github merge --rebase` and `tools git rebase-cascade` move children; a hand-made rebuild does not.
  *
  * A child counts as handled when the same push also moves its branch onto the new parent head (`git push origin
- * parent child`), or when its branch no longer holds the old parent head. GT_ALLOW_ORPHANED_CHILD_PRS=1 skips the
- * guard for one push. Without `gh`, or when GitHub does not answer, the guard warns and lets the push go.
+ * parent child`), or when its branch holds no commit of the old parent that the new parent lacks. That covers a child
+ * cut from an older parent commit too: it lacks the old head but still carries the commits under it.
+ * GT_ALLOW_ORPHANED_CHILD_PRS=1 skips the guard for one push. Without `gh`, or when GitHub does not answer, the guard warns and lets the push go.
  */
 
 import { env } from "@genesiscz/utils/env";
-import { SafeJSON } from "@genesiscz/utils/json";
+import { isJsonObject, SafeJSON } from "@genesiscz/utils/json";
+import { captureSync } from "@genesiscz/utils/process/capture";
 
 const ZERO = "0000000000000000000000000000000000000000";
+/** `gh pr list` stops at 30 PRs unless asked for more; a branch with this many open children is reported as unchecked. */
+const PR_LIST_LIMIT = 1000;
 
 export interface RefUpdate {
     localSha: string;
@@ -30,13 +34,6 @@ export interface ChildPr {
     title: string;
     headRefName: string;
     headSha: string;
-}
-
-interface GhPrRow {
-    number: number;
-    title: string;
-    headRefName: string;
-    headRefOid: string;
 }
 
 export interface OrphanedChild {
@@ -52,17 +49,65 @@ export function parsePrePushLines(text: string): RefUpdate[] {
         .map(([, localSha, remoteRef, remoteSha]) => ({ localSha, remoteRef, remoteSha }));
 }
 
+/**
+ * The open PRs out of `gh pr list --json number,title,headRefName,headRefOid`, or null when the answer is not such a
+ * list. The lookup is best effort: a broken answer means the children were not checked, never a failed push.
+ */
+export function parsePrList(text: string): ChildPr[] | null {
+    let parsed: unknown;
+    try {
+        parsed = SafeJSON.parse(text, { strict: true });
+    } catch {
+        return null;
+    }
+
+    if (!Array.isArray(parsed)) {
+        return null;
+    }
+
+    const list: ChildPr[] = [];
+    for (const row of parsed) {
+        if (!isJsonObject(row)) {
+            return null;
+        }
+
+        const { number, title, headRefName, headRefOid } = row;
+        if (
+            typeof number !== "number" ||
+            typeof title !== "string" ||
+            typeof headRefName !== "string" ||
+            typeof headRefOid !== "string"
+        ) {
+            return null;
+        }
+
+        list.push({ number, title, headRefName, headSha: headRefOid });
+    }
+
+    return list;
+}
+
 export function branchOf(remoteRef: string): string | null {
     return remoteRef.startsWith("refs/heads/") ? remoteRef.slice("refs/heads/".length) : null;
 }
 
+/** The two history questions the guard asks. Both answer "no" (false, empty) for a commit this clone does not have. */
+export interface CommitGraph {
+    /** Whether commit `ancestor` is in the history of `descendant`. */
+    isAncestor(ancestor: string, descendant: string): boolean;
+    /** The best common ancestors of two commits, as `git merge-base --all` prints them. */
+    mergeBases(a: string, b: string): string[];
+}
+
 /**
- * The children that keep the old commits of a rewritten parent. `isAncestor(a, b)` answers whether commit a is in b.
+ * The children that keep old commits of a rewritten parent. The commits a child shares with the old parent head are
+ * the merge bases of the two and everything under them, so a merge base that the new parent head does not contain is
+ * an old parent commit the child still carries.
  */
 export function findOrphanedChildren(
     updates: RefUpdate[],
     childrenOf: (branch: string) => ChildPr[],
-    isAncestor: (ancestor: string, descendant: string) => boolean
+    graph: CommitGraph
 ): OrphanedChild[] {
     const pushed = new Map<string, RefUpdate>();
     for (const update of updates) {
@@ -78,30 +123,29 @@ export function findOrphanedChildren(
             continue;
         }
 
-        if (isAncestor(update.remoteSha, update.localSha)) {
+        if (graph.isAncestor(update.remoteSha, update.localSha)) {
             continue;
         }
 
         for (const child of childrenOf(parent)) {
             const moved = pushed.get(child.headRefName);
-            if (moved && moved.localSha !== ZERO) {
-                if (!isAncestor(update.remoteSha, moved.localSha) && isAncestor(update.localSha, moved.localSha)) {
-                    continue;
-                }
-            } else if (!isAncestor(update.remoteSha, child.headSha)) {
-                continue;
+            const head = moved && moved.localSha !== ZERO ? moved.localSha : child.headSha;
+            const carriesOld = graph
+                .mergeBases(update.remoteSha, head)
+                .some((base) => !graph.isAncestor(base, update.localSha));
+            if (carriesOld) {
+                orphaned.push({ parent, child });
             }
-
-            orphaned.push({ parent, child });
         }
     }
 
     return orphaned;
 }
 
-function run(args: string[]): { ok: boolean; out: string } {
-    const proc = Bun.spawnSync(args, { stdout: "pipe", stderr: "pipe" });
-    return { ok: proc.exitCode === 0, out: proc.stdout.toString() };
+function run(args: string[]): { ok: boolean; out: string; err: string } {
+    const [command, ...rest] = args;
+    const result = captureSync(command, rest);
+    return { ok: result.status === 0, out: result.stdout, err: result.stderr.trim() };
 }
 
 function hasCommit(sha: string): boolean {
@@ -142,34 +186,58 @@ async function main(): Promise<number> {
             "open",
             "--base",
             parent,
+            "--limit",
+            String(PR_LIST_LIMIT),
             "--json",
             "number,title,headRefName,headRefOid",
         ]);
         if (!listed.ok) {
             process.stderr.write(
-                `⚠ stack guard: could not list the PRs based on ${parent}; children were not checked\n`
+                `⚠ stack guard: could not list the PRs based on ${parent}; children were not checked${listed.err ? ` (${listed.err})` : ""}\n`
             );
             continue;
         }
 
-        const rows: GhPrRow[] = SafeJSON.parse(listed.out, { strict: true });
-        const list = rows.map((r) => ({
-            number: r.number,
-            title: r.title,
-            headRefName: r.headRefName,
-            headSha: r.headRefOid,
-        }));
+        const list = parsePrList(listed.out);
+        if (!list) {
+            process.stderr.write(
+                `⚠ stack guard: gh did not answer with a PR list for ${parent}; children were not checked\n`
+            );
+            continue;
+        }
+
+        if (list.length >= PR_LIST_LIMIT) {
+            process.stderr.write(
+                `⚠ stack guard: ${parent} has ${PR_LIST_LIMIT} or more open PRs; only the first ${PR_LIST_LIMIT} were checked\n`
+            );
+        }
+
         for (const child of list) {
             if (!hasCommit(child.headSha)) {
                 run(["git", "fetch", "--quiet", remote, child.headSha]);
+            }
+
+            if (!hasCommit(child.headSha)) {
+                process.stderr.write(
+                    `⚠ stack guard: could not fetch the head of #${child.number} (${child.headRefName}); it was not checked\n`
+                );
             }
         }
         children.set(parent, list);
     }
 
-    const isAncestor = (a: string, b: string): boolean =>
-        hasCommit(a) && hasCommit(b) && run(["git", "merge-base", "--is-ancestor", a, b]).ok;
-    const orphaned = findOrphanedChildren(updates, (b) => children.get(b) ?? [], isAncestor);
+    const graph: CommitGraph = {
+        isAncestor: (a, b) => hasCommit(a) && hasCommit(b) && run(["git", "merge-base", "--is-ancestor", a, b]).ok,
+        mergeBases: (a, b) => {
+            if (!hasCommit(a) || !hasCommit(b)) {
+                return [];
+            }
+
+            const bases = run(["git", "merge-base", "--all", a, b]);
+            return bases.ok ? bases.out.split("\n").filter(Boolean) : [];
+        },
+    };
+    const orphaned = findOrphanedChildren(updates, (b) => children.get(b) ?? [], graph);
     if (orphaned.length === 0) {
         return 0;
     }
@@ -179,7 +247,7 @@ async function main(): Promise<number> {
         "  GitHub would show each of them with every old parent commit as its own (2026-11-19: 133 commits instead of 8).",
         ...orphaned.map(
             ({ parent, child }) =>
-                `  - #${child.number} (${child.title}) on ${parent}: its branch ${child.headRefName} holds the old head`
+                `  - #${child.number} (${child.title}) on ${parent}: its branch ${child.headRefName} still holds old parent commits`
         ),
         "  Rebuild each child on the new parent head and push it in the same command:",
         "    git push --force-with-lease origin <parent> <child>   (or: tools git rebase-cascade <parent>)",

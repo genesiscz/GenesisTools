@@ -36,13 +36,18 @@ export function claudeCall(row: Row): SessionCall | null {
     };
 }
 
-export function decodeClaudeRow(line: string, path: string): Row | null {
-    const row = parseRow(line, path);
-    if (row?.type === "assistant" && typeof row.message === "string") {
-        row.message = parseRow(row.message, path);
+/** An assistant row can hold its message as a JSON string; the loop, tail and mid-work readers all decode it here. */
+export function withDecodedMessage(row: Row, path: string): Row {
+    if (row.type === "assistant" && typeof row.message === "string") {
+        return { ...row, message: parseRow(row.message, path) };
     }
 
     return row;
+}
+
+export function decodeClaudeRow(line: string, path: string): Row | null {
+    const row = parseRow(line, path);
+    return row && withDecodedMessage(row, path);
 }
 
 export function isCompactBoundary(row: Row): boolean {
@@ -61,7 +66,7 @@ export function lastClaudeContext(records: readonly Row[]): number | null {
             return typeof post === "number" && post >= 0 ? post : null;
         }
 
-        const call = claudeCall(row);
+        const call = claudeCall(withDecodedMessage(row, "subagent transcript tail"));
         if (call) {
             return contextAfter(call);
         }

@@ -404,8 +404,9 @@ extension WidgetModel {
 
     /// The staged items as the snapshot shows them, and the picks staged here that it now shows (the engine's
     /// confirmation: shown, overtaken by a newer row, or expired). `listed`: every decision the snapshot lists, to say
-    /// when a revision cleared a staged pick.
-    func reconcileStaged(_ items: [WidgetInboxItem], listed: [WidgetInboxItem] = []) {
+    /// when a revision cleared a staged pick. `complete` false: the snapshot's decision read failed, so a decision
+    /// it does not list may still be staged, and that absence retires no send.
+    func reconcileStaged(_ items: [WidgetInboxItem], listed: [WidgetInboxItem] = [], complete: Bool = true) {
         let staged = items.filter(\.isStaged)
         noteClearedPicks(before: stagedRows, after: staged, listed: listed)
         if staged != stagedRows { stagedRows = staged }
@@ -420,7 +421,7 @@ extension WidgetModel {
         }
         pendingStageItems = pendingStageItems.filter { decisions.pending[$0.key] != nil }
         stageAgain = stageAgain.filter { decisions.pending[$0.key] != nil }
-        dropAgreedSends(listed: Set(staged.map(\.sourceId)))
+        dropAgreedSends(staged: staged, complete: complete)
         closeEmptyLeaveQuestion()
     }
 
@@ -430,13 +431,21 @@ extension WidgetModel {
     nonisolated static let sentAgreeSeconds: TimeInterval = 90
 
     /// A sent decision shows as sent until a snapshot no longer lists it as staged, then leaves `sentDecisions`; one
-    /// still listed `sentAgreeSeconds` after the hub answered leaves it too, with a log line. A send's reason leaves
-    /// with the staged row it was about.
-    private func dropAgreedSends(listed: Set<String>) {
+    /// still listed `sentAgreeSeconds` after the hub answered leaves it too, with a log line, and so does one listed
+    /// with a stage made after its send began (another inbox staged it anew: that stage is shown, not the old send).
+    /// An incomplete snapshot proves no absence, so only the age retires a send then. A send's reason leaves with the
+    /// staged row it was about, and when the row shows another stage than the one whose send failed.
+    private func dropAgreedSends(staged: [WidgetInboxItem], complete: Bool) {
         guard !sentDecisions.isEmpty || !unsentReasons.isEmpty else { return }
         let now = decisions.now()
+        let rows = Dictionary(staged.map { ($0.sourceId, $0) }, uniquingKeysWith: { first, _ in first })
         let kept = sentDecisions.filter { id, sent in
-            guard listed.contains(id) else { return false }
+            guard let row = rows[id] else { return !complete && now - sent.at <= Self.sentAgreeSeconds }
+            if let stagedAt = row.draftedAt, let started = sent.startedAt, stagedAt / 1000 > started {
+                PerfLog.mark("widget.staged sent id=\(id) staged again \(Int(stagedAt / 1000 - started))s after its "
+                    + "send began; showing the new stage")
+                return false
+            }
             guard now - sent.at <= Self.sentAgreeSeconds else {
                 PerfLog.mark("widget.staged sent id=\(id) still listed as staged \(Int(now - sent.at))s after the hub "
                     + "answered \(sent.delivered ? "delivered" : "kept for the session"); showing the snapshot again")
@@ -445,14 +454,18 @@ extension WidgetModel {
             return true
         }
         if kept != sentDecisions { sentDecisions = kept }
-        let reasons = unsentReasons.filter { listed.contains($0.key) || decisions.pending[$0.key] != nil }
+        let reasons = unsentReasons.filter { id, reason in
+            guard let row = rows[id] else { return !complete || decisions.pending[id] != nil }
+            return reason.isAbout(option: stagedOption(id, stored: row.draftOption),
+                                  note: decisions.note(id, stored: row.draft))
+        }
         if reasons != unsentReasons { unsentReasons = reasons }
     }
 
     /// Whether the send that runs for `id`, or the last one the hub answered, took its newest stage. A pick or note
     /// staged after the send took the old one is staged again.
     func sendTookNewest(_ id: String) -> Bool {
-        let taken = sendingDecisionIDs.contains(id) ? sendingStageVersions[id] : sentDecisions[id]?.version
+        let taken = sendingDecisionIDs.contains(id) ? sendingStages[id]?.version : sentDecisions[id]?.version
         return decisions.version(id).map { $0 == taken } ?? true
     }
 
@@ -474,43 +487,51 @@ extension WidgetModel {
             return sent.delivered ? .sent(at: sent.at)
                 : .waiting(at: sent.at, reason: sent.reason ?? WidgetDecisionSendOutcome.sentence(for: nil))
         }
-        return .staged(since: stagedSince(id, stored: draftedAt), unsent: unsentReasons[id])
+        return .staged(since: stagedSince(id, stored: draftedAt), unsent: unsentReasons[id]?.text)
     }
 
     /// When the pick or note shown for `id` was staged, in seconds since 1970: the stage made here that no snapshot
-    /// confirmed yet, else the snapshot's (`draftedAt`, epoch ms). Nil when neither says (an older hub).
+    /// confirmed yet, else the snapshot's (`draftedAt`, epoch ms). Nil when neither says (an older hub). A note-only
+    /// stage counts too (its pick is `""`); a pending clear (no pick, no note) falls back to the snapshot's.
     func stagedSince(_ id: String, stored: Double?) -> TimeInterval? {
-        if let pending = decisions.pending[id], pending.option != "" { return pending.askedAt }
+        if let pending = decisions.pending[id], pending.option != "" || pending.note?.isEmpty == false {
+            return pending.askedAt
+        }
         return stored.map { $0 / 1000 }
     }
 
     /// What a staged send did to each of its decisions. One delivered, or kept for its session's next prompt, shows
     /// as sent until a snapshot agrees, and its stage made here goes: the stage outlived the send by 14 s on
     /// 2026-11-17, and the leave question asked about a decision already delivered, then counted "0 decisions". One
-    /// a session refused stays staged with the hub's reason on its row.
-    private func settleStagedSend(_ items: [WidgetInboxItem], outcome: WidgetDecisionSendOutcome) {
+    /// a session refused stays staged with the hub's reason on its row, while that stage is still the current one.
+    /// `taken`: the stage the request took for each decision (its version, pick, note and session), captured when the
+    /// request went out, so a session dropped from the index meanwhile, or a pick staged during the send, changes
+    /// nothing about what this send did.
+    private func settleStagedSend(_ items: [WidgetInboxItem], outcome: WidgetDecisionSendOutcome,
+                                  taken: [String: WidgetSendingStage]) {
         let now = decisions.now()
         var sent = sentDecisions
         var reasons = unsentReasons
         for item in items {
             let id = item.sourceId
-            let result = outcome.result(forSession: session(forKey: item.key)?.target.sessionId ?? "")
+            guard let stage = taken[id] else { continue }
+            let result = outcome.result(forSession: stage.sessionId, number: item.number)
             switch result {
             case .delivered, .waiting:
-                let version = sendingStageVersions[id]
                 var reason: String?
                 if case .waiting(let why) = result { reason = why }
                 sent[id] = WidgetSentDecision(at: now, delivered: result == .delivered, reason: reason,
-                                              version: version, option: stagedOption(id, stored: item.draftOption),
-                                              note: decisions.note(id, stored: item.draft))
-                if let version { decisions.forget(id, version: version) }
+                                              version: stage.version, option: stage.option, note: stage.note,
+                                              startedAt: stage.startedAt)
+                if let version = stage.version { decisions.forget(id, version: version) }
                 // A pick staged during the send is its own stage: it keeps its item and its Try again.
                 if decisions.version(id) == nil {
                     pendingStageItems[id] = nil
                     stageAgain[id] = nil
                 }
             case .failed(let why):
-                reasons[id] = why
+                // A pick or note staged during the send is not the stage the hub refused.
+                if decisions.version(id) == stage.version { reasons[id] = WidgetUnsentReason(why, stage: stage) }
             case .skipped:
                 PerfLog.mark("widget.decision-send staged id=\(id): the hub sent nothing (no longer staged there)")
             }
@@ -518,6 +539,34 @@ extension WidgetModel {
         if sent != sentDecisions { sentDecisions = sent }
         if reasons != unsentReasons { unsentReasons = reasons }
         closeEmptyLeaveQuestion()
+    }
+
+    /// The stage a send takes of `item`: the newest version staged here, the pick and note the log holds for it (the
+    /// stage made here, else the freshest snapshot row), its session and when the request went out.
+    private func sendingStage(_ item: WidgetInboxItem, sessionId: String) -> WidgetSendingStage {
+        let id = item.sourceId
+        let row = stagedRows.first { $0.sourceId == id } ?? item
+        return WidgetSendingStage(version: decisions.version(id), option: stagedOption(id, stored: row.draftOption),
+                                  note: decisions.note(id, stored: row.draft), sessionId: sessionId,
+                                  startedAt: decisions.now())
+    }
+
+    /// Send again of answers a staged send left waiting for their session: one the retry delivered shows as sent from
+    /// now, so its row stops reading "Waiting for its session" while the note says delivered. One the retry did not
+    /// deliver keeps its waiting receipt; the note says why the retry failed.
+    private func settleResend(_ items: [WidgetInboxItem], outcome: WidgetDecisionSendOutcome,
+                              sessionIds: [String: String]) {
+        var sent = sentDecisions
+        for item in items {
+            guard var receipt = sent[item.sourceId], !receipt.delivered,
+                  outcome.result(forSession: sessionIds[item.sourceId] ?? "", number: item.number) == .delivered
+            else { continue }
+            receipt.delivered = true
+            receipt.at = decisions.now()
+            receipt.reason = nil
+            sent[item.sourceId] = receipt
+        }
+        if sent != sentDecisions { sentDecisions = sent }
     }
 
     /// The leave question whose list emptied while it was open (a send took its decisions, or a snapshot no longer
@@ -642,8 +691,12 @@ extension WidgetModel {
         let closeRevision = sendCloseRevision
         let draftAtSend = draft
         let ids = Set(items.map(\.sourceId))
+        // Each decision's session, taken now: the request goes to these sessions, and its answer is read by them, even
+        // if a snapshot drops one from the index while the request runs.
+        var sessionIds: [String: String] = [:]
+        for item in items { sessionIds[item.sourceId] = session(forKey: item.key)?.target.sessionId ?? "" }
         sendingDecisionIDs.formUnion(ids)
-        for id in ids { sendingStageVersions[id] = decisions.version(id) }
+        for item in items { sendingStages[item.sourceId] = sendingStage(item, sessionId: sessionIds[item.sourceId] ?? "") }
         if staged {
             if sentDecisions.keys.contains(where: ids.contains) {
                 sentDecisions = sentDecisions.filter { !ids.contains($0.key) }
@@ -671,19 +724,28 @@ extension WidgetModel {
             guard let self else { return }
             defer {
                 self.sendingDecisionIDs.subtract(ids)
-                for id in ids { self.sendingStageVersions[id] = nil }
+                for id in ids { self.sendingStages[id] = nil }
             }
+            // The stage each decision has as the request goes out: the hub sends what the log holds now, which
+            // includes a pick staged while this send waited for the writes before it.
+            var taken: [String: WidgetSendingStage] = [:]
+            for item in items {
+                taken[item.sourceId] = self.sendingStage(item, sessionId: sessionIds[item.sourceId] ?? "")
+            }
+            self.sendingStages.merge(taken) { _, newer in newer }
             do {
                 let result = try await self.call(DecisionAnswering.sendRequest(action, ids: items.map(\.sourceId),
                                                                                targets: targets))
                 let outcome = WidgetDecisionSendOutcome(result, titles: titles)
                 let text = outcome.notice(items: items, staged: staged)
                 if let details = outcome.details { PerfLog.mark("widget.decision-send \(action.rawValue) not delivered: \(details)") }
-                let waiting = items.filter { item in
-                    self.session(forKey: item.key).map { outcome.queuedSessions.contains($0.target.sessionId) } ?? false
-                }
+                let waiting = items.filter { outcome.queuedSessions.contains(sessionIds[$0.sourceId] ?? "") }
                 PerfLog.mark("widget.decision-send \(action.rawValue) result: \(text)")
-                if staged { self.settleStagedSend(items, outcome: outcome) }
+                if staged {
+                    self.settleStagedSend(items, outcome: outcome, taken: taken)
+                } else {
+                    self.settleResend(items, outcome: outcome, sessionIds: sessionIds)
+                }
                 let tone: WidgetNoticeTone = outcome.delivered ? .success : .warning
                 if fromPeek {
                     self.applyAlertPopup(self.alertPopup.sendEnded(
@@ -719,18 +781,19 @@ extension WidgetModel {
             } catch {
                 if let sendingNote, self.notice == sendingNote { self.notice = nil }
                 PerfLog.mark("widget.decision-send \(action.rawValue) failed: \(error.localizedDescription)")
+                let words = WidgetSendFailureWords(error, staged: staged)
                 if staged {
-                    for item in items { self.unsentReasons[item.sourceId] = "the hub refused it." }
+                    // Only on a stage that is still the current one: a pick staged during the send was never sent.
+                    for (id, stage) in taken where self.decisions.version(id) == stage.version {
+                        self.unsentReasons[id] = WidgetUnsentReason(words.row, stage: stage)
+                    }
                 }
                 self.sendCloseRevision += 1
                 if fromPeek {
-                    self.applyAlertPopup(self.alertPopup.sendEnded(WidgetPeekOutcome(text: staged
-                        ? "Not sent: the hub refused it. It stays staged." : "Not sent again: the hub refused it.",
+                    self.applyAlertPopup(self.alertPopup.sendEnded(WidgetPeekOutcome(text: words.peek,
                         tone: .warning, detail: error.localizedDescription), sent: ids, delivered: false))
                 }
-                fail(staged ? "The decisions could not be sent. They stay staged, so you can send them again."
-                         : "The answers could not be sent again. They still wait for the session's next prompt.",
-                     detail: error.localizedDescription)
+                fail(words.notice, detail: error.localizedDescription)
                 if staged { keptStaged.subtract(items.map(\.sourceId)) }
                 flashUnsent(items)
             }
@@ -886,6 +949,7 @@ public extension WidgetModel {
 /// A staged decision the hub answered a send for, until a snapshot no longer lists it as staged: when the hub
 /// answered, whether a live receiver took it (`delivered`) or the hub kept it for the session's next prompt (`reason`),
 /// the version of the stage the send took, and the pick and note it sent, which its rows draw meanwhile.
+/// `startedAt`: when the request went out; a snapshot row staged after it is a newer stage than this send.
 public struct WidgetSentDecision: Equatable, Sendable {
     public var at: TimeInterval
     public var delivered: Bool
@@ -893,6 +957,67 @@ public struct WidgetSentDecision: Equatable, Sendable {
     var version: UUID?
     public var option: String?
     public var note: String?
+    var startedAt: TimeInterval?
+}
+
+/// The stage a send took of one decision, captured when its request went out: the version staged here (nil for a
+/// stage only the snapshot holds), the pick and note the hub sends, the session it goes to, and the time.
+struct WidgetSendingStage: Equatable {
+    var version: UUID?
+    var option: String?
+    var note: String?
+    var sessionId: String
+    var startedAt: TimeInterval
+}
+
+/// Why the last send of a staged decision did not take it, with the pick and note that send took: the reason belongs
+/// to that stage only, so a decision staged anew (here or in another inbox) does not show it.
+public struct WidgetUnsentReason: Equatable, Sendable {
+    public var text: String
+    var option: String?
+    var note: String?
+
+    init(_ text: String, stage: WidgetSendingStage) {
+        self.text = text
+        option = stage.option
+        note = stage.note
+    }
+
+    /// Whether the decision's shown pick and note are still the stage whose send failed.
+    func isAbout(option shown: String?, note shownNote: String?) -> Bool {
+        Self.normalized(option) == Self.normalized(shown) && Self.normalized(note) == Self.normalized(shownNote)
+    }
+
+    private static func normalized(_ text: String?) -> String {
+        text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+}
+
+/// The words of a staged send or a Send again that got no usable answer. Only an explicit refusal from the hub
+/// (`ToolsBridgeError.refused`) says "refused"; a timeout or an unreadable answer cannot tell whether the hub sent
+/// the decisions, so it says the hub did not confirm the send.
+struct WidgetSendFailureWords: Equatable {
+    let row: String
+    let peek: String
+    let notice: String
+
+    init(_ error: Error, staged: Bool) {
+        var refused = false
+        if case ToolsBridgeError.refused = error { refused = true }
+        if refused {
+            row = "the hub refused it."
+            peek = staged ? "Not sent: the hub refused it. It stays staged." : "Not sent again: the hub refused it."
+            notice = staged ? "The decisions could not be sent. They stay staged, so you can send them again."
+                : "The answers could not be sent again. They still wait for the session's next prompt."
+        } else {
+            row = "the hub did not confirm the send."
+            peek = staged ? "Not confirmed: the hub did not answer. Check the decision before sending it again."
+                : "Not confirmed: the hub did not answer the Send again."
+            notice = staged ? "The hub did not confirm the send. The decisions stay staged here; check them before "
+                + "sending again, since the hub may have sent them."
+                : "The hub did not confirm the Send again. The answers may still wait for the session's next prompt."
+        }
+    }
 }
 
 /// A button beside the widget's notice line.

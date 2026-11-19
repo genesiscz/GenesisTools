@@ -7,7 +7,7 @@ import { Executor } from "@genesiscz/utils/cli/executor";
 import { env } from "@genesiscz/utils/env";
 import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { optIn } from "@genesiscz/utils/test/skip";
-import { RATE, stereo } from "./dsp";
+import { Curve, RATE, stereo } from "./dsp";
 import { duck } from "./effects";
 import { parseLoudness, probeMedia } from "./measure";
 import { encodeMidi } from "./midi";
@@ -272,17 +272,49 @@ describe("sources, synth and stems", () => {
         expect(refused({ effects: { reverb: 0.3 } })).toBe(false);
         expect(refused({ lanes: [{ target: "cutoff", points: [[0, 1]] }] })).toBe(false);
         expect(refused({ lanes: [{ target: "level", points: [[0, -6]] }] })).toBe(true);
+        expect(
+            refused({
+                lanes: [
+                    {
+                        target: "level",
+                        points: [
+                            [1, -6],
+                            [0, 0],
+                        ],
+                    },
+                ],
+            })
+        ).toBe(false);
     });
 
-    test("a synth render repeats sample for sample and is silent before its first note", () => {
+    test("a lane's area runs on score time, so a free LFO knows its phase at any onset", () => {
+        expect(new Curve([[0, 2]]).integral(0.25)).toBeCloseTo(0.5, 9);
+        expect(
+            new Curve([
+                [1, 0],
+                [3, 4],
+            ]).integral(5)
+        ).toBeCloseTo(12, 9);
+        expect(
+            new Curve(
+                [
+                    [1, 0],
+                    [3, 4],
+                ],
+                true
+            ).integral(5)
+        ).toBeCloseTo(8, 9);
+    });
+
+    test("a synth render repeats sample for sample and is silent before its first note", async () => {
         const options = {
             patch: resolvePatch("reese"),
             notes: [{ at: 0.1, duration: 0.2, midi: 41, velocity: 100 }],
             samples: RATE / 2,
             seed: 7,
         };
-        const first = renderSynth(options);
-        const second = renderSynth(options);
+        const first = await renderSynth(options);
+        const second = await renderSynth(options);
         expect(first.left).toEqual(second.left);
         expect(first.left.subarray(0, RATE / 10 - 1).every((sample) => sample === 0)).toBe(true);
         expect(first.left.some((sample) => Math.abs(sample) > 0.05)).toBe(true);
@@ -358,6 +390,15 @@ describe("sources, synth and stems", () => {
         const untouched = power(balanced);
         expect(guardLows(balanced, 6)).toBeCloseTo(0, 3);
         expect(power(balanced)).toBeCloseTo(untouched, 3);
+
+        // The same sub in opposite phase on the two sides cancels in a mono sum, and the guard still hears it.
+        const opposite = tones(0.5, 0.02);
+
+        for (let n = 0; n < opposite.right.length; n++) {
+            opposite.right[n] = opposite.right[n] - 2 * 0.5 * Math.sin((2 * Math.PI * 50 * n) / RATE);
+        }
+
+        expect(guardLows(opposite, 6)).toBeGreaterThan(6);
     });
 
     test("the master stops at the loss cap and ships quieter, and without the cap it refuses", async () => {

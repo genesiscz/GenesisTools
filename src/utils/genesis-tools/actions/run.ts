@@ -382,13 +382,15 @@ export async function runAreaAction(
         logger.debug({ id, skipped }, "genesis-tools actions: no way could run");
 
         if (action.failureNotice && deps.postNotice && !deadline.signal.aborted && !deps.facts.isTest()) {
-            const notice = action.failureNotice(parsedArgs.data, outcome);
-            if (notice) {
-                try {
+            // The notice is best effort: neither its text nor its delivery may change the outcome.
+            try {
+                const notice = action.failureNotice(parsedArgs.data, outcome);
+
+                if (notice) {
                     await untilAborted(deps.postNotice(notice), deadline.signal);
-                } catch (error) {
-                    logger.warn({ id, error }, "genesis-tools actions: could not post the failure notice");
                 }
+            } catch (error) {
+                logger.warn({ id, error }, "genesis-tools actions: could not post the failure notice");
             }
         }
 

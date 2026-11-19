@@ -54,7 +54,8 @@ summary loses. So: **the block to read after a compaction**.
 ## The sections of a spec, in this order
 
 `assets/spec.example.md` shows all of them filled in. The file goes to
-`.claude/plans/YYYY-MM-DD-<FeatureNameCamelCase>.md` (in a linked worktree: the main checkout's folder).
+`.claude/plans/YYYY-MM-DD-<FeatureNameCamelCase>.md` (in a linked worktree: the main checkout's folder). In a linked worktree, run the checker with `--root <the
+worktree>`: relative paths are then checked against the tree the executor changes, not the main checkout.
 
 1. **The head.** `**Status:**` (date, state), `**Goal:**` (one sentence), `**Non-goals:**`, `**Executor:**`.
 2. **`## Read this first after a compaction`.** The owner's standing orders, word for word with their date ("no
@@ -160,6 +161,6 @@ expensive, and the spec is the test of itself: an executor that needs the planne
 ## When you are the executor of a spec
 
 Read "Read this first after a compaction", "Sources" and "Rules for the executor", then your package. Claim the
-handoff. Per package: build, run the gate, tick, commit, write one line into Progress (package, state, commit,
+handoff. Per package: build, run the gate, commit, tick (the tick names the commit), write one line into Progress (package, state, commit,
 the check with where it ran). Stop for the owner only on an open decision that blocks every package you can
 start.

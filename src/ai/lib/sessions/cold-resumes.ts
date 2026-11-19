@@ -3,6 +3,7 @@ import type { LoopResumes } from "@genesiscz/utils/agent-sessions/analysis-types
 import { byId } from "@genesiscz/utils/ai/catalog/static";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { priceUsage } from "@genesiscz/utils/ai/usage/spend/priced-usage";
+import { median } from "@genesiscz/utils/math";
 import { formatTable } from "@genesiscz/utils/table";
 
 interface ColdSample {
@@ -73,61 +74,78 @@ export function addColdEvidence(
     }
 }
 
-function median(values: number[]): number | null {
-    if (!values.length) {
-        return null;
-    }
-    return values.sort((a, b) => a - b)[Math.floor(values.length / 2)];
+interface ColdBand {
+    from: number;
+    to: number | null;
+    resumes: number;
+    medianCalls: number | null;
+    medianRewriteUsd: number | null;
+    medianFollowUsd: number | null;
+    unpricedFollowUps: number;
 }
 
-export function renderCold(
+type FreshComparison =
+    | { priced: false; reason: string }
+    | {
+          priced: true;
+          priceModel: string;
+          freshStart: number;
+          calls: number;
+          shares: number[];
+          rows: Array<{ context: number; savedUsd: number[] }>;
+      };
+
+/** The cold comparison as data: `--json` prints it and `renderCold` draws it. */
+export interface ColdComparison {
+    idleSeconds: number;
+    edges: Array<{ idleSeconds: number; hit: number; other: number }>;
+    resumes: number;
+    partialOrMiss: number;
+    bands: ColdBand[];
+    fresh: FreshComparison | null;
+}
+
+export function coldComparison(
     evidence: ColdEvidence,
     opts: { priceModel: string; freshStart: number; idleSeconds: number }
-): string {
+): ColdComparison {
     const { samples } = evidence;
-    const lines = [
-        "Subagent cache edge (15-second intervals)",
-        formatTable(
-            [...evidence.edges]
-                .sort(([a], [b]) => a - b)
-                .map(([step, cell]) => [String(step), String(cell.hit), String(cell.other)]),
-            ["IDLE (s)", "HIT", "PARTIAL OR MISS"]
-        ),
-        `Cold resumes after ${opts.idleSeconds}s: ${samples.length}, including ${samples.filter((p) => !p.hit).length} partial hits or misses.`,
-    ];
+    const comparison: ColdComparison = {
+        idleSeconds: opts.idleSeconds,
+        edges: [...evidence.edges]
+            .sort(([a], [b]) => a - b)
+            .map(([step, cell]) => ({ idleSeconds: step, hit: cell.hit, other: cell.other })),
+        resumes: samples.length,
+        partialOrMiss: samples.filter((p) => !p.hit).length,
+        bands: [],
+        fresh: null,
+    };
     if (!samples.length) {
-        return lines.join("\n");
+        return comparison;
     }
+
     const bands = [0, 50_000, 100_000, 150_000, 200_000, 300_000, 500_000];
-    const rows = bands.flatMap((from, i) => {
-        const to = bands[i + 1] ?? Infinity;
-        const band = samples.filter((s) => s.expected >= from && s.expected < to);
+    comparison.bands = bands.flatMap((from, i) => {
+        const to = bands[i + 1] ?? null;
+        const band = samples.filter((s) => s.expected >= from && (to === null || s.expected < to));
         if (!band.length) {
             return [];
         }
+
         const rewrite = band.flatMap((s) => s.rewriteUsd ?? []);
         const follow = band.flatMap((s) => s.followUsd ?? []);
         return [
-            [
-                `${from}–${to === Infinity ? "above" : to}`,
-                String(band.length),
-                String(median(band.map((s) => s.calls))),
-                median(rewrite)?.toFixed(2) ?? "unpriced",
-                median(follow)?.toFixed(2) ?? "unpriced",
-                String(band.length - follow.length),
-            ],
+            {
+                from,
+                to,
+                resumes: band.length,
+                medianCalls: median(band.map((s) => s.calls)) ?? null,
+                medianRewriteUsd: median(rewrite) ?? null,
+                medianFollowUsd: median(follow) ?? null,
+                unpricedFollowUps: band.length - follow.length,
+            },
         ];
     });
-    lines.push(
-        formatTable(rows, [
-            "CONTEXT",
-            "RESUMES",
-            "MEDIAN CALLS",
-            "MEDIAN REWRITE ($)",
-            "MEDIAN FOLLOW-UP ($)",
-            "UNPRICED FOLLOW-UPS",
-        ])
-    );
     const model = byId(opts.priceModel, "anthropic")?.id ?? opts.priceModel;
     const { price } = priceUsage({
         source: "claude",
@@ -135,20 +153,68 @@ export function renderCold(
         tokens: { input: opts.freshStart, output: 0, cacheWrite: 0, cacheRead: 0 },
     });
     if (!price) {
-        lines.push(`Fresh-agent comparison unavailable: no price for ${opts.priceModel}.`);
-        return lines.join("\n");
+        comparison.fresh = { priced: false, reason: `no price for ${opts.priceModel}` };
+        return comparison;
     }
+
     const n = median(samples.map((s) => s.calls)) ?? 1;
     const perToken = (price.cacheWrite + price.cacheRead * (n - 1)) / 1_000_000;
     const shares = [0, 0.25, 0.5, 0.75, 1];
-    lines.push(
-        `Estimated dollars saved by starting fresh (${opts.priceModel}, ${opts.freshStart} initial tokens, ${n} calls). Columns give the share of old context the fresh agent needs.`,
+    comparison.fresh = {
+        priced: true,
+        priceModel: opts.priceModel,
+        freshStart: opts.freshStart,
+        calls: n,
+        shares,
+        rows: [100_000, 150_000, 200_000, 300_000, 400_000, 600_000].map((context) => ({
+            context,
+            savedUsd: shares.map((s) => (context - opts.freshStart - s * context) * perToken),
+        })),
+    };
+    return comparison;
+}
+
+export function renderCold(comparison: ColdComparison): string {
+    const lines = [
+        "Subagent cache edge (15-second intervals)",
         formatTable(
-            [100_000, 150_000, 200_000, 300_000, 400_000, 600_000].map((c) => [
-                String(c),
-                ...shares.map((s) => ((c - opts.freshStart - s * c) * perToken).toFixed(2)),
+            comparison.edges.map((edge) => [String(edge.idleSeconds), String(edge.hit), String(edge.other)]),
+            ["IDLE (s)", "HIT", "PARTIAL OR MISS"]
+        ),
+        `Cold resumes after ${comparison.idleSeconds}s: ${comparison.resumes}, including ${comparison.partialOrMiss} partial hits or misses.`,
+    ];
+    if (!comparison.resumes) {
+        return lines.join("\n");
+    }
+
+    lines.push(
+        formatTable(
+            comparison.bands.map((band) => [
+                `${band.from}–${band.to ?? "above"}`,
+                String(band.resumes),
+                String(band.medianCalls),
+                band.medianRewriteUsd?.toFixed(2) ?? "unpriced",
+                band.medianFollowUsd?.toFixed(2) ?? "unpriced",
+                String(band.unpricedFollowUps),
             ]),
-            ["CONTEXT", ...shares.map((s) => `${100 * s}%`)]
+            ["CONTEXT", "RESUMES", "MEDIAN CALLS", "MEDIAN REWRITE ($)", "MEDIAN FOLLOW-UP ($)", "UNPRICED FOLLOW-UPS"]
+        )
+    );
+    const { fresh } = comparison;
+    if (!fresh) {
+        return lines.join("\n");
+    }
+
+    if (!fresh.priced) {
+        lines.push(`Fresh-agent comparison unavailable: ${fresh.reason}.`);
+        return lines.join("\n");
+    }
+
+    lines.push(
+        `Estimated dollars saved by starting fresh (${fresh.priceModel}, ${fresh.freshStart} initial tokens, ${fresh.calls} calls). Columns give the share of old context the fresh agent needs.`,
+        formatTable(
+            fresh.rows.map((row) => [String(row.context), ...row.savedUsd.map((usd) => usd.toFixed(2))]),
+            ["CONTEXT", ...fresh.shares.map((s) => `${100 * s}%`)]
         )
     );
     return lines.join("\n");

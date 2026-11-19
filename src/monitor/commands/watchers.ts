@@ -186,7 +186,7 @@ function buildInput(target: string, opts: AddOptions): WatcherInput {
         enabled: !opts.paused,
         notify: opts.notify,
         targetIds: opts.targets,
-        mutedUntil: opts.mute ? muteUntilFrom(opts.mute) : undefined,
+        mutedUntil: opts.mute !== undefined ? muteUntilFrom(opts.mute) : undefined,
     });
 }
 
@@ -374,7 +374,7 @@ export function registerWatcherCommands(program: Command): void {
                     config: Object.keys(config).length > 0 ? { ...current.config, ...config } : undefined,
                     notify: opts.notify,
                     targetIds: opts.targets,
-                    mutedUntil: opts.mute ? muteUntilFrom(opts.mute) : undefined,
+                    mutedUntil: opts.mute !== undefined ? muteUntilFrom(opts.mute) : undefined,
                 },
                 current.kind
             );

@@ -813,6 +813,10 @@ describe("NativeSessionReader.midWork", () => {
         expect(midWork("claude", [claudeUser(0), claudeAssistant(1, [{ type: "tool_use", name: "Bash" }], null)])).toBe(
             true
         );
+        const streaming = claudeAssistant(1, [{ type: "text", text: "partial" }], null);
+        expect(
+            midWork("claude", [claudeUser(0), { ...streaming, message: SafeJSON.stringify(streaming.message) }])
+        ).toBe(true);
         expect(midWork("claude", [claudeUser(0), claudeAssistant(1, [{ type: "text", text: "ok" }], "end_turn")])).toBe(
             false
         );

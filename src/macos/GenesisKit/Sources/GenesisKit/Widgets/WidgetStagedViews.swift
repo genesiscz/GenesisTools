@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// A decision's staged pick or note, as one line: "a) Back both up" or the note.
+/// A decision's staged pick or note, as one line: "a) Back both up" or the note. `option` and `note` are the ones the
+/// row shows (`WidgetModel.shownStagedLine`): a send's pick goes with that send's note, never the snapshot's.
 enum WidgetStagedText {
-    static func line(_ item: WidgetInboxItem, option: String?) -> String {
+    static func line(_ item: WidgetInboxItem, option: String?, note: String?) -> String {
         let options = item.options ?? []
         // Every staged letter with its own text: a ⇧-pick in the hub stores "ac", which read "ac) <text of a>" (F14).
         let picks = (option ?? "").compactMap { letter -> String? in
@@ -10,8 +11,8 @@ enum WidgetStagedText {
             // The option's own "b) " is dropped: the line read "b) b) drop it" (UX audit F1).
             return "\(letter)) " + WidgetOptionText.text(options[index], letter: String(letter))
         }
-        guard !picks.isEmpty else { return item.draft ?? "Nothing picked" }
-        return picks.joined(separator: " / ") + (item.draft.map { " · " + $0 } ?? "")
+        guard !picks.isEmpty else { return note ?? "Nothing picked" }
+        return picks.joined(separator: " / ") + (note.map { " · " + $0 } ?? "")
     }
 }
 
@@ -68,6 +69,17 @@ public enum WidgetStagePhase: Equatable, Sendable {
         return true
     }
 
+    /// The title of a staged decision's own Send in this phase: what it sends while staged, "Sending…" while its send
+    /// runs, then "Sent" or "Waiting". A Send is disabled once a send took the decision (`onItsWay`), since the hub
+    /// refuses a second send of it; Send again lives in the note.
+    public func sendTitle(_ letters: String?, multiple: Bool) -> String {
+        switch self {
+        case .staged: return DecisionAnswering.sendTitle(letters, multiple: multiple)
+        case .sending: return "Sending…"
+        case .sent, .waiting: return word
+        }
+    }
+
     var color: Color {
         switch self {
         case .staged, .sending: return SessionPalette.blue
@@ -116,11 +128,41 @@ extension WidgetModel {
         return stagedOption(sourceId, stored: stored)
     }
 
-    /// The staged note a view draws, with the same rule.
+    /// The staged note a view draws, with the same rule: the one staged here a moment ago, else the snapshot's; none
+    /// for an empty one (a clear made here).
     func shownStagedNote(_ sourceId: String, _ draft: String?) -> String? {
         guard !heldDecisionIDs.contains(sourceId) else { return nil }
         if let sent = sentDecisions[sourceId], sendTookNewest(sourceId) { return sent.note }
-        return draft
+        let note = decisions.note(sourceId, stored: draft)
+        return note?.isEmpty == false ? note : nil
+    }
+
+    /// The staged line's words for `item`: the pick and the note a view draws, from the same source, so a row that
+    /// shows the pick a send took also shows that send's note.
+    func shownStagedLine(_ item: WidgetInboxItem) -> String {
+        WidgetStagedText.line(item, option: shownStagedOption(item.sourceId, stored: item.draftOption),
+                              note: shownStagedNote(item.sourceId, item.draft))
+    }
+
+    /// The staged decisions a send took, each counted once by where it is: its send runs, the hub delivered it, or the
+    /// hub kept it for its session's next prompt. Rows still staged count nowhere.
+    func onTheirWayCounts(_ items: [WidgetInboxItem]) -> (sending: Int, sent: Int, waiting: Int) {
+        var counts = (sending: 0, sent: 0, waiting: 0)
+        for item in items {
+            switch stagePhase(item.sourceId, draftedAt: item.draftedAt) {
+            case .sending: counts.sending += 1
+            case .sent: counts.sent += 1
+            case .waiting: counts.waiting += 1
+            case .staged: break
+            }
+        }
+        return counts
+    }
+
+    /// Whether an inbox entry still waits for the user's answer: a decision a send took (sending, delivered, or kept
+    /// for its session) does not, though a snapshot from before the send still says `needsAnswer`.
+    public func waitsForAnswer(_ item: WidgetInboxItem) -> Bool {
+        item.needsAnswer && !(item.kind == "decision" && isOnItsWay(item.sourceId))
     }
 
     /// Whether a view draws the decision as staged: its pick or its note, here or in the snapshot, with the same rule.
@@ -152,10 +194,18 @@ struct WidgetStagedChip: View {
         return total + " (" + parts.joined(separator: ", ") + ")"
     }
 
-    /// What the chip says once every staged decision is on its way: "Sending 3 decisions…", then "3 decisions sent".
-    static func onTheirWay(sending: Int, sent: Int) -> String {
-        sending > 0 ? "Sending " + Plural.count(sending + sent, "decision") + "…"
-                    : Plural.count(sent, "decision") + " sent"
+    /// What the chip says once every staged decision is on its way, each counted once by its phase: "Sending 1
+    /// decision… · 2 decisions sent · 1 decision waiting for its session". Delivered and waiting for a session are
+    /// apart: a queued answer was not delivered.
+    static func onTheirWay(sending: Int, sent: Int, waiting: Int = 0) -> String {
+        var parts: [String] = []
+        if sending > 0 { parts.append("Sending " + Plural.count(sending, "decision") + "…") }
+        if sent > 0 { parts.append(Plural.count(sent, "decision") + " sent") }
+        if waiting > 0 {
+            parts.append(Plural.count(waiting, "decision") + " waiting for "
+                         + (waiting == 1 ? "its session" : "their sessions"))
+        }
+        return parts.joined(separator: " · ")
     }
 
     var body: some View {
@@ -167,9 +217,9 @@ struct WidgetStagedChip: View {
             HStack(spacing: 8) {
                 Image(systemName: toSend.isEmpty ? "paperplane" : "tray.and.arrow.up").font(.system(size: 11))
                     .foregroundStyle(SessionPalette.blue)
+                let counts = model.onTheirWayCounts(all)
                 Text(toSend.isEmpty
-                    ? Self.onTheirWay(sending: all.filter { model.sendingDecisionIDs.contains($0.sourceId) }.count,
-                                      sent: all.filter { model.sentDecisions[$0.sourceId] != nil }.count)
+                    ? Self.onTheirWay(sending: counts.sending, sent: counts.sent, waiting: counts.waiting)
                     : Self.summary(toSend, here: model.selectedKey) { model.session(forKey: $0)?.title })
                     .font(.system(size: 11, weight: .medium)).lineLimit(2)
                 Spacer(minLength: 4)
@@ -184,9 +234,10 @@ struct WidgetStagedChip: View {
                 .instantTooltip(!here.isEmpty && here.count < toSend.count
                     ? "Sends the \(Plural.count(here.count, "decision")) staged here now, without the review"
                     : "Sends the staged decisions now, without the review, one message per session")
+                // The same scope as Send: this session's view only while it has something to send.
                 Button("Review and send") {
                     GenMotion.perform(expanding: true, reduceMotion: reduceMotion) {
-                        model.stagedView = model.sessionStaged.isEmpty ? "all" : "session"
+                        model.stagedView = here.isEmpty ? "all" : "session"
                     }
                 }
                 .buttonStyle(.genHover(accent: SessionPalette.blue)).font(.system(size: 11, weight: .semibold))
@@ -423,9 +474,7 @@ struct WidgetStagedDecisionRow: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(title).font(.system(size: 12, weight: .medium)).lineLimit(open ? nil : 2)
                             WidgetStageLine(phase: model.stagePhase(item.sourceId, draftedAt: item.draftedAt),
-                                            pick: WidgetStagedText.line(item, option: model.shownStagedOption(
-                                                item.sourceId, stored: item.draftOption)),
-                                            lineLimit: open ? nil : 2)
+                                            pick: model.shownStagedLine(item), lineLimit: open ? nil : 2)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         Spacer(minLength: 0)
@@ -466,7 +515,7 @@ struct WidgetStagedDecisionRow: View {
                         WidgetSetSendBar(
                             letters: model.shownStagedOption(item.sourceId, stored: item.draftOption),
                             recommended: DecisionAnswering.recommendedSet(item.recommended, count: options.count),
-                            sending: model.sendingDecisionIDs.contains(item.sourceId),
+                            phase: model.stagePhase(item.sourceId, draftedAt: item.draftedAt),
                             identifier: "widget.staged.sendSet." + item.sourceId,
                             pick: { model.pickSet(item, option: $0) },
                             send: { model.sendStaged([item.sourceId], known: [item]) })

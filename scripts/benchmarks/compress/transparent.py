@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import stat
 import struct
 import subprocess
@@ -20,7 +21,10 @@ args = parser.parse_args()
 root = Path(args.scratch).resolve()
 root.mkdir(mode=0o700, parents=True, exist_ok=False)
 # Every external command has a deadline (`_run.TIMEOUT_S`), and `commands` logs each one.
-from _run import APPEND, TIMEOUT_S, append_trial, commands, digest, require_corpus, run, search_trials
+from _run import (APPEND, TIMEOUT_S, append_trial, commands, digest, require_corpus, run, search_trials,
+                  seekable_decoded_size)
+
+ZSTD = shutil.which('zstd')
 
 def info(p):
     s = os.stat(p)
@@ -34,20 +38,33 @@ def info(p):
                 result['decmpfs_header'] = list(struct.unpack('<IIQ', header))
     return result
 
-def candidates(folder, pattern):
+def logical_size(p, s):
+    # The daily pass keeps finished day logs as seekable zstd; such a file enters with its decoded size.
+    if p.endswith('.zst'):
+        try:
+            return seekable_decoded_size(p)
+        except OSError:
+            return None
+    return s.st_size
+
+def candidates(folder, *patterns):
     result = []
     cutoff = time.time() - 86400
     for directory, _, names in os.walk(os.path.expanduser(folder)):
         for name in names:
-            if not fnmatch(name, pattern):
+            if not any(fnmatch(name, pattern) for pattern in patterns):
                 continue
             p = os.path.join(directory, name)
+            if p.endswith('.zst') and os.path.lexists(p[:-4]):
+                continue
             try:
                 s = os.lstat(p)
             except OSError:
                 continue
-            if (stat.S_ISREG(s.st_mode) and not s.st_flags & 0x40000000 and
-                    64*1024 <= s.st_size <= 16*1024*1024 and s.st_mtime < cutoff):
+            if not stat.S_ISREG(s.st_mode) or s.st_flags & 0x40000000 or s.st_mtime >= cutoff:
+                continue
+            size = logical_size(p, s)
+            if size is not None and 64*1024 <= size <= 16*1024*1024:
                 result.append(p)
     return sorted(result, key=lambda p: hashlib.sha256(p.encode()).hexdigest())
 
@@ -65,7 +82,8 @@ for kind, folder, pattern in [('tool_results','~/.claude/projects','*.txt'),
                               ('grok','~/.grok/sessions','*.json'),
                               ('logs','~/.genesis-tools/logs','*.log'),
                               ('json','~/.genesis-tools','*.json')]:
-    files = candidates(folder, pattern)
+    # Only today's and yesterday's day logs stay plain, so finished days count in either form (decoded below).
+    files = candidates(folder, pattern, *(['*.log.zst'] if kind == 'logs' and ZSTD else []))
     if kind == 'tool_results':
         files = [p for p in files if '/tool-results/' in p]
     if kind == 'grok':
@@ -81,7 +99,11 @@ for kind, paths in selected.items():
         folder.mkdir(exist_ok=True)
         plain = folder/'plain'
         original = info(source)
-        run(['/usr/bin/ditto','--noclone',source,plain])
+        if source.endswith('.zst'):
+            # The zstd CLI decodes every frame (Bun's node:zlib stops after the first one).
+            run([ZSTD,'-d','-q','-o',plain,'--',source])
+        else:
+            run(['/usr/bin/ditto','--noclone',source,plain])
         # ditto preserves compression on an already compressed source. Materialize data fork plain.
         if info(plain)['flags'] & 32:
             with open(folder/'materialized','wb') as dst:

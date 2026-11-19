@@ -229,6 +229,14 @@ describe("stopped-job-wake", () => {
         expect(ids("killall -s CONT claude")).toEqual(process.platform === "linux" ? [WAKE] : []);
     });
 
+    it("ends killall's options at --, takes its last signal option, and reads -s and -d outside Linux as a dry run", () => {
+        expect(ids("/usr/bin/killall -- -CONT")).toEqual([]);
+        expect(ids("/usr/bin/killall -TERM -CONT fixture-worker")).toEqual([WAKE]);
+        expect(ids("/usr/bin/killall -CONT -s fixture-worker")).toEqual(process.platform === "linux" ? [WAKE] : []);
+        expect(ids("/usr/bin/killall -CONT -d fixture-worker")).toEqual(process.platform === "linux" ? [WAKE] : []);
+        expect(ids("pkill -- -CONT")).toEqual([]);
+    });
+
     const otherByName = [
         "pkill -TERM claude",
         "pkill -x lldb",
@@ -240,6 +248,43 @@ describe("stopped-job-wake", () => {
     ];
 
     it.each(otherByName)("passes %j", (command) => {
+        expect(ids(command)).toEqual([]);
+    });
+
+    const groupSpellings = [
+        "kill -CONT 0",
+        "kill -CONT 00",
+        "kill -CONT %1",
+        "kill --signal=CONT -- -1234",
+        "kill -sCONT -1234",
+        `kill -n${CONT_NUMBER} -1234`,
+        `kill -0${CONT_NUMBER} -1234`,
+        "'/bin/kill' -CONT -1234",
+        '"kill" -CONT -1234',
+        "kill >/dev/null -CONT -1234",
+        "kill 2> /dev/null -CONT -1234",
+    ];
+
+    it.each(groupSpellings)("blocks the group resume %j", (command) => {
+        expect(ids(command)).toEqual([WAKE]);
+    });
+
+    it("pairs one pid however its number is written, and a variable only while its binding is unchanged", () => {
+        expect(ids("kill -TERM 01234; kill -CONT 1234")).toEqual([WAKE]);
+        expect(ids('p=1234; kill -TERM "$p"; kill -CONT "${p}"')).toEqual([WAKE]);
+        expect(ids('p=1234; kill -TERM "$p"; p=2345; kill -CONT "$p"')).toEqual([]);
+        expect(ids('kill -TERM "$p"; export p=2345; kill -CONT "$p"')).toEqual([]);
+        expect(ids("kill -TERM 1234; kill -CONT 12340")).toEqual([]);
+    });
+
+    const notAResume = [
+        "'/bin/echo' kill -CONT -1234",
+        "echo kill -CONT -1234",
+        "kill -CONT 1234 > -out.log",
+        "cat <<EOF\nkill -CONT -1\nEOF\nls",
+    ];
+
+    it.each(notAResume)("passes %j", (command) => {
         expect(ids(command)).toEqual([]);
     });
 });

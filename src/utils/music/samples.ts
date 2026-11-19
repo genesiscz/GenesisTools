@@ -1,11 +1,11 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { musicSamplesInstallCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { fileHash, musicSignal } from "./process";
-import { SAMPLE_MANIFEST } from "./samples-manifest";
+import { SAMPLE_MANIFEST, type SampleSet } from "./samples-manifest";
 
 export function samplesDir(): string {
     return toolDataDir("music", "samples");
@@ -89,9 +89,60 @@ export function setsToInstall(only?: string): string[] {
     return sets;
 }
 
+/** One file of a set: kept when its hash matches, else fetched, checked and renamed in. True when it downloaded. */
+async function installSample(options: {
+    entry: SampleSet;
+    folder: string;
+    file: SampleSet["files"][number];
+    signal: AbortSignal;
+}): Promise<boolean> {
+    const { entry } = options;
+    const [path, , sha256] = options.file;
+    const file = join(options.folder, path);
+
+    if (existsSync(file) && (await fileHash(file)) === sha256) {
+        return false;
+    }
+
+    const scoped = musicSignal();
+    const timeout = AbortSignal.timeout(120_000);
+    const remote = `https://raw.githubusercontent.com/${entry.repo}/${entry.commit}/${entry.folder}${path
+        .split("/")
+        .map(encodeURIComponent)
+        .join("/")}`;
+    const response = await fetch(remote, {
+        signal: AbortSignal.any(scoped ? [scoped, timeout, options.signal] : [timeout, options.signal]),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Sample download failed: HTTP ${response.status} for ${remote}`);
+    }
+
+    const bytes = new Uint8Array(await response.arrayBuffer());
+
+    if (createHash("sha256").update(bytes).digest("hex") !== sha256) {
+        throw new Error(`Sample download checksum mismatch: ${remote}`);
+    }
+
+    await mkdir(dirname(file), { recursive: true });
+    const staging = `${file}.${randomUUID()}.part`;
+
+    try {
+        await writeFile(staging, bytes);
+        await rename(staging, file);
+    } catch (error) {
+        await rm(staging, { force: true });
+        throw error;
+    }
+
+    return true;
+}
+
 /**
  * Explicit mutation: fetch every file of the pinned sets that is missing or changed, and keep one only when its
- * SHA-256 matches the manifest. A file lands by rename, so a reader never sees a partial sample.
+ * SHA-256 matches the manifest. A file lands by rename from its own staging file, so a reader never sees a partial
+ * sample and two installs never share one. The first failure stops the downloads; the call returns only after every
+ * download settled, and the verified files stay for the next attempt.
  */
 export async function installSamples(only?: string): Promise<SampleSetState[]> {
     const sets = setsToInstall(only);
@@ -102,44 +153,35 @@ export async function installSamples(only?: string): Promise<SampleSetState[]> {
         const folder = join(samplesDir(), set);
         const queue = [...entry.files];
         let downloaded = 0;
+        const stop = new AbortController();
+        const failures: unknown[] = [];
 
         await Promise.all(
             Array.from({ length: 8 }, async () => {
-                for (let next = queue.pop(); next !== undefined; next = queue.pop()) {
-                    const [path, , sha256] = next;
-                    const file = join(folder, path);
+                try {
+                    while (!stop.signal.aborted) {
+                        const next = queue.pop();
 
-                    if (existsSync(file) && (await fileHash(file)) === sha256) {
-                        continue;
+                        if (next === undefined) {
+                            break;
+                        }
+
+                        if (await installSample({ entry, folder, file: next, signal: stop.signal })) {
+                            downloaded++;
+                        }
                     }
-
-                    const scoped = musicSignal();
-                    const timeout = AbortSignal.timeout(120_000);
-                    const remote = `https://raw.githubusercontent.com/${entry.repo}/${entry.commit}/${entry.folder}${path
-                        .split("/")
-                        .map(encodeURIComponent)
-                        .join("/")}`;
-                    const response = await fetch(remote, {
-                        signal: scoped ? AbortSignal.any([scoped, timeout]) : timeout,
-                    });
-
-                    if (!response.ok) {
-                        throw new Error(`Sample download failed: HTTP ${response.status} for ${remote}`);
-                    }
-
-                    const bytes = new Uint8Array(await response.arrayBuffer());
-
-                    if (createHash("sha256").update(bytes).digest("hex") !== sha256) {
-                        throw new Error(`Sample download checksum mismatch: ${remote}`);
-                    }
-
-                    await mkdir(dirname(file), { recursive: true });
-                    await writeFile(`${file}.part`, bytes);
-                    await rename(`${file}.part`, file);
-                    downloaded++;
+                } catch (error) {
+                    failures.push(error);
+                    stop.abort();
                 }
             })
         );
+
+        if (failures.length > 0) {
+            // The first failure is the cause; the rest are downloads it stopped.
+            throw failures[0];
+        }
+
         result.push(await state(set, downloaded));
     }
 
