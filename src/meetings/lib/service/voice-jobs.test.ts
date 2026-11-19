@@ -121,7 +121,13 @@ test.each(["before library", "after library", "after journal"] as const)(
             } });
         `,
             ],
-            { stdin: new Blob([SafeJSON.stringify({ cut, change })]), stdout: "ignore", stderr: "pipe" }
+            {
+                stdin: new Blob([SafeJSON.stringify({ cut, change })]),
+                stdout: "ignore",
+                stderr: "pipe",
+                // The child's store must be this test's home; without it the child opened the real meetings store.
+                env: { ...process.env, GENESIS_TOOLS_HOME: env.tools.getHome() },
+            }
         );
         await child.exited;
         expect(child.signalCode).toBe("SIGKILL");
