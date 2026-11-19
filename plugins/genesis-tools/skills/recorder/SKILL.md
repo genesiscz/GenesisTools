@@ -132,7 +132,8 @@ A movie track has the ID `movie-0`, `movie-1`, and so on.
 A voiceover uses its clip ID. The music lane uses `music`.
 A mute or volume change applies to the whole lane.
 
-List the layers with `await m.layers()`. This call returns the IDs from bottom to top.
+List the layers with `await m.layers()`. It returns layer records from bottom to top: `{ id: "camera", kind: "camera" }`
+for the camera and `{ id, kind }` for an image or video. Use `layers.map(({ id }) => id)` for just the IDs.
 The timeline shows the top layer first. The camera has the ID `camera` when the edit has a camera file.
 Each image or video has its own ID. Use the ID from `addLayer` or `layers()` for later changes.
 

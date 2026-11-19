@@ -34,12 +34,16 @@ final class RecorderPictureTests: XCTestCase {
                 _ = try await RecorderRenders.snapshot(request, to: png.path)
                 let data = try Data(contentsOf: png)
                 let rep = try XCTUnwrap(NSBitmapImageRep(data: data))
-                XCTAssertEqual(rep.pixelsWide, rep.pixelsHigh * 2, "\(host) \(state) must be 960 × 480 points at either scale")
+                let scale = rep.pixelsWide == 1920 ? 2 : 1
+                XCTAssertEqual(rep.pixelsWide, 960 * scale, "\(host) \(state) width")
+                XCTAssertEqual(rep.pixelsHigh, 480 * scale, "\(host) \(state) height")
                 XCTAssertEqual(FrameProbe.frames["recording.picker.window-102"] != nil, state == "picker")
                 XCTAssertEqual(FrameProbe.frames["recorder.snapshot.pulse"] != nil, state == "picker")
                 XCTAssertEqual(FrameProbe.frames["recorder.snapshot.drag"] != nil, state == "area")
-                pictures.insert(data)
-                if state == "done" { donePictures.append(data) }
+                let bitmap = try XCTUnwrap(rep.bitmapData)
+                let pixels = Data(bytes: bitmap, count: rep.bytesPerRow * rep.pixelsHigh)
+                pictures.insert(pixels)
+                if state == "done" { donePictures.append(pixels) }
             }
             XCTAssertEqual(pictures.count, 7, "a phase fell back to another phase's picture")
         }
@@ -51,15 +55,14 @@ final class RecorderPictureTests: XCTestCase {
         let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("recorder/lib/__fixtures__/make-editor-pictures.py")
-        let status = try await Task.detached {
+        let generated = try await Task.detached {
             let proc = Process()
             proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
             proc.arguments = ["python3", source.path, fixture.path, "--mute-system"]
-            try proc.run()
-            proc.waitUntilExit()
-            return proc.terminationStatus
+            return try proc.runCapturing(timeout: 100)
         }.value
-        XCTAssertEqual(status, 0)
+        XCTAssertEqual(generated.status, 0, String(decoding: generated.stderr, as: UTF8.self))
+        guard generated.status == 0 else { return }
         let project = try await ProjectStore.load(path: fixture.path).project
         XCTAssertEqual(project.audio.lanes?.map(\.id), ["mic", "system"])
         XCTAssertEqual(project.audio.lanes?.map(\.muted), [false, true])
@@ -71,7 +74,11 @@ final class RecorderPictureTests: XCTestCase {
         let png = folder.appendingPathComponent("menu.png")
         let request = RecorderRequest.parse(["--edit", fixture.path, "--at", "2", "--layer-menu", "slate",
                                              "--width", "1440", "--height", "920", "--no-focus", "--snapshot", png.path])
-        _ = try await RecorderRenders.snapshot(request, to: png.path)
+        let suite = "recorder.picture.\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(true, forKey: EditorModel.soundLanesShownKey)
+        _ = try await RecorderRenders.snapshot(request, to: png.path, defaults: defaults)
         let menu = try XCTUnwrap(FrameProbe.frames["recorder.snapshot.layerMenu"])
         XCTAssertGreaterThan(menu.height, 120, "a menu with enabled and disabled layer commands occupies several rows")
         let imageRow = try XCTUnwrap(FrameProbe.frames["recorder.timeline.layer.slate"])

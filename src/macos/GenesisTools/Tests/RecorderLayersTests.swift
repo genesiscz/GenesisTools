@@ -39,13 +39,19 @@ final class RecorderLayersTests: XCTestCase {
             let camera: Bool
             let layers: EditProject.LayerStack?
             let moves: [EditOp.LayerMove]
+            let movesAfter: [[String]]?
             let order: [Ref]
         }
         for row in try cases("layers.cases.json", of: Row.self) {
             var edit = try project(oldEdit())
             edit.layers = row.layers
             edit.camera = row.camera ? .init(file: "camera.mov") : nil
-            for move in row.moves { edit = try edit.movingLayer(move.id, to: move.to) }
+            for (index, move) in row.moves.enumerated() {
+                edit = try edit.movingLayer(move.id, to: move.to)
+                if let expected = row.movesAfter {
+                    XCTAssertEqual(edit.layerOrder().map(\.id), expected[index], "\(row.name), move \(index + 1)")
+                }
+            }
             let stack = edit.layerOrder()
             XCTAssertEqual(stack.map(\.id), row.order.map(\.id), row.name)
             XCTAssertEqual(stack.map { item -> String in
@@ -73,6 +79,23 @@ final class RecorderLayersTests: XCTestCase {
         guard case let .layer(op)? = ops.first else { return XCTFail("Expected a camera layer resize") }
         XCTAssertEqual(op.id, "camera")
         XCTAssertEqual(try XCTUnwrap(op.width), 0.18, accuracy: 0.000_001)
+    }
+
+    func testCameraRemovalPrecedesReorderingTheSurvivingMedia() throws {
+        var before = try project(withLayers())
+        before.layers?.media.append(.init(id: "second", kind: .image, file: "second.png", startUs: 0, endUs: 1_000_000))
+        before.layers?.order = ["camera", "l-logo", "second"]
+        var after = before
+        after.camera = nil
+        after.layers?.order = ["second", "l-logo"]
+        let ops = try XCTUnwrap(EditOpDiff.ops(from: before, to: after))
+        XCTAssertEqual(ops.count, 2)
+        guard case let .camera(camera) = ops.first, camera.enabled == false,
+              case let .layerMove(move) = ops.last else {
+            return XCTFail("Remove the camera before using the remaining layers' indices")
+        }
+        before.camera = nil
+        XCTAssertEqual(try before.movingLayer(move.id, to: move.to).layerOrder().map(\.id), ["second", "l-logo"])
     }
 
     func testGestureOpsIdentifyTheChangedLaneAndLayer() throws {

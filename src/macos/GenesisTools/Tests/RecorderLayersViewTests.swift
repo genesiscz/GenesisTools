@@ -52,6 +52,35 @@ final class RecorderLayersViewTests: XCTestCase {
         try FileManager.default.removeItem(at: folder)
     }
 
+    func testLayerDropDefaultsRoundTripInTheChosenStore() throws {
+        let suite = "recorder.layers.\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var stored = EditorModel.DropDefaults(defaults: defaults)
+        stored.width = 0.42
+        stored.atPointer = true
+        stored.save()
+        let reopened = EditorModel.DropDefaults(defaults: defaults)
+        XCTAssertEqual(reopened.width, 0.42)
+        XCTAssertTrue(reopened.atPointer)
+    }
+
+    func testLosingProxySidecarFactsRebuildsThePreview() async throws {
+        var project = model.project
+        project.audio.lanes = nil
+        model.adopt(project, rebuild: false)
+        hostTimeline()
+        let video = project.source.video
+        let separate = EditProject.AudioFacts(movieTracks: 1, mixedFrom: [.init(source: .mic, file: "mic.m4a", offsetMs: 0)])
+        model.adoptSourceAudioFacts(separate, for: video)
+        XCTAssertEqual(model.soundRows.map(\.id), ["mic"])
+        _ = try await waitFor("first rebuild attempted to open the fixture movie") { model.previewProblem }
+        model.previewProblem = nil
+        model.adoptSourceAudioFacts(.init(movieTracks: 1, mixedFrom: []), for: video)
+        XCTAssertEqual(model.soundRows.map(\.id), ["movie-0"])
+        _ = try await waitFor("removing sidecars must also rebuild") { model.previewProblem }
+    }
+
     private func hostTimeline(height: CGFloat = 650) {
         let size = CGSize(width: 1100, height: height)
         window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.borderless],
@@ -149,6 +178,10 @@ final class RecorderLayersViewTests: XCTestCase {
         hostTimeline()
         let before = try await sound("mic")
         XCTAssertEqual(before.value, "100%")
+        // The hidden test window has no pointer hover. Focus the lane to mount its pointer control.
+        let mic = EditorRowFocus(area: .timelineSound, id: "mic")
+        model.requestedRowFocus = mic
+        _ = try await waitFor("timeline microphone has focus") { model.focusedEditorRow == mic ? mic : nil }
         try await press("recorder.timeline.sound.mic.mute")
         let after = try await sound("mic", changedFrom: before.value)
         XCTAssertEqual(service.sentOps as NSArray, [["op": "audioLane", "id": "mic", "muted": true]] as NSArray)

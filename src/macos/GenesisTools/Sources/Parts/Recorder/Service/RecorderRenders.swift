@@ -51,7 +51,11 @@ enum RecorderRenders {
 
     /// The fields `--export --json` prints.
     static func exportAnswer(_ result: EditExporter.Result) -> [String: Any] {
-        ["ok": true, "path": result.url.path, "bytes": result.bytes, "seconds": (result.seconds * 100).rounded() / 100]
+        var answer: [String: Any] = [
+            "ok": true, "path": result.url.path, "bytes": result.bytes, "seconds": (result.seconds * 100).rounded() / 100,
+        ]
+        if !result.warnings.isEmpty { answer["warnings"] = result.warnings }
+        return answer
     }
 
     /// `--snapshot`: the editor (`edit`), the library or the capture picker drawn off screen into `path`. Answers how
@@ -60,7 +64,7 @@ enum RecorderRenders {
     /// code that made it still holds it, so the close would release it twice: the picker's did, and the face crashed in
     /// the next autorelease pool pop (2026-11-05). Each window is kept alive through its close here.
     @MainActor
-    static func snapshot(_ request: RecorderRequest, to path: String) async throws -> String {
+    static func snapshot(_ request: RecorderRequest, to path: String, defaults: UserDefaults = .standard) async throws -> String {
         let before = Set(NSApp.windows.map(ObjectIdentifier.init))
         defer {
             for window in NSApp.windows where !before.contains(ObjectIdentifier(window)) && window.alphaValue == 0 && window.ignoresMouseEvents {
@@ -117,7 +121,7 @@ enum RecorderRenders {
         let still = try? await stillFrame(project: project, atOutput: at, zoom: model.zoom)
         let window = EditorWindows.makeWindow(model: model, size: NSSize(width: request.width, height: request.height))
         window.contentView = NSHostingView(rootView: EditorView(model: model, stillPreview: still)
-            .snapshotLayerMenu(request.layerMenu))
+            .defaultAppStorage(defaults).snapshotLayerMenu(request.layerMenu))
         window.orderInForSnapshot()
         try await Task.sleep(for: .milliseconds(500))
         guard let capture = await WindowSnapshot.capture(window),

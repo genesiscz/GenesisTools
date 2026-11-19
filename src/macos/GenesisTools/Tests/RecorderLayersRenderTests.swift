@@ -15,7 +15,7 @@ final class RecorderLayersRenderTests: XCTestCase {
         return url
     }
 
-    private func movie(_ url: URL, levels: [UInt8]) async throws {
+    private func movie(_ url: URL, levels: [UInt8], ticks: [Int]? = nil) async throws {
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: side, AVVideoHeightKey: side,
@@ -23,7 +23,10 @@ final class RecorderLayersRenderTests: XCTestCase {
         ])
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: nil)
         writer.add(input)
-        XCTAssertTrue(writer.startWriting())
+        guard writer.startWriting() else {
+            throw writer.error ?? NSError(domain: "RecorderLayersRenderTests", code: 1,
+                                           userInfo: [NSLocalizedDescriptionKey: "Could not start writing \(url.lastPathComponent)"])
+        }
         writer.startSession(atSourceTime: .zero)
         for (index, level) in levels.enumerated() {
             try await input.waitUntilReady()
@@ -38,9 +41,10 @@ final class RecorderLayersRenderTests: XCTestCase {
                 for col in 0..<side { base[row * stride + col] = pixel }
             }
             CVPixelBufferUnlockBaseAddress(buffer, [])
-            XCTAssertTrue(adaptor.append(buffer, withPresentationTime: CMTime(value: Int64(index), timescale: 10)))
+            let tick = ticks?[index] ?? index
+            XCTAssertTrue(adaptor.append(buffer, withPresentationTime: CMTime(value: Int64(tick), timescale: 10)))
         }
-        writer.endSession(atSourceTime: CMTime(value: Int64(levels.count), timescale: 10))
+        writer.endSession(atSourceTime: CMTime(value: Int64((ticks?.last ?? levels.count - 1) + 1), timescale: 10))
         input.markAsFinished()
         await writer.finishWriting()
         XCTAssertEqual(writer.status, .completed, writer.error?.localizedDescription ?? "")
@@ -197,6 +201,11 @@ final class RecorderLayersRenderTests: XCTestCase {
         camera.size = 0.6
         edit.camera = camera
         let old = try await pixels(render(edit), atUs: 500_000)
+        func red(_ x: Int, _ y: Int) -> UInt8 { old[(y * side + x) * 4] }
+        XCTAssertGreaterThan(red(32, 32), 110, "legacy bubble is centred")
+        XCTAssertGreaterThan(red(48, 32), 110, "legacy diameter is 60% of the short side")
+        XCTAssertLessThan(red(56, 32), 50, "outside the bubble")
+        XCTAssertLessThan(red(48, 48), 50, "legacy circle removes the corner of its bounding square")
         let hash = SHA256.hash(data: old).map { String(format: "%02x", $0) }.joined()
         print("recorder.layers.legacy.sha256 \(hash)")
         if let reference = ProcessInfo.processInfo.environment["RECORDER_LEGACY_FRAME_SHA256"] {
@@ -278,12 +287,64 @@ final class RecorderLayersRenderTests: XCTestCase {
         XCTAssertEqual(rendered.warnings.count, 1)
         XCTAssertEqual(rendered.warnings.first?.file.lastPathComponent, file)
         let url = dir.appendingPathComponent("edited.mp4")
-        _ = try await EditExporter.export(project: edit, to: url) { _ in }
+        let exported = try await EditExporter.export(project: edit, to: url) { _ in }
+        XCTAssertEqual(exported.warnings, rendered.warnings.map(\.message))
+        XCTAssertEqual(RecorderRenders.exportAnswer(exported)["warnings"] as? [String], exported.warnings)
         let result = AVURLAsset(url: url)
         let picture = try await result.loadTracks(withMediaType: .video)
         let sound = try await result.loadTracks(withMediaType: .audio)
         XCTAssertEqual(picture.count, 1)
         XCTAssertTrue(sound.isEmpty)
+    }
+
+    func testRepeatedMovieTrackPlaysOnceAtTheFirstLanesGain() async throws {
+        var edit = try await source(in: folder(), mixed: true)
+        edit.audio.lanes = [.init(id: "first", source: .movie, track: 0, volume: 0.6),
+                            .init(id: "second", source: .movie, track: 0)]
+        let rendered = try await render(edit)
+        XCTAssertEqual(rendered.composition.tracks(withMediaType: .audio).count, 1)
+        let parameters = try XCTUnwrap(rendered.audioMix?.inputParameters.first)
+        var start: Float = 0, end: Float = 0, range = CMTimeRange.zero
+        XCTAssertTrue(parameters.getVolumeRamp(for: .zero, startVolume: &start, endVolume: &end, timeRange: &range))
+        XCTAssertEqual(start, 0.6, accuracy: 0.001)
+    }
+
+    func testSeekWithoutASampleCursorShowsThePrecedingVariableRateFrame() async throws {
+        let url = try folder().appendingPathComponent("variable.mov")
+        try await movie(url, levels: [24, 90, 190, 240], ticks: [0, 1, 7, 8])
+        let asset = AVURLAsset(url: url)
+        let tracks = try await asset.loadTracks(withMediaType: .video)
+        let warnings = RenderWarnings()
+        let feed = MediaFeed(asset: asset, track: try XCTUnwrap(tracks.first), durationUs: 900_000, warnings: warnings)
+        let context = CIContext()
+        func level(_ us: Int64) throws -> Int {
+            let frame = try XCTUnwrap(feed.frame(at: us))
+            var pixel = [UInt8](repeating: 0, count: 4)
+            context.render(frame, toBitmap: &pixel, rowBytes: 4, bounds: CGRect(x: 8, y: 8, width: 1, height: 1),
+                           format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
+            return Int(pixel[0])
+        }
+        XCTAssertEqual(try level(500_000), 90, accuracy: 15)
+        XCTAssertEqual(try level(760_000), 190, accuracy: 15)
+        XCTAssertEqual(try level(850_000), 240, accuracy: 15)
+        XCTAssertEqual(try level(250_000), 90, accuracy: 15)
+        XCTAssertTrue(warnings.entries.isEmpty)
+    }
+
+    func testUnreadableStillReportsOneWarningWhenItsFirstFrameIsDrawn() async throws {
+        let dir = try folder()
+        var edit = try await source(in: dir)
+        let image = try whiteImage(in: dir)
+        let url = dir.appendingPathComponent(image.file)
+        // A PNG signature and IHDR advertise an image, but there's no compressed pixel data to decode.
+        try Data(contentsOf: url).prefix(33).write(to: url, options: .atomic)
+        edit.layers = .init(media: [image])
+        let rendered = try await render(edit)
+        XCTAssertTrue(rendered.warnings.isEmpty, "the header advertised a readable container")
+        _ = try await pixels(rendered, atUs: 400_000)
+        _ = try await pixels(rendered, atUs: 500_000)
+        XCTAssertEqual(rendered.warnings.map(\.file.lastPathComponent), [image.file])
+        XCTAssertTrue(rendered.warnings.first?.message.hasPrefix("Could not decode") == true)
     }
 
     func testMusicAndVoiceoverUseTheirOwnLevelMultipliedByTheirLane() async throws {

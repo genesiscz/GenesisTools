@@ -9,7 +9,7 @@ struct EditorRowFocus: Equatable {
     func withID(_ id: String) -> Self { Self(area: area, id: id) }
 }
 
-struct EditorSoundRow: Identifiable {
+struct EditorSoundRow: Identifiable, Equatable {
     let lane: EditProject.AudioLane
     let waveform: Waveform
     let voiceover: EditProject.Voiceover?
@@ -19,6 +19,11 @@ struct EditorSoundRow: Identifiable {
     var name: String { mixed ? "Mixed sound" : lane.displayName }
     var level: String { "\(Int((lane.volume * 100).rounded()))%" }
     var accessibilityValue: String { lane.muted ? "muted" : level }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.lane == rhs.lane && lhs.waveform === rhs.waveform && lhs.voiceover == rhs.voiceover
+            && lhs.music == rhs.music && lhs.mixed == rhs.mixed
+    }
 
     /// Source files follow kept clips. Music follows output time and starts its next loop at file time zero.
     @MainActor
@@ -69,45 +74,25 @@ struct SoundLanesView: View {
             ForEach(model.soundRows) { row in
                 let prefix = scale == nil ? "recorder.audio.sound." : "recorder.timeline.sound."
                 let id = prefix + row.id
-                HStack(spacing: 5) {
-                    Button { model.toggleMute(row) } label: {
-                        Image(systemName: row.lane.muted ? "speaker.slash.fill" : "speaker.wave.2")
-                            .frame(width: 26, height: 26)
-                    }
-                    .buttonStyle(.genHoverPlain())
-                    .accessibilityLabel(row.lane.muted ? "Unmute \(row.name)" : "Mute \(row.name)")
-                    .accessibilityIdentifier(id + ".mute")
-                    .frameProbe(id + ".mute")
-                    .instantTooltip(row.lane.muted ? "Unmute \(row.name) (M)" : "Mute \(row.name) (M)")
-                    Text(verbatim: row.name).lineLimit(1)
-                    if scale == nil { Spacer(minLength: 2) }
-                    Menu { levels(row) } label: {
-                        Text(verbatim: row.level).monospacedDigit().frame(minHeight: 24)
-                    }
-                    .fixedSize()
-                    .menuStyle(.borderlessButton)
-                    .accessibilityLabel("\(row.name) volume")
-                    .accessibilityValue(row.level)
-                    .accessibilityIdentifier(id + ".volume")
-                    .instantTooltip("Set \(row.name) volume")
-                    if scale != nil { Spacer(minLength: 0) }
-                }
-                .font(.system(size: 11.5))
-                .padding(.horizontal, 6)
-                .padding(.bottom, scale == nil ? 0 : 8)
-                .frame(height: TimelineView.sourceRowHeight)
-                .background(alignment: .bottom) {
-                    if let scale {
-                        LaneWaveform(row: row, placed: model.rowClips, scale: scale)
-                            .frame(height: 9)
-                    }
-                }
-                .background(focus == row.id ? Color.accentColor.opacity(0.16) : Color.clear)
-                .contentShape(Rectangle())
-                .onTapGesture { focus = row.id }
+                SoundLaneRow(id: id, row: row, scale: scale, clips: scale == nil ? [] : model.rowClips,
+                             selected: focus == row.id, toggleMute: { model.toggleMute(row) },
+                             setVolume: { volume in model.edit([.audioLane(.init(id: row.id, volume: volume))]) })
+                .equatable()
+                .simultaneousGesture(TapGesture().onEnded { focus = row.id })
                 .focusable()
                 .focused($focus, equals: row.id)
-                .contextMenu { levels(row) }
+                .contextMenu {
+                    ForEach(SoundLaneRow.percentages, id: \.self) { percent in
+                        let volume = Double(percent) / 100
+                        Button { model.edit([.audioLane(.init(id: row.id, volume: volume))]) } label: {
+                            if row.lane.volume == volume {
+                                Label("\(percent)%", systemImage: "checkmark")
+                            } else {
+                                Text("\(percent)%")
+                            }
+                        }
+                    }
+                }
                 .accessibilityElement(children: .contain)
                 .soundRowAccessibility(id: id, label: row.name, value: row.accessibilityValue)
                 .id(row.id)
@@ -126,15 +111,65 @@ struct SoundLanesView: View {
         .onDisappear { if model.focusedEditorRow?.area == area { model.focusedEditorRow = nil } }
     }
 
-    @ViewBuilder private func levels(_ row: EditorSoundRow) -> some View {
-        ForEach([0, 25, 50, 75, 100, 125, 150, 175, 200], id: \.self) { percent in
-            Button {
-                model.edit([.audioLane(.init(id: row.id, volume: Double(percent) / 100))])
-            } label: {
-                if row.lane.volume == Double(percent) / 100 {
-                    Label("\(percent)%", systemImage: "checkmark")
-                } else { Text("\(percent)%") }
+}
+
+private struct SoundLaneRow: View, Equatable {
+    static let percentages = [0, 25, 50, 75, 100, 125, 150, 175, 200]
+    let id: String
+    let row: EditorSoundRow
+    let scale: TimelineScale?
+    let clips: [TimelineMap.Placed]
+    let selected: Bool
+    let toggleMute: () -> Void
+    let setVolume: (Double) -> Void
+
+    // Closures belong to the stable lane ID in this editor.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.id == rhs.id && lhs.row == rhs.row && lhs.scale == rhs.scale
+            && lhs.clips == rhs.clips && lhs.selected == rhs.selected
+    }
+
+    var body: some View {
+        let mute = row.lane.muted ? "Unmute \(row.name)" : "Mute \(row.name)"
+        HStack(spacing: 5) {
+            LiveButton(tooltip: "\(mute) (M)", pressable: true, action: toggleMute) {
+                Image(systemName: row.lane.muted ? "speaker.slash.fill" : "speaker.wave.2")
+                    .frame(width: 26, height: 26)
+                    .contentShape(Rectangle())
             }
+            .accessibilityLabel(mute)
+            .accessibilityIdentifier(id + ".mute")
+            .frameProbe(id + ".mute")
+            Text(verbatim: row.name).lineLimit(1)
+            if scale == nil { Spacer(minLength: 2) }
+            MenuButton(items: volumeOptions) {
+                Text(verbatim: row.level).monospacedDigit().frame(minHeight: 24)
+            }
+            .fixedSize()
+            .accessibilityLabel("\(row.name) volume")
+            .accessibilityValue(row.level)
+            .accessibilityIdentifier(id + ".volume")
+            .instantTooltip("Set \(row.name) volume")
+            if scale != nil { Spacer(minLength: 0) }
+        }
+        .font(.system(size: 11.5))
+        .padding(.horizontal, 6)
+        .padding(.bottom, scale == nil ? 0 : 8)
+        .frame(height: TimelineView.sourceRowHeight)
+        .background(alignment: .bottom) {
+            if let scale {
+                LaneWaveform(row: row, placed: clips, scale: scale).frame(height: 9)
+            }
+        }
+        .background(selected ? Color.accentColor.opacity(0.16) : Color.clear)
+        .contentShape(Rectangle())
+        .liveRow(selected: selected)
+    }
+
+    private func volumeOptions() -> [MenuButtonItem] {
+        Self.percentages.map { percent in
+            let volume = Double(percent) / 100
+            return .action("\(percent)%", checked: row.lane.volume == volume) { setVolume(volume) }
         }
     }
 }

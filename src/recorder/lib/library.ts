@@ -593,6 +593,7 @@ export const exportAnswerSchema = z.object({
     path: z.string().optional(),
     bytes: z.number().optional(),
     seconds: z.number().optional(),
+    warnings: z.array(z.string()).optional(),
     error: z.string().optional(),
 });
 export type ExportAnswer = z.infer<typeof exportAnswerSchema>;

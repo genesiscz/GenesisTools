@@ -5,7 +5,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
-import { type AudioFacts, audioLaneSchema, setAudioLane, syncExtraAudioLanes } from "./audio-lanes";
+import { type AudioFacts, audioLaneSchema, audioLanesSchema, setAudioLane, syncExtraAudioLanes } from "./audio-lanes";
 import { bubbleRect, CAMERA_CORNERS, CAMERA_SHAPES, cameraBubbleSchema, hideCamera, showCamera } from "./camera";
 import { cursorSmoothSchema } from "./cursor-smooth";
 import { DENOISE_METHODS, denoiseSchema } from "./denoise";
@@ -733,7 +733,7 @@ export const editProjectSchema = z.object({
             volume: z.number().min(0).max(2).default(1),
             mutedTracks: z.array(z.number().int().nonnegative()).default([]),
             /** Absent until the recording has separate sources or a lane is edited. */
-            lanes: z.array(audioLaneSchema).optional(),
+            lanes: audioLanesSchema.optional(),
             /** A sound file under the movie (looped to its length); absent is none. */
             music: musicSchema.optional(),
             /** Noise reduction of the sound on export (`denoise.ts`); absent is none. */
@@ -3069,6 +3069,8 @@ export const editOpSchema = z.discriminatedUnion("op", [
             op: z.literal("layer"),
             id: layerFields.id,
             ...layerPlacement,
+            // The camera width is measured against the canvas, so a small bubble on a wide canvas can be below 0.05.
+            width: z.number().positive().max(1).optional(),
             opacity: layerFields.opacity.unwrap().optional(),
             shape: layerFields.shape.unwrap().nullable().optional(),
             hidden: z.boolean().optional(),

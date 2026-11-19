@@ -12,7 +12,7 @@ enum EditOpDiff {
         guard old.clips == new.clips, old.markers == new.markers, old.lanes == new.lanes,
               sameItems(old.zooms, new.zooms, \.id), sameItems(old.redactions ?? [], new.redactions ?? [], \.id),
               sameItems(old.texts ?? [], new.texts ?? [], \.id), sameItems(old.shapes ?? [], new.shapes ?? [], \.id),
-              sameItems(old.camera?.hidden ?? [], new.camera?.hidden ?? [], \.id),
+              (new.camera == nil || sameItems(old.camera?.hidden ?? [], new.camera?.hidden ?? [], \.id)),
               (old.camera == nil) == (new.camera == nil) || new.camera == nil,
               // A voiceover clip added here has no file length yet; the window adds one with its own op.
               Set(ids(new.audio.voiceovers)).isSubset(of: ids(old.audio.voiceovers)),
@@ -31,6 +31,10 @@ enum EditOpDiff {
             guard let changes = audioLaneOps(from: old, to: new) else { return nil }
             ops += changes
         }
+        // Reorder indices refer to the surviving stack. Remove a camera before applying those moves.
+        if old.camera != nil, new.camera == nil, let op = camera(old.camera, nil) {
+            ops.append(.camera(op))
+        }
         if old.layers != new.layers {
             guard let changes = layerOps(from: old, to: new) else { return nil }
             ops += changes
@@ -42,7 +46,7 @@ enum EditOpDiff {
         if old.captions != new.captions { ops.append(.captions(captions(new.captions))) }
         if old.keys != new.keys { ops.append(.keys(keys(new.keys))) }
         if old.motion != new.motion { ops.append(.motion(EditOp.Motion(blur: (new.motion ?? EditProject.Motion()).blur))) }
-        if old.camera != new.camera, let op = camera(old.camera, new.camera) {
+        if new.camera != nil, old.camera != new.camera, let op = camera(old.camera, new.camera) {
             ops.append(cameraOp(op, in: new))
         }
         if old.transcript != new.transcript { ops += fixes(old.transcript?.fixes ?? [:], new.transcript?.fixes ?? [:]) }
@@ -93,14 +97,13 @@ enum EditOpDiff {
     static func seconds(_ us: Int64) -> Double { Double(us) / 1_000_000 }
 
     private static func cameraOp(_ op: EditOp.Camera, in project: EditProject) -> EditOp {
-        // A size drag in the layer stack speaks canvas width. On an ultrawide canvas a legal bubble can be
-        // narrower than the layer op's minimum. Camera's native size still expresses that edit exactly.
+        // A size drag in the layer stack speaks canvas width, even for a small bubble on an ultrawide canvas.
         guard project.layers != nil, let size = op.size, op == EditOp.Camera(size: size) else { return .camera(op) }
         let source = project.source
         let canvas = project.frame?.aspect?.ratio.map { CGSize(width: $0, height: 1) }
             ?? CGSize(width: source.width > 0 ? source.width : 16, height: source.height > 0 ? source.height : 9)
         let width = EditProject.layerWidth(forCameraSize: size, canvas: canvas)
-        guard (0.05...1).contains(width) else { return .camera(op) }
+        guard width > 0, width <= 1 else { return .camera(op) }
         return .layer(.init(id: EditProject.cameraLayerID, width: width))
     }
 
@@ -116,7 +119,8 @@ enum EditOpDiff {
             case .music: base.muted = false
             case .voiceover:
                 base.muted = false
-                base.name = project.audio.voiceovers?.first(where: { $0.id == base.id }).flatMap(EditProject.voiceoverLaneName)
+                base.name = EditProject.voiceover(forLaneID: base.id, in: project.audio.voiceovers ?? [])
+                    .flatMap(EditProject.voiceoverLaneName)
             case .mic, .system, .movie:
                 base.muted = project.audio.mutedTracks.contains(base.track ?? 0)
             }

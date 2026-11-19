@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -123,7 +123,7 @@ export async function ensureDenoisedSource(options: {
     }
 
     mkdirSync(dirname(output), { recursive: true });
-    const partial = `${output.slice(0, -4)}.partial.mp4`;
+    const partial = `${output.slice(0, -4)}.${randomUUID()}.partial.mp4`;
     const command = denoisedSourceArgv({
         source: options.source,
         output: partial,
@@ -131,8 +131,16 @@ export async function ensureDenoisedSource(options: {
         settings: options.settings,
     });
     log.info({ source: options.source, output, settings: options.settings, audioTracks }, "cleaning the sound");
-    await runVideoCommand({ command, timeoutMs: 60 * 60_000, ...(options.signal ? { signal: options.signal } : {}) });
-    renameSync(partial, output);
+    try {
+        await runVideoCommand({
+            command,
+            timeoutMs: 60 * 60_000,
+            ...(options.signal ? { signal: options.signal } : {}),
+        });
+        renameSync(partial, output);
+    } finally {
+        rmSync(partial, { force: true });
+    }
     return { path: output, made: true, audioTracks };
 }
 

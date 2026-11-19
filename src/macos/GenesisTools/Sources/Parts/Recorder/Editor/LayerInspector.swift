@@ -76,20 +76,22 @@ private struct MediaLayerInspector: View {
             }
         }
         SectionLabel(text: "Span in the recording")
-        seconds("Start", value: Double(layer.startUs) / 1e6) { value in
-            guard value < Double(layer.endUs) / 1e6 else { return false }
-            set(.init(id: layer.id, startUs: Int64((value * 1e6).rounded())))
+        let duration = Int(model.project.source.durationUs)
+        let bound = duration < Int.max ? duration + 1 : Int.max
+        seconds("Start", value: Int(layer.startUs), upper: bound, fractionDigits: 6) { value in
+            guard value < layer.endUs else { return false }
+            set(.init(id: layer.id, startUs: Int64(value)))
             return true
         }
-        seconds("End", value: Double(layer.endUs) / 1e6) { value in
-            guard value > Double(layer.startUs) / 1e6, value <= Double(model.project.source.durationUs) / 1e6 else { return false }
-            set(.init(id: layer.id, endUs: Int64((value * 1e6).rounded())))
+        seconds("End", value: Int(layer.endUs), upper: bound, fractionDigits: 6) { value in
+            guard value > layer.startUs, value <= duration else { return false }
+            set(.init(id: layer.id, endUs: Int64(value)))
             return true
         }
         if layer.kind == .video {
-            seconds("Start in video", value: Double(layer.videoStartMs) / 1000) { value in
-                guard value < Double(Int.max) / 1000 else { return false }
-                set(.init(id: layer.id, videoStartMs: Int((value * 1000).rounded())))
+            seconds("Start in video", value: layer.videoStartMs, upper: Int.max, fractionDigits: 3) { value in
+                guard value < Int.max else { return false }
+                set(.init(id: layer.id, videoStartMs: value))
                 return true
             }
             SwitchRow("Play video sound", isOn: Binding(get: { layer.videoSound },
@@ -100,17 +102,17 @@ private struct MediaLayerInspector: View {
 
     private func set(_ op: EditOp.Layer) { model.edit([.layer(op)]) }
 
-    private func seconds(_ label: String, value: Double, apply: @escaping (Double) -> Bool) -> some View {
-        LabeledContent(label) {
-            TextField(label, value: Binding(get: { value }, set: { next in
-                if next != value, !next.isFinite || next < 0 || !apply(next) {
+    private func seconds(_ label: String, value: Int, upper: Int, fractionDigits: Int,
+                         apply: @escaping (Int) -> Bool) -> some View {
+        let step = fractionDigits == 6 ? 100_000 : 100
+        return LabeledContent(label) {
+            // Allow values just outside the edit's bounds so a bad span can report its validation error.
+            KitNumberField("\(label) in seconds", value: Binding(get: { value }, set: { next in
+                if next != value, next < 0 || !apply(next) {
                     model.show("Enter a time within the layer’s range.", error: true)
                 }
-            }), format: .number.precision(.fractionLength(0...6)))
-            .frame(width: 84)
-            .multilineTextAlignment(.trailing)
-            .accessibilityLabel("\(label) in seconds")
-            Text("s").foregroundStyle(.secondary)
+            }), in: -step...upper, step: step, suffix: .text("s"),
+                           style: .bare, fractionDigits: fractionDigits)
         }
     }
 }

@@ -254,6 +254,101 @@
       ]
     },
     {
+      "name": "all same-kind inputs stay editable and a voiceover named mic has its own identity",
+      "audio": {
+        "voiceovers": [
+          {
+            "id": "mic",
+            "atUs": 0,
+            "durationUs": 1000,
+            "file": "speech.wav",
+            "volume": 1
+          }
+        ]
+      },
+      "facts": {
+        "movieTracks": 2,
+        "mixedFrom": [
+          {
+            "source": "mic",
+            "file": "left.wav",
+            "offsetMs": 33
+          },
+          {
+            "source": "mic",
+            "file": "right.wav",
+            "offsetMs": -79
+          },
+          {
+            "source": "system",
+            "file": "desk.wav",
+            "offsetMs": 0
+          },
+          {
+            "source": "system",
+            "file": "call.wav",
+            "offsetMs": 7
+          }
+        ]
+      },
+      "lanes": [
+        {
+          "source": "mic",
+          "file": "left.wav",
+          "offsetMs": 33,
+          "id": "mic",
+          "name": "Microphone 1",
+          "muted": false,
+          "volume": 1
+        },
+        {
+          "source": "mic",
+          "file": "right.wav",
+          "offsetMs": -79,
+          "id": "mic-2",
+          "name": "Microphone 2",
+          "muted": false,
+          "volume": 1
+        },
+        {
+          "source": "system",
+          "file": "desk.wav",
+          "offsetMs": 0,
+          "id": "system",
+          "name": "System sound 1",
+          "muted": false,
+          "volume": 1
+        },
+        {
+          "source": "system",
+          "file": "call.wav",
+          "offsetMs": 7,
+          "id": "system-2",
+          "name": "System sound 2",
+          "muted": false,
+          "volume": 1
+        },
+        {
+          "id": "movie-1",
+          "source": "movie",
+          "track": 1,
+          "offsetMs": 0,
+          "volume": 1,
+          "muted": false
+        },
+        {
+          "id": "voice-224948ca810fc2bc9e3d80c0b1129fe2",
+          "source": "voiceover",
+          "offsetMs": 0,
+          "volume": 1,
+          "muted": false
+        }
+      ],
+      "movieTracksPlayed": [
+        1
+      ]
+    },
+    {
       "name": "silent movie",
       "audio": {},
       "facts": {

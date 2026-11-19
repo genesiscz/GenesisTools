@@ -1,7 +1,10 @@
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { audioTrackCount } from "@genesiscz/utils/recording-editor/denoise";
 import { atempoChain } from "@genesiscz/utils/recording-editor/ffmpeg";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
+import { type AudioFacts, type AudioLane, movieTracksPlayed } from "./audio-lanes";
 
 const { log } = logger.scoped("recording-editor-loudness");
 
@@ -62,12 +65,18 @@ export interface PlayedClip {
  * clip's source range of every track, mixed, sped up as it plays (so a part weighs its played length), then joined.
  */
 export function playedAudioFilter(tracks: readonly number[], clips?: readonly PlayedClip[]): string {
-    if (!clips || clips.length === 0) {
-        return mixedTracksFilter(tracks);
-    }
+    return clips?.length
+        ? playedClipsFilter(
+              tracks.map((track) => `[0:a:${track}]`),
+              clips
+          )
+        : mixedTracksFilter(tracks);
+}
 
-    const split = tracks.map(
-        (track) => `[0:a:${track}]asplit=${clips.length}${clips.map((_, index) => `[t${track}c${index}]`).join("")}`
+function playedClipsFilter(labels: readonly string[], clips: readonly PlayedClip[]): string {
+    const tracks = labels.map((_, index) => index);
+    const split = labels.map(
+        (label, track) => `${label}asplit=${clips.length}${clips.map((_, index) => `[t${track}c${index}]`).join("")}`
     );
     const parts = clips.map((clip, index) => {
         const trimmed = tracks.map(
@@ -83,6 +92,82 @@ export function playedAudioFilter(tracks: readonly number[], clips?: readonly Pl
     return `${[...split, ...parts].join(";")};${joined},`;
 }
 
+/** An audible recording lane, with the same source choice and gain as the renderer. */
+export interface RecordingLaneInput {
+    path: string;
+    track: number;
+    volume: number;
+    offsetMs: number;
+}
+
+export function recordingLaneInputs(options: {
+    video: string;
+    lanes: readonly AudioLane[];
+    facts: AudioFacts;
+}): RecordingLaneInput[] {
+    const { video, lanes, facts } = options;
+    const movie = new Set(movieTracksPlayed(lanes, facts));
+    const result: RecordingLaneInput[] = [];
+    for (const lane of lanes) {
+        if (lane.source === "music" || lane.source === "voiceover") {
+            continue;
+        }
+        if (lane.file) {
+            const path = resolve(dirname(video), lane.file);
+            if (!lane.muted && lane.volume > 0 && existsSync(path)) {
+                result.push({ path, track: 0, volume: lane.volume, offsetMs: lane.offsetMs });
+            }
+        } else if (lane.track !== undefined && movie.delete(lane.track) && !lane.muted && lane.volume > 0) {
+            result.push({ path: video, track: lane.track, volume: lane.volume, offsetMs: 0 });
+        }
+    }
+    return result;
+}
+
+/** Place each recording input on the source clock before summing, as AVFoundation does in the export. */
+function laneMix(lanes: readonly RecordingLaneInput[], durationUs: number) {
+    const files = [...new Set(lanes.map(({ path }) => path))];
+    const duration = durationUs / 1_000_000;
+    const streams = lanes.map(({ path, track, volume, offsetMs }, index) => {
+        const start = offsetMs < 0 ? `atrim=start=${-offsetMs / 1000},asetpts=PTS-STARTPTS,` : "";
+        const delay = offsetMs > 0 ? `adelay=${offsetMs}:all=1,` : "";
+        return `[${files.indexOf(path)}:a:${track}]aresample=48000:async=1:first_pts=0,${start}${delay}volume=${volume},apad,atrim=duration=${duration}[lane${index}]`;
+    });
+    const labels = lanes.map((_, index) => `[lane${index}]`).join("");
+    const mix = lanes.length > 1 ? `amix=inputs=${lanes.length}:normalize=0` : "anull";
+    return { inputs: files.flatMap((file) => ["-i", file]), graph: `${streams.join(";")};${labels}${mix}[recorded]` };
+}
+
+/** Transcription uses the source clock, before cuts, and the same recording lanes as export. */
+export async function recordingLanesToMonoMp3(options: {
+    lanes: readonly RecordingLaneInput[];
+    durationUs: number;
+    output: string;
+}): Promise<void> {
+    const mix = laneMix(options.lanes, options.durationUs);
+    await runVideoCommand({
+        command: [
+            "ffmpeg",
+            "-nostdin",
+            "-v",
+            "error",
+            ...mix.inputs,
+            "-filter_complex",
+            mix.graph,
+            "-map",
+            "[recorded]",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-b:a",
+            "64k",
+            options.output,
+        ],
+        timeoutMs: 10 * 60_000,
+    });
+}
+
 /**
  * The integrated loudness (EBU R128, LUFS) of the movie's audio tracks that are not muted, mixed as the export mixes
  * them; undefined when no such track exists. ebur128 prints its running values as frame metadata; the last
@@ -93,23 +178,27 @@ export async function integratedLoudness(options: {
     video: string;
     mutedTracks?: readonly number[];
     clips?: readonly PlayedClip[];
+    mix?: { lanes: readonly RecordingLaneInput[]; durationUs: number };
 }): Promise<number | undefined> {
-    const tracks = await audibleTracksOf(options.video, { mutedTracks: options.mutedTracks });
+    const tracks = options.mix ? [] : await audibleTracksOf(options.video, { mutedTracks: options.mutedTracks });
 
-    if (tracks.length === 0) {
+    if ((options.mix?.lanes.length ?? tracks.length) === 0) {
         return undefined;
     }
 
+    const mix = options.mix && laneMix(options.mix.lanes, options.mix.durationUs);
+    const audioFilter = mix
+        ? `${mix.graph};${options.clips?.length ? playedClipsFilter(["[recorded]"], options.clips) : "[recorded]"}`
+        : playedAudioFilter(tracks, options.clips);
     const text = await runVideoCommand({
         command: [
             "ffmpeg",
             "-nostdin",
             "-v",
             "error",
-            "-i",
-            options.video,
+            ...(mix ? mix.inputs : ["-i", options.video]),
             "-filter_complex",
-            `${playedAudioFilter(tracks, options.clips)}ebur128=metadata=1,ametadata=mode=print:key=lavfi.r128.I:file=-[out]`,
+            `${audioFilter}ebur128=metadata=1,ametadata=mode=print:key=lavfi.r128.I:file=-[out]`,
             "-map",
             "[out]",
             "-f",

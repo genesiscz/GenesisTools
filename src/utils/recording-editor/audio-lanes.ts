@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { EditOp, EditProject, OpFacts } from "./project";
 
@@ -16,6 +17,9 @@ export const audioLaneSchema = z.object({
     name: z.string().max(40).optional(),
 });
 export type AudioLane = z.infer<typeof audioLaneSchema>;
+export const audioLanesSchema = z
+    .array(audioLaneSchema)
+    .refine((lanes) => new Set(lanes.map((lane) => lane.id)).size === lanes.length, "Audio lane IDs must be unique");
 
 export interface AudioFacts {
     movieTracks: number;
@@ -23,10 +27,22 @@ export interface AudioFacts {
     mixedFrom: Array<{ source: "mic" | "system"; file: string; offsetMs: number }>;
 }
 
+function voiceoverLaneId(id: string): string {
+    // Ordinary clip IDs keep their saved lane identity. Disambiguate reserved recording and music IDs.
+    if (
+        id.length > 0 &&
+        id.length <= 40 &&
+        !/^(?:(?:mic|system)(?:-\d+)?|music|movie-\d+|voice-[0-9a-f]{32})$/.test(id)
+    ) {
+        return id;
+    }
+    return `voice-${createHash("sha256").update(id).digest("hex").slice(0, 32)}`;
+}
+
 function extraLanes(audio: EditProject["audio"]): AudioLane[] {
     const lanes = (audio.voiceovers ?? []).map((clip) =>
         audioLaneSchema.parse({
-            id: clip.id,
+            id: voiceoverLaneId(clip.id),
             source: "voiceover",
             ...(clip.label ? { name: clip.label.slice(0, 40) } : {}),
         })
@@ -49,9 +65,12 @@ export function audioLanesOf(project: EditProject, facts: AudioFacts): AudioLane
     const muted = new Set(audio.mutedTracks);
     const lanes: AudioLane[] = [];
     for (const source of ["mic", "system"] as const) {
-        const input = facts.mixedFrom.find((file) => file.source === source);
-        if (input) {
-            lanes.push(audioLaneSchema.parse({ ...input, id: source, muted: muted.has(0) }));
+        const inputs = facts.mixedFrom.filter((file) => file.source === source);
+        for (const [index, input] of inputs.entries()) {
+            const id = index === 0 ? source : `${source}-${index + 1}`;
+            const name =
+                inputs.length > 1 ? `${source === "mic" ? "Microphone" : "System sound"} ${index + 1}` : undefined;
+            lanes.push(audioLaneSchema.parse({ ...input, id, name, muted: muted.has(0) }));
         }
     }
 
@@ -59,7 +78,7 @@ export function audioLanesOf(project: EditProject, facts: AudioFacts): AudioLane
         lanes.push(audioLaneSchema.parse({ id: `movie-${track}`, source: "movie", track, muted: muted.has(track) }));
     }
 
-    return [...lanes, ...extraLanes(audio)];
+    return audioLanesSchema.parse([...lanes, ...extraLanes(audio)]);
 }
 
 /** A replacement file suppresses its proxy mix even when the file lane itself is muted. */
@@ -83,10 +102,28 @@ export function syncExtraAudioLanes(before: EditProject, after: EditProject): Ed
         return after;
     }
 
-    const overrides = new Map(lanes.map((lane) => [lane.id, lane]));
+    const overrides = new Map(lanes.map((lane) => [`${lane.source}:${lane.id}`, lane]));
+    // An old ID can be another clip's current lane ID. In that case the current owner keeps its controls.
+    const clips = before.audio.voiceovers ?? [];
+    const currentVoiceovers = new Set(clips.map((clip) => voiceoverLaneId(clip.id)));
+    for (const clip of clips) {
+        if (currentVoiceovers.has(clip.id)) {
+            continue;
+        }
+        const old = overrides.get(`voiceover:${clip.id}`);
+        const key = `voiceover:${voiceoverLaneId(clip.id)}`;
+        if (old && !overrides.has(key)) {
+            overrides.set(key, old);
+        }
+    }
     const recording = lanes.filter((lane) => lane.source !== "music" && lane.source !== "voiceover");
-    const extras = extraLanes(after.audio).map((lane) => overrides.get(lane.id) ?? lane);
-    return { ...after, audio: { ...after.audio, lanes: [...recording, ...extras] } };
+    const extras = extraLanes(after.audio).map((lane) => {
+        const override = overrides.get(`${lane.source}:${lane.id}`);
+        return override
+            ? { ...lane, volume: override.volume, muted: override.muted, name: override.name ?? lane.name }
+            : lane;
+    });
+    return { ...after, audio: { ...after.audio, lanes: audioLanesSchema.parse([...recording, ...extras]) } };
 }
 
 export function setAudioLane(

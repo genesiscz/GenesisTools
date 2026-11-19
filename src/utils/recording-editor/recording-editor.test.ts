@@ -52,7 +52,12 @@ import {
     silenceDetectArgs,
 } from "@genesiscz/utils/recording-editor/idle";
 import { laneItems, resolveLanes } from "@genesiscz/utils/recording-editor/lanes";
-import { audibleTracks, integratedLoudness, transcribedTracks } from "@genesiscz/utils/recording-editor/loudness";
+import {
+    audibleTracks,
+    integratedLoudness,
+    recordingLaneInputs,
+    transcribedTracks,
+} from "@genesiscz/utils/recording-editor/loudness";
 import {
     annotateClicks,
     applyOp,
@@ -4375,12 +4380,51 @@ describe("recording layer contract", () => {
                 ...(row.camera ? withCamera() : wholeProject(source)),
                 layers: row.layers,
             });
-            for (const move of row.moves) {
+            for (const [index, move] of row.moves.entries()) {
                 project = applyOp(project, editOpSchema.parse({ op: "layerMove", ...move }));
+                if (row.movesAfter) {
+                    expect(layerOrderOf(project).map(({ id }) => id)).toEqual(row.movesAfter[index]!);
+                }
             }
             expect<unknown>(layerOrderOf(project)).toEqual(row.order);
         });
     }
+
+    test("a camera can use its minimum size while media still needs five percent width", () => {
+        const project = withCamera();
+        const resized = applyOp(project, editOpSchema.parse({ op: "layer", id: "camera", width: 0.045 }));
+        expect(resized.camera?.size).toBeCloseTo(0.08, 6);
+        const media = applyOp(project, { op: "layerAdd", kind: "image", file: "logo.png" });
+        const id = media.layers!.media[0].id;
+        expect(() => applyOp(media, editOpSchema.parse({ op: "layer", id, width: 0.045 }))).toThrow();
+    });
+
+    test("a saved recording lane can't override an extra with a reserved clip ID", async () => {
+        const { audioLanesOf, syncExtraAudioLanes } = await import("./audio-lanes");
+        const before = {
+            ...wholeProject(source),
+            audio: { ...wholeProject(source).audio, lanes: audioLanesOf(wholeProject(source), frames) },
+        };
+        before.audio.lanes[0].volume = 0.25;
+        const withVoice = {
+            ...before,
+            audio: {
+                ...before.audio,
+                voiceovers: [{ id: "mic", file: "speech.wav", atUs: 0, durationUs: 1000, volume: 1 }],
+            },
+        };
+        const after = syncExtraAudioLanes(before, withVoice);
+        expect(after.audio.lanes?.map(({ source, volume }) => [source, volume])).toEqual([
+            ["mic", 0.25],
+            ["system", 1],
+            ["voiceover", 1],
+        ]);
+        const duplicate = {
+            ...after,
+            audio: { ...after.audio, lanes: [before.audio.lanes[0], before.audio.lanes[0]] },
+        };
+        expect(editProjectSchema.safeParse(duplicate).success).toBe(false);
+    });
 
     test("opening an old edit derives both file lanes without changing its bytes or playing the mix", async () => {
         const path = join(workspace(), "old.edit.json");
@@ -5163,6 +5207,39 @@ describe.skipIf(skip.integration)("normalize measures what the export plays", ()
             timeoutMs: 60_000,
         });
     };
+
+    test("an explicit sound mix measures only the unmuted lane, at its own gain and offset", async () => {
+        const dir = workspace();
+        const mixed = join(dir, "proxy.mp4");
+        const mic = join(dir, "mic.mp4");
+        await makeTone(mixed, 4, "1");
+        await makeTone(mic, 4, "0.25");
+        const inputs = recordingLaneInputs({
+            video: mixed,
+            facts: {
+                movieTracks: 1,
+                mixedFrom: [
+                    { source: "mic", file: mic, offsetMs: 100 },
+                    { source: "system", file: mixed, offsetMs: 0 },
+                ],
+            },
+            lanes: [
+                { id: "mic", source: "mic", file: mic, offsetMs: 100, muted: false, volume: 0.5 },
+                { id: "system", source: "system", file: mixed, offsetMs: 0, muted: true, volume: 1 },
+                { id: "movie-0", source: "movie", track: 0, offsetMs: 0, muted: false, volume: 1 },
+            ],
+        });
+        expect(inputs).toEqual([{ path: mic, track: 0, offsetMs: 100, volume: 0.5 }]);
+        const measured = await integratedLoudness({
+            video: mixed,
+            mix: { lanes: inputs, durationUs: 4_000_000 },
+            clips: [{ fromUs: 1_000_000, toUs: 4_000_000, speed: 1 }],
+        });
+        const micOnly = await integratedLoudness({ video: mic });
+        expect(measured).toBeDefined();
+        expect(micOnly).toBeDefined();
+        expect((micOnly ?? 0) - (measured ?? 0)).toBeCloseTo(6, 0);
+    });
 
     test("only the kept clips count, at their played speed, so a cut loud part does not lower the gain", async () => {
         const dir = workspace();

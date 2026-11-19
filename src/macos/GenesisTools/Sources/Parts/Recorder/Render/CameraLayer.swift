@@ -8,13 +8,17 @@ final class CameraFeed: Sendable {
 
     private init(feed: MediaFeed) { self.feed = feed }
 
-    static func make(project: EditProject) async -> CameraFeed? {
+    static func make(project: EditProject, warnings: RenderWarnings? = nil) async -> CameraFeed? {
         guard let camera = project.camera else { return nil }
         let url = camera.movieURL(video: project.source.video)
         // Keep the asset alive for the lifetime of the reader.
         let asset = AVURLAsset(url: url)
         guard let video = try? await asset.loadTracks(withMediaType: .video).first else { return nil }
-        return CameraFeed(feed: MediaFeed(asset: asset, track: video, camera: true))
+        let cursors = (try? await video.load(.canProvideSampleCursors)) ?? false
+        let duration = try? await asset.load(.duration)
+        let durationUs = duration.flatMap { $0.isNumeric ? $0.convertScale(1_000_000, method: .roundHalfAwayFromZero).value : nil } ?? 0
+        return CameraFeed(feed: MediaFeed(asset: asset, track: video, durationUs: durationUs, sampleCursors: cursors,
+                                          camera: true, warnings: warnings))
     }
 
     func draw(_ camera: EditProject.Camera, atSourceUs sourceUs: Int64, on base: CIImage, canvas: CGSize) -> CIImage {

@@ -2,8 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { concurrentMap } from "@genesiscz/utils/async";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { isInsideDir } from "@genesiscz/utils/fs/canonical";
+import { FileIdentityCache, fileIdentity } from "@genesiscz/utils/fs/identity-cache";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { imageSize } from "@genesiscz/utils/macos/ocr-boxes";
@@ -535,19 +537,69 @@ function frameSoundTracks(manifest: RecordingManifest | undefined) {
         : [];
 }
 
-/** A piece's length by ffprobe, for a piece recording.json does not list; undefined when ffprobe cannot read it. */
+const pieceLengths = new FileIdentityCache<Promise<number | undefined>>({ limit: 2048 });
+
+/** A piece's length by ffprobe, coalesced until the file changes. Failed probes can be retried. */
 async function probedLengthMs(path: string): Promise<number | undefined> {
-    try {
-        return (await audioFileDurationUs(path)) / 1000;
-    } catch (err) {
-        log.warn({ err, path }, "audio piece of unknown length; it is mixed whole");
+    const identity = fileIdentity(path);
+    if (!identity) {
         return undefined;
     }
+    const cached = pieceLengths.get(path, identity);
+    if (cached) {
+        return cached;
+    }
+    const reading = audioFileDurationUs(path)
+        .then((us) => us / 1000)
+        .catch((err: unknown) => {
+            if (pieceLengths.get(path, identity) === reading) {
+                pieceLengths.delete(path);
+            }
+            log.warn({ err, path }, "audio piece of unknown length; it is mixed whole");
+            return undefined;
+        });
+    pieceLengths.set(path, identity, reading);
+    return reading;
+}
+
+function existingTrackPath(folder: string, path: string): string | undefined {
+    const local = localTrackFile(folder, path);
+    const resolved = local && join(folder, local);
+    return resolved && existsSync(resolved) ? resolved : undefined;
+}
+
+function legacyAudioNames(folder: string): string[] {
+    const dir = join(folder, "audio");
+    return existsSync(dir) ? readdirSync(dir) : [];
+}
+
+/** Every source piece a proxy may read, even before it has prepared a per-source mix. */
+export function proxyAudioInputPaths(movie: string): string[] {
+    if (basename(movie) !== PROXY_FILE) {
+        return [];
+    }
+    const folder = dirname(movie);
+    const manifest = readRecordingManifestSafe(folder)?.manifest;
+    if (!manifest || manifest.settings.kind === "video") {
+        return [];
+    }
+    const declared = frameSoundTracks(manifest).flatMap(({ path }) => {
+        const local = path && existingTrackPath(folder, path);
+        return local ? [local] : [];
+    });
+    return [
+        ...new Set([
+            ...declared,
+            ...legacyAudioNames(folder)
+                .filter((name) => AUDIO_PIECE.test(name))
+                .map((name) => join(folder, "audio", name)),
+        ]),
+    ];
 }
 
 /** Both mixes use the same pieces and clock, including files from captures before the manifest listed tracks. */
 async function libraryAudioPieces(folder: string, manifest?: RecordingManifest) {
-    const pieces = new Map<string, ProxyAudioPiece>();
+    const pieces = new Map<string, ProxyAudioPiece & { source: AudioSource }>();
     const origin = manifest ? Date.parse(manifest.startedAt) : NaN;
     let complete = true;
     if (!Number.isFinite(origin) || manifest?.settings.kind === "video") {
@@ -555,7 +607,7 @@ async function libraryAudioPieces(folder: string, manifest?: RecordingManifest) 
     }
 
     const audioDir = join(folder, "audio");
-    for (const name of existsSync(audioDir) ? readdirSync(audioDir) : []) {
+    for (const name of legacyAudioNames(folder)) {
         const match = AUDIO_PIECE.exec(name);
         if (match) {
             const path = join(audioDir, name);
@@ -572,12 +624,11 @@ async function libraryAudioPieces(folder: string, manifest?: RecordingManifest) 
         if (!track.path) {
             continue;
         }
-        const file = localTrackFile(folder, track.path);
-        if (!file || !existsSync(join(folder, file))) {
+        const path = existingTrackPath(folder, track.path);
+        if (!path) {
             complete = false;
             continue;
         }
-        const path = join(folder, file);
         const named = pieces.get(path);
         const start = track.startedAtMs !== undefined ? track.startedAtMs - origin : (named?.delayMs ?? 0);
         pieces.set(path, {
@@ -591,13 +642,17 @@ async function libraryAudioPieces(folder: string, manifest?: RecordingManifest) 
 
     const result = [...pieces.values()];
     // Duration only breaks ties between overlapping pieces of the same source.
-    for (const source of ["mic", "system"] as const) {
-        const same = result.filter((piece) => piece.source === source);
-        if (same.length > 1) {
-            for (const piece of same) {
-                piece.durationMs ||= await probedLengthMs(piece.path);
-            }
-        }
+    const counts = { mic: 0, system: 0 };
+    for (const piece of result) {
+        counts[piece.source]++;
+    }
+    const probes = await concurrentMap({
+        items: result.filter((piece) => counts[piece.source] > 1 && piece.durationMs === undefined),
+        concurrency: 4,
+        fn: (piece) => probedLengthMs(piece.path),
+    });
+    for (const [piece, duration] of probes) {
+        piece.durationMs = duration;
     }
     return { pieces: result, complete };
 }
@@ -642,13 +697,14 @@ export function recordingAudioIssues(movie: string): EditIssue[] {
     return frameSoundTracks(manifest).flatMap((track) => {
         const name = track.source === "mic" ? "Microphone" : "System sound";
         const messages = track.warnings?.filter(Boolean) ?? [];
-        if (!track.path) {
+        if (!track.path || !existingTrackPath(dirname(movie), track.path)) {
+            const issue = track.path ? `${name} file is missing: ${track.path}.` : `${name} recorded no file.`;
             return [
                 {
                     severity: "check" as const,
                     kind: "recording-audio-warning",
                     item: `audio source ${track.source}`,
-                    message: `${name} recorded no file.${messages.length ? ` ${messages.join(" ")}` : ""}`,
+                    message: [issue, ...messages].join(" "),
                 },
             ];
         }

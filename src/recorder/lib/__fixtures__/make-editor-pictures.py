@@ -7,7 +7,7 @@ import subprocess
 
 
 def ffmpeg(folder, *args):
-    subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-n", *args], cwd=folder, check=True)
+    subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-n", *args], cwd=folder, check=True, timeout=15)
 
 
 def write_json(folder, filename, value):
