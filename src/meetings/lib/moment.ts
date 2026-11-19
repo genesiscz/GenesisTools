@@ -669,13 +669,11 @@ function toneSoundOf(input: MomentInput): ToneSound {
 
 function momentOf(input: MomentInput, target: MomentTarget, span: Span): Moment {
     const { listen } = input;
+    const targetId = target.kind === "item" ? questionIdOf(input.record, target.id) : undefined;
     const splitPart =
-        target.kind === "item" &&
+        targetId !== undefined &&
         input.record.items.some(
-            (item) =>
-                item.id === questionIdOf(input.record, target.id) &&
-                item.kind === "question" &&
-                item.question.startsWith('Who says "')
+            (item) => item.id === targetId && item.kind === "question" && item.question.startsWith('Who says "')
         );
     const voicePad = Math.max(splitPart ? 1.5 : 0, listen.tone.leadSec + SPEAKER_PAD_SEC);
     const pads = span.pad === "voice" ? { beforeSec: voicePad, afterSec: voicePad } : aroundPads(input);
@@ -728,10 +726,10 @@ export function planMoment(input: MomentInput & { target: MomentTarget }): Momen
  * A question plays its own clip, and a range or a selection is bounded by the caller.
  */
 function clampTooLong(record: MeetingRecord, target: MomentTarget, span: Span, longestSec: number): Span {
+    const targetId = target.kind === "item" ? questionIdOf(record, target.id) : undefined;
     const capped =
         target.kind === "stretch" ||
-        (target.kind === "item" &&
-            record.items.find((item) => item.id === questionIdOf(record, target.id))?.kind !== "question");
+        (targetId !== undefined && record.items.find((item) => item.id === targetId)?.kind !== "question");
 
     if (!capped || span.toSec - span.fromSec <= longestSec) {
         return span;
@@ -920,7 +918,8 @@ function hitWords(record: MeetingRecord, target: MomentTarget): string[] {
         return [];
     }
 
-    const item = record.items.find((one) => one.id === questionIdOf(record, target.id));
+    const itemId = questionIdOf(record, target.id);
+    const item = record.items.find((one) => one.id === itemId);
 
     if (item?.kind === "term") {
         return [item.proposed, item.heard].filter((word): word is string => Boolean(word));

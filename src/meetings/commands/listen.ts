@@ -522,7 +522,8 @@ class TerminalAdapter implements ListenAdapter {
     private async offerDictionary(label: string): Promise<void> {
         const { store, meeting } = this.deps;
         const record = store.read(meeting.id);
-        const answered = record?.items.find((item) => item.id === questionIdOf(record, label));
+        const answeredId = record && questionIdOf(record, label);
+        const answered = record?.items.find((item) => item.id === answeredId);
 
         if (!record || answered?.kind !== "question") {
             return;
@@ -671,7 +672,8 @@ class TerminalAdapter implements ListenAdapter {
 
         if (note.kind === "decided") {
             const record = this.deps.store.read(meeting.id);
-            const decided = record?.items.find((item) => record && item.id === questionIdOf(record, note.label));
+            const decidedId = record && questionIdOf(record, note.label);
+            const decided = record?.items.find((item) => item.id === decidedId);
             const fixed =
                 note.outcome !== "skip" &&
                 note.outcome.answer &&
