@@ -1332,9 +1332,7 @@ public final class WidgetModel: ObservableObject {
     }
     /// Every unread or waiting inbox item: what "Mark all read" acts on.
     public var inboxCount: Int { max(0, inbox.unread) + max(0, inbox.needsAnswer) }
-    /// The rail badge: only the items that wait for the user's answer (open or drafted decisions and pending
-    /// questions), the kind of item the hub's Inbox counts. Unread answers and results do not count: a badge of weeks
-    /// of read-later items read as 99+ while the hub said 26 (ux catalogue R1).
+    /// The rail badge follows the shared inbox kind settings. Older snapshots count only items waiting for an answer.
     public var waitingCount: Int { max(0, inbox.badgeCount ?? inbox.needsAnswer) }
 
     /// Expands one inbox card in place. An unread answer or result counts as read once the user opens it, the same
