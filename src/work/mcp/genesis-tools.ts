@@ -1,5 +1,5 @@
 /**
- * The `work_*` MCP tools: six tools over the one method table. Reads have their own tool each; every other write
+ * The `work_*` MCP tools use one method table. Reads have their own tool each; every other write
  * goes through `work_write { method, params }`, so the tool list stays short.
  */
 import { jsonSchemaOf } from "@genesiscz/utils/api-descriptor";
@@ -13,7 +13,9 @@ import { workFormatters } from "@genesiscz/utils/work/formatters";
 import type { CallOptions } from "@genesiscz/utils/work/handlers";
 import { callWorkHere } from "../doors/service";
 
-const OWN_TOOLS = ["context", "list", "show", "spot", "reopen"] as const satisfies readonly WorkMethodName[];
+const OWN_TOOLS = (Object.keys(workMethods) as WorkMethodName[]).filter(
+    (name) => workMethods[name].effect === "read" || name === "spot" || name === "reopen"
+);
 const WRITE_METHODS = (Object.keys(workMethods) as WorkMethodName[]).filter(
     (name) => workMethods[name].effect !== "read" && !(OWN_TOOLS as readonly string[]).includes(name)
 );
