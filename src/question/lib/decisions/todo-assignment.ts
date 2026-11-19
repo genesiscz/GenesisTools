@@ -40,7 +40,7 @@ async function assign({ file, events, id, expected, action, sourceHome, afterRes
     }
     const located = deliver
         ? undefined
-        : await (await import("../inbox/drafts")).waitForSessionReceiver(target, afterResume ? 30_000 : 0);
+        : await (await import("../inbox/drafts")).waitForSessionReceiver(target, afterResume ? 30_000 : 0, { signal });
     signal?.throwIfAborted();
     const reserved = await changeTodoAssignment({
         ...assignment,
