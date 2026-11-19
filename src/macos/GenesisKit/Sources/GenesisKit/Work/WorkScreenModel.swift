@@ -19,7 +19,7 @@ public final class WorkScreenModel: ObservableObject {
     }
 
     @Published public private(set) var projects: [String] = []
-    /// The first read of the projects ended, whatever it found: a store with no project settles here.
+    /// The first project read for this activation ended, whatever it found. An empty store settles here.
     @Published public private(set) var projectsLoaded = false
     @Published public var project: String? {
         didSet {
@@ -148,7 +148,8 @@ public final class WorkScreenModel: ObservableObject {
     public func activate(preferring projects: [String]? = nil) {
         guard !active else { return }
         active = true
-        if itemRef != nil, companionReadNeeded { reload() }
+        if projectsLoaded { projectsLoaded = false }
+        if itemRef != nil, stale || companionReadNeeded { reload() }
         openingCandidates = projects
         if visible { listen() }
         wake = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification,
