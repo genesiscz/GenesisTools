@@ -20,6 +20,7 @@ import {
     planRemoval,
     rmCallerFromRuntime,
 } from "@genesiscz/utils/rm";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { pairItem } from "@genesiscz/utils/work/connectors/sync";
 import type { NewChange } from "@genesiscz/utils/work/model/change";
@@ -358,6 +359,37 @@ export class TodoStore {
                 todoId: id,
             })[0]?.todo ?? null
         );
+    }
+
+    private syncReceiptPath(id: string, target: "calendar" | "reminders"): string {
+        return join(
+            dirname(this.dbPath),
+            "todo-sync",
+            projectHash(this.projectRoot),
+            `${projectHash(id)}-${target}.json`
+        );
+    }
+
+    readSyncReceipt(id: string, target: "calendar" | "reminders"): string | undefined {
+        const path = this.syncReceiptPath(id, target);
+        try {
+            const receipt: unknown = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true });
+            if (typeof receipt !== "string" || receipt.length === 0) {
+                throw new Error(`Invalid ${target} receipt for Todo ${id}`);
+            }
+            return receipt;
+        } catch (error) {
+            if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+                return undefined;
+            }
+            throw error;
+        }
+    }
+
+    writeSyncReceipt(id: string, target: "calendar" | "reminders", remoteKey: string): void {
+        const path = this.syncReceiptPath(id, target);
+        mkdirSync(dirname(path), { recursive: true });
+        atomicWriteFileSync(path, SafeJSON.stringify(remoteKey, { strict: true }));
     }
 
     /** One native side effect per todo at a time, without holding the store's own write. */
