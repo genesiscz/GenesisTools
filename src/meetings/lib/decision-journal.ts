@@ -1779,6 +1779,15 @@ function dictionaryPlan(options: {
             }
         } else if (change.before && !change.after && !current) {
             plan.undo.push({ scope: change.scope, after: change.before });
+        } else if (change.before && change.after && current) {
+            // A changed answer replaced the earlier answer's entry: its Undo puts that entry back.
+            if (same(current, change.after)) {
+                plan.undo.push({ scope: change.scope, before: change.after, after: change.before });
+            } else {
+                plan.warnings.push(
+                    `The ${scopeName(change.scope)} dictionary entry "${value}" changed since this answer; it stays.`
+                );
+            }
         }
     }
 
@@ -1851,29 +1860,75 @@ function askDictionary(
     }
 }
 
-/** Writes one dictionary change: `after` alone adds the entry (only when absent), `before` alone removes it. */
+/**
+ * The dictionary changes a decision makes, in order. The answer's own entry comes first; when the answer it replaces
+ * added an entry for the same word, the two become one replacement, so the revised entry is not refused as present
+ * and then removed by the earlier answer's Undo.
+ */
+function plannedDictionaryChanges(plan: DictionaryPlan): DictionaryChange[] {
+    if (!plan.write) {
+        return plan.undo;
+    }
+
+    const { scope, entry } = plan.write;
+    const earlier = plan.undo.find((change) => change.before?.value === entry.value && same(change.scope, scope));
+    const rest = plan.undo.filter((change) => change !== earlier);
+    return [{ scope, ...(earlier?.before ? { before: earlier.before } : {}), after: entry }, ...rest];
+}
+
+/**
+ * Writes one dictionary change while the level still holds what it starts from (`before`, or no entry), compared
+ * under the config lock: `after` alone adds the entry, `before` alone removes it, both replace it. A change that
+ * found something else leaves the entry as it is and returns a note.
+ */
 async function applyDictionaryChange(
     config: MeetingsConfigStore,
     change: DictionaryChange
-): Promise<string | undefined> {
-    if (change.after && !change.before) {
-        try {
-            await config.putDictionaryEntry(change.scope, change.after, { ifAbsent: true });
-            return undefined;
-        } catch (error) {
-            if (error instanceof MeetingsConflictError && error.code === "dictionary-exists") {
-                return `The ${scopeName(change.scope)} dictionary already has "${change.after.value}".`;
-            }
+): Promise<{ applied: boolean; note?: string }> {
+    const outcome = await config.changeDictionaryEntryIfSame(change.scope, {
+        expected: change.before,
+        next: change.after,
+    });
 
-            throw error;
+    if (outcome === "written") {
+        return { applied: true };
+    }
+
+    const value = (change.before ?? change.after)?.value;
+
+    if (change.after && !change.before) {
+        return { applied: false, note: `The ${scopeName(change.scope)} dictionary already has "${value}".` };
+    }
+
+    if (outcome === "conflict") {
+        return {
+            applied: false,
+            note: `The ${scopeName(change.scope)} dictionary entry "${value}" changed since this answer; it stays.`,
+        };
+    }
+
+    return { applied: false };
+}
+
+/** Takes back changes `applyDictionaryChange` made, newest first; one that cannot go back is logged, not thrown. */
+async function revertDictionaryChanges(
+    config: MeetingsConfigStore,
+    changes: DictionaryChange[],
+    meeting: string
+): Promise<void> {
+    for (const change of [...changes].reverse()) {
+        const back = { scope: change.scope, before: change.after, after: change.before };
+
+        try {
+            const { applied, note } = await applyDictionaryChange(config, back);
+
+            if (!applied && note) {
+                log.warn({ meeting, change }, `dictionary change not taken back: ${note}`);
+            }
+        } catch (error) {
+            log.warn({ error, meeting, change }, "dictionary change not taken back");
         }
     }
-
-    if (change.before && !change.after) {
-        await config.removeDictionaryEntry(change.scope, change.before.value);
-    }
-
-    return undefined;
 }
 
 export class DecisionJournal {
@@ -2294,18 +2349,30 @@ export class DecisionJournal {
               })
             : NO_DICTIONARY_PLAN;
         const notes = [...plan.warnings];
-        // The answer's own entry is written first, so a refused write leaves the record as it was.
-        let written: DictionaryChange | undefined =
-            plan.write && !save ? { scope: plan.write.scope, after: plan.write.entry } : undefined;
+        const planned = plannedDictionaryChanges(plan);
+        /**
+         * The dictionary changes are written before the record, each only while its entry is as planned, and taken
+         * back when the record does not take the decision; the entry lists the ones that were written.
+         */
+        const dictionary: DictionaryChange[] = save ? [] : planned;
 
-        if (save && plan.write) {
-            const change = { scope: plan.write.scope, after: plan.write.entry };
-            const note = await applyDictionaryChange(this.dictionaryConfig(), change);
-            written = note ? undefined : change;
-            notes.push(...(note ? [note] : []));
+        if (save) {
+            try {
+                for (const change of planned) {
+                    const { applied, note } = await applyDictionaryChange(this.dictionaryConfig(), change);
+
+                    if (applied) {
+                        dictionary.push(change);
+                    }
+
+                    notes.push(...(note ? [note] : []));
+                }
+            } catch (error) {
+                await revertDictionaryChanges(this.dictionaryConfig(), dictionary, meeting);
+                throw error;
+            }
         }
 
-        const dictionary = [...(written ? [{ scope: written.scope, after: written.after }] : []), ...plan.undo];
         let result: Decided = { skipped: [] };
         /** Open questions once the decision is made: the round-end of a round it writes itself says it. */
         let openAfter = 0;
@@ -2401,12 +2468,7 @@ export class DecisionJournal {
         }
 
         let takeBack = (): void => {};
-        // An entry this answer wrote leaves again when the record does not take the answer.
-        const unwrite = async () => {
-            if (written?.after) {
-                await this.dictionaryConfig().removeDictionaryEntry(written.scope, written.after.value);
-            }
-        };
+        const unwrite = () => revertDictionaryChanges(this.dictionaryConfig(), dictionary, meeting);
 
         try {
             await store.update(
@@ -2459,16 +2521,6 @@ export class DecisionJournal {
 
         if (!result.entry) {
             await unwrite();
-            return result;
-        }
-
-        // An Undo takes its entries back once the record has taken the Undo.
-        for (const change of plan.undo) {
-            const note = await applyDictionaryChange(this.dictionaryConfig(), change);
-
-            if (note) {
-                result = { ...result, warnings: [...(result.warnings ?? []), note] };
-            }
         }
 
         return result;
