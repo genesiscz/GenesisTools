@@ -144,6 +144,7 @@ struct WorkProjectRow: View, Equatable {
 
 /// The main view: the header in the title bar, then the Items or the Notifications pane.
 struct WorkMain: View {
+    @State private var findRequest = 0
     @ObservedObject var screen: WorkScreenModel
     /// A section a title bar count asked for; the Items scroll view brings its header to the top.
     @State private var jump: String?
@@ -215,6 +216,8 @@ struct WorkMain: View {
             }
             .padding(18)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else if screen.pane == .items {
+            itemList
         } else if let failure = screen.failure, screen.snapshot == nil {
             FailureInline(.unexpected(failure, outcome: "The work items did not load", action: "Read the work items"),
                           form: .pane) { screen.reload() }
@@ -223,34 +226,74 @@ struct WorkMain: View {
             EmptyState(symbol: "checklist", text: "Pick a project", detail: "The projects with work items are on the left.")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            ScrollViewReader { proxy in
             ScrollView {
                 Group {
-                    switch screen.pane {
-                    case .items:
-                        if let snapshot = screen.snapshot {
-                            WorkItemsView(snapshot: snapshot, pending: screen.pending) { action in
-                                Task { await screen.perform(action) }
-                            }
-                        }
-                    case .notify:
-                        WorkNotifyGridView(project: screen.project ?? "", rows: screen.notifyRows)
-                    }
+                    WorkNotifyGridView(project: screen.project ?? "", rows: screen.notifyRows)
                 }
                 .padding(.horizontal, 18)
                 .padding(.vertical, 14)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .genScrollBars()
             }
-            .onChange(of: jump) { _, section in
-                guard let section else { return }
-                GenMotion.perform(expanding: true, reduceMotion: reduceMotion) {
-                    proxy.scrollTo(WorkItemsView.sectionID(section), anchor: .top)
+        }
+    }
+
+    private var itemList: some View {
+        VStack(spacing: 0) {
+            WorkFindBar(filter: $screen.filter,
+                        matchedCount: screen.results?.matchedCount ?? 0,
+                        totalCount: screen.results?.totalCount ?? 0,
+                        focusRequest: findRequest, filterNotice: screen.filterNotice,
+                        onClear: { screen.filter = .default },
+                        onSubmit: { if let ref = screen.filter.fullRef { screen.select(ref) } })
+                .id(screen.project)
+                .disabled(screen.snapshot == nil)
+            Divider()
+            if let snapshot = screen.snapshot, let rows = screen.results {
+                ScrollViewReader { reader in
+                    ScrollView {
+                        WorkItemsView(snapshot: snapshot, projection: rows, filter: screen.filter,
+                                      selection: screen.selection, pending: screen.pending,
+                                      indexLoading: screen.indexLoading, indexFailure: screen.indexFailure,
+                                      select: { screen.select($0) }, toggleExpansion: { ref, _ in screen.toggleContainer(ref) },
+                                      showMore: screen.showMore, clearFilters: { screen.filter = .default },
+                                      retryIndex: screen.loadIndexIfNeeded,
+                                      perform: { action in Task { await screen.perform(action) } })
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .genScrollBars()
+                    }
+                    // initial: a count clicked on the Notify pane switches to this list and sets the jump in one step.
+                    .onChange(of: jump, initial: true) { _, section in
+                        guard let section else { return }
+                        GenMotion.perform(expanding: true, reduceMotion: reduceMotion) {
+                            reader.scrollTo(WorkItemsView.sectionID(section), anchor: .top)
+                        }
+                        jump = nil
+                    }
                 }
-                jump = nil
-            }
+            } else if let failure = screen.listFailure ?? (screen.selection == nil ? screen.failure : nil) {
+                FailureInline(.unexpected(failure, outcome: "The work items did not load", action: "Read the work items"),
+                              form: .pane) { if screen.selection == nil { screen.reload() } else { screen.readListBesideDetail() } }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if screen.project == nil && screen.projectsLoaded && screen.selection == nil {
+                EmptyState(symbol: "checklist", text: "Pick a project", detail: "The projects with work items are on the left.")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ProgressView("Reading work items").controlSize(.small)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .task(id: screen.filter.fullRef) {
+            guard let ref = screen.filter.fullRef else { return }
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled, screen.filter.fullRef == ref, let snapshot = screen.snapshot,
+                  !snapshot.containers.contains(where: { $0.ref == ref || $0.members.contains(where: { $0.ref == ref && $0.isOpen }) }),
+                  !snapshot.triage.contains(where: { $0.ref == ref }) else { return }
+            screen.select(ref)
+        }
+        .panelFindNative("work.items") { findRequest += 1 }
     }
 }
 

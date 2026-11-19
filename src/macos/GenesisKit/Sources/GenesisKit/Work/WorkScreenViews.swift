@@ -27,43 +27,63 @@ public enum WorkStateLook {
     }
 }
 
-/// The Items pane: the open handoffs with their tasks, the spotted items by type, the reopened items nobody works on.
-/// It is the content of a scroll view; a test renders it as is.
+/// The Items pane consumes the model's projection; the legacy initializer renders the same rows.
+/// The host owns the find bar and scroll view.
 public struct WorkItemsView: View {
     let snapshot: WorkSnapshotValue
+    let projection: WorkItemsProjection?
+    let filter: WorkFilter
+    let selection: String?
     let pending: Set<String>
+    let indexLoading: Bool
+    let indexFailure: String?
+    let select: (String) -> Void
+    let toggleExpansion: ((String, Bool) -> Void)?
+    let showMore: () -> Void
+    let clearFilters: () -> Void
+    let retryIndex: () -> Void
     let perform: (WorkScreenAction) -> Void
-    @State private var expanded: Set<String> = []
+    @State private var expanded: Set<String>
 
     public init(snapshot: WorkSnapshotValue, pending: Set<String>, expandAll: Bool = false,
                 perform: @escaping (WorkScreenAction) -> Void) {
-        self.snapshot = snapshot
-        self.pending = pending
-        self.perform = perform
+        self.snapshot = snapshot; self.pending = pending; self.perform = perform
+        projection = nil; filter = .default; selection = nil
+        indexLoading = false; indexFailure = nil
+        select = { _ in }; toggleExpansion = nil; showMore = {}; clearFilters = {}; retryIndex = {}
         _expanded = State(initialValue: expandAll ? Set(snapshot.containers.map(\.ref)) : [])
     }
 
+    public init(snapshot: WorkSnapshotValue, projection: WorkItemsProjection, filter: WorkFilter,
+                selection: String?, pending: Set<String>, indexLoading: Bool = false, indexFailure: String? = nil,
+                select: @escaping (String) -> Void, toggleExpansion: @escaping (String, Bool) -> Void,
+                showMore: @escaping () -> Void, clearFilters: @escaping () -> Void,
+                retryIndex: @escaping () -> Void, perform: @escaping (WorkScreenAction) -> Void) {
+        self.snapshot = snapshot; self.projection = projection; self.filter = filter
+        self.selection = selection; self.pending = pending
+        self.indexLoading = indexLoading; self.indexFailure = indexFailure
+        self.select = select; self.toggleExpansion = toggleExpansion; self.showMore = showMore
+        self.clearFilters = clearFilters; self.retryIndex = retryIndex; self.perform = perform
+        _expanded = State(initialValue: [])
+    }
+
+    private var items: WorkItemsProjection {
+        projection ?? WorkItemsProjection(snapshot: snapshot, expanded: expanded)
+    }
+
+    private var showsOpenSections: Bool {
+        filter.states.isEmpty || !filter.states.isDisjoint(with: [.open, .spotted, .reopened])
+    }
+
     public var body: some View {
+        let items = items
         VStack(alignment: .leading, spacing: 22) {
-            section(Self.containersTitle, count: snapshot.containers.count,
-                    empty: "No open handoff or epic in \(snapshot.project)") {
-                ForEach(snapshot.containers) { container in
-                    containerRow(container)
-                }
-            }
-            section(Self.spottedTitle, count: snapshot.spotted.count, empty: "Nothing spotted waits for a look") {
-                ForEach(spottedByType, id: \.type) { group in
-                    Text(Plural.count(group.rows.count, group.type))
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(KitPalette.dim)
-                        .padding(.top, 4)
-                    ForEach(group.rows) { row in triageRow(row, accept: true) }
-                }
-            }
-            section(Self.reopenedTitle, count: snapshot.reopened.count,
-                    empty: "No reopened item waits for a worker") {
-                ForEach(snapshot.reopened) { row in triageRow(row, accept: false) }
-            }
+            if filter.isActive && items.isEmpty && !indexLoading && indexFailure == nil {
+                EmptyState(symbol: "magnifyingglass", text: "No item matches", detail: filter.text)
+                Button("Clear filters", action: clearFilters)
+                    .buttonStyle(.genHoverPlain())
+                    .accessibilityIdentifier("work-clear-empty-filters")
+            } else { sections(items) }
         }
         .accessibilityIdentifier("work-items")
     }
@@ -74,15 +94,95 @@ public struct WorkItemsView: View {
     public static let spottedTitle = "Spotted"
     public static let reopenedTitle = "Reopened, nobody working"
 
-    private var spottedByType: [(type: String, rows: [WorkTriageValue])] {
-        Dictionary(grouping: snapshot.spotted, by: \.type)
-            .map { (type: $0.key, rows: $0.value) }
-            .sorted { $0.type < $1.type }
+    @ViewBuilder
+    private func sections(_ items: WorkItemsProjection) -> some View {
+        if showsOpenSections {
+            section(Self.containersTitle, count: items.containers.count,
+                    empty: "No open handoff or epic in \(snapshot.project)") {
+                ForEach(items.containers) { container in
+                    ContainerRow(container: container, filtered: filter.isActive,
+                                 snapshot: snapshot, pending: pending, selection: selection,
+                                 selectable: projection != nil, select: select,
+                                 toggle: { open in
+                                     if let toggleExpansion { toggleExpansion(container.ref, open) }
+                                     else if open { expanded.insert(container.ref) }
+                                     else { expanded.remove(container.ref) }
+                                 }, perform: perform)
+                        .equatable()
+                }
+            }
+            section(Self.spottedTitle, count: items.spotted.count, empty: "Nothing spotted waits for a look") {
+                ForEach(items.spottedGroups) { group in
+                    Text(Plural.count(group.rows.count, WorkWords.type(group.type).lowercased()))
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(KitPalette.dim)
+                        .padding(.top, 4)
+                    ForEach(group.rows) { triage($0, accept: true) }
+                }
+            }
+            section(Self.reopenedTitle, count: items.reopened.count,
+                    empty: "No reopened item waits for a worker") {
+                ForEach(items.reopened) { triage($0, accept: false) }
+            }
+        }
+        if !items.other.isEmpty {
+            section("Other matching items", count: items.other.count, empty: "") {
+                ForEach(items.other) { row($0) }
+            }
+        }
+        if filter.requiresIndex {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 7) {
+                    Text("Done and dropped").font(.system(size: 13, weight: .semibold))
+                    CountBadge(items.archiveCount, tooltip: Plural.count(items.archiveCount, "item"))
+                    Spacer()
+                }
+                if indexLoading {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Reading done and dropped items").font(.system(size: 12))
+                            .foregroundStyle(KitPalette.dim)
+                    }
+                    .accessibilityIdentifier("work-index-loading")
+                }
+                if let indexFailure {
+                    FailureInline(.unexpected(indexFailure, outcome: "Could not read done and dropped items",
+                                              action: "Read the project items"), form: .compact) { retryIndex() }
+                        .accessibilityIdentifier("work-index-failure")
+                }
+                if items.archive.isEmpty && !indexLoading && indexFailure == nil {
+                    Text("No match in Done and dropped").font(.system(size: 12)).foregroundStyle(KitPalette.faint)
+                }
+                ForEach(items.archive) { row($0, archive: true) }
+                if items.hasMoreArchive {
+                    Button("Show 200 more", action: showMore)
+                        .buttonStyle(.genHoverPlain())
+                        .accessibilityIdentifier("work-show-more-archive")
+                }
+            }
+        }
+    }
+
+    private func row(_ value: WorkRowValue, archive: Bool = false) -> some View {
+        ItemRow(value: value, detail: nil, summary: nil, accept: false, archive: archive,
+                showActions: true, snapshot: snapshot, pending: pending,
+                selected: selection == value.ref, selectable: projection != nil,
+                select: select, perform: perform).equatable()
+    }
+
+    private func triage(_ value: WorkTriageValue, accept: Bool) -> some View {
+        ItemRow(value: WorkRowValue(ref: value.ref, state: value.state, type: value.type,
+                                   severity: value.severity, worker: value.worker, title: value.title,
+                                   pairings: value.pairings),
+                detail: [value.where, value.why].compactMap { $0 }.joined(separator: " · "), summary: nil,
+                accept: accept, archive: false, showActions: true, snapshot: snapshot, pending: pending,
+                selected: selection == value.ref, selectable: projection != nil,
+                select: select, perform: perform).equatable()
     }
 
     @ViewBuilder
     private func section<Content: View>(_ title: String, count: Int, empty: String,
-                                         @ViewBuilder content: () -> Content) -> some View {
+                                        @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 7) {
                 Text(title).font(.system(size: 13, weight: .semibold))
@@ -92,181 +192,227 @@ public struct WorkItemsView: View {
             .padding(.bottom, 4)
             .id(WorkItemsView.sectionID(title))
             if count == 0 {
-                Text(empty).font(.system(size: 12)).foregroundStyle(KitPalette.faint)
-            } else {
-                content()
-            }
+                Text(filter.isActive ? "No match in \(title)" : empty)
+                    .font(.system(size: 12)).foregroundStyle(KitPalette.faint)
+            } else { content() }
         }
     }
 
-    private func containerRow(_ container: WorkContainerValue) -> some View {
-        let open = Binding(get: { expanded.contains(container.ref) },
-                           set: { if $0 { expanded.insert(container.ref) } else { expanded.remove(container.ref) } })
-        let links = pairingRows(ref: container.ref, pairings: container.pairings)
-        return VStack(alignment: .leading, spacing: 0) {
-            GenDisclosure(isExpanded: open, identifier: "work-container-\(container.ref)",
-                          accessibilityTitle: container.title) {
-                VStack(alignment: .leading, spacing: 2) {
-                    links
-                    ForEach(container.members) { member in
-                        memberRow(member)
+    private struct ContainerRow: View, Equatable {
+        let container: WorkItemsProjection.Container
+        let filtered: Bool
+        let snapshot: WorkSnapshotValue
+        let pending: Set<String>
+        let selection: String?
+        let selectable: Bool
+        let select: (String) -> Void
+        let toggle: (Bool) -> Void
+        let perform: (WorkScreenAction) -> Void
+
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.container == rhs.container && lhs.filtered == rhs.filtered && lhs.snapshot == rhs.snapshot
+                && lhs.pending == rhs.pending && lhs.selection == rhs.selection && lhs.selectable == rhs.selectable
+        }
+
+        var body: some View {
+            let value = container.value
+            let summary = filtered ? "\(container.matchingCount) of \(value.total) tasks match"
+                : "\(value.open) of \(value.total) open"
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .top, spacing: 0) {
+                    // The disclosure and selection are sibling controls, never a button inside a button.
+                    GenDisclosure(isExpanded: Binding(get: { container.isExpanded }, set: toggle),
+                                  identifier: "work-container-\(value.ref)", accessibilityTitle: value.title) {
+                        EmptyView()
+                    } label: { EmptyView() }
+                    .frame(width: 24)
+                    ItemRow(value: WorkRowValue(ref: value.ref, state: value.state, type: value.type,
+                                                title: value.title, pairings: value.pairings),
+                            detail: nil, summary: summary, accept: false, archive: false, showActions: false,
+                            snapshot: snapshot, pending: pending, selected: selection == value.ref,
+                            selectable: selectable, select: select, perform: perform).equatable()
+                }
+                if container.isExpanded {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(container.members) { member in
+                            ItemRow(value: member, detail: nil, summary: nil, accept: false, archive: false,
+                                    showActions: true, snapshot: snapshot, pending: pending,
+                                    selected: selection == member.ref, selectable: selectable,
+                                    select: select, perform: perform).equatable()
+                        }
                     }
+                    .padding(.leading, 24)
+                    .transition(.genReveal)
                 }
-                .padding(.leading, 18)
-            } label: {
+            }
+            .clipShape(Rectangle().inset(by: -3))
+            .liveRow(selected: selection == value.ref || container.isExpanded)
+        }
+    }
+
+    private struct ItemRow: View, Equatable {
+        let value: WorkRowValue
+        let detail: String?
+        let summary: String?
+        let accept: Bool
+        let archive: Bool
+        let showActions: Bool
+        let snapshot: WorkSnapshotValue
+        let pending: Set<String>
+        let selected: Bool
+        let selectable: Bool
+        let select: (String) -> Void
+        let perform: (WorkScreenAction) -> Void
+
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.value == rhs.value && lhs.detail == rhs.detail && lhs.summary == rhs.summary
+                && lhs.accept == rhs.accept && lhs.archive == rhs.archive && lhs.showActions == rhs.showActions
+                && lhs.snapshot == rhs.snapshot && lhs.pending == rhs.pending
+                && lhs.selected == rhs.selected && lhs.selectable == rhs.selectable
+        }
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 8) {
-                    Image(systemName: container.type == "epic" ? "square.stack.3d.up" : "tray.full")
+                    if selectable {
+                        label.rowButton { select(value.ref) }
+                            .accessibilityLabel("\(value.title), \(WorkWords.state(value.state))")
+                            .accessibilityAddTraits(selected ? .isSelected : [])
+                            .accessibilityIdentifier("work-select-\(value.ref)")
+                    } else { label }
+                    if showActions { actions(ref: value.ref, state: value.state, accept: accept) }
+                }
+                pairingRows(ref: value.ref, pairings: archive ? nil : value.pairings, project: value.project)
+                    .padding(.leading, 24)
+                if let detail, !detail.isEmpty {
+                    Text(detail).font(.system(size: 11)).foregroundStyle(KitPalette.dim).lineLimit(2)
+                        .padding(.leading, 24)
+                }
+            }
+            .padding(.vertical, detail == nil ? 0 : 3)
+            .background(selected ? Color.accentColor.opacity(0.12) : Color.clear)
+            .accessibilityElement(children: .contain)
+            .id(value.ref)
+            .liveRow(selected: selected)
+        }
+
+        private var label: some View {
+            HStack(spacing: 8) {
+                if summary != nil {
+                    Image(systemName: value.type == "epic" ? "square.stack.3d.up" : "tray.full")
                         .foregroundStyle(KitPalette.dim)
-                    Text(container.title).font(.system(size: 12.5, weight: .medium)).lineLimit(1)
-                    Text(verbatim: container.ref).font(.system(size: 10.5, design: .monospaced))
-                        .foregroundStyle(KitPalette.faint)
-                    Spacer()
-                    Text(verbatim: "\(container.open) of \(container.total) open")
-                        .font(.system(size: 11)).foregroundStyle(KitPalette.dim)
-                }
-            }
-            // Pairing buttons stay outside the disclosure button and are usable even when the members are folded.
-            if !open.wrappedValue {
-                links.padding(.leading, 24)
-            }
-        }
-    }
-
-    private func memberRow(_ row: WorkRowValue) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                stateGlyph(row.state)
-                Text(row.title).font(.system(size: 12)).lineLimit(1)
-                    .foregroundStyle(row.isOpen ? KitPalette.text : KitPalette.dim)
-                Text(verbatim: row.slot ?? row.ref).font(.system(size: 10.5, design: .monospaced))
-                    .foregroundStyle(KitPalette.faint)
-                Spacer()
-                if let worker = row.worker {
-                    Text(worker).font(.system(size: 10.5)).foregroundStyle(KitPalette.faint).lineLimit(1)
-                }
-                actions(ref: row.ref, state: row.state, accept: false)
-            }
-            .frame(minHeight: 26)
-            pairingRows(ref: row.ref, pairings: row.pairings, project: row.project).padding(.leading, 24)
-        }
-        .accessibilityElement(children: .contain)
-    }
-
-    private func triageRow(_ row: WorkTriageValue, accept: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 8) {
-                stateGlyph(row.state)
-                Text(row.title).font(.system(size: 12)).lineLimit(1)
-                if let severity = row.severity {
-                    Badge(severity, color: severity == "critical" || severity == "high" ? KitPalette.removed : KitPalette.dim,
+                } else { stateGlyph(value.state) }
+                Text(value.title).font(.system(size: summary == nil ? 12 : 12.5,
+                                               weight: summary == nil ? .regular : .medium)).lineLimit(1)
+                    .foregroundStyle(value.isOpen ? KitPalette.text : KitPalette.dim)
+                if let severity = value.severity {
+                    Badge(WorkWords.severity(severity),
+                          color: severity == "critical" || severity == "high" ? KitPalette.removed : KitPalette.dim,
                           look: .tone)
                 }
-                Text(verbatim: row.ref).font(.system(size: 10.5, design: .monospaced))
+                Text(verbatim: value.slot ?? value.ref).font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(KitPalette.faint)
                 Spacer()
-                actions(ref: row.ref, state: row.state, accept: accept)
+                if let summary {
+                    Text(verbatim: summary).font(.system(size: 11)).foregroundStyle(KitPalette.dim)
+                } else if let worker = value.worker {
+                    Text(worker).font(.system(size: 11)).foregroundStyle(KitPalette.faint).lineLimit(1)
+                }
             }
-            pairingRows(ref: row.ref, pairings: row.pairings).padding(.leading, 24)
-            let detail = [row.where, row.why].compactMap { $0 }.joined(separator: " · ")
-            if !detail.isEmpty {
-                Text(detail).font(.system(size: 11)).foregroundStyle(KitPalette.dim).lineLimit(2)
-                    .padding(.leading, 24)
-            }
+            .frame(maxWidth: .infinity, minHeight: 26, alignment: .leading)
+            .contentShape(Rectangle())
         }
-        .padding(.vertical, 3)
-        .accessibilityElement(children: .contain)
-    }
 
-    private func stateGlyph(_ state: String) -> some View {
-        Image(systemName: WorkStateLook.symbol(state))
-            .foregroundStyle(WorkStateLook.color(state))
-            .frame(width: 16)
-            .instantTooltip(state)
-            .accessibilityLabel(state)
-    }
-
-    @ViewBuilder
-    private func pairingRows(ref: String, pairings: [WorkPairingValue]?, project: String? = nil) -> some View {
-        if let pairings, !pairings.isEmpty {
-            HStack(alignment: .top, spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(pairings) { pairing in
-                        let look = pairing.look
-                        let name = pairing.displayName ?? pairing.connector
-                        let key = pairing.remoteKey.isEmpty ? "No remote key yet" : pairing.remoteKey
-                        let disabledReason = pairing.enabled ? nil : "Sync is turned off for this connector."
-                        HStack(spacing: 5) {
-                            Badge(look.label, color: look.color, look: .tone, symbol: look.symbol,
-                                  tooltip: [look.detail, pairing.note, disabledReason].compactMap { $0 }.joined(separator: "\n"))
-                            Text(verbatim: "\(name) · \(key)")
-                                .font(.system(size: 11)).lineLimit(1).truncationMode(.middle)
-                                .instantTooltip("\(name) · \(key)")
-                            IconButton(systemName: "minus.circle", tooltip: "Unpair \(name) · \(key). Removes the link and keeps both items.") {
-                                perform(.unpair(ref: ref, connector: pairing.connector, project: project))
+        private func stateGlyph(_ state: String) -> some View {
+            Image(systemName: WorkStateLook.symbol(state))
+                .foregroundStyle(WorkStateLook.color(state))
+                .frame(width: 16)
+                .instantTooltip(WorkWords.state(state))
+                .accessibilityLabel(WorkWords.state(state))
+        }
+        @ViewBuilder
+        private func pairingRows(ref: String, pairings: [WorkPairingValue]?, project: String? = nil) -> some View {
+            if let pairings, !pairings.isEmpty {
+                HStack(alignment: .top, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(pairings) { pairing in
+                            let look = pairing.look
+                            let name = pairing.displayName ?? pairing.connector
+                            let key = pairing.remoteKey.isEmpty ? "No remote key yet" : pairing.remoteKey
+                            let disabledReason = pairing.enabled ? nil : "Sync is turned off for this connector."
+                            HStack(spacing: 5) {
+                                Badge(look.label, color: look.color, look: .tone, symbol: look.symbol,
+                                      tooltip: [look.detail, pairing.note, disabledReason].compactMap { $0 }.joined(separator: "\n"))
+                                Text(verbatim: "\(name) · \(key)")
+                                    .font(.system(size: 11)).lineLimit(1).truncationMode(.middle)
+                                    .instantTooltip("\(name) · \(key)")
+                                IconButton(systemName: "minus.circle", tooltip: "Unpair \(name) · \(key). Removes the link and keeps both items.") {
+                                    perform(.unpair(ref: ref, connector: pairing.connector, project: project))
+                                }
                             }
                         }
                     }
-                }
-                Spacer(minLength: 0)
-                if pairings.contains(where: \.enabled) {
-                    let syncTip = "Sync now. Push this item's local fields to enabled connectors and release held changes."
-                    let driftTip = " A successful push clears the drift flag without pulling remote fields."
-                    IconButton(systemName: "arrow.triangle.2.circlepath",
-                               tooltip: syncTip + (pairings.contains { $0.enabled && $0.state == .drift } ? driftTip : "")) {
-                        perform(.sync(ref: ref, project: project))
-                    }
-                }
-            }
-            .disabled(pending.contains(ref))
-        }
-    }
-
-    @ViewBuilder
-    private func actions(ref: String, state: String, accept: Bool) -> some View {
-        if pending.contains(ref) {
-            ProgressView().controlSize(.small).accessibilityLabel("Saving")
-        } else {
-            HStack(spacing: 4) {
-                if accept && state == "spotted" {
-                    IconButton(systemName: "checkmark.circle", tooltip: "Accept: it becomes open work") {
-                        perform(.accept(ref: ref))
-                    }
-                }
-                if ["open", "active", "reopened"].contains(state) {
-                    WorkReasonButton(symbol: "checkmark.seal", tooltip: "Finish, with the proof",
-                                     prompt: "The proof: the command, where it ran, the commit") {
-                        perform(.finish(ref: ref, proof: $0))
-                    }
-                }
-                if ["done", "dropped"].contains(state) {
-                    WorkReasonButton(symbol: "arrow.uturn.backward.circle", tooltip: "Reopen, with what is still wrong",
-                                     prompt: "What is still wrong, with the evidence") {
-                        perform(.reopen(ref: ref, why: $0))
-                    }
-                }
-                if state != "dropped" && state != "done" {
-                    if !handoffs(excluding: ref).isEmpty {
-                        MenuButton(items: {
-                            handoffs(excluding: ref).map { handoff in
-                                .action("\(handoff.title) (\(handoff.ref))") { perform(.addMember(ref: ref, handoff: handoff.ref)) }
-                            }
-                        }) {
-                            Image(systemName: "tray.and.arrow.down").frame(width: 20, height: 20)
+                    Spacer(minLength: 0)
+                    if pairings.contains(where: \.enabled) {
+                        let syncTip = "Sync now. Push this item's local fields to enabled connectors and release held changes."
+                        let driftTip = " A successful push clears the drift flag without pulling remote fields."
+                        IconButton(systemName: "arrow.triangle.2.circlepath",
+                                   tooltip: syncTip + (pairings.contains { $0.enabled && $0.state == .drift } ? driftTip : "")) {
+                            perform(.sync(ref: ref, project: project))
                         }
-                        .instantTooltip("Add to a handoff as one of its tasks")
-                        .accessibilityLabel("Add to a handoff")
                     }
-                    WorkReasonButton(symbol: "xmark.circle", tooltip: "Drop, with the reason",
-                                     prompt: "Why nobody will do it") {
-                        perform(.drop(ref: ref, why: $0))
+                }
+                .disabled(pending.contains(ref))
+            }
+        }
+
+        @ViewBuilder
+        private func actions(ref: String, state: String, accept: Bool) -> some View {
+            if pending.contains(ref) {
+                ProgressView().controlSize(.small).accessibilityLabel("Saving")
+            } else {
+                HStack(spacing: 4) {
+                    if accept && state == "spotted" {
+                        IconButton(systemName: "checkmark.circle", tooltip: "Accept: it becomes open work") {
+                            perform(.accept(ref: ref))
+                        }
+                    }
+                    if ["open", "active", "reopened"].contains(state) {
+                        WorkReasonButton(symbol: "checkmark.seal", tooltip: "Finish, with the proof",
+                                         prompt: "The proof: the command, where it ran, the commit") {
+                            perform(.finish(ref: ref, proof: $0))
+                        }
+                    }
+                    if ["done", "dropped"].contains(state) {
+                        WorkReasonButton(symbol: "arrow.uturn.backward.circle", tooltip: "Reopen, with what is still wrong",
+                                         prompt: "What is still wrong, with the evidence") {
+                            perform(.reopen(ref: ref, why: $0))
+                        }
+                    }
+                    if state != "dropped" && state != "done" {
+                        if !handoffs(excluding: ref).isEmpty {
+                            MenuButton(items: {
+                                handoffs(excluding: ref).map { handoff in
+                                    .action("\(handoff.title) (\(handoff.ref))") { perform(.addMember(ref: ref, handoff: handoff.ref)) }
+                                }
+                            }) {
+                                Image(systemName: "tray.and.arrow.down").frame(width: 20, height: 20)
+                            }
+                            .instantTooltip("Add to a handoff as one of its tasks")
+                            .accessibilityLabel("Add to a handoff")
+                        }
+                        WorkReasonButton(symbol: "xmark.circle", tooltip: "Drop, with the reason",
+                                         prompt: "Why nobody will do it") {
+                            perform(.drop(ref: ref, why: $0))
+                        }
                     }
                 }
             }
         }
-    }
 
-    private func handoffs(excluding ref: String) -> [WorkContainerValue] {
-        snapshot.openHandoffs.filter { handoff in !handoff.members.contains { $0.ref == ref } }
+        private func handoffs(excluding ref: String) -> [WorkContainerValue] {
+            snapshot.openHandoffs.filter { handoff in !handoff.members.contains { $0.ref == ref } }
+        }
     }
 }
 
