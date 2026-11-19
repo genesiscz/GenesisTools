@@ -440,9 +440,7 @@ async function buildTree(options: HubAgentsOptions, listing?: TreeListing): Prom
             () => listing?.workers?.() ?? listWorkers({ now, since, promptChars: options.promptChars })
         ),
         prof.measureAsync("codex-agents", async () => {
-            const ids = listing?.exact
-                ? (await parentsJob).filter((row) => row.provider === "codex").map((row) => row.sessionId)
-                : undefined;
+            const ids = listing?.exact ? (await parentsJob).map((row) => row.sessionId) : undefined;
             return ids?.length === 0
                 ? []
                 : codexAgentRecords({
