@@ -7,7 +7,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { localVoiceBackend } from "@genesiscz/utils/meetings/voice";
-import { addVoicePrint, readVoiceStore, type VoiceStore } from "@genesiscz/utils/meetings/voice-store";
+import { type VoiceStore, voicePrintSchema } from "@genesiscz/utils/meetings/voice-store";
 import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 import { formatTable } from "@genesiscz/utils/table";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
@@ -155,7 +155,9 @@ async function embeddings(meeting: InputMeeting, onlySamples: boolean): Promise<
     return result;
 }
 
-let store: VoiceStore = { version: 1, model, people: {} };
+// Training is built from this run's --samples only, in memory: a persisted store would keep the samples of an
+// earlier run with other inputs. The scratch home still isolates the embedding caches.
+const store: VoiceStore = { version: 1, model: "", people: {} };
 await env.testing.withOverrides({ GENESIS_TOOLS_HOME: voiceHome }, async () => {
     for (const meeting of meetings) {
         const embedded = await embeddings(meeting, meeting.id !== target.id);
@@ -166,24 +168,29 @@ await env.testing.withOverrides({ GENESIS_TOOLS_HOME: voiceHome }, async () => {
             if (!line || channel?.quality !== "ready") {
                 continue;
             }
-            addVoicePrint(
-                "benchmark",
-                sample.person,
-                {
+            if (store.model && store.model !== channel.model) {
+                throw new Error("The samples were embedded by two voice models; clear the cache and run again");
+            }
+            store.model = channel.model;
+            const person = store.people[sample.person] ?? { samples: [] };
+            store.people[sample.person] = person;
+            if (person.samples.some((print) => print.meeting === meeting.id && print.fromSec === line.fromSec)) {
+                continue;
+            }
+            person.samples.push(
+                voicePrintSchema.parse({
                     meeting: meeting.id,
                     sourceSha: meeting.sourceSha,
                     seat: line.seat,
                     track: line.track,
-                    fromSec: line.fromSec!,
-                    toSec: line.toSec!,
+                    fromSec: line.fromSec,
+                    toSec: line.toSec,
                     embedding: channel.embedding,
                     confirmedAt: "ear-confirmed-input",
-                },
-                channel.model
+                })
             );
         }
     }
-    store = readVoiceStore("benchmark");
 });
 
 const targetLines = allEmbeddings.get(target.id)!;
