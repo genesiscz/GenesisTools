@@ -8,6 +8,26 @@ import XCTest
 /// times it shows, and which meetings each sidebar place lists.
 @MainActor
 final class MeetingsWindowTests: XCTestCase {
+    func testMicrophoneTestRequiresMicrophoneSamplesEvenWhenSystemSoundWorks() {
+        let empty = #"{"mic":{"sampled":false},"system":{"sampled":false},"calibration":{"layout":"unknown"}}"#
+        let systemOnly = #"{"mic":{"sampled":false},"system":{"sampled":true,"dbfs":-30},"calibration":{"layout":"unknown"}}"#
+        let systemTest = MicrophoneTest()
+        systemTest.receive([empty, systemOnly])
+        XCTAssertEqual(systemTest.status, "Waiting for microphone samples…")
+        XCTAssertEqual(systemTest.reading?.system.dbfs, -30)
+        systemTest.finished(status: 0, stderr: "")
+        XCTAssertEqual(systemTest.status, "Test unavailable")
+        XCTAssertEqual(systemTest.warning, "No microphone samples were received.")
+
+        let silentMic = #"{"mic":{"sampled":true},"system":{"sampled":false},"calibration":{"layout":"unknown"}}"#
+        let microphoneTest = MicrophoneTest()
+        microphoneTest.receive([silentMic, empty])
+        XCTAssertEqual(microphoneTest.status, "Listening")
+        microphoneTest.finished(status: 0, stderr: "")
+        XCTAssertEqual(microphoneTest.status, "Test finished")
+        XCTAssertNil(microphoneTest.warning)
+    }
+
     func testStemAndRemovalItemsDecodeWithoutLosingNativeReviewFields() throws {
         let source = #"{"id":"i1","kind":"term","status":"confirmed","heard":"fixture","proposed":"correct","heardStem":"fixture","proposedStem":"correct","rules":[],"suggestedAt":"2026-11-02T15:00:00.000Z"}"#
         let item = try JSONDecoder().decode(MeetingItem.self, from: Data(source.utf8))

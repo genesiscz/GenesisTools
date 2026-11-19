@@ -133,10 +133,11 @@ import {
     WATCH_INTERVAL_MS,
     type WatchDeps,
     type WatchNote,
+    watchLoop,
     watchOnce,
 } from "./lib/watch";
 import { readAuto, writeAuto } from "./lib/watch-auto";
-import { ensureWatcher, watcherPidPath } from "./lib/watcher";
+import { ensureWatcher, recordingAutostart, runWatcher, watcherPidPath } from "./lib/watcher";
 
 function line(speaker: string, startSec: number, text: string, speakerId?: number): TranscriptEntry {
     return { speaker, startSec, text, speakerId };
@@ -1538,17 +1539,35 @@ describe("watchOnce", () => {
     });
 
     test("a slow source-audio pass never holds the recorder control, and one pass runs at a time", async () => {
+        const started = Promise.withResolvers<void>();
+        const copy = Promise.withResolvers<boolean>();
         let passes = 0;
         const h = harness({
             archiveAudio: () => {
                 passes += 1;
-                return new Promise<boolean>(() => {});
+                started.resolve();
+                return copy.promise;
             },
         });
 
-        expect(await watchOnce(h.store, { deps: h.deps, now, archiveBudgetMs: 5 })).toBe("started");
-        expect(await watchOnce(h.store, { deps: h.deps, now, archiveBudgetMs: 5 })).toBe("recording");
-        expect(passes).toBe(1);
+        try {
+            expect(await watchOnce(h.store, { deps: h.deps, now, archiveBudgetMs: 5 })).toBe("started");
+            await withTimeout(started.promise, 1000);
+            expect(await watchOnce(h.store, { deps: h.deps, now, archiveBudgetMs: 5 })).toBe("recording");
+            const stopping = runWatcher(h.store, {
+                loop: (store) => watchLoop(store, AbortSignal.abort()),
+            });
+            await withTimeout(stopping, 1000);
+            expect(existsSync(watcherPidPath(h.store))).toBe(false);
+
+            // A different store object for the same root cannot depend on the old watcher's in-memory promise.
+            const replacement = new MeetingStore(h.store.storage);
+            expect(await watchOnce(replacement, { deps: h.deps, now, archiveBudgetMs: 100 })).toBe("recording");
+            expect(passes).toBe(1);
+        } finally {
+            copy.resolve(true);
+            await watchOnce(h.store, { deps: h.deps, now, archiveBudgetMs: 1000 });
+        }
     });
 
     test("completed linked audio is preserved on the next tick even with capture autostart off", async () => {
@@ -2090,11 +2109,30 @@ describe("watchOnce", () => {
         });
     });
 
+    test("changing autostart refuses a non-default store without writing settings or spawning", async () => {
+        const { store } = harness();
+        const spawn = spyOn(await import("@genesiscz/utils/cli"), "spawnToolDetached").mockImplementation(() => {
+            throw new Error("watcher spawn must be refused");
+        });
+        try {
+            await expect(recordingAutostart("on", store)).rejects.toThrow("configured meetings store");
+            await expect(recordingAutostart("off", store)).rejects.toThrow("configured meetings store");
+            expect(existsSync(store.storage.getConfigPath())).toBe(false);
+            expect(spawn).not.toHaveBeenCalled();
+            expect(await recordingAutostart("status", store)).toEqual({
+                enabled: false,
+                running: false,
+                lastFailure: undefined,
+            });
+        } finally {
+            spawn.mockRestore();
+        }
+    });
+
     test("newer code ends the old watcher and the daemon starts a fresh owner", async () => {
         const home = mkdtempSync(join(tmpdir(), "recording-restart-"));
         await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
             const store = new MeetingStore();
-            const { runWatcher } = await import("./lib/watcher");
             const { superviseMeetingsWatcher } = await import("@app/daemon/daemon");
             const claimed = Promise.withResolvers<void>();
             const replacement = Promise.withResolvers<void>();
@@ -2159,7 +2197,6 @@ describe("watchOnce", () => {
                 microphone: true,
             }),
         ]);
-        const { recordingAutostart } = await import("./lib/watcher");
         const reopened = new MeetingStore(h.store.storage);
         expect((await recordingAutostart("status", reopened)).lastFailure).toMatchObject({
             meeting: "Planning",

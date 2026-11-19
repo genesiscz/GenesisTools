@@ -39,7 +39,7 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
 
     init(directory: URL, seconds: Double, emit: ((Data) -> Void)? = nil,
          muted: [CaptureAudioSource] = [], paused: Bool = false, monitorOnly: Bool = false, metering: Bool = false,
-         clock: (() -> (host: CMTime, wall: Date))? = nil) {
+         micID: String? = nil, clock: (() -> (host: CMTime, wall: Date))? = nil) {
         self.directory = directory
         self.monitorOnly = monitorOnly
         self.emit = emit
@@ -48,7 +48,13 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
         self.paused = paused
         self.clock = clock ?? { (CMClockGetTime(CMClockGetHostTimeClock()), Date()) }
         super.init()
-        if metering { levels = AudioLevelMeter(queue: queue, micID: argValue("--mic-device")) }
+        if metering {
+            levels = AudioLevelMeter(queue: queue, micID: micID) { [weak self] row in
+                guard let self else { return }
+                if self.emit != nil { self.writeRow(row) }
+                else { CaptureEvents.emit(row) }
+            }
+        }
     }
 
     private func wallTime(_ time: CMTime) -> String {
@@ -445,18 +451,20 @@ func cmdAudioRecord() {
     }
     guard !sources.isEmpty else { errorExit("no requested audio source is available", code: "no-permission") }
     let directory = argValue("--out").map { URL(fileURLWithPath: $0) } ?? FileManager.default.temporaryDirectory
+    let micID = argValue("--mic-device")
     do {
         if !monitorOnly { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
         let configuration = SCStreamConfiguration()
         let audio = SegmentedAudio(directory: directory, seconds: seconds, muted: muted, paused: paused,
-                                   monitorOnly: monitorOnly, metering: monitorOnly || CommandLine.arguments.contains("--levels"))
+                                   monitorOnly: monitorOnly, metering: monitorOnly || CommandLine.arguments.contains("--levels"),
+                                   micID: micID)
         if withoutScreen {
             let inputs = IndependentAudio(audio: audio)
             var started: [CaptureAudioSource] = []
             var failures: [String] = []
             for source in sources {
                 do {
-                    try inputs.start(source, micDevice: argValue("--mic-device"))
+                    try inputs.start(source, micDevice: micID)
                     started.append(source)
                 } catch {
                     let reason = "\(source.rawValue) audio omitted: \(error.localizedDescription)"
@@ -480,7 +488,7 @@ func cmdAudioRecord() {
         configuration.excludesCurrentProcessAudio = true
         if #available(macOS 15.0, *) {
             configuration.captureMicrophone = sources.contains(.mic)
-            configuration.microphoneCaptureDeviceID = argValue("--mic-device")
+            configuration.microphoneCaptureDeviceID = micID
         }
         let content = try awaitResult { try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) }
         guard let display = content.displays.first else { errorExit("audio-record found no shareable display") }
