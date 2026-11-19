@@ -10,7 +10,8 @@ on it there.
 - No new store, no new service, no new transport. Every read and write goes through `GenesisToolsRPC.work.*`
   (the actions service), which the screen uses today.
 - No server-side text search. The search runs in Swift over rows the screen already reads (decision 2 of P1).
-- No change to the widget's Tasks module or its links into Work, except that a link must still land on the item.
+- The Tasks widget supplies links into Work, including legacy session-task links. The widget link commits also
+  supply optional hover previews and plan shortcuts. Open the linked item in Work to read its full text.
 - No VoiceOver, Full Keyboard Access or OS accessibility settings work (ux skill, "Accessibility scope": not
   confirmed for this task). Keep every existing accessibility label and identifier, and give each new control a
   label and an identifier.
@@ -33,7 +34,8 @@ it alone commits. It reads only this file and what it links.
     build in your worktree, and the commands in "Rules for the executor".
   - One Swift build or test at a time on this Mac. Before EVERY `swift build`, `swift test`,
     `bun scripts/native/swift-package.ts ...` or `bun run app:test`, wait until
-    `pgrep -f 'swift-build|swift-test|swift-frontend'` prints nothing (loop with a 20 s sleep).
+    `pgrep -x swift-build || pgrep -x swift-test || pgrep -x swift-frontend` prints nothing.
+    Check every 20 s for up to 20 minutes. If the deadline expires, report the PIDs and mark the Swift check blocked.
   - Never `rm`. Delete with `tools rm <paths>`. Scratch files go under
     `/tmp/cc/GenesisTools/ae3ac312-7dbe-4045-970a-292aa93ed9ab/work-find-a/`.
   - No agent attribution in commits (no `Co-Authored-By`, no "Generated with"). Commit titles follow

@@ -33,7 +33,8 @@ what it links.
     build in your worktree, and the commands in "Rules for the executor".
   - One Swift build or test at a time on this Mac. Before EVERY `swift build`, `swift test`,
     `bun scripts/native/swift-package.ts ...` or `bun run app:test`, wait until
-    `pgrep -f 'swift-build|swift-test|swift-frontend'` prints nothing (loop with a 20 s sleep).
+    `pgrep -x swift-build || pgrep -x swift-test || pgrep -x swift-frontend` prints nothing.
+    Check every 20 s for up to 20 minutes. If the deadline expires, report the PIDs and mark the Swift check blocked.
   - Never `rm`. Delete with `tools rm <paths>`. Scratch files go under
     `/tmp/cc/GenesisTools/ae3ac312-7dbe-4045-970a-292aa93ed9ab/work-live-b/`.
   - Never write Martin's real config file in a test or a probe: every test uses a temporary `configPath` or a
