@@ -4,6 +4,13 @@ import XCTest
 
 @MainActor
 final class MeetingsTimedSeatsTests: XCTestCase {
+    func testSeatSuggestionFromBeforeDeviceOffersStillDecodes() throws {
+        let json = #"{"meeting":"planning","current":null,"suggestion":{"seats":{"room":["Boardroom PC"]},"people":[]}}"#
+        let result = try JSONDecoder().decode(MeetingsAPI.SeatsSuggest.Result.self, from: Data(json.utf8))
+        XCTAssertEqual(result.suggestion.seats.room, ["Boardroom PC"])
+        XCTAssertTrue(result.suggestion.people.isEmpty)
+    }
+
     func testEditingAnotherSeatPreservesLegacyRoomGroupAndDisjointStays() throws {
         let data = Data(#"""
         {"room":["Reed Example",{"name":"Fern Example","fromSec":60,"toSec":120}],
