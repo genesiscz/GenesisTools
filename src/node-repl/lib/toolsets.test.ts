@@ -463,7 +463,7 @@ describe("toolset method names", () => {
     test("J7 REPL exposes the device list and the explicit owner decision with their CLI twins", async () => {
         const meetings = await loadMeetings();
         expect(await meetings.roomDevices()).toHaveProperty("devices");
-        const input = { action: "unmap", account: "Boardroom PC" };
+        const input: { action: "unmap"; account: string } = { action: "unmap", account: "Boardroom PC" };
         const call = spyOn(InProcessMeetingsClient.prototype, "call").mockResolvedValue({
             changed: false,
             device: null,
