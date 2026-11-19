@@ -53,6 +53,7 @@ async function fixture(examples: Example[], fields: Partial<MeetingRecord> = {})
             project: "garden",
             sources: { wisprflow: { meetingId: "garden-review" } },
             participants: [finch, lark].map((name) => ({ name, from: ["calendar"] })),
+            evidence: { channels: { layout: "right-mic", segments: { mic: 0, system: 0 } } },
             ...fields,
         },
         { command: "new", change: "fixture" }
@@ -92,7 +93,12 @@ async function fixture(examples: Example[], fields: Partial<MeetingRecord> = {})
         rows: [],
         timelineZeroMs: 0,
         tracks: "source",
-        source: { path: audio, source: "wisprflow", layout: "right-mic", durationSec: 200 },
+        source: {
+            path: audio,
+            source: "wisprflow",
+            layout: record.evidence?.channels?.layout ?? "unknown",
+            durationSec: 200,
+        },
     });
     const embed = spyOn(voice, "embedVoiceLines").mockImplementation(async ({ spans, channels, audioPath }) =>
         spans.map(({ index, fromSec, toSec }) => ({
@@ -116,6 +122,7 @@ async function fixture(examples: Example[], fields: Partial<MeetingRecord> = {})
         store,
         record,
         embed,
+        reads,
         keys: voiceLineKeys(meeting),
         preview: (id = record.id) => client.call("meeting.seats.suggest", { meeting: id }),
         evidenceFiles: () =>
@@ -183,6 +190,43 @@ test("seat preview finds both unseated voices in one read-only batch per channel
     expect(readVoiceLibrary()).toEqual(before.library);
     expect(readFileSync(join(f.store.root, "voice-library", "library.json"))).toEqual(before.bytes);
     expect(f.evidenceFiles()).toEqual(before.evidence);
+});
+
+test("a personal mute and a partial call stay leave room speech eligible and only one eligible call line", async () => {
+    const f = await fixture([mic, mic, call, call, call], {
+        participants: [
+            { name: finch, from: ["platform-roster"], firstSeenSec: 15 },
+            { name: lark, from: ["platform-roster"], stays: [{ fromSec: 10, toSec: 30, source: "hand" }] },
+        ],
+    });
+    sample(finch, { seat: "mic" });
+    sample(lark, { seat: "call" });
+    f.reads.mockResolvedValue({
+        segments: [],
+        files: [],
+        speaking: [
+            { tSec: 0, speaking: [], muted: [finch] },
+            { tSec: 16, speaking: [], muted: [finch, lark] },
+        ],
+    });
+    const { suggestion } = await f.preview();
+    expect(suggestion.people).toMatchObject([
+        { name: finch, seat: "room", reason: expect.stringContaining("2 microphone, 0 call") },
+        { name: lark, seat: "unsure", reason: expect.stringContaining("0 microphone, 1 call") },
+    ]);
+});
+
+test("a source with unknown channel order cannot support a seat from its default left and right tracks", async () => {
+    const f = await fixture([mic, mic], {
+        evidence: { channels: { layout: "unknown", segments: { mic: 0, system: 0 } } },
+    });
+    sample(finch, { seat: "mic" });
+    const { suggestion } = await f.preview();
+    expect(suggestion.people[0]).toMatchObject({
+        seat: "unsure",
+        reason: expect.stringContaining("0 microphone, 0 call"),
+    });
+    expect(f.embed).not.toHaveBeenCalled();
 });
 
 test("one opposite-side match keeps the whole seat unsure and incompatible tracks, models and dimensions cannot vote", async () => {
