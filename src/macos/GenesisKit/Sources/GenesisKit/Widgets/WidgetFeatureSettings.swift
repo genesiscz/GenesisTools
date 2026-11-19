@@ -356,7 +356,7 @@ private struct WidgetGeneralSettings: View {
                         Text("One list").tag("list")
                     }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
                 }
-                if prefs.inboxGrouping == "feed" {
+                if prefs.inboxGrouping == "feed" || prefs.previewView == "items" {
                     Divider()
                     NativeSettingsSegmented(
                         "Feed headers", detail: "A new header starts when the next item comes from another session (or project).",

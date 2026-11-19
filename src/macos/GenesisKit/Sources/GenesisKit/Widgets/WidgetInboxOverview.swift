@@ -62,6 +62,11 @@ struct WidgetInboxOverview: View {
                     if feed, let id = orderAnchor ?? visibleOpenID, id == openID { proxy.scrollTo(id, anchor: .top) }
                     orderAnchor = nil
                 }
+                .onChange(of: feedRows.replacement?.id, initial: true) { _, _ in
+                    if feed, belowTop, let replacement = feedRows.replacement {
+                        readingBoundary = replacement
+                    }
+                }
                 .onChange(of: filter) { _, _ in
                     readingBoundary = feed && belowTop ? model.inboxFeeds[filter].first?.items.first : nil
                 }
@@ -219,18 +224,18 @@ struct WidgetInboxOverview: View {
                 // Hundreds of entries: lazy, so only the rows on screen exist (swift skill, dense lists).
                 LazyVStack(alignment: .leading, spacing: 10) {
                     if feed {
-                        ForEach(runs) { run in
-                            Section {
-                                ForEach(run.items, id: \.id) { item in row(item) }
-                            } header: {
-                                WidgetFeedRunHeader(run: run, model: model).equatable()
-                                    .padding(.top, run.id == runs.first?.id ? 0 : 8)
+                        ForEach(WidgetFeedRow.rows(runs)) { entry in
+                            switch entry {
+                            case .header(let run, let first):
+                                WidgetFeedRunHeader(run: run, model: model).equatable().padding(.top, first ? 0 : 8)
+                            case .item(let item, let grouped):
+                                row(item, grouped: grouped)
                             }
                         }
                     } else if grouped {
                         ForEach(Self.groups(items), id: \.key) { group in
                             Section {
-                                ForEach(group.items, id: \.id) { item in row(item) }
+                                ForEach(group.items, id: \.id) { item in row(item, grouped: true) }
                             } header: {
                                 header(group.key, items: group.items)
                             }
@@ -273,7 +278,8 @@ struct WidgetInboxOverview: View {
                 .font(.system(size: 11)).lineLimit(1)
         }
         .instantTooltip("Order of the inbox list")
-        .accessibilityLabel(feed ? "Order of the inbox list" : grouped ? "Show one list" : "Group by session")
+        .accessibilityLabel("Order of the inbox list")
+        .accessibilityValue(feed ? "Newest first" : grouped ? "By session" : "One list")
         .accessibilityHint("Opens the inbox order menu")
         .accessibilityIdentifier("widget.overview.grouping")
     }
@@ -327,10 +333,10 @@ struct WidgetInboxOverview: View {
         GenMotion.perform(expanding: opening, reduceMotion: reduceMotion) { openID = opening ? item.id : nil }
     }
 
-    private func row(_ item: WidgetInboxItem) -> some View {
+    private func row(_ item: WidgetInboxItem, grouped: Bool = false) -> some View {
         let open = openID == item.id
         let focused = focusID == item.id
-        return WidgetInboxEntry(model: model, item: item, open: open, focused: focused, grouped: grouped || feed,
+        return WidgetInboxEntry(model: model, item: item, open: open, focused: focused, grouped: grouped,
                                 focusedOption: focusedOption, toggle: { toggle(item) })
             .onGeometryChange(for: Bool.self, of: { geometry in
                 guard open, let viewport = geometry.bounds(of: .scrollView) else { return false }
@@ -389,7 +395,8 @@ struct WidgetInboxOverviewRow: View, Equatable {
         let _ = RenderProbe.hit("widget.overview.row.body")
         labels
             .rowButton(cornerRadius: 11) { toggle() }
-            .accessibilityLabel(WidgetInboxOverview.kindLabel(item) + ": " + WidgetInboxOverview.title(item))
+            .accessibilityLabel([WidgetInboxOverview.kindLabel(item), WidgetInboxOverview.title(item),
+                                 grouped ? nil : sessionTitle].compactMap { $0 }.joined(separator: ", "))
             .accessibilityValue(open ? "Expanded" : "Collapsed")
             .accessibilityAddTraits(focused ? .isSelected : [])
             .accessibilityIdentifier("widget.overview.row." + item.id)
@@ -405,7 +412,8 @@ struct WidgetInboxOverviewRow: View, Equatable {
                 .foregroundStyle(.secondary).frame(width: 14).padding(.top, 1)
             VStack(alignment: .leading, spacing: 3) {
                 Text(WidgetInboxOverview.title(item)).font(.system(size: 12.5, weight: open ? .semibold : .medium))
-                    .lineLimit(open ? 6 : 2).fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(open ? (item.reply == nil ? 6 : nil) : 2)
+                    .fixedSize(horizontal: false, vertical: true)
                 if let askedIn = item.askedIn, !askedIn.isEmpty {
                     WidgetAskedInLine(askedIn)
                 }
