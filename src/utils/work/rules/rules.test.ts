@@ -57,6 +57,16 @@ function ctx(sessionId: string, over: Partial<WorkContext> = {}): WorkContext {
 }
 
 describe("the config file", () => {
+    test.each(["", "projects..App", "__proto__", "projects.constructor.setting", "projects.App.prototype"])(
+        "rejects the invalid path %j without writing the config",
+        async (path) => {
+            const before = SafeJSON.stringify({ version: WORK_CONFIG_VERSION });
+            writeFileSync(configPath, before);
+            expect(await setWorkConfigValue({ configPath, path, value: "ignored" })).toMatchObject({ ok: false });
+            expect(readFileSync(configPath, "utf8")).toBe(before);
+        }
+    );
+
     test("an old fixture loads, a set round-trips, a newer file gives defaults and a problem", async () => {
         writeFileSync(
             configPath,
