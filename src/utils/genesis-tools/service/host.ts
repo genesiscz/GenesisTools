@@ -1,6 +1,7 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { type MethodDescriptor, type RpcHandler, type RpcHandlers, toRpcTable } from "@genesiscz/utils/api-descriptor";
+import { isWatchDriverId } from "@genesiscz/utils/fs/watch-driver/registry";
 import { createConfigStore } from "@genesiscz/utils/genesis-tools/actions/config";
 import type { AnyActionDef } from "@genesiscz/utils/genesis-tools/actions/define";
 import { type Area, type EngineDeps, liveEngineDeps } from "@genesiscz/utils/genesis-tools/actions/registry";
@@ -13,6 +14,7 @@ import {
     requestOutcomeSchema,
     requestWindowDeadline,
 } from "@genesiscz/utils/genesis-tools/areas/person/request";
+import { createWorktreeService, type WorktreeService } from "@genesiscz/utils/genesis-tools/worktree/service";
 import { logger } from "@genesiscz/utils/logger";
 import { JSON_RPC_ERRORS, RpcError } from "@genesiscz/utils/rpc/errors";
 import { type ServiceHost, startServiceHost } from "@genesiscz/utils/rpc/service-host";
@@ -98,6 +100,8 @@ export async function startGenesisToolsService(
         checkEveryMs?: number;
         /** The checkout to watch: a changed module under it retires the service once no call runs. */
         sourceRoot?: string;
+        /** The worktree status watchers; a test passes one with the fake driver. */
+        worktree?: WorktreeService;
     } = {}
 ): Promise<{ status: "running" } | { status: "started"; host: ServiceHost<FaceState>; deps: EngineDeps }> {
     if (isTestProcess() && (!options.dir || options.dir === genesisToolsServiceDir())) {
@@ -109,6 +113,7 @@ export async function startGenesisToolsService(
     let host: ServiceHost<FaceState> | undefined;
     let offJournal: (() => void) | undefined;
     const journal = createRequestJournal({ dir: join(dir, "requests") });
+    const worktree = options.worktree ?? createWorktreeService();
     const config = createConfigStore({ registry: AREAS, file: join(dir, "config.json") });
     const state = createStateStore({
         file: join(dir, "state.json"),
@@ -240,6 +245,14 @@ export async function startGenesisToolsService(
             return outcome;
         },
         "requests.withdraw": (params) => journal.withdraw(params.id),
+        "worktree.snapshot": (params, { signal }) => {
+            if (!isWatchDriverId(params.driver)) {
+                return { state: "unavailable", reason: "no-driver" };
+            }
+
+            return worktree.snapshot({ ...params, driver: params.driver }, signal);
+        },
+        "worktree.watchers": () => worktree.watchers(),
     };
     Object.assign(handlers, extra);
     const table = toRpcTable<typeof genesisToolsApi, ServiceCall>(genesisToolsApi, handlers);
@@ -320,6 +333,7 @@ export async function startGenesisToolsService(
         },
         keepAlive: { idle: () => journal.pending().length > 0 },
         onStopped: () => {
+            void worktree.dispose();
             offConfig();
             offJournal?.();
             offEvents();

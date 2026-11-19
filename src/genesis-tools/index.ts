@@ -18,6 +18,7 @@ const registrars: LazyRegistrar[] = [
     { names: ["logs"], load: async () => (await import("./commands/logs")).registerLogsCommand },
     { names: ["probe"], load: async () => (await import("./commands/probe")).registerProbeCommand },
     { names: ["triage"], load: async () => (await import("./commands/triage")).registerTriageCommand },
+    { names: ["worktree"], load: async () => (await import("./commands/worktree")).registerWorktreeCommand },
 ];
 
 if (import.meta.main) {

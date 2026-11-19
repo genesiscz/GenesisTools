@@ -3693,6 +3693,21 @@
     }
   },
   {
+    "method": "worktree.snapshot",
+    "params": {
+      "root": "fixture",
+      "driver": "fixture",
+      "since": "fixture",
+      "fenceMs": 1
+    },
+    "result": null
+  },
+  {
+    "method": "worktree.watchers",
+    "params": {},
+    "result": null
+  },
+  {
     "method": "request.present",
     "params": {
       "kind": "notice",

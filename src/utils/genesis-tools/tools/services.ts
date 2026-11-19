@@ -140,3 +140,8 @@ export function dashboardAppAttachCommand(key: string, commandName: string): str
 export function dashboardAppDependencyUpCommand(commandName: string): string {
     return toolCommand(`${commandName} up`);
 }
+
+/** Starts the GenesisTools service in the background, behind its start gate; the hooks' status door asks for it. */
+export function genesisToolsServeDetachCommand(): string {
+    return toolCommand("genesis-tools serve --detach");
+}

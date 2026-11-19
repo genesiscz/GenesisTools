@@ -161,6 +161,25 @@ export const serviceMethods = [
         doc: "Withdraw an unanswered request",
         effect: "reversible",
     },
+    {
+        name: "worktree.snapshot",
+        params: z.object({
+            root: z.string(),
+            driver: z.string(),
+            since: z.string().optional(),
+            fenceMs: z.number().int().min(1).max(5_000).optional(),
+        }),
+        result: z.unknown(),
+        doc: "The Git status of a worktree kept current by a file watcher; the first call opens the watch and answers opening",
+        effect: "read",
+    },
+    {
+        name: "worktree.watchers",
+        params: z.object({}),
+        result: z.unknown(),
+        doc: "The worktrees this service watches, with their counters; opens no root",
+        effect: "read",
+    },
 ] as const satisfies readonly MethodDescriptor[];
 export const genesisToolsApi = defineApi({
     id: "genesis-tools",

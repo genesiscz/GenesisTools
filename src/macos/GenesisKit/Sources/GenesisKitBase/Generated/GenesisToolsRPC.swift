@@ -19573,6 +19573,41 @@ public struct RequestsWithdrawResult: Codable, Sendable {
     }
 }
 
+public struct WorktreeSnapshotParams: Codable, Sendable {
+    public var `root`: String
+    public var `driver`: String
+    public var `since`: String?
+    public var `fenceMs`: Int?
+    public init(`root`: String, `driver`: String, `since`: String? = nil, `fenceMs`: Int? = nil) {
+        self.`root` = `root`
+        self.`driver` = `driver`
+        self.`since` = `since`
+        self.`fenceMs` = `fenceMs`
+    }
+    private enum CodingKeys: String, CodingKey { case `root`; case `driver`; case `since`; case `fenceMs` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`root` = try box.decode(String.self, forKey: .`root`)
+        self.`driver` = try box.decode(String.self, forKey: .`driver`)
+        self.`since` = try box.decodeIfPresent(String.self, forKey: .`since`)
+        self.`fenceMs` = try box.decodeIfPresent(Int.self, forKey: .`fenceMs`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`root`, forKey: .`root`)
+        try box.encode(`driver`, forKey: .`driver`)
+        try box.encodeIfPresent(`since`, forKey: .`since`)
+        try box.encodeIfPresent(`fenceMs`, forKey: .`fenceMs`)
+    }
+}
+
+public struct WorktreeWatchersParams: Codable, Sendable {
+
+    public init() {
+
+    }
+}
+
 public enum RequestPresentParamsKind: String, Codable, Sendable {
     case value0 = "notice"
 }
@@ -20867,6 +20902,8 @@ public final class GenesisToolsRPC {
     public func requestsList(_ params: RequestsListParams) async throws -> [RequestsListResultItem] { try await call("requests.list", params) }
     public func requestsPresent(_ params: RequestsPresentParams) async throws -> RequestsPresentResult { try await call("requests.present", params, timeout: GenesisToolsRPC.actionClientTimeout("person.showWindow")) }
     public func requestsWithdraw(_ params: RequestsWithdrawParams) async throws -> RequestsWithdrawResult { try await call("requests.withdraw", params) }
+    public func worktreeSnapshot(_ params: WorktreeSnapshotParams) async throws -> GenesisToolsJSON { try await call("worktree.snapshot", params) }
+    public func worktreeWatchers(_ params: WorktreeWatchersParams) async throws -> GenesisToolsJSON { try await call("worktree.watchers", params) }
     public lazy var events = Events(owner: self)
     @MainActor public final class Events {
         unowned let owner: GenesisToolsRPC
@@ -21004,6 +21041,8 @@ public final class GenesisToolsRPC {
         case "requests.list": _ = try decoder.decode(RequestsListParams.self, from: params); _ = try decoder.decode([RequestsListResultItem].self, from: result)
         case "requests.present": _ = try decoder.decode(RequestsPresentParams.self, from: params); _ = try decoder.decode(RequestsPresentResult.self, from: result)
         case "requests.withdraw": _ = try decoder.decode(RequestsWithdrawParams.self, from: params); _ = try decoder.decode(RequestsWithdrawResult.self, from: result)
+        case "worktree.snapshot": _ = try decoder.decode(WorktreeSnapshotParams.self, from: params); _ = try decoder.decode(GenesisToolsJSON.self, from: result)
+        case "worktree.watchers": _ = try decoder.decode(WorktreeWatchersParams.self, from: params); _ = try decoder.decode(GenesisToolsJSON.self, from: result)
         case "request.present": _ = try decoder.decode(RequestPresentParams.self, from: params); _ = try decoder.decode(RequestPresentResult.self, from: result)
         default: throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "Unknown method " + method))
         }
