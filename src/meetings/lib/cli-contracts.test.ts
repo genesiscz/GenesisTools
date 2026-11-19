@@ -84,6 +84,14 @@ test("missing meeting names the searched store and locates an exact id across th
     expect(missingMeetingMessage({ ref: "absent", root: ordinary, ...locations })).toBe(
         `No meeting "absent" in ${ordinary}. ${list}`
     );
+    // The scan is bounded: a store nested deeper than a session home is never walked to.
+    const deepRef = "2026-11-02_16-00-deep-fixture";
+    const deep = genesisToolsDirIn(join(scratchRoot, "a", "b", "c", "d", "e", "f", "g", "h", "home"), "meetings");
+    mkdirSync(join(deep, deepRef), { recursive: true });
+    writeFileSync(join(deep, deepRef, "meeting.json"), "{}");
+    expect(missingMeetingMessage({ ref: deepRef, root: ordinary, ...locations })).toBe(
+        `No meeting "${deepRef}" in ${ordinary}. ${list}`
+    );
 
     const human = spyOn(ui, "err").mockImplementation(() => {});
     const raw = spyOn(ui, "raw").mockImplementation(() => {});

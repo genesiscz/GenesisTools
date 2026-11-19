@@ -6,6 +6,7 @@ import { redactCurrentRunText } from "@genesiscz/utils/cli/failures/watch";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { MEETING_FILE, type MeetingRecord } from "@genesiscz/utils/meetings/record";
 import * as p from "@genesiscz/utils/prompts/p";
 import { sharedTempRoot } from "@genesiscz/utils/rm/paths";
@@ -13,6 +14,8 @@ import { scratchRootNames } from "@genesiscz/utils/rm/scratch-dirs";
 import { rpcErrorBody } from "@genesiscz/utils/rpc/errors";
 import { genesisToolsDirIn, toolDataDir } from "@genesiscz/utils/storage/root";
 import { globIterateSync } from "glob";
+
+const { log } = logger.scoped("meetings-shared");
 
 export const TOOL = "tools meetings";
 
@@ -36,7 +39,17 @@ const skipScratchChildren = new Set([
     "vendor",
 ]);
 
+/**
+ * The scratch scan runs on a miss, also inside the service's request, so it is bounded: a session home sits a few
+ * folders deep, and the walk stops after this many folders or milliseconds and reports no store.
+ */
+const SCRATCH_SCAN = { maxDepth: 8, maxFolders: 5000, maxMs: 100 } as const;
+
 function scratchStoreWith(ref: string, roots: string[]): string | undefined {
+    const deadline = performance.now() + SCRATCH_SCAN.maxMs;
+    let folders = 0;
+    const spent = () => ++folders > SCRATCH_SCAN.maxFolders || performance.now() > deadline;
+
     for (const cwd of roots) {
         if (!existsSync(cwd)) {
             continue;
@@ -47,13 +60,18 @@ function scratchStoreWith(ref: string, roots: string[]): string | undefined {
             cwd,
             absolute: true,
             follow: false,
-            ignore: { childrenIgnored: (entry) => skipScratchChildren.has(entry.name) },
+            maxDepth: SCRATCH_SCAN.maxDepth,
+            ignore: { childrenIgnored: (entry) => skipScratchChildren.has(entry.name) || spent() },
         })) {
             const meetings = join(folder, "meetings");
             if (existsSync(join(meetings, ref, MEETING_FILE))) {
                 return meetings;
             }
         }
+    }
+
+    if (folders > SCRATCH_SCAN.maxFolders || performance.now() > deadline) {
+        log.debug({ ref, folders }, "the scratch store scan stopped at its bound");
     }
 }
 
