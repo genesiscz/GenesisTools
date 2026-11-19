@@ -1744,7 +1744,7 @@ public final class WidgetModel: ObservableObject {
         openModule("agents", on: surface)
     }
 
-    /// The inbox button: every session's entries in one list. A second click while that list is open hides the panel.
+    /// With no filter, toggles the inbox overview. A filter opens or selects that tab without changing the saved default.
     public func toggleInboxOverview(on surface: WidgetSurfaceID, filter: String? = nil) {
         guard !stopping else { return }
         if filter == nil, presentation(for: surface) == .expanded, activeModuleID == "agents", inboxOverview {

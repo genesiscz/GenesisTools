@@ -722,6 +722,26 @@ final class WidgetTasksPolishTests: XCTestCase {
         XCTAssertFalse(text.contains("Nothing waiting"), text)
     }
 
+    func testTaskFeedbackKeepsFourRecentFailuresAndSummarizesTheRest() async throws {
+        let tasks = (1...6).map { task("t_\($0)_fixture") }
+        let store = WidgetTasksStore(request: { args in
+            if args.first == "update" { throw ToolsBridgeError.refused("fixture stderr line") }
+            return try self.snapshot(tasks)
+        })
+        defer { store.stop() }
+        store.refresh()
+        await settled(store)
+        for task in tasks {
+            store.toggle(task)
+            await settled(store)
+        }
+        XCTAssertEqual(store.failures.map(\.id), tasks.suffix(4).map { .change($0.id) })
+        XCTAssertEqual(store.earlierFailureCount, 2)
+        store.clearFeedback()
+        XCTAssertTrue(store.failures.isEmpty)
+        XCTAssertEqual(store.earlierFailureCount, 0)
+    }
+
     /// A store whose edit request waits until the test lets it answer, so the editor can be used meanwhile.
     private final class HeldEdit {
         var release: CheckedContinuation<Void, Never>?

@@ -84,7 +84,7 @@ struct WidgetTasksModuleView: View {
             }
             if let openHandoffSettings {
                 IconButton(systemName: "gearshape", tooltip: "Tasks settings", action: openHandoffSettings)
-                    .accessibilityLabel("Claimed handoff settings")
+                    .accessibilityLabel("Tasks settings")
                     .accessibilityHint("Opens Tasks settings, including tooltips")
             }
             IconButton(systemName: "arrow.clockwise", tooltip: "Refresh tasks") { store.refresh(force: true) }
@@ -194,6 +194,14 @@ struct WidgetTasksModuleView: View {
 
     @ViewBuilder private var feedback: some View {
         ForEach(store.failures) { failure in failureRow(failure) }
+        if store.earlierFailureCount > 0 {
+            HStack {
+                Text(verbatim: Plural.count(store.earlierFailureCount, "earlier task error"))
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                IconButton(systemName: "xmark", tooltip: "Dismiss earlier task errors", action: store.clearEarlierFailures)
+            }
+        }
         if let receipt = store.receipt {
             HStack(alignment: .center, spacing: 8) {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(.mint)
