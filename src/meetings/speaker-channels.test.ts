@@ -383,6 +383,25 @@ describe("seat suggestions", () => {
         expect(microphoneCandidates(meeting, 30, "desk")).toEqual([]);
     });
 
+    test("a saved decision with no matching lines stays unsure while other speakers have lines", () => {
+        const meeting = meetingRecordSchema.parse({
+            ...record,
+            participants: [{ name: "Wren", from: ["platform-roster"] }],
+        });
+        const ranges = [
+            { label: "Moss", person: "Moss", fromSec: 0, toSec: 10 },
+            { label: "Wren", person: "Wren", fromSec: 20, toSec: 30 },
+        ];
+        const reasonFor = (lines: { startSec: number; label: string; energyMicRaw: number }[]) =>
+            suggestSeats({ record: meeting, ranges, lines }).people.find((person) => person.name === "Wren");
+        const expected = {
+            seat: "unsure",
+            reason: "A speaker decision is saved, but no transcript line counts for it.",
+        };
+        expect(reasonFor([])).toMatchObject(expected);
+        expect(reasonFor([{ startSec: 1, label: "Moss", energyMicRaw: 0.9 }])).toMatchObject(expected);
+    });
+
     test.each([
         ["room", [0.66, 0.66, 0.66, 0.65, undefined]],
         ["remote", [0.34, 0.34, 0.34, 0.35, undefined]],
@@ -398,7 +417,7 @@ describe("seat suggestions", () => {
         expect(suggestSeats(input).people.find((person) => person.name === "Moss")?.seat).toBe(seat);
     });
 
-    test("a line votes once for its latest assignment; a proposal, rejection, machine decision or split casts no vote", () => {
+    test("a line votes once for its latest assignment; a proposal, rejection, machine decision or split casts no vote, and a superseded decision stays unsure", () => {
         const range = {
             label: "S1",
             kind: "speaker-range",
@@ -433,6 +452,12 @@ describe("seat suggestions", () => {
             Array.from({ length: 5 }, (_, startSec) => ({ label, startSec, energyMicRaw: 1 }))
         );
         expect(suggestSeats({ record: meeting, ranges: decidedSeatRanges(meeting), lines }).people).toEqual([
+            {
+                name: "Fern",
+                seat: "unsure",
+                reason: "A speaker decision is saved, but no transcript line counts for it.",
+                confidence: 0,
+            },
             { name: "Lake", seat: "room", reason: "5 of 5 decided lines on the microphone.", confidence: 1 },
         ]);
     });
