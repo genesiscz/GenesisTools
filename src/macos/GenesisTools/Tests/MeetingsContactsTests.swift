@@ -40,9 +40,11 @@ final class MeetingsContactsTests: XCTestCase {
         let fake = try FakeMeetingsService()
         let offer = RoomDeviceOffer(account: "Boardroom PC", group: "north", meetings: ["planning", "review"], question: "Shared?")
         fake.fixtureMethods = ["people.devices.decide"]
-        fake.fixtureReply = { _, params in
+        fake.fixtureReply = { [weak fake] _, params in
             let mapped = params["yes"] as? Bool == true || params["action"] as? String == "map"
-            return ["changed": true, "device": mapped ? ["account": "Boardroom PC", "group": "north"] as Any : NSNull()]
+            // An identical Yes replay has no new decision to undo.
+            let changed = params["yes"] as? Bool != true || fake?.count("people.devices.decide") == 1
+            return ["changed": changed, "device": mapped ? ["account": "Boardroom PC", "group": "north"] as Any : NSNull()]
         }
         try await fake.withVoiceWindow { window in
             let actions = RoomDeviceActions()
@@ -56,9 +58,17 @@ final class MeetingsContactsTests: XCTestCase {
                 actions.submit(change, service: window.service, notices: window.notices, refresh: { reads += 1 })
                 let saved = await waitUntil(3) { reads == 1 && !actions.busy }
                 XCTAssertTrue(saved)
-                let notice = try XCTUnwrap(window.notices.notices.last)
+                let notice = try XCTUnwrap(window.notices.notices.last { $0.actions.contains { $0.label == label } })
+                if case .answer(_, _, true) = change {
+                    actions.submit(change, service: window.service, notices: window.notices, refresh: { reads += 1 })
+                    let replayed = await waitUntil(3) { reads == 2 && !actions.busy }
+                    XCTAssertTrue(replayed)
+                    XCTAssertEqual(window.notices.notice(notice.id)?.actions.first?.label, "Undo")
+                    XCTAssertTrue(window.notices.notices.last?.actions.isEmpty == true)
+                }
+                let beforeUndo = reads
                 window.notices.press(try XCTUnwrap(notice.actions.first { $0.label == label }), of: notice.id)
-                let reversed = await waitUntil(3) { reads == 2 && window.notices.waiting[notice.id] == nil }
+                let reversed = await waitUntil(3) { reads == beforeUndo + 1 && window.notices.waiting[notice.id] == nil }
                 XCTAssertTrue(reversed)
                 XCTAssertEqual(fake.received.last?["params"] as? [String: String], inverse)
             }

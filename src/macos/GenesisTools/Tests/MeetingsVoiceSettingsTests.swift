@@ -29,12 +29,13 @@ final class MeetingsVoiceSettingsTests: XCTestCase {
     }
 
     func testRoomDeviceThresholdReadsAndWritesTheSeatSetting() throws {
-        let raw = try raw(#"{"global":{"speakerLabels":{"seat":{"deviceOfferMinMeetings":7}}}}"#)
+        let config = try raw(#"{"global":{"speakerLabels":{"seat":{"deviceOfferMinMeetings":7}}}}"#)
         var writes: [String: Int] = [:]
-        let card = RoomDeviceSettingsCard(raw: raw) { path, value in writes[path.joined(separator: ".")] = value }
+        let card = RoomDeviceSettingsCard(raw: config) { path, value in writes[path.joined(separator: ".")] = value }
         XCTAssertEqual(card.minimum, 7)
         XCTAssertEqual(RoomDeviceSettingsCard(raw: nil, set: { _, _ in }).minimum, 2)
         card.choose(4)
+        card.choose(0)
         XCTAssertEqual(writes, ["global.speakerLabels.seat.deviceOfferMinMeetings": 4])
     }
 

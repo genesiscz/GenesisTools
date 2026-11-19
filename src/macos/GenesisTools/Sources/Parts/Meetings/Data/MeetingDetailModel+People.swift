@@ -163,7 +163,7 @@ final class RoomDeviceActions {
                 } else if case .answer = change {
                     text = "Kept \(account) as a person."
                 } else {
-                    text = "Removed the room device mapping for \(account)."
+                    text = "\(account) has no room device mapping."
                 }
                 if receipt.changed {
                     let inverse: RoomDeviceChange
@@ -196,8 +196,12 @@ final class RoomDeviceActions {
                         actions = [.undo(reverse)]
                     }
                 }
-                lastNotice[key] = notices.push(StackedNotice(text: receipt.changed ? text : "Already saved. " + text,
-                                                             actions: actions), replacing: lastNotice[key])
+                // Replaying an already-saved request must not take another receipt's Undo away.
+                if receipt.changed {
+                    lastNotice[key] = notices.push(StackedNotice(text: text, actions: actions), replacing: lastNotice[key])
+                } else {
+                    notices.push(StackedNotice(text: text))
+                }
                 committed()
             } catch {
                 notices.push(.meetingsFailure(error))
