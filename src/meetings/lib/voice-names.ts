@@ -1,3 +1,4 @@
+import { IntervalIndex } from "@genesiscz/utils/array";
 import { DEFAULT_APPLY_ABOVE, type MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import type { ChannelEmbedding, LineEmbedding } from "@genesiscz/utils/meetings/voice";
 import type { SampleSource } from "@genesiscz/utils/meetings/voice-library";
@@ -75,7 +76,18 @@ interface Profile {
     sum: number[];
     count: number;
     windows: WindowPrint[];
+    /** The same-meeting windows by their line time, and by their source audio and channel, for the overlap lookups. */
+    byTime: IntervalIndex<WindowPrint>;
+    byAudio: Map<string, IntervalIndex<WindowPrint>>;
+    /** The windows by their transcript line, and the spans of every window and of the windows without a line key. */
+    byLineKey: Map<string, WindowPrint[]>;
+    spans: Set<string>;
+    keylessSpans: Set<string>;
     external: number[][];
+}
+
+function audioKey(voice: ReadyVoice): string {
+    return `${voice.source.audioPath}\0${voice.channel}`;
 }
 
 function profileKey(person: string, sample: VoiceVector): string {
@@ -105,19 +117,37 @@ function voiceProfiles(options: NamingInputs, people: string[]) {
             sum: Array<number>(vector.length).fill(0),
             count: 0,
             windows: [],
+            byTime: new IntervalIndex(),
+            byAudio: new Map(),
+            byLineKey: new Map(),
+            spans: new Set(),
+            keylessSpans: new Set(),
             external: [],
         };
         if (window) {
+            const span = `${window.fromSec}:${window.toSec}`;
+            // Two windows of one transcript line are the same window; without both line keys, the same span is.
             if (
-                profile.windows.some((w) =>
-                    w.lineKey && window.lineKey
-                        ? w.lineKey === window.lineKey
-                        : w.fromSec === window.fromSec && w.toSec === window.toSec
-                )
+                window.lineKey
+                    ? profile.byLineKey.has(window.lineKey) || profile.keylessSpans.has(span)
+                    : profile.spans.has(span)
             ) {
                 return;
             }
+            profile.spans.add(span);
+            if (!window.lineKey) {
+                profile.keylessSpans.add(span);
+            }
+            if (window.lineKey !== undefined) {
+                profile.byLineKey.set(window.lineKey, [...(profile.byLineKey.get(window.lineKey) ?? []), window]);
+            }
             profile.windows.push(window);
+            profile.byTime.add(window.fromSec, window.toSec, window);
+            if (window.voice) {
+                const byAudio = profile.byAudio.get(audioKey(window.voice)) ?? new IntervalIndex();
+                byAudio.add(window.voice.fromSec, window.voice.toSec, window);
+                profile.byAudio.set(audioKey(window.voice), byAudio);
+            }
         } else {
             profile.external.push(vector);
         }
@@ -185,15 +215,20 @@ function voiceProfiles(options: NamingInputs, people: string[]) {
     return { profiles, enrolled };
 }
 
-function overlapsWindow(w: WindowPrint, { fromSec, toSec, voice, lineKey }: Target): boolean {
-    return (
-        (lineKey !== undefined && w.lineKey === lineKey) ||
-        (w.fromSec < toSec && w.toSec > fromSec) ||
-        (w.voice?.source.audioPath === voice.source.audioPath &&
-            w.voice.channel === voice.channel &&
-            w.voice.fromSec < voice.toSec &&
-            w.voice.toSec > voice.fromSec)
-    );
+/**
+ * The same-meeting windows that overlap the target: the same transcript line (`lineKey`), the line time, or the same
+ * source audio and channel. Looked up in the profile's indexes, so a long meeting does not scan every training window
+ * for every target line.
+ */
+function overlappingWindows(profile: Profile, { fromSec, toSec, voice, lineKey }: Target): Set<WindowPrint> {
+    const found = new Set(profile.byTime.overlapping(fromSec, toSec));
+    for (const window of profile.byAudio.get(audioKey(voice))?.overlapping(voice.fromSec, voice.toSec) ?? []) {
+        found.add(window);
+    }
+    for (const window of lineKey === undefined ? [] : (profile.byLineKey.get(lineKey) ?? [])) {
+        found.add(window);
+    }
+    return found;
 }
 
 export function dot(a: number[], b: number[]): number {
@@ -205,11 +240,11 @@ export function dot(a: number[], b: number[]): number {
 }
 
 function profileScore(profile: Profile, target: Target) {
-    const overlaps = profile.windows.filter((w) => overlapsWindow(w, target));
-    if (overlaps.length === profile.count) {
+    const overlaps = overlappingWindows(profile, target);
+    if (overlaps.size === profile.count) {
         return undefined;
     }
-    const sum = overlaps.length ? [...profile.sum] : profile.sum;
+    const sum = overlaps.size ? [...profile.sum] : profile.sum;
     for (const print of overlaps) {
         addVector(sum, print.vector, -1);
     }
@@ -226,8 +261,9 @@ function closestPrint(profile: Profile, target: Target): number {
     for (const print of profile.external) {
         closest = Math.max(closest, dot(target.vector, print));
     }
+    const overlaps = overlappingWindows(profile, target);
     for (const print of profile.windows) {
-        if (!overlapsWindow(print, target)) {
+        if (!overlaps.has(print)) {
             closest = Math.max(closest, dot(target.vector, print.vector));
         }
     }

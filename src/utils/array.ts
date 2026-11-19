@@ -51,3 +51,58 @@ export function moveItem<T>(list: readonly T[], from: number, to: number): T[] {
 
     return next;
 }
+
+/**
+ * Intervals looked up by overlap without scanning all of them. Kept sorted by start; a lookup starts one longest
+ * interval before the query, so it reads only the intervals near it. Overlap is strict on both ends, as for half-open
+ * spans: `from < queryTo && to > queryFrom`.
+ */
+export class IntervalIndex<T> {
+    private readonly items: Array<{ from: number; to: number; value: T }> = [];
+    private sorted = true;
+    private longest = 0;
+
+    get size(): number {
+        return this.items.length;
+    }
+
+    add(from: number, to: number, value: T): void {
+        const last = this.items.at(-1);
+        if (last && from < last.from) {
+            this.sorted = false;
+        }
+
+        this.items.push({ from, to, value });
+        this.longest = Math.max(this.longest, to - from);
+    }
+
+    overlapping(from: number, to: number): T[] {
+        const items = this.items;
+        if (!this.sorted) {
+            items.sort((a, b) => a.from - b.from);
+            this.sorted = true;
+        }
+
+        // An interval that starts before `from - longest` ends at or before `from`, so it cannot overlap.
+        const floor = from - this.longest;
+        let low = 0;
+        let high = items.length;
+        while (low < high) {
+            const mid = (low + high) >> 1;
+            if (items[mid]!.from < floor) {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+
+        const found: T[] = [];
+        for (let at = low; at < items.length && items[at]!.from < to; at++) {
+            if (items[at]!.to > from) {
+                found.push(items[at]!.value);
+            }
+        }
+
+        return found;
+    }
+}
