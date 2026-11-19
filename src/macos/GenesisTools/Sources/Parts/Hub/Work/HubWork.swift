@@ -14,6 +14,7 @@ final class HubWorkModel: ObservableObject {
     /// launch with `--mode work` settles there, as the Timeline and Inbox modes settle on their first load.
     var onLoaded: (() -> Void)? { didSet { watchFirstLoad() } }
     private var loadWatch: AnyCancellable?
+    private var requestedProject: String?
 
     init(source: WorkSource? = nil, defaults: UserDefaults = HubDefaults.store) {
         self.defaults = defaults
@@ -41,7 +42,14 @@ final class HubWorkModel: ObservableObject {
         case .firstInList:
             candidates = []
         }
-        screen.activate(preferring: candidates)
+        screen.activate(preferring: requestedProject.map { [$0] } ?? candidates)
+        requestedProject = nil
+    }
+
+    func openLinkedProject(_ name: String) {
+        requestedProject = name
+        openProject(name)
+        screen.pane = .items
     }
 
     func openProject(_ name: String) {
@@ -64,7 +72,7 @@ final class HubWorkModel: ObservableObject {
                 done?()
             }
     }
-    func deactivate() { screen.deactivate() }
+    func deactivate() { requestedProject = nil; screen.deactivate() }
 }
 
 /// The Work mode's answers to the hub (Hub/HubModeModel.swift).
@@ -80,34 +88,41 @@ struct WorkProjectsList: View {
     @ObservedObject var screen: WorkScreenModel
     let filter: String
     let openProject: (String) -> Void
+    var clearFilter: (() -> Void)?
+    @FocusState private var focused: Bool
 
     var body: some View {
         let words = filter.lowercased().split(whereSeparator: \.isWhitespace)
         let shown = screen.projects.filter { name in words.allSatisfy { name.lowercased().contains($0) } }
-        ScrollView {
-            VStack(alignment: .leading, spacing: 2) {
-                if screen.projects.isEmpty {
-                    Text(screen.failure == nil ? "Reading the projects…" : "No projects")
-                        .font(.system(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 10)
-                } else if shown.isEmpty {
-                    Text("No project matches “\(filter.trimmingCharacters(in: .whitespaces))”")
-                        .font(.system(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 10)
-                }
-                ForEach(shown, id: \.self) { name in
-                    WorkProjectRow(name: name, selected: screen.project == name) { openProject(name) }
-                        .equatable()
-                        .contextMenu {
-                            Button("Read the work again") {
-                                if screen.project == name, screen.itemRef == nil { screen.reload() }
-                                else { openProject(name) }
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    if screen.projects.isEmpty {
+                        Text(screen.failure != nil ? "Projects unavailable" : screen.projectsLoaded ? "No projects with work items" : "Reading the projects…")
+                            .font(.system(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 10)
+                    } else if shown.isEmpty {
+                        EmptyState(text: "No matching projects", detail: filter.trimmingCharacters(in: .whitespacesAndNewlines),
+                                   actionTitle: clearFilter == nil ? nil : "Clear filter", action: clearFilter)
+                    }
+                    ForEach(shown, id: \.self) { name in
+                        WorkProjectRow(name: name, selected: screen.project == name) { openProject(name) }
+                            .equatable()
+                            .id(name)
+                            .contextMenu {
+                                Button("Read the work again") {
+                                    if screen.project == name, screen.itemRef == nil { screen.reload() }
+                                    else { openProject(name) }
+                                }
+                                .accessibilityIdentifier("work.project.reload.\(name)")
                             }
-                            .accessibilityIdentifier("work.project.reload.\(name)")
-                        }
+                    }
                 }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 8)
+                .genScrollBars()
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 8)
-            .genScrollBars()
+            .modifier(SidebarArrowKeys(ids: { shown }, selection: { screen.project }, select: openProject,
+                                         proxy: proxy, focused: $focused, focusOnClick: true))
         }
     }
 }
@@ -152,6 +167,8 @@ struct WorkMain: View {
     @ObservedObject var screen: WorkScreenModel
     /// A section a title bar count asked for; the Items scroll view brings its header to the top.
     @State private var jump: String?
+    @State private var foldedSections: Set<String> = []
+    @AppStorage(HubWorkSections.foldLongListsKey, store: HubDefaults.store) private var foldLongLists = true
 
     @ObservedObject var preferences: HubPreferences
     var mainCheckout: String?
@@ -185,9 +202,20 @@ struct WorkMain: View {
         }
         .noticeStack(screen.noticeStack)
         .hubSurface(.content)
+        .onChange(of: screen.snapshot?.project, initial: true) { _, project in
+            if project != nil { resetSectionFolds() }
+        }
+        .onChange(of: foldLongLists) { _, _ in resetSectionFolds() }
     }
 
-    private var header: some View { WorkHeader(screen: screen, onJump: { jump = $0 }) }
+    private func resetSectionFolds() {
+        guard let snapshot = screen.snapshot else { return }
+        foldedSections = HubWorkSections.startsFolded(snapshot, preference: foldLongLists) ? [WorkItemsView.containersTitle] : []
+    }
+
+    private var header: some View {
+        WorkHeader(screen: screen, onJump: { section in foldedSections.remove(section); jump = section })
+    }
 
     private var inspector: some View {
         WorkItemInspector(model: screen, drafts: inspectorDrafts, projectRoot: mainCheckout, openCommit: { sha in
@@ -200,7 +228,10 @@ struct WorkMain: View {
     @ViewBuilder
     private var content: some View {
         if screen.pane == .notify {
-            if let failure = screen.failure, screen.snapshot == nil {
+            if let failure = screen.failure, screen.project == nil {
+                FailureInline(.unexpected(failure, outcome: "The projects did not load", action: "Read the Work projects"),
+                              form: .pane) { Task { await screen.loadProjects() } }
+            } else if let failure = screen.failure, screen.snapshot == nil {
                 FailureInline(.unexpected(failure, outcome: "The work items did not load", action: "Read the work items"),
                               form: .pane) { screen.reload() }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -212,7 +243,8 @@ struct WorkMain: View {
                         .genScrollBars()
                 }
             } else {
-                EmptyState(symbol: "checklist", text: "Pick a project", detail: "The projects with work items are on the left.")
+                EmptyState(symbol: "checklist", text: screen.projectsLoaded ? "No projects with work items" : "Reading projects…",
+                           detail: screen.projectsLoaded ? "Projects appear here when they have a work item." : nil)
             }
         } else {
             GeometryReader { geometry in
@@ -284,7 +316,7 @@ struct WorkMain: View {
                         WorkItemsView(snapshot: snapshot, projection: rows, filter: screen.filter,
                                       selection: screen.selection, pending: screen.pending,
                                       indexLoading: screen.indexLoading, indexFailure: screen.indexFailure,
-                                      select: { workFocus = true; screen.select($0) }, toggleExpansion: { ref, _ in screen.toggleContainer(ref) },
+                                      foldedSections: $foldedSections, select: { workFocus = true; screen.select($0) }, toggleExpansion: { ref, _ in screen.toggleContainer(ref) },
                                       showMore: screen.showMore, clearFilters: { screen.filter = .default },
                                       retryIndex: screen.loadIndexIfNeeded, perform: screen.write)
                             .padding(.horizontal, 16)
@@ -317,12 +349,17 @@ struct WorkMain: View {
                         }
                     }
                 }
+            } else if let failure = screen.failure, screen.project == nil, screen.selection == nil {
+                FailureInline(.unexpected(failure, outcome: "The projects did not load", action: "Read the Work projects"),
+                              form: .pane) { Task { await screen.loadProjects() } }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let failure = screen.listFailure ?? (screen.selection == nil ? screen.failure : nil) {
                 FailureInline(.unexpected(failure, outcome: "The work items did not load", action: "Read the work items"),
                               form: .pane) { if screen.selection == nil { screen.reload() } else { screen.readListBesideDetail() } }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if screen.project == nil && screen.projectsLoaded && screen.selection == nil {
-                EmptyState(symbol: "checklist", text: "Pick a project", detail: "The projects with work items are on the left.")
+            } else if screen.project == nil && screen.selection == nil {
+                EmptyState(symbol: "checklist", text: screen.projectsLoaded ? "No projects with work items" : "Reading projects…",
+                           detail: screen.projectsLoaded ? "Projects appear here when they have a work item." : nil)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ProgressView("Reading work items").controlSize(.small)
@@ -371,11 +408,17 @@ struct WorkHeader: View {
                         ForEach(Array(summary.enumerated()), id: \.offset) { index, part in
                             if index > 0 { Text(verbatim: "·").foregroundColor(ReviewPalette.dim) }
                             Button { screen.pane = .items; onJump?(part.section) } label: {
-                                Text(verbatim: part.text).foregroundColor(ReviewPalette.dim).lineLimit(1)
+                                ViewThatFits(in: .horizontal) {
+                                    Text(verbatim: part.text).fixedSize()
+                                    Label(String(part.count), systemImage: part.symbol).fixedSize()
+                                }
+                                    .foregroundColor(ReviewPalette.dim)
+                                    .padding(.horizontal, 3).frame(minHeight: 24).contentShape(Rectangle())
                             }
                             .buttonStyle(.genHoverPlain())
                             .disabled(onJump == nil)
                             .instantTooltip("Show the " + part.section.lowercased() + " section")
+                            .accessibilityLabel("Show \(part.text)")
                         }
                     }
                     .font(.system(size: 11.5))
@@ -407,11 +450,11 @@ struct WorkHeader: View {
         }
     }
 
-    private var summary: [(text: String, section: String)]? {
+    private var summary: [(text: String, section: String, count: Int, symbol: String)]? {
         guard screen.itemRef == nil, let snapshot = screen.snapshot else { return nil }
-        return [(Plural.count(snapshot.containers.count, "container"), WorkItemsView.containersTitle),
-                (Plural.count(snapshot.spotted.count, "spotted item"), WorkItemsView.spottedTitle),
-                (Plural.count(snapshot.reopened.count, "reopened item"), WorkItemsView.reopenedTitle)]
+        return [(Plural.count(snapshot.containers.count, "container"), WorkItemsView.containersTitle, snapshot.containers.count, "tray.full"),
+                (Plural.count(snapshot.spotted.count, "spotted item"), WorkItemsView.spottedTitle, snapshot.spotted.count, "eye"),
+                (Plural.count(snapshot.reopened.count, "reopened item"), WorkItemsView.reopenedTitle, snapshot.reopened.count, "arrow.uturn.backward")]
     }
 }
 

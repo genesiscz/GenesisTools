@@ -273,6 +273,34 @@ final class WorkScreenTests: XCTestCase {
         XCTAssertFalse(text.contains("TASK-42"), text)
     }
 
+    func testFinishedTasksAndAnEmptyHandoffHaveDifferentSummaries() throws {
+        var container = fixture().containers[0]
+        container.open = 0
+        container.members = container.members.map { row in var row = row; row.state = "done"; return row }
+        XCTAssertEqual(container.progressLabel, "3 tasks done")
+        container.members[0].state = "dropped"
+        XCTAssertEqual(container.progressLabel, "3 tasks closed")
+        container.total = 0
+        container.members = []
+        XCTAssertEqual(container.progressLabel, "No tasks")
+    }
+
+    func testLongHandoffListsFoldOnlyWhenTriageWouldBeBuriedAndThePreferenceAllowsIt() throws {
+        var crowded = fixture()
+        crowded.containers = (1...47).map { index in
+            WorkContainerValue(ref: "h_group\(index)", type: "handoff", state: "open",
+                               title: "Group \(index)", open: 0, total: 0, members: [])
+        }
+        XCTAssertTrue(HubWorkSections.startsFolded(crowded, preference: true))
+        XCTAssertFalse(HubWorkSections.startsFolded(crowded, preference: false))
+        let text = try render(WorkItemsView(snapshot: crowded, pending: [], foldedSections: .constant([WorkItemsView.containersTitle])) { _ in }
+            .frame(width: 600), name: "work-items-triage-first")
+        XCTAssertFalse(text.contains("Group 47"), text)
+        XCTAssertTrue(text.contains("The widget counts lag a write"), text)
+        crowded.triage = []
+        XCTAssertFalse(HubWorkSections.startsFolded(crowded, preference: true))
+    }
+
     func testTheGeneratedMemberKeepsItsPairingWhenReencodedForTheScreen() throws {
         let bytes = Data("""
         {"ref":"w_member01","title":"Fix the counter","state":"open","type":"task","project":"App",

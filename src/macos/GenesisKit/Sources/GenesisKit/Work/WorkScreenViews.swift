@@ -56,20 +56,24 @@ public struct WorkItemsView: View {
     let perform: @MainActor (WorkScreenAction) -> Task<Bool, Never>
     @State private var expanded: Set<String>
     @State private var compact = false
+    @State private var localFolded: Set<String> = []
+    private var foldedSections: Binding<Set<String>>?
 
     public init(snapshot: WorkSnapshotValue, pending: Set<String>, expandAll: Bool = false,
+                foldedSections: Binding<Set<String>>? = nil,
                 perform: @escaping (WorkScreenAction) -> Void) {
         self.snapshot = snapshot; self.pending = pending
         self.perform = { action in perform(action); return Task { true } }
         projection = nil; filter = .default; selection = nil
         indexLoading = false; indexFailure = nil
         select = { _ in }; toggleExpansion = nil; showMore = {}; clearFilters = {}; retryIndex = {}
+        self.foldedSections = foldedSections
         _expanded = State(initialValue: expandAll ? Set(snapshot.containers.map(\.ref)) : [])
     }
 
     public init(snapshot: WorkSnapshotValue, projection: WorkItemsProjection, filter: WorkFilter,
                 selection: String?, pending: Set<String>, indexLoading: Bool = false, indexFailure: String? = nil,
-                select: @escaping (String) -> Void, toggleExpansion: @escaping (String, Bool) -> Void,
+                foldedSections: Binding<Set<String>>? = nil, select: @escaping (String) -> Void, toggleExpansion: @escaping (String, Bool) -> Void,
                 showMore: @escaping () -> Void, clearFilters: @escaping () -> Void,
                 retryIndex: @escaping () -> Void, perform: @escaping @MainActor (WorkScreenAction) async -> Bool) {
         self.snapshot = snapshot; self.projection = projection; self.filter = filter
@@ -77,6 +81,7 @@ public struct WorkItemsView: View {
         self.indexLoading = indexLoading; self.indexFailure = indexFailure
         self.select = select; self.toggleExpansion = toggleExpansion; self.showMore = showMore
         self.clearFilters = clearFilters; self.retryIndex = retryIndex
+        self.foldedSections = foldedSections
         self.perform = { action in Task { await perform(action) } }
         _expanded = State(initialValue: [])
     }
@@ -190,7 +195,7 @@ public struct WorkItemsView: View {
         ItemRow(value: WorkRowValue(ref: value.ref, state: value.state, type: value.type,
                                    severity: value.severity, worker: value.worker, title: value.title,
                                    pairings: value.pairings),
-                detail: [value.where, value.why].compactMap { $0 }.joined(separator: " · "), summary: nil,
+                detail: [value.userSees, value.why, value.where].compactMap { $0 }.joined(separator: " · "), summary: nil,
                 accept: accept, archive: false, showActions: true, snapshot: snapshot, pending: pending,
                 selected: selection == value.ref, selectable: projection != nil,
                 select: select, perform: perform).equatable()
@@ -199,19 +204,22 @@ public struct WorkItemsView: View {
     @ViewBuilder
     private func section<Content: View>(_ title: String, count: Int, empty: String,
                                         @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 7) {
-                Text(title).font(.system(size: 13, weight: .semibold))
-                CountBadge(count, tooltip: Plural.count(count, "item"))
-                Spacer()
-            }
-            .padding(.bottom, 4)
-            .id(WorkItemsView.sectionID(title))
+        let folded = foldedSections ?? $localFolded
+        let isExpanded = Binding(get: { !folded.wrappedValue.contains(title) }, set: { show in
+            if show { folded.wrappedValue.remove(title) } else { folded.wrappedValue.insert(title) }
+        })
+        GenDisclosure(isExpanded: isExpanded, identifier: Self.sectionID(title), accessibilityTitle: title) {
             if count == 0 {
                 Text(filter.isActive ? "No match in \(title)" : empty)
                     .font(.system(size: 12)).foregroundStyle(KitPalette.faint)
-            } else { content() }
+            } else {
+                LazyVStack(alignment: .leading, spacing: 4) { content() }
+            }
+        } label: {
+            Text(title).font(.system(size: 13, weight: .semibold))
+            CountBadge(count, tooltip: Plural.count(count, "item"))
         }
+        .id(Self.sectionID(title))
     }
 
     private struct ContainerRow: View, Equatable {
@@ -233,7 +241,7 @@ public struct WorkItemsView: View {
         var body: some View {
             let value = container.value
             let summary = filtered ? "\(container.matchingCount) of \(value.total) tasks match"
-                : "\(value.open) of \(value.total) open"
+                : value.progressLabel
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .top, spacing: 0) {
                     // The disclosure and selection are sibling controls, never a button inside a button.
@@ -250,8 +258,12 @@ public struct WorkItemsView: View {
                 }
                 if container.isExpanded {
                     VStack(alignment: .leading, spacing: 2) {
+                        if value.members.isEmpty {
+                            Text("No tasks in this \(value.type == "epic" ? "epic" : "handoff")")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                         ForEach(container.members) { member in
-                            ItemRow(value: member, detail: nil, summary: nil, accept: false, archive: false,
+                            ItemRow(value: member, detail: nil, summary: nil, accept: member.state == "spotted", archive: false,
                                     showActions: true, snapshot: snapshot, pending: pending,
                                     selected: selection == member.ref, selectable: selectable,
                                     select: select, perform: perform).equatable()
@@ -290,15 +302,16 @@ public struct WorkItemsView: View {
 
         var body: some View {
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 8) {
+                Group {
                     if selectable {
                         label.rowButton { select(value.ref) }
                             .accessibilityLabel("\(value.title), \(WorkWords.state(value.state))")
                             .accessibilityAddTraits(selected ? .isSelected : [])
                             .accessibilityIdentifier("work-select-\(value.ref)")
                     } else { label }
-                    if showActions { actions(ref: value.ref, state: value.state, accept: accept) }
                 }
+                // The ID is not printed on the row, so long titles keep their width; the menu copies it.
+                .contextMenu { Button("Copy item ID") { Clipboard.copy(value.ref, what: "Item ID") } }
                 if !archive, let pairings = value.pairings, !pairings.isEmpty {
                     WorkPairingActions(ref: value.ref, pairings: pairings, project: value.project,
                                        pending: pending) { _ = perform($0) }.padding(.leading, 24)
@@ -307,6 +320,8 @@ public struct WorkItemsView: View {
                     Text(detail).font(.system(size: 11)).foregroundStyle(KitPalette.dim).lineLimit(2)
                         .padding(.leading, 24)
                 }
+                // Actions sit under the title, so a title is never squeezed by its buttons.
+                if showActions { actions(ref: value.ref, state: value.state, accept: accept).padding(.leading, 24) }
             }
             .padding(.vertical, detail == nil ? 0 : 3)
             .background(selected ? Color.accentColor.opacity(0.12) : Color.clear)
@@ -333,7 +348,7 @@ public struct WorkItemsView: View {
                             .foregroundStyle(KitPalette.dim)
                     } else { stateGlyph(value.state) }
                     Text(value.title).font(.system(size: summary == nil ? 12 : 12.5,
-                                                   weight: summary == nil ? .regular : .medium)).lineLimit(1)
+                                                   weight: summary == nil ? .regular : .medium)).lineLimit(summary == nil ? 3 : 2)
                         .foregroundStyle(value.isOpen ? KitPalette.text : KitPalette.dim)
                     rowFacts
                 }
@@ -348,11 +363,10 @@ public struct WorkItemsView: View {
                       color: severity == "critical" || severity == "high" ? KitPalette.removed : KitPalette.dim,
                       look: .tone)
             }
-            Text(verbatim: value.slot ?? value.ref).font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(KitPalette.faint).lineLimit(1).truncationMode(.middle)
-            Spacer(minLength: 0)
+            Spacer(minLength: 4)
             if let summary {
                 Text(verbatim: summary).font(.system(size: 11)).foregroundStyle(KitPalette.dim)
+                    .fixedSize(horizontal: true, vertical: false)
             } else if let worker = value.worker {
                 Text(worker).font(.system(size: 11)).foregroundStyle(KitPalette.faint).lineLimit(1)
             }

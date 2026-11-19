@@ -213,6 +213,7 @@ public final class WorkScreenModel: ObservableObject {
         do {
             let names = try await source.projects()
             guard !Task.isCancelled else { return }
+            if project == nil && itemRef == nil { failure = nil }
             projects = names
             if itemRef != nil {
                 // The item owns its project, even when the default project's list finishes last.

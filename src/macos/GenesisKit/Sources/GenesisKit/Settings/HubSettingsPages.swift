@@ -117,6 +117,7 @@ private struct HubAppearanceSettings: View {
 struct HubWorkOpeningProjectPicker: View {
     @EnvironmentObject private var preferences: HubPreferences
     @AppStorage(HubWorkOpeningProject.key) private var choice: HubWorkOpeningProject = .recentSession
+    @AppStorage(HubWorkSections.foldLongListsKey) private var foldLongLists = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -138,6 +139,9 @@ struct HubWorkOpeningProjectPicker: View {
                     NativeSettingsOption("replace", "In place of the list"),
                 ],
                 selection: $preferences.workDetailPlacement, width: 245)
+            Divider()
+            NativeSettingsToggle("Fold long handoff lists", detail: "When more than ten handoffs and epics precede items needing attention, start with the group folded.",
+                                 identifier: HubWorkSections.foldLongListsKey, isOn: $foldLongLists)
         }
     }
 }

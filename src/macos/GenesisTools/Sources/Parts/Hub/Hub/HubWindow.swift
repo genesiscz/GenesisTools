@@ -83,6 +83,7 @@ struct HubRequest {
     var worktree: String?
     /// --work <ref> opens one task or handoff in Work.
     var workItem: String?
+    var workProject: String?
     /// Inbox mode: opens the resume dialog (`--inbox-resume <id>`) or the session info popover
     /// (`--inbox-info <id>`) for this session (id or prefix) once the list has loaded; for snapshots.
     var inboxResume: String?
@@ -215,6 +216,11 @@ struct HubRequest {
             case "--widget-cwd": widgetCwd = value; index += 1
             case "--widget-provider": widgetProvider = value; index += 1
             case "--worktree": worktree = value; index += 1
+            case "--work-project":
+                mode = .work
+                workProject = Self.optionalText(value)
+                if workProject?.isEmpty != false { workProject = nil; problems.append("--work-project needs a project") }
+                index += 1
             case "--work":
                 mode = .work
                 workItem = Self.optionalText(value)
@@ -1106,6 +1112,7 @@ final class HubModel {
     @MainActor
     func navRequestMatches(_ asked: HubNavRequest) -> Bool {
         if let ref = asked.workItem { return mode == .work && work.screen.itemRef == ref }
+        if let project = asked.workProject { return mode == .work && work.screen.itemRef == nil && work.screen.project == project }
         if let pr = asked.pr {
             return mode == .prs && prs.selected.map(pr.matches) == true
         }
@@ -2073,6 +2080,7 @@ final class HubModel {
         if request.mode == .work {
             MainActor.assumeIsolated {
                 if let ref = request.workItem { work.screen.openItem(ref) }
+                else if let project = request.workProject { work.openLinkedProject(project) }
                 else {
                     work.screen.closeItem()
                     work.screen.pane = .items
@@ -3046,7 +3054,8 @@ private struct SessionListView: View {
                 default: UsageListView(usage: model.usage, filter: model.filter)
                 }
             case .work:
-                WorkProjectsList(screen: model.work.screen, filter: model.filter, openProject: model.work.openProject)
+                WorkProjectsList(screen: model.work.screen, filter: model.filter, openProject: model.work.openProject,
+                                 clearFilter: { model.filter = "" })
             case .agents:
                 AgentsListView(model: model, agents: model.agents)
             case .sessions:

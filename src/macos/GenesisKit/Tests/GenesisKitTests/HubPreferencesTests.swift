@@ -124,8 +124,21 @@ final class HubPreferencesTests: XCTestCase {
                 let request = VNRecognizeTextRequest()
                 request.recognitionLevel = .accurate
                 request.usesLanguageCorrection = false
-                try readWorkScreenshot(try XCTUnwrap(bitmap.cgImage), with: request)
-                let drawn = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+                let image = try XCTUnwrap(bitmap.cgImage)
+                try readWorkScreenshot(image, with: request)
+                var drawn = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+                // With three rows, Vision's accurate recognizer drops "First in the list" when "In place of the
+                // list" sits under it; its fast recognizer reads both in the same pixels. The words of both count.
+                let fast = VNRecognizeTextRequest()
+                fast.recognitionLevel = .fast
+                fast.usesLanguageCorrection = false
+                for (stage, devices) in try fast.supportedComputeStageDevices {
+                    if let cpu = devices.first(where: { if case .cpu = $0 { return true }; return false }) {
+                        fast.setComputeDevice(cpu, for: stage)
+                    }
+                }
+                try VNImageRequestHandler(cgImage: image).perform([fast])
+                drawn += (fast.results ?? []).compactMap { $0.topCandidates(1).first?.string }
                 for expected in ["Opening project", "First in the list", "Item details",
                                  "Beside the list, or in place of the list",
                                  placement == "beside" ? "Beside the list" : "In place of the list"] {
