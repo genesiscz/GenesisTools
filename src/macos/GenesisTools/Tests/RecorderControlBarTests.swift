@@ -218,11 +218,15 @@ final class RecorderControlBarTests: XCTestCase {
         host.show(focus: false)
         let bar = try XCTUnwrap(host.bar)
         let original = bar.setup
-        XCTAssertEqual(original, RecordingSetup(microphone: .init(enabled: true), camera: .init(enabled: true, size: 260, shape: "rounded"),
-                                               frameRate: 24, stillFrameRate: 0.5, countdownSeconds: 7, drawsCursor: false))
+        let saved = RecordingSetup(microphone: .init(enabled: true), camera: .init(enabled: true, size: 260, shape: "rounded"),
+                                   frameRate: 24, stillFrameRate: 0.5, countdownSeconds: 7, drawsCursor: false)
+        // With no saved target this recorder records the display in use; the draft names it, the saved setup does not.
+        var opened = saved
+        opened.target = .followDisplay
+        XCTAssertEqual(original, opened)
         bar.apply(.camera(.init(enabled: false)))
         host.dismiss()
-        XCTAssertEqual(RecordingSetup.load(reopened), original)
+        XCTAssertEqual(RecordingSetup.load(reopened), saved)
     }
 
     func testAreasUseTheSelectedDisplaysOriginAndFramesUseDisplayIDs() throws {
