@@ -107,14 +107,16 @@ export async function readRows(
         doubts.set(key, indexes);
     }
     const entries = new Map(new DecisionJournal({ store }).read(record.id).map((entry) => [entry.token, entry]));
+    const questionsById = new Map(questions.map((question) => [question.id, question]));
     const questionDetails = result.rows.flatMap((row): QuestionDetails[] => {
-        const question = questions.find((one) => one.id === row.id);
+        const question = questionsById.get(row.id);
         if (!question) {
             return [];
         }
 
         const decided = decidedById.get(question.id) ?? [];
-        const sameLines = new Set([...(doubts.get(doubtKey(question)) ?? []), ...decided.map((line) => line.index)]);
+        const sameDoubt = doubts.get(doubtKey(question));
+        const decidedElsewhere = new Set(decided.map((line) => line.index).filter((index) => !sameDoubt?.has(index)));
         const entry = question.decision && entries.get(question.decision.token);
         const raised =
             entry?.action.kind === "answer" && entry.question === question.id && !entry.revertedBy
@@ -138,7 +140,7 @@ export async function readRows(
                 impact: {
                     lines: decided.length,
                     words: decided.reduce((total, line) => total + line.text.trim().split(/\s+/u).length, 0),
-                    sameDoubtLines: sameLines.size,
+                    sameDoubtLines: (sameDoubt?.size ?? 0) + decidedElsewhere.size,
                 },
                 ...(entry?.action.kind === "answer"
                     ? {
