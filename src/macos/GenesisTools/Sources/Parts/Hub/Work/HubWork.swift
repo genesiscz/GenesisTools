@@ -163,7 +163,8 @@ struct WorkMain: View {
     @State private var focusAfterReturn = false
     @FocusState private var workFocus: Bool
     @GenReduceMotion private var reduceMotion
-    @StateObject private var inspectorDrafts = WorkItemInspectorDrafts()
+    /// One draft store for the rows and the inspector, outside the beside/replace branches.
+    @StateObject private var drafts = WorkItemInspectorDrafts()
     @ObservedObject var screen: WorkScreenModel
     /// A section a title bar count asked for; the Items scroll view brings its header to the top.
     @State private var jump: String?
@@ -206,31 +207,60 @@ struct WorkMain: View {
             if project != nil { resetSectionFolds() }
         }
         .onChange(of: foldLongLists) { _, _ in resetSectionFolds() }
+        // A match inside a folded section would be a match nobody sees.
+        .onChange(of: screen.filter) { _, filter in
+            if filter.isActive, !foldedSections.isEmpty { foldedSections = [] }
+        }
     }
 
     private func resetSectionFolds() {
         guard let snapshot = screen.snapshot else { return }
-        foldedSections = HubWorkSections.startsFolded(snapshot, preference: foldLongLists) ? [WorkItemsView.containersTitle] : []
+        foldedSections = HubWorkSections.startsFolded(snapshot, preference: foldLongLists) && !screen.filter.isActive
+            ? [WorkItemsView.containersTitle] : []
     }
 
     private var header: some View {
-        WorkHeader(screen: screen, onJump: { section in foldedSections.remove(section); jump = section })
+        WorkHeader(screen: screen, onJump: { section in
+            // A count opens what it counts: a state filter that hides the open sections gives way to it.
+            if !WorkItemsView.showsOpenSections(screen.filter) { screen.filter = .default }
+            foldedSections.remove(section)
+            jump = section
+        })
     }
 
     private var inspector: some View {
-        WorkItemInspector(model: screen, drafts: inspectorDrafts, projectRoot: mainCheckout, openCommit: { sha in
+        WorkItemInspector(model: screen, drafts: drafts, projectRoot: mainCheckout, openCommit: { sha in
             openCommit(sha, mainCheckout ?? screen.itemDetail?.item.project)
         }, openPullRequest: openPullRequest, externalLink: { text, url in
             AnyView(ExternalLink(text: text, url: url))
         })
     }
 
+    /// No project is open and no item is routed: the project list failed, is still being read, or holds nothing to open.
+    @ViewBuilder
+    private var noProject: some View {
+        if let failure = screen.failure {
+            FailureInline(.unexpected(failure, outcome: "The projects did not load", action: "Read the Work projects"),
+                          form: .pane) { Task { await screen.loadProjects() } }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if !screen.projectsLoaded {
+            EmptyState(symbol: "checklist", text: "Reading projects…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if screen.projects.isEmpty {
+            EmptyState(symbol: "checklist", text: "No projects with work items",
+                       detail: "Projects appear here when they have a work item.")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            EmptyState(symbol: "checklist", text: "Pick a project", detail: "The projects with work items are on the left.")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
     @ViewBuilder
     private var content: some View {
         if screen.pane == .notify {
-            if let failure = screen.failure, screen.project == nil {
-                FailureInline(.unexpected(failure, outcome: "The projects did not load", action: "Read the Work projects"),
-                              form: .pane) { Task { await screen.loadProjects() } }
+            if screen.project == nil {
+                noProject
             } else if let failure = screen.failure, screen.snapshot == nil {
                 FailureInline(.unexpected(failure, outcome: "The work items did not load", action: "Read the work items"),
                               form: .pane) { screen.reload() }
@@ -242,9 +272,6 @@ struct WorkMain: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .genScrollBars()
                 }
-            } else {
-                EmptyState(symbol: "checklist", text: screen.projectsLoaded ? "No projects with work items" : "Reading projects…",
-                           detail: screen.projectsLoaded ? "Projects appear here when they have a work item." : nil)
             }
         } else {
             GeometryReader { geometry in
@@ -316,7 +343,8 @@ struct WorkMain: View {
                         WorkItemsView(snapshot: snapshot, projection: rows, filter: screen.filter,
                                       selection: screen.selection, pending: screen.pending,
                                       indexLoading: screen.indexLoading, indexFailure: screen.indexFailure,
-                                      foldedSections: $foldedSections, select: { workFocus = true; screen.select($0) }, toggleExpansion: { ref, _ in screen.toggleContainer(ref) },
+                                      foldedSections: $foldedSections, drafts: drafts,
+                                      select: { workFocus = true; screen.select($0) }, toggleExpansion: { ref, _ in screen.toggleContainer(ref) },
                                       showMore: screen.showMore, clearFilters: { screen.filter = .default },
                                       retryIndex: screen.loadIndexIfNeeded, perform: screen.write)
                             .padding(.horizontal, 16)
@@ -324,21 +352,15 @@ struct WorkMain: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .genScrollBars()
                     }
-                    // initial: a count clicked on the Notify pane switches to this list and sets the jump in one step.
-                    .onChange(of: jump, initial: true) { _, section in
-                        guard let section else { return }
-                        GenMotion.perform(expanding: true, reduceMotion: reduceMotion) {
-                            reader.scrollTo(WorkItemsView.sectionID(section), anchor: .top)
-                        }
-                        jump = nil
-                    }
                     .onChange(of: screen.selection) { _, ref in
                         guard let ref else { return }
+                        unfold(ref, in: rows)
                         if reduceMotion { reader.scrollTo(ref, anchor: nil) }
                         else { withAnimation(.easeOut(duration: 0.12)) { reader.scrollTo(ref, anchor: nil) } }
                     }
                     .onChange(of: screen.selection.map { screen.visibleRefs.contains($0) } ?? false, initial: true) { old, nowVisible in
                         guard nowVisible, let ref = screen.selection else { return }
+                        unfold(ref, in: screen.results ?? rows)
                         // A routed item can already be in the list when the list first appears (an archive row far
                         // below the fold). On that first value the rows are not laid out yet, so the scroll waits one
                         // turn. A row already on screen does not move.
@@ -348,18 +370,20 @@ struct WorkMain: View {
                             reader.scrollTo(ref, anchor: nil)
                         }
                     }
+                    // initial: a count clicked on the Notify pane switches to this list and sets the jump in one step.
+                    .onChange(of: jump, initial: true) { _, section in
+                        guard let section else { return }
+                        GenMotion.perform(expanding: true, reduceMotion: reduceMotion) {
+                            reader.scrollTo(WorkItemsView.sectionID(section), anchor: .top)
+                        }
+                        jump = nil
+                    }
                 }
-            } else if let failure = screen.failure, screen.project == nil, screen.selection == nil {
-                FailureInline(.unexpected(failure, outcome: "The projects did not load", action: "Read the Work projects"),
-                              form: .pane) { Task { await screen.loadProjects() } }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if screen.project == nil, screen.selection == nil {
+                noProject
             } else if let failure = screen.listFailure ?? (screen.selection == nil ? screen.failure : nil) {
                 FailureInline(.unexpected(failure, outcome: "The work items did not load", action: "Read the work items"),
                               form: .pane) { if screen.selection == nil { screen.reload() } else { screen.readListBesideDetail() } }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if screen.project == nil && screen.selection == nil {
-                EmptyState(symbol: "checklist", text: screen.projectsLoaded ? "No projects with work items" : "Reading projects…",
-                           detail: screen.projectsLoaded ? "Projects appear here when they have a work item." : nil)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ProgressView("Reading work items").controlSize(.small)
@@ -379,6 +403,13 @@ struct WorkMain: View {
                   !snapshot.containers.contains(where: { $0.ref == ref || $0.members.contains(where: { $0.ref == ref && $0.isOpen }) }),
                   !snapshot.triage.contains(where: { $0.ref == ref }) else { return }
             screen.select(ref)
+        }
+    }
+
+    /// A row selected by the keyboard or a route opens the folded section that holds it, so the scroll has a target.
+    private func unfold(_ ref: String, in rows: WorkItemsProjection) {
+        if let section = WorkItemsView.sectionTitle(of: ref, in: rows), foldedSections.contains(section) {
+            foldedSections.remove(section)
         }
     }
 }
@@ -407,7 +438,10 @@ struct WorkHeader: View {
                     HStack(spacing: 2) {
                         ForEach(Array(summary.enumerated()), id: \.offset) { index, part in
                             if index > 0 { Text(verbatim: "·").foregroundColor(ReviewPalette.dim) }
-                            Button { screen.pane = .items; onJump?(part.section) } label: {
+                            Button {
+                                screen.pane = .items
+                                onJump?(part.section)
+                            } label: {
                                 ViewThatFits(in: .horizontal) {
                                     Text(verbatim: part.text).fixedSize()
                                     Label(String(part.count), systemImage: part.symbol).fixedSize()

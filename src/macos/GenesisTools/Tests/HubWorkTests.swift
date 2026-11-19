@@ -12,6 +12,7 @@ import XCTest
 private final class FakeWorkSource: WorkSource {
     var performed: [WorkScreenAction] = []
     var projectNames = ["App", "Quiet"]
+    var projectsError: WorkSourceError?
     var requestedItems: [String] = []
     var snapshotReads = 0
     var holdNextSnapshot = false
@@ -66,7 +67,10 @@ private final class FakeWorkSource: WorkSource {
         throw WorkSourceError("No fixture item \(ref)")
     }
 
-    func projects() async throws -> [String] { projectNames }
+    func projects() async throws -> [String] {
+        if let projectsError { throw projectsError }
+        return projectNames
+    }
     func snapshot(project: String) async throws -> WorkSnapshotValue {
         snapshotReads += 1
         if holdNextSnapshot {
@@ -190,6 +194,21 @@ final class HubWorkTests: XCTestCase {
         XCTAssertEqual(model.screen.project, "Quiet")
     }
 
+    func testRetryingProjectDiscoveryCanResolveToAnEmptyStore() async {
+        let source = FakeWorkSource()
+        source.projectsError = WorkSourceError("Fixture service unavailable")
+        let model = HubWorkModel(source: source, defaults: isolatedDefaults())
+        await model.screen.loadProjects()
+        XCTAssertTrue(model.screen.projectsLoaded)
+        XCTAssertNotNil(model.screen.failure)
+        source.projectsError = nil
+        source.projectNames = []
+        await model.screen.loadProjects()
+        XCTAssertNil(model.screen.failure)
+        XCTAssertTrue(model.screen.projects.isEmpty)
+        XCTAssertNil(model.screen.project)
+    }
+
     func testTheWorkModeIsAModeOfTheHub() {
         XCTAssertTrue(HubMode.allCases.contains(.work))
         XCTAssertEqual(HubMode.work.title, "Work")
@@ -223,6 +242,7 @@ final class HubWorkTests: XCTestCase {
         XCTAssertEqual(hub.mode, .work)
         XCTAssertEqual(hub.work.screen.project, "App")
         XCTAssertEqual(hub.work.screen.pane, .items)
+        XCTAssertEqual(hub.navTitle(hub.navEntry), "Work: Verify the release")
         XCTAssertTrue(text.contains("The archive contains the receipt"), text)
         XCTAssertEqual(HubPlace(entry: hub.navEntry, tab: .transcript).arguments, ["--work", ref])
         XCTAssertTrue(hub.apply(HubRequest(["--mode", "work"])))
@@ -230,6 +250,8 @@ final class HubWorkTests: XCTestCase {
         XCTAssertEqual(HubPlace(entry: hub.navEntry, tab: .transcript).arguments, ["--work-project", "App"])
         let projectLink = try XCTUnwrap(HubRequest.arguments(fromLink: "genesis-tools://hub?work-project=Quiet"))
         XCTAssertTrue(hub.apply(HubRequest(projectLink)))
+        let asked = try XCTUnwrap(HubNavRequest(HubRequest(projectLink)))
+        XCTAssertEqual(asked.target.place, HubNavEntry(mode: .work, selection: "Quiet"))
         XCTAssertEqual(hub.work.screen.project, "Quiet")
         XCTAssertEqual(HubPlace.resumed(["--resume"], place: HubPlace(entry: hub.navEntry, tab: .transcript)), projectLink)
     }

@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 
 /// Owned by WorkMain, outside the beside/replace branches. Selection and resizing do not discard drafts.
+/// The rows of the Items pane and the inspector share it: one draft for each item and purpose.
 @MainActor
 public final class WorkItemInspectorDrafts: ObservableObject {
     struct Key: Hashable { var ref: String; var purpose: String }
@@ -223,12 +224,10 @@ public struct WorkItemInspector: View {
                     }
                 }
                 if ["open", "active", "reopened"].contains(state) {
-                    reason("Finish", symbol: "checkmark.seal", purpose: "finish", ref: ref, pending: pending,
-                           prompt: "The proof: the command, where it ran, the commit") { .finish(ref: ref, proof: $0) }
+                    reason(.finish, ref: ref, title: detail.item.title, pending: pending)
                 }
                 if ["done", "dropped"].contains(state) {
-                    reason("Reopen", symbol: "arrow.uturn.backward.circle", purpose: "reopen", ref: ref,
-                           pending: pending, prompt: "What is still wrong, with the evidence") { .reopen(ref: ref, why: $0) }
+                    reason(.reopen, ref: ref, title: detail.item.title, pending: pending)
                 }
                 if ["spotted", "open", "active", "reopened"].contains(state) {
                     if !handoffs.isEmpty {
@@ -244,8 +243,7 @@ public struct WorkItemInspector: View {
                             .accessibilityIdentifier("work.detail.action.add-member")
                             .disabled(pending)
                     }
-                    reason("Drop", symbol: "xmark.circle", purpose: "drop", ref: ref, pending: pending,
-                           prompt: "Why nobody will do it") { .drop(ref: ref, why: $0) }
+                    reason(.drop, ref: ref, title: detail.item.title, pending: pending)
                 }
             }
             if pending {
@@ -271,13 +269,12 @@ public struct WorkItemInspector: View {
             .accessibilityIdentifier("work.detail.action.\(id)")
     }
 
-    private func reason(_ title: String, symbol: String, purpose: String, ref: String, pending: Bool,
-                        prompt: String, action: @escaping (String) -> WorkScreenAction) -> some View {
-        let key = WorkItemInspectorDrafts.Key(ref: ref, purpose: purpose)
-        return WorkReasonButton(title: title, symbol: symbol, tooltip: "\(title), with \(purpose == "finish" ? "the proof" : "the reason")",
-                                prompt: prompt, text: drafts.binding(key), isPending: pending,
-                                identifier: "work.detail.action.\(purpose)") { _ in
-            drafts.submit(key) { value in await model.write(action(value)) }
+    /// The same button and the same draft as the item's row: a reason typed in one place is there in the other.
+    private func reason(_ kind: WorkReasonButton.Kind, ref: String, title: String, pending: Bool) -> some View {
+        let key = WorkItemInspectorDrafts.Key(ref: ref, purpose: kind.purpose)
+        return WorkReasonButton(kind: kind, title: title, busy: pending, plain: true,
+                                identifier: "work.detail.action.\(kind.purpose)", text: drafts.binding(key)) { value in
+            await model.write(kind.action(ref: ref, text: value))
         }
         .id(key)
     }

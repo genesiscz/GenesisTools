@@ -79,12 +79,16 @@ public final class WorkScreenModel: ObservableObject {
     @Published public private(set) var failure: String?
     /// The answer of the last write: ok shows as a fading notice, a refusal stays until the next write.
     @Published public private(set) var notice: WorkActionOutcome?
+    @Published public private(set) var notices: [WorkActionNotice] = [] {
+        didSet { notice = notices.last?.outcome }
+    }
     /// Items with a write on its way; their row shows it and refuses a second click.
     @Published public private(set) var pending: Set<String> = []
     @Published public private(set) var notifyPending: [String: String] = [:]
     @Published public private(set) var notifyCommand: String?
     public let noticeStack = NoticeStackModel()
-    private var itemNoticeID: StackedNotice.ID?
+    /// The stacked copy of each item notice, so closing or replacing one closes its card too.
+    private var stackedNotices: [UUID: StackedNotice.ID] = [:]
     private var notifyGeneration = UUID()
 
     private let source: WorkSource
@@ -612,14 +616,20 @@ public final class WorkScreenModel: ObservableObject {
         }
     }
 
-    public func perform(_ action: WorkScreenAction) async {
-        await write(action)
-    }
+    public func perform(_ action: WorkScreenAction) async { _ = await write(action) }
 
+    /// The one write of the screen. It acts on the item's own project and previews the new state at once. It answers
+    /// true only when the service acknowledged this specific write, so a reason editor keeps its draft until then.
     @discardableResult
     public func write(_ action: WorkScreenAction) async -> Bool {
         let project = itemRef == action.ref ? (itemDetail?.item.project ?? self.project) : self.project
         guard let project, !pending.contains(action.ref) else { return false }
+        let item = rowInfo(for: action.ref)
+        let itemTitle = item?.title ?? (itemDetail?.item.id == action.ref ? itemDetail?.item.title : nil) ?? "Work item"
+        let target: String
+        if case let .addMember(_, handoff) = action { target = rowInfo(for: handoff)?.title ?? "handoff" }
+        else { target = "" }
+        let accepting = snapshot?.spotted.contains(where: { $0.ref == action.ref }) == true
         pending.insert(action.ref)
         defer { pending.remove(action.ref) }
         switch action {
@@ -630,26 +640,68 @@ public final class WorkScreenModel: ObservableObject {
         default: break
         }
         showPendingItemStates()
-        let outcome: WorkActionOutcome
+        let result: WorkActionOutcome
         do {
-            outcome = try await source.perform(action, project: project)
+            result = try await source.perform(action, project: project)
         } catch {
-            outcome = WorkActionOutcome(ok: false, message: error.localizedDescription)
+            result = WorkActionOutcome(ok: false, message: error.localizedDescription)
         }
-        notice = outcome
-        if outcome.ok {
-            itemNoticeID = noticeStack.push(.init(text: outcome.message))
+        var shown = result
+        if result.ok {
+            switch action {
+            case .addMember:
+                shown.message = "\(accepting ? "Accepted and added" : "Added") “\(itemTitle)” to “\(target)”"
+            case let .unpair(_, connector, _):
+                let name = item?.pairings?.first(where: { $0.connector == connector })?.displayName ?? connector
+                shown.message = "\(result.message) “\(itemTitle)” from \(name)"
+            case .sync, .reopen:
+                shown.message = "“\(itemTitle)” · \(result.message)"
+            case .accept, .drop, .finish, .claim, .release, .comment:
+                shown.message = "\(action.done): \(itemTitle)"
+            }
+        } else if result.partial {
+            shown.message = "“\(itemTitle)” · \(result.message)"
         } else {
-            let failed = "The work item could not be changed"
-            let report = FailureReport.unexpected(outcome.message, outcome: failed, action: "Change the work item")
-            itemNoticeID = noticeStack.push(.init(text: failed, tone: .error, actions: [.details(report)]))
+            shown.message = "Could not \(action.verb) “\(itemTitle)”"
         }
+        let failure = result.ok ? nil : FailureReport.unexpected(result.message, outcome: shown.message,
+                                                                action: action.verb.capitalized, area: "work", app: .launch)
+        // One notice per item: a newer outcome for the same item takes the older one's place in the stack.
+        let previous = notices.filter { $0.ref == action.ref && $0.project == project }
+        let replacing = previous.compactMap { stackedNotices[$0.id] }.last
+        for old in previous {
+            if let id = stackedNotices.removeValue(forKey: old.id), id != replacing { noticeStack.dismiss(id) }
+        }
+        notices.removeAll { $0.ref == action.ref && $0.project == project }
+        let notice = WorkActionNotice(project: project, ref: action.ref, outcome: shown, failure: failure)
+        notices.append(notice)
+        stackedNotices[notice.id] = result.ok
+            ? noticeStack.push(.init(text: shown.message), replacing: replacing)
+            : noticeStack.push(.init(text: shown.message, tone: .error, actions: failure.map { [.details($0)] } ?? []),
+                               replacing: replacing)
         pendingItemStates[action.ref] = nil
-        if !outcome.ok { showPendingItemStates() }
+        if !result.ok { showPendingItemStates() }
         invalidateFindReads()
         await readAfterWrite()
-        return outcome.ok
+        return result.ok
     }
+
+    private func rowInfo(for ref: String) -> (title: String, pairings: [WorkPairingValue]?)? {
+        if let row = snapshot?.triage.first(where: { $0.ref == ref }) { return (row.title, row.pairings) }
+        for container in snapshot?.containers ?? [] {
+            if container.ref == ref { return (container.title, container.pairings) }
+            if let row = container.members.first(where: { $0.ref == ref }) { return (row.title, row.pairings) }
+        }
+        // A done or dropped row of the find results is only in the index.
+        if let row = index.first(where: { $0.ref == ref }) { return (row.title, row.pairings) }
+        return nil
+    }
+
+    public func clearNotice(_ id: UUID) {
+        if let stacked = stackedNotices.removeValue(forKey: id) { noticeStack.dismiss(stacked) }
+        notices.removeAll { $0.id == id }
+    }
+    public func clearNotice() { if let last = notices.last { clearNotice(last.id) } }
 
     private func showPendingItemStates() {
         guard let confirmedSnapshot, confirmedSnapshot.project == project, snapshot != nil else { return }
@@ -668,11 +720,6 @@ public final class WorkScreenModel: ObservableObject {
     func finishCurrentRead() async {
         // An explicit read or a navigation may supersede our read while it is in flight.
         while let current = loading { await current.value }
-    }
-
-    public func clearNotice() {
-        if let itemNoticeID { noticeStack.dismiss(itemNoticeID); self.itemNoticeID = nil }
-        notice = nil
     }
 
     // MARK: - Notify

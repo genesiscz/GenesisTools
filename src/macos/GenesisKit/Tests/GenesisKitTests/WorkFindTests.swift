@@ -449,7 +449,10 @@ final class WorkFindTests: XCTestCase {
         source.writeOutcome = .init(ok: false, message: "Could not save this comment")
         let saved = await model.write(.comment(ref: ref, text: "Keep the draft for retry"))
         XCTAssertFalse(saved)
-        XCTAssertEqual(model.notice, source.writeOutcome)
+        // The notice carries the screen's own words; the service's reason is in the failure details.
+        XCTAssertEqual(model.notice?.ok, false)
+        XCTAssertEqual(model.notices.last?.ref, ref)
+        XCTAssertEqual(model.notices.last?.failure?.log, source.writeOutcome?.message)
         XCTAssertEqual(model.itemDetail?.item.id, ref)
         XCTAssertTrue(model.pending.isEmpty)
     }

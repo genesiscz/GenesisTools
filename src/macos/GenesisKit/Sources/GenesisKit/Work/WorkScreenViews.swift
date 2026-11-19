@@ -58,9 +58,12 @@ public struct WorkItemsView: View {
     @State private var compact = false
     @State private var localFolded: Set<String> = []
     private var foldedSections: Binding<Set<String>>?
+    /// The reason and proof drafts. A host that also shows the inspector gives the store both share.
+    @State private var localDrafts: WorkItemInspectorDrafts
+    private let drafts: WorkItemInspectorDrafts?
 
     public init(snapshot: WorkSnapshotValue, pending: Set<String>, expandAll: Bool = false,
-                foldedSections: Binding<Set<String>>? = nil,
+                foldedSections: Binding<Set<String>>? = nil, drafts: WorkItemInspectorDrafts? = nil,
                 perform: @escaping (WorkScreenAction) -> Void) {
         self.snapshot = snapshot; self.pending = pending
         self.perform = { action in perform(action); return Task { true } }
@@ -68,12 +71,15 @@ public struct WorkItemsView: View {
         indexLoading = false; indexFailure = nil
         select = { _ in }; toggleExpansion = nil; showMore = {}; clearFilters = {}; retryIndex = {}
         self.foldedSections = foldedSections
+        self.drafts = drafts
+        _localDrafts = State(initialValue: drafts ?? WorkItemInspectorDrafts())
         _expanded = State(initialValue: expandAll ? Set(snapshot.containers.map(\.ref)) : [])
     }
 
     public init(snapshot: WorkSnapshotValue, projection: WorkItemsProjection, filter: WorkFilter,
                 selection: String?, pending: Set<String>, indexLoading: Bool = false, indexFailure: String? = nil,
-                foldedSections: Binding<Set<String>>? = nil, select: @escaping (String) -> Void, toggleExpansion: @escaping (String, Bool) -> Void,
+                foldedSections: Binding<Set<String>>? = nil, drafts: WorkItemInspectorDrafts? = nil,
+                select: @escaping (String) -> Void, toggleExpansion: @escaping (String, Bool) -> Void,
                 showMore: @escaping () -> Void, clearFilters: @escaping () -> Void,
                 retryIndex: @escaping () -> Void, perform: @escaping @MainActor (WorkScreenAction) async -> Bool) {
         self.snapshot = snapshot; self.projection = projection; self.filter = filter
@@ -81,8 +87,10 @@ public struct WorkItemsView: View {
         self.indexLoading = indexLoading; self.indexFailure = indexFailure
         self.select = select; self.toggleExpansion = toggleExpansion; self.showMore = showMore
         self.clearFilters = clearFilters; self.retryIndex = retryIndex
-        self.foldedSections = foldedSections
         self.perform = { action in Task { await perform(action) } }
+        self.foldedSections = foldedSections
+        self.drafts = drafts
+        _localDrafts = State(initialValue: drafts ?? WorkItemInspectorDrafts())
         _expanded = State(initialValue: [])
     }
 
@@ -90,8 +98,27 @@ public struct WorkItemsView: View {
         projection ?? WorkItemsProjection(snapshot: snapshot, expanded: expanded)
     }
 
-    private var showsOpenSections: Bool {
+    /// The scroll ID of a section's header, so a count elsewhere (the hub's title bar) can bring that section into view.
+    public static func sectionID(_ title: String) -> String { "work.section." + title }
+    public static let containersTitle = "Handoffs and epics"
+    public static let spottedTitle = "Spotted"
+    public static let reopenedTitle = "Reopened, nobody working"
+    public static let otherTitle = "Other matching items"
+    public static let archiveTitle = "Done and dropped"
+
+    /// False while the state filter leaves out every open state: then the three open sections are not on screen.
+    public static func showsOpenSections(_ filter: WorkFilter) -> Bool {
         filter.states.isEmpty || !filter.states.isDisjoint(with: [.open, .spotted, .reopened])
+    }
+
+    /// The section that shows a row, so a selection that arrives by the keyboard or a route can open a folded one.
+    public static func sectionTitle(of ref: String, in items: WorkItemsProjection) -> String? {
+        if items.containers.contains(where: { $0.ref == ref || $0.members.contains { $0.ref == ref } }) { return containersTitle }
+        if items.spotted.contains(where: { $0.ref == ref }) { return spottedTitle }
+        if items.reopened.contains(where: { $0.ref == ref }) { return reopenedTitle }
+        if items.other.contains(where: { $0.ref == ref }) { return otherTitle }
+        if items.archive.contains(where: { $0.ref == ref }) { return archiveTitle }
+        return nil
     }
 
     public var body: some View {
@@ -109,21 +136,15 @@ public struct WorkItemsView: View {
         .onGeometryChange(for: Bool.self) { $0.size.width < 510 } action: { compact = $0 }
     }
 
-    /// The scroll ID of a section's header, so a count elsewhere (the hub's title bar) can bring that section into view.
-    public static func sectionID(_ title: String) -> String { "work.section." + title }
-    public static let containersTitle = "Handoffs and epics"
-    public static let spottedTitle = "Spotted"
-    public static let reopenedTitle = "Reopened, nobody working"
-
     @ViewBuilder
     private func sections(_ items: WorkItemsProjection) -> some View {
-        if showsOpenSections {
+        if Self.showsOpenSections(filter) {
             section(Self.containersTitle, count: items.containers.count,
                     empty: "No open handoff or epic in \(snapshot.project)") {
                 ForEach(items.containers) { container in
-                    ContainerRow(container: container, filtered: filter.isActive,
+                    ContainerRow(container: container, filtered: filter.isActive, showsRef: showsRef,
                                  snapshot: snapshot, pending: pending, selection: selection,
-                                 selectable: projection != nil, select: select,
+                                 selectable: projection != nil, drafts: drafts ?? localDrafts, select: select,
                                  toggle: { open in
                                      if let toggleExpansion { toggleExpansion(container.ref, open) }
                                      else if open { expanded.insert(container.ref) }
@@ -147,47 +168,48 @@ public struct WorkItemsView: View {
             }
         }
         if !items.other.isEmpty {
-            section("Other matching items", count: items.other.count, empty: "") {
+            section(Self.otherTitle, count: items.other.count, empty: "") {
                 ForEach(items.other) { row($0) }
             }
         }
         if filter.requiresIndex {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 7) {
-                    Text("Done and dropped").font(.system(size: 13, weight: .semibold))
-                    CountBadge(items.archiveCount, tooltip: Plural.count(items.archiveCount, "item"))
-                    Spacer()
-                }
-                if indexLoading {
-                    HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
-                        Text("Reading done and dropped items").font(.system(size: 12))
-                            .foregroundStyle(KitPalette.dim)
+            disclosure(Self.archiveTitle, count: items.archiveCount) {
+                VStack(alignment: .leading, spacing: 8) {
+                    if indexLoading {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Reading done and dropped items").font(.system(size: 12))
+                                .foregroundStyle(KitPalette.dim)
+                        }
+                        .accessibilityIdentifier("work-index-loading")
                     }
-                    .accessibilityIdentifier("work-index-loading")
-                }
-                if let indexFailure {
-                    FailureInline(.unexpected(indexFailure, outcome: "Could not read done and dropped items",
-                                              action: "Read the project items"), form: .compact) { retryIndex() }
-                        .accessibilityIdentifier("work-index-failure")
-                }
-                if items.archive.isEmpty && !indexLoading && indexFailure == nil {
-                    Text("No match in Done and dropped").font(.system(size: 12)).foregroundStyle(KitPalette.faint)
-                }
-                ForEach(items.archive) { row($0, archive: true) }
-                if items.hasMoreArchive {
-                    Button("Show 200 more", action: showMore)
-                        .buttonStyle(.genHoverPlain())
-                        .accessibilityIdentifier("work-show-more-archive")
+                    if let indexFailure {
+                        FailureInline(.unexpected(indexFailure, outcome: "Could not read done and dropped items",
+                                                  action: "Read the project items"), form: .compact) { retryIndex() }
+                            .accessibilityIdentifier("work-index-failure")
+                    }
+                    if items.archive.isEmpty && !indexLoading && indexFailure == nil {
+                        Text("No match in Done and dropped").font(.system(size: 12)).foregroundStyle(KitPalette.faint)
+                    }
+                    ForEach(items.archive) { row($0, archive: true) }
+                    if items.hasMoreArchive {
+                        Button("Show 200 more", action: showMore)
+                            .buttonStyle(.genHoverPlain())
+                            .accessibilityIdentifier("work-show-more-archive")
+                    }
                 }
             }
         }
     }
 
+    /// A row shows its ID only while the reader searches by words, where a match can be the ID itself. At other
+    /// times the ID is in the row's context menu and in the item details.
+    private var showsRef: Bool { !filter.text.trimmingCharacters(in: .whitespaces).isEmpty }
+
     private func row(_ value: WorkRowValue, archive: Bool = false) -> some View {
-        ItemRow(value: value, detail: nil, summary: nil, accept: false, archive: archive,
-                showActions: true, snapshot: snapshot, pending: pending,
-                selected: selection == value.ref, selectable: projection != nil,
+        ItemRow(value: value, detail: nil, summary: nil, accept: value.state == "spotted", archive: archive,
+                showActions: true, showsRef: showsRef, snapshot: snapshot, pending: pending,
+                selected: selection == value.ref, selectable: projection != nil, drafts: drafts ?? localDrafts,
                 select: select, perform: perform).equatable()
     }
 
@@ -196,25 +218,34 @@ public struct WorkItemsView: View {
                                    severity: value.severity, worker: value.worker, title: value.title,
                                    pairings: value.pairings),
                 detail: [value.userSees, value.why, value.where].compactMap { $0 }.joined(separator: " · "), summary: nil,
-                accept: accept, archive: false, showActions: true, snapshot: snapshot, pending: pending,
-                selected: selection == value.ref, selectable: projection != nil,
+                accept: accept, archive: false, showActions: true, showsRef: showsRef, snapshot: snapshot, pending: pending,
+                selected: selection == value.ref, selectable: projection != nil, drafts: drafts ?? localDrafts,
                 select: select, perform: perform).equatable()
     }
 
     @ViewBuilder
     private func section<Content: View>(_ title: String, count: Int, empty: String,
                                         @ViewBuilder content: () -> Content) -> some View {
-        let folded = foldedSections ?? $localFolded
-        let isExpanded = Binding(get: { !folded.wrappedValue.contains(title) }, set: { show in
-            if show { folded.wrappedValue.remove(title) } else { folded.wrappedValue.insert(title) }
-        })
-        GenDisclosure(isExpanded: isExpanded, identifier: Self.sectionID(title), accessibilityTitle: title) {
+        disclosure(title, count: count) {
             if count == 0 {
                 Text(filter.isActive ? "No match in \(title)" : empty)
                     .font(.system(size: 12)).foregroundStyle(KitPalette.faint)
             } else {
-                LazyVStack(alignment: .leading, spacing: 4) { content() }
+                // Not lazy: a routed or keyboard-selected row far below the fold needs a place to scroll to.
+                VStack(alignment: .leading, spacing: 4) { content() }
             }
+        }
+    }
+
+    /// Every section folds, and its header carries the scroll ID a count elsewhere jumps to.
+    private func disclosure<Content: View>(_ title: String, count: Int,
+                                           @ViewBuilder content: () -> Content) -> some View {
+        let folded = foldedSections ?? $localFolded
+        let isExpanded = Binding(get: { !folded.wrappedValue.contains(title) }, set: { show in
+            if show { folded.wrappedValue.remove(title) } else { folded.wrappedValue.insert(title) }
+        })
+        return GenDisclosure(isExpanded: isExpanded, identifier: Self.sectionID(title), accessibilityTitle: title) {
+            content()
         } label: {
             Text(title).font(.system(size: 13, weight: .semibold))
             CountBadge(count, tooltip: Plural.count(count, "item"))
@@ -225,23 +256,25 @@ public struct WorkItemsView: View {
     private struct ContainerRow: View, Equatable {
         let container: WorkItemsProjection.Container
         let filtered: Bool
+        let showsRef: Bool
         let snapshot: WorkSnapshotValue
         let pending: Set<String>
         let selection: String?
         let selectable: Bool
+        let drafts: WorkItemInspectorDrafts
         let select: (String) -> Void
         let toggle: (Bool) -> Void
         let perform: @MainActor (WorkScreenAction) -> Task<Bool, Never>
 
         static func == (lhs: Self, rhs: Self) -> Bool {
-            lhs.container == rhs.container && lhs.filtered == rhs.filtered && lhs.snapshot == rhs.snapshot
-                && lhs.pending == rhs.pending && lhs.selection == rhs.selection && lhs.selectable == rhs.selectable
+            lhs.container == rhs.container && lhs.filtered == rhs.filtered && lhs.showsRef == rhs.showsRef
+                && lhs.snapshot == rhs.snapshot && lhs.pending == rhs.pending && lhs.selection == rhs.selection
+                && lhs.selectable == rhs.selectable && lhs.drafts === rhs.drafts
         }
 
         var body: some View {
             let value = container.value
-            let summary = filtered ? "\(container.matchingCount) of \(value.total) tasks match"
-                : value.progressLabel
+            let summary = filtered ? "\(container.matchingCount) of \(value.total) tasks match" : value.progressLabel
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .top, spacing: 0) {
                     // The disclosure and selection are sibling controls, never a button inside a button.
@@ -250,11 +283,12 @@ public struct WorkItemsView: View {
                         EmptyView()
                     } label: { EmptyView() }
                     .frame(width: 24)
+                    // The container's own pairing is part of this row, so it stays in reach while the tasks are folded.
                     ItemRow(value: WorkRowValue(ref: value.ref, state: value.state, type: value.type,
                                                 title: value.title, pairings: value.pairings),
                             detail: nil, summary: summary, accept: false, archive: false, showActions: false,
-                            snapshot: snapshot, pending: pending, selected: selection == value.ref,
-                            selectable: selectable, select: select, perform: perform).equatable()
+                            showsRef: showsRef, snapshot: snapshot, pending: pending, selected: selection == value.ref,
+                            selectable: selectable, drafts: drafts, select: select, perform: perform).equatable()
                 }
                 if container.isExpanded {
                     VStack(alignment: .leading, spacing: 2) {
@@ -263,10 +297,10 @@ public struct WorkItemsView: View {
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         ForEach(container.members) { member in
-                            ItemRow(value: member, detail: nil, summary: nil, accept: member.state == "spotted", archive: false,
-                                    showActions: true, snapshot: snapshot, pending: pending,
-                                    selected: selection == member.ref, selectable: selectable,
-                                    select: select, perform: perform).equatable()
+                            ItemRow(value: member, detail: nil, summary: nil, accept: member.state == "spotted",
+                                    archive: false, showActions: true, showsRef: showsRef, snapshot: snapshot,
+                                    pending: pending, selected: selection == member.ref, selectable: selectable,
+                                    drafts: drafts, select: select, perform: perform).equatable()
                         }
                     }
                     .padding(.leading, 24)
@@ -286,18 +320,20 @@ public struct WorkItemsView: View {
         let accept: Bool
         let archive: Bool
         let showActions: Bool
+        let showsRef: Bool
         let snapshot: WorkSnapshotValue
         let pending: Set<String>
         let selected: Bool
         let selectable: Bool
+        let drafts: WorkItemInspectorDrafts
         let select: (String) -> Void
         let perform: @MainActor (WorkScreenAction) -> Task<Bool, Never>
 
         static func == (lhs: Self, rhs: Self) -> Bool {
             lhs.value == rhs.value && lhs.detail == rhs.detail && lhs.summary == rhs.summary
                 && lhs.accept == rhs.accept && lhs.archive == rhs.archive && lhs.showActions == rhs.showActions
-                && lhs.snapshot == rhs.snapshot && lhs.pending == rhs.pending
-                && lhs.selected == rhs.selected && lhs.selectable == rhs.selectable
+                && lhs.showsRef == rhs.showsRef && lhs.snapshot == rhs.snapshot && lhs.pending == rhs.pending
+                && lhs.selected == rhs.selected && lhs.selectable == rhs.selectable && lhs.drafts === rhs.drafts
         }
 
         var body: some View {
@@ -310,7 +346,6 @@ public struct WorkItemsView: View {
                             .accessibilityIdentifier("work-select-\(value.ref)")
                     } else { label }
                 }
-                // The ID is not printed on the row, so long titles keep their width; the menu copies it.
                 .contextMenu { Button("Copy item ID") { Clipboard.copy(value.ref, what: "Item ID") } }
                 if !archive, let pairings = value.pairings, !pairings.isEmpty {
                     WorkPairingActions(ref: value.ref, pairings: pairings, project: value.project,
@@ -320,8 +355,11 @@ public struct WorkItemsView: View {
                     Text(detail).font(.system(size: 11)).foregroundStyle(KitPalette.dim).lineLimit(2)
                         .padding(.leading, 24)
                 }
-                // Actions sit under the title, so a title is never squeezed by its buttons.
-                if showActions { actions(ref: value.ref, state: value.state, accept: accept).padding(.leading, 24) }
+                // The actions have their own line under the row: labelled buttons need the room, and they wrap.
+                if showActions {
+                    actions(ref: value.ref, title: value.title, state: value.state, accept: accept)
+                        .padding(.leading, 24)
+                }
             }
             .padding(.vertical, detail == nil ? 0 : 3)
             .background(selected ? Color.accentColor.opacity(0.12) : Color.clear)
@@ -333,7 +371,7 @@ public struct WorkItemsView: View {
         @ViewBuilder private var label: some View {
             if compact, selectable, summary == nil {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(verbatim: value.title).font(.system(size: 12)).lineLimit(2)
+                    Text(verbatim: value.title).font(.system(size: 12)).lineLimit(3)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     HStack(spacing: 6) {
                         stateGlyph(value.state)
@@ -348,7 +386,8 @@ public struct WorkItemsView: View {
                             .foregroundStyle(KitPalette.dim)
                     } else { stateGlyph(value.state) }
                     Text(value.title).font(.system(size: summary == nil ? 12 : 12.5,
-                                                   weight: summary == nil ? .regular : .medium)).lineLimit(summary == nil ? 3 : 2)
+                                                   weight: summary == nil ? .regular : .medium))
+                        .lineLimit(summary == nil ? 3 : 2)
                         .foregroundStyle(value.isOpen ? KitPalette.text : KitPalette.dim)
                     rowFacts
                 }
@@ -363,12 +402,16 @@ public struct WorkItemsView: View {
                       color: severity == "critical" || severity == "high" ? KitPalette.removed : KitPalette.dim,
                       look: .tone)
             }
+            if showsRef {
+                Text(verbatim: value.slot ?? value.ref).font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(KitPalette.faint).lineLimit(1).truncationMode(.middle)
+            }
             Spacer(minLength: 4)
             if let summary {
                 Text(verbatim: summary).font(.system(size: 11)).foregroundStyle(KitPalette.dim)
                     .fixedSize(horizontal: true, vertical: false)
             } else if let worker = value.worker {
-                Text(worker).font(.system(size: 11)).foregroundStyle(KitPalette.faint).lineLimit(1)
+                Text(worker).font(.system(size: 11)).foregroundStyle(KitPalette.dim).lineLimit(1)
             }
         }
 
@@ -379,52 +422,59 @@ public struct WorkItemsView: View {
                 .instantTooltip(WorkWords.state(state))
                 .accessibilityLabel(WorkWords.state(state))
         }
+
         @ViewBuilder
-        private func actions(ref: String, state: String, accept: Bool) -> some View {
-            if pending.contains(ref) {
-                ProgressView().controlSize(.small).accessibilityLabel("Saving")
-            } else {
-                HStack(spacing: 4) {
-                    if accept && state == "spotted" {
-                        IconButton(systemName: "checkmark.circle", tooltip: "Accept: it becomes open work") {
-                            _ = perform(.accept(ref: ref))
-                        }
+        private func actions(ref: String, title: String, state: String, accept: Bool) -> some View {
+            WrapLayout(spacing: 6) {
+                if accept && state == "spotted" {
+                    KitButton("Accept", symbol: "checkmark.circle", kind: .ghost, size: .small, tooltip: "Accept as open work") {
+                        _ = perform(.accept(ref: ref))
                     }
-                    if ["open", "active", "reopened"].contains(state) {
-                        WorkReasonButton(symbol: "checkmark.seal", tooltip: "Finish, with the proof",
-                                         prompt: "The proof: the command, where it ran, the commit") {
-                            perform(.finish(ref: ref, proof: $0))
-                        }
-                    }
-                    if ["done", "dropped"].contains(state) {
-                        WorkReasonButton(symbol: "arrow.uturn.backward.circle", tooltip: "Reopen, with what is still wrong",
-                                         prompt: "What is still wrong, with the evidence") {
-                            perform(.reopen(ref: ref, why: $0))
-                        }
-                    }
-                    if state != "dropped" && state != "done" {
-                        if !handoffs(excluding: ref).isEmpty {
-                            MenuButton(items: {
-                                handoffs(excluding: ref).map { handoff in
-                                    .action("\(handoff.title) (\(handoff.ref))") { _ = perform(.addMember(ref: ref, handoff: handoff.ref)) }
-                                }
-                            }) {
-                                Image(systemName: "tray.and.arrow.down").frame(width: 20, height: 20)
-                            }
-                            .instantTooltip("Add to a handoff as one of its tasks")
-                            .accessibilityLabel("Add to a handoff")
-                        }
-                        WorkReasonButton(symbol: "xmark.circle", tooltip: "Drop, with the reason",
-                                         prompt: "Why nobody will do it") {
-                            perform(.drop(ref: ref, why: $0))
-                        }
-                    }
+                    .accessibilityLabel("Accept: it becomes open work")
+                    .disabled(pending.contains(ref))
                 }
+                if ["open", "active", "reopened"].contains(state) {
+                    reasonButton(.finish, ref: ref, title: title)
+                }
+                if ["done", "dropped"].contains(state) {
+                    reasonButton(.reopen, ref: ref, title: title)
+                }
+                if state != "dropped" && state != "done" {
+                    if !handoffs(excluding: ref).isEmpty {
+                        MenuButton(items: {
+                            let choices = handoffs(excluding: ref)
+                            let byTitle = Dictionary(grouping: choices, by: \.title)
+                            return choices.map { handoff in
+                                let label = byTitle[handoff.title]?.count == 1 ? handoff.title : "\(handoff.title) (\(handoff.ref))"
+                                return .action(label) { _ = perform(.addMember(ref: ref, handoff: handoff.ref)) }
+                            }
+                        }) {
+                            Label(accept ? "Accept and add to handoff" : "Add to handoff", systemImage: "tray.and.arrow.down")
+                                .font(.system(size: 11)).padding(.horizontal, 5).frame(minHeight: 22)
+                        }
+                        .instantTooltip("Add to a handoff as one of its tasks")
+                        .accessibilityLabel("Add to a handoff")
+                        .accessibilityHint(accept ? "Also accepts the spotted item" : "Choose the handoff")
+                        .disabled(pending.contains(ref))
+                    }
+                    reasonButton(.drop, ref: ref, title: title)
+                }
+            }
+            .overlay(alignment: .trailing) {
+                if pending.contains(ref) { ProgressView().controlSize(.mini).offset(x: 18).accessibilityLabel("Saving") }
+            }
+        }
+
+        private func reasonButton(_ kind: WorkReasonButton.Kind, ref: String, title: String) -> some View {
+            WorkReasonButton(kind: kind, title: title, busy: pending.contains(ref),
+                             identifier: "work.reason.\(kind.purpose).\(ref)",
+                             text: drafts.binding(.init(ref: ref, purpose: kind.purpose))) { value in
+                await perform(kind.action(ref: ref, text: value)).value
             }
         }
 
         private func handoffs(excluding ref: String) -> [WorkContainerValue] {
-            snapshot.openHandoffs.filter { handoff in !handoff.members.contains { $0.ref == ref } }
+            snapshot.openHandoffs.filter { handoff in handoff.ref != ref && !handoff.members.contains { $0.ref == ref } }
         }
     }
 }
@@ -450,7 +500,10 @@ struct WorkPairingActions: View {
                         Text(verbatim: "\(name) · \(key)")
                             .font(.system(size: 11)).lineLimit(1).truncationMode(.middle)
                             .instantTooltip("\(name) · \(key)")
-                        IconButton(systemName: "minus.circle", tooltip: "Unpair \(name) · \(key). Removes the link and keeps both items.") {
+                        if !pairing.enabled {
+                            Text("Sync off").font(.caption).foregroundStyle(.secondary)
+                        }
+                        WorkUnpairButton(name: name, key: key) {
                             perform(.unpair(ref: ref, connector: pairing.connector, project: project))
                         }
                     }
@@ -458,10 +511,10 @@ struct WorkPairingActions: View {
             }
             Spacer(minLength: 0)
             if pairings.contains(where: \.enabled) {
-                let syncTip = "Sync now. Push this item's local fields to enabled connectors and release held changes."
+                let syncTip = "Push local fields and release held changes. An enabled connector may create a remote item."
                 let driftTip = " A successful push clears the drift flag without pulling remote fields."
-                IconButton(systemName: "arrow.triangle.2.circlepath",
-                           tooltip: syncTip + (pairings.contains { $0.enabled && $0.state == .drift } ? driftTip : "")) {
+                KitButton("Sync", symbol: "arrow.triangle.2.circlepath", kind: .ghost, size: .small,
+                          tooltip: syncTip + (pairings.contains { $0.enabled && $0.state == .drift } ? driftTip : "")) {
                     perform(.sync(ref: ref, project: project))
                 }
             }
@@ -494,123 +547,145 @@ private extension WorkPairingValue {
     }
 }
 
-/// An icon button that asks for one line of text (a reason, a proof) in a popover before it acts.
+private struct WorkUnpairButton: View {
+    let name: String
+    let key: String
+    let action: () -> Void
+    @State private var confirming = false
+
+    var body: some View {
+        KitButton("Unpair", symbol: "minus.circle", kind: .ghost, size: .small,
+                  tooltip: "Unpair \(name) · \(key). Removes the link and keeps both items.") { confirming = true }
+            .accessibilityLabel("Unpair \(name) · \(key). Removes the link and keeps both items.")
+            .confirmationDialog("Unpair \(name) · \(key)?", isPresented: $confirming, titleVisibility: .visible) {
+                Button("Unpair", role: .destructive, action: action)
+                Button("Cancel", role: .cancel) {}
+            } message: { Text("Both items remain. Future changes will no longer sync through this link.") }
+            .liveRow(selected: confirming)
+    }
+}
+
+/// A button that asks for a reason or a proof in a popover before it acts. The text lives in the caller's draft
+/// store, so a refused write, a dismissed popover and a redrawn row all keep it.
 struct WorkReasonButton: View {
-    private let symbol: String
-    private let tooltip: String
-    private let prompt: String
-    private let title: String?
-    private let externalText: Binding<String>?
-    private let isPending: Bool
-    private let identifier: String
-    private let action: @MainActor (String) -> Task<Bool, Never>?
+    enum Kind: String {
+        case finish = "Finish", reopen = "Reopen", drop = "Drop"
+
+        var label: (symbol: String, accessibility: String, prompt: String) {
+            switch self {
+            case .finish: return ("checkmark.seal", "Finish, with the proof",
+                                  "Record what ran, where and on which commit. This finishes the task in every handoff that contains it.")
+            case .reopen: return ("arrow.uturn.backward.circle", "Reopen, with what is still wrong",
+                                  "What still needs work? The previous worker receives your reason if available.")
+            case .drop: return ("xmark.circle", "Drop, with the reason",
+                                "Why will this work be dropped? This drops the task in every handoff that contains it.")
+            }
+        }
+
+        /// This kind's part of a draft key and of an identifier.
+        var purpose: String { rawValue.lowercased() }
+
+        func action(ref: String, text: String) -> WorkScreenAction {
+            switch self {
+            case .finish: return .finish(ref: ref, proof: text)
+            case .reopen: return .reopen(ref: ref, why: text)
+            case .drop: return .drop(ref: ref, why: text)
+            }
+        }
+    }
+
+    let kind: Kind
+    let title: String
+    let busy: Bool
+    /// The inspector's actions are plain labelled buttons; a row's are small ghost buttons.
+    var plain = false
+    var identifier: String?
+    /// The caller's draft. The row and the inspector of one item give the same one.
+    @Binding var text: String
+    /// True only when the service acknowledged this write.
+    let action: (String) async -> Bool
     @State private var asking = false
-    @State private var localText = ""
-    @State private var localRevision = UUID()
-    @State private var sending = false
+    @State private var saving = false
+    @State private var refused = false
+    /// The editor's own copy of the draft: typing redraws this button only, never the row or the list around it.
+    @State private var draft = ""
     @State private var presentation = UUID()
-    @FocusState private var focused: Bool
+    @FocusState private var typing: Bool
 
-    /// Compatibility initializer for the existing row actions.
-    init(symbol: String, tooltip: String, prompt: String, action: @escaping @MainActor (String) -> Task<Bool, Never>?) {
-        self.symbol = symbol
-        self.tooltip = tooltip
-        self.prompt = prompt
-        self.title = nil
-        self.externalText = nil
-        self.isPending = false
-        self.identifier = "work.reason.\(symbol)"
-        self.action = action
-    }
-
-    /// Labelled inspector action. Success is true only after the write is confirmed by the model.
-    init(title: String, symbol: String, tooltip: String, prompt: String, text: Binding<String>,
-         isPending: Bool = false, identifier: String,
-         action: @escaping @MainActor (String) -> Task<Bool, Never>?) {
-        self.symbol = symbol
-        self.tooltip = tooltip
-        self.prompt = prompt
-        self.title = title
-        self.externalText = text
-        self.isPending = isPending
-        self.identifier = identifier
-        self.action = action
-    }
-
-    private var text: Binding<String> {
-        externalText ?? Binding(get: { localText }, set: { localText = $0; localRevision = UUID() })
-    }
-    private var verb: String { title ?? tooltip.components(separatedBy: ",").first ?? "Save" }
-    private var empty: Bool { text.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private var id: String { identifier ?? "work.reason.\(kind.purpose)" }
+    /// The editor and the caller's draft change together.
+    private var editor: Binding<String> { Binding(get: { draft }, set: { draft = $0; text = $0 }) }
 
     var body: some View {
         Group {
-            if let title {
-                Button(action: toggle) { Label(title, systemImage: symbol) }
+            if plain {
+                Button(action: toggle) { Label(kind.rawValue, systemImage: kind.label.symbol) }
                     .buttonStyle(.genHoverPlain())
-                    .instantTooltip(tooltip)
+                    .instantTooltip(kind.label.accessibility)
             } else {
-                IconButton(systemName: symbol, tooltip: tooltip, action: toggle)
+                KitButton(kind.rawValue, symbol: kind.label.symbol, kind: .ghost, size: .small,
+                          tooltip: "\(kind.rawValue) \(title)") { toggle() }
             }
         }
-        .accessibilityLabel(verb)
-        .accessibilityIdentifier(identifier)
-        .disabled(isPending || sending)
+        .accessibilityLabel(kind.label.accessibility)
+        .accessibilityHint(title)
+        .accessibilityIdentifier(id)
+        .disabled(busy || saving)
         .popover(isPresented: $asking, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 10) {
-                Text(prompt).font(.system(size: 12, weight: .medium))
-                    .fixedSize(horizontal: false, vertical: true)
-                TextField("", text: text, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
-                    .lineLimit(2...6)
-                    .focused($focused)
-                    .accessibilityLabel(prompt)
-                    .accessibilityIdentifier("\(identifier).text")
-                Text("Return adds a line. ⌘Return saves.").font(.system(size: 11)).foregroundStyle(.secondary)
-                HStack(spacing: 8) {
-                    if sending {
-                        ProgressView().controlSize(.small)
-                        Text("Saving").font(.system(size: 11)).foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 0)
-                    Button("Cancel") { asking = false }
-                        .buttonStyle(.genHoverPlain())
-                        .keyboardShortcut(.cancelAction)
-                        .accessibilityIdentifier("\(identifier).cancel")
-                    Button(verb, action: confirm)
-                        .buttonStyle(.genHoverPlain())
+                Text(verbatim: "\(kind.rawValue) “\(title)”").font(.headline)
+                Text(kind.label.prompt).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                TextEditor(text: $draft)
+                    .font(.body)
+                    .frame(minHeight: 58, maxHeight: 88)
+                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(.secondary.opacity(0.4)).allowsHitTesting(false))
+                    .accessibilityLabel(kind == .finish ? "Proof" : "Reason")
+                    .accessibilityIdentifier("\(id).text")
+                    .focused($typing)
+                    // The popover only asks for this text: it takes the keys at once, no second click.
+                    .onAppear { draft = text; typing = true }
+                    .onChange(of: draft) { _, value in if text != value { text = value } }
+                if refused { Text("Your text is here. Check the failure details in Work and try again.").font(.caption) }
+                Text("Return adds a line. ⌘Return submits.").font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Spacer()
+                    Button("Cancel") { asking = false }.keyboardShortcut(.cancelAction)
+                        .accessibilityIdentifier("\(id).cancel")
+                    Button(saving ? "Saving…" : kind.rawValue, action: confirm)
                         .keyboardShortcut(.return, modifiers: .command)
-                        .disabled(empty || sending || isPending)
-                        .accessibilityIdentifier("\(identifier).save")
+                        .disabled(saving || busy || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityIdentifier("\(id).save")
                 }
             }
-            .frame(width: 288)
-            .padding(14)
-            // The popover only asks for this text: it takes the keys at once, no second click.
-            .onAppear { focused = true }
+            .frame(width: 320).padding(14)
         }
     }
 
     private func toggle() {
-        guard !isPending, !sending else { return }
+        guard !busy, !saving else { return }
         if !asking { presentation = UUID() }
         asking.toggle()
     }
 
     private func confirm() {
-        let value = text.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty, !isPending, !sending else { return }
-        let submittedRevision = localRevision
+        guard !busy, !saving else { return }
+        saving = true
         let shown = presentation
-        guard let submitted = action(value) else { return }
-        sending = true
-        Task {
-            let ok = await submitted.value
-            sending = false
-            if externalText == nil, ok, localRevision == submittedRevision { localText = "" }
-            // External-draft clearing is owned by the caller's revision check. A failed write stays open;
-            // a new draft, typed during the write, also stays open. Cancel/dismiss never erases text.
-            if ok, text.wrappedValue.isEmpty, presentation == shown { asking = false }
+        Task { @MainActor in
+            let saved = await Self.saveDraft(editor, using: action)
+            saving = false
+            refused = !saved
+            // A refused write stays open, and so does a draft typed during the write or a popover opened again.
+            if saved, draft.isEmpty, presentation == shown { asking = false }
         }
+    }
+
+    @MainActor
+    static func saveDraft(_ text: Binding<String>, using action: (String) async -> Bool) async -> Bool {
+        let submitted = text.wrappedValue
+        let value = submitted.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, await action(value) else { return false }
+        if text.wrappedValue == submitted { text.wrappedValue = "" }
+        return true
     }
 }
