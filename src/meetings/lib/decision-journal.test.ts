@@ -986,6 +986,96 @@ describe("decision journal", () => {
         expect(await entries()).toEqual([{ type: "fix", value: "zorb", substitution: "zorbik" }]);
     });
 
+    async function learnFixture() {
+        const words = { heard: "zorb", rules: [MeetingRule.UnknownWord], evidence: { occurrences: 3 } };
+        const fx = await fixture(
+            [term("i1", 5, words), question("i2", { heard: "zorb", choices: [], decides: ["i1"], group: "words" })],
+            {},
+            { project: "work" }
+        );
+        const config = new MeetingsConfigStore(fx.store.storage);
+        const entries = async () => (await config.read()).projects.work?.dictionary?.entries ?? [];
+        const answer = (text: string, replaces?: string) =>
+            fx.journal.apply({
+                meeting: fx.meeting.id,
+                action: {
+                    kind: "answer",
+                    question: "i2",
+                    answer: text,
+                    learn: "add",
+                    ...(replaces ? { replaces } : {}),
+                },
+                actor: person,
+            });
+        return { fx, config, entries, answer };
+    }
+
+    test("a changed answer with learn add replaces the earlier answer's entry, and its Undo brings that entry back", async () => {
+        const { fx, entries, answer } = await learnFixture();
+        const first = await answer("sorb");
+        const changed = await answer("zorbik", first.entry!.token);
+
+        expect(await entries()).toEqual([{ type: "fix", value: "zorb", substitution: "zorbik" }]);
+        expect(changed.entry?.dictionary).toEqual([
+            {
+                scope: { kind: "project", project: "work" },
+                before: { type: "fix", value: "zorb", substitution: "sorb" },
+                after: { type: "fix", value: "zorb", substitution: "zorbik" },
+            },
+        ]);
+        await fx.journal.revert({ meeting: fx.meeting.id, token: changed.entry!.token, actor: person });
+        expect(await entries()).toEqual([{ type: "fix", value: "zorb", substitution: "sorb" }]);
+    });
+
+    test("an Undo whose dictionary write fails leaves the record and the dictionary as they were, so a retry works", async () => {
+        const { fx, entries, answer } = await learnFixture();
+        const fixed = await answer("sorb");
+        const failing = spyOn(MeetingsConfigStore.prototype, "changeDictionaryEntryIfSame").mockRejectedValueOnce(
+            new Error("config disk full")
+        );
+
+        try {
+            await expect(
+                fx.journal.revert({ meeting: fx.meeting.id, token: fixed.entry!.token, actor: person })
+            ).rejects.toThrow("config disk full");
+        } finally {
+            failing.mockRestore();
+        }
+
+        expect(fx.item("i1")).toMatchObject({ status: "confirmed", proposed: "sorb" });
+        expect(await entries()).toEqual([{ type: "fix", value: "zorb", substitution: "sorb" }]);
+        await fx.journal.revert({ meeting: fx.meeting.id, token: fixed.entry!.token, actor: person });
+        expect(fx.item("i1")).toMatchObject({ status: "suggested" });
+        expect(await entries()).toEqual([]);
+    });
+
+    test("an Undo leaves a dictionary entry edited after it read the config, and says so", async () => {
+        const { fx, config, entries, answer } = await learnFixture();
+        const fixed = await answer("sorb");
+        const original = MeetingsConfigStore.prototype.changeDictionaryEntryIfSame;
+        const racing = spyOn(MeetingsConfigStore.prototype, "changeDictionaryEntryIfSame").mockImplementationOnce(
+            async function (this: MeetingsConfigStore, scope, change) {
+                // A person edits the entry between the Undo's read and its write.
+                await config.putDictionaryEntry(scope, { type: "fix", value: "zorb", substitution: "zorbik" });
+                return original.call(this, scope, change);
+            }
+        );
+
+        try {
+            const undone = await fx.journal.revert({
+                meeting: fx.meeting.id,
+                token: fixed.entry!.token,
+                actor: person,
+            });
+            expect(undone.warnings).toContain('The work dictionary entry "zorb" changed since this answer; it stays.');
+            expect(undone.entry?.dictionary).toBeUndefined();
+        } finally {
+            racing.mockRestore();
+        }
+
+        expect(await entries()).toEqual([{ type: "fix", value: "zorb", substitution: "zorbik" }]);
+    });
+
     test("a word corrected without learn leaves one dictionary question; a person's yes writes the entry, an agent's is refused", async () => {
         const words = { heard: "zorb", rules: [MeetingRule.UnknownWord], evidence: { occurrences: 31 } };
         const fx = await fixture(

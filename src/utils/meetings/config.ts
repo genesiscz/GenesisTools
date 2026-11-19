@@ -1,4 +1,5 @@
 import { isAbsolute, win32 } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { logger } from "@genesiscz/utils/logger";
 import { DEFAULT_OCR_TILE_PX, OCR_READS } from "@genesiscz/utils/macos/ocr";
 import { FILLER_WORDS, type FillerLists } from "@genesiscz/utils/recording-editor/transcript-cuts";
@@ -9,6 +10,7 @@ import {
     type AbbrExpansion,
     type DictionaryEntry,
     type DictionaryLevel,
+    dictionaryEntrySchema,
     dictionaryLevelSchema,
     mergeDictionaries,
     type ResolvedDictionary,
@@ -1139,6 +1141,53 @@ export class MeetingsConfigStore {
         return removed;
     }
 
+    /**
+     * Changes the entry for one value only while it is still `expected`, compared under the config lock: `next`
+     * replaces it in its place, no `next` removes it, no `expected` means the value must be absent (then `next` is
+     * added). `unchanged`: the level holds `next` already (or neither). `conflict`: the entry is something else now,
+     * so a dictionary edit made after the caller read it is left as it is.
+     */
+    async changeDictionaryEntryIfSame(
+        scope: DictionaryScope,
+        change: { expected?: DictionaryEntry; next?: DictionaryEntry }
+    ): Promise<"written" | "unchanged" | "conflict"> {
+        const value = (change.expected ?? change.next)?.value;
+
+        if (value === undefined) {
+            return "unchanged";
+        }
+
+        let outcome: "written" | "unchanged" | "conflict" = "unchanged";
+
+        await this.update((raw) => {
+            const level = dictionaryAt(raw, scope);
+            const entries = Array.isArray(level.entries) ? (level.entries as StoredDictionaryEntry[]) : [];
+            const at = entries.findIndex((existing) => existing.value === value);
+            const current = at === -1 ? undefined : entries[at];
+
+            if (sameStoredEntry(current, change.next)) {
+                outcome = "unchanged";
+                return;
+            }
+
+            if (!sameStoredEntry(current, change.expected)) {
+                outcome = "conflict";
+                return;
+            }
+
+            const kept = entries.filter((existing) => existing.value !== value);
+
+            if (change.next) {
+                kept.splice(at === -1 ? kept.length : at, 0, change.next);
+            }
+
+            level.entries = kept;
+            outcome = "written";
+        });
+
+        return outcome;
+    }
+
     /** Adds and removes known labels of a project; the project joins the known ones. Returns its labels. */
     async setProjectLabels(project: string, change: { add?: string[]; remove?: string[] }): Promise<string[]> {
         projectNameSchema.parse(project);
@@ -1364,6 +1413,22 @@ function dictionaryAt(raw: Record<string, unknown>, scope: DictionaryScope): Rec
 }
 
 type StoredDictionaryEntry = { value?: unknown };
+
+/** Whether a stored entry is `entry` as the dictionary reads it; an absent entry matches only an absent one. */
+function sameStoredEntry(stored: StoredDictionaryEntry | undefined, entry: DictionaryEntry | undefined): boolean {
+    if (!stored || !entry) {
+        return !stored && !entry;
+    }
+
+    const parsed = dictionaryEntrySchema.safeParse(stored);
+    return (
+        parsed.success && isDeepStrictEqual(definedKeys(parsed.data), definedKeys(dictionaryEntrySchema.parse(entry)))
+    );
+}
+
+function definedKeys(entry: DictionaryEntry): Record<string, unknown> {
+    return Object.fromEntries(Object.entries(entry).filter(([, field]) => field !== undefined));
+}
 
 /** The level's entries with `previous` replaced by `entry` in its place; an older entry with the new value goes. */
 function renamedEntries(
