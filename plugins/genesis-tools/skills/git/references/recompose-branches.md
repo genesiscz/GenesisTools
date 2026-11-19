@@ -65,10 +65,15 @@ Manual equivalent, per group:
 
 ```bash
 git switch -c <group-branch> --no-track "$BASE"
-git cherry-pick <sha> <sha> …                             # in original order, never -x
 ```
 
-For a `paths-only` commit, after its pick:
+Pick one commit at a time in source order. Plain picks preserve existing commit messages and append no provenance trailer.
+
+```bash
+git cherry-pick <sha>
+```
+
+For a `paths-only` commit, run the restore and amend immediately after its pick, before picking the next commit:
 
 ```bash
 git restore --source=HEAD~1 --staged --worktree -- <outside paths>
