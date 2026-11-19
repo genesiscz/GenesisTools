@@ -35,6 +35,8 @@ public final class RecordingBarPanel {
     private let defaults: UserDefaults
     private let targetBounds: (RecordingTarget) -> CGRect?
     private var placement: RecordingPanelPlacement
+    /// The look the bar opened with (`RecordingBarLook.key`). It stays until the bar closes.
+    let look: RecordingBarLook
     private var cancellables = Set<AnyCancellable>()
     private var dragged = false
     private var dragging = false
@@ -55,6 +57,7 @@ public final class RecordingBarPanel {
         placement = defaults.string(forKey: "recorder.bar.placement").flatMap(RecordingPanelPlacement.init(rawValue:))
             ?? defaults.string(forKey: RecordingSettings.Key.placement).flatMap(RecordingPanelPlacement.init(rawValue:))
             ?? .nearTarget
+        look = RecordingBarLook.load(defaults)
         let panel = RecordingBarWindow(contentRect: CGRect(x: 0, y: 0, width: RecordingBarView.width, height: 44),
                                        styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         window = panel
@@ -68,7 +71,7 @@ public final class RecordingBarPanel {
         var hostedActions = actions
         hostedActions.hide = { [weak self] in self?.hide() }
         let view = RecordingBarView(model: model, actions: hostedActions, defaults: defaults, placement: placement,
-                                    motion: motion, onPlace: { [weak self] in self?.setPlacement($0) },
+                                    look: look, motion: motion, onPlace: { [weak self] in self?.setPlacement($0) },
                                     onDrag: { [weak self] in self?.dragging = true })
         let content = view.fixedSize().onGeometryChange(for: CGSize.self, of: { $0.size }) {
             [weak self] size in DispatchQueue.main.async { self?.resize(to: size) }
