@@ -1,5 +1,6 @@
 import { closeSync, openSync, readFileSync, statSync, utimesSync } from "node:fs";
 import { join } from "node:path";
+import { isProcessAlive } from "../../process-alive";
 import { toolDataDir } from "../../storage/root";
 import { isTestProcess } from "../../test-process";
 import type { WorktreeSnapshot, WorktreeSnapshotParams } from "./types";
@@ -7,8 +8,9 @@ import type { WorktreeSnapshot, WorktreeSnapshotParams } from "./types";
 /**
  * The hook's door to `worktree.snapshot`: plain parsing of `service.json`, one socket, `hello` and one call as JSON
  * lines, then close. No zod, no logger and no full client, so a hook process pays a few milliseconds for it. It
- * imports node:fs, node:path, bun, `./types`, and the two small modules that name the service folder and a test
- * process (both load only the env module every hook loads already). Every failure is `ok: false`.
+ * imports node:fs, node:path, bun, `./types`, the import-free pid check, and the two small modules that name the
+ * service folder and a test process (both load only the env module every hook loads already). Every failure is
+ * `ok: false`.
  */
 export type ThinCall<T> =
     | { ok: true; result: T; wallMs: number }
@@ -32,8 +34,8 @@ function serviceSocket(dir: string): string | null {
             return null;
         }
 
-        process.kill(pid, 0);
-        return socket;
+        // A recycled pid only costs one failed connect, which the caller reports as no-service.
+        return isProcessAlive(pid) ? socket : null;
     } catch {
         // No entry, a damaged one, or a process that is gone: there is no service to call.
         return null;

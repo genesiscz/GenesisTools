@@ -65,11 +65,13 @@ export function defineStatusMetrics(writer = "agents-hooks"): void {
     }
 
     defined = true;
-    const define = (metric: string, description: string) =>
-        SafeJSON.stringify({
+    const define = (metric: string, description: string) => {
+        const line = SafeJSON.stringify({
             v: 1,
             define: { project: STATUS_METRICS.project, metric, unit: "ms", description, dims: [...STATUS_METRIC_DIMS] },
-        }) + "\n";
+        });
+        return `${line}\n`;
+    };
 
     try {
         appendSpoolLines({
