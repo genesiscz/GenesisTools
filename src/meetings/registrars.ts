@@ -11,7 +11,7 @@ export const MEETINGS_REGISTRARS: LazyRegistrar[] = [
     { names: ["seats"], load: async () => (await import("./commands/seats")).registerSeatsCommand },
     { names: ["voices", "voice"], load: async () => (await import("./commands/voices")).registerVoicesCommand },
     {
-        names: ["new", "list", "ls", "show", "revisions", "set", "link", "merge", "duplicate", "context"],
+        names: ["new", "list", "ls", "show", "locate", "revisions", "set", "link", "merge", "duplicate", "context"],
         load: async () => (await import("./commands/meeting")).registerMeetingCommands,
     },
     {

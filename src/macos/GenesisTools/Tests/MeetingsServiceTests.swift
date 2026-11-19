@@ -1108,7 +1108,7 @@ final class MeetingsServiceTests: XCTestCase {
             XCTFail("an unknown meeting read")
         } catch let failure as MeetingsCLI.Failure {
             XCTAssertEqual(failure.code, "meeting-not-found")
-            XCTAssertEqual(failure.sentence, "No meeting \"nope\" in <meetings>. List them: tools meetings list.", "the refusal names the store it searched")
+            XCTAssertEqual(failure.sentence, "No meeting \"nope\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate nope.", "the refusal names the store it searched")
         }
         XCTAssertEqual(commands.runs, [], "a refusal is the answer: the command does not run it again")
     }

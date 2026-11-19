@@ -36,6 +36,7 @@ import {
     itemsRows,
     lines,
     list,
+    locate,
     meetingsToolsetApi,
     overview,
     prepareListen,
@@ -59,6 +60,7 @@ import {
     voiceFeatures,
     voiceScore,
 } from "@app/meetings/lib/service/toolset-api";
+import { locateMeeting } from "@app/meetings/lib/shared";
 import { applyLocalSourceAudio, planLocalSourceAudio } from "@app/meetings/lib/source-audio-backfill";
 import { isSuggestRule, SUGGEST_RULES } from "@app/meetings/lib/suggest";
 import { runSuggest } from "@app/meetings/lib/suggest-run";
@@ -147,6 +149,8 @@ export class MeetingsToolset extends ReplToolset {
                         }));
                 },
                 open: (refText: string) => this.meeting(store, ref.parse({ ref: refText }).ref),
+                locate: (refText: string) =>
+                    locateMeeting({ ref: locate.params.parse({ ref: refText }).ref, root: store.root }) ?? null,
                 overview: async (input: z.input<typeof overview.params> = {}) => {
                     const { days } = overview.params.parse(input);
                     return meetingsOverview({

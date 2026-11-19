@@ -20,7 +20,7 @@ import { mergeMeetings } from "../lib/merge";
 import { OpenedMeeting } from "../lib/opened-meeting";
 import { resolveProject } from "../lib/project";
 import { withMeetingsClient } from "../lib/service/client";
-import { fail, hintIfSeatsUnset, TOOL } from "../lib/shared";
+import { fail, hintIfSeatsUnset, locateMeeting, TOOL } from "../lib/shared";
 import { showText } from "../lib/show-text";
 import { listSoundTracks } from "../lib/sound";
 import { sourceAudioSummary } from "../lib/source-audio";
@@ -203,6 +203,23 @@ async function revisions(ref: string, opts: { json?: boolean }): Promise<void> {
     } catch (err) {
         fail(err);
     }
+}
+
+/** The explicit search of the meetings stores; a missing meeting only names this command. */
+function locate(ref: string): void {
+    const root = new MeetingStore().root;
+    const found = locateMeeting({ ref, root });
+    if (!found) {
+        ui.err(`No store holds "${ref}". Searched from ${root}; it takes an exact meeting id.`);
+        process.exitCode = 1;
+        return;
+    }
+
+    out.print(
+        found.setting
+            ? `"${ref}" is in ${found.store}. Open it with ${found.setting}.\n`
+            : `"${ref}" is in this store: ${found.store}\n`
+    );
 }
 
 async function show(ref: string, opts: { json?: boolean }): Promise<void> {
@@ -506,6 +523,12 @@ export function registerMeetingCommands(program: Command): void {
         .description("One meeting record")
         .option("--json", "print the record and its project voice readiness")
         .action(show);
+
+    program
+        .command("locate")
+        .argument("<meeting>", "an exact meeting id")
+        .description("Search the other meetings stores (the ordinary home, agent scratch homes) for a meeting id")
+        .action(locate);
 
     program
         .command("revisions")

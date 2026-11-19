@@ -350,7 +350,7 @@
         "id": 5,
         "error": {
           "code": 1100,
-          "message": "No meeting \"nope\" in <meetings>. List them: tools meetings list",
+          "message": "No meeting \"nope\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate nope",
           "data": {
             "code": "meeting-not-found"
           },
@@ -377,7 +377,7 @@
         "id": 6,
         "error": {
           "code": 1100,
-          "message": "No meeting \"nope\" in <meetings>. List them: tools meetings list",
+          "message": "No meeting \"nope\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate nope",
           "data": {
             "code": "meeting-not-found"
           },
@@ -404,7 +404,7 @@
         "id": 7,
         "error": {
           "code": 1100,
-          "message": "No meeting \"nope\" in <meetings>. List them: tools meetings list",
+          "message": "No meeting \"nope\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate nope",
           "data": {
             "code": "meeting-not-found"
           },
@@ -432,7 +432,7 @@
         "id": 8,
         "error": {
           "code": 1100,
-          "message": "No meeting \"nope\" in <meetings>. List them: tools meetings list",
+          "message": "No meeting \"nope\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate nope",
           "data": {
             "code": "meeting-not-found"
           },
@@ -459,7 +459,7 @@
         "id": 9,
         "error": {
           "code": 1100,
-          "message": "No meeting \"nope\" in <meetings>. List them: tools meetings list",
+          "message": "No meeting \"nope\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate nope",
           "data": {
             "code": "meeting-not-found"
           },
@@ -523,7 +523,7 @@
         "id": 11,
         "error": {
           "code": 1100,
-          "message": "No meeting \"nope\" in <meetings>. List them: tools meetings list",
+          "message": "No meeting \"nope\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate nope",
           "data": {
             "code": "meeting-not-found"
           },
@@ -550,7 +550,7 @@
         "id": 12,
         "error": {
           "code": 1100,
-          "message": "No meeting \"nope\" in <meetings>. List them: tools meetings list",
+          "message": "No meeting \"nope\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate nope",
           "data": {
             "code": "meeting-not-found"
           },
@@ -649,7 +649,7 @@
         "id": 16,
         "error": {
           "code": 1100,
-          "message": "No meeting \"nope\" in <meetings>. List them: tools meetings list",
+          "message": "No meeting \"nope\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate nope",
           "data": {
             "code": "meeting-not-found"
           },
@@ -2806,7 +2806,7 @@
         "id": 39,
         "error": {
           "code": 1100,
-          "message": "No meeting \"missing\" in <meetings>. List them: tools meetings list",
+          "message": "No meeting \"missing\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate missing",
           "data": {
             "code": "meeting-not-found"
           },
@@ -2836,7 +2836,7 @@
         "id": 40,
         "error": {
           "code": 1100,
-          "message": "No meeting \"missing\" in <meetings>. List them: tools meetings list",
+          "message": "No meeting \"missing\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate missing",
           "data": {
             "code": "meeting-not-found"
           },
@@ -2867,7 +2867,7 @@
         "id": 41,
         "error": {
           "code": 1100,
-          "message": "No meeting \"missing\" in <meetings>. List them: tools meetings list",
+          "message": "No meeting \"missing\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate missing",
           "data": {
             "code": "meeting-not-found"
           },
@@ -2899,7 +2899,7 @@
         "id": 42,
         "error": {
           "code": 1100,
-          "message": "No meeting \"missing\" in <meetings>. List them: tools meetings list",
+          "message": "No meeting \"missing\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate missing",
           "data": {
             "code": "meeting-not-found"
           },
@@ -2951,7 +2951,7 @@
         "id": 44,
         "error": {
           "code": 1100,
-          "message": "No meeting \"missing\" in <meetings>. List them: tools meetings list",
+          "message": "No meeting \"missing\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate missing",
           "data": {
             "code": "meeting-not-found"
           },
@@ -2978,7 +2978,7 @@
         "id": 45,
         "error": {
           "code": 1100,
-          "message": "No meeting \"missing\" in <meetings>. List them: tools meetings list",
+          "message": "No meeting \"missing\" in <meetings>. List them: tools meetings list. Look in the other stores: tools meetings locate missing",
           "data": {
             "code": "meeting-not-found"
           },

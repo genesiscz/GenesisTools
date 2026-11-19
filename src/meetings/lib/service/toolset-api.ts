@@ -410,6 +410,15 @@ export const assignApply = defineMethod({
     doc: "Apply an answer without the inbox: the project (null: none), labels, the overlapping calendar entry whose attendees get paired with the project, and whether to pair the source folder the meeting is in.",
 });
 
+export const locate = defineMethod({
+    name: "locate",
+    params: ref,
+    positional: ["ref"],
+    result: z.unknown(),
+    resultName: "{ store, setting? } | null",
+    effect: "read",
+    doc: "Which meetings store holds this exact id: this one (no setting), the ordinary home or an agent scratch home (setting names the GENESIS_TOOLS_HOME to use), or null. A missing meeting never searches the other stores by itself. CLI: tools meetings locate <id>.",
+});
 export const overview = defineMethod({
     name: "overview",
     params: z.object({ days: z.number().positive().optional() }).strict(),
@@ -616,6 +625,7 @@ export const meetingsToolsetApi = defineApi({
     methods: [
         list,
         open,
+        locate,
         overview,
         projectsLabels,
         projectsPair,

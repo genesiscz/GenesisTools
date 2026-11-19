@@ -253,6 +253,7 @@ interface MeetingHandle {
 interface MeetingsHandle {
     list(): Array<{ id: string; seconds: number | null }>;
     open(ref: string): MeetingHandle;
+    locate(ref: string): { store: string; setting?: string } | null;
     config: { get(path?: string): Promise<unknown> };
     projects: {
         labels(input: unknown): Promise<string[]>;
@@ -2040,6 +2041,17 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         const rows = meetings.list();
         expect(rows.find((row) => row.id === ended.id)?.seconds).toBe(1500);
         expect(rows.find((row) => row.id === running.id)?.seconds).toBeNull();
+    });
+
+    test("meetings: locate is the explicit store search behind tools meetings locate", async () => {
+        const store = new MeetingStore();
+        const record = await store.create(
+            { title: "Located", start: "2026-11-02T20:00:00.000Z", createdBy: "new" },
+            { command: "new", change: "test" }
+        );
+        const meetings = await loadMeetings();
+        expect(meetings.locate(record.id)).toEqual({ store: store.root });
+        expect(meetings.locate("last")).toBeNull();
     });
 
     test("meetings: a handle names its meeting, a confirm is undone with its token, and an unknown config path is refused", async () => {
