@@ -107,6 +107,13 @@ export function voicesHandlers(
         }
         return result;
     }
+    // A missing or ambiguous meeting answers with the typed refusal `meeting.show` gives (`meeting-not-found`,
+    // `meeting-ref`), not with the voice library's plain error.
+    const knownMeetings = (refs: readonly string[] | undefined) => {
+        for (const ref of refs ?? []) {
+            recordOf(store, ref);
+        }
+    };
     return {
         "voices.jobs": ({ project }) => deps.voiceJobs?.list(project) ?? [],
         "voices.jobs.cancel": ({ id }) => deps.voiceJobs?.cancel(id) ?? null,
@@ -131,6 +138,7 @@ export function voicesHandlers(
         "voices.quality": (p) => voiceQuality({ ...access, ...p }),
         "voices.list": (params) => listProjectVoices({ ...access, ...params }),
         "voice.backfill": async (params, context) => {
+            knownMeetings(params.meetings);
             const result =
                 deps.voiceJobs && !params.dryRun
                     ? await deps.voiceJobs.backfill(params)
@@ -140,11 +148,19 @@ export function voicesHandlers(
             }
             return result;
         },
-        "voices.preview": (params, context) =>
-            previewVoices({ ...access, ...params, onProgress: voicePassProgress(context), signal: context.signal }),
+        "voices.preview": (params, context) => {
+            knownMeetings([params.meeting]);
+            return previewVoices({
+                ...access,
+                ...params,
+                onProgress: voicePassProgress(context),
+                signal: context.signal,
+            });
+        },
         "voices.sample": (params) => voiceSample({ ...access, ...params }),
         "voices.workers": () => autoVoiceWorkers(deps.freeCores),
         "voices.apply": async (params, context) => {
+            knownMeetings([params.meeting]);
             const result = await applyVoices({
                 ...access,
                 ...params,
