@@ -451,6 +451,41 @@ test("CLI suggestions use the shared runner and render its warnings", async () =
     }
 });
 
+test("CLI suggestions refuse bad options before the project question can change the meeting", async () => {
+    const { Command } = await import("commander");
+    const runner = await import("./suggest-run");
+    const { ui } = await import("@genesiscz/utils/cli/ui");
+    const { registerItemCommands } = await import("../commands/items");
+    const { record } = await newRecord({});
+    const resolve = spyOn(MeetingStore.prototype, "resolve").mockReturnValue(record);
+    const run = spyOn(runner, "runSuggest");
+    const err = spyOn(ui, "err").mockImplementation(() => {});
+    const raw = spyOn(ui, "raw").mockImplementation(() => {});
+    const exitCode = process.exitCode;
+    try {
+        for (const args of [
+            ["--rules", "nonsense"],
+            ["--attendance-id", "chat-b"],
+        ]) {
+            const program = new Command();
+            registerItemCommands(program);
+            await program.parseAsync(["suggest", record.id, ...args], { from: "user" });
+        }
+
+        expect(run).not.toHaveBeenCalled();
+        expect(err.mock.calls.map(([message]) => String(message))).toEqual([
+            expect.stringContaining("Unknown rule set nonsense"),
+            expect.stringContaining("--attendance-id requires --attendance"),
+        ]);
+    } finally {
+        process.exitCode = exitCode;
+        resolve.mockRestore();
+        run.mockRestore();
+        err.mockRestore();
+        raw.mockRestore();
+    }
+});
+
 describe("suggest attendance resilience", () => {
     test("a failed automatic attendance lookup stays recorded when suggestions fall back to the roster", async () => {
         const { store, record } = await newRecord({
