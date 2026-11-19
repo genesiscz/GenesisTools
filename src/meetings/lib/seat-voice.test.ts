@@ -345,11 +345,12 @@ test("at share 0 one opposite-side match keeps the seat unsure and incompatible 
     sample(lark, { seat: "mic", track: "mic-raw" });
     const { suggestion } = await f.preview();
     expect(suggestion.seats).toEqual({ room: [], remote: [] });
+    // Read the plain reason first: an asymmetric matcher in toMatchObject replaces the value it inspects.
+    expect(suggestion.people[0]?.reason).toContain("Voice matches occur on both sides");
     expect(suggestion.people).toMatchObject([
         { name: finch, seat: "unsure", reason: expect.stringContaining("2 microphone, 1 call") },
         { name: lark, seat: "unsure", reason: expect.stringContaining("0 microphone, 0 call") },
     ]);
-    expect(suggestion.people[0]?.reason).toContain("Voice matches occur on both sides");
 });
 
 test("the default share seats a voice with 3 microphone and 129 call matches remotely", async () => {
@@ -415,11 +416,11 @@ test("a copied target and a refused line cannot supply independent votes", async
     const copy = await duplicateMeeting({ store: f.store, ref: f.record.id, withoutItems: true });
     const { suggestion } = await f.preview(copy.id);
     expect(suggestion.seats).toEqual({ room: [], remote: [] });
+    expect(suggestion.people[0]?.reason).toContain("Microphone voice matches unavailable");
     expect(suggestion.people).toMatchObject([
         { name: finch, seat: "unsure", reason: expect.stringContaining("0 call") },
         { name: lark, seat: "unsure", reason: expect.stringContaining("1 call") },
     ]);
-    expect(suggestion.people[0]?.reason).toContain("Microphone voice matches unavailable");
 });
 
 test("overlapping positives count once and a weak microphone or tied rival contributes no vote", async () => {
@@ -433,11 +434,11 @@ test("overlapping positives count once and a weak microphone or tied rival contr
     sample(finch, { seat: "mic" });
     sample(lark, { seat: "mic", fromSec: 50, toSec: 54 });
     const { suggestion } = await f.preview();
+    expect(suggestion.people[0]?.reason).toContain("Call voice matches unavailable: no eligible lines.");
     expect(suggestion.people).toMatchObject([
         { seat: "unsure", reason: expect.stringContaining("1 microphone") },
         { seat: "unsure", reason: expect.stringContaining("0 microphone") },
     ]);
-    expect(suggestion.people[0]?.reason).toContain("Call voice matches unavailable: no eligible lines.");
 });
 
 test("saved seats and five decided lines take precedence over a new voice suggestion", async () => {

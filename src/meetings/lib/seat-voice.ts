@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import type { ChannelCalibration } from "@genesiscz/utils/meetings/energy";
 import { nameKey } from "@genesiscz/utils/meetings/people";
@@ -45,7 +46,7 @@ export interface SeatVoiceInput {
 
 function unavailableText(reason: string): string {
     return reason === "Speaker model unavailable; run meetings voice prepare explicitly"
-        ? "the speaker model is not installed (tools meetings voice prepare)."
+        ? `the speaker model is not installed (${toolCommand("meetings", "voice", "prepare")}).`
         : reason.endsWith(".")
           ? reason
           : `${reason}.`;
