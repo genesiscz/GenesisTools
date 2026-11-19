@@ -1,8 +1,10 @@
 import type { CalendarPerson } from "@genesiscz/utils/meetings/calendar-entry";
 import type { Participant, TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 
-export type SourceName = "local" | "mcp";
-export type SourceChoice = SourceName | "auto";
+/** Which source answered: the app's data on this Mac, an export imported from another Mac, or the MCP. */
+export type SourceName = "local" | "imported" | "mcp";
+/** What `--source` asks for. `local` covers the imported exports too: both are on this Mac. */
+export type SourceChoice = "local" | "mcp" | "auto";
 
 export interface Folder {
     id: string;

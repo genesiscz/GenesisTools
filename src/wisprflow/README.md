@@ -20,6 +20,8 @@ tools wisprflow meetings show <id>
 tools wisprflow meetings transcript <id> --first-names --no-summary -o Transcript.md
 # Summary.md, Transcript.md and meeting.json in a folder per meeting
 tools wisprflow meetings export <id> --dir ~/Projects/app/meetings --timestamps
+# A meeting someone else exported on their Mac: import it, then read it like your own
+tools wisprflow meetings import ~/Downloads/2026-11-02-Sync
 # Calendar events in the next 8 hours
 tools wisprflow calendar upcoming --hours 8
 ```
@@ -54,6 +56,20 @@ stderr, so stdout holds only the result. `--source auto|local|mcp` picks the sou
   flags are in "Transcript output" below.
 - `meetings export <meetings...> --dir <dir>`: one sub-folder per meeting with `Summary.md`, `Transcript.md` and
   `meeting.json`. `--dir` is required. `--confirm`, `--timestamps`, `--first-names`, `--source`.
+- `meetings import <folder>`: copies a meeting that was recorded on another Mac and another Wispr Flow account into
+  this tool's import store, `~/.genesis-tools/wisprflow/imported/<meeting id>/`. After that, every command here and
+  `tools meetings` (`--source wisprflow:<id>`) read it as if it were on this Mac.
+  - The folder is one sub-folder of `meetings export`: `meeting.json` (required), `Summary.md`, `Transcript.md`. Add
+    the raw files of the recording Mac's `~/Library/Application Support/Wispr Flow/meetings/<id>/` beside them or in
+    a `wispr-raw/` sub-folder: `live.ndjson`, `refined.ndjson`, `native-language-evidence.json`,
+    `audio-devices.json`, `speakers.observations.ndjson`, `.mic-retained`, the recording `upload.ogg`, and `mic.m4a`
+    when the recorder kept one. Without `live.ndjson` there is no mic/system channel per line; without `upload.ogg`
+    there is nothing to play.
+  - Each file is an APFS clone where the volume allows it, so the copy costs no disk space.
+  - The same content again changes nothing (`unchanged`). A different export of the same meeting is refused, and
+    nothing is written; `--force` replaces it and moves the old import to the GenesisTools trash.
+  - It prints each copied file and the known files the export lacks. `--json` prints
+    `{ status, meetingId, title, folder, copied[], missing[] }`.
 - `meetings series <meeting>`: every recorded occurrence of the recurring meeting this one belongs to. MCP only, so it
   has no `--source`. `--limit <n>` (default 25), `--format table|json`.
 - `meetings speakers <meeting>`: moved. It prints the `tools meetings speakers stats` command to use and exits 1.
@@ -160,18 +176,23 @@ on with the next one.
 
 ## How it works
 
-Two sources:
+Three sources:
 
 1. **local**: the Wispr Flow app's own data on this Mac, opened read-only while the app keeps writing to it.
    - `~/Library/Application Support/Wispr Flow/flow.sqlite` holds the meetings, the speaker map, summaries, folders,
      notes, calendar events, your dictionary and your transcript edits.
    - `meetings/<id>/refined.ndjson` in that folder holds the transcript with a time and a speaker number per line.
      `meetings/<id>/live.ndjson` is the unrefined transcript the app writes while the meeting runs.
-2. **mcp**: the hosted Wispr Flow MCP (`https://api.wisprflow.ai/connect/mcp`) through the local MCP gateway of
+2. **imported**: exports added with `meetings import`, in `~/.genesis-tools/wisprflow/imported/<id>/`, laid out like
+   the app's meeting folder. They are for meetings recorded on another Mac and account, which neither this Mac's app
+   data nor your MCP login can see. The recording user is the participant marked `isSelf` in the export's
+   `meeting.json`, and the calendar event is the one the export carries.
+3. **mcp**: the hosted Wispr Flow MCP (`https://api.wisprflow.ai/connect/mcp`) through the local MCP gateway of
    `tools mcp-manager`. It sees meetings recorded on another machine, filters by attendee e-mail and knows recurring
    series. Through the MCP there are no times per line, no dictionary and no `--folder` filter.
 
-`--source auto` uses the local data when the meeting is on this Mac and the MCP otherwise. For `meetings list`,
+`--source auto` uses the local data when the meeting is in this Mac's app data, then an imported export, and the MCP
+otherwise. `--source local` reads the app data and the imported exports, never the MCP. For `meetings list`,
 `notes list` and the calendar commands, `auto` uses the local data whenever the app's database is on this Mac
 (except `meetings list --attendee`, which needs the MCP).
 
@@ -231,6 +252,7 @@ tools mcp-manager gateway status          # is the local gateway running?
 
 ## For agents
 
+- **A meeting from another Mac:** `meetings import <folder>` first. The `source` of every answer is then `imported`.
 - **JSON:** `--format json` on `meetings list|show|transcript|series`, `notes list|show` and
   `calendar upcoming|search`. Each of these answers names its `source`. Lists are `{ source, meetings }`,
   `{ source, notes }` or `{ source, events }`, and `notes show` is `{ source, note }`. Calendar events carry `people`
@@ -249,7 +271,8 @@ tools mcp-manager gateway status          # is the local gateway running?
   `wisprflow:<id>`), and this tool imports nothing from `tools meetings`. The adapter also gives `tools meetings` the
   app's dictionary, the calendar, the folders, the meeting that is recording now, and the raw evidence files of a
   meeting folder (`speakers.observations.ndjson`, `native-language-evidence.json`, `audio-devices.json`,
-  `upload.ogg`). Transcript second 0 is the meeting's start (checked on 2026-11-02 against Teams leave times, within
+  `upload.ogg`). For an imported meeting it reads the same files from the import store, and `tools meetings`
+  finds its `upload.ogg` like the app's own recordings. Transcript second 0 is the meeting's start (checked on 2026-11-02 against Teams leave times, within
   4 seconds).
 - **node-repl:** the `meetings` toolset's `meetings.open()` also takes `wisprflow:<id>` to open the stored meeting
   record of a Wispr Flow meeting.

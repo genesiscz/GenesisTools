@@ -1838,12 +1838,12 @@ describe("local source audio reconciliation", () => {
             Date.parse("2026-11-01T11:00:00Z"),
         ]);
         db.close();
-        const adapter = wisprAudioAccess(dir);
+        const adapter = wisprAudioAccess({ dir });
         const before = statSync(join(dir, "flow.sqlite")).mtimeMs;
         expect(await adapter.files()).toHaveLength(1);
         expect((await adapter.load("source-local"))?.transcript).toEqual([]);
         expect(statSync(join(dir, "flow.sqlite")).mtimeMs).toBe(before);
         // No Wispr database: the meeting is unknown, which plans as unmatched, never as a failed pass.
-        expect(await wisprAudioAccess(join(dir, "absent")).load("source-local")).toBeNull();
+        expect(await wisprAudioAccess({ dir: join(dir, "absent") }).load("source-local")).toBeNull();
     });
 });
