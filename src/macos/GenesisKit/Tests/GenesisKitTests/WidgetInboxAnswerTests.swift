@@ -20,6 +20,10 @@ enum WidgetInboxRender {
         let model = WidgetModel(binaryPath: "/usr/bin/true", stateRoot: root.path, defaults: defaults,
             appearance: NativeSettingsAppearance(defaults: defaults, notificationNamespace: UUID().uuidString,
                                                  observeExternalChanges: false))
+        model.entryBodyRequest = { id in
+            guard let row = items.first(where: { $0.sourceId == id }) else { throw CocoaError(.fileNoSuchFile) }
+            return WidgetEntryBody(body: row.reply?.text ?? row.message?.text ?? "", question: row.reply?.question)
+        }
         let groups = sessions.map { session in
             let rows = items.filter { $0.key == session.key }
             return WidgetInboxSession(key: session.key, unread: rows.filter { !$0.needsAnswer }.count,
@@ -66,14 +70,16 @@ final class WidgetInboxAnswerTests: XCTestCase {
     private let session = WidgetInboxRender.session("alpha", project: "Orchard")
     private let size = CGSize(width: 460, height: 520)
 
-    private func opened(_ item: WidgetInboxItem, name: String? = nil) throws -> [String] {
+    private func opened(_ item: WidgetInboxItem, name: String? = nil, failReceipt: Bool = false) throws -> [String] {
         var preferences = WidgetPreferences.hubDefaults
         preferences.inboxGrouping = "session"
         let model = try WidgetInboxRender.model(sessions: [session], items: [item], preferences: preferences)
         defer { model.stop() }
+        if failReceipt { model.entryBodyRequest = { _ in throw CocoaError(.fileNoSuchFile) } }
         model.expanded = .right
         model.inboxOverview = true
-        return try WidgetInboxRender.draw(ScrollView { WidgetInboxOverview(model: model) }, size: size, name: name) { _, _ in
+        let list = WidgetInboxOverview(model: model, viewport: { content in AnyView(ScrollView { content }) })
+        return try WidgetInboxRender.draw(list, size: size, name: name) { _, _ in
             XCTAssertTrue(model.moveInList(.down))
             WidgetInboxRender.settle()
             XCTAssertTrue(model.moveInList(.open))
@@ -95,6 +101,16 @@ final class WidgetInboxAnswerTests: XCTestCase {
         XCTAssertFalse(after.contains("Question"), after.description)
     }
 
+    func testAFailedAttachmentReadKeepsThePreviewAndOffersRetryEvenWhenTheTextIsComplete() throws {
+        let row = WidgetInboxItem(reply: .init(question: "Ready?", text: "The pears are ready."),
+                                  id: "answer:short", sourceId: "short", kind: "answer", key: session.key,
+                                  at: 5000, needsAnswer: false, title: "Ready?")
+        let words = try opened(row, name: "answer-read-failure", failReceipt: true).joined(separator: " ")
+        for phrase in ["The pears are ready", "Attachments could not be checked", "Try again", "Details"] {
+            XCTAssertTrue(words.contains(phrase), words)
+        }
+    }
+
     func testALongQuestionHasItsOwnSection() throws {
         let question = String(repeating: "What did the harvest yield? ", count: 7) + "Include the pears."
         let item = WidgetInboxItem(reply: .init(question: question, text: "Two baskets."), id: "answer:a",
@@ -107,9 +123,10 @@ final class WidgetInboxAnswerTests: XCTestCase {
 
     func testMessagesAndDecidedDecisionsNameWhatIsBeingRead() throws {
         let message = WidgetInboxItem(message: .init(text: "The baskets have arrived."), id: "answer:m", sourceId: "m",
-                                      kind: "answer", key: session.key, at: 5000, needsAnswer: false, title: "Delivery", tag: "message")
+                                      kind: "answer", key: session.key, at: 5000, needsAnswer: false, title: "Delivery", count: 2, tag: "message")
         let note = try opened(message)
         XCTAssertTrue(note.contains("Message"), note.description)
+        XCTAssertTrue(note.joined(separator: " ").contains("1 earlier message"), note.description)
         XCTAssertTrue(note.joined().contains("The baskets have arrived"), note.description)
         let decision = WidgetInboxItem(id: "decision:d", sourceId: "d", kind: "decision", key: session.key, at: 5000,
                                       needsAnswer: false, title: "Choose a crate", options: ["unused option"],

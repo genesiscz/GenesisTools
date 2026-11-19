@@ -3026,7 +3026,10 @@ public final class WidgetModel: ObservableObject {
         try await entryBody(id: item.sourceId)
     }
 
+    var entryBodyRequest: ((String) async throws -> WidgetEntryBody)?
+
     func entryBody(id: String) async throws -> WidgetEntryBody {
+        if let entryBodyRequest { return try await entryBodyRequest(id) }
         let result = try await bridge.run(subcommand: "hub", args: widgetArgs + ["message-body", id],
                                           timeoutSeconds: 8)
         try Task.checkCancellation()

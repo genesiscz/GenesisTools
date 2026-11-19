@@ -19,10 +19,16 @@ struct WidgetInboxEntry: View {
     var body: some View {
         let session = item.message?.origin == nil ? model.session(forKey: item.key) : nil
         VStack(alignment: .leading, spacing: 0) {
-            WidgetInboxOverviewRow(
-                item: item, open: open, focused: focused,
-                source: sourceLabel(session), stagedLine: stagedLine(item), toggle: toggle)
-                .equatable()
+            HStack(spacing: 2) {
+                WidgetInboxOverviewRow(item: item, open: open, focused: focused,
+                                       source: sourceLabel(session), stagedLine: stagedLine(item), toggle: toggle)
+                    .equatable()
+                if context == .inlineSource, let session {
+                    IconButton(systemName: "tray", tooltip: "Open the whole inbox of " + session.title, size: 11) {
+                        model.openSessionInbox(session, on: surface)
+                    }.padding(.trailing, 6)
+                }
+            }.liveRow(selected: open || focused)
             if open {
                 WidgetInboxEntryDetail(model: model, item: item, session: session, compact: compact,
                                        context: context,
@@ -73,8 +79,10 @@ struct WidgetInboxEntryDetail: View {
     var surface: WidgetSurfaceID?
     @State private var earlierOpen = false
     @State private var entries: [WidgetGroupEntry]?
-    @State private var groupFailure: String?
+    @State private var groupFailure: FailureReport?
     @State private var groupAttempt = 0
+    @State private var groupLimit = 5
+    @State private var loadedLimit = 0
 
     /// An open decision's options, each staging (or sending, by the setting) that pick from here; the shared option
     /// row, so this list, the alert and a session's inbox draw an option one way.
@@ -124,35 +132,35 @@ struct WidgetInboxEntryDetail: View {
                                    imageHeight: compact ? 64 : 96, showMedia: { model.showMedia?($0) },
                                    load: { try await model.messageBody(for: item) })
                     .accessibilityIdentifier("widget.overview.answer." + item.id)
-                if let count = item.count, count > 1 {
-                    earlierAnswers(count - 1)
-                }
             } else if item.kind == "decision", !item.needsAnswer, item.option != nil || item.answer != nil {
                 let words = [item.option.map { "Answered " + $0.uppercased() }, item.answer]
                     .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
                 WidgetAnswerBlock(question: nil, answer: words, more: false, clampLines: 1,
                                   label: WidgetAlerts.answeredViaText(item.answeredVia))
             }
+            if let count = item.count, count > 1, item.reply != nil || item.message != nil {
+                earlierEntries(count - 1)
+            }
             choices(item)
             if !compact, let session {
                 HStack(spacing: 8) {
                     AIProviderGlyph(meta: AIProviders.meta(for: session.target.provider), size: 18)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text([context == .list || context == .sessionHeader ? session.project : "",
-                              session.visualStatus.label, String(session.target.sessionId.prefix(8))]
-                            .filter { !$0.isEmpty }.joined(separator: " · "))
-                            .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                    }
+                    let shortID = String(session.target.sessionId.prefix(8))
+                    Text([context == .list || context == .sessionHeader ? session.project : "",
+                          session.visualStatus.label, shortID.caseInsensitiveCompare(session.title) == .orderedSame ? "" : shortID]
+                        .filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
             HStack(spacing: 8) {
-                if session != nil {
-                    Button(item.needsAnswer ? "Answer in its session" : "Open in its session") { model.openInboxItem(item, on: surface) }
+                if item.message?.origin == nil {
+                    Button(session == nil ? "Session unavailable" : item.openTitle) { model.openInboxItem(item, on: surface) }
                         .buttonStyle(.genHover(accent: item.needsAnswer ? .orange : KitTheme.accent))
+                        .disabled(session == nil)
                         .accessibilityIdentifier("widget.overview.open." + item.id)
                 }
                 if let session {
-                    if context != .sessionHeader {
+                    if context == .projectHeader || context == .list {
                         Button("Whole inbox") { model.openSessionInbox(session, on: surface) }.buttonStyle(.genHover())
                     }
                     Spacer(minLength: 0)
@@ -162,8 +170,10 @@ struct WidgetInboxEntryDetail: View {
         }
     }
 
-    private func earlierAnswers(_ count: Int) -> some View {
-        let title = Plural.count(count, "earlier answer")
+    private func earlierEntries(_ count: Int) -> some View {
+        let message = item.message != nil
+        let noun = message ? "message" : "answer"
+        let title = Plural.count(count, "earlier " + noun)
         return GenDisclosure(isExpanded: $earlierOpen, minHeight: 22,
                       identifier: "widget.overview.earlier." + item.id, accessibilityTitle: title) {
             VStack(alignment: .leading, spacing: 8) {
@@ -172,29 +182,46 @@ struct WidgetInboxEntryDetail: View {
                         VStack(alignment: .leading, spacing: 3) {
                             LiveAgo(date: Date(timeIntervalSince1970: entry.at / 1000), style: .spelled)
                                 .font(.caption2).foregroundStyle(.secondary)
-                            WidgetReceiptBlock(question: entry.question, preview: entry.text, more: entry.more == true,
-                                               headTitle: nil, label: "Answer", clamp: 4, imageHeight: 56,
+                            WidgetReceiptBlock(question: message ? nil : entry.question, preview: entry.text, more: entry.more == true,
+                                               headTitle: nil, label: message ? "Message" : "Answer", clamp: 4, imageHeight: 56,
                                                showMedia: { model.showMedia?($0) }, earlier: true,
                                                load: { try await model.entryBody(id: entry.id) })
                         }
                     }
                     if entries.isEmpty {
-                        Text("No earlier unread answers remain.").font(.caption).foregroundStyle(.secondary)
-                    } else if entries.count == 5, count > entries.count, session != nil {
-                        Text(Plural.count(count - entries.count, "more answer") + " in the session inbox")
-                            .font(.caption).foregroundStyle(.secondary)
+                        Text("No earlier unread " + noun + "s remain.").font(.caption).foregroundStyle(.secondary)
+                    } else if entries.count >= loadedLimit, count > entries.count {
+                        if groupLimit < 20 {
+                            Button("Show " + Plural.count(min(5, count - entries.count), "more " + noun)) {
+                                groupLimit = min(20, groupLimit + 5)
+                                groupAttempt += 1
+                            }.buttonStyle(.genHover()).disabled(groupLimit != loadedLimit)
+                        } else if loadedLimit == 20 {
+                            Text(Plural.count(count - entries.count, "more " + noun)
+                                 + (session == nil ? " beyond the preview limit" : " in the session inbox"))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                     }
-                } else if let groupFailure {
-                    Text("Earlier answers could not be read: \(groupFailure)").font(.caption).foregroundStyle(.secondary)
-                    Button("Try again") { groupAttempt += 1 }.buttonStyle(.genHoverPlain())
-                } else {
-                    ProgressView("Loading earlier answers").controlSize(.small)
+                }
+                if let groupFailure {
+                    FailureInline(groupFailure, form: .compact, identifier: "widget.overview.earlierFailure") {
+                        groupAttempt += 1
+                    }
+                } else if loadedLimit < groupLimit {
+                    ProgressView("Loading earlier " + noun + "s").controlSize(.small)
                 }
             }.task(id: groupAttempt) {
-                guard entries == nil else { return }
+                guard loadedLimit < groupLimit else { return }
                 groupFailure = nil
-                do { entries = try await model.answerGroup(for: item) }
-                catch { if !Task.isCancelled { groupFailure = error.localizedDescription } }
+                do {
+                    entries = try await model.answerGroup(for: item, limit: groupLimit)
+                    loadedLimit = groupLimit
+                }
+                catch {
+                    guard !Task.isCancelled else { return }
+                    groupFailure = FailureReport(title: title, headline: "Earlier " + noun + "s could not be loaded.",
+                                                 action: "Load earlier " + noun + "s", log: error.localizedDescription, area: "widget")
+                }
             }
         } label: {
             Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
@@ -228,7 +255,7 @@ private struct WidgetReceiptBlock: View {
     let load: () async throws -> WidgetEntryBody
 
     @State private var full: WidgetEntryBody?
-    @State private var failure: String?
+    @State private var failure: FailureReport?
     @State private var attempt = 0
 
     private var shownQuestion: String? {
@@ -248,18 +275,20 @@ private struct WidgetReceiptBlock: View {
                 WidgetCardAttachments(images: images, height: imageHeight, maxWidth: imageHeight * 2.4,
                                       compare: !earlier, showMedia: showMedia)
             }
-            if let failure, more {
-                Text("The full \(label.lowercased()) could not be read: \(failure)")
-                    .font(.caption).foregroundStyle(.secondary)
-                // lint-rules-ignore: short list (at most five earlier answers, and only after a failed read)
-                Button("Try again") { attempt += 1 }.buttonStyle(.genHoverPlain()).font(.caption)
+            if let failure {
+                FailureInline(failure, form: .compact, identifier: "widget.overview.receiptFailure") { attempt += 1 }
             }
         }.task(id: attempt) {
             // Every open reads the receipt once: a cut text gets its rest, and any text gets its pictures.
             guard full == nil else { return }
             failure = nil
             do { full = try await load() }
-            catch { if !Task.isCancelled { failure = error.localizedDescription } }
+            catch {
+                guard !Task.isCancelled else { return }
+                let headline = more ? "The full \(label.lowercased()) could not be loaded." : "Attachments could not be checked."
+                failure = FailureReport(title: label, headline: headline, action: "Read the \(label.lowercased())",
+                                        log: error.localizedDescription, area: "widget")
+            }
         }
     }
 }
