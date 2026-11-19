@@ -177,6 +177,12 @@ public struct WidgetWorkCount: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+struct WidgetTaskResumeRequest: Sendable {
+    let task: WidgetTask
+    let sourceHome: String?
+    var id: String { task.id }
+}
+
 struct WidgetTaskUpdate: Codable, Sendable {
     struct Receipt: Codable, Sendable {
         var id: String

@@ -1144,6 +1144,7 @@ export async function updateTodo({
     events,
     id,
     state,
+    comment,
     expected,
     signal,
     now = () => new Date().toISOString(),
@@ -1152,6 +1153,7 @@ export async function updateTodo({
     events: string;
     id: string;
     state: "acknowledged" | "implemented" | "dismissed" | "open";
+    comment?: string;
     expected: TodoUpdateSnapshot;
     signal?: AbortSignal;
     now?: () => string;
@@ -1161,7 +1163,7 @@ export async function updateTodo({
         {
             state,
             expectedRevision: expected.revision,
-            ...(state === "dismissed" ? { comment: "Dismissed by the user." } : {}),
+            ...(comment !== undefined ? { comment } : {}),
         },
         "todo update"
     );

@@ -2591,13 +2591,14 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
-    public func ledger(_ card: WidgetCard, state: String) {
+    public func ledger(_ card: WidgetCard, state: String, comment: String? = nil) {
         guard let selected, let revision = card.revision else { return }
         var fields: [String: WidgetJSON] = [
             "action": "ledger", "id": .string(card.sourceId), "sessionId": .string(selected.target.sessionId),
             "expectedRevision": .number(Double(revision)), "state": .string(state),
         ]
         if state == "drafted" { fields["draft"] = .string(draft.text) }
+        if let comment { fields["comment"] = .string(comment) }
         action(.object(fields))
     }
 

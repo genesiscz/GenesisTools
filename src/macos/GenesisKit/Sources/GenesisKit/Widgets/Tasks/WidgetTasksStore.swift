@@ -14,9 +14,11 @@ public final class WidgetTasksStore: ObservableObject {
     @Published public private(set) var recent: [WidgetTask] = []
     @Published public private(set) var isCreating = false
     @Published public private(set) var error: String?
+    @Published private var taskErrors: [String: String] = [:]
     @Published public private(set) var receipt: String?
     @Published public private(set) var undo: WidgetTaskUndo?
-    @Published public var resumeRequest: WidgetTask?
+    @Published var resumeRequest: WidgetTaskResumeRequest?
+    @Published var dismissRequest: WidgetTask?
     @Published public var draft = WidgetTaskDraft()
     @Published public var scope = "active" { didSet { if scope != oldValue { filtersChanged() } } }
     @Published public var project = "" { didSet { if project != oldValue { filtersChanged() } } }
@@ -77,6 +79,8 @@ public final class WidgetTasksStore: ObservableObject {
 
     /// The state to draw for `task`: the ticked one while its change is in flight.
     public func shownState(_ task: WidgetTask) -> String { pendingStates[task.id] ?? task.state }
+
+    public func error(for task: WidgetTask) -> String? { taskErrors[task.id] }
 
     /// The module's rows show in its preview and expanded panes only: the compact rail never draws them
     /// (WidgetHostView's `content`), so a compact module reads nothing and its next showing reads the ledger.
@@ -260,27 +264,35 @@ public final class WidgetTasksStore: ObservableObject {
     /// Ticks, unticks, acknowledges or dismisses one task. The row shows the new state at once; the ledger's
     /// answer confirms it, or the row returns to the saved state with the reason. `next` is a second step (an undo
     /// back to in progress), run against the version this one returned.
-    public func perform(_ action: WidgetTaskAction, on task: WidgetTask, then next: WidgetTaskAction? = nil, afterResume: Bool = false, sourceHome: String? = nil) {
+    public func perform(_ action: WidgetTaskAction, on task: WidgetTask, then next: WidgetTaskAction? = nil, afterResume: Bool = false, sourceHome: String? = nil, comment: String? = nil) {
         guard !stopped, mutations[task.id] == nil, task.actions.contains(action) else { return }
+        let reason = comment?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if action == .dismiss, reason?.isEmpty != false {
+            dismissRequest = task
+            return
+        }
         var args = ["update", task.id, "--action", action.rawValue,
                     "--revision", String(task.revision), "--state", task.state, "--updated-at", task.updatedTs,
                     "--session", task.sessionId, "--provider", task.provider]
         let view = viewGeneration
+        if let reason, action == .dismiss { args += ["--comment", reason] }
+        let receiverHome: String?
         if action == .send {
             if afterResume { args.append("--after-resume") }
             let homes = Set(sessionsSource().filter { $0.target.sessionId == task.sessionId && $0.target.provider == task.provider }
                 .map(\.target.sourceHome).filter { !$0.isEmpty })
-            if let home = sourceHome ?? (homes.count == 1 ? homes.first : nil), !home.isEmpty {
+            receiverHome = sourceHome ?? (homes.count == 1 ? homes.first : nil)
+            if let home = receiverHome, !home.isEmpty {
                 args += ["--source-home", home]
             }
-        }
+        } else { receiverHome = nil }
         pendingStates[task.id] = action.targetState(from: task.state)
         mutate(task, args: args) { [weak self] data in
             guard let self else { return }
             let response = try JSONDecoder().decode(WidgetTaskUpdate.self, from: data)
             if action == .send, response.receipt.needsResume == true, !response.receipt.saved,
                response.task.id == task.id, response.task.sessionId == task.sessionId, response.task.provider == task.provider {
-                self.resumeRequest = response.task
+                self.resumeRequest = .init(task: response.task, sourceHome: receiverHome)
                 return
             }
             let finalState = response.task.state
@@ -345,6 +357,7 @@ public final class WidgetTasksStore: ObservableObject {
     private func mutate(_ task: WidgetTask, args: [String], saved: @escaping (Data) throws -> Void) {
         let identity = UUID()
         mutatingIDs.insert(task.id)
+        taskErrors[task.id] = nil
         mutationFailure = nil
         error = nil
         receipt = nil
@@ -372,6 +385,7 @@ public final class WidgetTasksStore: ObservableObject {
                     self.error = "Update stopped. Refreshing the saved task state."
                 } else { self.report(error) }
                 self.mutationFailure = self.error
+                self.taskErrors[task.id] = self.error
                 self.cache.removeAll(keepingCapacity: true)
                 self.refresh(force: true)
             }
@@ -507,6 +521,7 @@ public final class WidgetTasksStore: ObservableObject {
     }
 
     public func clearFeedback() {
+        taskErrors.removeAll()
         mutationFailure = nil
         error = nil
         receipt = nil
