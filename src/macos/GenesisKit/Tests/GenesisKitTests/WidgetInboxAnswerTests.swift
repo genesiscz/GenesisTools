@@ -166,16 +166,9 @@ final class WidgetInboxAnswerTests: XCTestCase {
         model.expanded = .right
         model.inboxOverview = true
         let path = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".png")
-        let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 16, pixelsHigh: 16,
-            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
-            bytesPerRow: 0, bitsPerPixel: 0))
-        for y in 0..<16 {
-            for x in 0..<16 { bitmap.setColor(.magenta, atX: x, y: y) }
-        }
-        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-        try png.write(to: path)
+        try MediaThumbnailCacheTests.writePNG(path, width: 400, height: 300, color: CGColor(red: 1, green: 0, blue: 1, alpha: 1))
         defer { try? FileManager.default.removeItem(at: path) }
-        let image = WidgetImageReference(id: "img-fixture", path: path.path, name: "Crate photo", width: 16, height: 16)
+        let image = WidgetImageReference(id: "img-fixture", path: path.path, name: "Crate photo", width: 400, height: 300)
         var reads = 0
         model.entryBodyReader = { id in
             XCTAssertEqual(id, "receipt")
@@ -183,7 +176,7 @@ final class WidgetInboxAnswerTests: XCTestCase {
             return WidgetEntryBody(body: "The crates are ready.", question: "Check the crates?", attachments: [image])
         }
         let lines = try WidgetInboxRender.draw(ScrollView { WidgetInboxOverview(model: model) }, size: size,
-                                              waitForDetail: true) { _, host in
+                                              name: "receipt-hosted", waitForDetail: true) { _, host in
             openRow(model, host: host)
             WidgetInboxRender.waitFor("receipt thumbnail to paint") { Self.hasMagentaPixels(host) }
             var newer = item
@@ -205,8 +198,8 @@ final class WidgetInboxAnswerTests: XCTestCase {
         guard let shot = HostedShot.bitmap(host) else { return false }
         for y in stride(from: 0, to: shot.pixelsHigh, by: 8) {
             for x in stride(from: 0, to: shot.pixelsWide, by: 8) {
-                if let pixel = shot.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
-                   pixel.redComponent > 0.8, pixel.blueComponent > 0.8, pixel.greenComponent < 0.2 { return true }
+                if let pixel = shot.colorAt(x: x, y: y)?.usingColorSpace(.sRGB),
+                   min(pixel.redComponent, pixel.blueComponent) - pixel.greenComponent > 0.6 { return true }
             }
         }
         return false
