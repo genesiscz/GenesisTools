@@ -1013,10 +1013,11 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
     }
 
     const itemId = opts.item ? questionIdOf(meeting, opts.item) : undefined;
+    const chosen = selected ? new Set(selected) : undefined;
     const inRound = openQuestions(meeting).filter(
         (item) =>
             (!itemId || item.id === itemId) &&
-            (selected ? selected.includes(item.id) : itemId !== undefined || withinListenThreshold(item, threshold))
+            (chosen ? chosen.has(item.id) : itemId !== undefined || withinListenThreshold(item, threshold))
     );
     const first = inRound[0];
 

@@ -315,6 +315,9 @@ export class ListenSession {
         return at;
     }
 
+    /** The selected questions as a set, so each scope check is one lookup. */
+    private selectedIds?: ReadonlySet<string>;
+
     private inScope(question: QuestionItem): boolean {
         const { only, minPriority, selected } = this.options;
 
@@ -326,7 +329,8 @@ export class ListenSession {
             return question.id === only;
         }
         if (selected) {
-            return selected.includes(question.id);
+            this.selectedIds ??= new Set(selected);
+            return this.selectedIds.has(question.id);
         }
 
         return (
