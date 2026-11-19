@@ -131,7 +131,8 @@ export function selectItems(db: Database, filter: ListFilter): Item[] {
     }
 
     const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
-    const limit = filter.limit ?? 500;
+    const requested = filter.limit ?? 500;
+    const limit = Number.isFinite(requested) ? Math.max(0, Math.min(5000, Math.trunc(requested))) : 500;
     params.push(limit);
     return db
         .query<ItemRow, (string | number)[]>(`SELECT * FROM items${where} ORDER BY created_ts, id LIMIT ?`)
