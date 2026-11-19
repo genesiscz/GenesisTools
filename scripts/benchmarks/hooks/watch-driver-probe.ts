@@ -27,6 +27,7 @@ import { worktreeGitDir } from "@genesiscz/utils/git/hook-status";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { formatTable } from "@genesiscz/utils/table";
+import { startPrivateWatchman } from "./private-watchman";
 
 const FILES = 50;
 const HELD_TRIALS = 5;
@@ -202,49 +203,6 @@ function makeRepo(scratch: string): { main: string; linked: string } {
     const linked = join(scratch, "linked");
     git(main, ["worktree", "add", "-q", linked, "-b", "probe"]);
     return { main, linked };
-}
-
-interface DaemonFacts {
-    sock: string;
-    stop(): void;
-}
-
-/** A private Watchman daemon for this run only, so the probe never touches the user's watches. */
-function startPrivateWatchman(scratch: string): DaemonFacts | null {
-    const binary = Bun.which("watchman");
-
-    if (!binary) {
-        return null;
-    }
-
-    const sock = join(scratch, "watchman.sock");
-    const flags = [
-        `--sockname=${sock}`,
-        `--statefile=${join(scratch, "watchman.state")}`,
-        `--logfile=${join(scratch, "watchman.log")}`,
-        `--pidfile=${join(scratch, "watchman.pid")}`,
-    ];
-    const started = Bun.spawnSync([binary, ...flags, "--no-save-state", "get-sockname"], {
-        stdout: "pipe",
-        stderr: "pipe",
-        timeout: 20_000,
-    });
-
-    if (started.exitCode !== 0) {
-        out.println(`watchman did not start: ${started.stderr.toString().slice(0, 300)}`);
-        return null;
-    }
-
-    return {
-        sock,
-        stop: () => {
-            Bun.spawnSync([binary, `--sockname=${sock}`, "shutdown-server"], {
-                stdout: "pipe",
-                stderr: "pipe",
-                timeout: 10_000,
-            });
-        },
-    };
 }
 
 async function child(): Promise<void> {
