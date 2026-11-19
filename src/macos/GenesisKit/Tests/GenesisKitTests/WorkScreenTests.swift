@@ -150,9 +150,12 @@ final class WorkScreenTests: XCTestCase {
         )
     }
 
-    private func settle(_ until: () -> Bool) async {
-        let deadline = Date().addingTimeInterval(3)
-        while !until() && Date() < deadline { try? await Task.sleep(for: .milliseconds(10)) }
+    private func settle(file: StaticString = #filePath, line: UInt = #line, _ condition: () -> Bool) async {
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !condition() && ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(condition(), "Work model did not settle", file: file, line: line)
     }
 
     private func awaitSnapshot(_ model: WorkScreenModel, trigger: () -> Void) async {
@@ -186,9 +189,8 @@ final class WorkScreenTests: XCTestCase {
     func testAFailedChangeReloadRetriesWithoutAnotherWrite() async {
         let source = FakeWorkSource(fixture())
         let model = WorkScreenModel(source: source, reloadInterval: 0.2, settle: 0.05)
-        model.activate()
+        await awaitSnapshot(model) { model.activate() }
         defer { model.deactivate() }
-        await settle { model.snapshot != nil }
         let before = source.reads
         source.readsToFail = 1
         source.tick()
