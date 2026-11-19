@@ -4,7 +4,7 @@ import { genesisToolsSourceRoot as meetingsSourceRoot } from "@genesiscz/utils/g
 import { TONE_PRESET_NAMES, toneSoundSettingSchema } from "@genesiscz/utils/meetings/config";
 import { MEETINGS_CONFLICT_CODES, MEETINGS_STATE_CODES } from "@genesiscz/utils/meetings/conflict";
 import { echoMetricSchema } from "@genesiscz/utils/meetings/echo";
-import { pairedBySchema } from "@genesiscz/utils/meetings/people";
+import { pairedBySchema, roomDeviceOfferSchema } from "@genesiscz/utils/meetings/people";
 import {
     type KnownPeople,
     type KnownPerson,
@@ -1457,6 +1457,7 @@ const meetingSeatsSuggest = defineMethod({
         current: storedMeetingSeatsSchema.nullable(),
         suggestion: z.object({
             seats: meetingSeatsSchema,
+            deviceOffers: z.array(roomDeviceOfferSchema).optional(),
             people: z.array(
                 z.object({
                     name: z.string(),
@@ -1467,7 +1468,7 @@ const meetingSeatsSuggest = defineMethod({
             ),
         }),
     }),
-    resultName: "{ meeting, current, suggestion: { seats, people } }",
+    resultName: "{ meeting, current, suggestion: { seats, people, deviceOffers? } }",
     doc: "Preview room and remote seats from decided speakers, channel energy and call attendance. Override a person by name or supply their room and remote stays. Unsure people have reasons.",
     effect: "read",
 });

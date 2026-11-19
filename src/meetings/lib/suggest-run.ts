@@ -335,6 +335,7 @@ async function readSuggestInputs(
     }
 
     const inputs: SuggestInputs = {
+        devices: needsSpeakerInputs ? opened.roomDevices : undefined,
         measuredLines: needsSpeakerInputs
             ? prof.measure("rules.line-evidence", () =>
                   lineEvidence(meeting.transcript, evidence ?? { segments: [], speaking: [] }, presence, share)

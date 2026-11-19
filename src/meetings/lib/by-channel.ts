@@ -1,4 +1,4 @@
-import { nameKey } from "@genesiscz/utils/meetings/people";
+import { nameKey, type RoomDevice, rosterAccountKey } from "@genesiscz/utils/meetings/people";
 import {
     activeSeatPeople,
     type MeetingSeats,
@@ -68,6 +68,7 @@ export interface ByChannelPlan {
 
 /** Channel evidence settles a person only when explicit seats leave one candidate. It never judges words. */
 export function planByChannel(options: {
+    devices?: readonly RoomDevice[];
     lines: readonly ChannelLine[];
     input: ByChannelOptions;
     seats?: MeetingSeats;
@@ -79,6 +80,7 @@ export function planByChannel(options: {
         ...(options.seats?.microphones ? { microphones: options.seats.microphones } : {}),
     });
     const groups = seats.microphones ?? [];
+    const devices = new Set(options.devices?.map(({ account }) => rosterAccountKey(account)));
     // The microphone channel is the owner's microphone (group `self`), else a group under this label; the system
     // channel narrows to a remote device group under this label. Without a group every seated person stays possible.
     const labelGroup = groups.find((group) => group.label === input.label);
@@ -192,7 +194,7 @@ export function planByChannel(options: {
             });
             continue;
         }
-        const candidates =
+        const candidates = (
             kind === "room"
                 ? active.room.filter((person) => !roomGroup || roomGroup.includes(nameKey(person)))
                 : active.remote
@@ -201,7 +203,8 @@ export function planByChannel(options: {
                               ? remoteGroup.includes(nameKey(person.name))
                               : !person.label || person.label === input.label
                       )
-                      .map((person) => person.name);
+                      .map((person) => person.name)
+        ).filter((name) => !devices.has(rosterAccountKey(name)));
         const confidence = kind === "room" ? 0.85 : active.remote.length === 1 ? 0.8 : 0.7;
 
         if (

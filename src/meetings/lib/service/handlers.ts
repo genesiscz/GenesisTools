@@ -266,7 +266,8 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
             const store = storeOf();
             const record = recordOf(store, params.meeting);
             const { seatSuggestion } = await import("./seat-handlers");
-            return seatSuggestion({ store, record, linked: deps.linkedSource?.(record), params });
+            const config = await (deps.config?.() ?? deps.configStore?.().read());
+            return seatSuggestion({ store, record, config, linked: deps.linkedSource?.(record), params });
         },
         "meeting.thresholds.preview": async (params, context) => {
             const store = storeOf();
@@ -335,6 +336,7 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
                     record: current,
                     entries,
                     speakers: new LineSpeakers({
+                        devices: opened.roomDevices,
                         lines,
                         record: current,
                         meeting,

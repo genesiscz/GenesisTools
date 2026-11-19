@@ -1,8 +1,10 @@
 import { logger } from "@genesiscz/utils/logger";
+import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { OpenedMeeting } from "../opened-meeting";
 import { speakingEvidence } from "../platforms";
+import { roomDeviceOffers } from "../room-devices";
 import { decidedSeatRanges, explicitPreviewSeats, includeSeatVoiceHints, suggestSeats } from "../seat-suggest";
 import { type LinkedSource, sourceRefOf } from "../sources";
 
@@ -48,20 +50,29 @@ export async function seatSuggestion({
     store,
     record,
     linked,
+    config,
     params,
 }: {
     store: MeetingStore;
     record: MeetingRecord;
     linked?: LinkedSource;
+    config?: MeetingsConfig;
     params: Pick<Parameters<typeof suggestSeats>[0], "room" | "remote">;
 }) {
     const ranges = decidedSeatRanges(record);
-    const opened = OpenedMeeting.of(store, record, linked);
+    const opened = OpenedMeeting.of(store, record, linked, config);
     let evidence: ReturnType<typeof seatEvidence> | undefined;
     const readEvidence = () => (evidence ??= seatEvidence(opened));
     const source = sourceRefOf(record);
     const lines = source && ranges.length ? (await readEvidence()).lines : [];
-    const suggestion = suggestSeats({ record, ranges, lines, room: params.room, remote: params.remote });
+    const suggestion = suggestSeats({
+        record,
+        ranges,
+        lines,
+        devices: opened.roomDevices,
+        room: params.room,
+        remote: params.remote,
+    });
     if (source && record.project && suggestion.people.some((row) => row.seat === "unsure" && row.confidence === 0)) {
         const { readSeatVoiceHints } = await import("../seat-voice");
         try {
@@ -76,9 +87,15 @@ export async function seatSuggestion({
             log.warn({ error, meeting: record.id }, "seat suggestions without voice matches");
         }
     }
+    const deviceOffers = roomDeviceOffers({
+        store,
+        meeting: record,
+        history: opened.deviceHistory,
+        minimum: (await opened.config()).global.speakerLabels.seat.deviceOfferMinMeetings,
+    });
     return {
         meeting: record.id,
         current: record.seats ?? null,
-        suggestion,
+        suggestion: { ...suggestion, ...(deviceOffers.length ? { deviceOffers } : {}) },
     };
 }
