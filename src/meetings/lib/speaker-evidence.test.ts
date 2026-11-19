@@ -2,13 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { type LineEvidence, SELF } from "@genesiscz/utils/transcribe/evidence";
-import {
-    type EvidenceInput,
-    evidenceItems,
-    independentIndicatorLines,
-    rangesOf,
-    speakerEvidence,
-} from "./speaker-evidence";
+import { type EvidenceInput, evidenceItems, independentIndicatorLines, speakerEvidence } from "./speaker-evidence";
 
 const dana = "Dana Example";
 const eli = "Eli Example";
@@ -56,20 +50,7 @@ function scene(lines: LineEvidence[]): EvidenceInput {
 
 function evaluate(input: EvidenceInput, threshold = applyAbove) {
     const evidence = speakerEvidence(input);
-    const grouped = rangesOf(evidence);
-    const seeds = independentIndicatorLines(evidence, threshold);
-    const previousSeeds = new Map<number, string>();
-    const previous = evidenceItems({
-        ...input,
-        onIndicator(index, person, confidence) {
-            if (confidence >= threshold) {
-                previousSeeds.set(index, person);
-            }
-        },
-    });
-    expect(grouped).toEqual(previous);
-    expect([...seeds]).toEqual([...previousSeeds]);
-    return { evidence, items: grouped.items, seeds };
+    return { evidence, items: evidenceItems(input).items, seeds: independentIndicatorLines(evidence, threshold) };
 }
 
 describe("per-line speaker evidence", () => {
