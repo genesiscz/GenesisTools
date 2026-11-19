@@ -194,11 +194,20 @@ export async function readRows(
             },
         ];
     });
-    const facts = await Promise.all([opened.evidence(), opened.energy(), opened.presence()]).catch((error: unknown) => {
-        logger.debug({ error, meeting: record.id }, "line measurements unavailable for review rows");
-        return undefined;
-    });
-    const [evidence, energy, presence] = facts ?? [];
+    // Each measurement is optional on its own: a failed energy read keeps the evidence and presence that did load.
+    const optional = <T>(name: string, read: Promise<T>) =>
+        read.catch((error: unknown) => {
+            logger.debug(
+                { error, meeting: record.id, measurement: name },
+                "a line measurement is unavailable for review rows"
+            );
+            return undefined;
+        });
+    const [evidence, energy, presence] = await Promise.all([
+        optional("evidence", opened.evidence()),
+        optional("energy", opened.energy()),
+        optional("presence", opened.presence()),
+    ]);
     const owners = [
         ...record.participants.filter((person) => person.self).map((person) => person.name),
         ...(evidence?.selfName ? [evidence.selfName] : []),
