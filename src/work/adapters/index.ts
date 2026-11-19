@@ -154,7 +154,7 @@ export function sessionDelivery(): SessionDelivery {
                     };
                 }
 
-                if (result.channel === "queued") {
+                if (result.channel === "queued" && result.queueId !== undefined) {
                     return { outcome: "queued", to, route: result.channel, at };
                 }
 
