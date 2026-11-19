@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -14,8 +14,8 @@ import { faceOfFirstArgument, type WindowFaceKind } from "./parts";
  * Faces that survive a rebuild. `reapStaleAppFaces` kills every face of the replaced bundle, and a review or
  * hub window that was open simply vanished; the widget did too, after every install, until 2026-10-11.
  * Before the reap, each long-lived face's exact argv is recorded; after it, exactly those faces start again
- * from the NEW bundle with the same arguments, behind the app in front. A face that was not running is never
- * started, and short-lived faces (`--rpc`, `--notify`, link routers, scripted runs) end on their own.
+ * from the NEW bundle with the same arguments, behind the app in front. An installed recorder starts even if
+ * its old face had exited. Short-lived faces (`--rpc`, `--notify`, link routers, scripted runs) end on their own.
  *
  * The argv comes from the record each window face writes at launch (`~/.genesis-tools/app/faces/<pid>.json`,
  * Sources/App/FaceRecord.swift), because `ps` joins argv with spaces and a path with a space in it
@@ -47,7 +47,8 @@ export interface WindowFace {
 }
 
 export interface RelaunchStep {
-    pid: number;
+    /** The previous process, or null for an installed recorder with no previous process. */
+    pid: number | null;
     kind: WindowFaceKind;
     argv: string[];
     activate: boolean;
@@ -273,7 +274,11 @@ export function withoutHubActions(argv: string[]): string[] {
  * (settings windows opened before that face held an instance lock) come back as one: the frontmost copy
  * when it is among them, else the first.
  */
-export function relaunchPlan(faces: WindowFace[], frontPid: number | null): RelaunchStep[] {
+export function relaunchPlan(
+    faces: WindowFace[],
+    frontPid: number | null,
+    parts: readonly string[] = []
+): RelaunchStep[] {
     const steps = faces.map((face): RelaunchStep => {
         // A review process's other windows open behind its front one: they share its pid.
         const activate = face.pid === frontPid && face.front !== false;
@@ -319,6 +324,9 @@ export function relaunchPlan(faces: WindowFace[], frontPid: number | null): Rela
     }
 
     const once = [...unique.values()];
+    if (parts.includes("recorder") && !once.some((step) => step.kind === "recorder")) {
+        once.push({ pid: null, kind: "recorder", argv: ["--recorder", "--no-activate"], activate: false });
+    }
     return [...once.filter((step) => !step.activate), ...once.filter((step) => step.activate)];
 }
 
@@ -505,6 +513,7 @@ export function planRelaunch(options: {
     frontPid: () => number | null;
     environment: (pid: number) => Record<string, string> | null;
     recordDirs?: string[];
+    parts?: readonly string[];
 }): RelaunchCapture {
     const faces: WindowFace[] = [];
     const unrestorable: WindowFace[] = [];
@@ -521,7 +530,9 @@ export function planRelaunch(options: {
         faces.push(restored ? { ...face, environment: restored } : face);
     }
 
-    const steps = faces.length > 0 ? relaunchPlan(faces, options.frontPid()) : [];
+    // Never replace a recorder whose environment we could not read with one on another home.
+    const parts = unrestorable.some((face) => face.kind === "recorder") ? [] : options.parts;
+    const steps = relaunchPlan(faces, faces.length > 0 ? options.frontPid() : null, parts);
     return {
         steps,
         relay: steps.length > 0 || linkRelayAmong(options),
@@ -581,25 +592,40 @@ export function readStoppedFaceRecords(
  * is read from its own home: a face started on a sandbox (`GENESIS_TOOLS_HOME`) wrote it there, not into the build's.
  */
 export function captureRelaunch(options: {
-    processes: Pick<ProcessEntry, "pid" | "command">[];
+    processes: Pick<ProcessEntry, "pid" | "command" | "name" | "zombie">[];
     launcherPath: string;
     stalePids: string[];
+    parts?: readonly string[];
 }): RelaunchCapture {
-    const stalePids = new Set(options.stalePids);
-    const lines = staleLauncherLines({ processes: options.processes, launcherPath: options.launcherPath, stalePids });
-    const environments = new Map(lines.map(({ pid }) => [pid, readProcessEnvironment(pid)]));
-    const { records, windows, fronts, recordDirs } = readStoppedFaceRecords(environments);
-    const capture = planRelaunch({
-        processes: options.processes,
-        launcherPath: options.launcherPath,
-        stalePids,
-        records,
-        windows,
-        fronts,
-        frontPid: frontmostPid,
-        environment: (pid) => environments.get(pid) ?? null,
-        recordDirs,
-    });
+    const listing = { ...options, stalePids: new Set(options.stalePids) };
+    let capture: RelaunchCapture;
+
+    try {
+        const lines = staleLauncherLines(listing);
+        const environments = new Map(lines.map(({ pid }) => [pid, readProcessEnvironment(pid)]));
+        const { records, windows, fronts, recordDirs } = readStoppedFaceRecords(environments);
+        const launcherName = basename(options.launcherPath);
+        // A live process whose argv the kernel withheld could be a recorder on another home.
+        const unreadableLauncher = options.processes.some(
+            ({ command, name, zombie }) => command === null && name === launcherName && !zombie
+        );
+        capture = planRelaunch({
+            ...listing,
+            parts: unreadableLauncher ? [] : options.parts,
+            records,
+            windows,
+            fronts,
+            frontPid: frontmostPid,
+            environment: (pid) => environments.get(pid) ?? null,
+            recordDirs,
+        });
+    } catch (err) {
+        // The listing still tells us whether we stopped a relay. A failed capture cannot establish a face's home.
+        const relay = linkRelayAmong(listing);
+        logger.warn({ err, relay }, "relaunch: faces could not be recorded; they stay closed after the reap");
+        return { steps: [], relay, unrestorable: [], recordDirs: [] };
+    }
+
     logger.info(
         {
             faces: capture.steps.map((entry) => ({
@@ -611,7 +637,7 @@ export function captureRelaunch(options: {
             unrestorable: capture.unrestorable.map((face) => ({ pid: face.pid, kind: face.kind, argv: face.argv })),
             relay: capture.relay,
             front: capture.steps.find((entry) => entry.activate)?.pid ?? null,
-            recordDirs,
+            recordDirs: capture.recordDirs,
         },
         "relaunch: faces recorded before the reap"
     );
@@ -694,7 +720,8 @@ export function runRelaunch(capture: RelaunchCapture, step: (message: string) =>
     const faceEnvironment = openEnvironment();
 
     for (const { step: entry, args } of relaunchCommands(capture, genesisAppBundlePath())) {
-        const result = spawnText(args, entry ? faceEnvironment : undefined);
+        // A newly installed face belongs to the install's environment, including a sandbox home.
+        const result = spawnText(args, entry && entry.pid !== null ? faceEnvironment : undefined);
 
         if (!entry) {
             if (result.code !== 0) {
@@ -704,9 +731,10 @@ export function runRelaunch(capture: RelaunchCapture, step: (message: string) =>
             continue;
         }
 
+        const previous = entry.pid === null ? "" : ` (was pid ${entry.pid})`;
         if (result.code !== 0) {
             logger.warn({ pid: entry.pid, args, stderr: result.stderr }, "relaunch: open failed");
-            step(`could not reopen the ${entry.kind} face (was pid ${entry.pid}): ${result.stderr.trim()}`);
+            step(`could not open the ${entry.kind} face${previous}: ${result.stderr.trim()}`);
             continue;
         }
 
@@ -721,7 +749,7 @@ export function runRelaunch(capture: RelaunchCapture, step: (message: string) =>
             "relaunch: reopened"
         );
         step(
-            `reopened the ${entry.kind} face (was pid ${entry.pid})${environmentText(entry.environment)}: ${entry.argv.join(" ")}`
+            `${entry.pid === null ? "started" : "reopened"} the ${entry.kind} face${previous}${environmentText(entry.environment)}: ${entry.argv.join(" ")}`
         );
     }
 }

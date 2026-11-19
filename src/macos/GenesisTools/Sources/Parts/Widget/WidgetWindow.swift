@@ -12,6 +12,8 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
     var coordinator: WidgetCoordinator?
     var observer: NSObjectProtocol?
     var testObserver: NSObjectProtocol?
+    private let appMenu = AppMenuBar()
+    private var menuObserver: NSObjectProtocol?
     let args: [String]
     let descriptor: Int32
     private var terminating = false
@@ -108,10 +110,23 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
         // Text fields take ⌘A, ⌘C, ⌘X, ⌘V, ⌘Z and ⇧⌘Z from an Edit menu; without one they beep.
         menu.addItem(StandardEditing.menuItem())
         NSApp.mainMenu = menu
+        menuObserver = DistributedNotificationCenter.default().addObserver(
+            forName: MenuBarSettings.changed, object: NativePreview.namespace, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updateMenuBar() }
+        }
+        updateMenuBar()
         // `--no-activate` is a rebuild's relaunch (relaunch.ts): a widget that is off then stays quiet instead of
         // opening the settings over the app in front.
-        coordinator?.start(showSettings: args.contains("--settings"), settingsWhenOff: !args.contains("--no-activate"))
+        coordinator?.start(showSettings: args.contains("--settings"),
+                           settingsWhenOff: !args.contains("--no-activate") && !args.contains(WidgetLaunch.ensureRunningFlag))
         if let key = value("--session-key") { openSession(key) }
+    }
+
+    private func updateMenuBar() {
+        guard !terminating else { return }
+        appMenu.update(shown: MenuBarSettings.showsApp())
+        AppMenuBar.keepRecorder?(MenuBarSettings.separateRecorder())
     }
     /// While "Show the widget" is off, the coordinator opens the settings instead of a panel.
     private func openSession(_ key: String) { coordinator?.openSession(key) }
@@ -186,6 +201,7 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !terminating else { return .terminateLater }
         terminating = true
+        AppMenuBar.keepRecorder?(false)
         Task { [self] in
             await coordinator?.shutdown()
             replyToTermination(sender)
@@ -209,6 +225,7 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
         coordinator?.stop()
         if let observer { DistributedNotificationCenter.default().removeObserver(observer) }
         if let testObserver { DistributedNotificationCenter.default().removeObserver(testObserver) }
+        if let menuObserver { DistributedNotificationCenter.default().removeObserver(menuObserver) }
         flock(descriptor, LOCK_UN)
         close(descriptor)
     }

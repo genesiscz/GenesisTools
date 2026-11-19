@@ -71,7 +71,7 @@ import {
     partsForBuild,
     scratchName,
 } from "./parts";
-import { captureRelaunch, linkRelayAmong, type RelaunchCapture, runRelaunch } from "./relaunch";
+import { captureRelaunch, runRelaunch } from "./relaunch";
 import { createSwiftProgressReporter } from "./swift-progress";
 
 export const APP_SOURCE_DIR = resolve(import.meta.dirname, "../../GenesisTools");
@@ -2139,8 +2139,14 @@ const STALE_FACE_TERM_GRACE_MS = 500;
  * Read-only process snapshot shared by the reap and its pre-kill recheck, oldest first: the faces start again in this
  * order, and the kernel table lists the newest first.
  */
-export function readAppFaceProcesses(): ProcessEntry[] {
-    return listProcesses().sort(
+export function readAppFaceProcesses(): ProcessEntry[] | null {
+    const processes = listProcesses();
+
+    if (!processes.some((entry) => entry.command !== null)) {
+        return null;
+    }
+
+    return processes.sort(
         (a, b) => (a.startMs ?? Number.POSITIVE_INFINITY) - (b.startMs ?? Number.POSITIVE_INFINITY) || a.pid - b.pid
     );
 }
@@ -2218,35 +2224,25 @@ async function reapStaleAppFaces({
 }): Promise<void> {
     const launcher = genesisAppLauncherPath();
     const listing = readAppFaceProcesses();
-    if (listing.length === 0) {
-        logger.debug("could not list processes; skipping the stale-face reap");
+    if (listing === null) {
+        logger.warn("could not list process commands; skipping the stale-face reap and relaunch");
         return;
     }
 
     const stale = staleAppFacePids(listing, launcher);
+    const reopen = relaunch
+        ? captureRelaunch({ processes: listing, launcherPath: launcher, stalePids: stale, parts })
+        : null;
 
     if (stale.length === 0) {
+        if (reopen?.steps.length) {
+            runRelaunch(reopen, step);
+        }
+
         return;
     }
 
-    // The long-lived faces among them, with their exact argv, recorded before anything is killed.
-    let reopen: RelaunchCapture = { steps: [], relay: false, unrestorable: [], recordDirs: [] };
-
-    if (relaunch) {
-        // A failed capture only costs the reopen; the reap below must still run.
-        try {
-            reopen = captureRelaunch({ processes: listing, launcherPath: launcher, stalePids: stale });
-        } catch (err) {
-            // The relay decision needs only the listing, so a relay that was running still comes back.
-            const relay = linkRelayAmong({
-                processes: listing,
-                launcherPath: launcher,
-                stalePids: new Set(stale),
-            });
-            reopen = { steps: [], relay, unrestorable: [], recordDirs: [] };
-            logger.warn({ err, relay }, "relaunch: faces could not be recorded; they stay closed after the reap");
-        }
-    } else {
+    if (!relaunch) {
         logger.info("relaunch: off (--no-relaunch); reaped faces stay closed");
     }
 
@@ -2256,7 +2252,7 @@ async function reapStaleAppFaces({
     try {
         await killStaleFaces(stale, launcher, step);
     } finally {
-        if (relaunch) {
+        if (reopen) {
             const linked = (face: { argv: string[] }) => {
                 const part = partForFace(face.argv[0] ?? "");
                 return part === undefined || parts.includes(part);
@@ -2338,7 +2334,7 @@ async function killStaleFaces(stale: string[], launcher: string, step: (message:
 
     // A pid freed during the grace period can be reused, so classify the pids again instead of
     // trusting liveness alone.
-    const stillStale = new Set(staleAppFacePids(readAppFaceProcesses(), launcher));
+    const stillStale = new Set(staleAppFacePids(readAppFaceProcesses() ?? [], launcher));
     const survivors = stale.filter((pid) => stillStale.has(pid) && isProcessAlive(Number(pid)));
 
     for (const pid of survivors) {

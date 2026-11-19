@@ -11,10 +11,12 @@ import SwiftUI
 // GenesisTools --recorder --edit <path> --snapshot <png> [--width <pt>] [--height <pt>] [--at <seconds>] [--tab zoom|clip|hide|style|audio|export] [--select-zoom <n>|--select-clip <n>] [--part <from>-<to>] [--range <from>-<to>] [--comment <n>]
 //   Draws the editor off screen into a PNG and exits (verification without a screen).
 
-private let recorderInstance = SingleInstance(
+private let recorderLockFile = NativePreview.hubFile("recorder.lock")
+let recorderAddressKey = RecorderMenuIPC.addressKey(for: recorderLockFile)
+let recorderInstance = SingleInstance(
     name: "recorder",
-    lockFile: NativePreview.hubFile("recorder.lock"),
-    notificationPrefix: NativePreview.namespace + ".recorder",
+    lockFile: recorderLockFile,
+    notificationPrefix: NativePreview.namespace + ".recorder." + recorderAddressKey,
     retryHint: "quit the recorder from its menu bar item, then try again.",
     log: { HubPerf.log($0) }
 )
@@ -31,6 +33,7 @@ struct RecorderRequest {
     var width: CGFloat = 1440
     var height: CGFloat = 920
     var atSeconds: Double?
+    var atSourceUs: Int64?
     var tab: InspectorTab?
     var selectZoom: Int?
     var selectClip: Int?
@@ -85,6 +88,7 @@ struct RecorderRequest {
             case "--width": request.width = value().flatMap(Double.init).map { CGFloat($0) } ?? request.width
             case "--height": request.height = value().flatMap(Double.init).map { CGFloat($0) } ?? request.height
             case "--at": request.atSeconds = value().flatMap(Double.init)
+            case "--at-source-seconds": request.atSourceUs = value().flatMap(Double.init).flatMap(microseconds)
             case "--tab": request.tab = value().flatMap(InspectorTab.init(rawValue:))
             case "--select-zoom": request.selectZoom = value().flatMap(Int.init)
             case "--select-clip": request.selectClip = value().flatMap(Int.init)
@@ -117,6 +121,10 @@ struct RecorderRequest {
         return request
     }
 
+    static func microseconds(_ seconds: Double) -> Int64? {
+        Int64(exactly: (seconds * 1_000_000).rounded())
+    }
+
     private static func absolute(_ path: String) -> String {
         URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardizedFileURL.path
     }
@@ -140,6 +148,7 @@ package func runRecorder(_ args: [String]) -> Never {
     if !recorderInstance.claim() {
         exit(recorderInstance.forward(args) ? 0 : 1)
     }
+    FaceLifecycle.logRecorderExits()
     MainActor.assumeIsolated {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
@@ -150,25 +159,34 @@ package func runRecorder(_ args: [String]) -> Never {
                 // The recorder service launches the face when a camera or window call finds no host: attach at once
                 // rather than after the retry's back-off (up to a minute).
                 RecorderServiceHost.shared?.attachNow()
-                if let edit = next.edit { EditorWindows.shared.open(path: edit, focus: next.focus, atSeconds: next.atSeconds, tab: next.tab) }
-                if next.library { LibraryWindow.shared.show(focus: next.focus) }
-                if next.picker { CapturePicker.shared.show(focus: next.focus) }
+                next.openWindows()
             }
         }
+        let menuListener = RecorderMenuIPC.listen { RecorderMenu.shared.run($0) }
+        defer { menuListener?.cancel() }
         RecorderMenu.shared.install()
         RecorderShortcutActions.install()
         // The live recordings' item and floating controls; the hub defers to this face while it runs.
         LiveRecordingsStatusItem.shared.start(preferred: true)
         RecorderServiceHost.startForFace()
-        if let edit = request.edit { EditorWindows.shared.open(path: edit, focus: request.focus, atSeconds: request.atSeconds, tab: request.tab) }
-        if request.library { LibraryWindow.shared.show(focus: request.focus) }
-        if request.picker { CapturePicker.shared.show(focus: request.focus) }
-        app.run()
+        request.openWindows()
+        withExtendedLifetime(menuListener) { app.run() }
     }
+    FaceLifecycle.recorderExiting(code: 0)
     exit(0)
 }
 
 // MARK: - Windows
+
+extension RecorderRequest {
+    @MainActor fileprivate func openWindows() {
+        if let edit {
+            EditorWindows.shared.open(path: edit, focus: focus, atSeconds: atSeconds, atSourceUs: atSourceUs, tab: tab)
+        }
+        if library { LibraryWindow.shared.show(focus: focus) }
+        if picker { CapturePicker.shared.show(focus: focus, previewCamera: false) }
+    }
+}
 
 @MainActor
 final class EditorWindows: NSObject, NSWindowDelegate {
@@ -180,16 +198,15 @@ final class EditorWindows: NSObject, NSWindowDelegate {
 
     /// Opens (or brings back) the editor of `path`; `atSeconds` (output time) and `tab` place it, so an agent can show
     /// a moment (`movie.show({ at, tab })`, `tools recorder edit --at --tab`).
-    /// `atSourceSeconds` is a moment of the recording itself (a search hit), placed where it plays in the edit.
+    /// `atSourceUs` is a moment of the recording itself (a search hit), placed where it plays in the edit.
     /// `opened` gets the window once it exists (or the reason it did not open), before any placement or alert.
-    func open(path: String, focus wanted: Bool = true, atSeconds: Double? = nil, atSourceSeconds: Double? = nil, tab: InspectorTab? = nil,
+    func open(path: String, focus wanted: Bool = true, atSeconds: Double? = nil, atSourceUs: Int64? = nil, tab: InspectorTab? = nil,
               opened: ((Result<NSWindow, Error>) -> Void)? = nil) {
         let place = { (model: EditorModel) in
             if let tab { model.tab = tab }
-            if let atSeconds { model.seek(Int64((atSeconds * 1_000_000).rounded())) }
-            if let atSourceSeconds {
-                let sourceUs = Int64((atSourceSeconds * 1_000_000).rounded())
-                model.seek(TimelineMap.outputTime(ofSource: sourceUs, in: model.project) ?? 0)
+            if let outputUs = atSeconds.flatMap(RecorderRequest.microseconds) { model.seek(outputUs) }
+            if let atSourceUs {
+                model.seek(TimelineMap.outputTime(ofSource: atSourceUs, in: model.project) ?? 0)
             }
         }
         // The same matcher as `close`: the recording's folder, its edit file or its movie bring the open window back.

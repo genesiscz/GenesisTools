@@ -44,14 +44,19 @@ final class CapturePicker {
     private var area: AreaSelection?
     /// Whether the open picker took the keyboard; a redraw after the targets load keeps it.
     private var takesFocus = true
+    private var previewsCameraAutomatically = false
 
     var isVisible: Bool { panel.isVisible }
 
     /// Opens the picker under the pointer, on the front window of the app the person was in. Without `focus`
     /// (`--no-focus`, `window.show { focus: false }`) it comes to the front and that app keeps the keyboard.
-    func show(focus: Bool = true) {
+    func show(focus: Bool = true, previewCamera: Bool = true) {
         panel.closesOnFocusLoss = CapturePickerFocusLoss.load().closesPicker
         if panel.isVisible {
+            if previewCamera, !previewsCameraAutomatically {
+                previewsCameraAutomatically = true
+                CameraBubble.shared.optionChanged(model.options.camera)
+            }
             if focus {
                 panel.window.makeKeyAndOrderFront(nil)
             } else {
@@ -60,6 +65,7 @@ final class CapturePicker {
             return
         }
         takesFocus = focus
+        previewsCameraAutomatically = previewCamera
         model.reload()
         anchor = NSEvent.mouseLocation
         let front = NSWorkspace.shared.frontmostApplication.flatMap { app in
@@ -69,7 +75,8 @@ final class CapturePicker {
         initial = targets?.defaultTarget(preferredPid: front)
         filter = nil
         present()
-        CameraBubble.shared.optionChanged(model.options.camera)
+        // A launch or forwarded window intent can show the picker before a person interacts with it.
+        if previewCamera { CameraBubble.shared.optionChanged(model.options.camera) }
         HubPerf.log("recorder: capture picker opened")
         Task { await refresh(preferredPid: front) }
     }
@@ -83,7 +90,7 @@ final class CapturePicker {
         panel.closesOnFocusLoss = CapturePickerFocusLoss.load().closesPicker
         guard panel.isVisible else { return }
         model.reloadFromDefaults()
-        CameraBubble.shared.optionChanged(model.options.camera)
+        if previewsCameraAutomatically { CameraBubble.shared.optionChanged(model.options.camera) }
     }
 
     private func present() {
@@ -272,6 +279,7 @@ final class CapturePicker {
 final class CapturePickerModel: ObservableObject {
     /// False for a snapshot: the panel's changes stay in memory.
     private let persist: Bool
+    private var reloading = false
 
     init(persist: Bool = true) {
         self.persist = persist
@@ -279,7 +287,7 @@ final class CapturePickerModel: ObservableObject {
 
     @Published var options = CaptureOptions.load() {
         didSet {
-            guard persist, options != oldValue else { return }
+            guard persist, !reloading, options != oldValue else { return }
             options.save()
             if options.camera != oldValue.camera { CameraBubble.shared.optionChanged(options.camera) }
         }
@@ -313,6 +321,8 @@ final class CapturePickerModel: ObservableObject {
     }
 
     func reload() {
+        reloading = true
+        defer { reloading = false }
         options = CaptureOptions.load()
         bindings = Self.loadBindings()
     }

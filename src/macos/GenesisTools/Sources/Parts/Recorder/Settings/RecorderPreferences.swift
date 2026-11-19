@@ -160,6 +160,9 @@ enum RecorderPreferencesSync {
     static func observe() {
         guard observers.isEmpty else { return }
         let center = DistributedNotificationCenter.default()
+        observers.append(center.addObserver(forName: MenuBarSettings.changed, object: NativePreview.namespace, queue: .main) { _ in
+            MainActor.assumeIsolated { RecorderMenu.shared.applyVisibility() }
+        })
         observers.append(center.addObserver(forName: changed, object: NativePreview.namespace, queue: .main) { _ in
             MainActor.assumeIsolated {
                 HubPerf.log("recorder: settings changed in another process; reading them again")

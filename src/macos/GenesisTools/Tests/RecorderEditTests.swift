@@ -366,6 +366,16 @@ final class RecorderScreenFindViewTests: XCTestCase {
 }
 
 final class RecorderEditTests: XCTestCase {
+    func testSourceSeekArgumentUsesCheckedMicroseconds() {
+        let request = RecorderRequest.parse(["--at-source-seconds", "1.2345676"])
+        XCTAssertEqual(request.atSourceUs, 1_234_568)
+        XCTAssertEqual(RecorderRequest.parse(["--at-source-seconds", "0"]).atSourceUs, 0)
+
+        for value in ["nan", "inf", "-inf", "1e100", "-1e100", "9223372036854.776"] {
+            XCTAssertNil(RecorderRequest.parse(["--at-source-seconds", value]).atSourceUs, value)
+        }
+    }
+
     /// The word pick reads what `tools recorder words` prints and sends the place of the picked words, as the
     /// `cutWords` op numbers them (it cuts every run of the same folded words).
     func testTheWordPickSendsThePlaceOfThePickedWordsAsCutWordsNumbersThem() throws {
