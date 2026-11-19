@@ -48,6 +48,25 @@ struct PresenceGroup: Identifiable, Equatable {
 /// The people directory's methods: through the Meetings service when it answers, else `tools meetings people` with the
 /// same JSON (`people list|add|hide|merge|unmerge --json`), so the picker and the Contacts view work without a service.
 enum PeopleCalls {
+    @MainActor
+    private static func deviceService(_ service: MeetingsService?) throws -> MeetingsService {
+        guard let service else {
+            throw MeetingsCLI.Failure(sentence: "Connect to the Meetings service to manage room devices.",
+                                      detail: "Room device decisions use the window's Meetings service connection.")
+        }
+        return service
+    }
+
+    @MainActor
+    static func roomDevices(offers: Bool = true, service: MeetingsService?) async throws -> MeetingsAPI.RoomDevices.Result {
+        try await deviceService(service).call(MeetingsAPI.RoomDevices.self, .init(offers: offers))
+    }
+
+    @MainActor
+    static func decideDevice(_ change: RoomDeviceChange, service: MeetingsService?) async throws -> MeetingsAPI.DecideRoomDevice.Result {
+        try await deviceService(service).call(MeetingsAPI.DecideRoomDevice.self, change.params)
+    }
+
     /// `people.known`, or `people list [query] --json`.
     static func known(_ params: MeetingsAPI.PeopleKnown.Params) -> MeetingsRead<MeetingsAPI.PeopleKnown.Result> {
         .service(MeetingsAPI.PeopleKnown.self, params, orRun: knownArgs(params))
@@ -88,6 +107,74 @@ enum PeopleCalls {
     }
 
 
+}
+
+/// Both editors use the service's receipt and the same inverse operation. Only an explicit button starts a write.
+@Observable @MainActor
+final class RoomDeviceActions {
+    private(set) var busy = false
+    @ObservationIgnored private var lastNotice: [String: StackedNotice.ID] = [:]
+
+    func submit(_ change: RoomDeviceChange, service: MeetingsService?, notices: NoticeStackModel,
+                refresh: @escaping @MainActor () async -> Void, committed: @escaping @MainActor () -> Void = {}) {
+        guard !busy else { return }
+        busy = true
+        Task {
+            defer { busy = false }
+            do {
+                let receipt = try await PeopleCalls.decideDevice(change, service: service)
+                let account = change.params.account
+                let key = account.lowercased()
+                var actions: [StackedNotice.Action] = []
+                let text: String
+                if let device = receipt.device {
+                    text = "\(device.account) is mapped to \(device.group ?? "the room")."
+                } else if case .answer = change {
+                    text = "Kept \(account) as a person."
+                } else {
+                    text = "Removed the room device mapping for \(account)."
+                }
+                if receipt.changed {
+                    let inverse: RoomDeviceChange
+                    switch change {
+                    case .map(let device): inverse = .unmap(device)
+                    case .unmap(let device): inverse = .map(device)
+                    case let .answer(offer, _, yes): inverse = yes ? .unmap(offer.device) : .map(offer.device)
+                    }
+                    let reverse: @MainActor (StackedNotice.ID) -> Void = { [weak notices] id in
+                        guard let notices else { return }
+                        guard !self.busy else { notices.release(id); return }
+                        let done: String
+                        switch inverse {
+                        case .map(let device): done = "\(account) is mapped to \(device.group ?? "the room")."
+                        default: done = "\(account) is no longer a room device."
+                        }
+                        notices.settleUndo(id, done: done) {
+                            guard !self.busy else {
+                                throw MeetingsCLI.Failure(sentence: "Wait for the current room device change to finish.", detail: "")
+                            }
+                            self.busy = true
+                            defer { self.busy = false }
+                            _ = try await PeopleCalls.decideDevice(inverse, service: service)
+                            await refresh()
+                        }
+                    }
+                    if case .answer(_, _, false) = change {
+                        actions = [.init("Change to Yes", afterPress: .wait("Mapping…"), perform: reverse)]
+                    } else {
+                        actions = [.undo(reverse)]
+                    }
+                }
+                lastNotice[key] = notices.push(StackedNotice(text: receipt.changed ? text : "Already saved. " + text,
+                                                             actions: actions), replacing: lastNotice[key])
+                committed()
+            } catch {
+                notices.push(.meetingsFailure(error))
+            }
+            // A refused stale offer and a lost response both need a fresh read, too.
+            await refresh()
+        }
+    }
 }
 
 // MARK: - A picker's search

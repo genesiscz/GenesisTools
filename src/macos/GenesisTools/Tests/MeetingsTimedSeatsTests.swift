@@ -29,6 +29,17 @@ final class MeetingsTimedSeatsTests: XCTestCase {
         XCTAssertTrue(result.suggestion.people.isEmpty)
     }
 
+    func testRefreshedSeatsKeepAnEditedGuestAndDropTheConfirmedDevice() {
+        typealias Suggestion = MeetingsAPI.SeatsSuggest.Suggestion
+        let guest = MeetingsAPI.SeatsSuggest.Person(name: "Ash Example", seat: .unsure, reason: "Roster", confidence: 0.4)
+        let device = MeetingsAPI.SeatsSuggest.Person(name: "Boardroom PC", seat: .remote, reason: "Roster", confidence: 0.5)
+        var choices = MeetingSeatChoices(Suggestion(seats: .init(), people: [guest, device]))
+        choices.set(.room, for: guest.name)
+        let fresh = choices.refreshed(with: Suggestion(seats: .init(), people: [guest]))
+        XCTAssertEqual(fresh.choices, [guest.name: .room])
+        XCTAssertEqual(fresh.count, 1)
+    }
+
     func testEditingAnotherSeatPreservesLegacyRoomGroupAndDisjointStays() throws {
         let data = Data(#"""
         {"room":["Reed Example",{"name":"Fern Example","fromSec":60,"toSec":120}],
