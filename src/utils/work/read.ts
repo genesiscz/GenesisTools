@@ -261,7 +261,7 @@ function triageNext(item: Item, group: TriageGroup): NextAction[] {
     return [
         { do: "accept it", call: { method: "accept", params: { refs: [ref] } } },
         { do: "drop it with a reason", call: { method: "drop", params: { refs: [ref], why: "<text>" } } },
-        { do: "add it to a handoff", call: { method: "add", params: { ref, under: "<handoff>" } } },
+        { do: "add it to a handoff", call: { method: "addMember", params: { refs: [ref], to: "<handoff>" } } },
         { do: "make a handoff from these", call: { method: "handoff", params: { title: "<title>", from: [ref] } } },
     ];
 }
