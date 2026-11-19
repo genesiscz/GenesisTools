@@ -146,8 +146,12 @@ function renderVoice(options: {
     let lfoLevel = 1;
     let fmNow = 1;
 
+    // A free-running LFO runs on score time: its phase at the onset is its rate, with the lfoRate lane, summed from 0.
+    const rateLane = lanes.get("lfoRate");
+    const elapsed = rateLane ? rateLane.integral(start / RATE) : start / RATE;
+
     for (const lfo of lfos) {
-        lfo.phase = lfo.spec.retrigger ? 0 : ((start / RATE) * lfo.spec.rate) % 1;
+        lfo.phase = lfo.spec.retrigger ? 0 : (elapsed * lfo.spec.rate) % 1;
     }
 
     for (let n = start; n < total; n++) {

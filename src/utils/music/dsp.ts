@@ -165,4 +165,42 @@ export class Curve {
 
         return v0 + ((next[1] - v0) * (seconds - t0)) / (next[0] - t0);
     }
+
+    /** The area under the curve from 0 to `seconds`, read the way `at` reads it. */
+    integral(seconds: number): number {
+        const points = this.points;
+        let area = 0;
+        let from = 0;
+
+        if (points.length === 0 || seconds <= 0) {
+            return 0;
+        }
+
+        if (points[0][0] > 0) {
+            from = Math.min(seconds, points[0][0]);
+            area += points[0][1] * from;
+        }
+
+        for (let i = 0; i < points.length && from < seconds; i++) {
+            const [t0, v0] = points[i];
+            const next = points[i + 1];
+            const a = Math.max(from, t0);
+            const b = next === undefined ? seconds : Math.min(seconds, next[0]);
+
+            if (b <= a) {
+                continue;
+            }
+
+            if (next === undefined || this.hold) {
+                area += v0 * (b - a);
+            } else {
+                const slope = (next[1] - v0) / (next[0] - t0);
+                area += (v0 + slope * ((a + b) / 2 - t0)) * (b - a);
+            }
+
+            from = b;
+        }
+
+        return area;
+    }
 }

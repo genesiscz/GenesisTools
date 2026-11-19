@@ -7,7 +7,7 @@ import { Executor } from "@genesiscz/utils/cli/executor";
 import { env } from "@genesiscz/utils/env";
 import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { optIn } from "@genesiscz/utils/test/skip";
-import { RATE, stereo } from "./dsp";
+import { Curve, RATE, stereo } from "./dsp";
 import { duck } from "./effects";
 import { parseLoudness, probeMedia } from "./measure";
 import { encodeMidi } from "./midi";
@@ -272,6 +272,25 @@ describe("sources, synth and stems", () => {
         expect(refused({ effects: { reverb: 0.3 } })).toBe(false);
         expect(refused({ lanes: [{ target: "cutoff", points: [[0, 1]] }] })).toBe(false);
         expect(refused({ lanes: [{ target: "level", points: [[0, -6]] }] })).toBe(true);
+    });
+
+    test("a lane's area runs on score time, so a free LFO knows its phase at any onset", () => {
+        expect(new Curve([[0, 2]]).integral(0.25)).toBeCloseTo(0.5, 9);
+        expect(
+            new Curve([
+                [1, 0],
+                [3, 4],
+            ]).integral(5)
+        ).toBeCloseTo(12, 9);
+        expect(
+            new Curve(
+                [
+                    [1, 0],
+                    [3, 4],
+                ],
+                true
+            ).integral(5)
+        ).toBeCloseTo(8, 9);
     });
 
     test("a synth render repeats sample for sample and is silent before its first note", async () => {
