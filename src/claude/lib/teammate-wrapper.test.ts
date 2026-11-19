@@ -169,6 +169,15 @@ describe("buildTeammateWrapperScript", () => {
         expect(script).toContain("export CLAUDE_CODE_OAUTH_SCOPES='user:inference user:profile'");
     });
 
+    test("exports no plan name when the lead has none, as for a token that reads the profile", () => {
+        const script = buildTeammateWrapperScript({
+            claudeBin: "/usr/local/bin/claude",
+            env: { ...AUTH, subscriptionType: undefined, oauthScopes: "user:inference user:profile" },
+        });
+
+        expect(script).not.toContain("CLAUDE_CODE_SUBSCRIPTION_TYPE");
+    });
+
     /**
      * The script is why a shell function can never satisfy the bare-name fallback
      * above: non-interactive bash, no profile sourced, and it ends in `exec`, so

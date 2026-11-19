@@ -71,7 +71,8 @@ const FULL_SCOPES =
  * policy, which Code Mode needs before it starts; it reaches Claude Code as CLAUDE_CODE_OAUTH_SCOPES
  * (`pinnedLaunchEnv`).
  */
-export const LONG_LIVED_SCOPES = "user:inference user:profile";
+export const PROFILE_SCOPE = "user:profile";
+export const LONG_LIVED_SCOPES = `user:inference ${PROFILE_SCOPE}`;
 
 /** What Claude Code asks for on a setup-token exchange. */
 export const ONE_YEAR_SECONDS = 365 * 24 * 60 * 60;

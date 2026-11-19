@@ -31,6 +31,22 @@ describe("pinnedLaunchEnv", () => {
         expect(env.CLAUDE_CODE_OAUTH_SCOPES).toBe("user:inference user:profile");
     });
 
+    // A plan name makes Claude Code class the login as a personal plan and skip the policy fetch, so Code Mode still
+    // refused with the scopes set (2.1.328, 2026-11-19). An inference-only token keeps it for the [1m] switch.
+    test("leaves the plan name out for a token that reads the profile, and keeps it for an inference-only one", () => {
+        const profile = pinnedLaunchEnv(
+            { name: "work", label: "max 20x" },
+            { value: "t", scopes: ["user:inference", "user:profile"] }
+        );
+        const inference = pinnedLaunchEnv(
+            { name: "work", label: "max 20x" },
+            { value: "t", scopes: ["user:inference"] }
+        );
+
+        expect(profile).not.toHaveProperty("CLAUDE_CODE_SUBSCRIPTION_TYPE");
+        expect(inference.CLAUDE_CODE_SUBSCRIPTION_TYPE).toBe("max");
+    });
+
     test("leaves the scopes out for a token whose grant is unknown", () => {
         expect(pinnedLaunchEnv({ name: "work" }, { value: "t" })).not.toHaveProperty("CLAUDE_CODE_OAUTH_SCOPES");
         expect(pinnedLaunchEnv({ name: "work" }, { value: "t", scopes: [] })).not.toHaveProperty(
