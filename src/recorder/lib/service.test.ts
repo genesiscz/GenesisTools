@@ -1339,6 +1339,64 @@ describe("the format an export asks for", () => {
 });
 
 describe("a denoised export's render copy", () => {
+    test("denoising follows audible sidecars and retains their lane gain and offset", async () => {
+        const folder = mkdtempSync(join(tmpdir(), "rs-denoise-lanes-"));
+        closing.push(() => rmSync(folder, { recursive: true, force: true }));
+        const source = join(folder, "proxy.mp4");
+        const mic = join(folder, "mic.m4a");
+        const system = join(folder, "system.m4a");
+        for (const input of [source, mic, system]) {
+            writeFileSync(input, "recorded");
+        }
+        const path = join(folder, "edit.json");
+        const whole = wholeProject({ video: source, durationUs: 1_000_000, width: 80, height: 60 });
+        const settings = { method: "afftdn" as const, reductionDb: 12 };
+        writeProject(path, {
+            ...whole,
+            audio: {
+                ...whole.audio,
+                denoise: settings,
+                lanes: [
+                    { id: "mic", source: "mic", file: "mic.m4a", muted: false, volume: 0.4, offsetMs: -70 },
+                    { id: "system", source: "system", file: "system.m4a", muted: true, volume: 1, offsetMs: 0 },
+                ],
+            },
+            export: { ...whole.export, chapters: false },
+        });
+        const filtered: string[] = [];
+        const video = spyOn(videoProcess, "runVideoCommand").mockImplementation(async ({ command }) => {
+            if (command[0] === "ffprobe") {
+                return "1\n";
+            }
+            expect(command).toContain("-filter:a:0");
+            filtered.push(command[command.indexOf("-i") + 1]);
+            writeFileSync(command.at(-1)!, "cleaned");
+            return "";
+        });
+        const host = spyOn(serviceClient, "hostExport").mockImplementation(async ({ path: render, out }) => {
+            const { source, audio } = readProject(render);
+            expect(readFileSync(source.video, "utf8")).toBe("cleaned");
+            const lane = audio.lanes?.[0];
+            expect(lane?.file).toContain("/.denoise/mic-");
+            expect(lane?.volume).toBe(0.4);
+            expect(lane?.offsetMs).toBe(-70);
+            expect(readFileSync(lane!.file!, "utf8")).toBe("cleaned");
+            expect(audio.lanes?.[1]).toMatchObject({ file: system, muted: true });
+            writeFileSync(out!, "export");
+            return { ok: true, path: out, warnings: ["Skipped overlay.mov"] };
+        });
+        closing.push(
+            () => host.mockRestore(),
+            () => video.mockRestore()
+        );
+        expect(await edits.exportAs(path, { out: join(folder, "export.mp4") })).toMatchObject({
+            ok: true,
+            warnings: ["Skipped overlay.mov"],
+        });
+        expect(filtered).toEqual([source, mic]);
+        expect(readProject(path).audio.lanes?.[0].file).toBe("mic.m4a");
+    });
+
     // Round 1 hunt (denoise-render-sidecars): the copy renders from .denoise/, where the renderer finds no
     // recording.json, so the burned-in progress bar lost every marker set while recording.
     test("denoisedRenderProject carries the recording's markers beside the edit's own, in time order, and renders the cleaned movie", () => {

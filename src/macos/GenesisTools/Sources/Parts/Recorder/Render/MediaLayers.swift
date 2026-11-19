@@ -12,6 +12,7 @@ final class MediaFeed: @unchecked Sendable {
     private let transform: CGAffineTransform
     private let camera: Bool
     private let sampleCursors: Bool
+    private let warnings: RenderWarnings?
     private let lock = NSLock()
     private var reader: AVAssetReader?
     private var output: AVAssetReaderTrackOutput?
@@ -21,16 +22,17 @@ final class MediaFeed: @unchecked Sendable {
     private var finished = false
 
     init(asset: AVURLAsset, track: AVAssetTrack, durationUs: Int64 = 0, transform: CGAffineTransform = .identity,
-         sampleCursors: Bool = false, camera: Bool = false) {
+         sampleCursors: Bool = false, camera: Bool = false, warnings: RenderWarnings? = nil) {
         self.asset = asset
         self.track = track
         self.durationUs = durationUs
         self.transform = transform
         self.sampleCursors = sampleCursors
         self.camera = camera
+        self.warnings = warnings
     }
 
-    static func open(_ url: URL) async throws -> MediaFeed? {
+    static func open(_ url: URL, warnings: RenderWarnings? = nil) async throws -> MediaFeed? {
         let asset = AVURLAsset(url: url)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else { return nil }
         let duration = try await asset.load(.duration)
@@ -38,7 +40,8 @@ final class MediaFeed: @unchecked Sendable {
         let (transform, cursors) = try await track.load(.preferredTransform, .canProvideSampleCursors)
         let us = duration.convertScale(1_000_000, method: .roundHalfAwayFromZero).value
         guard us > 0 else { return nil }
-        return MediaFeed(asset: asset, track: track, durationUs: us, transform: transform, sampleCursors: cursors)
+        return MediaFeed(asset: asset, track: track, durationUs: us, transform: transform, sampleCursors: cursors,
+                         warnings: warnings)
     }
 
     /// Both the picture and the sound start at this instant of the video. Reduce an unbounded offset before
@@ -53,6 +56,7 @@ final class MediaFeed: @unchecked Sendable {
 
     func frame(at us: Int64) -> CIImage? {
         guard us >= 0 else { return nil }
+        if camera, durationUs > 0, us > durationUs, us - durationUs > 100_000 { return nil }
         lock.lock()
         defer { lock.unlock() }
         let seek: Bool = camera
@@ -80,23 +84,44 @@ final class MediaFeed: @unchecked Sendable {
         current = nil
         upcoming = nil
         finished = true
-        guard let reader = try? AVAssetReader(asset: asset) else { return }
-        // A VFR layer can hold a single frame for seconds. Seek to its actual sample, including on a first
-        // request at EOF. A format without sample cursors must decode forward from the beginning.
-        var start = camera ? EditRenderer.us(max(0, us - 200_000)) : .zero
-        if sampleCursors, let cursor = track.makeSampleCursor(presentationTimeStamp: EditRenderer.us(us)),
-           cursor.presentationTimeStamp.isNumeric {
-            start = CMTimeMaximum(.zero, cursor.presentationTimeStamp)
+        guard let reader = try? AVAssetReader(asset: asset) else {
+            warnings?.skipped(asset.url)
+            return
         }
-        reader.timeRange = CMTimeRange(start: start, duration: .positiveInfinity)
+        // Pick a presentation sample at or before the request. With no usable cursor, AVFoundation's image seek
+        // supplies the preceding frame without draining every decoded frame from the beginning of the asset.
+        let requested = EditRenderer.us(us)
+        var preceding: CMTime?
+        if sampleCursors, let cursor = track.makeSampleCursor(presentationTimeStamp: requested) {
+            if cursor.presentationTimeStamp > requested { _ = cursor.stepInPresentationOrder(byCount: -1) }
+            if cursor.presentationTimeStamp.isNumeric, cursor.presentationTimeStamp <= requested {
+                preceding = CMTimeMaximum(.zero, cursor.presentationTimeStamp)
+            }
+        }
+        if preceding == nil, us > 0 {
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.requestedTimeToleranceBefore = .positiveInfinity
+            generator.requestedTimeToleranceAfter = .zero
+            if camera { generator.maximumSize = CGSize(width: 720, height: 720) }
+            var actual = CMTime.invalid
+            if let pixels = try? generator.copyCGImage(at: requested, actualTime: &actual),
+               actual.isNumeric, actual <= requested {
+                current = (actual.convertScale(1_000_000, method: .roundHalfAwayFromZero).value,
+                           displayImage(CIImage(cgImage: pixels)))
+            }
+        }
+        reader.timeRange = CMTimeRange(start: preceding ?? requested, duration: .positiveInfinity)
         let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
         ])
         output.alwaysCopiesSampleData = false
-        guard reader.canAdd(output) else { return }
+        guard reader.canAdd(output) else {
+            warnings?.skipped(asset.url)
+            return
+        }
         reader.add(output)
         guard reader.startReading() else {
-            HubPerf.log("recorder: video reader did not start: \(reader.error?.localizedDescription ?? asset.url.lastPathComponent)")
+            if current == nil || reader.status == .failed { reportReadFailure(reader.error) }
             return
         }
         self.reader = reader
@@ -105,17 +130,28 @@ final class MediaFeed: @unchecked Sendable {
     }
 
     private func read() -> (us: Int64, image: CIImage)? {
-        guard !finished, let sample = output?.copyNextSampleBuffer(),
-              let buffer = CMSampleBufferGetImageBuffer(sample) else {
+        guard !finished else { return nil }
+        guard let sample = output?.copyNextSampleBuffer() else {
             finished = true
+            if reader?.status == .failed { reportReadFailure(reader?.error) }
             return nil
         }
         let time = CMSampleBufferGetPresentationTimeStamp(sample)
-        guard time.isNumeric, time.seconds.isFinite else {
+        guard let buffer = CMSampleBufferGetImageBuffer(sample), time.isNumeric, time.seconds.isFinite else {
+            reportReadFailure(nil)
             finished = true
             return nil
         }
-        var image = CIImage(cvPixelBuffer: buffer)
+        return (time.convertScale(1_000_000, method: .roundHalfAwayFromZero).value, displayImage(CIImage(cvPixelBuffer: buffer)))
+    }
+
+    private func reportReadFailure(_ error: Error?) {
+        current = nil
+        warnings?.decodeFailed(asset.url, error: error)
+    }
+
+    private func displayImage(_ input: CIImage) -> CIImage {
+        var image = input
         if camera {
             let longest = max(image.extent.width, image.extent.height)
             if longest > 720 {
@@ -126,32 +162,48 @@ final class MediaFeed: @unchecked Sendable {
             let flip = CGAffineTransform(scaleX: 1, y: -1)
             image = image.transformed(by: flip.concatenating(transform).concatenating(flip))
         }
-        return (time.convertScale(1_000_000, method: .roundHalfAwayFromZero).value, image)
+        return image
     }
 }
 
-struct RenderWarnings {
-    struct Entry: Hashable {
+final class RenderWarnings: @unchecked Sendable {
+    struct Entry: Hashable, Sendable {
         let file: URL
         let message: String
     }
 
+    private let lock = NSLock()
     private var files = Set<URL>()
-    private(set) var entries: [Entry] = []
+    private var stored: [Entry] = []
+    private let changed: (@Sendable ([Entry]) -> Void)?
 
-    mutating func skipped(_ url: URL) {
+    init(changed: (@Sendable ([Entry]) -> Void)? = nil) { self.changed = changed }
+
+    var entries: [Entry] { lock.withLock { stored } }
+
+    func skipped(_ url: URL) {
         warn(url, "Skipped \(url.lastPathComponent). The file is missing or unreadable.")
     }
 
-    mutating func noAudio(_ url: URL) {
+    func noAudio(_ url: URL) {
         warn(url, "\(url.lastPathComponent) has no audio track.")
     }
 
-    private mutating func warn(_ url: URL, _ message: String) {
+    func decodeFailed(_ url: URL, error: Error? = nil) {
+        let reason = error.map { " \($0.localizedDescription)" } ?? ""
+        warn(url, "Could not decode \(url.lastPathComponent).\(reason)")
+    }
+
+    private func warn(_ url: URL, _ message: String) {
         let file = url.standardizedFileURL
-        guard files.insert(file).inserted else { return }
-        entries.append(Entry(file: file, message: message))
+        let snapshot = lock.withLock { () -> [Entry]? in
+            guard files.insert(file).inserted else { return nil }
+            stored.append(Entry(file: file, message: message))
+            return stored
+        }
+        guard let snapshot else { return }
         HubPerf.log("recorder: \(message)")
+        changed?(snapshot)
     }
 }
 
@@ -159,24 +211,48 @@ struct MediaLayers {
     /// Open the container with the other files, but decode its pixels only when a visible frame needs them.
     private final class Still: @unchecked Sendable {
         private let lock = NSLock()
+        private let url: URL
+        private let warnings: RenderWarnings
         private var source: CGImageSource?
+        private let orientedSize: CGSize
         private var cached: CIImage?
+        private var decodedLimit = 0
 
-        init?(_ url: URL) {
-            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil), CGImageSourceGetCount(source) > 0 else { return nil }
+        init?(_ url: URL, warnings: RenderWarnings) {
+            let read = [kCGImageSourceShouldCache: false] as CFDictionary
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, read), CGImageSourceGetCount(source) > 0 else { return nil }
+            self.url = url
+            self.warnings = warnings
             self.source = source
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+            let width = (properties?[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue ?? 1
+            let height = (properties?[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue ?? 1
+            let orientation = (properties?[kCGImagePropertyOrientation] as? NSNumber)?.intValue ?? 1
+            orientedSize = (5...8).contains(orientation) ? CGSize(width: height, height: width) : CGSize(width: width, height: height)
         }
 
-        func image() -> CIImage? {
+        func image(width: CGFloat, square: Bool, canvas: CGSize) -> CIImage? {
             lock.lock()
             defer { lock.unlock() }
-            if let source {
+            let longest = max(1, orientedSize.width, orientedSize.height)
+            let fittedSide = max(1, square ? min(orientedSize.width, orientedSize.height) : orientedSize.width)
+            let needed = min(longest, width * longest / fittedSide, 2 * max(canvas.width, canvas.height))
+            let limit = max(1, Int((needed / 64).rounded(.up)) * 64)
+            guard let source, limit > decodedLimit else { return cached }
+            let span = HubPerf.begin("recorder.layer.thumbnail", "\(url.lastPathComponent) \(limit) px")
+            defer { span.end() }
+            let options = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceThumbnailMaxPixelSize: limit,
+            ] as CFDictionary
+            if let pixels = CGImageSourceCreateThumbnailAtIndex(source, 0, options) {
+                cached = CIImage(cgImage: pixels)
+                decodedLimit = limit
+            } else {
                 self.source = nil
-                if let pixels = CGImageSourceCreateImageAtIndex(source, 0, nil) {
-                    let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
-                    let orientation = properties?[kCGImagePropertyOrientation] as? NSNumber
-                    cached = CIImage(cgImage: pixels).oriented(forExifOrientation: orientation?.int32Value ?? 1)
-                }
+                warnings.decodeFailed(url)
             }
             return cached
         }
@@ -205,21 +281,21 @@ struct MediaLayers {
         return false
     }
 
-    init(project: EditProject, warnings: inout RenderWarnings) async {
+    init(project: EditProject, warnings: RenderWarnings) async {
         folder = URL(fileURLWithPath: project.source.video).deletingLastPathComponent()
         var cached: [URL: Still] = [:]
         for layer in project.layers?.media ?? [] {
             let url = fileURL(layer.file)
             switch layer.kind {
             case .image:
-                if let image = cached[url] ?? Still(url) {
+                if let image = cached[url] ?? Still(url, warnings: warnings) {
                     cached[url] = image
                     images[layer.file] = image
                 } else {
                     warnings.skipped(url)
                 }
             case .video:
-                if let feed = try? await MediaFeed.open(url) {
+                if let feed = try? await MediaFeed.open(url, warnings: warnings) {
                     videos[layer.id] = (layer.file, feed)
                 } else {
                     warnings.skipped(url)
@@ -242,7 +318,7 @@ struct MediaLayers {
         let frame: CIImage?
         switch layer.kind {
         case .image:
-            frame = images[layer.file]?.image()
+            frame = images[layer.file]?.image(width: layer.width * canvas.width, square: layer.shape != nil, canvas: canvas)
         case .video:
             guard let feed = video(layer) else { return base }
             let elapsed = us - layer.startUs

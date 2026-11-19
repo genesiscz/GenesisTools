@@ -741,7 +741,7 @@ private struct SourceAudioMix {
     }
 
     func file(_ asset: AVURLAsset, gain: Float, span: Range<Int64>, originUs: Int64, periodUs: Int64? = nil,
-              warnings: inout RenderWarnings) async -> AVMutableAudioMixInputParameters? {
+              warnings: RenderWarnings) async -> AVMutableAudioMixInputParameters? {
         guard FileManager.default.fileExists(atPath: asset.url.path) else {
             warnings.skipped(asset.url)
             return nil
@@ -772,7 +772,8 @@ struct EditRenderer {
         /// One frame at the rate the movie plays (`exportFps`), in µs.
         let frameUs: Int64
         /// Missing inputs, in discovery order, once per file even if it supplied both picture and sound.
-        let warnings: [RenderWarnings.Entry]
+        let warningLog: RenderWarnings
+        var warnings: [RenderWarnings.Entry] { warningLog.entries }
     }
 
     enum RenderError: LocalizedError {
@@ -901,7 +902,8 @@ struct EditRenderer {
 
     static func render(project: EditProject, asset: AVURLAsset, zoom: ZoomState, maxHeight: Int,
                        cards: Bool = false, size fixed: EditProject.OutputSize? = nil,
-                       audioFacts: EditProject.AudioFacts? = nil) async throws -> Rendered {
+                       audioFacts: EditProject.AudioFacts? = nil,
+                       onWarnings: (@Sendable ([RenderWarnings.Entry]) -> Void)? = nil) async throws -> Rendered {
         guard let video = try await asset.loadTracks(withMediaType: .video).first else {
             throw RenderError.noVideoTrack(asset.url.path)
         }
@@ -964,9 +966,9 @@ struct EditRenderer {
         try checkSize(fixed, source: natural, aspect: project.frame?.aspect)
         let (picture, size) = (plan.picture, plan.canvas)
         let outputScale = picture.height / natural.height
-        var warnings = RenderWarnings()
-        let media = await MediaLayers(project: project, warnings: &warnings)
-        let cameraFeed = await CameraFeed.make(project: project)
+        let warnings = RenderWarnings(changed: onWarnings)
+        let media = await MediaLayers(project: project, warnings: warnings)
+        let cameraFeed = await CameraFeed.make(project: project, warnings: warnings)
         if let camera = project.camera, cameraFeed == nil { warnings.skipped(camera.movieURL(video: project.source.video)) }
         // Round 4 fx-render: the frames a transition blends with, read when a frame first needs them.
         // The preview keeps this composition through zoom edits, so each frame sizes the stills by the zooms it has now.
@@ -1187,15 +1189,15 @@ struct EditRenderer {
             let mix = SourceAudioMix(composition: composition, clips: TimelineMap.placed(project), leadUs: cardSpans.leadUs,
                                      ramps: Declick.ramps(at: Declick.cuts(in: project), lengthUs: project.outputDurationUs))
             let movieSpan = 0..<project.source.durationUs
-            let played = Set(project.movieTracksPlayed(lanes, facts: facts))
+            var played = Set(project.movieTracksPlayed(lanes, facts: facts))
             for lane in lanes where lane.source != .music && lane.source != .voiceover {
                 let gain = lane.muted ? 0 : Float(lane.volume * project.audio.volume)
                 if let file = lane.file {
                     if let input = await mix.file(AVURLAsset(url: media.fileURL(file)), gain: gain, span: movieSpan,
-                                                  originUs: Int64(lane.offsetMs) * 1000, warnings: &warnings) {
+                                                  originUs: Int64(lane.offsetMs) * 1000, warnings: warnings) {
                         inputs.append(input)
                     }
-                } else if let i = lane.track, played.contains(i),
+                } else if let i = lane.track, played.remove(i) != nil,
                           let input = try await mix.add(tracks[i], gain: gain, span: movieSpan) {
                     inputs.append(input)
                 }
@@ -1204,13 +1206,17 @@ struct EditRenderer {
                 guard layer.endUs > layer.startUs, let feed = media.video(layer) else { continue }
                 let origin = layer.startUs - feed.startUs(for: layer)
                 if let input = await mix.file(feed.asset, gain: Float(project.audio.volume), span: layer.startUs..<layer.endUs,
-                                              originUs: origin, periodUs: layer.loop ? feed.durationUs : nil, warnings: &warnings) {
+                                              originUs: origin, periodUs: layer.loop ? feed.durationUs : nil, warnings: warnings) {
                     inputs.append(input)
                 }
             }
         }
         // R4 9 intro and end cards: the music runs under the cards too; everything the movie times moves by the intro.
         var soundProject = project
+        let voices = project.audio.voiceovers ?? []
+        let voiceLanes = Dictionary(lanes.filter { $0.source == .voiceover }.compactMap { lane in
+            EditProject.voiceover(forLaneID: lane.id, in: voices).map { ($0.id, lane) }
+        }, uniquingKeysWith: { first, _ in first })
         soundProject.audio.voiceovers = project.audio.voiceovers?.compactMap { original in
             var clip = original
             let url = media.fileURL(clip.file)
@@ -1219,7 +1225,7 @@ struct EditRenderer {
                 return nil
             }
             clip.file = url.path
-            if let lane = lanes.first(where: { $0.source == .voiceover && $0.id == clip.id }) {
+            if let lane = voiceLanes[clip.id] {
                 clip.volume *= lane.muted ? 0 : lane.volume
             }
             return clip
@@ -1230,8 +1236,9 @@ struct EditRenderer {
                 music.volume *= lane.muted ? 0 : lane.volume
             }
             var duckingProject = soundProject
-            let silenced = Set(lanes.filter { $0.source == .voiceover && ($0.muted || $0.volume == 0) }.map(\.id))
-            duckingProject.audio.voiceovers?.removeAll { silenced.contains($0.id) }
+            duckingProject.audio.voiceovers?.removeAll { clip in
+                voiceLanes[clip.id].map { $0.muted || $0.volume == 0 } ?? false
+            }
             if let parameters = try await MusicMix.add(music, to: composition, lengthUs: Int64((cursor.seconds * 1_000_000).rounded()),
                                                        project: duckingProject, lines: zoom.captionLines, offsetUs: cardSpans.leadUs,
                                                        cards: cardSpans, movieUs: movieUs) {
@@ -1252,7 +1259,7 @@ struct EditRenderer {
             audioMix = mix
         }
         return Rendered(composition: composition, videoComposition: videoComposition, audioMix: audioMix, renderSize: size,
-                        frameUs: frameUs(fps: fps), warnings: warnings.entries)
+                        frameUs: frameUs(fps: fps), warningLog: warnings)
     }
 }
 
@@ -1265,6 +1272,7 @@ final class EditExporter {
         let url: URL
         let seconds: Double
         let bytes: Int64
+        let warnings: [String]
     }
 
     /// The MP4's likely size before it is made: screen exports measured at about 0.082 bits per pixel and frame with
@@ -1380,7 +1388,8 @@ final class EditExporter {
         try FileManager.default.moveItem(at: partial, to: url)
         await MainActor.run { onProgress(1) }
         let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0
-        return Result(url: url, seconds: Date().timeIntervalSince(started), bytes: bytes)
+        return Result(url: url, seconds: Date().timeIntervalSince(started), bytes: bytes,
+                      warnings: rendered.warnings.map(\.message))
     }
 
     enum ExportError: LocalizedError {

@@ -371,9 +371,13 @@ final class CapturePicker {
         let fixture = try RecorderBarSnapshot(request: request, shortcutsOpen: shortcutsOpen)
         let view = await fixture.view()
         let sized = request.hasSnapshotDimensions || request.barState != nil
-        let hosting = NSHostingView(rootView: view.fixedSize()
-            .frame(width: sized ? request.width : nil, height: sized ? request.height : nil)
-            .preferredColorScheme(.dark))
+        func root(opaque: Bool) -> some View {
+            view.fixedSize()
+                .frame(width: sized ? request.width : nil, height: sized ? request.height : nil)
+                .preferredColorScheme(.dark)
+                .environment(\.nativeSettingsReduceTransparency, opaque)
+        }
+        let hosting = NSHostingView(rootView: root(opaque: false))
         hosting.layoutSubtreeIfNeeded()
         let size = sized ? CGSize(width: request.width, height: request.height) : hosting.fittingSize
         let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.borderless],
@@ -383,12 +387,26 @@ final class CapturePicker {
         window.contentView = hosting
         window.orderInForSnapshot()
         try await Task.sleep(for: .milliseconds(600))
-        guard let capture = await WindowSnapshot.capture(window),
-              let png = capture.image.representation(using: .png, properties: [:]) else {
+        let capture = await WindowSnapshot.capture(window)
+        let image: NSBitmapImageRep?
+        let method: String
+        if let capture, capture.method == "window server" {
+            image = capture.image
+            method = capture.method
+        } else {
+            // AppKit's bitmap capture omits the Glass surface and its controls. Draw their opaque form.
+            hosting.rootView = root(opaque: true)
+            await Task.yield()
+            hosting.layoutSubtreeIfNeeded()
+            image = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds)
+            if let image { hosting.cacheDisplay(in: hosting.bounds, to: image) }
+            method = "cacheDisplay with opaque controls"
+        }
+        guard let png = image?.representation(using: .png, properties: [:]) else {
             throw NSError(domain: "recorder", code: 70, userInfo: [NSLocalizedDescriptionKey: "the picker could not be drawn"])
         }
         try png.write(to: URL(fileURLWithPath: path))
-        FileHandle.standardError.write(Data("recorder snapshot: \(path) by \(capture.method) (\(Int(size.width))×\(Int(size.height)) pt)\n".utf8))
+        FileHandle.standardError.write(Data("recorder snapshot: \(path) by \(method) (\(Int(size.width))×\(Int(size.height)) pt)\n".utf8))
     }
 
 }

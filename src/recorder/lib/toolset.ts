@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import type { RecordingTarget } from "@app/control/lib/recording-targets";
@@ -7,6 +8,7 @@ import { convertFileToMonoMp3 } from "@genesiscz/utils/audio/converter";
 import { execTool, spawnToolDetached } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { FlockState } from "@genesiscz/utils/fs/flock";
+import { fileIdentity } from "@genesiscz/utils/fs/identity-cache";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { awaitStart, startGatePath, stopPassedChild, sweepStartGates } from "@genesiscz/utils/process/start-gate";
@@ -25,7 +27,11 @@ import { findIdle } from "@genesiscz/utils/recording-editor/idle";
 import { arrowTail } from "@genesiscz/utils/recording-editor/item-ops";
 import { DEFAULT_LANES, EFFECT_KINDS, type EffectLane } from "@genesiscz/utils/recording-editor/lanes";
 import { layerOrderOf, type MediaLayer } from "@genesiscz/utils/recording-editor/layers";
-import { transcribedTracks } from "@genesiscz/utils/recording-editor/loudness";
+import {
+    recordingLaneInputs,
+    recordingLanesToMonoMp3,
+    transcribedTracks,
+} from "@genesiscz/utils/recording-editor/loudness";
 import { cardsLeadUs, TEXT_ANIMATIONS } from "@genesiscz/utils/recording-editor/overlays";
 import {
     outputTimeSchema,
@@ -70,6 +76,7 @@ import { ReplToolset, type ToolsetContext } from "@genesiscz/utils/repl/toolset"
 import { recorderSetSchema, settingsPatchOf } from "@genesiscz/utils/repl/toolsets/recorder";
 import { readRecordingManifest, renameRecording } from "@genesiscz/utils/screen-recorder/library";
 import { callRecorder, type LiveEntry, listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { hasAudio, type MediaFacts, readMediaFacts } from "@genesiscz/utils/video/media-facts";
 import { probeVideo } from "@genesiscz/utils/video/probe";
@@ -89,6 +96,7 @@ import {
     exportProgressPrinter,
     openProject,
     previewTranscriptCuts,
+    recordingLaneFacts,
     transcriptWords,
     undoDepth,
     writeSubtitles,
@@ -1921,9 +1929,10 @@ export class Movie {
     }
 
     async audioLanes() {
-        const { project, audioFacts } = await openProject(this.recording);
+        const { project, audioFacts } = await openProject(this.recording, { prepareAudio: true });
         const lanes =
-            project.audio.lanes ?? audioLanesOf(project, audioFacts ?? (await audioFactsOf(project.source.video)));
+            project.audio.lanes ??
+            audioLanesOf(project, audioFacts ?? (await audioFactsOf(project.source.video, { prepare: true })));
         return lanes.map((lane) => ({ ...lane, name: soundLaneName(lane) }));
     }
 
@@ -2268,35 +2277,72 @@ export class Movie {
         const video = opened.project.source.video;
         const cache = transcriptCachePath(video);
 
+        const { audio } = opened.project;
+        const selectionPath = `${cache}.lanes.json`;
+        const explicit = audio.lanes;
+        const lanes =
+            explicit && audio.include && audio.volume > 0
+                ? recordingLaneInputs({
+                      video,
+                      lanes: explicit,
+                      facts: opened.audioFacts ?? (await recordingLaneFacts(opened.project)),
+                  })
+                : [];
+        const selection = explicit
+            ? {
+                  durationUs: opened.project.source.durationUs,
+                  lanes: lanes.map((lane) => ({ ...lane, source: fileIdentity(lane.path) })),
+              }
+            : undefined;
+        const stamp = (transcript: string) =>
+            SafeJSON.stringify({ selection, transcript: createHash("sha256").update(transcript).digest("hex") });
+
         if (!options.refresh && existsSync(cache)) {
-            return transcriptLines(SafeJSON.parse(readFileSync(cache, "utf8"), { strict: true }), opened.project);
+            const transcript = readFileSync(cache, "utf8");
+            const previous = existsSync(selectionPath) ? readFileSync(selectionPath, "utf8") : undefined;
+
+            if (previous ? previous === stamp(transcript) : !explicit) {
+                return transcriptLines(SafeJSON.parse(transcript, { strict: true }), opened.project);
+            }
         }
 
-        if (recordedWithoutSound(opened)) {
+        if (explicit && !lanes.length) {
+            throw new Error(`${video} has no audible recording lanes, so there is nothing to transcribe`);
+        }
+
+        if (!explicit && recordedWithoutSound(opened)) {
             throw new Error(`${video} was recorded without sound, so there is nothing to transcribe`);
         }
 
-        // What the export plays, on the movie's clock: every unmuted track mixed, a late first sample kept in place.
-        const tracks = transcribedTracks(await audioTrackCount(video), opened.project.audio);
+        // What the export plays, on the movie's clock, before edits to the timeline.
+        const tracks = explicit ? [] : transcribedTracks(await audioTrackCount(video), audio);
         // The guard sits on the paid call itself: a method declared read that reaches here is refused (NR1).
         assertReach("paid", "start a transcription", "Call movie.transcript() first; it declares the paid run.");
-        const heard = join(tmpdir(), `gt-transcript-${process.pid}-${Date.now()}.mp3`);
-
+        const scratch = mkdtempSync(join(tmpdir(), "gt-transcript-"));
+        const heard = join(scratch, "heard.mp3");
+        const written = join(scratch, "transcript.json");
         try {
-            await convertFileToMonoMp3(video, heard, { tracks });
+            if (explicit) {
+                await recordingLanesToMonoMp3({ lanes, durationUs: opened.project.source.durationUs, output: heard });
+            } else {
+                await convertFileToMonoMp3(video, heard, { tracks, timeoutMs: 10 * 60_000 });
+            }
             await transcribeInto({
                 input: heard,
-                cache,
+                cache: written,
                 provider: options.provider,
                 lang: options.lang,
                 video,
                 tracks,
             });
+            const transcript = readFileSync(written, "utf8");
+            // Pair the stamp with the bytes this request wrote, even if another request replaces the cache.
+            atomicWriteFileSync(selectionPath, stamp(transcript));
+            atomicWriteFileSync(cache, transcript);
+            return transcriptLines(SafeJSON.parse(transcript, { strict: true }), opened.project);
         } finally {
-            rmSync(heard, { force: true });
+            rmSync(scratch, { recursive: true, force: true });
         }
-
-        return transcriptLines(SafeJSON.parse(readFileSync(cache, "utf8"), { strict: true }), opened.project);
     }
 
     /** One frame of the edit as it exports, shown to the model; `at` is OUTPUT seconds (what plays). */

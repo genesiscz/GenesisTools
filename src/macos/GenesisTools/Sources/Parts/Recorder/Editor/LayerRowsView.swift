@@ -61,6 +61,56 @@ enum LayerOrderCommand: String, CaseIterable {
     }
 }
 
+private struct LayerRowLabel: View, Equatable {
+    let id: String
+    let name: String
+    let icon: String
+    let hidden: Bool
+    let spans: [Range<Int64>]
+    let scale: TimelineScale
+    let selected: Bool
+    let focused: Bool
+    let dropTarget: Bool
+    let toggle: () -> Void
+
+    // The callback belongs to this row's stable editor and ID.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.id == rhs.id && lhs.name == rhs.name && lhs.icon == rhs.icon && lhs.hidden == rhs.hidden
+            && lhs.spans == rhs.spans && lhs.scale == rhs.scale && lhs.selected == rhs.selected
+            && lhs.focused == rhs.focused && lhs.dropTarget == rhs.dropTarget
+    }
+
+    var body: some View {
+        let visibility = "\(hidden ? "Show" : "Hide") \(name)"
+        HStack(spacing: 6) {
+            LiveButton(tooltip: "\(visibility) (H)", pressable: true, action: toggle) {
+                Image(systemName: hidden ? "eye.slash" : "eye").frame(width: 26, height: 26)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel(visibility)
+            Label(name, systemImage: icon).lineLimit(1)
+            Spacer()
+        }
+        .font(.system(size: 11.5, weight: selected ? .semibold : .regular))
+        .padding(.horizontal, 6)
+        .padding(.bottom, 4)
+        .frame(height: TimelineView.sourceRowHeight)
+        .background(alignment: .bottom) {
+            Canvas { context, size in
+                var path = Path()
+                for span in spans {
+                    path.addRect(CGRect(x: scale.x(span.lowerBound), y: size.height - 4,
+                                        width: max(1, scale.width(span.upperBound - span.lowerBound)), height: 3))
+                }
+                context.fill(path, with: .color(.accentColor.opacity(hidden ? 0.3 : 0.9)))
+            }
+        }
+        .background(selected || dropTarget ? Color.accentColor.opacity(0.16) : Color.clear)
+        .contentShape(Rectangle())
+        .liveRow(selected: selected || focused || dropTarget)
+    }
+}
+
 enum LayerRowDrop: Codable, Transferable {
     case row(window: String, id: String)
     case file(URL)
@@ -85,33 +135,13 @@ struct LayerRowsView: View {
             ForEach(model.layerRows) { row in
                 let id = "recorder.timeline.layer." + row.id
                 let selected = model.selection == .layer(row.id)
-                HStack(spacing: 6) {
-                    Button { model.toggleVisibility(row) } label: {
-                        Image(systemName: row.hidden ? "eye.slash" : "eye").frame(width: 26, height: 26)
-                    }
-                    .buttonStyle(.genHoverPlain())
-                    .accessibilityLabel("\(row.hidden ? "Show" : "Hide") \(row.name)")
-                    .instantTooltip("\(row.hidden ? "Show" : "Hide") \(row.name) (H)")
-                    Label(row.name, systemImage: row.icon).lineLimit(1)
-                    Spacer()
+                LayerRowLabel(id: row.id, name: row.name, icon: row.icon, hidden: row.hidden,
+                              spans: row.spans, scale: scale, selected: selected, focused: focus == row.id,
+                              dropTarget: target == row.id) {
+                    model.toggleVisibility(row)
                 }
-                .font(.system(size: 11.5, weight: selected ? .semibold : .regular))
-                .padding(.horizontal, 6)
-                .padding(.bottom, 4)
-                .frame(height: TimelineView.sourceRowHeight)
-                .background(alignment: .bottom) {
-                    Canvas { context, size in
-                        var path = Path()
-                        for span in row.spans {
-                            path.addRect(CGRect(x: scale.x(span.lowerBound), y: size.height - 4,
-                                                width: max(1, scale.width(span.upperBound - span.lowerBound)), height: 3))
-                        }
-                        context.fill(path, with: .color(.accentColor.opacity(row.hidden ? 0.3 : 0.9)))
-                    }
-                }
-                .background(selected || target == row.id ? Color.accentColor.opacity(0.16) : Color.clear)
-                .contentShape(Rectangle())
-                .onTapGesture { model.selectLayer(row.id); focus = row.id }
+                .equatable()
+                .simultaneousGesture(TapGesture().onEnded { model.selectLayer(row.id); focus = row.id })
                 .focusable()
                 .focused($focus, equals: row.id)
                 .onKeyPress(phases: .down) { key in handle(key, row: row) }
@@ -208,16 +238,18 @@ extension EditorModel {
     struct DropDefaults {
         var width: Double
         var atPointer: Bool
+        private let defaults: UserDefaults
 
         init(defaults: UserDefaults = .standard) {
+            self.defaults = defaults
             let saved = defaults.dictionary(forKey: EditorModel.layerDropDefaultsKey)
             width = min(1, max(0.05, saved?["width"] as? Double ?? 0.35))
             atPointer = saved?["at"] as? String == "pointer"
         }
 
         func save() {
-            UserDefaults.standard.set(["width": width, "at": atPointer ? "pointer" : "centre"] as [String: Any],
-                                      forKey: EditorModel.layerDropDefaultsKey)
+            defaults.set(["width": width, "at": atPointer ? "pointer" : "centre"] as [String: Any],
+                         forKey: EditorModel.layerDropDefaultsKey)
         }
     }
 

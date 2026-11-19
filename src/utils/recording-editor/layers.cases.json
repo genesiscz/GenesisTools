@@ -151,6 +151,33 @@
           "id": "clip",
           "kind": "video"
         }
+      ],
+      "movesAfter": [
+        [
+          "clip",
+          "camera",
+          "logo"
+        ],
+        [
+          "clip",
+          "logo",
+          "camera"
+        ],
+        [
+          "clip",
+          "camera",
+          "logo"
+        ],
+        [
+          "camera",
+          "clip",
+          "logo"
+        ],
+        [
+          "camera",
+          "logo",
+          "clip"
+        ]
       ]
     },
     {

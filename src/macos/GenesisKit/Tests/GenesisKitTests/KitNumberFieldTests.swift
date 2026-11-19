@@ -3,6 +3,15 @@ import XCTest
 
 /// The value rules of `KitNumberField`: what a typed text means, where a step lands, and the words of a unit.
 final class KitNumberFieldTests: XCTestCase {
+    func testFixedPointFieldKeepsMicrosecondsAndBounds() {
+        let range = -1...4_000_001
+        let shown = KitNumberFieldMath.formatted(1_234_567, fractionDigits: 6)
+        XCTAssertEqual(KitNumberFieldMath.parsed(shown, fallback: 0, in: range, fractionDigits: 6), 1_234_567)
+        XCTAssertEqual(KitNumberFieldMath.parsed("5", fallback: 0, in: range, fractionDigits: 6), 4_000_001)
+        XCTAssertEqual(KitNumberFieldMath.parsed("-1", fallback: 0, in: range, fractionDigits: 6), -1)
+        XCTAssertEqual(KitNumberFieldMath.parsed("oops", fallback: 1_234_567, in: range, fractionDigits: 6), 1_234_567)
+    }
+
     func testATypedValueOutsideTheRangeLandsOnTheNearestLimit() {
         XCTAssertEqual(KitNumberFieldMath.parsed("500", fallback: 48, in: 1...336), 336)
         XCTAssertEqual(KitNumberFieldMath.parsed("0", fallback: 48, in: 1...336), 1)

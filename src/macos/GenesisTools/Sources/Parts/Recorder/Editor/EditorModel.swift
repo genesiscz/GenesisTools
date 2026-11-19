@@ -136,6 +136,7 @@ final class EditorModel {
     @ObservationIgnored private var asset: AVURLAsset
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var renderTask: Task<Void, Never>?
+    @ObservationIgnored private var renderID: UUID?
     @ObservationIgnored var rebuildSoon: DispatchWorkItem?
     /// What ⌘Z and ⇧⌘Z would take back or make again, for their names in the Edit menu: the service keeps the
     /// edit's real undo stack, and each step here mirrors one change this window made or took from outside.
@@ -178,6 +179,7 @@ final class EditorModel {
     /// The banners of the last edits written from outside the window (EditorChangeFeed.swift).
     var changes: [EditChange] = []
     @ObservationIgnored private var renderWarnings: Set<RenderWarnings.Entry> = []
+    @ObservationIgnored private var renderedPreview: EditRenderer.Rendered?
     /// Each banner's removal, cancelled while the pointer rests on it (`holdBanner`).
     @ObservationIgnored var bannerTimers: [UUID: Task<Void, Never>] = [:]
     /// A counter per zoom, hidden part, text or shape id: its timeline segment flashes each time it rises.
@@ -1319,6 +1321,9 @@ final class EditorModel {
 
     func rebuild() {
         renderTask?.cancel()
+        let id = UUID()
+        renderID = id
+        renderedPreview = nil
         let project = project
         let asset = asset
         let zoom = zoom
@@ -1328,9 +1333,16 @@ final class EditorModel {
             let span = HubPerf.begin("recorder.editor.render", "\(project.clips.count) clips")
             do {
                 // The preview renders at most 1440 pixels high: a 4K source costs a quarter of the work per frame.
-                let rendered = try await EditRenderer.render(project: project, asset: asset, zoom: zoom, maxHeight: 1440, audioFacts: facts)
+                let rendered = try await EditRenderer.render(project: project, asset: asset, zoom: zoom, maxHeight: 1440,
+                                                             audioFacts: facts) { [weak self] _ in
+                    Task { @MainActor [weak self] in
+                        guard let self, self.renderID == id, let item = self.renderedPreview else { return }
+                        self.reportRenderWarnings(item.warnings)
+                    }
+                }
                 span.end()
                 guard !Task.isCancelled, let self else { return }
+                self.renderedPreview = rendered
                 self.reportRenderWarnings(rendered.warnings)
                 self.frameUs = rendered.frameUs
                 let item = AVPlayerItem(asset: rendered.composition)
@@ -1584,18 +1596,21 @@ final class EditorModel {
         }
         let part = exportPart
         let rendered = Self.exportedProject(project, part: part)
+        let facts = sourceAudioFacts
         let url = EditExporter.outputURL(for: project)
         exportProgress = 0
         exportCancelled = false
         exportTask = Task { [weak self] in
             defer { self?.exportTask = nil }
             do {
-                let result = try await EditExporter.export(project: rendered, to: url, isCancelled: { self?.exportCancelled ?? true }) { progress in
+                let result = try await EditExporter.export(project: rendered, to: url, audioFacts: facts,
+                                                           isCancelled: { self?.exportCancelled ?? true }) { progress in
                     self?.exportProgress = progress
                 }
                 self?.exportProgress = nil
                 HubPerf.log("recorder.export: \(result.url.path) \(ByteFormat.file(result.bytes)) in \(String(format: "%.1f", result.seconds)) s")
-                self?.show("Exported \(result.url.lastPathComponent) (\(ByteFormat.file(result.bytes)), \(String(format: "%.1f", result.seconds)) s).", error: false)
+                self?.showExport("Exported \(result.url.lastPathComponent) (\(ByteFormat.file(result.bytes)), \(String(format: "%.1f", result.seconds)) s).",
+                                 warnings: result.warnings)
                 self?.finishExport(result.url, part: part)
                 self?.reveal(result.url)
             } catch is CancellationError {
@@ -1814,9 +1829,14 @@ final class EditorModel {
             }
             let bytes = (answer?["bytes"] as? NSNumber)?.int64Value ?? 0
             HubPerf.log("recorder.export: \(path) \(ByteFormat.file(bytes)) as \(format.rawValue)")
-            self.show("Exported \(URL(fileURLWithPath: path).lastPathComponent) (\(ByteFormat.file(bytes))).", error: false)
+            self.showExport("Exported \(URL(fileURLWithPath: path).lastPathComponent) (\(ByteFormat.file(bytes))).",
+                            warnings: answer?["warnings"] as? [String] ?? [])
             self.reveal(URL(fileURLWithPath: path))
         }
+    }
+
+    private func showExport(_ text: String, warnings: [String]) {
+        show(([text] + warnings).joined(separator: "\n"), error: !warnings.isEmpty)
     }
 
     func show(_ text: String, error: Bool) {
@@ -1825,6 +1845,9 @@ final class EditorModel {
     }
 
     func close() {
+        renderTask?.cancel()
+        renderID = nil
+        renderedPreview = nil
         fileWaveforms.values.forEach { $0.cancel() }
         waveform.cancel()
         finishGesture()
@@ -1863,17 +1886,21 @@ extension EditorModel {
         tab = .style
     }
 
+    /// Refreshing discovery can remove a replacement as well as introduce one.
+    func adoptSourceAudioFacts(_ facts: EditProject.AudioFacts, for video: String) {
+        guard project.source.video == video, project.audio.lanes == nil, sourceAudioFacts != facts else { return }
+        let inputsChanged = (sourceAudioFacts?.mixedFrom ?? []) != facts.mixedFrom
+        sourceAudioFacts = facts
+        updateSoundRows()
+        if inputsChanged { rebuild() }
+    }
+
     private func readSourceAudioFacts() {
         // An older frames edit can still have separate sound files. Ask the session that prepared them,
         // using the existing window hold. Merely opening its inspector must never write audio.lanes.
         let video = project.source.video
         guard project.audio.lanes == nil, URL(fileURLWithPath: video).lastPathComponent == "proxy.mp4" else { return }
-        func adoptFacts(_ facts: EditProject.AudioFacts) {
-            guard project.source.video == video, project.audio.lanes == nil, sourceAudioFacts != facts else { return }
-            sourceAudioFacts = facts
-            updateSoundRows()
-            if !facts.mixedFrom.isEmpty { rebuild() }
-        }
+
         if !session.isOnline {
             // Standalone editors also use the recorder's source discovery (including segmented microphone files).
             // Pass a JSON string literal as one argv argument so every filename is data in the REPL call.
@@ -1887,14 +1914,16 @@ extension EditorModel {
                     guard lane.source == .mic || lane.source == .system, let file = lane.file else { return nil }
                     return .init(source: lane.source, file: file, offsetMs: lane.offsetMs)
                 }
-                adoptFacts(.init(movieTracks: self.audioTrackCount, mixedFrom: inputs))
+                self.adoptSourceAudioFacts(.init(movieTracks: self.audioTrackCount, mixedFrom: inputs), for: video)
             }
             return
         }
         struct OpenFacts: Decodable { var audioFacts: EditProject.AudioFacts? }
-        session.call("session.open", ["path": session.path, "holder": session.holder]) { result in
+        session.call("session.open", ["path": session.path, "holder": session.holder]) { [weak self] result in
             if case let .success(value) = result,
-               let facts = try? RecorderProtocol.decode(OpenFacts.self, from: value).audioFacts { adoptFacts(facts) }
+               let facts = try? RecorderProtocol.decode(OpenFacts.self, from: value).audioFacts {
+                self?.adoptSourceAudioFacts(facts, for: video)
+            }
         }
     }
 
@@ -1905,7 +1934,8 @@ extension EditorModel {
         let lanes = project.audioLanes(facts: facts)
         var files: [URL: Waveform] = [:]
         soundRows = lanes.map { lane in
-            let clip = lane.source == .voiceover ? project.audio.voiceovers?.first { $0.id == lane.id } : nil
+            let clip = lane.source == .voiceover
+                ? EditProject.voiceover(forLaneID: lane.id, in: project.audio.voiceovers ?? []) : nil
             let music = lane.source == .music ? project.audio.music : nil
             let file = lane.file ?? clip?.file ?? music?.file
             var wave = waveform

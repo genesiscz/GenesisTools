@@ -763,6 +763,9 @@ extension EditProject {
     /// hand or by another writer can hold anything; a clip speed of 0 made every duration Int64(infinity), which traps,
     /// and a negative one asked AVFoundation for a negative duration. Refused here with the clip named instead.
     func validate() throws {
+        if let lanes = audio.lanes, Set(lanes.map(\.id)).count != lanes.count {
+            throw ProjectError.badValue("audio lane IDs must be unique")
+        }
         guard source.durationUs >= 0 else { throw ProjectError.badValue("source.durationUs is \(source.durationUs); it must be 0 or more") }
         for (index, clip) in clips.enumerated() {
             guard clip.speed.isFinite, (0.25...16).contains(clip.speed) else {

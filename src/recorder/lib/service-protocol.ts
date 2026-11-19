@@ -296,7 +296,13 @@ export const hostApi = defineApi({
                     })
                     .optional(),
             }),
-            result: z.object({ ok: z.literal(true), path: z.string(), bytes: z.number(), seconds: z.number() }),
+            result: z.object({
+                ok: z.literal(true),
+                path: z.string(),
+                bytes: z.number(),
+                seconds: z.number(),
+                warnings: z.array(z.string()).optional(),
+            }),
             doc: 'Renders the edit as a movie; the host sends $/progress { id, fraction, label: "export" } and stops on $/cancel.',
             effect: "reversible",
         }),

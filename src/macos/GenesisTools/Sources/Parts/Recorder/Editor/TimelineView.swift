@@ -16,7 +16,7 @@ enum RecorderPalette {
 }
 
 /// Output time and x position on the timeline, both ways.
-struct TimelineScale {
+struct TimelineScale: Equatable {
     var pointsPerSecond: Double = 100
     var inset: CGFloat = 28
 

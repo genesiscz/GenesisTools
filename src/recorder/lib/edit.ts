@@ -19,7 +19,7 @@ import {
 } from "@genesiscz/utils/recording-editor/denoise";
 import { exportVideoArgv } from "@genesiscz/utils/recording-editor/ffmpeg";
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
-import { integratedLoudness } from "@genesiscz/utils/recording-editor/loudness";
+import { integratedLoudness, recordingLaneInputs } from "@genesiscz/utils/recording-editor/loudness";
 import { cardsLeadUs } from "@genesiscz/utils/recording-editor/overlays";
 import { type TimeValue, timeToUs } from "@genesiscz/utils/recording-editor/plan";
 import {
@@ -78,7 +78,7 @@ import {
     exportChapterPoints,
     recordedMarkersOf,
 } from "./moments";
-import { PROXY_FILE, proxySoundSources } from "./proxy";
+import { PROXY_FILE, proxyAudioInputPaths, proxySoundSources } from "./proxy";
 import { hostExport } from "./service-client";
 
 const { log } = logger.scoped("recorder-edit");
@@ -752,10 +752,26 @@ async function probeFacts({
         // export renders from when denoise is on (music, voiceovers and the click keep their own volume).
         const denoise = project.audio.denoise;
         const cleaned = denoise ? denoisedSourcePath(project.source.video, denoise) : undefined;
+        let video = cleaned && existsSync(cleaned) ? cleaned : project.source.video;
+        const facts = project.audio.lanes ? (audioFacts ?? (await recordingLaneFacts(project))) : undefined;
+        let lanes = project.audio.lanes;
+        if (lanes && facts && denoise) {
+            const clean = await cleanRecordingAudio({ project, facts, settings: denoise });
+            video = clean.path;
+            lanes = clean.lanes;
+        }
         const lufs = await integratedLoudness({
-            video: cleaned && existsSync(cleaned) ? cleaned : project.source.video,
+            video,
             mutedTracks: project.audio.mutedTracks,
             clips: project.clips,
+            ...(facts && lanes
+                ? {
+                      mix: {
+                          lanes: recordingLaneInputs({ video, lanes, facts }),
+                          durationUs: project.source.durationUs,
+                      },
+                  }
+                : {}),
         });
         return { loudnessLufs: lufs ?? null };
     }
@@ -1078,14 +1094,17 @@ function overwritesInput(target: string, inputs: string[]): ExportAnswer | undef
 }
 
 /** The source movie and every media input an export must never replace. */
-export function exportInputsOf(project: EditProject): string[] {
+export function exportInputsOf(project: EditProject, facts?: AudioFacts): string[] {
     const video = project.source.video;
     return [
         video,
         ...(project.camera ? [cameraMoviePath(project.camera, video)] : []),
         ...(project.audio.music ? [resolve(dirname(video), project.audio.music.file)] : []),
         ...(project.audio.voiceovers ?? []).map((voiceover) => resolve(dirname(video), voiceover.file)),
-        ...(project.audio.lanes ?? []).flatMap((lane) => (lane.file ? [resolve(dirname(video), lane.file)] : [])),
+        ...(project.audio.lanes ?? facts?.mixedFrom ?? []).flatMap((lane) =>
+            lane.file ? [resolve(dirname(video), lane.file)] : []
+        ),
+        ...proxyAudioInputPaths(video),
         ...(project.layers?.media ?? []).map((layer) => resolve(dirname(video), layer.file)),
     ];
 }
@@ -1291,7 +1310,7 @@ export async function finishExport({
     // The Export tab hides the subtitle file for a GIF, so the edit's default writes none beside one; an ask still does.
     const isGif = extname(movie).toLowerCase() === ".gif";
     const format = subtitles ?? (isGif ? undefined : project.export.subtitles);
-    const warnings: string[] = [];
+    const warnings = [...(answer.warnings ?? [])];
     // R4 9 intro card: the renderer plays it before the movie, so writeSubtitles and embedChapters move a whole
     // export's subtitles and chapters by its length. A part is a clip of the movie without the cards on every route
     // (exportAs here, the window's exportedProject), so it starts at the part's first frame.
@@ -1331,7 +1350,11 @@ export async function finishExport({
  * and `.denoise/` has none, so without them the progress bar lost them. A label is clipped to the edit markers' cap,
  * and a marker without a label or before the movie's start is left out, so the copy stays a valid edit.
  */
-export function denoisedRenderProject(options: { opened: OpenedProject; cleanedPath: string }): EditProject {
+export function denoisedRenderProject(options: {
+    opened: OpenedProject;
+    cleanedPath: string;
+    cleanedLanes?: EditProject["audio"]["lanes"];
+}): EditProject {
     const { project } = options.opened;
     const { denoise: _denoise, ...audio } = project.audio;
     const camera = project.camera;
@@ -1360,14 +1383,79 @@ export function denoisedRenderProject(options: { opened: OpenedProject; cleanedP
                   },
               }
             : {}),
-        audio: audio.lanes
-            ? {
-                  ...audio,
-                  lanes: audio.lanes.map((lane) => (lane.file ? { ...lane, file: resolve(folder, lane.file) } : lane)),
-              }
-            : audio,
+        audio: {
+            ...audio,
+            ...(options.cleanedLanes !== undefined
+                ? { lanes: options.cleanedLanes }
+                : audio.lanes
+                  ? {
+                        lanes: audio.lanes.map((lane) =>
+                            lane.file ? { ...lane, file: resolve(folder, lane.file) } : lane
+                        ),
+                    }
+                  : {}),
+            ...(audio.music ? { music: { ...audio.music, file: resolve(folder, audio.music.file) } } : {}),
+            ...(audio.voiceovers
+                ? { voiceovers: audio.voiceovers.map((clip) => ({ ...clip, file: resolve(folder, clip.file) })) }
+                : {}),
+        },
         ...(markers.length ? { markers } : {}),
     };
+}
+
+/** Read live facts or retain the saved proxy-track replacements when their original files are missing. */
+export async function recordingLaneFacts(project: EditProject, prepare = false): Promise<AudioFacts> {
+    return (
+        (await editorAudioFacts({ project, prepare })) ?? {
+            movieTracks: await audioTrackCount(project.source.video),
+            mixedFrom: [],
+        }
+    );
+}
+
+/** File lanes stand in for proxy track 0 and use its noise reduction choice and strength. */
+async function cleanRecordingAudio(options: {
+    project: EditProject;
+    facts: AudioFacts;
+    settings: NonNullable<EditProject["audio"]["denoise"]>;
+}): Promise<{ path: string; made: boolean; lanes: EditProject["audio"]["lanes"] }> {
+    const { project, facts, settings } = options;
+    const source = project.source.video;
+    const signal = editCancel.getStore();
+    const clean =
+        facts.movieTracks > 0
+            ? await ensureDenoisedSource({ source, settings, signal })
+            : { path: source, made: false };
+    const lanes = project.audio.lanes ?? (facts.mixedFrom.length ? audioLanesOf(project, facts) : undefined);
+    const needsSidecars = settings.tracks?.includes(0) ?? true;
+    if (!lanes) {
+        return { ...clean, lanes };
+    }
+    const adjusted = [];
+    for (const lane of lanes) {
+        if (!lane.file) {
+            adjusted.push(lane);
+            continue;
+        }
+        const file = resolve(dirname(source), lane.file);
+        if (
+            needsSidecars &&
+            (lane.source === "mic" || lane.source === "system") &&
+            !lane.muted &&
+            lane.volume > 0 &&
+            existsSync(file)
+        ) {
+            const { path } = await ensureDenoisedSource({
+                source: file,
+                settings: { ...settings, tracks: [0] },
+                signal,
+            });
+            adjusted.push({ ...lane, file: path });
+        } else {
+            adjusted.push({ ...lane, file });
+        }
+    }
+    return { ...clean, lanes: adjusted };
 }
 
 /**
@@ -1385,17 +1473,22 @@ async function withDenoisedSource<T>(opened: OpenedProject, render: (editPath: s
 
     const source = opened.project.source.video;
     const started = performance.now();
-    const cleaned = await ensureDenoisedSource({ source, settings });
+    const facts = opened.audioFacts?.mixedFrom.length
+        ? opened.audioFacts
+        : await recordingLaneFacts(opened.project, true);
+    const cleaned = await cleanRecordingAudio({ project: opened.project, facts, settings });
     log.info(
         { source, cleaned: cleaned.path, made: cleaned.made, ms: Math.round(performance.now() - started) },
         "the export renders from the cleaned sound"
     );
-    syncDenoisedTranscript({ transcript: transcriptCachePath(source), copy: transcriptCachePath(cleaned.path) });
+    if (cleaned.path !== source) {
+        syncDenoisedTranscript({ transcript: transcriptCachePath(source), copy: transcriptCachePath(cleaned.path) });
+    }
     const scratch = await mkdtemp(join(tmpdir(), "recorder-denoise-"));
 
     try {
         const copy = join(scratch, "denoised.edit.json");
-        writeProject(copy, denoisedRenderProject({ opened, cleanedPath: cleaned.path }));
+        writeProject(copy, denoisedRenderProject({ opened, cleanedPath: cleaned.path, cleanedLanes: cleaned.lanes }));
         return await render(copy);
     } finally {
         await rm(scratch, { recursive: true, force: true });
@@ -1476,7 +1569,12 @@ async function renderExport(
         overwrite: options.overwrite,
     });
     // The denoised render reads a cleaned copy, but the target is still checked against the recording's own files.
-    const inputs = exportInputsOf(opened.project);
+    const facts =
+        opened.audioFacts ??
+        (basename(opened.project.source.video) === PROXY_FILE
+            ? await editorAudioFacts({ project: opened.project, prepare: false })
+            : undefined);
+    const inputs = exportInputsOf(opened.project, facts);
     const refused = overwritesInput(output, inputs);
 
     if (refused) {
@@ -1540,7 +1638,13 @@ async function renderExport(
                 });
                 const bytes = (await stat(to)).size;
                 log.debug({ output: to, format, bytes }, "converted the export");
-                return { ok: true, path: to, bytes, seconds: Math.round((performance.now() - started) / 10) / 100 };
+                return {
+                    ok: true,
+                    path: to,
+                    bytes,
+                    seconds: Math.round((performance.now() - started) / 10) / 100,
+                    warnings: movie.warnings,
+                };
             },
         });
     } finally {
