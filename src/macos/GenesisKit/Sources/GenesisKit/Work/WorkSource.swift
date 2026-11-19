@@ -167,6 +167,9 @@ public struct WorkNotifyRow: Identifiable, Equatable, Sendable {
 
 /// A write the screen offers on one item.
 public enum WorkScreenAction: Equatable, Sendable {
+    case claim(ref: String)
+    case release(ref: String)
+    case comment(ref: String, text: String)
     case accept(ref: String)
     case drop(ref: String, why: String)
     case finish(ref: String, proof: String)
@@ -178,7 +181,7 @@ public enum WorkScreenAction: Equatable, Sendable {
 
     public var ref: String {
         switch self {
-        case let .accept(ref), let .drop(ref, _), let .finish(ref, _), let .reopen(ref, _),
+        case let .claim(ref), let .release(ref), let .comment(ref, _), let .accept(ref), let .drop(ref, _), let .finish(ref, _), let .reopen(ref, _),
              let .addMember(ref, _), let .unpair(ref, _, _), let .sync(ref, _): return ref
         }
     }
@@ -186,6 +189,9 @@ public enum WorkScreenAction: Equatable, Sendable {
     /// The past tense for the notice after the write.
     public var done: String {
         switch self {
+        case .claim: return "Claimed"
+        case .release: return "Released"
+        case .comment: return "Comment added"
         case .accept: return "Accepted"
         case .drop: return "Dropped"
         case .finish: return "Finished"
@@ -396,6 +402,12 @@ public final class LiveWorkSource: WorkSource {
     public func perform(_ action: WorkScreenAction, project: String) async throws -> WorkActionOutcome {
         let outcome: Envelope<IgnoredData>
         switch action {
+        case let .claim(ref):
+            outcome = try decode(await rpc.work.claim(.init(ref: ref, call: .init(project: project))))
+        case let .release(ref):
+            outcome = try decode(await rpc.work.release(.init(ref: ref, call: .init(project: project))))
+        case let .comment(ref, text):
+            outcome = try decode(await rpc.work.comment(.init(ref: ref, text: text, call: .init(project: project))))
         case let .accept(ref):
             outcome = try decode(await rpc.work.accept(WorkAcceptParams(refs: [ref], call: .init(project: project))))
         case let .drop(ref, why):

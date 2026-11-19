@@ -16,6 +16,7 @@ public struct WorkItemDetail: Decodable, Equatable, Sendable {
         public var tags: [String]?
         public var rev: Int?
         public var fields: [String: String]?
+        public var checkoutPath: String?
 
         public init(id: String, title: String, type: String, state: String, project: String? = nil,
                     body: String? = nil, acceptance: String? = nil, severity: String? = nil,
@@ -27,7 +28,7 @@ public struct WorkItemDetail: Decodable, Equatable, Sendable {
         }
 
         private enum CodingKeys: String, CodingKey {
-            case id, title, type, state, project, body, acceptance, severity, worker, tags, rev, fields
+            case id, title, type, state, project, body, acceptance, severity, worker, tags, rev, fields, createdBy
         }
 
         public init(from decoder: Decoder) throws {
@@ -37,6 +38,12 @@ public struct WorkItemDetail: Decodable, Equatable, Sendable {
             type = try box.decode(String.self, forKey: .type)
             state = try box.decode(String.self, forKey: .state)
             project = try box.decodeIfPresent(String.self, forKey: .project)
+            struct Origin: Decodable { var repoRoot: String?; var project: String? }
+            if let origin = try box.decodeIfPresent(Origin.self, forKey: .createdBy), let project,
+               origin.project?.caseInsensitiveCompare(project) == .orderedSame,
+               origin.repoRoot?.hasPrefix("/") == true {
+                checkoutPath = origin.repoRoot
+            }
             body = try box.decodeIfPresent(String.self, forKey: .body)
             acceptance = try box.decodeIfPresent(String.self, forKey: .acceptance)
             severity = try box.decodeIfPresent(String.self, forKey: .severity)
