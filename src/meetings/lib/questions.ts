@@ -456,27 +456,46 @@ export function wordPriority(occurrences: number): number {
  */
 export function wordQuestions(items: MeetingItem[], context: QuestionContext, minOccurrences: number): NewQuestion[] {
     const asked = new Set(items.flatMap((item) => (item.kind === "question" ? item.decides : [])));
+    // A form some question asks about through one of its terms is asked already.
+    const askedForms = new Set(
+        items.flatMap((item) => (item.kind === "term" && asked.has(item.id) ? [item.heard.toLowerCase()] : []))
+    );
+    const forms = new Map<string, Array<{ item: TermItem; atSec: number; occurrences: number }>>();
 
-    return items
-        .flatMap(
-            (item): Array<{ item: TermItem; atSec: number; occurrences: number }> =>
-                item.kind === "term" &&
-                item.status === "suggested" &&
-                item.atSec !== undefined &&
-                !item.proposed &&
-                !item.meaning &&
-                !item.quote &&
-                item.rules.includes(MeetingRule.UnknownWord) &&
-                heardTimes(item) >= minOccurrences &&
-                !asked.has(item.id)
-                    ? [{ item, atSec: item.atSec, occurrences: heardTimes(item) }]
-                    : []
-        )
+    for (const item of items) {
+        if (
+            item.kind !== "term" ||
+            item.status !== "suggested" ||
+            item.atSec === undefined ||
+            item.proposed ||
+            item.meaning ||
+            item.quote ||
+            !item.rules.includes(MeetingRule.UnknownWord) ||
+            heardTimes(item) < minOccurrences ||
+            askedForms.has(item.heard.toLowerCase())
+        ) {
+            continue;
+        }
+
+        const form = item.heard.toLowerCase();
+        forms.set(form, [...(forms.get(form) ?? []), { item, atSec: item.atSec, occurrences: heardTimes(item) }]);
+    }
+
+    return [...forms.values()]
+        .map((terms) => {
+            const ordered = [...terms].sort((a, b) => a.atSec - b.atSec);
+            return {
+                ...ordered[0]!,
+                occurrences: Math.max(...terms.map((term) => term.occurrences)),
+                decides: ordered.map((term) => term.item.id),
+            };
+        })
         .sort((a, b) => b.occurrences - a.occurrences || a.atSec - b.atSec)
-        .map(({ item, atSec, occurrences }) => {
+        .map(({ item, atSec, occurrences, decides }) => {
             const heard = heardTerm(item, atSec, context);
             return {
                 ...heard.question,
+                decides,
                 group: "words" as const,
                 question: `What is "${item.heard}"? It is heard ${occurrences} times.`,
                 choices: [],

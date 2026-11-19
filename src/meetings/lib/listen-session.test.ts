@@ -432,6 +432,27 @@ describe("listen session", () => {
         expect(fx.item("i4")?.evidence).not.toHaveProperty("derivedFrom");
     });
 
+    test("word questions ask once per heard form, and a form a question asks already is not asked again", async () => {
+        const unknown = (heard: string, occurrences: number) => ({
+            heard,
+            rules: [MeetingRule.UnknownWord],
+            evidence: { occurrences },
+        });
+        const items = [
+            term("i1", 10, unknown("Zorb", 3)),
+            term("i2", 20, unknown("zorb", 4)),
+            term("i3", 30, unknown("vemlet", 2)),
+            term("i4", 40, unknown("vemlet", 2)),
+            question("i5", { about: "term", group: "words", heard: "vemlet", decides: ["i3"] }),
+        ];
+        const fx = await fixture(items);
+        const suggested = wordQuestions(fx.read().items, { transcript, points: [], listenBelow: 0.6 }, 2);
+
+        expect(
+            suggested.map(({ heard, decides, evidence }) => ({ heard, decides, occurrences: evidence?.occurrences }))
+        ).toEqual([{ heard: "Zorb", decides: ["i1", "i2"], occurrences: 4 }]);
+    });
+
     test("an answer decides its items, and a word answer settles the other question on the same heard words", async () => {
         const { session, item, ledger, logPath } = await fixture([
             term("i1", 50, { proposed: "ADA" }),
