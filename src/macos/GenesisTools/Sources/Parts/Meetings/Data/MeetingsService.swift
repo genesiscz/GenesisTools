@@ -1223,7 +1223,7 @@ final class MeetingsRowsRefresh {
     func apply(_ patch: ReviewRowsPatch, token: String) {
         for key in recent where key.meeting == patch.meeting {
             guard let current = snapshots[key] else { continue }
-            let latest = Dictionary(uniqueKeysWithValues: current.rows.compactMap { row in row.decision.map { (row.id, $0.token) } })
+            let latest = Dictionary(current.rows.compactMap { row in row.decision.map { (row.id, $0.token) } }, uniquingKeysWith: { first, _ in first })
             snapshots[key] = patch.applying(to: current, token: token, latest: latest)
         }
     }

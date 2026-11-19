@@ -311,6 +311,21 @@ extension MeetingsQuestionRowsTests {
         XCTAssertEqual(detail.rows.value, saved)
     }
 
+    func testRepeatedIDsFailTheRowsReadInsteadOfTrapping() throws {
+        let row = #"{"id":"q","label":"Q1","kind":"question","status":"suggested","what":"Who?","parts":[],"choices":[],"edit":"answer","sources":[],"target":{"kind":"item","id":"q"}}"#
+        let details = #"{"id":"q","decidedLines":[],"impact":{"lines":0,"words":0,"sameDoubtLines":0}}"#
+        func decode(rows: [String], details: [String]) throws -> ReviewRows {
+            try JSONDecoder().decode(ReviewRows.self, from: Data(#"{"meeting":"copy","hidden":{"lowPriority":0,"minPriority":0},"rows":[\#(rows.joined(separator: ","))],"questionDetails":[\#(details.joined(separator: ","))]}"#.utf8))
+        }
+        XCTAssertEqual(try decode(rows: [row], details: [details]).questionDetailsByID.count, 1)
+        XCTAssertThrowsError(try decode(rows: [row, row], details: [details]), "a repeated row id is a broken reply")
+        XCTAssertThrowsError(try decode(rows: [row], details: [details, details]), "a repeated details id is a broken reply")
+        let built = ReviewRows(meeting: "copy", rows: [try question(token: "first"), try question(token: "second")],
+                               hidden: .init(lowPriority: 0, minPriority: 0), questionDetails: [evidence(), evidence()])
+        XCTAssertEqual(built.questionDetailsTokens["q"], "first", "a value built in code keeps the first")
+        XCTAssertEqual(built.questionDetailsByID.count, 1)
+    }
+
     func testPatchPreservesEveryOptionalRowAndEvidenceField() throws {
         let row = try JSONDecoder().decode(ReviewRow.self, from: Data(#"{"id":"q","label":"Q1","kind":"question","status":"suggested","confidence":0.8,"priority":0.9,"group":"rules","occurrences":3,"reach":0.7,"comment":"Keep the source","what":"Who?","parts":[],"choices":[],"edit":"answer","needs":"listen","sources":[],"target":{"kind":"item","id":"q"},"answer":"Earlier","decision":{"token":"earlier","actor":{"kind":"window"},"by":"you","action":"answer","reason":"Checked","question":"q","at":"2026-01-01T00:00:00Z"}}"#.utf8))
         let hidden = ReviewRows.Hidden(lowPriority: 2, minPriority: 0.5)

@@ -887,8 +887,9 @@ struct ReviewRows: Decodable, Equatable {
         self.meeting = meeting; self.rows = rows; self.hidden = hidden
         self.attendanceWarning = attendanceWarning; self.attendanceDetail = attendanceDetail
         self.lineEvidence = lineEvidence; self.questionDetails = questionDetails
-        questionDetailsByID = Dictionary(uniqueKeysWithValues: (questionDetails ?? []).map { ($0.id, $0) })
-        questionDetailsTokens = Dictionary(uniqueKeysWithValues: rows.compactMap { row in row.decision.map { (row.id, $0.token) } })
+        // Decoding refuses repeated ids; a value built in code keeps the first.
+        questionDetailsByID = Dictionary((questionDetails ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        questionDetailsTokens = Dictionary(rows.compactMap { row in row.decision.map { (row.id, $0.token) } }, uniquingKeysWith: { first, _ in first })
     }
 
     func needsQuestionDetails(for row: ReviewRow) -> Bool {
@@ -900,11 +901,20 @@ struct ReviewRows: Decodable, Equatable {
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
-        self.init(meeting: try values.decode(String.self, forKey: .meeting), rows: try values.decode([ReviewRow].self, forKey: .rows),
+        let rows = try values.decode([ReviewRow].self, forKey: .rows)
+        let questionDetails = try values.decodeIfPresent([QuestionDetails].self, forKey: .questionDetails)
+        // A repeated id is a broken reply: it fails as a read instead of trapping where the rows are indexed by id.
+        for (ids, key) in [(rows.map(\.id), CodingKeys.rows), ((questionDetails ?? []).map(\.id), .questionDetails)] {
+            var seen = Set<String>()
+            if let repeated = ids.first(where: { !seen.insert($0).inserted }) {
+                throw DecodingError.dataCorruptedError(forKey: key, in: values, debugDescription: "The id \(repeated) appears twice")
+            }
+        }
+        self.init(meeting: try values.decode(String.self, forKey: .meeting), rows: rows,
             hidden: try values.decode(Hidden.self, forKey: .hidden), attendanceWarning: try values.decodeIfPresent(String.self, forKey: .attendanceWarning),
             attendanceDetail: try values.decodeIfPresent(String.self, forKey: .attendanceDetail),
             lineEvidence: try values.decodeIfPresent([WindowLineEvidence].self, forKey: .lineEvidence),
-            questionDetails: try values.decodeIfPresent([QuestionDetails].self, forKey: .questionDetails))
+            questionDetails: questionDetails)
     }
 }
 
@@ -1019,7 +1029,7 @@ struct ReviewRowsPatch: Decodable, Equatable {
             }
         }
         if !conflicted {
-            let positions = Dictionary(uniqueKeysWithValues: order.enumerated().map { ($0.element, $0.offset) })
+            let positions = Dictionary(order.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: { first, _ in first })
             rows = rows.enumerated().sorted {
                 let a = positions[$0.element.id] ?? Int.max, b = positions[$1.element.id] ?? Int.max
                 return a == b ? $0.offset < $1.offset : a < b

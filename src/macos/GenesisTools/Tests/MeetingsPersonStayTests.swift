@@ -108,6 +108,17 @@ final class MeetingsPersonStayTests: XCTestCase {
         draft.set(.unsure, for: "Fern")
         XCTAssertEqual(draft.count, 0)
         XCTAssertEqual(draft.seats(record: nil), MeetingSeats())
+
+        // A person who left the call and came back has two remote seats: both survive, and the person counts once.
+        let returning = try JSONDecoder().decode(MeetingsAPI.SeatsSuggest.Suggestion.self, from: Data(#"""
+        {"seats":{"room":[],"remote":[{"name":"Fern","fromSec":0,"toSec":60},{"name":"Fern","fromSec":120,"toSec":180}]},
+         "people":[{"name":"Fern","seat":"remote","reason":"Two stays on the call.","confidence":1}]}
+        """#.utf8))
+        var twice = MeetingSeatChoices(returning)
+        XCTAssertEqual(twice.count, 1)
+        XCTAssertEqual(twice.seats(record: nil), returning.seats)
+        twice.set(.unsure, for: "Fern")
+        XCTAssertEqual(twice.count, 0)
     }
 
     /// w_sbxfmxen: the seats sheet seats picked people and picks a device; nothing is typed as an id or a comma list,

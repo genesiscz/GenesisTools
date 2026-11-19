@@ -50,9 +50,9 @@ extension MeetingDetailModel {
 
     /// Rows that landed: the player learns once whether this meeting's Moments can play (G-STATE-1).
     func rowsLanded(_ rows: ReviewRows) {
-        rowDecisionTokens = Dictionary(uniqueKeysWithValues: rows.rows.compactMap { row in
+        rowDecisionTokens = Dictionary(rows.rows.compactMap { row in
             row.decision.map { (row.id, $0.token) }
-        })
+        }, uniquingKeysWith: { first, _ in first })
         if let first = rows.rows.first(where: \.isOpen) ?? rows.rows.first {
             window?.player.checkPlayable(first.target, in: id)
         }

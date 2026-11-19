@@ -343,8 +343,8 @@ struct MeetingSeatChoices {
 
     init(_ suggestion: MeetingsAPI.SeatsSuggest.Suggestion) {
         self.suggestion = suggestion
-        choices = Dictionary(uniqueKeysWithValues: suggestion.people.map { ($0.name, $0.seat) })
-        count = suggestion.people.filter { $0.seat != .unsure }.count
+        choices = Dictionary(suggestion.people.map { ($0.name, $0.seat) }, uniquingKeysWith: { first, _ in first })
+        count = choices.values.filter { $0 != .unsure }.count
     }
 
     mutating func set(_ seat: Seat, for name: String) {
@@ -368,7 +368,8 @@ struct MeetingSeatChoices {
         let remote = Dictionary(grouping: suggestion.seats.remote, by: { PeopleText.personKey($0.name) })
         let room = Dictionary(grouping: suggestion.seats.roomRows, by: { PeopleText.personKey($0.name) })
         var seats = MeetingSeats()
-        for person in suggestion.people {
+        var placed = Set<String>()
+        for person in suggestion.people where placed.insert(person.name).inserted {
             switch choices[person.name] ?? .unsure {
             case .room: seats.roomRows += room[PeopleText.personKey(person.name)] ?? [.init(person.name)]
             case .remote:
