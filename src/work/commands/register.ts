@@ -74,6 +74,28 @@ export async function runMethod(
         return;
     }
 
+    if (method === "configSet") {
+        for (const key of ["notify", "restore"] as const) {
+            const raw = params[key];
+
+            if (typeof raw !== "string" && !(Array.isArray(raw) && raw.every((value) => typeof value === "string"))) {
+                continue;
+            }
+
+            try {
+                // The generic CLI supports flat values; this method's two structured inputs are JSON.
+                params[key] = SafeJSON.parse(typeof raw === "string" ? raw : raw.join(","), { strict: true });
+            } catch (error) {
+                emitAs(
+                    failReply("configSet", [errorDiagnostic("BAD_JSON", `${key} is not JSON: ${String(error)}`, key)]),
+                    workFormatters().configSet,
+                    formatFlags(extra)
+                );
+                return;
+            }
+        }
+    }
+
     const reply = await callWorkHere(method, params, {
         ...(typeof extra.requestId === "string" ? { request: extra.requestId } : {}),
         ...(extra.dryRun === true ? { dryRun: true } : {}),
@@ -141,6 +163,7 @@ export function registerWorkCommands(program: Command): void {
     registerConfigSet(commands.get("config"));
     // The spec's spelling (P5 decision 5); the method keeps the camel-case name every other door uses.
     commands.get("addMember")?.alias("add-member");
+    commands.get("configSet")?.alias("config-set");
 
     program
         .command("dump")

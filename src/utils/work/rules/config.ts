@@ -74,7 +74,7 @@ const routingRuleSchema = z.object({
     }),
 });
 
-const notifyRuleSchema = z.union([
+export const notifyRuleSchema = z.union([
     z.enum(NOTIFY_LEVELS),
     z.object({ level: z.enum(NOTIFY_LEVELS), minSeverity: z.enum(SEVERITIES) }),
 ]);

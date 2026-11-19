@@ -8,10 +8,12 @@ private final class FakeWorkSource: WorkSource {
     var snapshotValue: WorkSnapshotValue
     var notifyRows: [WorkNotifyRow] = []
     var performed: [WorkScreenAction] = []
+    var notifyCall: [String?] = []
     var reads = 0
     var holdNextRead = false
     var resumeRead: CheckedContinuation<Void, Never>?
     var subscriptions = 0
+    var serviceDown = false
     private var continuation: AsyncStream<Void>.Continuation?
 
     init(_ snapshot: WorkSnapshotValue) { snapshotValue = snapshot }
@@ -28,13 +30,20 @@ private final class FakeWorkSource: WorkSource {
         return snapshotValue
     }
     func notify(project: String) async throws -> [WorkNotifyRow] { notifyRows }
+    func setNotify(project: String?, scope: WorkNotifyScope, type: String, action: String, level: String?) async throws -> WorkActionOutcome {
+        notifyCall = [project, scope.rawValue, type, action, level]
+        return WorkActionOutcome(ok: true, message: "Updated")
+    }
     func perform(_ action: WorkScreenAction, project: String) async throws -> WorkActionOutcome {
         performed.append(action)
         return WorkActionOutcome(ok: true, message: "\(action.done): \(action.ref)")
     }
     func changes() -> AsyncStream<Void> {
         subscriptions += 1
-        return AsyncStream { continuation = $0 }
+        return AsyncStream {
+            continuation = $0
+            if serviceDown { $0.finish() }
+        }
     }
     func tick() { continuation?.yield(()) }
     func end() { continuation?.finish() }
@@ -42,6 +51,38 @@ private final class FakeWorkSource: WorkSource {
 
 @MainActor
 final class WorkScreenTests: XCTestCase {
+    func testLiveSourceEndsWhenTheSubscribedSocketCloses() async throws {
+        let peer = FakeRPCPeer()
+        try peer.start()
+        let rpc = GenesisToolsRPC(path: peer.path)
+        let source = LiveWorkSource(rpc: rpc, walPath: peer.path + "/work.db-wal")
+        let stream = source.changes()
+        let ended = expectation(description: "Work observed the socket closing")
+        let listener = Task { for await _ in stream {}; ended.fulfill() }
+        defer { listener.cancel(); rpc.close() }
+        try await Task.detached {
+            defer { peer.stop() }
+            for method in ["hello", "subscribe"] {
+                let request = try peer.line { $0["method"] as? String == method }
+                let id = try XCTUnwrap(request["id"])
+                peer.send(["jsonrpc": "2.0", "id": id, "result": [:]])
+            }
+        }.value
+        await fulfillment(of: [ended], timeout: 3)
+    }
+
+    func testNotifyUsesTheTypedSourceAndEncodesInheritanceAsNull() async throws {
+        let fake = FakeWorkSource(fixture())
+        let source: WorkSource = fake
+        let result = try await source.setNotify(project: "Orchard", scope: .project, type: "bug", action: "spotted", level: "inbox")
+        XCTAssertTrue(result.ok)
+        XCTAssertEqual(fake.notifyCall, ["Orchard", "project", "bug", "spotted", "inbox"])
+        let bytes = Data(#"{"scope":"project","project":"Orchard","notify":{"type":"*","action":"finished","level":null}}"#.utf8)
+        let params = try JSONDecoder().decode(WorkConfigSetParams.self, from: bytes)
+        let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(params)) as? [String: Any]
+        let notify = try XCTUnwrap(encoded?["notify"] as? [String: Any])
+        XCTAssertTrue(notify["level"] is NSNull)
+    }
     private func fixture() -> WorkSnapshotValue {
         WorkSnapshotValue(
             project: "App",
@@ -169,6 +210,21 @@ final class WorkScreenTests: XCTestCase {
         await settle { source.reads > reads }
         XCTAssertEqual(source.subscriptions, 2)
         XCTAssertEqual(source.reads, reads + 1)
+    }
+
+    func testRetriesStopAfterThreeFailuresAndManualReconnectRestartsTheStream() async {
+        let source = FakeWorkSource(fixture())
+        let model = WorkScreenModel(source: source, retryDelays: [0, 0, 0])
+        source.serviceDown = true
+        model.activate()
+        defer { model.deactivate() }
+        let stopped = WorkLiveState.stopped(reason: "The GenesisTools service stopped.")
+        await settle { source.subscriptions >= 4 && model.live == stopped }
+        XCTAssertEqual(source.subscriptions, 4)
+        source.serviceDown = false
+        model.reconnect()
+        XCTAssertEqual(source.subscriptions, 5)
+        XCTAssertEqual(model.live, .live)
     }
 
     func testSlowTickAndPendingWriteWaitForTheirOwnRead() async {

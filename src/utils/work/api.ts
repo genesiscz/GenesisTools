@@ -5,7 +5,8 @@
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { z } from "zod";
 import { ITEM_STATES, ITEM_TYPES, LINK_KINDS, LOG_RESULTS, SEVERITIES } from "./model/vocab";
-import { configResultSchema, listRowSchema, treeResultSchema, triageRowSchema } from "./wire";
+import { NOTIFY_ACTIONS, NOTIFY_LEVELS, notifyRuleSchema } from "./rules/config";
+import { configResultSchema, configSetResultSchema, listRowSchema, treeResultSchema, triageRowSchema } from "./wire";
 
 const ref = z.string().min(1).describe("an id (w_…, h_…) or <handoff>:<slot>");
 const refs = z.array(z.string().min(1)).min(1).describe("ids or <handoff>:<slot>, comma-separated on the CLI");
@@ -85,6 +86,36 @@ export const workMethods = {
         resultName: `${reply}, data: { project, rows: { type, fields, writes, notify }[] }`,
         effect: "read",
         doc: "The effective rules of a project; each value names the layer that set it.",
+    }),
+    configSet: defineMethod({
+        name: "configSet",
+        params: z.object({
+            scope: z.enum(["project", "global"]),
+            project: z.string().min(1).optional(),
+            notify: z
+                .object({
+                    type: z.enum([...ITEM_TYPES, "*"]),
+                    action: z.enum([...NOTIFY_ACTIONS, "*"]),
+                    level: z.enum(NOTIFY_LEVELS).nullable(),
+                })
+                .optional(),
+            restore: z
+                .array(
+                    z.object({
+                        type,
+                        action: z.enum(NOTIFY_ACTIONS),
+                        from: notifyRuleSchema.nullable(),
+                        to: notifyRuleSchema.nullable(),
+                    })
+                )
+                .min(1)
+                .max(Math.max(ITEM_TYPES.length, NOTIFY_ACTIONS.length))
+                .optional(),
+        }),
+        result: configSetResultSchema,
+        resultName: `${reply}, data: { changed: { path, type, action, from, to }[], file }`,
+        effect: "reversible",
+        doc: "Change notification rules for one cell, a row or a column, or restore a previous change. Supply exactly one of notify or restore. Request ids are not persisted; repeating a level change is a no-op.",
     }),
     spot: defineMethod({
         name: "spot",

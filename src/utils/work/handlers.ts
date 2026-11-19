@@ -17,12 +17,12 @@ import {
 import { originFor, type Pairing } from "./connectors/types";
 import { type ContextReport, stampOf } from "./context";
 import type { Item } from "./model/item";
-import { ITEM_TYPES, type ItemType, isOpenState } from "./model/vocab";
-import { type ResolvedNotify, resolveNotify } from "./notify";
+import { ITEM_TYPES, type ItemType, isOpenState, type Severity } from "./model/vocab";
+import { defaultNotify, type ResolvedNotify, resolveNotify } from "./notify";
 import { pairingsForRows, type RowPairings } from "./pairing-rows";
 import { type ItemRow, type Liveness, listItems, type ShowResult, showItem, type TriageRow, triage } from "./read";
 import { type ReopenData, reopen } from "./reopen";
-import type { FieldRule, RoleRule } from "./rules/config";
+import type { FieldRule, NotifyLevel, NotifyRule, RoleRule } from "./rules/config";
 import {
     NOTIFY_ACTIONS,
     type NotifyAction,
@@ -31,7 +31,13 @@ import {
     WRITE_VERBS,
     type WriteVerb,
 } from "./rules/config";
-import { type LoadProjectRules, loadWorkRules } from "./rules/load";
+import {
+    type LoadedRules,
+    type LoadProjectRules,
+    loadWorkRules,
+    type NotifyConfigChange,
+    setWorkNotifyConfig,
+} from "./rules/load";
 import type { Resolved } from "./rules/resolve";
 import { randomItemSuffix, type WorkContext, type WriteData, write } from "./service";
 import type { WorkCommand } from "./store/decide";
@@ -50,6 +56,8 @@ export interface WorkSession {
     call: CallOptions;
     alive: Liveness;
     loadRules?: LoadProjectRules;
+    /** The machine file this session edits; tests supply a temporary file. */
+    configPath?: string;
     /** The preflight context; the door builds it (git, the forge, T3 state). */
     context(network: boolean): Promise<ContextReport>;
 }
@@ -75,12 +83,23 @@ export interface ContextResult extends ContextReport {
     harness: string;
 }
 
+export interface ConfigNotifyEditor extends ResolvedNotify {
+    builtInLevel: NotifyLevel;
+    minSeverity?: Severity;
+    repoPath: string | null;
+    layers: (ResolvedNotify["layers"][number] & {
+        rule: NotifyRule | null;
+        wildcard: boolean;
+        fallback?: NotifyLevel;
+    })[];
+}
+
 export interface ConfigRow {
     type: ItemType;
     fields: { field: RuleField; resolved: Resolved<FieldRule> }[];
     writes: { verb: WriteVerb; resolved: Resolved<RoleRule> }[];
     /** Who hears about each action on this type (P8 decision 4): the level of each layer and the one that decides. */
-    notify: { action: NotifyAction; resolved: ResolvedNotify }[];
+    notify: { action: NotifyAction; resolved: ResolvedNotify; editor: ConfigNotifyEditor }[];
 }
 
 export interface ConfigResult {
@@ -98,6 +117,7 @@ export interface WorkResults {
     triage: (TriageRow & RowPairings)[];
     context: ContextResult;
     config: ConfigResult;
+    configSet: { changed: NotifyConfigChange[]; file: string };
     spot: WriteData;
     add: WriteData;
     edit: WriteData;
@@ -199,6 +219,62 @@ function knownConnector(deps: SyncDeps, verb: string, id: string): Reply<never> 
     ]);
 }
 
+/** A rule editor shows the stored level and threshold, rather than testing an event with no severity. */
+function notifyForConfig({
+    loaded,
+    type,
+    action,
+}: {
+    loaded: LoadedRules;
+    type: ItemType;
+    action: NotifyAction;
+}): ConfigNotifyEditor {
+    const builtInLevel = defaultNotify({ type, action });
+    const result: ConfigNotifyEditor = {
+        level: builtInLevel,
+        from: "default",
+        builtInLevel,
+        repoPath: loaded.sources.find((source) => source.layer === "config.repo")?.path ?? null,
+        layers: [{ layer: "default", value: builtInLevel, rule: null, wildcard: false }],
+    };
+
+    for (const entry of loaded.notifyLayers) {
+        if (entry.layer !== "config.global" && entry.layer !== "config.repo" && entry.layer !== "config.project") {
+            continue;
+        }
+
+        const concrete = entry.rules?.notify?.[type]?.[action];
+        const fallback = entry.rules?.notify?.["*"]?.[action];
+        const rule = concrete ?? fallback;
+        const level = typeof rule === "string" ? rule : rule?.level;
+        result.layers.push({
+            layer: entry.layer,
+            ...(level !== undefined ? { value: level } : {}),
+            rule: rule ?? null,
+            wildcard: concrete === undefined && rule !== undefined,
+            ...(concrete && fallback ? { fallback: typeof fallback === "string" ? fallback : fallback.level } : {}),
+        });
+
+        if (level !== undefined) {
+            result.level = level;
+            result.from = entry.layer;
+            result.minSeverity = typeof rule === "object" ? rule.minSeverity : undefined;
+        }
+    }
+
+    return result;
+}
+
+function rulesForConfig(session: WorkSession, project: string): Promise<LoadedRules> {
+    const location = {
+        project,
+        repoRoot: project === session.ctx.project ? session.ctx.actor.repoRoot : null,
+    };
+    return session.loadRules
+        ? session.loadRules(location)
+        : loadWorkRules({ ...location, configPath: session.configPath });
+}
+
 export const workHandlers: WorkHandlers = {
     async list(p, session) {
         const workerSession = p.worker === "me" ? (session.ctx.actor.sessionId ?? "-") : p.worker;
@@ -285,10 +361,7 @@ export const workHandlers: WorkHandlers = {
 
     async config(p, session) {
         const project = p.project ?? session.ctx.project;
-        const loaded = await (session.loadRules ?? loadWorkRules)({
-            project,
-            repoRoot: project === session.ctx.project ? session.ctx.actor.repoRoot : null,
-        });
+        const loaded = await rulesForConfig(session, project);
         const types = p.type ?? [...ITEM_TYPES];
         const rows: ConfigRow[] = types.map((type) => ({
             type,
@@ -299,9 +372,35 @@ export const workHandlers: WorkHandlers = {
             notify: NOTIFY_ACTIONS.map((action) => ({
                 action,
                 resolved: resolveNotify(loaded.notifyLayers, { type, action }),
+                editor: notifyForConfig({ loaded, type, action }),
             })),
         }));
         return okReply("config", { project, sources: loaded.sources, rows }, { diagnostics: loaded.problems });
+    },
+
+    async configSet(p, session) {
+        const project = p.project ?? session.ctx.project;
+        const loaded = await rulesForConfig(session, project);
+        const lockedCells = new Set<string>();
+
+        for (const type of ITEM_TYPES) {
+            for (const action of NOTIFY_ACTIONS) {
+                if (notifyForConfig({ loaded, type, action }).from === "config.repo") {
+                    lockedCells.add(`${type}:${action}`);
+                }
+            }
+        }
+
+        const result = await setWorkNotifyConfig({
+            ...p,
+            ...(session.configPath !== undefined ? { configPath: session.configPath } : {}),
+            dryRun: session.call.dryRun === true,
+            projectExists: selectItems(session.ctx.db, { project, limit: 1 }).length > 0,
+            lockedCells,
+        });
+        return result.ok
+            ? okReply("configSet", { changed: result.changed, file: result.file }, { dryRun: session.call.dryRun })
+            : failReply("configSet", [errorDiagnostic(result.code, result.problem)]);
     },
 
     async spot(p, session) {
