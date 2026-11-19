@@ -30,6 +30,8 @@ public final class WorkScreenModel: ObservableObject {
                 itemDetail = nil
                 snapshot = nil
                 notifyRows = []
+                clearProjectEdits()
+                if failure != nil { failure = nil }
                 isFirstLoad = true
                 read()
             }
@@ -38,6 +40,7 @@ public final class WorkScreenModel: ObservableObject {
     @Published public var pane: Pane = .items {
         didSet {
             if pane != oldValue {
+                if failure != nil { failure = nil }
                 if pane == .notify { itemRef = nil; itemDetail = nil }
                 read()
             }
@@ -47,8 +50,11 @@ public final class WorkScreenModel: ObservableObject {
     @Published public private(set) var itemDetail: WorkItemDetail?
     private var adoptingItemProject = false
     @Published public private(set) var snapshot: WorkSnapshotValue?
+    private var confirmedSnapshot: WorkSnapshotValue?
+    private var pendingItemStates: [String: String] = [:]
     public private(set) var rowAnimation: Bool?
     @Published public private(set) var notifyRows: [WorkNotifyRow] = []
+    @Published public private(set) var notifyLoaded = false
     @Published public private(set) var isLoading = false
     @Published public private(set) var isFirstLoad = true
     @Published public private(set) var live: WorkLiveState = .live
@@ -57,6 +63,10 @@ public final class WorkScreenModel: ObservableObject {
     @Published public private(set) var notice: WorkActionOutcome?
     /// Items with a write on its way; their row shows it and refuses a second click.
     @Published public private(set) var pending: Set<String> = []
+    @Published public private(set) var notifyPending: [String: String] = [:]
+    @Published public private(set) var notifyCommand: String?
+    public let notifyNotices = NoticeStackModel()
+    private var notifyGeneration = UUID()
 
     private let source: WorkSource
     private var openingCandidates: [String]?
@@ -261,9 +271,11 @@ public final class WorkScreenModel: ObservableObject {
                     self.adoptingItemProject = false
                     if self.itemDetail != detail { self.itemDetail = detail }
                 } else if let project, pane == .items {
-                    let next = try await self.source.snapshot(project: project)
+                    let confirmed = try await self.source.snapshot(project: project)
                     guard !Task.isCancelled, self.project == project else { return }
                     PerfSpans.measure("work.reload") {
+                        self.confirmedSnapshot = confirmed
+                        let next = confirmed.previewing(self.pendingItemStates)
                         if self.snapshot != next {
                             PerfMainBusy.measure("work.reload")
                             self.rowAnimation = self.snapshot.flatMap { previous in
@@ -278,6 +290,7 @@ public final class WorkScreenModel: ObservableObject {
                     let rows = try await self.source.notify(project: project)
                     guard !Task.isCancelled, self.project == project else { return }
                     if self.notifyRows != rows { self.notifyRows = rows }
+                    if !self.notifyLoaded { self.notifyLoaded = true }
                 }
                 if self.isFirstLoad { self.isFirstLoad = false }
                 if self.failure != nil { self.failure = nil }
@@ -321,24 +334,176 @@ public final class WorkScreenModel: ObservableObject {
         guard let project, !pending.contains(action.ref) else { return }
         pending.insert(action.ref)
         defer { pending.remove(action.ref) }
+        switch action {
+        case .finish: pendingItemStates[action.ref] = "done"
+        case .drop: pendingItemStates[action.ref] = "dropped"
+        case .accept: pendingItemStates[action.ref] = "open"
+        case .reopen: pendingItemStates[action.ref] = "reopened"
+        default: break
+        }
+        showPendingItemStates()
         do {
             notice = try await source.perform(action, project: project)
         } catch {
             notice = WorkActionOutcome(ok: false, message: error.localizedDescription)
         }
+        pendingItemStates[action.ref] = nil
+        if notice?.ok != true { showPendingItemStates() }
         await readAfterWrite()
+    }
+
+    private func showPendingItemStates() {
+        guard let confirmedSnapshot, confirmedSnapshot.project == project, snapshot != nil else { return }
+        let next = confirmedSnapshot.previewing(pendingItemStates)
+        if snapshot != next {
+            rowAnimation = nil
+            snapshot = next
+        }
     }
 
     private func readAfterWrite() async {
         read()
+        await finishCurrentRead()
+    }
+
+    func finishCurrentRead() async {
         // An explicit read or a navigation may supersede our read while it is in flight.
         while let current = loading { await current.value }
     }
 
     public func clearNotice() { notice = nil }
+
+    // MARK: - Notify
+
+    private func clearProjectEdits() {
+        notifyGeneration = UUID()
+        if notifyLoaded { notifyLoaded = false }
+        if !notifyPending.isEmpty { notifyPending = [:] }
+        if notifyCommand != nil { notifyCommand = nil }
+        let remaining = pending.filter { !$0.hasPrefix("notify:") }
+        if remaining != pending { pending = remaining }
+    }
+
+    public func setNotify(scope: WorkNotifyScope, type: String, action: String, level: String?) async {
+        guard let project, pane == .notify else { return }
+        if case .stopped = live { return }
+        let layer = scope == .global ? "config.global" : "config.project"
+        var previews: [String: String] = [:]
+        for row in notifyRows where type == "*" || type == row.type {
+            for cell in row.cells where cell.writable && (action == "*" || action == cell.action) {
+                let key = "notify:\(row.type):\(cell.action)"
+                // A project override remains visible when its global default is edited.
+                if scope == .global && ["config.project", "config.repo"].contains(cell.from) {
+                    previews[key] = cell.level
+                } else if let level {
+                    previews[key] = level
+                } else {
+                    previews[key] = cell.inheriting(scope).level
+                }
+            }
+        }
+        let keys = Set(previews.keys).union(["notify:\(type):\(action)"])
+        guard !previews.isEmpty, pending.isDisjoint(with: keys) else { return }
+        pending.formUnion(keys)
+        notifyPending.merge(previews) { _, new in new }
+        let generation = notifyGeneration
+        defer {
+            if notifyGeneration == generation {
+                pending.subtract(keys)
+                notifyPending = notifyPending.filter { !keys.contains($0.key) }
+            }
+        }
+        do {
+            let result = try await source.setNotify(project: project, scope: scope, type: type, action: action, level: level)
+            guard result.ok else { throw WorkSourceError(result.message) }
+            var message = result.message
+            if notifyGeneration == generation {
+                await readAfterWrite()
+                if notifyGeneration == generation, pane == .notify, failure == nil {
+                    if let change = result.changes.last {
+                        notifyCommand = command(for: change, scope: scope, project: project)
+                    }
+                    let conflicts = result.changes.contains { change in
+                        guard let row = notifyRows.first(where: { $0.type == change.type }),
+                              let cell = row.cells.first(where: { $0.action == change.action }) else { return true }
+                        let stored = cell.layers.first { $0.layer == layer && !$0.wildcard }?.rule ?? .inherit
+                        return stored != change.to
+                    }
+                    if conflicts { message = "Changed by another writer" }
+                    else if !result.changes.isEmpty {
+                        let name = type == "*" ? WorkNotifyWords.action(action) : WorkNotifyWords.type(type)
+                        let affected = Plural.count(result.changes.count, type == "*" ? "type" : "rule")
+                        let effect = level == "off" ? "nobody hears about it" : level.map(WorkNotifyWords.level)?.lowercased() ?? "inherited level"
+                        message = "\(name): \(effect) for \(affected)"
+                    }
+                } else if pane == .notify && failure != nil {
+                    message = "Rules saved. The updated rules could not be read."
+                }
+            }
+            let fixes: [StackedNotice.Action] = result.changes.isEmpty ? [] : [
+                .undo { [weak self] id in Task {
+                    await self?.undoNotify(project: project, scope: scope, changes: result.changes, noticeID: id)
+                } }
+            ]
+            notifyNotices.push(.init(text: message, actions: fixes))
+        } catch {
+            showNotifyFailure(error, outcome: "The notification rules could not be saved")
+        }
+    }
+
+    private func undoNotify(project: String, scope: WorkNotifyScope, changes: [WorkNotifyChange],
+                            noticeID: StackedNotice.ID) async {
+        do {
+            let result = try await source.restoreNotify(project: project, scope: scope, changes: changes)
+            guard result.ok else { throw WorkSourceError(result.message) }
+            if self.project == project, pane == .notify { await readAfterWrite() }
+            notifyNotices.push(.init(text: "Restored the previous notification rules"), replacing: noticeID)
+        } catch {
+            showNotifyFailure(error, outcome: "The previous rules could not be restored", replacing: noticeID)
+        }
+    }
+
+    private func showNotifyFailure(_ error: Error, outcome: String, replacing: StackedNotice.ID? = nil) {
+        let report = FailureReport.unexpected(error.localizedDescription, outcome: outcome, action: "Change notification rules")
+        notifyNotices.push(.init(text: outcome, tone: .error, actions: [.details(report)]), replacing: replacing)
+    }
+
+    private func command(for change: WorkNotifyChange, scope: WorkNotifyScope, project: String) -> String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let json = try? String(decoding: encoder.encode(change.to), as: UTF8.self) else { return nil }
+        if scope == .project && project.contains(".") {
+            // A dotted CLI path cannot represent this project. The typed command takes the name as one word.
+            let newLevel: String?
+            switch change.to {
+            case .inherit: newLevel = nil
+            case .level(let value), .threshold(let value, _): newLevel = value
+            }
+            let object: [String: Any] = ["type": change.type, "action": change.action, "level": newLevel as Any]
+            guard let bytes = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else { return nil }
+            return "tools work config-set --scope project --project " + ShellWords.word(project) +
+                " --notify " + ShellWords.quoted(String(decoding: bytes, as: UTF8.self))
+        }
+        return "tools work config set " + ShellWords.word(change.path) + " " + ShellWords.quoted(json)
+    }
 }
 
 private extension WorkSnapshotValue {
+    func previewing(_ states: [String: String]) -> Self {
+        guard !states.isEmpty else { return self }
+        var result = self
+        for i in containers.indices {
+            if let state = states[containers[i].ref] { result.containers[i].state = state }
+            for j in containers[i].members.indices {
+                if let state = states[containers[i].members[j].ref] { result.containers[i].members[j].state = state }
+            }
+        }
+        for i in triage.indices {
+            if let state = states[triage[i].ref] { result.triage[i].state = state }
+        }
+        return result
+    }
+
     var rowRefs: Set<String> {
         Set(containers.map(\.ref) + containers.flatMap { $0.members.map(\.ref) } + triage.map(\.ref))
     }
