@@ -252,7 +252,12 @@ async function pushProject({
                     writePairing(db, deps, { ...base, remoteKey: result.remoteKey, state: "in-sync", note: undefined });
                     report.pushed++;
                 } else {
-                    writePairing(db, deps, { ...base, state: "failed", note: result.error });
+                    writePairing(db, deps, {
+                        ...base,
+                        remoteKey: result.remoteKey ?? base.remoteKey,
+                        state: "failed",
+                        note: result.error,
+                    });
                     report.failed++;
                 }
             });

@@ -54,7 +54,7 @@ export interface PushIntent {
     labels: string[];
 }
 
-export type PushResult = { ok: true; remoteKey: string } | { ok: false; error: string };
+export type PushResult = { ok: true; remoteKey: string } | { ok: false; error: string; remoteKey?: string };
 
 /** One outside item as a connector reads it. */
 export interface RemoteItem {
