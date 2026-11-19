@@ -317,9 +317,10 @@ tools github code "interface Props" --repo owner/repo --language typescript
 ai|md|json` (default `ai`), `-o, --output <file>`, and `--search-type keyword|semantic|hybrid` for issues and PRs.
 
 - Semantic and hybrid search use GitHub by default. Each run makes one REST request against a quota of 10 per minute.
-  GitHub ranks the page. The result's `source` is `semantic` or `hybrid`. On HTTP 403 or 429, the command reports
-  the reset time when GitHub supplies it.
+  GitHub ranks the page. The result's `source` is `semantic` or `hybrid`. For rate-limited requests, the command reports
+  the reset time when GitHub supplies it. Permission denials retain GitHub's original error.
 - Add `--local` to either mode to rank previously cached issues and PRs offline on macOS using DarwinKit.
+  Local ranking uses the first 16,384 characters of each cached body. If more than 512 candidates match, narrow the filters before ranking.
   Local hybrid search also searches the cached title and body with FTS5.
 - Keyword search runs two backends at once and merges the hits: GitHub's advanced issue search
   (`advanced_search=true`, `type:` qualifiers) and the legacy one (`is:` qualifiers). It prints how many hits each
@@ -328,7 +329,7 @@ ai|md|json` (default `ai`), `-o, --output <file>`, and `--search-type keyword|se
   `updated` or `help-wanted-issues` for repositories.
 - `search` reads one page per backend, and `-L` is its size. GitHub caps a page at 100.
 - In keyword mode, `--min-comment-reactions` reads the comments of every hit over GraphQL. It first prints its cost estimate in points
-  of the 5,000 per hour GraphQL budget. When no hit passes, it prints all hits instead of none.
+  of the 5,000 per hour GraphQL budget. When no hit passes, JSON returns an empty array and human-readable output shows the original hits with a notice.
   Local semantic and hybrid modes filter cached comments. Hosted semantic and hybrid modes reject this flag.
 - `--type repo` searches repositories; GitHub's own qualifiers work in the query (`topic:react stars:>5000`).
 
