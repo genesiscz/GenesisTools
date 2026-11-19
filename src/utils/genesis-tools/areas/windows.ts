@@ -25,17 +25,18 @@ export function reviewResourcesProblem(bundle: string): string | undefined {
 }
 
 /**
- * The needs of opening a face: macOS, the bundle, the part that ships the face, and a person who can see it. `open`
+ * The needs of opening a face: macOS, a person who can see it, the bundle, and the part that ships the face. `open`
  * starts the bundle itself, so routing switched off blocks no face: `--window` holds the switch that turns it back on.
+ * The display comes before every need a build can repair, so a caller nobody can see never builds first.
  */
 function openNeeds(flag: OpenWindowFlag): NeedSpec[] {
     const part = OPEN_WINDOWS[flag].part;
     return [
         Need.platform.darwin,
+        Need.person.display,
         Need.app.bundle,
         ...(part ? [Need.app.part(part)] : []),
         ...(flag === "--review" ? [Need.app.diffViewer] : []),
-        Need.person.display,
     ];
 }
 

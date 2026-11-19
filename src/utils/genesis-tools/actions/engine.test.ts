@@ -653,7 +653,11 @@ describe("the real areas", () => {
         const missingPart = deps({ postNotice });
         const missingApp = deps({
             postNotice,
-            facts: { ...appNeedFixture({ installed: false }).facts, hasTerminal: () => true },
+            facts: {
+                ...appNeedFixture({ installed: false }).facts,
+                hasDisplay: async () => true,
+                hasTerminal: () => true,
+            },
         });
 
         for (const [engine, code, command] of [
@@ -715,9 +719,9 @@ describe("the real areas", () => {
         expect(explain.ways.map((way) => way.way)).toEqual(["native"]);
         expect(explain.ways[0]?.needs.map((need) => need.need)).toEqual([
             "platform.darwin",
+            "person.display",
             "app.bundle",
             "app.part(hub)",
-            "person.display",
         ]);
         expect(explain.first).toBeNull();
         expect(explain.config).toEqual({ fix: "offer" });
@@ -756,15 +760,26 @@ describe("the real areas", () => {
         expect(hub.first).toBe("native");
         expect(build).not.toHaveBeenCalled();
 
-        // With no display the real native way cannot launch a window even after the repair succeeds.
+        // With no display nobody could see the window, so even the build policy starts no repair.
         const headless = { ...engine, facts: { ...engine.facts, hasDisplay: async () => false } };
-        const click = await runAreaAction(AREAS, "windows.open", { ...args, fix: "skip" }, headless);
+        const unseen = await runAreaAction(AREAS, "windows.open", args, headless);
+        expect(unseen.skipped[0]?.code).toBe("no-display");
+        expect(build).not.toHaveBeenCalled();
+
+        const click = await runAreaAction(AREAS, "windows.open", { ...args, fix: "skip" }, engine);
         expect(click.skipped[0]).toMatchObject({ code: "app-stale", fix: { command: "build-it hub" } });
         expect(build).not.toHaveBeenCalled();
 
-        const repaired = await runAreaAction(AREAS, "windows.open", args, headless);
+        // The real native way would start the app, so the repair runs in front of a stand-in launch.
+        const open = AREAS.windows.actions.open;
+        const launch = mock(() => ({ window: "--review", opened: true }));
+        const registry = {
+            windows: { ...AREAS.windows, actions: { open: { ...open, native: { ...open.native, run: launch } } } },
+        };
+        const repaired = await runAreaAction(registry, "windows.open", args, engine);
         expect(build.mock.calls).toEqual([["hub"]]);
-        expect(repaired.skipped[0]?.code).toBe("no-display");
+        expect(repaired).toMatchObject({ status: "ran", via: "native" });
+        expect(launch).toHaveBeenCalledTimes(1);
         expect((await explain()).first).toBe("native");
     });
 });
