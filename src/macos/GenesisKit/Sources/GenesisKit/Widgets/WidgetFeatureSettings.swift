@@ -375,7 +375,7 @@ private struct WidgetGeneralSettings: View {
                     NativeSettingsSegmented(
                         "Feed headers", detail: "For single items, show the source inside the row or in a separate header.",
                         identifier: "widget.settings.inboxFeedHeaders",
-                        options: [.init("groups", "Groups only"), .init("all", "All runs")],
+                        options: [.init("all", "Every run"), .init("groups", "Groups only")],
                         selection: field(\.inboxFeedHeaders))
                 }
                 openingFilters
