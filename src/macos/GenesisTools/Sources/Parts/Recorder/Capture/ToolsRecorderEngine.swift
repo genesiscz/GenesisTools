@@ -35,6 +35,8 @@ final class ToolsRecorderEngine: RecordingEngineAdapter {
     private var framing = false
     private var watcher: LiveRecordingsWatcher?
     private var releasePreparation: (@MainActor () -> Void)?
+    /// The display last reported to the bar, so a status refresh that changes nothing sends nothing.
+    private var reportedDisplay: RecordingDisplay?
     var followedDisplay: RecordingDisplay? {
         guard let display = entry?.displays.first, let id = UInt32(exactly: display.id),
               let index = CaptureChoice.screenIDs.firstIndex(of: id),
@@ -198,6 +200,11 @@ final class ToolsRecorderEngine: RecordingEngineAdapter {
         guard recording.id == liveID else { return }
         entry = recording
         if CaptureCountdown.hasFirstFrame(recording) || (foreign && recording.isPaused) { firstFrame() }
+        let display = followedDisplay
+        if display != reportedDisplay {
+            reportedDisplay = display
+            emit(.liveDisplay(display))
+        }
         if recording.isPaused != paused { paused = recording.isPaused; emit(paused ? .paused : .resumed) }
         if framing { emit(.elapsed(milliseconds: recording.elapsedMs(now: Date()))) }
     }

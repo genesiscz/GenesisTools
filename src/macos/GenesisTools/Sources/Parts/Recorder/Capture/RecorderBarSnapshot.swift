@@ -8,7 +8,7 @@ import SwiftUI
 struct RecorderBarSnapshot {
     enum Host: String, CaseIterable { case recorder, widget }
     enum State: String, CaseIterable {
-        case setup, expanded = "setup-expanded", picker, area, recording, paused, done
+        case setup, expanded = "setup-expanded", picker, pickerDisplays = "picker-displays", area, recording, paused, done
 
         var live: Bool { self == .recording || self == .paused || self == .done }
     }
@@ -23,12 +23,13 @@ struct RecorderBarSnapshot {
     static let targets = RecordingTargets(windows: [
         RecordingWindow(id: 101, pid: -201, app: "Editor", title: "Notes", bounds: .init(x: 0, y: 0, width: 580, height: 420)),
         document,
-    ], apps: [.init(pid: -201, name: "Editor", windowCount: 2)], displays: [display])
+    ], apps: [.init(pid: -201, name: "Editor", windowCount: 2)],
+       displays: [display, RecordingDisplay(index: 1, name: "Side Display", isPrimary: false, width: 2560, height: 1440)])
 
     init(request: RecorderRequest, shortcutsOpen: Bool) throws {
         guard let state = State(rawValue: request.barState ?? "picker"),
               let host = Host(rawValue: request.barHost ?? "recorder") else {
-            throw RecordingEngineError.unsupported("Choose --bar-host recorder|widget and --bar-state setup|setup-expanded|picker|area|recording|paused|done.")
+            throw RecordingEngineError.unsupported("Choose --bar-host recorder|widget and --bar-state setup|setup-expanded|picker|picker-displays|area|recording|paused|done.")
         }
         guard request.width.isFinite, request.height.isFinite, request.width > 0, request.height > 0 else {
             throw RecordingEngineError.unsupported("Snapshot width and height must be positive.")
@@ -41,7 +42,7 @@ struct RecorderBarSnapshot {
 
     func makeModel() async -> RecordingBarModel {
         let engine = SnapshotMovie(host: host, state: state)
-        let target = legacyPicker ? Self.targets.defaultTarget() : host == .widget ? Self.display.target : nil
+        let target = legacyPicker ? Self.targets.defaultTarget() : host == .widget ? Self.display.target : .followDisplay
         let setup = RecordingSetup(target: target, microphone: .init(enabled: host == .recorder),
                                    systemAudio: .init(enabled: host == .recorder), countdownSeconds: nil)
         let model = RecordingBarModel(engine: engine, setup: setup)
@@ -73,9 +74,11 @@ struct RecorderBarSnapshot {
         return HStack(alignment: .bottom, spacing: 12) {
             VStack(spacing: 4) {
                 RecordingBarView(model: model, actions: actions, defaults: defaults)
-                if state == .picker {
+                if state == .picker || state == .pickerDisplays {
                     // Highlight the same row a hover selects, independently of the target set in the bar.
-                    RecordingTargetPicker(load: .loaded(Self.targets), initial: legacyPicker ? model.setup.target : Self.document.target,
+                    let initial = state == .pickerDisplays ? RecordingTarget.followDisplay
+                        : legacyPicker ? model.setup.target : Self.document.target
+                    RecordingTargetPicker(load: .loaded(Self.targets), initial: initial,
                                           onChoose: { _ in }, onCancel: {}, capabilities: model.capabilities,
                                           overlays: RecordingPickerOverlays(screens: []))
                 }
@@ -148,6 +151,7 @@ private final class SnapshotMovie: RecordingEngineAdapter {
         func emit(_ value: RecordingEngineEvent.Value) { output.yield(.init(take: nextTakeID, value: value)) }
         emit(.elapsed(milliseconds: 83_000))
         emit(.firstFrame)
+        if setup.target == .followDisplay { emit(.liveDisplay(RecorderBarSnapshot.display)) }
         if state == .paused { emit(.paused) }
         if state == .done { emit(.stopped(movie)) }
     }

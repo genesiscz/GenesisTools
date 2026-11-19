@@ -100,7 +100,7 @@ public struct RecordingBarView: View {
         if case .recording = model.phase { return true }
         return false
     }
-    private var follows: Bool { actions.followsDisplayInUse && setup.target == nil }
+    private var follows: Bool { setup.target == .followDisplay || (actions.followsDisplayInUse && setup.target == nil) }
     private var useInlineMenus: Bool {
         switch model.phase {
         case .setup, .done, .failed: false
@@ -136,8 +136,12 @@ public struct RecordingBarView: View {
             phaseDetails
             if follows {
                 HStack {
-                    let captured = actions.followedDisplay?.wrappedValue
-                    if let captured { Text(captured.name) }
+                    let captured = model.liveDisplay ?? actions.followedDisplay?.wrappedValue
+                    Label(captured.map { live ? "Recording \($0.name)" : $0.name } ?? "Starts on the display in use",
+                          systemImage: live && captured != nil ? "record.circle" : RecordingTarget.followDisplay.symbol)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("recording.bar.liveDisplay")
+                    Spacer(minLength: 4)
                     let lockReason = live && captured == nil ? "Waiting for the recorder to report its display." : nil
                     word("Lock to This Display", "lockDisplay", reason: lockReason ?? reason("target", live: caps.liveTargetSwitch)) {
                         if let captured { model.apply(.target(captured.target)); return }
@@ -211,7 +215,7 @@ public struct RecordingBarView: View {
     }
 
     private var target: some View {
-        let title = setup.target?.title ?? (follows ? "Follow Display in Use" : "Choose target")
+        let title = setup.target?.title ?? (follows ? RecordingTarget.followDisplay.title : "Choose target")
         return Button { pick(nil) } label: {
             HStack(spacing: 4) {
                 Image(systemName: setup.target?.symbol ?? "display")

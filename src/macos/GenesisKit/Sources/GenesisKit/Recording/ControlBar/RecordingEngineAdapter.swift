@@ -83,6 +83,8 @@ public struct RecordingEngineEvent: Equatable, Sendable {
     public enum Value: Equatable, Sendable {
         case firstFrame, paused, resumed, stopped(URL?), discarded, failed(String)
         case elapsed(milliseconds: Double), warning(String), audioLevels(microphone: Double, systemAudio: Double)
+        /// The display a following take records now; nil while the engine has not said.
+        case liveDisplay(RecordingDisplay?)
     }
 
     public let take: String

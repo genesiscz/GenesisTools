@@ -86,7 +86,7 @@ final class CapturePicker {
         var setup = draft(preset: options)
         switch choice {
         case let .target(target): setup.target = target
-        case .followPointer: setup.target = nil
+        case .followPointer: setup.target = .followDisplay
         case let .area(rect):
             let screens = NSScreen.screens.map(\.frame)
             guard let primary = screens.first else { return }
@@ -105,6 +105,8 @@ final class CapturePicker {
 
     private func draft(preset: CaptureOptions?) -> RecordingSetup {
         var setup = RecordingSetup.load(defaults)
+        // This recorder's start with no target follows the display in use: name it, so the bar says what Record does.
+        if setup.target == nil { setup.target = .followDisplay }
         if let preset {
             setup.microphone.enabled = preset.microphone
             setup.systemAudio.enabled = preset.systemAudio

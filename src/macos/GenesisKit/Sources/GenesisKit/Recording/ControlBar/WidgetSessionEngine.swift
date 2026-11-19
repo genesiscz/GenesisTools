@@ -6,7 +6,7 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
     /// A change to active FPS, idle FPS or the motion threshold starts a new segment, or waits for Resume when paused.
     public var capabilities: RecordingCapabilities { Self.movieCapabilities }
     public static let movieCapabilities = RecordingCapabilities(
-        targets: [.window, .app, .display, .area], liveTargetSwitch: true, liveFrameRate: true,
+        targets: [.window, .app, .display, .area, .follow], liveTargetSwitch: true, liveFrameRate: true,
         maxDurationMs: RecordingSessionController.maximumDurationMs, reasonUnavailable: [
             "displays": "Record several displays with the full recorder (⌘7).",
             "microphone": "The widget keeps the sound chosen at start.",
@@ -203,6 +203,9 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
             default: break
             }
             if let ms = event.elapsedMs { emit(.elapsed(milliseconds: ms)) }
+            if event.target == .followDisplay, let display = event.display, let id = UInt32(exactly: display.id) {
+                emit(.liveDisplay(RecordingDisplay.connected(displayID: id, name: display.name)))
+            }
         case "elapsed":
             if let ms = event.elapsedMs { emit(.elapsed(milliseconds: ms)) }
         case "preparing":

@@ -78,6 +78,24 @@ final class RecordingBarModelTests: XCTestCase {
         XCTAssertEqual(model.phase, .starting(take: "take-1"))
     }
 
+    func testAFollowingTakeShowsTheDisplayItsEngineReportsUntilItEnds() async {
+        let (model, engine) = await recording(target: .followDisplay)
+        XCTAssertNil(model.liveDisplay, "nothing is known before the engine says")
+        let side = RecordingDisplay(index: 1, name: "Side", isPrimary: false, width: 2560, height: 1440)
+        let moved = expectation(description: "the live display arrives")
+        let observation = model.$liveDisplay.first(where: { $0 == side }).sink { _ in moved.fulfill() }
+        engine.emit(.liveDisplay(side), take: "take-1")
+        await fulfillment(of: [moved], timeout: 2)
+        observation.cancel()
+        engine.emit(.liveDisplay(side), take: "take-0")
+        XCTAssertEqual(model.liveDisplay, side, "another take's report changes nothing")
+        model.discard()
+        await model.pendingCommand?.value
+        XCTAssertNil(model.liveDisplay, "a discarded take forgets its display")
+        XCTAssertEqual(RecordingTarget.followDisplay.title, "Follow display")
+        XCTAssertEqual(RecordingPickerTab.of(.followDisplay), .displays)
+    }
+
     func testLiveFrameRateKeepsOnlyWhatTheEngineAccepted() async {
         let (model, engine) = await recording()
         model.apply(.frameRate(24, still: 1))
@@ -199,6 +217,8 @@ final class RecordingBarModelTests: XCTestCase {
             (#"{"kind":"area","screenIndex":1,"rect":{"x":-20.5,"y":30,"width":120,"height":90}}"#,
              .area(rect: CGRect(x: -20.5, y: 30, width: 120, height: 90), display: 1)),
             (#"{"kind":"displays","indices":[2,0]}"#, .displays(indices: [2, 0])),
+            // Follow display travels as the display shape both engines read.
+            (#"{"kind":"display","screenIndex":0,"follow":true}"#, .followDisplay),
         ]
         for (json, target) in fixtures {
             let data = Data(json.utf8)

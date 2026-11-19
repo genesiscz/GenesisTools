@@ -38,7 +38,7 @@ public enum RecordingPickerTab: String, CaseIterable, Hashable, Sendable {
     public static func of(_ target: RecordingTarget?) -> RecordingPickerTab {
         switch target {
         case .app: return .apps
-        case .display, .displays: return .displays
+        case .display, .displays, .followDisplay: return .displays
         case .area: return .area
         default: return .windows
         }
@@ -105,9 +105,15 @@ struct RecordingPickerRow: Identifiable, Equatable {
         return nil
     }
 
+    /// The first row of the Displays tab when the engine can follow the display in use.
+    static let follow = RecordingPickerRow(id: "display-follow", kind: .target(.followDisplay), title: "Follow display",
+                                           detail: "Display in use", pid: nil, symbol: RecordingTarget.followDisplay.symbol)
+
     /// The rows of one tab: windows grouped under their app in the order the apps' front windows stand, apps, or
-    /// displays. `query` keeps the windows whose title or app contains it (apps by name).
-    static func rows(_ targets: RecordingTargets, tab: RecordingPickerTab, query: String) -> [RecordingPickerRow] {
+    /// displays (after "Follow display" when `offersFollow`). `query` keeps the windows whose title or app contains it
+    /// (apps by name).
+    static func rows(_ targets: RecordingTargets, tab: RecordingPickerTab, query: String,
+                     offersFollow: Bool = false) -> [RecordingPickerRow] {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
         func matches(_ values: String...) -> Bool {
             needle.isEmpty || values.contains { $0.localizedCaseInsensitiveContains(needle) }
@@ -139,7 +145,8 @@ struct RecordingPickerRow: Identifiable, Equatable {
                                    detail: Plural.count(app.windowCount, "window"), pid: app.pid, symbol: "app")
             }
         case .displays:
-            return targets.displays.filter { matches($0.name) }.map { display in
+            let follows = offersFollow && matches(Self.follow.title, Self.follow.detail) ? [Self.follow] : []
+            return follows + targets.displays.filter { matches($0.name) }.map { display in
                 RecordingPickerRow(id: "display-\(display.index)", kind: .target(display.target), title: display.name,
                                    detail: "\(Int(display.width)) × \(Int(display.height))", pid: nil, symbol: "display",
                                    badge: display.isPrimary ? "Main" : nil)
@@ -209,7 +216,8 @@ public struct RecordingTargetPicker: View {
         self.onFilterChange = onFilterChange
         let firstTab = restoring?.tab ?? RecordingPickerTab.of(initial)
         _tab = State(initialValue: firstTab)
-        _listing = StateObject(wrappedValue: RecordingPickerListing(load: load, tab: firstTab, query: restoring?.query ?? ""))
+        _listing = StateObject(wrappedValue: RecordingPickerListing(load: load, tab: firstTab, query: restoring?.query ?? "",
+                                                                    offersFollow: capabilities?.targets.contains(.follow) == true))
         _query = State(initialValue: restoring?.query ?? "")
         _checked = State(initialValue: RecordingDisplaySelection.indices(of: initial))
         _overlays = StateObject(wrappedValue: overlays ?? RecordingPickerOverlays())
@@ -232,13 +240,16 @@ public struct RecordingTargetPicker: View {
     private var rows: [RecordingPickerRow] { listing.rows }
     private var targetRows: [RecordingPickerRow] { listing.targets }
     private var checksDisplays: Bool { tab == .displays && capabilities?.targets.contains(.displays) == true }
+    private var offersFollow: Bool { capabilities?.targets.contains(.follow) == true }
 
     private func supports(_ tab: RecordingPickerTab) -> Bool {
         guard let capabilities else { return true }
         switch tab {
         case .windows, .click: return capabilities.targets.contains(.window)
         case .apps: return capabilities.targets.contains(.app)
-        case .displays: return capabilities.targets.contains(.display) || capabilities.targets.contains(.displays)
+        case .displays:
+            return capabilities.targets.contains(.display) || capabilities.targets.contains(.displays)
+                || capabilities.targets.contains(.follow)
         case .area: return capabilities.targets.contains(.area)
         }
     }
@@ -526,7 +537,7 @@ public struct RecordingTargetPicker: View {
 
     private func reloadRows(useInitial: Bool) {
         stopHover()
-        listing.update(load: load, tab: tab, query: query)
+        listing.update(load: load, tab: tab, query: query, offersFollow: offersFollow)
         guard case let .loaded(targets) = load else { highlighted = nil; return }
         checked.formIntersection(targets.displays.map(\.index))
         let candidates = targetRows
@@ -596,7 +607,8 @@ public struct RecordingTargetPicker: View {
         guard pulseMode == .hoverAndChoice else { stopHover(); return }
         feedback.highlight(target) {
             let windows = window.map { [$0] } ?? windowsForPulse(target)
-            overlays.pulse.hover(RecordingPickerGeometry.rects(target, windows: windows, screens: NSScreen.screens.map(\.frame)))
+            overlays.pulse.hover(RecordingPickerGeometry.rects(target, windows: windows, screens: NSScreen.screens.map(\.frame),
+                                                               pointer: NSEvent.mouseLocation))
         }
     }
 
@@ -621,7 +633,8 @@ public struct RecordingTargetPicker: View {
         }, pulse: { wasRaised in
             guard pulseMode != .off else { return }
             let latest = wasRaised ? windowsForPulse(target) : windows
-            let rects = RecordingPickerGeometry.rects(target, windows: latest, screens: NSScreen.screens.map(\.frame))
+            let rects = RecordingPickerGeometry.rects(target, windows: latest, screens: NSScreen.screens.map(\.frame),
+                                                      pointer: NSEvent.mouseLocation)
             overlays.pulse.pulse(rects, after: wasRaised ? .zero : .milliseconds(350))
         }, restore: {
             if let focusLoss { panel?.closesOnFocusLoss = focusLoss }
@@ -642,13 +655,13 @@ private final class RecordingPickerListing: ObservableObject {
     @Published private(set) var rows: [RecordingPickerRow] = []
     private(set) var targets: [RecordingPickerRow] = []
 
-    init(load: RecordingTargetPicker.Load, tab: RecordingPickerTab, query: String) {
-        update(load: load, tab: tab, query: query)
+    init(load: RecordingTargetPicker.Load, tab: RecordingPickerTab, query: String, offersFollow: Bool) {
+        update(load: load, tab: tab, query: query, offersFollow: offersFollow)
     }
 
-    func update(load: RecordingTargetPicker.Load, tab: RecordingPickerTab, query: String) {
+    func update(load: RecordingTargetPicker.Load, tab: RecordingPickerTab, query: String, offersFollow: Bool) {
         if case let .loaded(list) = load {
-            rows = RecordingPickerRow.rows(list, tab: tab, query: query)
+            rows = RecordingPickerRow.rows(list, tab: tab, query: query, offersFollow: offersFollow)
         } else {
             rows = []
         }
@@ -673,7 +686,10 @@ enum RecordingDisplaySelection {
 }
 
 enum RecordingPickerGeometry {
-    static func rects(_ target: RecordingTarget, windows: [RecordingWindow], screens: [CGRect]) -> [CGRect] {
+    /// Cocoa screen rects to outline for `target`; "Follow display" outlines the display under `pointer`, where its
+    /// take starts (the first display without one).
+    static func rects(_ target: RecordingTarget, windows: [RecordingWindow], screens: [CGRect],
+                      pointer: CGPoint? = nil) -> [CGRect] {
         guard let primary = screens.first else { return [] }
         func cocoa(_ window: RecordingWindow) -> CGRect { RecordingPanelLayout.cocoa(window.quartzFrame, primaryHeight: primary.maxY) }
         switch target {
@@ -687,6 +703,9 @@ enum RecordingPickerGeometry {
             return screens.indices.contains(index) ? [screens[index].insetBy(dx: 6, dy: 6)] : []
         case let .displays(indices):
             return indices.compactMap { screens.indices.contains($0) ? screens[$0].insetBy(dx: 6, dy: 6) : nil }
+        case .followDisplay:
+            let start = pointer.flatMap { point in screens.first { $0.contains(point) } } ?? primary
+            return [start.insetBy(dx: 6, dy: 6)]
         }
     }
 }

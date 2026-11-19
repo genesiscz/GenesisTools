@@ -32,6 +32,8 @@ public final class RecordingBarModel: ObservableObject {
     @Published public private(set) var notice: RecordingBarNotice?
     @Published public private(set) var elapsedMs: Double = 0
     @Published public private(set) var audioLevels: (microphone: Double, systemAudio: Double)?
+    /// The display a "Follow display" take records now, as its engine reports it; nil before the first report.
+    @Published public private(set) var liveDisplay: RecordingDisplay?
     @Published public private(set) var audioInputs: [RecordingAudioDevice] = []
     @Published public private(set) var audioOutputs: [RecordingAudioDevice] = []
 
@@ -112,6 +114,7 @@ public final class RecordingBarModel: ObservableObject {
         clearNotice()
         elapsedMs = 0
         audioLevels = nil
+        liveDisplay = nil
         let seconds = max(0, draft.countdownSeconds ?? 0)
         activeTake = seconds > 0 ? nil : take
         phase = seconds > 0 ? .countdown(seconds) : .starting(take: take)
@@ -308,6 +311,7 @@ public final class RecordingBarModel: ObservableObject {
         case let .elapsed(milliseconds): elapsedMs = milliseconds
         case let .warning(message): report(message, control: "recording")
         case let .audioLevels(microphone, systemAudio): audioLevels = (microphone, systemAudio)
+        case let .liveDisplay(display): if liveDisplay != display { liveDisplay = display }
         }
     }
 
@@ -327,6 +331,7 @@ public final class RecordingBarModel: ObservableObject {
         phaseBeforeFinish = nil
         clearNotice()
         audioLevels = nil
+        liveDisplay = nil
         if result == .setup { elapsedMs = 0 }
         phase = result
     }
