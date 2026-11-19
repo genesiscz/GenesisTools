@@ -2596,7 +2596,9 @@ describe("frame recordings with continuous sound", () => {
                 expect(
                     notes?.filter((note) => note.includes("The sound is recorded inside the screen pieces"))
                 ).toEqual([
-                    `The continuous sound stopped at ${time} (${reason}). The sound is recorded inside the screen pieces since then; up to 5 seconds are missing every 30 seconds.`,
+                    retried
+                        ? `The continuous sound stopped at ${time} (${reason}). The sound is recorded inside the screen pieces since then; sound between two pieces can be missing.`
+                        : `The continuous sound did not start at ${time} (${reason}). The sound is recorded inside the screen pieces; sound between two pieces can be missing.`,
                 ]);
             }
         }
@@ -2721,7 +2723,8 @@ describe("frame recordings with continuous sound", () => {
         } finally {
             notes = (await recording.stop()).notes;
         }
-        expect(notes?.filter((note) => note.includes("The continuous sound stopped at"))).toHaveLength(1);
+        expect(notes?.filter((note) => note.includes("The continuous sound did not start at"))).toHaveLength(1);
+        expect(notes?.some((note) => note.includes("seconds are missing"))).toBe(false);
         expect(readRecordingManifest(recording.folder)?.settings?.tracks).toHaveLength(3);
     });
 });

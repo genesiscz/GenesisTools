@@ -6197,7 +6197,9 @@ test("native sound mode and each fallback reach live status, the meeting record 
                 expect(last).toMatchObject({ sound: { path: "pieces", reason, since: expect.any(String) } });
                 expect(saved?.recording?.warning).toBe(last.warning);
                 // One note per restart and one per fall back (P16d decision 2).
-                expect(saved?.recording?.warning?.match(/The continuous sound stopped at/g)).toHaveLength(
+                expect(
+                    saved?.recording?.warning?.match(/The continuous sound (stopped|did not start) at/g)
+                ).toHaveLength(
                     fixture === "--fixture-audio-session-dies-later" ||
                         fixture === "--fixture-audio-session-restart-fails"
                         ? 2

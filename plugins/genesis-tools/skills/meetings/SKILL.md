@@ -319,7 +319,7 @@ match and ten call matches suggest a remote seat. The range is 0 to 0.5, inclusi
 every match to be on the same side.
 
 Set `global.capture.recorders.native.audio.mode` to `session` for continuous sound in 60-second files; the default
-`pieces` records the sound inside the screen pieces, with up to 5 seconds missing every 30 seconds, and `record status`
+`pieces` records the sound inside the screen pieces, where sound between two pieces can be missing, and `record status`
 explains a fall back.
 
 ## Measure room and call attribution

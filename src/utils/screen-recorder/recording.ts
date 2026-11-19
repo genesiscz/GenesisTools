@@ -365,6 +365,8 @@ export class FrameRecording<S = unknown> extends RecorderControl {
     private capturesReplacedForSound?: Set<SessionCapture>;
     private startingSound?: Promise<void>;
     private lastSoundRestart = -Infinity;
+    /** Whether a continuous sound session ever ran, so the fallback note says "stopped" or "did not start". */
+    private soundSessionRan = false;
     private readonly soundAbort = new AbortController();
     private readonly soundNotes: string[] = [];
     private currentSoundPath: RecordingSoundPath = { path: "pieces" };
@@ -1019,6 +1021,7 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             return;
         }
 
+        this.soundSessionRan = true;
         this.currentSoundPath = { path: "session", sources: [...this.sound.sources] };
         hooks.onSoundPath?.(this.currentSoundPath);
     }
@@ -1058,8 +1061,11 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             this.captures.abortAll();
         }
         this.config.hooks.onSoundPath?.(this.currentSoundPath);
+        // No fixed gap is promised: the sound between two pieces is missing, and how much depends on the pieces.
         this.soundWarning(
-            `The continuous sound stopped at ${time} (${reason}). The sound is recorded inside the screen pieces since then; up to 5 seconds are missing every 30 seconds.`
+            this.soundSessionRan
+                ? `The continuous sound stopped at ${time} (${reason}). The sound is recorded inside the screen pieces since then; sound between two pieces can be missing.`
+                : `The continuous sound did not start at ${time} (${reason}). The sound is recorded inside the screen pieces; sound between two pieces can be missing.`
         );
     }
 
