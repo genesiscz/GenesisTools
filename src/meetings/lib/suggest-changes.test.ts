@@ -116,6 +116,7 @@ test("R3 planning on frozen input preserves old range edits, choices and departu
         applySuggestionChanges(current, changes)
     );
     const reopened = new MeetingStore(store.storage).read(record.id)!;
+    const replay = planSuggestions({ ...inputs, record: reopened });
     expect(reopened.participants.find((p) => p.name === guest)?.stays?.[0]).toMatchObject({
         toSec: 2400,
         leaveSource: "goodbye",
@@ -128,5 +129,5 @@ test("R3 planning on frozen input preserves old range edits, choices and departu
     expect(reopened.items).toContainEqual(
         expect.objectContaining({ label: "Local", fromSec: 10, toSec: 10, speaker: owner })
     );
-    expect(planSuggestions({ ...inputs, record: reopened }).fresh).toEqual([]);
+    expect(replay.fresh).toEqual([]);
 });
