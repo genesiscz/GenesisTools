@@ -162,8 +162,8 @@ function fieldsOf(p: {
         ...(p.why !== undefined ? { why: p.why } : {}),
         ...(p.userSees !== undefined ? { userSees: p.userSees } : {}),
         ...(p.cost !== undefined ? { cost: p.cost } : {}),
-        ...(p.existedBefore ? { existedBefore: true } : {}),
-        ...(p.production ? { production: true } : {}),
+        ...(p.existedBefore !== undefined ? { existedBefore: p.existedBefore } : {}),
+        ...(p.production !== undefined ? { production: p.production } : {}),
     };
 }
 
