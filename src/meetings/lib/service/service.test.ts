@@ -3539,6 +3539,24 @@ async function captureExamples(): Promise<Example[]> {
     await ask(window, "voices.reject", { id: "vs_missing", reason: "bad-audio" });
     await ask(window, "voices.undo", { token: "missing" });
     await ask(window, "voices.quality", { project: "Atlas" });
+    await window.request(SUBSCRIBE, { events: ["voices.job"], project: "Rehearsal" });
+    service.emit("voices.job", {
+        id: "fixture-job",
+        kind: "answer-samples",
+        project: "Rehearsal",
+        meeting: REVIEW.id,
+        state: "running",
+        progress: { done: 1, total: 2, step: "added" },
+        added: 1,
+        skipped: 0,
+    });
+    await ask(window, "voices.jobs", { project: "Empty-fixture" });
+    await ask(window, "voices.jobs.cancel", { id: "missing" });
+    examples.push({
+        method: "voices.job",
+        direction: "service→client",
+        notification: window.lines.find((line) => line.method === "voices.job"),
+    });
     return examples;
 }
 

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { fileURLToPath } from "node:url";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
+import { genesisToolsSourceRoot as meetingsSourceRoot } from "@genesiscz/utils/genesis-tools/service/clients";
 import { TONE_PRESET_NAMES, toneSoundSettingSchema } from "@genesiscz/utils/meetings/config";
 import { MEETINGS_CONFLICT_CODES, MEETINGS_STATE_CODES } from "@genesiscz/utils/meetings/conflict";
 import { echoMetricSchema } from "@genesiscz/utils/meetings/echo";
@@ -1775,6 +1775,35 @@ export const voicesWorkers = defineMethod({
     effect: "read",
 });
 
+const count = z.number().int().nonnegative();
+export const voiceJobSchema = z.object({
+    id: z.string(),
+    kind: z.enum(["answer-samples", "backfill"]),
+    project: z.string(),
+    meeting: z.string().optional(),
+    state: z.enum(["queued", "running", "done", "cancelled", "failed"]),
+    progress: z.object({ done: count, total: count, step: z.string() }),
+    added: count,
+    skipped: count,
+    error: z.string().optional(),
+});
+export type VoiceJob = z.output<typeof voiceJobSchema>;
+
+export const voicesJobs = defineMethod({
+    name: "voices.jobs",
+    params: z.object({ project: z.string().min(1).optional() }).strict(),
+    result: z.array(voiceJobSchema),
+    doc: "List current and recent voice learning jobs and their line counts, optionally for one project.",
+    effect: "read",
+});
+export const voicesJobsCancel = defineMethod({
+    name: "voices.jobs.cancel",
+    params: z.object({ id: z.string().min(1) }).strict(),
+    result: voiceJobSchema.nullable(),
+    doc: "Cancel a queued or running voice job and return its state. An unknown id returns null.",
+    effect: "reversible",
+});
+
 export const voiceBackfill = defineMethod({
     name: "voice.backfill",
     params: z
@@ -1818,6 +1847,8 @@ export const VOICES_METHODS = [
     voicesUndo,
     voicesQuality,
     voiceBackfill,
+    voicesJobs,
+    voicesJobsCancel,
 ] as const;
 export type VoicesMethod = (typeof VOICES_METHODS)[number]["name"];
 type VoiceMethodNamed<M extends VoicesMethod> = Extract<(typeof VOICES_METHODS)[number], { name: M }>;
@@ -1953,10 +1984,13 @@ export const MEETINGS_EVENTS = [
     "comment.sent",
     "comment.changed",
     "people.changed",
+    "voices.job",
 ] as const;
 export type MeetingsEvent = (typeof MEETINGS_EVENTS)[number];
 
 export const subscribeParamsSchema = z.object({
+    /** Restrict voice-job notifications to this project. */
+    project: z.string().min(1).optional(),
     /** Only this meeting's events (an exact id); absent: every meeting's. Anything else is refused (-32602). */
     meeting: z.string().min(1).optional(),
     /** Only these events; absent or empty: all of them. */
@@ -1965,6 +1999,7 @@ export const subscribeParamsSchema = z.object({
 export const subscribeResultSchema = z.object({ events: z.array(z.string()) });
 
 export const NOTIFICATION_SCHEMAS = {
+    "voices.job": voiceJobSchema,
     "meeting.wordTimings.changed": z.object({ meeting: z.string(), revision: z.string() }),
     "people.changed": z.object({}),
     "comment.changed": z.object({ meeting: z.string(), comment: meetingCommentSchema.optional() }),
@@ -2048,11 +2083,7 @@ export function meetingsProtocolVersion(): string {
     return createHash("sha1").update(text).digest("hex").slice(0, 12);
 }
 
-/** The checkout this code runs from (src/meetings/lib/service/ is four levels below it), as a decoded path. */
-export function meetingsSourceRoot(): string {
-    // fileURLToPath, not `.pathname`: a checkout path with a space would stay `%20` and match no loaded module.
-    return fileURLToPath(new URL("../../../../", import.meta.url));
-}
+export { meetingsSourceRoot };
 
 /**
  * The code stamp `hello` compares: the checkout this code runs from. A worktree's CLI and the main checkout's service

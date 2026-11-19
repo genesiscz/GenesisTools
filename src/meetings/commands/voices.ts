@@ -11,7 +11,6 @@ import { callerActor } from "../lib/decision-journal";
 import { type MeetingsParams, type MeetingsResult, voicesReject } from "../lib/service/api";
 import { withMeetingsClient } from "../lib/service/client";
 import { fail, resolveEnum } from "../lib/shared";
-import { backfillVoices } from "../lib/voice-backfill";
 import { addVoiceSample, applyVoices, previewVoices } from "../lib/voices";
 import { registerLegacyVoiceCommands } from "./acoustic";
 import { playSoundSlice } from "./play";
@@ -238,6 +237,47 @@ export function registerVoicesCommand(program: Command): void {
             })
         );
 
+    const jobs = voices
+        .command("jobs")
+        .description("List current and recent voice learning jobs")
+        .option("--project <name>", "show jobs for one project")
+        .option("--json", "print all job fields")
+        .action((opts: VoiceOptions) =>
+            guarded(async () => {
+                const options = flags(opts);
+                const rows = await withMeetingsClient((c) => c.call("voices.jobs", { project: options.project }));
+                if (options.json) {
+                    out.result(SafeJSON.stringify(rows));
+                    return;
+                }
+                const table = createBoxTable(["ID", "PROJECT / MEETING", "STATE", "PROGRESS", "ADDED", "SKIPPED"]);
+                for (const row of rows) {
+                    table.push([
+                        row.id,
+                        [row.project, row.meeting].filter(Boolean).join("\n"),
+                        row.state,
+                        `${row.progress.done}/${row.progress.total} ${row.error ?? row.progress.step}`,
+                        row.added,
+                        row.skipped,
+                    ]);
+                }
+                out.println(rows.length ? table.toString() : "No voice jobs.");
+            })
+        );
+    jobs.command("cancel <id>")
+        .description("Cancel a queued or running voice job")
+        .option("--json", "print the job or null for an unknown id")
+        .action((id: string, opts: VoiceOptions) =>
+            guarded(async () => {
+                const row = await withMeetingsClient((c) => c.call("voices.jobs.cancel", { id }));
+                if (opts.json || jobs.opts<VoiceOptions>().json || voices.opts<VoiceOptions>().json) {
+                    out.result(SafeJSON.stringify(row));
+                } else {
+                    out.println(row ? `${row.id}: ${row.state}` : `No voice job "${id}".`);
+                }
+            })
+        );
+
     voices
         .command("backfill [meetings...]")
         .description("Recover project samples from the meeting journal's human speaker decisions")
@@ -247,12 +287,17 @@ export function registerVoicesCommand(program: Command): void {
         .action((meetings: string[], opts: VoiceOptions & { dryRun?: boolean }) =>
             guarded(async () => {
                 const flags = { ...voices.opts<VoiceOptions>(), ...opts };
-                const result = await backfillVoices({
-                    store: new MeetingStore(),
-                    meetings,
-                    project: flags.project,
-                    dryRun: flags.dryRun,
-                });
+                const result = await withMeetingsClient((client) =>
+                    client.call(
+                        "voice.backfill",
+                        {
+                            meetings: meetings.length ? meetings : undefined,
+                            project: flags.project,
+                            dryRun: flags.dryRun,
+                        },
+                        { timeoutMs: 3_600_000 }
+                    )
+                );
                 if (flags.json) {
                     out.result(SafeJSON.stringify(result));
                     return;

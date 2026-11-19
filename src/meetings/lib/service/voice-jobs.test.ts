@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -9,6 +9,8 @@ import { MeetingStore, meetingItemSchema } from "@genesiscz/utils/meetings/recor
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { readVoiceLibrary } from "@genesiscz/utils/meetings/voice-library";
 import { DecisionJournal } from "../decision-journal";
+import { OpenedMeeting } from "../opened-meeting";
+import * as voice from "../speaker-labels/voice";
 import type { VoicePrintChange } from "../voice-samples";
 import { MeetingVoiceJobs } from "./voice-jobs";
 
@@ -88,13 +90,21 @@ test.each(["before library", "after library", "after journal"] as const)(
                 "-e",
                 `
             import { DecisionJournal } from "./src/meetings/lib/decision-journal";
-            import { publishVoiceChanges } from "./src/meetings/lib/voice-samples";
             import { MeetingStore } from "./src/utils/meetings/record";
             const { cut, change } = await Bun.stdin.json();
-            if (cut === "after library") publishVoiceChanges([change]);
-            if (cut === "after journal") new DecisionJournal({store: new MeetingStore()})
-                .publishBackfilledVoices(change.after.meeting, [change], false);
-            process.kill(process.pid, "SIGKILL");
+            class StoppingJournal extends DecisionJournal {
+                appendVoiceReceipts(meeting, rows) {
+                    if (cut === "after library") process.kill(process.pid, "SIGKILL");
+                    super.appendVoiceReceipts(meeting, rows);
+                    if (cut === "after journal") process.kill(process.pid, "SIGKILL");
+                }
+            }
+            const store = new MeetingStore();
+            await store.withRecords({ ids: [change.after.meeting], fn: async () => {
+                if (cut !== "before library") new StoppingJournal({store})
+                    .publishBackfilledVoices(change.after.meeting, [change], false);
+                process.kill(process.pid, "SIGKILL");
+            } });
         `,
             ],
             { stdin: new Blob([SafeJSON.stringify({ cut, change })]), stdout: "ignore", stderr: "pipe" }
@@ -105,14 +115,59 @@ test.each(["before library", "after library", "after journal"] as const)(
         if (cut === "before library") {
             expect(reopened.read(record.id)[0]?.voices).toBeUndefined();
             expect(readVoiceLibrary().library.samples).toEqual([]);
-            // The original decision still owns this pending unit.
-            reopened.publishBackfilledVoices(record.id, [change], false);
         } else {
             expect(reopened.read(record.id)[0]?.voices?.[0]?.id).toBe(readVoiceLibrary().library.samples[0]?.id);
         }
+        const audio = join(store.folder(record.id), "rehearsal.wav");
+        writeFileSync(audio, "one voice");
+        const opened = OpenedMeeting.of(store, record);
+        const spies = [
+            spyOn(OpenedMeeting, "of").mockReturnValue(opened),
+            spyOn(opened, "meeting").mockResolvedValue({
+                sourceMeetingId: "rehearsal",
+                title: "Rehearsal",
+                start: at,
+                participants: [],
+                speakers: [],
+                folders: [],
+                transcript: [
+                    { speaker: "Speaker", text: "One line", startSec: 0 },
+                    { speaker: "Speaker", text: "Next line", startSec: 4 },
+                ],
+            }),
+            spyOn(opened, "evidence").mockResolvedValue({
+                segments: [{ startSec: 0, endSec: 10, channel: "mic" }],
+                speaking: [],
+                files: [],
+            }),
+            spyOn(opened, "energy").mockResolvedValue({}),
+            spyOn(opened, "sound").mockResolvedValue({ tracks: [], slice: () => undefined }),
+        ];
+        const embed = spyOn(voice, "embedSeatLines").mockImplementation(async ({ lines }) => {
+            if (cut !== "before library") {
+                throw new Error("Recovery must use its committed receipt");
+            }
+            return lines.map((line) => ({
+                ...line,
+                track: "source-mic",
+                channels: [
+                    {
+                        model: "test-model",
+                        track: "raw-mic",
+                        channel: 0,
+                        fromSec: line.fromSec,
+                        toSec: line.toSec,
+                        quality: "ready",
+                        embedding: [1, 0],
+                        source: { audioPath: audio, size: statSync(audio).size, mtimeMs: statSync(audio).mtimeMs },
+                    },
+                ],
+            }));
+        });
         const jobs = new MeetingVoiceJobs({ store: new MeetingStore(), notify: () => {} });
         try {
             await jobs.discover(new MeetingStore().read(record.id)!);
+            expect(embed).toHaveBeenCalledTimes(cut === "before library" ? 1 : 0);
             const receipts = readVoiceLibrary().library.receipts.filter((r) => r.kind === "learn");
             expect(receipts).toHaveLength(1);
             expect(readFileSync(join(store.folder(record.id), "voice-backfill.ndjson"), "utf8")).toContain(
@@ -122,6 +177,10 @@ test.each(["before library", "after library", "after journal"] as const)(
             expect(readVoiceLibrary().library.samples).toEqual([]);
         } finally {
             jobs.stop();
+            embed.mockRestore();
+            for (const spy of spies.reverse()) {
+                spy.mockRestore();
+            }
         }
     }
 );

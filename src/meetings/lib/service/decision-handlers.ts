@@ -97,6 +97,7 @@ export async function applyDecision(
 
     if (decided.entry) {
         context.emit?.("decision.applied", { meeting: record.id, entry: decided.entry });
+        scheduleLearning(deps, store, decided.entry);
     }
 
     return {
@@ -132,9 +133,38 @@ export async function revertDecision(
 
     if (decided.entry) {
         context.emit?.("decision.reverted", { meeting: record.id, token: params.token, entry: decided.entry });
+        scheduleLearning(deps, store, decided.entry);
     }
 
     return decided;
+}
+
+function scheduleLearning(deps: MeetingsHandlerDeps, store: MeetingStore, entry: JournalEntry): void {
+    const jobs = deps.voiceJobs;
+    if (
+        !jobs ||
+        !(
+            entry.action.kind === "answer" ||
+            entry.action.kind === "confirm" ||
+            entry.action.kind === "revert" ||
+            entry.action.kind === "reopen" ||
+            entry.fields?.some((field) => field.field === "project")
+        )
+    ) {
+        return;
+    }
+    const live = entry.action.kind === "answer" || entry.action.kind === "confirm";
+    setImmediate(() => {
+        void Promise.resolve()
+            .then(() => {
+                const record = store.read(entry.meeting);
+                return (
+                    record &&
+                    jobs.discover(record, live ? "answer-samples" : "backfill", live ? entry.token : undefined)
+                );
+            })
+            .catch((error: unknown) => log.warn({ error, meeting: entry.meeting }, "decision's voice learning failed"));
+    });
 }
 
 export function readJournal(

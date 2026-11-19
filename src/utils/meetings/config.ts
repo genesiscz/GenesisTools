@@ -628,6 +628,16 @@ const storedConfigSchema = z
     .object({
         /** A newer version than this code writes still reads: its keys this code knows, the rest stay in the file. */
         version: z.number().int().min(MEETINGS_CONFIG_VERSION).default(MEETINGS_CONFIG_VERSION),
+        meetings: z
+            .object({
+                voices: z
+                    .object({
+                        /** Seconds after the last learned sample before the meeting's speaker suggestions run again. */
+                        reproposeDelaySec: z.number().min(0).max(2_147_483).default(10),
+                    })
+                    .prefault({}),
+            })
+            .prefault({}),
         global: z
             .object({
                 dictionary: dictionaryLevelSchema.prefault({}),

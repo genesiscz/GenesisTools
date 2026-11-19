@@ -105,6 +105,8 @@
             "voices.undo",
             "voices.quality",
             "voice.backfill",
+            "voices.jobs",
+            "voices.jobs.cancel",
             "subscribe",
             "unsubscribe"
           ],
@@ -115,9 +117,10 @@
             "decision.reverted",
             "comment.sent",
             "comment.changed",
-            "people.changed"
+            "people.changed",
+            "voices.job"
           ],
-          "version": "fa5be15e4797"
+          "version": "2b836a3cb309"
         }
       }
     },
@@ -1492,6 +1495,8 @@
             "voices.undo",
             "voices.quality",
             "voice.backfill",
+            "voices.jobs",
+            "voices.jobs.cancel",
             "subscribe",
             "unsubscribe"
           ],
@@ -1502,9 +1507,10 @@
             "decision.reverted",
             "comment.sent",
             "comment.changed",
-            "people.changed"
+            "people.changed",
+            "voices.job"
           ],
-          "version": "fa5be15e4797"
+          "version": "2b836a3cb309"
         }
       }
     },
@@ -6174,6 +6180,8 @@
             "voices.undo",
             "voices.quality",
             "voice.backfill",
+            "voices.jobs",
+            "voices.jobs.cancel",
             "subscribe",
             "unsubscribe"
           ],
@@ -6184,9 +6192,10 @@
             "decision.reverted",
             "comment.sent",
             "comment.changed",
-            "people.changed"
+            "people.changed",
+            "voices.job"
           ],
-          "version": "fa5be15e4797"
+          "version": "2b836a3cb309"
         }
       }
     },
@@ -7211,6 +7220,62 @@
         "id": 125,
         "result": {
           "learnt": []
+        }
+      }
+    },
+    {
+      "method": "voices.jobs",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 127,
+        "method": "voices.jobs",
+        "params": {
+          "project": "Empty-fixture"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 127,
+        "result": []
+      }
+    },
+    {
+      "method": "voices.jobs.cancel",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 128,
+        "method": "voices.jobs.cancel",
+        "params": {
+          "id": "missing"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 128,
+        "result": null
+      }
+    },
+    {
+      "method": "voices.job",
+      "direction": "service→client",
+      "notification": {
+        "jsonrpc": "2.0",
+        "method": "voices.job",
+        "params": {
+          "id": "fixture-job",
+          "kind": "answer-samples",
+          "project": "Rehearsal",
+          "meeting": "2026-11-03-1000-design-review",
+          "state": "running",
+          "progress": {
+            "done": 1,
+            "total": 2,
+            "step": "added"
+          },
+          "added": 1,
+          "skipped": 0
         }
       }
     }

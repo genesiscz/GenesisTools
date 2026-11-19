@@ -95,6 +95,8 @@ export function voicePassProgress(
 }
 
 export interface MeetingsHandlerDeps {
+    /** Owned by the service process. A standalone CLI only commits the durable human decision. */
+    voiceJobs?: import("./voice-jobs").MeetingVoiceJobs;
     /** The CPU sample `voices.workers` reads (`freeCores` of the voice labeler); tests pass a fixed one. */
     freeCores?: () => Promise<VoiceFreeCores>;
     /** Local audio adapters with their live lookup; tests supply isolated ones and never read this Mac's provider. */
@@ -648,6 +650,10 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
         // The people directory loads Contacts (darwinkit) only when a call asks for people.
         "people.known": async (params) => (await people()).knownPeople(params, storeOf(), deps),
         // The voices methods (P6): the same functions as `tools meetings voices`, loaded with the people module.
+        "voices.jobs": async (params, context) =>
+            (await people()).voicesHandlers(storeOf(), deps)["voices.jobs"](params, context),
+        "voices.jobs.cancel": async (params, context) =>
+            (await people()).voicesHandlers(storeOf(), deps)["voices.jobs.cancel"](params, context),
         "voice.backfill": async (params, context) =>
             (await people()).voicesHandlers(storeOf(), deps)["voice.backfill"](params, context),
         "voices.list": async (params, context) =>

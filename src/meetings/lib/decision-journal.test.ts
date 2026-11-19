@@ -13,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
 import * as fileLines from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { MeetingsConfigStore, meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
@@ -24,7 +25,13 @@ import {
     meetingRecordSchema,
 } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
-import { readVoiceLibrary } from "@genesiscz/utils/meetings/voice-library";
+import {
+    correctVoiceSample,
+    insertVoiceSample,
+    readVoiceLibrary,
+    sourceForVoicePrint,
+    voiceLineKeys,
+} from "@genesiscz/utils/meetings/voice-library";
 import {
     addVoicePrint,
     readVoiceStore,
@@ -62,8 +69,9 @@ import { OpenedMeeting } from "./opened-meeting";
 import { personStays, presenceOf, rosterPresence, stayLeaveSource } from "./person-stays";
 import { rejectFilterIds } from "./reject-filter";
 import { reviewRow } from "./review-rows";
-import { meetingsMethod } from "./service/api";
-import { InProcessMeetingsClient } from "./service/client";
+import { MEETINGS_PROTOCOL, meetingsMethod, voiceJobSchema } from "./service/api";
+import { InProcessMeetingsClient, SocketMeetingsClient } from "./service/client";
+import { startMeetingsService } from "./service/service";
 import { MeetingVoiceJobs } from "./service/voice-jobs";
 import { assignmentReach } from "./speaker-assign";
 import * as voiceLabeler from "./speaker-labels/voice";
@@ -128,10 +136,11 @@ const lookAlikes = () => [
 async function fixture(
     items: Record<string, unknown>[],
     labels: Record<string, string> = {},
-    fields: Partial<MeetingRecord> = {}
+    fields: Partial<MeetingRecord> = {},
+    selectedStore?: MeetingStore
 ) {
     stores += 1;
-    const store = new MeetingStore(new Storage(`meetings-journal-${process.pid}-${stores}`));
+    const store = selectedStore ?? new MeetingStore(new Storage(`meetings-journal-${process.pid}-${stores}`));
     const meeting = await store.create(
         {
             title: "Harbor sync",
@@ -157,7 +166,11 @@ async function fixture(
 
 const person = { kind: "listen" } as const;
 
-async function voiceAnswerFixture(project = `journal-voice-${++stores}`, extra: Record<string, unknown>[] = []) {
+async function voiceAnswerFixture(
+    project = `journal-voice-${++stores}`,
+    extra: Record<string, unknown>[] = [],
+    selectedStore?: MeetingStore
+) {
     const fx = await fixture(
         [
             speakerRange("i1", 0, { toSec: 5 }),
@@ -177,7 +190,8 @@ async function voiceAnswerFixture(project = `journal-voice-${++stores}`, extra: 
             ...(project ? { project } : {}),
             seats: { room: ["Alice Example", "Bob Example"], remote: [] },
             participants: ["Alice Example", "Bob Example"].map((name) => ({ name, from: ["fixture"] })),
-        }
+        },
+        selectedStore
     );
     const opened = OpenedMeeting.of(fx.store, fx.meeting);
     const audio = join(fx.store.folder(fx.meeting.id), "voice-fixture.wav");
@@ -226,6 +240,31 @@ async function voiceAnswerFixture(project = `journal-voice-${++stores}`, extra: 
     return {
         ...fx,
         embedLines,
+        rejectFirst: async () => {
+            const after: VoicePrint = {
+                meeting: fx.meeting.id,
+                fromSec: 0,
+                toSec: 5,
+                seat: "mic",
+                track: "source-mic",
+                sourceSha: await sha256FileAsync(audio),
+                embedding: [1, 0],
+                confirmedAt: now,
+            };
+            const receipt = insertVoiceSample({
+                project,
+                owner: { name: "Alice Example" },
+                print: after,
+                model: "fixture-model",
+                origin: "enrol",
+                acquiredBy: "manual",
+                source: sourceForVoicePrint(after, fx.meeting.id, voiceLineKeys(await opened.meeting())[0]),
+            });
+            if (receipt.status !== "added") {
+                throw new Error("Fixture needs a confirmed sample");
+            }
+            correctVoiceSample({ kind: "reject", id: receipt.id, reason: "bad-audio" });
+        },
         learn: async (token: string) => {
             const jobs = new MeetingVoiceJobs({ store: fx.store, notify: () => {} });
             try {
@@ -319,20 +358,7 @@ describe("speaker answers and their project voice prints", () => {
                 } else if (interruption === "audio") {
                     appendFileSync(join(fx.store.folder(meeting), "voice-fixture.wav"), "different speech");
                 } else if (interruption === "rejection") {
-                    const { addVoiceSample, editVoice } = await import("./voices");
-                    await addVoiceSample({
-                        store: fx.store,
-                        meeting,
-                        person: "Alice Example",
-                        fromSec: 0,
-                        toSec: 5,
-                        confirmed: true,
-                    });
-                    const [sample] = readVoiceLibrary().library.samples;
-                    await editVoice({
-                        store: fx.store,
-                        action: { kind: "reject", id: sample!.id, reason: "bad-audio" },
-                    });
+                    await fx.rejectFirst();
                 } else {
                     mkdirSync(join(fx.store.folder(meeting), "voice-backfill.ndjson"));
                 }
@@ -376,6 +402,162 @@ describe("speaker answers and their project voice prints", () => {
             }
         }
     );
+
+    test("P6 offline CLI exits before learning and two service starts recover one line exactly once", async () => {
+        const fx = await voiceAnswerFixture(
+            undefined,
+            [
+                speakerRange("i4", 0, {
+                    speaker: "Alice Example",
+                    rules: [MeetingRule.VoiceEmbedding],
+                    evidence: { endSec: 10 },
+                }),
+            ],
+            new MeetingStore()
+        );
+        const dir = mkdtempSync(join(tmpdir(), "voice-rpc-"));
+        const meeting = fx.meeting.id;
+        const code = "receipt-rehearsal";
+        try {
+            await fx.rejectFirst();
+            const home = env.tools.getHome();
+            const cli = Bun.spawn(
+                [process.execPath, "run", "src/meetings/index.ts", "confirm", meeting, "i4", "--json"],
+                {
+                    env: { HOME: home, GENESIS_TOOLS_HOME: home, PATH: env.getProcessEnv().PATH },
+                    stdout: "pipe",
+                    stderr: "pipe",
+                }
+            );
+            const [exitCode, output, errors] = await Promise.all([
+                cli.exited,
+                new Response(cli.stdout).text(),
+                new Response(cli.stderr).text(),
+            ]);
+            expect({ exitCode, errors: exitCode ? errors : "" }).toEqual({ exitCode: 0, errors: "" });
+            expect(output).toContain('"token"');
+            expect(new DecisionJournal({ store: new MeetingStore() }).read(meeting)[0]).toMatchObject({
+                actor: { kind: "cli" },
+            });
+            expect(readVoiceLibrary().library.samples).toEqual([]);
+            for (const added of [1, 0]) {
+                const ready = Promise.withResolvers<void>();
+                const blocked = Promise.withResolvers<void>();
+                if (added) {
+                    fx.embed.mockImplementationOnce(async (input) => {
+                        expect(input.lines.map((l) => l.index)).toEqual([1]);
+                        ready.resolve();
+                        await blocked.promise;
+                        return fx.embedLines(input);
+                    });
+                } else {
+                    fx.embed.mockRejectedValue(new Error("already committed or refused lines must not embed"));
+                }
+                const start = await startMeetingsService({
+                    dir,
+                    code,
+                    watch: false,
+                    idleMs: 0,
+                    store: () => new MeetingStore(),
+                });
+                if (start.status !== "started") {
+                    throw new Error("Fixture expected a fresh service");
+                }
+                const client = await SocketMeetingsClient.connect(start.service.entry, {
+                    protocol: MEETINGS_PROTOCOL,
+                    role: "window",
+                    code,
+                });
+                try {
+                    if (added) {
+                        await ready.promise;
+                    }
+                    const finished = Promise.withResolvers<void>();
+                    await client.subscribe({ project: fx.project, events: ["voices.job"] }, (e) => {
+                        if (voiceJobSchema.parse(e.params).state === "done") {
+                            finished.resolve();
+                        }
+                    });
+                    const list = () => client.call("voices.jobs", { project: fx.project });
+                    if (!(await list()).some((r) => r.state === "done")) {
+                        blocked.resolve();
+                        await finished.promise;
+                    }
+                    expect(await list()).toContainEqual(
+                        expect.objectContaining({ state: "done", added, skipped: 2 - added })
+                    );
+                    expect(readVoiceLibrary().library.samples.map((v) => v.fromSec)).toEqual([5]);
+                } finally {
+                    blocked.resolve();
+                    client.close();
+                    start.service.stop("restart");
+                    await start.service.stopped;
+                }
+            }
+            expect(fx.embed).toHaveBeenCalledTimes(1);
+        } finally {
+            fx.restore();
+        }
+    }, 30_000);
+
+    test("P6 a queued Undo retires only its item and consecutive publications coalesce one naming pass", async () => {
+        const fx = await voiceAnswerFixture(undefined, [
+            ...[
+                ["i4", 0],
+                ["i5", 5],
+                ["i6", 10],
+            ].map(([id, sec]) =>
+                speakerRange(String(id), Number(sec), {
+                    speaker: "Alice Example",
+                    rules: [MeetingRule.VoiceEmbedding],
+                    evidence: { endSec: Number(sec) + 5 },
+                })
+            ),
+        ]);
+        const meeting = fx.meeting.id;
+        const named = Promise.withResolvers<void>();
+        const events: import("./service/api").VoiceJob[] = [];
+        const jobs = new MeetingVoiceJobs({
+            store: fx.store,
+            notify: (row) => events.push(row),
+            config: async () => meetingsConfigSchema.parse({ meetings: { voices: { reproposeDelaySec: 0.02 } } }),
+            nameMeeting: async () => {
+                named.resolve();
+                return { meeting, added: 0, warnings: [] };
+            },
+        });
+        const firstStarted = Promise.withResolvers<void>();
+        const resume = Promise.withResolvers<void>();
+        fx.embed.mockImplementationOnce(async (input) => {
+            firstStarted.resolve();
+            await resume.promise;
+            return fx.embedLines(input);
+        });
+        const confirm = async (items: string[]) =>
+            (await fx.journal.apply({ meeting, actor: person, action: { kind: "confirm", items } })).entry!;
+        try {
+            const first = await confirm(["i4"]);
+            const work = jobs.discover(fx.store.read(meeting)!, "answer-samples", first.token);
+            await firstStarted.promise;
+            const second = await confirm(["i5", "i6"]);
+            const queued = jobs.discover(fx.store.read(meeting)!, "answer-samples", second.token);
+            expect(jobs.list(fx.project).map((j) => j.state)).toEqual(["running", "queued"]);
+            await fx.journal.revert({ meeting, token: second.token, actor: person, items: ["i5"] });
+            resume.resolve();
+            await Promise.all([work, queued]);
+            await named.promise;
+            expect(
+                events
+                    .filter((r) => r.state === "running" && r.progress.step.startsWith("Naming again"))
+                    .map((r) => r.progress.step)
+            ).toEqual(["Naming again with 2 new samples"]);
+            expect(readVoiceLibrary().library.samples.map((s) => s.question)).toEqual(["i4", "i6"]);
+        } finally {
+            resume.resolve();
+            jobs.stop();
+            fx.restore();
+        }
+    });
 
     test("P2 rejection survives live human answers, explicit confirms, saved and freshly embedded backfill and journal replay", async () => {
         const fx = await voiceAnswerFixture(undefined, [
@@ -441,10 +623,10 @@ describe("speaker answers and their project voice prints", () => {
             await fx.learn(later.entry!.token);
             expect(later.entry?.decided).toContain("i7");
             expect(rows().map((row) => row.fromSec)).toEqual([5]);
-            // Neither later decision journaled the rejected clip. Backfill has to embed its line again.
+            // Neither later decision owns the rejected clip. Its known line can be skipped before embedding.
             fx.embed.mockClear();
             const recomputed = await recover();
-            expect(fx.embed).toHaveBeenCalled();
+            expect(fx.embed).not.toHaveBeenCalled();
             expect(recomputed.added).toBe(0);
             expect(recomputed.rows.some((r) => (r.skipped["bad-audio"] ?? 0) > 0)).toBe(true);
             const remaining = rows()[0]!;
