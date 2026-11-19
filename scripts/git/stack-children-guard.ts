@@ -216,6 +216,12 @@ async function main(): Promise<number> {
             if (!hasCommit(child.headSha)) {
                 run(["git", "fetch", "--quiet", remote, child.headSha]);
             }
+
+            if (!hasCommit(child.headSha)) {
+                process.stderr.write(
+                    `⚠ stack guard: could not fetch the head of #${child.number} (${child.headRefName}); it was not checked\n`
+                );
+            }
         }
         children.set(parent, list);
     }
