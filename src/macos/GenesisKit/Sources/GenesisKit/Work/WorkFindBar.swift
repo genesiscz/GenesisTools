@@ -8,6 +8,7 @@ public struct WorkFindBar: View {
     private let matchedCount: Int
     private let totalCount: Int
     private let focusRequest: Int
+    private let clearRequest: Int
     private let filterNotice: String?
     private let onClear: () -> Void
     private let onSubmit: () -> Void
@@ -16,13 +17,14 @@ public struct WorkFindBar: View {
     @State private var searchTask: Task<Void, Never>?
 
     public init(filter: Binding<WorkFilter>, matchedCount: Int, totalCount: Int,
-                focusRequest: Int = 0, filterNotice: String? = nil,
+                focusRequest: Int = 0, clearRequest: Int = 0, filterNotice: String? = nil,
                 onClear: @escaping () -> Void, onSubmit: @escaping () -> Void) {
         _filter = filter
         _query = State(initialValue: filter.wrappedValue.text)
         self.matchedCount = matchedCount
         self.totalCount = totalCount
         self.focusRequest = focusRequest
+        self.clearRequest = clearRequest
         self.filterNotice = filterNotice
         self.onClear = onClear
         self.onSubmit = onSubmit
@@ -64,6 +66,7 @@ public struct WorkFindBar: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .onChange(of: focusRequest) { _, _ in searchFocused = true }
+        .onChange(of: clearRequest) { _, _ in edit("") }
         .onChange(of: filter.text) { _, text in
             guard query != text else { return }
             searchTask?.cancel()

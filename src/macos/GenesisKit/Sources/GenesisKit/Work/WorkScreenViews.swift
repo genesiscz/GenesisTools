@@ -54,6 +54,7 @@ public struct WorkItemsView: View {
     let clearFilters: () -> Void
     let retryIndex: () -> Void
     let perform: @MainActor (WorkScreenAction) -> Task<Bool, Never>
+    @StateObject private var drafts: WorkItemInspectorDrafts
     @State private var expanded: Set<String>
     @State private var compact = false
 
@@ -64,6 +65,7 @@ public struct WorkItemsView: View {
         projection = nil; filter = .default; selection = nil
         indexLoading = false; indexFailure = nil
         select = { _ in }; toggleExpansion = nil; showMore = {}; clearFilters = {}; retryIndex = {}
+        _drafts = StateObject(wrappedValue: WorkItemInspectorDrafts())
         _expanded = State(initialValue: expandAll ? Set(snapshot.containers.map(\.ref)) : [])
     }
 
@@ -71,13 +73,15 @@ public struct WorkItemsView: View {
                 selection: String?, pending: Set<String>, indexLoading: Bool = false, indexFailure: String? = nil,
                 select: @escaping (String) -> Void, toggleExpansion: @escaping (String, Bool) -> Void,
                 showMore: @escaping () -> Void, clearFilters: @escaping () -> Void,
-                retryIndex: @escaping () -> Void, perform: @escaping @MainActor (WorkScreenAction) async -> Bool) {
+                retryIndex: @escaping () -> Void, drafts: WorkItemInspectorDrafts? = nil,
+                perform: @escaping @MainActor (WorkScreenAction) async -> Bool) {
         self.snapshot = snapshot; self.projection = projection; self.filter = filter
         self.selection = selection; self.pending = pending
         self.indexLoading = indexLoading; self.indexFailure = indexFailure
         self.select = select; self.toggleExpansion = toggleExpansion; self.showMore = showMore
         self.clearFilters = clearFilters; self.retryIndex = retryIndex
         self.perform = { action in Task { await perform(action) } }
+        _drafts = StateObject(wrappedValue: drafts ?? WorkItemInspectorDrafts())
         _expanded = State(initialValue: [])
     }
 
@@ -115,7 +119,7 @@ public struct WorkItemsView: View {
                     ContainerRow(container: container, filtered: filter.isActive,
                                  handoffs: handoffs, pending: pending.intersection(members),
                                  selection: selection.flatMap { $0 == container.ref || members.contains($0) ? $0 : nil },
-                                 selectable: projection != nil, select: select,
+                                 selectable: projection != nil, drafts: drafts, select: select,
                                  toggle: { open in
                                      if let toggleExpansion { toggleExpansion(container.ref, open) }
                                      else if open { expanded.insert(container.ref) }
@@ -180,7 +184,7 @@ public struct WorkItemsView: View {
         ItemRow(value: value, detail: nil, summary: nil, accept: false, archive: archive,
                 showActions: true, choices: choices, pending: pending.contains(value.ref),
                 selected: selection == value.ref, selectable: projection != nil,
-                select: select, perform: perform).equatable()
+                drafts: drafts, select: select, perform: perform).equatable()
     }
 
     private func triage(_ value: WorkTriageValue, accept: Bool, handoffs: HandoffChoices) -> some View {
@@ -192,7 +196,7 @@ public struct WorkItemsView: View {
                 accept: accept, archive: false, showActions: true, choices: handoffs.forRow(row),
                 pending: pending.contains(value.ref),
                 selected: selection == value.ref, selectable: projection != nil,
-                select: select, perform: perform).equatable()
+                drafts: drafts, select: select, perform: perform).equatable()
     }
 
     @ViewBuilder
@@ -231,7 +235,7 @@ public struct WorkItemsView: View {
         }
 
         func forRow(_ row: WorkRowValue) -> [HandoffChoice] {
-            guard row.state != "done", row.state != "dropped" else { return [] }
+            guard row.type != "handoff", row.state != "done", row.state != "dropped" else { return [] }
             guard let parents = memberships[row.ref] else { return choices }
             return choices.filter { !parents.contains($0.ref) }
         }
@@ -244,6 +248,7 @@ public struct WorkItemsView: View {
         let pending: Set<String>
         let selection: String?
         let selectable: Bool
+        let drafts: WorkItemInspectorDrafts
         let select: (String) -> Void
         let toggle: (Bool) -> Void
         let perform: @MainActor (WorkScreenAction) -> Task<Bool, Never>
@@ -269,7 +274,7 @@ public struct WorkItemsView: View {
                                                 title: value.title, pairings: value.pairings),
                             detail: nil, summary: summary, accept: false, archive: false, showActions: false,
                             choices: [], pending: false, selected: selection == value.ref,
-                            selectable: selectable, select: select, perform: perform).equatable()
+                            selectable: selectable, drafts: drafts, select: select, perform: perform).equatable()
                 }
                 if container.isExpanded {
                     VStack(alignment: .leading, spacing: 2) {
@@ -277,7 +282,7 @@ public struct WorkItemsView: View {
                             ItemRow(value: member, detail: nil, summary: nil, accept: false, archive: false,
                                     showActions: true, choices: handoffs.forRow(member), pending: pending.contains(member.ref),
                                     selected: selection == member.ref, selectable: selectable,
-                                    select: select, perform: perform).equatable()
+                                    drafts: drafts, select: select, perform: perform).equatable()
                         }
                     }
                     .padding(.leading, 24)
@@ -301,6 +306,7 @@ public struct WorkItemsView: View {
         let pending: Bool
         let selected: Bool
         let selectable: Bool
+        let drafts: WorkItemInspectorDrafts
         let select: (String) -> Void
         let perform: @MainActor (WorkScreenAction) -> Task<Bool, Never>
 
@@ -400,16 +406,12 @@ public struct WorkItemsView: View {
                         }
                     }
                     if ["open", "active", "reopened"].contains(state) {
-                        WorkReasonButton(symbol: "checkmark.seal", tooltip: "Finish, with the proof",
-                                         prompt: "The proof: the command, where it ran, the commit") {
-                            perform(.finish(ref: ref, proof: $0))
-                        }
+                        reason("finish", ref: ref, symbol: "checkmark.seal", tooltip: "Finish, with the proof",
+                               prompt: "The proof: the command, where it ran, the commit") { .finish(ref: ref, proof: $0) }
                     }
                     if ["done", "dropped"].contains(state) {
-                        WorkReasonButton(symbol: "arrow.uturn.backward.circle", tooltip: "Reopen, with what is still wrong",
-                                         prompt: "What is still wrong, with the evidence") {
-                            perform(.reopen(ref: ref, why: $0))
-                        }
+                        reason("reopen", ref: ref, symbol: "arrow.uturn.backward.circle", tooltip: "Reopen, with what is still wrong",
+                               prompt: "What is still wrong, with the evidence") { .reopen(ref: ref, why: $0) }
                     }
                     if state != "dropped" && state != "done" {
                         if !choices.isEmpty {
@@ -423,12 +425,19 @@ public struct WorkItemsView: View {
                             .instantTooltip("Add to a handoff as one of its tasks")
                             .accessibilityLabel("Add to a handoff")
                         }
-                        WorkReasonButton(symbol: "xmark.circle", tooltip: "Drop, with the reason",
-                                         prompt: "Why nobody will do it") {
-                            perform(.drop(ref: ref, why: $0))
-                        }
+                        reason("drop", ref: ref, symbol: "xmark.circle", tooltip: "Drop, with the reason",
+                               prompt: "Why nobody will do it") { .drop(ref: ref, why: $0) }
                     }
                 }
+            }
+        }
+
+        private func reason(_ purpose: String, ref: String, symbol: String, tooltip: String, prompt: String,
+                            action: @escaping (String) -> WorkScreenAction) -> some View {
+            let key = WorkItemInspectorDrafts.Key(ref: ref, purpose: purpose)
+            return WorkReasonButton(symbol: symbol, tooltip: tooltip, prompt: prompt, text: drafts.binding(key),
+                                    identifier: "work.reason.\(symbol)") { _ in
+                drafts.submit(key) { value in await perform(action(value)).value }
             }
         }
 
@@ -503,46 +512,29 @@ struct WorkReasonButton: View {
     private let tooltip: String
     private let prompt: String
     private let title: String?
-    private let externalText: Binding<String>?
+    private let text: Binding<String>
     private let isPending: Bool
     private let identifier: String
     private let action: @MainActor (String) -> Task<Bool, Never>?
     @State private var asking = false
-    @State private var localText = ""
-    @State private var localRevision = UUID()
     @State private var sending = false
     @State private var presentation = UUID()
     @FocusState private var focused: Bool
 
-    /// Compatibility initializer for the existing row actions.
-    init(symbol: String, tooltip: String, prompt: String, action: @escaping @MainActor (String) -> Task<Bool, Never>?) {
-        self.symbol = symbol
-        self.tooltip = tooltip
-        self.prompt = prompt
-        self.title = nil
-        self.externalText = nil
-        self.isPending = false
-        self.identifier = "work.reason.\(symbol)"
-        self.action = action
-    }
-
-    /// Labelled inspector action. Success is true only after the write is confirmed by the model.
-    init(title: String, symbol: String, tooltip: String, prompt: String, text: Binding<String>,
+    /// Success is true only after the write is confirmed by the model.
+    init(title: String? = nil, symbol: String, tooltip: String, prompt: String, text: Binding<String>,
          isPending: Bool = false, identifier: String,
          action: @escaping @MainActor (String) -> Task<Bool, Never>?) {
         self.symbol = symbol
         self.tooltip = tooltip
         self.prompt = prompt
         self.title = title
-        self.externalText = text
+        self.text = text
         self.isPending = isPending
         self.identifier = identifier
         self.action = action
     }
 
-    private var text: Binding<String> {
-        externalText ?? Binding(get: { localText }, set: { localText = $0; localRevision = UUID() })
-    }
     private var verb: String { title ?? tooltip.components(separatedBy: ",").first ?? "Save" }
     private var empty: Bool { text.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
@@ -602,15 +594,13 @@ struct WorkReasonButton: View {
     private func confirm() {
         let value = text.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty, !isPending, !sending else { return }
-        let submittedRevision = localRevision
         let shown = presentation
         guard let submitted = action(value) else { return }
         sending = true
         Task {
             let ok = await submitted.value
             sending = false
-            if externalText == nil, ok, localRevision == submittedRevision { localText = "" }
-            // External-draft clearing is owned by the caller's revision check. A failed write stays open;
+            // Draft clearing is owned by the caller's revision check. A failed write stays open;
             // a new draft, typed during the write, also stays open. Cancel/dismiss never erases text.
             if ok, text.wrappedValue.isEmpty, presentation == shown { asking = false }
         }

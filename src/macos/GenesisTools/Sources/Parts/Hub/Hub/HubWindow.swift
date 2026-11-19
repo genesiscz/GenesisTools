@@ -1165,7 +1165,10 @@ final class HubModel {
         case .sessions: return HubNavEntry(mode: .sessions, selection: selectedID)
         case .worktrees: return HubNavEntry(mode: .worktrees, selection: selectedWorktree)
         case .model(let model):
-            return HubNavEntry(mode: mode, selection: model.navSelection, workItem: mode == .work ? work.screen.itemRef : nil)
+            if mode == .work, let ref = work.screen.itemRef {
+                return HubNavEntry(mode: .work, selection: nil, workItem: ref)
+            }
+            return HubNavEntry(mode: mode, selection: model.navSelection)
         }
     }
 
@@ -1226,7 +1229,7 @@ final class HubModel {
     private func restorePlace(_ entry: HubNavEntry, commit: String?, repo: String?) {
         setMode(entry.mode)
         if entry.mode == .work {
-            restoreWorkItem(entry.workItem)
+            restoreWorkItem(entry.workItem, project: entry.selection)
             return
         }
         guard let id = entry.selection else { return }
@@ -2138,10 +2141,11 @@ final class HubModel {
     }
 
     @MainActor
-    private func restoreWorkItem(_ ref: String?) {
+    private func restoreWorkItem(_ ref: String?, project: String? = nil) {
         if let ref { work.screen.openItem(ref) }
         else {
-            work.screen.closeItem()
+            if let project, project != work.screen.project { work.openProject(project) }
+            else { work.screen.closeItem() }
             work.screen.pane = .items
         }
     }

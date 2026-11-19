@@ -54,8 +54,10 @@ struct HubNavTarget: Codable, Hashable, Sendable {
 
     /// The hub's own place, when it has one.
     var place: HubNavEntry? {
-        guard let mode, fields["selection"] != nil || fields["work"] != nil else { return nil }
-        return HubNavEntry(mode: mode, selection: fields["selection"], workItem: fields["work"])
+        guard let mode else { return nil }
+        let workItem = mode == .work ? fields["work"] : nil
+        guard fields["selection"] != nil || workItem != nil else { return nil }
+        return HubNavEntry(mode: mode, selection: workItem == nil ? fields["selection"] : nil, workItem: workItem)
     }
 
     /// The `--hub` flags of a place an agent or a link named.

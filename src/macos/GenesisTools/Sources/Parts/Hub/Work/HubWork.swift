@@ -148,6 +148,7 @@ struct WorkProjectRow: View, Equatable {
 /// The main view: the header in the title bar, then the Items or the Notifications pane.
 struct WorkMain: View {
     @State private var findRequest = 0
+    @State private var findClearRequest = 0
     @State private var focusAfterReturn = false
     @FocusState private var workFocus: Bool
     @GenReduceMotion private var reduceMotion
@@ -273,7 +274,7 @@ struct WorkMain: View {
             WorkFindBar(filter: $screen.filter,
                         matchedCount: screen.results?.matchedCount ?? 0,
                         totalCount: screen.results?.totalCount ?? 0,
-                        focusRequest: findRequest, filterNotice: screen.filterNotice,
+                        focusRequest: findRequest, clearRequest: findClearRequest, filterNotice: screen.filterNotice,
                         onClear: { screen.filter = .default },
                         onSubmit: { if let ref = screen.filter.fullRef { screen.select(ref) } })
                 .id(screen.project)
@@ -286,8 +287,11 @@ struct WorkMain: View {
                                       selection: screen.selection, pending: screen.pending,
                                       indexLoading: screen.indexLoading, indexFailure: screen.indexFailure,
                                       select: { workFocus = true; screen.select($0) }, toggleExpansion: { ref, _ in screen.toggleContainer(ref) },
-                                      showMore: screen.showMore, clearFilters: { screen.filter = .default },
-                                      retryIndex: screen.loadIndexIfNeeded, perform: screen.write)
+                                      showMore: screen.showMore, clearFilters: {
+                                          findClearRequest += 1
+                                          screen.filter = .default
+                                      },
+                                      retryIndex: screen.loadIndexIfNeeded, drafts: inspectorDrafts, perform: screen.write)
                             .padding(.horizontal, 16)
                             .padding(.vertical, 12)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -397,7 +401,8 @@ struct HubWorkContent: View {
 
     var body: some View {
         let origin = screen.itemDetail?.item.checkoutPath
-        let known = screen.project.flatMap { name in
+        let detailProject = screen.itemDetail?.item.project
+        let known = detailProject.flatMap { name in
             model.worktrees.first { $0.isMain && $0.repo.caseInsensitiveCompare(name) == .orderedSame }?.path
                 ?? PRsModel.projectRoot(name, in: model.prs.allProjects)
         }
