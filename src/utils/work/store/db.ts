@@ -23,17 +23,33 @@ export function openWorkDb(path: string = workDbPath()): Database {
     }
 
     const db = new Database(path, { create: true });
-    applyPragmas(db, { foreignKeys: false });
-    runMigrations(db, WORK_MIGRATIONS, { tableName: WORK_SCHEMA_SCOPE });
-    return db;
+    try {
+        applyPragmas(db, { foreignKeys: false });
+        runMigrations(db, WORK_MIGRATIONS, { tableName: WORK_SCHEMA_SCOPE });
+        return db;
+    } catch (error) {
+        db.close();
+        throw error;
+    }
 }
 
 export function withWorkDb<T>(path: string | undefined, fn: (db: Database) => T): T {
     const db = openWorkDb(path);
 
+    let pending = false;
+
     try {
-        return fn(db);
+        const result = fn(db);
+
+        if (result instanceof Promise) {
+            pending = true;
+            return result.finally(() => db.close()) as T;
+        }
+
+        return result;
     } finally {
-        db.close();
+        if (!pending) {
+            db.close();
+        }
     }
 }
