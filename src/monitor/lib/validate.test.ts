@@ -194,9 +194,9 @@ describe("parseEntityId", () => {
 });
 
 describe("watcher durations", () => {
-    test("a zero or out-of-range duration is a validation error, never a crash", () => {
+    test("an empty, zero or out-of-range duration is a validation error, never a crash or no filter", () => {
         for (const read of [muteUntilFrom, sinceFrom]) {
-            for (const bad of ["0m", "soon", "200000000d"]) {
+            for (const bad of ["", "0m", "soon", "200000000d"]) {
                 expect(() => read(bad)).toThrow(WatcherValidationError);
             }
         }

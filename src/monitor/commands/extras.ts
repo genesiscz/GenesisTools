@@ -653,7 +653,8 @@ export function registerExtraCommands(program: Command): void {
         .action(async (id: string, opts: { limit: string; since?: string; json?: boolean }) => {
             const limitValue = Number.parseInt(opts.limit, 10);
             const limit = Number.isInteger(limitValue) && limitValue > 0 ? Math.min(limitValue, 500) : 30;
-            const since = opts.since ? sinceFrom(opts.since) : undefined;
+            // An explicit empty `--since ""` reaches the validator instead of meaning "no filter".
+            const since = opts.since !== undefined ? sinceFrom(opts.since) : undefined;
             const { watcher, checks } = await withMonitor(async (monitor) => {
                 const current = await requireWatcher(monitor, id);
 
