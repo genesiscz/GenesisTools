@@ -957,10 +957,27 @@ describe("speaker answers and their project voice prints", () => {
     });
 
     test("voice backfill takes a name, never a sentence that an old free-text answer stored as the speaker", () => {
-        for (const name of ["Alice Example", "Example Bob (QT)", "alice.example01"]) {
+        for (const name of [
+            "Alice Example",
+            "Example Bob (QT)",
+            "alice.example01",
+            "J. R. Example",
+            "Dr. Ada Example",
+            "Bob Example, Jr.",
+        ]) {
             expect(looksLikeOnePerson(name)).toBe(true);
         }
-        expect(looksLikeOnePerson("That one was me. No, the merge part was Bob Example")).toBe(false);
+        for (const sentence of [
+            "That one was me. No, the merge part was Bob Example",
+            "It was me. Bob",
+            "Alice, then Bob",
+            "Bob Example: the second part",
+        ]) {
+            expect(looksLikeOnePerson(sentence)).toBe(false);
+        }
+        // A participant or attendance name is one person, whatever its punctuation.
+        expect(looksLikeOnePerson("Example, Carol", ["example, carol"])).toBe(true);
+        expect(looksLikeOnePerson("Example, Carol")).toBe(false);
     });
 
     test("voice backfill recovers two historical answers without seats and Undo retains the other person's sample", async () => {

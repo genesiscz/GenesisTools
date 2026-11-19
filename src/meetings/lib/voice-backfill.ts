@@ -4,6 +4,7 @@ import { projectNameSchema } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { voiceRootMeeting } from "@genesiscz/utils/meetings/record";
 import { meetingVoiceOwner, readVoiceLibrary, sourceForVoicePrint } from "@genesiscz/utils/meetings/voice-library";
+import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import { DecisionJournal } from "./decision-journal";
 import { recordPeople } from "./listen-answers";
 import { OpenedMeeting } from "./opened-meeting";
@@ -34,13 +35,37 @@ interface BackfillDecision extends VoiceTarget {
     refusals?: Map<string, number>;
 }
 
+/** Words a name abbreviates with a period (`Dr. Ada Example`), lower case. A single letter is an initial. */
+const NAME_ABBREVIATIONS = new Set(["mr", "mrs", "ms", "mx", "dr", "prof", "st", "jr", "sr"]);
+/** A suffix a name sets off with a comma: `Bob Example, Jr.`. */
+const NAME_SUFFIX = /^\s+(?:jr|sr|ii|iii|iv)\.?(?:\s|$)/i;
+
 /**
  * Answers saved before free text was parsed into people (I6) can hold a whole sentence as the speaker, and the record
- * then lists that sentence as a confirmed speaker, so the record's own people cannot veto it. A name never holds
- * sentence punctuation followed by a space, nor more than six words.
+ * then lists that sentence as a confirmed speaker, so the record's own speakers cannot veto it. A name that an
+ * independent source lists (`known`: the participants and the attendance) is one person. Otherwise a name has at most
+ * six words, and its punctuation before a space is a period after an initial or a title (`J. R. Example`,
+ * `Dr. Example`) or a comma before a suffix (`Bob Example, Jr.`); any other is a sentence's.
  */
-export function looksLikeOnePerson(name: string): boolean {
-    return !/[.?!,;:]\s/.test(name) && name.trim().split(/\s+/).length <= 6;
+export function looksLikeOnePerson(name: string, known: readonly string[] = []): boolean {
+    if (known.some((person) => sameName(person, name))) {
+        return true;
+    }
+
+    if (name.trim().split(/\s+/).length > 6) {
+        return false;
+    }
+
+    for (const match of name.matchAll(/([^\s.?!,;:]*)([.?!,;:])(?=\s)/g)) {
+        const [, word = "", mark] = match;
+        const rest = name.slice(match.index + match[0].length);
+        const initial = mark === "." && (word.length === 1 || NAME_ABBREVIATIONS.has(word.toLowerCase()));
+        if (!initial && !(mark === "," && NAME_SUFFIX.test(rest))) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 async function prepareDecisions(
@@ -56,6 +81,11 @@ async function prepareDecisions(
     );
     const people = recordPeople(record);
     const sourceChanged = job.sourceAtEnqueue && !sameRecording(job.sourceAtEnqueue, record);
+    // Only sources independent of the answers: a confirmed speaker may be the very sentence being checked.
+    const listed = [
+        ...record.participants.map((one) => one.name),
+        ...(record.attendance?.people.map((one) => one.name) ?? []),
+    ];
     const decisions: BackfillDecision[] = [];
     for (const entry of journal.read(record.id).reverse()) {
         if (job.tokens && !job.tokens.has(entry.token)) {
@@ -65,7 +95,7 @@ async function prepareDecisions(
             throw new Error(`Decision ${entry.token} belongs to ${entry.meeting}, not ${record.id}.`);
         }
         for (const target of answeredVoiceTargets(entry, people)) {
-            if (!looksLikeOnePerson(target.voice.person)) {
+            if (!looksLikeOnePerson(target.voice.person, listed)) {
                 decisions.push({ ...target, changes: [], skipped: "the answer is a sentence, not one person" });
                 continue;
             }
