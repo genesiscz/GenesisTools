@@ -28,7 +28,13 @@ export function rowLine(row: ItemRow): string {
 }
 
 function isItemRow(row: ItemRow | Record<string, unknown>): row is ItemRow {
-    return typeof row.ref === "string" && typeof row.state === "string" && typeof row.title === "string";
+    return (
+        typeof row.ref === "string" &&
+        typeof row.state === "string" &&
+        typeof row.type === "string" &&
+        typeof row.title === "string" &&
+        typeof row.project === "string"
+    );
 }
 
 const writeFormatter = defineFormatter<WriteData>({
