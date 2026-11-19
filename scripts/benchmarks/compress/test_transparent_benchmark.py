@@ -23,6 +23,7 @@ class BenchmarkTest(unittest.TestCase):
     def test_reports_sample_counts_and_interpolated_percentiles(self):
         self.assertEqual(distribution([10, 1, 4]), '3: 1.60 / 4.00 / 8.80')
         self.assertEqual(distribution([7]), '1: 7.00 / 7.00 / 7.00')
+        self.assertEqual(distribution([]), '0: n/a')
 
     def test_directory_search_pairs_the_same_names_and_alternates_arms(self):
         with tempfile.TemporaryDirectory() as scratch:
@@ -76,6 +77,23 @@ class BenchmarkTest(unittest.TestCase):
             self.assertIn('all\t700\t560\t140\t35: 25.00 / 25.00 / 25.00', result.getvalue())
             self.assertIn('Verified append bytes: 35', result.getvalue())
             self.assertIn('No supplementary writer results.', result.getvalue())
+
+    def test_report_keeps_sparse_inputs_out_of_the_ratios(self):
+        row = dict(plain=dict(size=20, allocated=16), compressed=dict(allocated=4),
+                   compression=[dict(elapsed_ms=2)], cmp=[dict(elapsed_ms=1)],
+                   append=[dict(elapsed_ms=4, before=dict(flags=32))],
+                   reads=[dict(arm=arm, elapsed_ms=7) for arm in ('plain', 'compressed')])
+        rows = [dict(row, kind=kind) for kind in KINDS for _ in range(5)]
+        rows[0] = dict(rows[0], plain=dict(size=20, allocated=0), compressed=dict(allocated=0))
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            (root / 'results.json').write_text(json.dumps(dict(
+                complete=True, rows=rows, search=row['reads'], boundaries=[])))
+            result = io.StringIO()
+            with redirect_stdout(result):
+                report(root)
+            self.assertIn('all\t700\t544\t136\t34: 25.00 / 25.00 / 25.00', result.getvalue())
+            self.assertIn('claude_plain: 1 input(s) had no allocated bytes and no retained %', result.getvalue())
 
 
 class OpenFileTest(unittest.TestCase):
