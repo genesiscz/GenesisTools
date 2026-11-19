@@ -1,8 +1,8 @@
 import { existsSync, realpathSync } from "node:fs";
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { BaseSource, DetectedBase, OriginDriver, PrInfo, WorktreeInfo } from "@genesiscz/utils/git";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { createGit } from "../core";
 import { blobMap } from "../porcelain";
 import { contentVerdict, type How, historicBlobsOf, quickVerdict, type Verdict } from "./verdict";
@@ -103,8 +103,8 @@ export async function resolveRef(ctx: CollectContext, ref: string): Promise<Reso
     const byPath = ctx.worktrees.find((w) => (exists || w.prunable) && samePath(w.path, ref));
 
     if (byPath) {
-        const abs = resolve(ref);
-        const label = abs.startsWith(`${ctx.repoRoot}/`) ? abs.slice(ctx.repoRoot.length + 1) : ref;
+        const rel = relative(ctx.repoRoot, resolve(ref));
+        const label = rel && !isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`) ? rel : ref;
         return {
             ref,
             label,
@@ -220,11 +220,11 @@ export async function collectRefReport(ctx: CollectContext, ref: string): Promis
     if ((decision.verdict === "MERGED" || decision.verdict === "EMPTY") && dirty === 0) {
         if (worktree && !isMainWorktree(worktree, ctx.repoRoot)) {
             // `worktree remove` refuses an entry whose `.git` file is gone; prune drops every such entry.
-            commands.push(prunable ? "git worktree prune" : `git worktree remove ${SafeJSON.stringify(worktree.path)}`);
+            commands.push(prunable ? "git worktree prune" : `git worktree remove -- ${shellQuote(worktree.path)}`);
         }
 
         if (branch) {
-            commands.push(`git branch -D ${branch}`);
+            commands.push(`git branch -D -- ${shellQuote(branch)}`);
         }
     }
 
