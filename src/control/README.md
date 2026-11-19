@@ -777,7 +777,12 @@ Native-only capture plan fields (the `ax-tool capture` flag in brackets):
 - `maxMb` (`--max-mb <n>`): stop keeping frames after n MB were written. Sampling and motion go on.
 - `audio` (`--audio system,mic`): record system audio (`excludesCurrentProcessAudio`) and the microphone (macOS 15
   and later, else code `unsupported`), each as its own AAC track in `videoOut` (system 2 channels, mic 1, 48 kHz).
-  Needs `videoOut` or `audioSidecar`; not in isolated mode.
+  Needs `videoOut` or `audioSidecar`. In isolated mode the sound comes from one extra stream whose picture is
+  dropped, so it never stops with a window's stream.
+- `systemAudioScope` (`--system-audio-scope all|app`): isolated mode with audio `system`. `all` (the default) keeps
+  everything the Mac plays but the recorder, as screen mode does; `app` keeps only the selected windows' apps.
+  ScreenCaptureKit filters sound per app, never per window: a `window` mode movie (one window's filter) keeps that
+  window's app only.
 - `micDevice` (`--mic-device <uid>`): an input that `ax-tool audio-devices` lists as `id`; an unknown one fails with
   code `device-missing`. Default: the system input.
 - `audioSidecar` (`--audio-sidecar`): also write `audio-system.m4a` and `audio-mic.m4a` next to the frames.

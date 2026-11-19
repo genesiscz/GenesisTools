@@ -15,7 +15,7 @@ import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
 import { type CaptureSpec, NATIVE_MOVIE_MAX_SECONDS } from "./capture-plan";
 import { CaptureRunError, runCapturePlanWithSignal } from "./capture-runner";
-import { captureFromFlags, validateCaptureOptions } from "./native-record";
+import { type CaptureSystemAudioScope, captureFromFlags, validateCaptureOptions } from "./native-record";
 import {
     audioTitleArgs,
     concatCopyArgv,
@@ -32,7 +32,7 @@ import {
     type SegmentStart,
     segmentPlacements,
 } from "./recording-session";
-import { describeRecordingTarget, type RecordingTarget } from "./recording-targets";
+import type { RecordingTarget } from "./recording-targets";
 
 const { log } = logger.scoped("control-recording-native");
 
@@ -55,10 +55,15 @@ export interface NativeRecorderOptions {
     fps?: number;
     /** False hides the red border around what is recorded (it never shows in the movie either way). */
     indicator?: boolean;
-    /** Audio tracks in each segment's movie, joined with the video. Display and region targets only. */
+    /** Audio tracks in each segment's movie, joined with the video, for every target. */
     audio?: ("system" | "mic")[];
     /** The microphone's input UID from `ax-tool audio-devices`; needs audio "mic". */
     micDevice?: string;
+    /**
+     * Whose sound the system track of a window or app segment keeps: everything the Mac plays (`all`, the default) or
+     * only the recorded apps (`app`). A display or area segment always keeps everything.
+     */
+    systemAudioScope?: CaptureSystemAudioScope;
     /**
      * Each segment writes `<segment>.cursor.jsonl`; the joiner makes `<output>.cursor.jsonl` of them for every target.
      */
@@ -87,12 +92,6 @@ export function segmentCaptureSpec({
     maxSeconds: number;
     options: NativeRecorderOptions;
 }): CaptureSpec {
-    if (target.kind !== "display" && target.kind !== "region" && options.audio?.length) {
-        throw new Error(
-            `${describeRecordingTarget(target)} cannot record audio: those need a display or an area target`
-        );
-    }
-
     const duration = String(Math.max(0.1, Math.min(NATIVE_MOVIE_MAX_SECONDS, maxSeconds)));
     const common = {
         codec: "h264",
@@ -148,6 +147,11 @@ export function segmentCaptureSpec({
 
         if (options.micDevice) {
             spec.micDevice = options.micDevice;
+        }
+
+        // A take that switches between a window and a display keeps one scope for its window and app segments.
+        if (spec.mode === "isolated" && options.systemAudioScope && options.audio.includes("system")) {
+            spec.systemAudioScope = options.systemAudioScope;
         }
     }
 

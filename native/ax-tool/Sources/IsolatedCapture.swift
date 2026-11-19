@@ -320,6 +320,56 @@ private final class IsolatedWindowSource: NSObject, SCStreamOutput, SCStreamDele
     }
 }
 
+/// The sound of an isolated movie: one stream whose picture is dropped, so the sound neither stops nor restarts with
+/// a window's stream. ScreenCaptureKit filters sound per app only (WWDC22 "Meet ScreenCaptureKit": "audio capture can
+/// only be filtered at an application level"): `.app` keeps the selected windows' apps, `.all` every app but this
+/// process (`excludesCurrentProcessAudio`), as a display movie does. The microphone rides on the same stream.
+@available(macOS 14.0, *)
+private final class IsolatedAudioSource: NSObject, SCStreamOutput, SCStreamDelegate {
+    private let filter: SCContentFilter
+    private let configuration: SCStreamConfiguration
+    private weak var recorder: NativeRecorder?
+    private let pictureQueue = DispatchQueue(label: "ax-tool.record.isolated-audio-picture", qos: .utility)
+    lazy var stream = SCStream(filter: filter, configuration: configuration, delegate: self)
+
+    init?(scope: SystemAudioScope, pids: Set<pid_t>, content: SCShareableContent, options: RecordOptions,
+          recorder: NativeRecorder) {
+        guard let display = content.displays.first else { return nil }
+        switch scope {
+        case .all:
+            filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+        case .app:
+            let apps = content.applications.filter { pids.contains($0.processID) }
+            guard !apps.isEmpty else { return nil }
+            filter = SCContentFilter(display: display, including: apps, exceptingWindows: [])
+        }
+        let configuration = SCStreamConfiguration()
+        // The smallest picture at one frame a second: the stream exists for its sound.
+        configuration.width = 2
+        configuration.height = 2
+        configuration.minimumFrameInterval = CMTime(value: 1, timescale: 1)
+        configuration.queueDepth = 3
+        configuration.showsCursor = false
+        configureAudio(configuration, options)
+        self.configuration = configuration
+        self.recorder = recorder
+        super.init()
+    }
+
+    func start(_ audio: NativeAudio) throws {
+        // A picture output keeps ScreenCaptureKit from logging a dropped frame every second.
+        try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: pictureQueue)
+        try addAudioOutputs(audio, to: stream)
+        try awaitResult { try await self.stream.startCapture() }
+    }
+
+    func stream(_ stream: SCStream, didOutputSampleBuffer sample: CMSampleBuffer, of type: SCStreamOutputType) {}
+
+    func stream(_ stream: SCStream, didStopWithError error: Error) {
+        recorder?.warn("the sound stopped early: \(error.localizedDescription)")
+    }
+}
+
 @available(macOS 14.0, *)
 private final class IsolatedCompositor {
     let recorder: NativeRecorder
@@ -483,6 +533,9 @@ func captureRectJSON(_ rect: CGRect) -> [String: CGFloat] {
 @available(macOS 13.0, *)
 func captureIsolatedWindows(_ options: RecordOptions) {
     guard #available(macOS 14.0, *) else { errorExit("isolated capture requires macOS 14 or newer") }
+    // A command-line process connects to the window server before its first filter, or the filter can throw or stall
+    // (aperture's `initializeCGS`, Apple forum thread 743615).
+    _ = CGMainDisplayID()
     let content: SCShareableContent
     do {
         content = try awaitResult { try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true) }
@@ -537,8 +590,25 @@ func captureIsolatedWindows(_ options: RecordOptions) {
     indicator.update(selected.map(\.bounds))
     defer { indicator.close() }
     var startedStreams: [SCStream] = []
+    var audio: NativeAudio?
+    var audioSource: IsolatedAudioSource?
     do {
         try recorder.prepareVideo(width: Int(output.width), height: Int(output.height))
+        if !options.audioSources.isEmpty {
+            // prepareVideo added the movie's tracks. The sound starts before the pictures, so the movie opens with it.
+            let tracks = NativeAudio(sources: options.audioSources, movieInputs: recorder.audioInputs,
+                                     sidecarDirectory: options.audioSidecar ? URL(fileURLWithPath: options.outDir) : nil)
+            guard let source = IsolatedAudioSource(scope: options.systemAudioScope, pids: Set(selected.map(\.pid)),
+                                                   content: content, options: options, recorder: recorder) else {
+                throw NSError(domain: "ax-tool", code: 1, userInfo: [NSLocalizedDescriptionKey:
+                    "ScreenCaptureKit lists no display or no selected app to take the sound from"])
+            }
+            recorder.audio = tracks
+            audio = tracks
+            audioSource = source
+            try source.start(tracks)
+            startedStreams.append(source.stream)
+        }
         for target in selected {
             guard let window = content.windows.first(where: { $0.windowID == target.id }) else { continue }
             let source = IsolatedWindowSource(target: target, window: window, fps: options.activeFps)
@@ -580,11 +650,16 @@ func captureIsolatedWindows(_ options: RecordOptions) {
         do { try awaitResult { try await source.stream.stopCapture() } }
         catch { compositor.queue.sync { compositor.error = error } }
     }
+    if let audioSource {
+        do { try awaitResult { try await audioSource.stream.stopCapture() } }
+        catch { recorder.warn("the sound did not stop cleanly: \(error.localizedDescription)") }
+    }
     compositor.queue.sync { compositor.finish() }
     cursorTrack?.stop()
     let stoppedAt = CMClockGetTime(CMClockGetHostTimeClock())
     let duration = Date().timeIntervalSince(started)
     recorder.drainFrames()
+    audio?.close()
     recorder.finishVideo(stoppedAt: stoppedAt)
     if let error = compositor.error { errorExit("isolated recording stopped early: \(error.localizedDescription)") }
     guard !recorder.kept.isEmpty else { errorExit("isolated recording produced no frames") }
@@ -597,7 +672,9 @@ func captureIsolatedWindows(_ options: RecordOptions) {
                     "transparent": options.selection.transparent, "codec": options.selection.codec,
                     "indicator": options.selection.indicator, "indicatorCaptured": false,
                     "selectionPolicy": "visible windows pinned at start", "resizePolicy": "follow canvas; aspect fit into fixed output",
-                    "windowIds": selected.map(\.id)] as [String: Any],
+                    "windowIds": selected.map(\.id), "audio": options.audioSources.map(\.rawValue),
+                    "audioSidecar": options.audioSidecar, "systemAudioScope": options.systemAudioScope.rawValue,
+                    "micDevice": options.micDevice ?? NSNull()] as [String: Any],
         "geometry": compositor.geometryHistory,
         "frames": recorder.kept.map { ["index": $0.index - 1, "file": $0.file, "path": directory.appendingPathComponent($0.file).path,
                                        "timestampMs": $0.timestampMs, "changePercent": $0.changePercent, "reason": $0.reason,
@@ -607,6 +684,9 @@ func captureIsolatedWindows(_ options: RecordOptions) {
                                   "firstFrameAfterStartMs": compositor.firstFrameAfterStartMs ?? -1], recorder.movieMs),
         "warnings": recorder.warnings + compositor.queue.sync { compositor.layers.warnings + compositor.placementWarnings },
     ]
+    if let audio {
+        data["tracks"] = audio.summaries(origin: recorder.origin)
+    }
     if let cursorTrack {
         data["cursorTrack"] = ["path": cursorTrack.path, "samples": cursorTrack.samples, "clicks": cursorTrack.clicks,
                                "shapes": cursorTrack.shapeCount, "shortcuts": cursorTrack.shortcuts]

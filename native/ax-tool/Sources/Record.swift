@@ -65,8 +65,16 @@ struct RecordOptions {
     let micDevice: String?
     /// `--audio-sidecar`: also write each source as `audio-<source>.m4a` next to the frames.
     let audioSidecar: Bool
+    /// `--system-audio-scope all|app`: whose sound the system track of an isolated movie keeps.
+    let systemAudioScope: SystemAudioScope
     /// Warnings raised before the recorder existed; they open its warning list.
     let startWarnings: [String]
+}
+
+/// Whose sound the system track keeps. ScreenCaptureKit filters sound per app, never per window, so an isolated movie
+/// keeps everything the Mac plays (`all`, as a display movie does) or only the selected windows' apps (`app`).
+enum SystemAudioScope: String {
+    case all, app
 }
 
 private func recordOptions(startWarnings: [String]) -> RecordOptions {
@@ -129,10 +137,20 @@ private func recordOptions(startWarnings: [String]) -> RecordOptions {
     }
     let micDevice = argValue("--mic-device")
     let audioSidecar = CommandLine.arguments.contains("--audio-sidecar")
-    if !audioSources.isEmpty {
-        if mode == "isolated" {
-            errorExit("--audio applies to screen, window and region mode", code: "invalid-argument")
+    var systemAudioScope = SystemAudioScope.all
+    if let raw = argValue("--system-audio-scope") {
+        guard let scope = SystemAudioScope(rawValue: raw) else {
+            errorExit("--system-audio-scope must be all or app", code: "invalid-argument")
         }
+        guard mode == "isolated" else {
+            errorExit("--system-audio-scope applies to isolated mode; a window mode movie keeps its app's sound, a screen or region movie everything", code: "invalid-argument")
+        }
+        guard audioSources.contains(.system) else {
+            errorExit("--system-audio-scope needs --audio system", code: "invalid-argument")
+        }
+        systemAudioScope = scope
+    }
+    if !audioSources.isEmpty {
         if argValue("--video-out") == nil && !audioSidecar {
             errorExit("--audio needs --video-out (tracks in the movie) or --audio-sidecar (.m4a files)", code: "invalid-argument")
         }
@@ -192,6 +210,7 @@ private func recordOptions(startWarnings: [String]) -> RecordOptions {
         audioSources: audioSources,
         micDevice: micDevice,
         audioSidecar: audioSidecar,
+        systemAudioScope: systemAudioScope,
         startWarnings: startWarnings
     )
 }
@@ -1390,7 +1409,7 @@ private func captureErrorCode(_ error: Error) -> String {
 }
 
 /// System audio and the microphone on the stream configuration. The caller checked the OS version for the microphone.
-private func configureAudio(_ configuration: SCStreamConfiguration, _ options: RecordOptions) {
+func configureAudio(_ configuration: SCStreamConfiguration, _ options: RecordOptions) {
     guard !options.audioSources.isEmpty else { return }
     configuration.sampleRate = 48_000
     configuration.channelCount = 2
@@ -1411,7 +1430,7 @@ private func configureAudio(_ configuration: SCStreamConfiguration, _ options: R
     }
 }
 
-private func addAudioOutputs(_ audio: NativeAudio, to stream: SCStream) throws {
+func addAudioOutputs(_ audio: NativeAudio, to stream: SCStream) throws {
     if audio.sources.contains(.system) {
         try stream.addStreamOutput(audio, type: .audio, sampleHandlerQueue: audio.queue)
     }

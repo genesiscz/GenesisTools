@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, rename } from "node:fs/promises";
 import { join } from "node:path";
+import type { CaptureSystemAudioScope } from "@app/control/lib/native-record";
 import { type CountdownHold, runCountdown } from "@app/control/lib/peekaboo";
 import {
     audioTrackTitles,
@@ -69,6 +70,8 @@ export interface VideoRecordingOptions {
     cameraHost?: CameraHost;
     audio?: ("system" | "mic")[];
     micDevice?: string;
+    /** With audio "system": a window or app segment keeps everything the Mac plays ("all", default) or only its app. */
+    systemAudioScope?: CaptureSystemAudioScope;
     /** Keep the system cursor for a display/area; hide the editable cursor initially for an isolated window/app. */
     systemCursor?: boolean;
     /** False keeps the shortcuts out of the cursor track; by default the ⌘/⌃ presses are kept for the keys overlay. */
@@ -119,6 +122,7 @@ export function segmentRecorderOptions(
         indicator: options.indicator,
         audio: options.audio,
         micDevice: options.micDevice,
+        systemAudioScope: options.systemAudioScope,
         cursorTrack: true,
         cursorShapes: isolated || !options.systemCursor ? join(folder, "cursor-shapes") : undefined,
         shortcuts: options.shortcuts !== false,
@@ -400,7 +404,11 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
             ...(options.idleFps === undefined ? {} : { idleFps: options.idleFps }),
             ...(options.threshold === undefined ? {} : { threshold: options.threshold }),
             ...(options.camera ? { camera: { requested: true, file: CAMERA_MOVIE } } : {}),
-            audio: { sources: options.audio ?? [], micDevice: options.micDevice },
+            audio: {
+                sources: options.audio ?? [],
+                micDevice: options.micDevice,
+                ...(options.systemAudioScope ? { systemAudioScope: options.systemAudioScope } : {}),
+            },
             cursor: options.systemCursor ? (isolatedTarget(options.target) ? "none" : "system") : "drawn",
             shortcuts: options.shortcuts !== false,
         },

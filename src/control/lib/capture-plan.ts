@@ -39,6 +39,8 @@ ISOLATED WINDOWS (native, macOS 14+)
   closed/hidden windows disappear. Newly opened app windows are not silently included.
   This mode excludes the system cursor and separate cursor overlays. Use region/screen
   only when those overlays and other desktop content are intentionally part of the proof.
+  audio:["system","mic"] adds sound tracks as in screen mode; the system track keeps everything
+  the Mac plays, or with systemAudioScope:"app" only the selected windows' apps.
   All timed actions below work with isolated plans. Recording is not input authorization.
 
   ${toolCommand("control capture record")} --window-ids ID,ID --canvas crop --duration 4
@@ -124,9 +126,10 @@ PLAN CONTRACT (TypeScript)
       quietMs?: number;           // native: calm ms before the idle rate (default 8 frames at the active rate)
       heartbeatSec?: number;      // native: keep a frame at least every N s while nothing changes (0 = off)
       maxMb?: number;             // native: stop keeping frames after N MB written; sampling continues
-      audio?: ("system" | "mic")[]; // native, not isolated: audio tracks in videoOut and/or .m4a sidecars
+      audio?: ("system" | "mic")[]; // native: audio tracks in videoOut and/or .m4a sidecars
       micDevice?: string;         // native: input UID from \`ax-tool audio-devices\` (needs audio "mic")
       audioSidecar?: boolean;     // native: also write audio-<source>.m4a next to the frames
+      systemAudioScope?: "all" | "app"; // isolated, needs audio "system": everything the Mac plays, or the selected apps
       cursorTrack?: string;       // native: the pointer as JSON lines (t, x, y, click) for auto zoom
       cursorShapes?: string;      // native, needs cursorTrack: hide the system cursor; its images go to this folder
       app?: string;               // window mode
@@ -490,12 +493,17 @@ export interface CaptureSpec {
     heartbeatSec?: number;
     /** Native: stop keeping frames after N MB were written; sampling continues. */
     maxMb?: number;
-    /** Native, not isolated: audio sources, each its own track in videoOut and/or an `.m4a` sidecar. */
+    /** Native: audio sources, each its own track in videoOut and/or an `.m4a` sidecar. */
     audio?: ("system" | "mic")[];
     /** Native: the microphone's input UID from `ax-tool audio-devices`; needs audio "mic". */
     micDevice?: string;
     /** Native: also write `audio-<source>.m4a` next to the frames. */
     audioSidecar?: boolean;
+    /**
+     * Isolated mode, needs audio "system": the system track keeps everything the Mac plays but the recorder (`all`,
+     * the default) or only the selected windows' apps (`app`).
+     */
+    systemAudioScope?: "all" | "app";
     /** Native: write the pointer (positions and clicks) as JSON lines to this file. */
     cursorTrack?: string;
     /** Native, needs cursorTrack: no system cursor in the movie; each cursor image goes into this folder for the editor. */

@@ -99,6 +99,8 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
                       [--shortcuts]  track rows also carry "key": "⌘C" for presses with ⌘ or ⌃ (never plain typing)
                       [--audio system,mic] [--mic-device UID] [--audio-sidecar]  audio tracks in the movie and/or
                       audio-<source>.m4a; the result lists tracks with durationMs, peakDbfs and mutedSpans
+                      isolated: [--system-audio-scope all|app]  the system track keeps everything the Mac plays (all,
+                      the default) or only the selected windows' apps (app); ScreenCaptureKit filters sound per app
       ax-tool screens                                         Displays in NSScreen order: index, name, displayID, scale, position, resolution
       ax-tool audio-devices                                   Audio inputs and outputs: id (UID), name, channels, default
       ax-tool audio-record --sources mic,system [--without-screen] [--mic-device UID] [--muted mic,system] [--paused] (--out DIR [--segment-sec 60] | --monitor) [--levels]

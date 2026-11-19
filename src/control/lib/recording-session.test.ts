@@ -1810,20 +1810,33 @@ describe("segmentCaptureSpec", () => {
         expect(spec.idleFps).toBeUndefined();
     });
 
-    it("refuses audio for a window or app but preserves the independent cursor track", () => {
+    it("records audio for a window or app, with the system sound scope, and keeps the independent cursor track", () => {
         const targets: RecordingTarget[] = [
             { kind: "window", windowIds: [7] },
             { kind: "app", app: "Notes" },
         ];
-        const asks: NativeRecorderOptions[] = [{ audio: ["mic"] }];
+        const asks: NativeRecorderOptions[] = [
+            { audio: ["mic"], micDevice: "BuiltInMicrophoneDevice" },
+            { audio: ["system", "mic"], systemAudioScope: "app" },
+        ];
 
         for (const target of targets) {
-            for (const options of asks) {
-                expect(() =>
-                    segmentCaptureSpec({ target, output: "/tmp/segment.mp4", maxSeconds: 60, options })
-                ).toThrow("those need a display or an area target");
-            }
+            const mic = segmentCaptureSpec({ target, output: "/tmp/segment.mp4", maxSeconds: 60, options: asks[0] });
+            expect(mic).toMatchObject({ mode: "isolated", audio: ["mic"], micDevice: "BuiltInMicrophoneDevice" });
+            expect(mic.systemAudioScope).toBeUndefined();
+            const both = segmentCaptureSpec({ target, output: "/tmp/segment.mp4", maxSeconds: 60, options: asks[1] });
+            expect(both).toMatchObject({ mode: "isolated", audio: ["system", "mic"], systemAudioScope: "app" });
         }
+
+        // A display segment of a take that switches keeps everything the Mac plays, whatever the scope says.
+        const display = segmentCaptureSpec({
+            target: { kind: "display", screenIndex: 0 },
+            output: "/tmp/segment.mp4",
+            maxSeconds: 60,
+            options: asks[1],
+        });
+        expect(display.audio).toEqual(["system", "mic"]);
+        expect(display.systemAudioScope).toBeUndefined();
 
         for (const target of targets) {
             const spec = segmentCaptureSpec({

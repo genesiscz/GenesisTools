@@ -20,12 +20,21 @@ export type NativeCaptureOptions = Pick<
     | "audio"
     | "micDevice"
     | "audioSidecar"
+    | "systemAudioScope"
     | "cursorTrack"
     | "cursorShapes"
     | "shortcuts"
 >;
 
 export const CAPTURE_AUDIO_SOURCES = ["system", "mic"] as const;
+
+/**
+ * Whose sound the system track of an isolated (window or app) movie keeps: everything the Mac plays but the recorder
+ * (`all`, as a display movie does) or only the selected windows' apps (`app`). ScreenCaptureKit filters sound per app,
+ * never per window.
+ */
+export const CAPTURE_SYSTEM_AUDIO_SCOPES = ["all", "app"] as const;
+export type CaptureSystemAudioScope = (typeof CAPTURE_SYSTEM_AUDIO_SCOPES)[number];
 
 /**
  * argv for `ax-tool capture`, the ScreenCaptureKit recorder. The runner prepends the binary
@@ -151,6 +160,10 @@ export function nativeCaptureArgv(cap: CaptureSpec, outDir: string): string[] {
         if (cap.audioSidecar) {
             argv.push("--audio-sidecar");
         }
+
+        if (cap.systemAudioScope) {
+            argv.push("--system-audio-scope", cap.systemAudioScope);
+        }
     }
 
     if (cap.cursorTrack) {
@@ -233,8 +246,20 @@ export function validateCaptureOptions(cap: CaptureSpec): void {
         throw new Error('audio must list "system" and/or "mic" once each');
     }
 
-    if (cap.audio?.length && cap.mode === "isolated") {
-        throw new Error("audio applies to screen, window and region mode");
+    if (cap.systemAudioScope !== undefined) {
+        if (!CAPTURE_SYSTEM_AUDIO_SCOPES.includes(cap.systemAudioScope)) {
+            throw new Error(`systemAudioScope must be ${CAPTURE_SYSTEM_AUDIO_SCOPES.join(" or ")}`);
+        }
+
+        if (cap.mode !== "isolated") {
+            throw new Error(
+                "systemAudioScope applies to isolated mode: a window mode movie keeps its app's sound, a screen or region movie everything"
+            );
+        }
+
+        if (!cap.audio?.includes("system")) {
+            throw new Error('systemAudioScope needs audio "system"');
+        }
     }
 
     if (cap.audioSidecar !== undefined && typeof cap.audioSidecar !== "boolean") {
@@ -297,6 +322,7 @@ export function validateCaptureOptions(cap: CaptureSpec): void {
         cap.audio,
         cap.micDevice,
         cap.audioSidecar,
+        cap.systemAudioScope,
         cap.cursorTrack,
         cap.cursorShapes,
         cap.shortcuts,

@@ -1,5 +1,10 @@
 import { NATIVE_MOVIE_MAX_SECONDS } from "@app/control/lib/capture-plan";
-import { parseScreenList, type ScreenInfo } from "@app/control/lib/native-record";
+import {
+    CAPTURE_SYSTEM_AUDIO_SCOPES,
+    type CaptureSystemAudioScope,
+    parseScreenList,
+    type ScreenInfo,
+} from "@app/control/lib/native-record";
 import {
     defaultRecordingTarget,
     listRecordingTargets,
@@ -54,6 +59,8 @@ export const DEFAULT_COUNTDOWN_SECONDS = 3;
 /** What commander gives for the flags of `tools recorder start`. */
 export interface StartFlags {
     audio?: string;
+    /** `--system-audio-scope [scope]`: true when given bare. */
+    systemAudioScope?: string | boolean;
     startGate?: string;
     micDevice?: string;
     fps?: string;
@@ -99,6 +106,14 @@ export function withStartOptions(command: Command): Command {
     return command
         .option("--audio <sources>", "audio tracks: system, mic, or system,mic")
         .option("--mic-device <uid>", "the microphone (an id from `ax-tool audio-devices`; needs --audio mic)")
+        .option(
+            "--system-audio-scope [scope]",
+            "with --audio system: whose sound a window or app take keeps, all (everything the Mac plays, the default) or app (only the recorded app)"
+        )
+        .option(
+            "--system-audio-scope [scope]",
+            `with --audio system, a window or an app: whose sound the system track keeps, all (everything the Mac plays, the default) or app (only the recorded app)`
+        )
         .option(
             "--fps <n>",
             `frames per second while something moves, ${fps.min}–${fps.max} for a movie (default ${DEFAULT_MOVIE_FPS}), ${frames.fps.min}–${frames.fps.max} with --frames`
@@ -275,15 +290,37 @@ export function startAudioOf(flags: StartFlags): StartAudioSource[] | undefined 
     return audio;
 }
 
+/**
+ * `--system-audio-scope all|app`: whose sound the system track of a window or app take keeps. It needs the system
+ * sound; a display or area take keeps everything whatever it says, so a take that switches targets keeps one scope.
+ */
+export function systemAudioScopeOf(
+    raw: StartFlags["systemAudioScope"],
+    audio: StartAudioSource[] | undefined
+): CaptureSystemAudioScope | undefined {
+    if (raw === undefined) {
+        return undefined;
+    }
+
+    const scope = CAPTURE_SYSTEM_AUDIO_SCOPES.find((one) => one === raw);
+
+    if (!scope) {
+        throw new Error(`--system-audio-scope takes ${CAPTURE_SYSTEM_AUDIO_SCOPES.join(" or ")}`);
+    }
+
+    if (!audio?.includes("system")) {
+        throw new Error(
+            "--system-audio-scope needs --audio system (or system,mic): it says whose system sound to keep"
+        );
+    }
+
+    return scope;
+}
+
 export function parseStartFlags(flags: StartFlags): StartRequest {
     const audio = startAudioOf(flags);
     const target = namedTarget(flags);
-
-    if (audio?.length && (target?.kind === "window" || target?.kind === "app")) {
-        throw new Error(
-            "--audio needs a display or an area (--display, --region): a window or app movie is made from those windows alone and has no audio track"
-        );
-    }
+    const systemAudioScope = systemAudioScopeOf(flags.systemAudioScope, audio);
 
     return {
         target,
@@ -296,6 +333,7 @@ export function parseStartFlags(flags: StartFlags): StartRequest {
         countdownSeconds: countdownSecondsOf(flags.countdown),
         audio,
         micDevice: flags.micDevice,
+        ...(systemAudioScope ? { systemAudioScope } : {}),
         maxSeconds: bounded(flags.maxSeconds, "--max-seconds", START_LIMITS.maxSeconds),
         indicator: flags.indicator,
         systemCursor: flags.systemCursor,
@@ -517,6 +555,8 @@ export const recordOptionsSchema = z
         audio: z.array(z.enum(START_AUDIO_SOURCES)).optional(),
         /** The microphone's id (`ax-tool audio-devices`); needs audio: ["mic"]. */
         micDevice: z.string().min(1).optional(),
+        /** With audio "system": a window or app take keeps everything the Mac plays ("all") or only its app ("app"). */
+        systemAudioScope: z.enum(CAPTURE_SYSTEM_AUDIO_SCOPES).optional(),
         title: z.string().optional(),
         maxSeconds: limited(START_LIMITS.maxSeconds).optional(),
         display: limited(START_LIMITS.display).optional(),
@@ -558,6 +598,7 @@ export type RecordOptions = z.infer<typeof recordOptionsSchema>;
 const START_ARGS: { [K in keyof Required<RecordOptions>]: (options: RecordOptions) => string[] } = {
     audio: ({ audio }) => (audio?.length ? ["--audio", audio.join(",")] : []),
     micDevice: ({ micDevice }) => (micDevice ? ["--mic-device", micDevice] : []),
+    systemAudioScope: ({ systemAudioScope }) => (systemAudioScope ? ["--system-audio-scope", systemAudioScope] : []),
     title: ({ title }) => (title ? ["--title", title] : []),
     maxSeconds: ({ maxSeconds }) => (maxSeconds === undefined ? [] : ["--max-seconds", String(maxSeconds)]),
     display: ({ display }) => (display === undefined ? [] : ["--display", String(display)]),

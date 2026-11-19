@@ -217,15 +217,20 @@ describe("nativeCaptureArgv", () => {
                 micDevice: "BuiltInMicrophoneDevice",
             })
         ).toThrow(/micDevice/);
+        const isolated = { mode: "isolated", windowIds: [12], duration: 1, videoOut: "/v.mp4" } as const;
+        expect(() => validateCaptureOptions({ ...isolated, audio: ["system", "mic"] })).not.toThrow();
+        expect(nativeCaptureArgv({ ...isolated, audio: ["system"], systemAudioScope: "app" }, "/o").slice(-4)).toEqual([
+            "--audio",
+            "system",
+            "--system-audio-scope",
+            "app",
+        ]);
+        expect(() => validateCaptureOptions({ ...isolated, audio: ["mic"], systemAudioScope: "app" })).toThrow(
+            /needs audio "system"/
+        );
         expect(() =>
-            validateCaptureOptions({
-                mode: "isolated",
-                windowIds: [12],
-                duration: 1,
-                audio: ["system"],
-                audioSidecar: true,
-            })
-        ).toThrow(/region mode/);
+            validateCaptureOptions({ ...screen, videoOut: "/v.mp4", audio: ["system"], systemAudioScope: "all" })
+        ).toThrow(/applies to isolated mode/);
         expect(() => validateCaptureOptions({ ...screen, micDevice: "x" })).toThrow(/need audio/);
         // The drawn cursor hides the system cursor and needs the track it is drawn from.
         expect(

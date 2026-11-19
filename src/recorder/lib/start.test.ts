@@ -24,6 +24,7 @@ import {
     parseStartFlags,
     refuseMissingWindowOrApp,
     refuseTargetOffScreen,
+    startArgsOf,
     startAudioOf,
 } from "./start-options";
 import {
@@ -693,10 +694,23 @@ describe("a window or app movie", () => {
         expect(() => refuseMissingWindowOrApp({ kind: "display", screenIndex: 0 }, seen)).not.toThrow();
     });
 
-    it("--audio with --window or --app is refused before anything starts", () => {
-        expect(() => parseStartFlags({ window: "83493", audio: "mic" })).toThrow(/--audio needs a display or an area/);
-        expect(() => parseStartFlags({ app: "Notes", audio: "system" })).toThrow(/--audio needs a display or an area/);
-        expect(parseStartFlags({ window: "83493" }).target).toEqual(window);
+    it("--audio records a window or an app too, and --system-audio-scope says whose system sound it keeps", () => {
+        expect(parseStartFlags({ window: "83493", audio: "mic" })).toMatchObject({ target: window, audio: ["mic"] });
+        expect(parseStartFlags({ app: "Notes", audio: "system" }).audio).toEqual(["system"]);
+        expect(parseStartFlags({ window: "83493", audio: "system" }).systemAudioScope).toBeUndefined();
+        expect(
+            parseStartFlags({ window: "83493", audio: "system,mic", systemAudioScope: "app" }).systemAudioScope
+        ).toBe("app");
+        expect(() => parseStartFlags({ window: "83493", audio: "mic", systemAudioScope: "app" })).toThrow(
+            /--system-audio-scope needs --audio system/
+        );
+        expect(() => parseStartFlags({ window: "83493", audio: "system", systemAudioScope: "window" })).toThrow(
+            /--system-audio-scope takes all or app/
+        );
+        // The REPL door writes the same flag, so movies.record() and the CLI agree.
+        expect(startArgsOf({ window: [83493], audio: ["system"], systemAudioScope: "app" })).toEqual(
+            expect.arrayContaining(["--system-audio-scope", "app"])
+        );
     });
 
     it("--audio records the system sound first, then the mic, as recording.json lists the tracks", () => {

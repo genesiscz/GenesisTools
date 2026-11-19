@@ -94,7 +94,10 @@ Use the display IDs from `r.displays.list()` in place of 37. Use an input ID fro
 The service forwards `switchTarget` as `target.switch`. It forwards `restart` as `restart` through `recording.call`.
 
 For setup, use `movies.record({ display: 0, audio: ["mic"], camera: true })` or
-`tools recorder start --display 0 --audio mic --camera`. Use `recorder.start({ displays: "all" })` or
+`tools recorder start --display 0 --audio mic --camera`. A window or app takes the same sound:
+`movies.record({ window: [WINDOW_ID], audio: ["system", "mic"], systemAudioScope: "app" })` or
+`tools recorder start --window WINDOW_ID --audio system,mic --system-audio-scope app` keeps only that app's sound in
+the system track (the default `all` keeps everything the Mac plays). Use `recorder.start({ displays: "all" })` or
 `tools recorder start --frames --displays all` for several displays.
 Countdown and threshold use `countdown` and `threshold` in `movies.record()` or `--countdown` and `--threshold` at start.
 To keep the system cursor, use `systemCursor: true` or `--system-cursor`.

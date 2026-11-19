@@ -56,8 +56,10 @@ Target flags of `start` (one at most):
 | `--app <name>` | this app's windows (name, bundle id or pid) |
 | `--region <x,y,w,h>` | an area, in global screen points from the top-left corner (CoreGraphics) |
 
-A display that is not connected, or an area off every display, is refused, naming the displays. A window or app
-movie has no audio: `--audio` needs `--display` or `--region`. Every target keeps cursor positions and clicks,
+A display that is not connected, or an area off every display, is refused, naming the displays. Every target
+records sound with `--audio`. A window or app movie's system track keeps everything the Mac plays, as a display
+movie does; `--system-audio-scope app` keeps only the recorded app's sound (ScreenCaptureKit filters sound per app,
+never per window). Every target keeps cursor positions and clicks,
 including a recording with the cursor hidden. Window clicks outside the selected windows are excluded. Shortcuts
 are kept unless `--no-shortcuts` is set. An area is recorded in ax-tool's region mode.
 
@@ -67,6 +69,7 @@ Movie flags of `start`:
 |---|---|---|
 | `--audio <sources>` | none | `system`, `mic` or `system,mic`, one track per source |
 | `--mic-device <uid>` | needs `--audio mic` | the microphone, an id from `ax-tool audio-devices` |
+| `--system-audio-scope [scope]` | `all`; needs `--audio system` | a window or app movie's system sound: `all` (everything the Mac plays) or `app` (only the recorded app); a display or area keeps everything |
 | `--fps <n>` | 60, 1 to 120 | frames per second while something moves |
 | `--idle-fps <n>` | keeps `--fps`, 0.1 to 5 | frames per second while nothing moves |
 | `--threshold <percent>` | 0.5, 0 to 100 | how much of the picture must change to leave the idle rate |
@@ -463,8 +466,9 @@ The Area tab uses `--region` at movie start. A live area switch uses a tagged ta
 `r.switchTarget({ kind: "region", x: 20, y: 30, width: 640, height: 480 })`.
 The rate call takes `fps` in the REPL. The `settings.set` RPC takes `activeFps`.
 
-Select the sources before you start. A full recorder window or app movie has no audio track.
-Choose **Select an Area** or a display for a movie with sound. The movie engine keeps its start-time audio settings.
+Select the sources before you start. Every target records the sources you choose, each as its own track: a
+display, an area, a window and an app alike. Settings → Recorder → What the movie keeps → "System audio of a window
+or app" picks whose sound a window or app movie keeps. The movie engine keeps its start-time audio settings.
 A frames take can mute a source or switch the microphone when it has the track and the live command.
 The widget records silent video. Its bar disables the camera and Add marker.
 The camera starts with a movie. The bar disables Change needed when both frame rates are equal.
