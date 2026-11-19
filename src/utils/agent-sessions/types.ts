@@ -88,6 +88,8 @@ export interface AgentSearchFilters {
     mtimeFrom?: number;
     /** Catalog only: exact transcript paths, applied before refresh, SQL decoding and row hydration. */
     filePaths?: string[];
+    /** Catalog only: native parent ids of indexed sub-agents. */
+    parentNativeIds?: string[];
     /**
      * Catalog only: the order `limit` cuts by. `"firstTimestamp"` (the default) keeps the sessions that started last,
      * `"mtime"` the ones written last, so a long session that is still being written keeps its place. The refresh is
@@ -289,6 +291,8 @@ export interface HistoryDiscoveryOptions {
     excludeAgents?: boolean;
     agentsOnly?: boolean;
     project?: string;
+    /** Only discover transcripts whose file mtime is at or after this epoch in milliseconds. */
+    mtimeFrom?: number;
     signal?: AbortSignal;
 }
 
