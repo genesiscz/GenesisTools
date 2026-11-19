@@ -129,7 +129,8 @@ export function knownWord(wordCheck: WordCheck | undefined): (word: string) => b
 
 /**
  * An unknown word with a candidate from the meeting itself at 80 % or more is proposed even when its family is said
- * on purpose (MC5): the suggestion and the retirement of a later run read it the same way.
+ * on purpose (MC5): the suggestion and the retirement of a later run read it the same way. The exception: a heard form
+ * spelled as an acronym (capitals and digits, `acronymStem`) counts a candidate at that score or more from any source.
  */
 function strongMeetingCandidate(heard: string, evidence: unknown, threshold: number): boolean {
     if (
