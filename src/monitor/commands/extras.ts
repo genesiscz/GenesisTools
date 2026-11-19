@@ -87,7 +87,23 @@ async function requireWatcher(monitor: Monitor, raw: string): Promise<Watcher> {
 
 /** `2h`, `45m`, `1d`, or bare minutes, as an ISO time from now. */
 export function muteUntilFrom(duration: string): string {
-    return new Date(Date.now() + positiveDuration(duration)).toISOString();
+    return isoFromNow(positiveDuration(duration), duration);
+}
+
+/** `2h`, `45m`, `1d`, or bare minutes, as an ISO time that long ago. */
+export function sinceFrom(duration: string): string {
+    return isoFromNow(-positiveDuration(duration), duration);
+}
+
+/** A finite duration can still land outside the dates JavaScript can represent (`200000000d`). */
+function isoFromNow(offsetMs: number, duration: string): string {
+    const at = new Date(Date.now() + offsetMs);
+
+    if (!Number.isFinite(at.getTime())) {
+        throw new WatcherValidationError(`"${duration}" is out of range (try 30m, 2h, 1d)`);
+    }
+
+    return at.toISOString();
 }
 
 /** A watcher duration must be readable and above zero; the shared reader allows zero. */
@@ -637,7 +653,7 @@ export function registerExtraCommands(program: Command): void {
         .action(async (id: string, opts: { limit: string; since?: string; json?: boolean }) => {
             const limitValue = Number.parseInt(opts.limit, 10);
             const limit = Number.isInteger(limitValue) && limitValue > 0 ? Math.min(limitValue, 500) : 30;
-            const since = opts.since ? new Date(Date.now() - positiveDuration(opts.since)).toISOString() : undefined;
+            const since = opts.since ? sinceFrom(opts.since) : undefined;
             const { watcher, checks } = await withMonitor(async (monitor) => {
                 const current = await requireWatcher(monitor, id);
 
