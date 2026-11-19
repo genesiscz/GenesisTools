@@ -146,7 +146,7 @@ export function freezeRoomCall(input: {
             plainSpeaker(aligned(columns[0]!, key)) === input.remote &&
             lost.band === "open" &&
             lost.confidence === 0.4 &&
-            choices.length === 2 &&
+            // A 0.4 question that offers the remote and the room guest; 37 of the frozen 123 also offered a third person.
             choices.includes(input.remote) &&
             choices.includes(scenario.roomTarget)
         );
