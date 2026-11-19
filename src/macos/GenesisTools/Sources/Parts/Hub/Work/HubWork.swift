@@ -370,7 +370,8 @@ struct WorkMain: View {
                             reader.scrollTo(ref, anchor: nil)
                         }
                     }
-                    .onChange(of: jump) { _, section in
+                    // initial: a count clicked on the Notify pane switches to this list and sets the jump in one step.
+                    .onChange(of: jump, initial: true) { _, section in
                         guard let section else { return }
                         GenMotion.perform(expanding: true, reduceMotion: reduceMotion) {
                             reader.scrollTo(WorkItemsView.sectionID(section), anchor: .top)
