@@ -28,8 +28,7 @@ final class LiveRecordingStoreTests: XCTestCase {
         let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 600, height: 520),
                               styleMask: .borderless, backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
-        let host = NSHostingView(rootView: controls())
-        window.contentView = host
+        window.contentView = NSHostingView(rootView: controls())
         window.orderInForSnapshot()
         defer { window.close() }
         let keys = warnings.map { "live-recording.message." + $0 }
@@ -46,7 +45,9 @@ final class LiveRecordingStoreTests: XCTestCase {
         try await verifyWarnings()
         recordings[0].state = "paused"
         FrameProbe.reset()
-        host.rootView = controls()
+        // A fresh host lays every row out again: an unchanged row reports no geometry change, so the reset probe
+        // would otherwise never hear from the second recording's warning.
+        window.contentView = NSHostingView(rootView: controls())
         try await verifyWarnings()
     }
 
