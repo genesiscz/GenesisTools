@@ -3,6 +3,8 @@ import { musicCheckpoint } from "./process";
 import type { Lane, Lfo, Note, Oscillator, Patch } from "./types";
 
 const CONTROL = 8;
+/** How often a voice asks for a cancellation checkpoint, in samples (about 85 ms of audio). */
+const CHECKPOINT_SAMPLES = 4096;
 const TAU = Math.PI * 2;
 const VOWELS = [
     [730, 1090, 2440],
@@ -110,13 +112,13 @@ class OscState {
     }
 }
 
-function renderVoice(options: {
+async function renderVoice(options: {
     patch: Patch;
     events: VoiceEvent[];
     out: Stereo;
     seed: number;
     lanes: Map<string, Curve>;
-}): void {
+}): Promise<void> {
     const { patch, events, out, lanes } = options;
     const rand = random(options.seed);
     const oscs = patch.oscillators.map((spec) => new OscState(spec, rand));
@@ -197,6 +199,11 @@ function renderVoice(options: {
             for (const osc of oscs) {
                 osc.envelope?.gate(false);
             }
+        }
+
+        // A mono voice can run for the whole track, so it lets a signal handler in on its own.
+        if ((n - start) % CHECKPOINT_SAMPLES === 0) {
+            await musicCheckpoint();
         }
 
         if ((n - start) % CONTROL === 0) {
@@ -420,13 +427,13 @@ export async function renderSynth(options: {
     }
 
     if (options.patch.mono) {
-        renderVoice({ patch: options.patch, events, out, seed: options.seed, lanes });
+        await renderVoice({ patch: options.patch, events, out, seed: options.seed, lanes });
         return out;
     }
 
     for (const [index, event] of events.entries()) {
         await musicCheckpoint();
-        renderVoice({ patch: options.patch, events: [event], out, seed: options.seed + index * 7919, lanes });
+        await renderVoice({ patch: options.patch, events: [event], out, seed: options.seed + index * 7919, lanes });
     }
 
     return out;
