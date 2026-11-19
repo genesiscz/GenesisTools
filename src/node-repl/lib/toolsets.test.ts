@@ -17,6 +17,8 @@ import type { MeetingsResult } from "@app/meetings/lib/service/api";
 import { InProcessMeetingsClient } from "@app/meetings/lib/service/client";
 import type { voiceLibraryMethods } from "@app/meetings/lib/service/toolset-api";
 import { settingsPatchFromFlags } from "@app/meetings/lib/settings-flags";
+import { deliverStartFailures } from "@app/meetings/lib/start-failures";
+import type { recordingAutostart } from "@app/meetings/lib/watcher";
 import { ReplEngine } from "@app/node-repl/lib/engine";
 import { BrowserToolset } from "@app/node-repl/lib/toolsets/browser";
 import { MeetingsToolset } from "@app/node-repl/lib/toolsets/meetings";
@@ -2997,10 +2999,40 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         const { meetings } = (await new MeetingsToolset().bootstrap()) as {
             meetings: {
                 recordStart: (input: { audio: string }) => Promise<unknown>;
-                autostart: () => Promise<{ enabled: boolean; running: boolean }>;
+                autostart: () => ReturnType<typeof recordingAutostart>;
             };
         };
-        expect(typeof (await meetings.autostart()).enabled).toBe("boolean");
+        const home = mkdtempSync(join(tmpdir(), "repl-meeting-failure-"));
+        try {
+            await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+                const store = new MeetingStore();
+                const at = "2026-11-02T15:00:00.000Z";
+                await deliverStartFailures(
+                    store,
+                    {
+                        key: "fixture-meeting",
+                        meeting: "Atlas review",
+                        problem: "Microphone permission denied",
+                        partial: true,
+                    },
+                    { inbox: async () => "fixture-receipt", banner: async () => false },
+                    Date.parse(at)
+                );
+
+                const status = await meetings.autostart();
+                expect(typeof status.enabled).toBe("boolean");
+                expect(status.lastFailure).toMatchObject({
+                    meeting: "Atlas review",
+                    problem: "Microphone permission denied",
+                    at,
+                    partial: true,
+                    inboxId: "fixture-receipt",
+                    confirmed: false,
+                });
+            });
+        } finally {
+            rmSync(home, { recursive: true, force: true });
+        }
         await expect(meetings.recordStart({ audio: "unknown" })).rejects.toThrow("--audio");
         const docs = new MeetingsToolset().api.methods;
         expect(docs.find((one) => one.name === "recordStart")?.doc).toContain("tools meetings record start");

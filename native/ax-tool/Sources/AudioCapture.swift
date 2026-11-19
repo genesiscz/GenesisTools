@@ -145,14 +145,16 @@ final class AudioLevelMeter {
     private var timer: DispatchSourceTimer?
     private let delivery = DispatchQueue(label: "ax-tool.audio-levels.delivery", qos: .utility)
     private let deliveryAvailable = DispatchSemaphore(value: 1)
+    private let emitRow: ([String: Any]) -> Void
     // Accessed only on delivery, away from the recording's sample queue.
     private var devices: (input: String?, output: String?) = (nil, nil)
     private var lastMicID: String?
     private var nextDeviceRead = Date.distantPast
     var micID: String?
 
-    init(queue: DispatchQueue, micID: String?) {
+    init(queue: DispatchQueue, micID: String?, emitRow: @escaping ([String: Any]) -> Void = CaptureEvents.emit) {
         self.micID = micID
+        self.emitRow = emitRow
         let timer = DispatchSource.makeTimerSource(queue: queue)
         self.timer = timer
         timer.schedule(deadline: .now() + .milliseconds(100), repeating: .milliseconds(100), leeway: .milliseconds(2))
@@ -186,7 +188,7 @@ final class AudioLevelMeter {
                 lastMicID = selectedMic
                 nextDeviceRead = now.addingTimeInterval(2)
             }
-            CaptureEvents.emit(["event": "levels", "atMs": now.timeIntervalSince1970 * 1000,
+            emitRow(["event": "levels", "atMs": now.timeIntervalSince1970 * 1000,
                                 "mic": mic as Any? ?? NSNull(), "system": system as Any? ?? NSNull(),
                                 "input": devices.input as Any? ?? NSNull(), "output": devices.output as Any? ?? NSNull()])
         }

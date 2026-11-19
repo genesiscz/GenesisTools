@@ -2,7 +2,7 @@ import AppKit
 import Observation
 import SwiftUI
 
-private struct MicrophoneReading: Decodable {
+struct MicrophoneReading: Decodable {
     struct Channel: Decodable {
         let dbfs: Double?
         let device: String?
@@ -20,13 +20,14 @@ private struct MicrophoneReading: Decodable {
 }
 
 @MainActor @Observable
-private final class MicrophoneTest {
+final class MicrophoneTest {
     var reading: MicrophoneReading?
     var warning: String?
     var status = "Ready"
     var running = false
     @ObservationIgnored private var stream: ToolsLineStream?
     @ObservationIgnored private var generation = 0
+    @ObservationIgnored private var sampledMicrophone = false
 
     func start() {
         guard stream == nil else { return }
@@ -35,36 +36,53 @@ private final class MicrophoneTest {
         status = "Opening audio inputs…"
         warning = nil
         reading = nil
+        sampledMicrophone = false
         running = true
         do {
             stream = try ToolsLineStream(bridge: MeetingsCLI.bridge, subcommand: "meetings",
                 args: ["levels", "--stream", "--seconds", "60", "--until-stdin-closes"],
                 onLines: { [weak self] lines in
                     guard let self, self.generation == request else { return }
-                    struct Warning: Decodable { let warning: String }
-                    let decoder = JSONDecoder()
-                    var newest: MicrophoneReading?
-                    for line in lines {
-                        let data = Data(line.utf8)
-                        if let row = try? decoder.decode(MicrophoneReading.self, from: data) { newest = row }
-                        else if let notice = try? decoder.decode(Warning.self, from: data) { self.warning = notice.warning }
-                    }
-                    if let newest { self.reading = newest; self.status = "Listening" }
+                    self.receive(lines)
                 },
                 onExit: { [weak self] result in
                     guard let self, self.generation == request else { return }
-                    self.stream = nil
-                    self.running = false
-                    self.status = result.status == 0 && self.reading != nil ? "Test finished" : "Test unavailable"
-                    if result.status != 0 {
-                        self.warning = MeetingsCLI.sentence(fromStderr: result.stderr)
-                            ?? "The audio monitor exited with status \(result.status)."
-                    }
+                    self.finished(status: result.status, stderr: result.stderr)
                 })
         } catch {
             running = false
             status = "Could not start the test"
             warning = error.localizedDescription
+        }
+    }
+
+    func receive(_ lines: [String]) {
+        struct Warning: Decodable { let warning: String }
+        let decoder = JSONDecoder()
+        var newest: MicrophoneReading?
+        for line in lines {
+            let data = Data(line.utf8)
+            if let row = try? decoder.decode(MicrophoneReading.self, from: data) {
+                sampledMicrophone = sampledMicrophone || row.mic.sampled
+                newest = row
+            } else if let notice = try? decoder.decode(Warning.self, from: data) {
+                warning = notice.warning
+            }
+        }
+        if let newest {
+            reading = newest
+            status = sampledMicrophone ? "Listening" : "Waiting for microphone samples…"
+        }
+    }
+
+    func finished(status exitStatus: Int32, stderr: String) {
+        stream = nil
+        running = false
+        status = exitStatus == 0 && sampledMicrophone ? "Test finished" : "Test unavailable"
+        if exitStatus != 0 {
+            warning = MeetingsCLI.sentence(fromStderr: stderr) ?? "The audio monitor exited with status \(exitStatus)."
+        } else if !sampledMicrophone, warning == nil {
+            warning = "No microphone samples were received."
         }
     }
 

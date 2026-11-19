@@ -3864,44 +3864,66 @@ const FIXTURE_VOICE_FRAMES = Array.from({ length: 900 }, (_, index) => {
     return { channels: index * 0.05 < 20 ? [voiced(120), quiet] : [quiet, voiced(210)] };
 });
 
-/**
- * Revision tokens hash file identities (inode, times), and a decision's token is a fresh UUID, so they differ each run;
- * everything else is fixed (the decisions' clock is `NOW`).
- */
+/** Give volatile values portable stand-ins. References to the same generated ID keep the same stand-in. */
 function normalized(examples: Example[]): unknown {
+    const aliases = new Map<string, number>();
+    const ordinal = (value: string) => {
+        const existing = aliases.get(value);
+        if (existing !== undefined) {
+            return existing;
+        }
+
+        const next = aliases.size + 1;
+        aliases.set(value, next);
+        return next;
+    };
+    const recordingKey = (key: string) => `fixture${ordinal(`audio:${key}`)}`;
+    const now = NOW.toISOString();
+
     return SafeJSON.parse(
         SafeJSON.stringify(examples, { strict: true })
             .replace(/"meetingsRoot":"[^"]*"/g, '"meetingsRoot":"<meetings>"')
-            // A missing meeting names the store it searched: the run's sandbox home.
             .replace(/ in \/[^ "]*?\. List them/g, " in <meetings>. List them")
-            .replace(/"(show|transcript|speakers|timeline)":"[0-9a-z]+"/g, '"$1":"<token>"')
-            .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, "<uuid>")
-            // Paths under the run's sandbox home and temp folders, and a clip's key (it hashes the recording's path).
-            .replace(/"(path)":"[^"]*?(\/meetings-cache\/[^"]*?)-[0-9a-z]+\.wav"/g, '"$1":"<home>$2-<key>.wav"')
-            .replace(/"path":"[^"]*\/upload\.ogg"/g, '"path":"<recording>"')
-            .replace(/"path":"[^"]*\/meetings\/config\.json"/g, '"path":"<config>"')
             .replace(
-                /"(path|ref)":"[^"]*\/(2026-11-03-1000-design-review\/clips\/[^"/]+?)-[0-9a-z]+\.wav"/g,
-                '"$1":"<meetings>/$2-<key>.wav"'
+                /"(show|transcript|speakers|timeline)":"([0-9a-z]+)"/g,
+                (_, field, key: string) => `"${field}":"fixture${ordinal(`revision:${key}`)}"`
             )
-            // A removed project's backup: under the sandbox home, named by the local time of the removal.
-            .replace(/"backup":"[^"]*"/g, '"backup":"<backup>"')
-            // A record's history line carries the wall clock of its write, and a saved clip's line names its key.
-            .replace(/"at":"[^"]*","command":/g, '"at":"<now>","command":')
-            .replace(/"change":"([^"]*?)-[0-9a-z]+\.wav"/g, '"change":"$1-<key>.wav"')
-            .replace(/"generatedAt":"[^"]*"/g, '"generatedAt":"<now>"')
             .replace(
-                /"(cacheRevision|revision|audioFingerprint|modelFingerprint|id)":"[a-f0-9]{64}"/g,
-                '"$1":"<timing-hash>"'
+                /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g,
+                (id) => `00000000-0000-4000-8000-${String(ordinal(`uuid:${id}`)).padStart(12, "0")}`
             )
-            // An error's stack names this checkout's paths and line numbers.
+            .replace(
+                /"path":"[^"]*?(\/meetings-cache\/[^"]*?)-([0-9a-z]+)\.wav"/g,
+                (_, clip, key: string) => `"path":"<home>${clip}-${recordingKey(key)}.wav"`
+            )
+            .replace(/"path":"[^"]*\/upload\.ogg"/g, '"path":"<recording>/upload.ogg"')
+            .replace(/"path":"[^"]*\/meetings\/config\.json"/g, '"path":"<meetings>/config.json"')
+            .replace(
+                /"(path|ref)":"[^"]*\/(2026-11-03-1000-design-review\/clips\/[^"/]+?)-([0-9a-z]+)\.wav"/g,
+                (_, field, clip, key: string) => `"${field}":"<meetings>/${clip}-${recordingKey(key)}.wav"`
+            )
+            .replace(
+                /"backup":"([^"]*\/\d{4}-\d{2}-\d{2}-\d{4}(-project-[^"/]+?)(?:-\d+)?\.json)"/g,
+                (_, path: string, project: string) =>
+                    `"backup":"<home>/backups/meetings/2026-11-03-1000${project}-${ordinal(`backup:${path}`)}.json"`
+            )
+            .replace(/"at":"[^"]*","command":/g, `"at":"${now}","command":`)
+            .replace(
+                /"change":"([^"]*?)-([0-9a-z]+)\.wav"/g,
+                (_, change, key: string) => `"change":"${change}-${recordingKey(key)}.wav"`
+            )
+            .replace(/"generatedAt":"[^"]*"/g, `"generatedAt":"${now}"`)
+            .replace(
+                /"(cacheRevision|revision|audioFingerprint|modelFingerprint|id)":"([a-f0-9]{64})"/g,
+                (_, field, hash: string) => `"${field}":"${ordinal(`hash:${hash}`).toString(16).padStart(64, "0")}"`
+            )
             .replace(
                 /"(path|folder)":"[^"\n]*\/(2026-11-03-1400-retro(?:\/frames\/screen\.png)?)"/g,
                 '"$1":"<meetings>/$2"'
             )
             .replace(/"stack":"(?:[^"\\]|\\.)*"/g, '"stack":"<stack>"')
-            // A file preset's availability is the host's (/System/Library/Sounds is on a Mac only).
-            .replace(/"available":(true|false)/g, '"available":"<host>"'),
+            // The built-in sounds are host-dependent; keep the fixture's wire type a boolean.
+            .replace(/("file":"\/System\/Library\/Sounds\/[^"]+","available":)(?:true|false)/g, "$1true"),
         { strict: true }
     );
 }
@@ -3944,38 +3966,36 @@ describe("tools meetings serve --detach", () => {
 });
 
 describe("the protocol fixture (__fixtures__/meetings-protocol.json)", () => {
-    test("a live service on the scratch store answers every example as the fixture holds it", async () => {
-        const captured = await captureExamples();
+    test("regeneration preserves which generated tokens belong to each request and reply", () => {
+        const examples = (token: string, other: string): Example[] => [
+            {
+                method: "decision.revert",
+                direction: "client→service",
+                request: { params: { token } },
+                reply: { result: { token: other, action: { token } } },
+            },
+        ];
+        const first = "c5cceaca-9f3c-4dda-afc2-a44408ee72f8";
+        const second = "f2c4d1e2-1162-47be-9964-793308a2e1f3";
+        const expected = examples("00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002");
+        expect(normalized(examples(first, second))).toEqual(expected);
+        expect(normalized(examples(second, first))).toEqual(expected);
+    });
 
-        // An emptied fixture is written again from the live service; review the diff before committing it.
-        if (fixture.examples.length === 0) {
+    test("a live service on the scratch store answers every example as the fixture holds it", async () => {
+        const captured = normalized(await captureExamples());
+
+        if (env.test.shouldWriteGolden()) {
             const path = join(import.meta.dir, "__fixtures__/meetings-protocol.json");
             const document = {
                 protocol: MEETINGS_PROTOCOL,
-                about: "One real request and reply per Meetings service method and event (src/meetings/lib/service/api.ts), captured over raw sockets from the TypeScript service on a scratch store with invented meetings. The Swift client tests decode these; src/meetings/lib/service/service.test.ts checks every one against the method's schemas and against a live service. Regenerate: set examples to [] and run bun run test src/meetings/lib/service/service.test.ts",
-                examples: SafeJSON.parse(
-                    SafeJSON.stringify(captured, { strict: true })
-                        .replace(/"meetingsRoot":"[^"]*"/g, '"meetingsRoot":"<meetings>"')
-                        .replace(/ in \/[^ "]*?\. List them/g, " in <meetings>. List them")
-                        .replace(/"stack":"(?:[^"\\]|\\.)*"/g, '"stack":"<stack>"')
-                        .replace(
-                            /"(path|ref)":"[^"]*\/(2026-11-03-1000-design-review\/clips\/[^"/]+?)-[0-9a-z]+\.wav"/g,
-                            '"$1":"<meetings>/$2-<key>.wav"'
-                        )
-                        .replace(
-                            /"(path|folder)":"[^"\n]*\/(2026-11-03-1400-retro(?:\/frames\/screen\.png)?)"/g,
-                            '"$1":"<meetings>/$2"'
-                        ),
-                    { strict: true }
-                ),
+                about: "One real request and reply per Meetings service method and event (src/meetings/lib/service/api.ts), captured over raw sockets from the TypeScript service on a scratch store with invented meetings. The Swift client tests decode these, and service.test.ts checks the schemas and the live service. Regenerate with GENESIS_TOOLS_WRITE_GOLDEN=1 bun run test src/meetings/lib/service/service.test.ts --test-name-pattern 'a live service on the scratch store'.",
+                examples: captured,
             };
-            mkdirSync(join(import.meta.dir, "__fixtures__"), { recursive: true });
             writeFileSync(path, `${SafeJSON.stringify(document, { strict: true }, 2)}\n`);
+        } else {
+            expect(captured).toEqual(fixture.examples);
         }
-
-        expect(normalized(captured)).toEqual(
-            normalized(fixture.examples.length === 0 ? captured : (fixture.examples as Example[]))
-        );
     });
 
     test("every example fits its method's schemas, and every method, event and refusal code has one", () => {

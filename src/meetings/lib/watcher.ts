@@ -107,8 +107,12 @@ export function ensureWatcher(): Promise<"started" | "running" | "disabled"> {
 
 let inFlight: Promise<"started" | "running" | "disabled"> | undefined;
 
-/** Shared by the autostart command and the meetings REPL. Status only reads. */
+/** Status reads any store. The autostart commands manage the configured store the watcher process opens. */
 export async function recordingAutostart(mode: "on" | "off" | "status" = "status", store = new MeetingStore()) {
+    if (mode !== "status" && resolve(store.root) !== resolve(new MeetingStore().root)) {
+        throw new Error("Recording autostart can only change the configured meetings store.");
+    }
+
     const configStore = new MeetingsConfigStore(store.storage);
     if (mode !== "status") {
         await configStore.setAutoRecord(mode === "on");

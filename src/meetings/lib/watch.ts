@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { readLivePermissions } from "@app/control/lib/permissions";
 import { abortableSleep } from "@genesiscz/utils/async";
 import { execTool } from "@genesiscz/utils/cli";
@@ -7,6 +8,7 @@ import { type NotificationAction, sendNotification } from "@genesiscz/utils/maco
 import { type MeetingsConfig, MeetingsConfigStore, type SourceSettings } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord, MeetingStore, RecordingBlock } from "@genesiscz/utils/meetings/record";
 import { type LiveRecording, MEETING_SOURCE_IDS, type MeetingSourceId } from "@genesiscz/utils/meetings/sources";
+import { releaseLock, tryAcquireLock } from "@genesiscz/utils/storage/file-lock";
 import { localTime } from "@genesiscz/utils/transcribe/render";
 import { assignSweep, hasOpenAssignSteps } from "./assign";
 import { linkSource } from "./link";
@@ -390,6 +392,21 @@ const ARCHIVE_BUDGET_MS = 2_000;
 /** The source-audio pass still running for a store: a look never starts a second one beside it. */
 const archiving = new WeakMap<MeetingStore, Promise<boolean>>();
 
+/** The archive can outlive its watcher, so it holds its own claim across watcher replacements. */
+async function archiveWithClaim(store: MeetingStore, archive: () => Promise<boolean>): Promise<boolean> {
+    const lock = join(store.root, "source-audio.archive.lock");
+
+    if (!(await tryAcquireLock(lock))) {
+        return true;
+    }
+
+    try {
+        return await archive();
+    } finally {
+        await releaseLock(lock);
+    }
+}
+
 /**
  * Runs one source-audio pass (or joins the one still running) and waits for it at most `budgetMs`. A first pass over
  * a provider's whole archive, or a slow volume, copies and hashes for minutes; the recorder's start, stop and
@@ -403,7 +420,7 @@ async function archiveWithinBudget(
     let pass = archiving.get(store);
 
     if (!pass) {
-        const started = archive().finally(() => archiving.delete(store));
+        const started = archiveWithClaim(store, archive).finally(() => archiving.delete(store));
         started.catch((error: unknown) => log.warn({ error }, "source-audio pass failed; the next look retries"));
         archiving.set(store, started);
         pass = started;
@@ -716,8 +733,4 @@ export async function watchLoop(store: MeetingStore, signal: AbortSignal): Promi
             }
         });
     }
-    // Finish any copy that outlived its tick before a replacement takes over this store.
-    await archiving
-        .get(store)
-        ?.catch((err: unknown) => log.warn({ err }, "source audio pass ended during watcher shutdown"));
 }
