@@ -29,10 +29,15 @@ import { RpcSocketClient } from "@genesiscz/utils/rpc/socket-client";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { Command } from "commander";
 import { z } from "zod";
+import { renderLook } from "../../commands/look";
 import { registerServeCommand } from "../../commands/serve";
 
+import { CallTimeline } from "../call-timeline";
 import { MeetingComments } from "../comments";
 import { DecisionJournal } from "../decision-journal";
+import { ocrPath } from "../frame-index";
+import { lookMeeting } from "../look";
+import { screenTextChanges } from "../look-screen";
 import { OpenedMeeting } from "../opened-meeting";
 import { projectRequired } from "../project";
 import { persistClip } from "../saved-clip";
@@ -134,7 +139,18 @@ test("threshold preview changes a 79% term at its two times and keeps decisions 
                 status: "suggested",
                 confidence: 0.79,
                 atSec: 9,
-                rules: [MeetingRule.Agent],
+                rules: [MeetingRule.PhoneticTerm],
+                suggestedAt: record.createdAt,
+            },
+            {
+                id: "i10",
+                kind: "term",
+                heard: "blenwick",
+                proposed: "Blenwik",
+                status: "suggested",
+                confidence: 0.65,
+                atSec: 22,
+                rules: [MeetingRule.PhoneticTerm],
                 suggestedAt: record.createdAt,
             },
         ];
@@ -150,6 +166,7 @@ test("threshold preview changes a 79% term at its two times and keeps decisions 
     });
     expect(preview.changes).toContainEqual(
         expect.objectContaining({
+            key: "saved:i9",
             kind: "term proposal",
             change: "changed",
             atSec: 9,
@@ -182,8 +199,9 @@ test("lowering and raising the dictionary cutoff adds and removes the same timed
     });
     const preview = (values: Record<string, number>) =>
         client.call("meeting.thresholds.preview", { meeting: REVIEW.id, values });
+    await expect(preview({ longStretchWords: Number.MAX_SAFE_INTEGER + 1 })).rejects.toThrow("longStretchWords");
     const added = await preview({ "fuzzy.suggest": 0.7 });
-    const term = added.changes.find((row) => row.kind === "term proposal");
+    const term = added.changes.find((row) => row.kind === "regenerated term proposal");
     expect(term).toMatchObject({ change: "added", atSec: 13, text: "klyxpart", after: { confidence: 0.75 } });
     await client.call("config.edit", { edits: [{ path: "global.suggest.terms.fuzzy.suggest", value: 0.7 }] });
     const removed = await preview({ "fuzzy.suggest": 0.8 });
@@ -194,6 +212,143 @@ test("lowering and raising the dictionary cutoff adds and removes the same timed
     const replaced = await preview({ "fuzzy.apply": 0.74, "fuzzy.suggest": 0.9 });
     expect(replaced.changes.find((row) => row.kind === "transcript line")?.after?.description).toContain("klymport");
     client.close();
+});
+
+test("look suppresses a global name where a confirmed label is meaningless", async () => {
+    const { store, source, linkedSource } = scratchStore();
+    const original = await source.load("wf-2041");
+    source.load = async () => ({
+        ...original,
+        transcript: [5, 10, 15, 20].map((startSec) => ({ startSec, speaker: "Speaker 1", text: "Fixture line" })),
+    });
+    source.evidence = async () => null;
+    const record = await store.update(
+        REVIEW.id,
+        { command: "fixture", change: "confirmed label decisions" },
+        (current) => {
+            current.speakers.labels["Speaker 1"] = "Alice Example";
+            current.speakers.assignments = [
+                { id: "a1", label: "Speaker 1", fromSec: 15, toSec: 15, person: "Dana Example", at: current.createdAt },
+            ];
+            current.items = [
+                {
+                    id: "i1",
+                    kind: "label",
+                    label: "Speaker 1",
+                    fromSec: 10,
+                    toSec: 25,
+                    meaningless: true,
+                    status: "confirmed",
+                    rules: [],
+                    suggestedAt: current.createdAt,
+                },
+                {
+                    id: "i2",
+                    kind: "speaker-range",
+                    label: "Speaker 1",
+                    fromSec: 20,
+                    toSec: 20,
+                    speaker: "Sam Example",
+                    status: "confirmed",
+                    rules: [],
+                    suggestedAt: current.createdAt,
+                },
+            ];
+        }
+    );
+    const opened = OpenedMeeting.of(store, record, linkedSource(record));
+    const open = spyOn(OpenedMeeting, "of").mockReturnValue(opened);
+    try {
+        const result = await lookMeeting(store, { meeting: record.id, from: 0, to: 25 });
+        expect(result.lines.map((line) => line.confirmedName)).toEqual([
+            "Alice Example",
+            null,
+            "Dana Example",
+            "Sam Example",
+        ]);
+    } finally {
+        open.mockRestore();
+    }
+});
+
+test("screen look parses only the requested window and viable display baselines in capture order", async () => {
+    const { store } = scratchStore();
+    const record = store.read(REVIEW.id)!;
+    const timeline = CallTimeline.stored(record);
+    const folder = store.folder(record.id);
+    const file = ocrPath(folder);
+    const row = (sec: number, text: string, displayId: number, failed?: string) =>
+        SafeJSON.stringify({
+            file: `frame-${sec}.jpg`,
+            at: new Date(timeline.msAt(sec)).toISOString(),
+            displayId,
+            text,
+            failed,
+        });
+    const distant = Array.from({ length: 64 }, (_, i) => row(30 + i, `Later ${i}`, 1));
+    const initial = [
+        row(9, "Wrong failed text", 1, "offline"),
+        row(11, "Red fox", 1),
+        ...distant,
+        row(3, "Older baseline", 1),
+        row(8, "First screen", 1),
+        row(7, "Seen before", 2),
+        row(10, "Second screen", 2),
+    ];
+    writeFileSync(file, `${initial.join("\n")}\n`);
+    const parser = spyOn(SafeJSON, "parse");
+    const read = () => screenTextChanges({ folder, timeline, fromSec: 10, toSec: 11 });
+    try {
+        expect(await read()).toEqual([
+            { atSec: 10, displayId: 2, added: ["Second screen"], removed: ["Seen before"] },
+            { atSec: 11, displayId: 1, added: ["Red fox"], removed: ["First screen"] },
+        ]);
+        expect(parser.mock.calls).toHaveLength(5);
+        parser.mockClear();
+        expect(await read()).toHaveLength(2);
+        expect(parser.mock.calls).toHaveLength(5);
+        writeFileSync(file, `${initial.join("\n")}\n${row(10, "Newly read", 1)}\n`);
+        expect((await read())?.find((change) => change.displayId === 1 && change.atSec === 10)?.added).toEqual([
+            "Newly read",
+        ]);
+    } finally {
+        parser.mockRestore();
+    }
+});
+
+test("the text look escapes source controls and can render a large section", () => {
+    const answer: Parameters<typeof renderLook>[0] = {
+        meeting: "meeting-fixture",
+        fromSec: 0,
+        toSec: 10,
+        lines: [
+            {
+                index: 0,
+                fromSec: 1,
+                toSec: 2,
+                label: "Speaker\u009b2K",
+                text: "Note\r\nFake\u001b[2J",
+                micShare: null,
+                confirmedName: "A\u0007",
+                suggestedName: null,
+                voice: null,
+                echoPair: null,
+            },
+        ],
+        attendance: [{ name: "Person\u2028Name", fromSec: 0, toSec: 4 }],
+        questions: [],
+        items: [],
+        screen: [
+            { atSec: 3, displayId: 1, added: Array.from({ length: 150_000 }, () => "OCR\u001b[2J"), removed: ["old"] },
+        ],
+    };
+    const text = renderLook(answer);
+    expect(text).toContain(String.raw`Speaker\u009b2K`);
+    expect(text).toContain(String.raw`Note\u000d\u000aFake\u001b[2J`);
+    expect(text).toContain(String.raw`Person\u2028Name`);
+    expect(text).toContain(String.raw`+ OCR\u001b[2J`);
+    expect(text).not.toContain("\u001b");
+    expect(answer.lines[0]!.text).toContain("\u001b");
 });
 
 test("threshold CLI lists sources, previews without saving and commits multiple global settings together", async () => {

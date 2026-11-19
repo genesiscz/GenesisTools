@@ -1,6 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { formatAttendanceCandidates } from "@genesiscz/utils/meetings/attendance-candidates";
 import { Command } from "commander";
 import { registerMeetingsCommand } from "../commands/meetings";
 import { buildMeetingAttendance, intervalsFromEvents, observerFromEvents, parseCallEndedMessage } from "./attendance";
@@ -17,6 +18,25 @@ const BOB = "8:teamsvisitor:00000000000000000000000000000b0b";
 const t = (hhmmss: string) => Date.parse(`2026-03-02T${hhmmss}Z`);
 
 describe("attendance candidate output", () => {
+    test("source controls cannot add a line to the retry hint", () => {
+        const candidates = [
+            {
+                id: "chat\u009b2K",
+                title: "Planning\nFake command\u001b[2J",
+                participantCount: 2,
+                lastCallAt: null,
+                command: "tools ms-teams meetings attendance --id 'chat\u009b2K'",
+            },
+        ];
+        const text = formatAttendanceCandidates(candidates);
+        expect(text.split("\n")).toHaveLength(3);
+        expect(text).toContain(String.raw`Planning\u000aFake command\u001b[2J (chat\u009b2K)`);
+        expect(text).toContain("Use JSON output for this retry command");
+        expect(text).not.toContain("--id");
+        expect(candidates[0]!.title).toContain("\n");
+        expect(candidates[0]!.command).toContain("chat\u009b2K");
+    });
+
     const title = "Paper Kite Review";
     const newer = "19:meeting_kite_new@thread.v2";
     const older = "19:meeting_kite_old@thread.v2";

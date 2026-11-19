@@ -202,6 +202,23 @@ describe("OpenedMeeting", () => {
         expect(store.read(record.id)?.history).toHaveLength(1);
     });
 
+    test("stored call silence is used only if the active calibration still agrees", async () => {
+        const calibration: ChannelCalibration = { layout: "left-mic", segments: { mic: 24, system: 24 } };
+        const callSilent = [{ fromSec: 9, toSec: 14 }];
+        const { store, record } = await newRecord({ evidence: { channels: { ...calibration, callSilent } } });
+        const opened = OpenedMeeting.of(store, record);
+        const current = spyOn(opened, "energy");
+        try {
+            current.mockResolvedValue({ calibration, share: () => 1 });
+            expect(await opened.silentCallSpans()).toEqual(callSilent);
+            current.mockResolvedValue({ calibration: { ...calibration, layout: "unknown" } });
+            expect(await opened.silentCallSpans()).toEqual([]);
+            expect(store.read(record.id)?.evidence?.channels?.callSilent).toEqual(callSilent);
+        } finally {
+            current.mockRestore();
+        }
+    });
+
     test("calibrate stores the silent call spans of the energy read after the echo cache was collected", async () => {
         const { store, record } = await newRecord();
         const audioPath = join(mkdtempSync(join(tmpdir(), "meetings-calibrate-")), "call.wav");

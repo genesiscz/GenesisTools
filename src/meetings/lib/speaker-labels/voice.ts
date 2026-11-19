@@ -10,7 +10,7 @@ import {
 } from "@genesiscz/utils/meetings/config";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { embedVoiceLines, type VoiceProgress } from "@genesiscz/utils/meetings/voice";
-import { readVoiceStore } from "@genesiscz/utils/meetings/voice-store";
+import { readVoiceStore, type VoiceStore } from "@genesiscz/utils/meetings/voice-store";
 import { backgroundPrefix } from "@genesiscz/utils/process/priority";
 import { profiler } from "@genesiscz/utils/profile";
 import type { OpenedMeeting } from "../opened-meeting";
@@ -204,7 +204,8 @@ async function meetingVoiceLines(opened: OpenedMeeting, context: LabelContext): 
 export function voiceLabeler(options: {
     opened: OpenedMeeting;
     settings: MeetingsConfig["global"]["speakerLabels"]["voice"];
-    /** A threshold preview supplies in-memory embeddings shared by its two scores. */
+    /** A threshold preview shares the same enrollment and in-memory embeddings across its scores. */
+    voiceStore?: VoiceStore;
     readLines?: (context: LabelContext, model: string) => Promise<VoiceLine[]>;
 }): SpeakerLabeler {
     return {
@@ -214,7 +215,7 @@ export function voiceLabeler(options: {
             if (!context.project || !context.attended.some((stay) => stay.seat)) {
                 return [];
             }
-            const store = readVoiceStore(context.project);
+            const store = options.voiceStore ?? readVoiceStore(context.project);
             if (!Object.keys(store.people).length && !context.certain?.size) {
                 return [];
             }

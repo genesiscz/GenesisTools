@@ -1,5 +1,10 @@
 import { SafeJSON } from "@genesiscz/utils/json";
-import { type MeetingsConfig, meetingsConfigSchema, resolveDictionary } from "@genesiscz/utils/meetings/config";
+import {
+    MEETINGS_CONFIG_VERSION,
+    type MeetingsConfig,
+    meetingsConfigSchema,
+    resolveDictionary,
+} from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { meetingRuleNames } from "@genesiscz/utils/meetings/rules";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
@@ -21,143 +26,142 @@ interface Threshold {
 }
 
 function threshold(
-    name: string,
-    path: string,
-    title: string,
-    meaning: string,
-    min = 0,
-    max: number | null = 1,
-    step = 0.01
+    options: Omit<Threshold, "min" | "max" | "step"> & {
+        min?: number;
+        max?: number | null;
+        step?: number;
+    }
 ): Threshold {
-    return { name, path: `global.${path}`, title, meaning, min, ...(max === null ? {} : { max }), step };
+    const { path, min = 0, max = 1, step = 0.01, ...labels } = options;
+    return { ...labels, path: `global.${path}`, min, ...(max === null ? {} : { max }), step };
 }
 
 const catalog = [
-    threshold(
-        "term.applyAbove",
-        "suggest.terms.applyAbove",
-        "Apply proposed terms",
-        "Use a suggested term at or above this confidence when the transcript includes suggestions."
-    ),
-    threshold(
-        "fuzzy.suggest",
-        "suggest.terms.fuzzy.suggest",
-        "Suggest dictionary matches",
-        "Propose words that resemble a dictionary spelling at or above this score."
-    ),
-    threshold(
-        "fuzzy.apply",
-        "suggest.terms.fuzzy.apply",
-        "Replace dictionary matches",
-        "Replace a matching word directly at or above this score."
-    ),
-    threshold(
-        "term.phonetic",
-        "suggest.terms.phonetic",
-        "Suggest similar phrases",
-        "Propose a vocabulary term when a spoken phrase sounds this close."
-    ),
-    threshold(
-        "term.unknownCandidate",
-        "suggest.terms.unknownCandidate",
-        "Suggest a spelling for an unknown word",
-        "Give an unfamiliar word a proposed spelling when a candidate reaches this score."
-    ),
-    threshold(
-        "applyAbove",
-        "suggest.applyAbove",
-        "Apply speaker suggestions",
-        "Use suggested speaker names and other non-term corrections at or above this confidence."
-    ),
-    threshold(
-        "listenBelow",
-        "suggest.listenBelow",
-        "Ask to listen",
-        "Consider asking about a term or speaker below this confidence."
-    ),
-    threshold(
-        "words.minOccurrences",
-        "suggest.words.minOccurrences",
-        "Word repetitions",
-        "Ask about an unfamiliar word after this many occurrences.",
-        2,
-        50,
-        1
-    ),
-    threshold(
-        "questionCap",
-        "suggest.questionCap",
-        "Question limit",
-        "Limit the total number of open rule questions per meeting.",
-        1,
-        500,
-        1
-    ),
-    threshold(
-        "minPriority",
-        "playback.listen.minPriority",
-        "Minimum question priority",
-        "Keep ordinary listening questions at or above this priority.",
-        0,
-        null
-    ),
-    threshold(
-        "longStretchWords",
-        "suggest.longStretchWords",
-        "Words in an unclear stretch",
-        "Ask about a continuous stretch of uncertain speech once it contains this many words.",
-        1,
-        null,
-        1
-    ),
-    threshold(
-        "leaveSilenceMinutes",
-        "suggest.leaveSilenceMinutes",
-        "Minutes before an inferred departure",
-        "Require this much observed silence before inferring a participant left.",
-        1,
-        120,
-        0.1
-    ),
-    threshold(
-        "voice.gate.score",
-        "speakerLabels.voice.gate.score",
-        "Voice match score",
-        "A voice must match a confirmed sample at least this closely to name its speaker."
-    ),
-    threshold(
-        "voice.gate.margin",
-        "speakerLabels.voice.gate.margin",
-        "Lead over the next voice",
-        "Require this difference between the two best voice scores."
-    ),
-    threshold(
-        "voice.gate.loneScore",
-        "speakerLabels.voice.gate.loneScore",
-        "Single sampled speaker",
-        "Require this score when only one participant has a sample."
-    ),
-    threshold(
-        "voice.gate.unsampledScore",
-        "speakerLabels.voice.gate.unsampledScore",
-        "Participant without a sample",
-        "Require this score when someone attending has no sample."
-    ),
-    threshold(
-        "voice.gate.strangerScore",
-        "speakerLabels.voice.gate.strangerScore",
-        "Different voice on a seat",
-        "Question the seat owner's name when the voice scores below this value."
-    ),
-    threshold(
-        "voice.minSeconds",
-        "speakerLabels.voice.minSeconds",
-        "Minimum voice duration",
-        "Compare a line to voice samples only when it lasts this many seconds.",
-        0,
-        60,
-        0.1
-    ),
+    threshold({
+        name: "term.applyAbove",
+        path: "suggest.terms.applyAbove",
+        title: "Apply proposed terms",
+        meaning: "Use a suggested term at or above this confidence when the transcript includes suggestions.",
+    }),
+    threshold({
+        name: "fuzzy.suggest",
+        path: "suggest.terms.fuzzy.suggest",
+        title: "Suggest dictionary matches",
+        meaning: "Propose words that resemble a dictionary spelling at or above this score.",
+    }),
+    threshold({
+        name: "fuzzy.apply",
+        path: "suggest.terms.fuzzy.apply",
+        title: "Replace dictionary matches",
+        meaning: "Replace a matching word directly at or above this score.",
+    }),
+    threshold({
+        name: "term.phonetic",
+        path: "suggest.terms.phonetic",
+        title: "Suggest similar phrases",
+        meaning: "Propose a vocabulary term when a spoken phrase sounds this close.",
+    }),
+    threshold({
+        name: "term.unknownCandidate",
+        path: "suggest.terms.unknownCandidate",
+        title: "Suggest a spelling for an unknown word",
+        meaning: "Give an unfamiliar word a proposed spelling when a candidate reaches this score.",
+    }),
+    threshold({
+        name: "applyAbove",
+        path: "suggest.applyAbove",
+        title: "Apply speaker suggestions",
+        meaning: "Use suggested speaker names and other non-term corrections at or above this confidence.",
+    }),
+    threshold({
+        name: "listenBelow",
+        path: "suggest.listenBelow",
+        title: "Ask to listen",
+        meaning: "Consider asking about a term or speaker below this confidence.",
+    }),
+    threshold({
+        name: "words.minOccurrences",
+        path: "suggest.words.minOccurrences",
+        title: "Word repetitions",
+        meaning: "Ask about an unfamiliar word after this many occurrences.",
+        min: 2,
+        max: 50,
+        step: 1,
+    }),
+    threshold({
+        name: "questionCap",
+        path: "suggest.questionCap",
+        title: "Question budget",
+        meaning: "Budget for ordinary rule questions. Voice exclusions can exceed it.",
+        min: 1,
+        max: 500,
+        step: 1,
+    }),
+    threshold({
+        name: "minPriority",
+        path: "playback.listen.minPriority",
+        title: "Minimum question priority",
+        meaning: "Keep ordinary listening questions at or above this priority.",
+        min: 0,
+        max: null,
+    }),
+    threshold({
+        name: "longStretchWords",
+        path: "suggest.longStretchWords",
+        title: "Words in an unclear stretch",
+        meaning: "Ask about a continuous stretch of uncertain speech once it contains this many words.",
+        min: 1,
+        max: null,
+        step: 1,
+    }),
+    threshold({
+        name: "leaveSilenceMinutes",
+        path: "suggest.leaveSilenceMinutes",
+        title: "Minutes before an inferred departure",
+        meaning: "Require this much observed silence before inferring a participant left.",
+        min: 1,
+        max: 120,
+        step: 0.1,
+    }),
+    threshold({
+        name: "voice.gate.score",
+        path: "speakerLabels.voice.gate.score",
+        title: "Voice match score",
+        meaning: "A voice must match a confirmed sample at least this closely to name its speaker.",
+    }),
+    threshold({
+        name: "voice.gate.margin",
+        path: "speakerLabels.voice.gate.margin",
+        title: "Lead over the next voice",
+        meaning: "Require this difference between the two best voice scores.",
+    }),
+    threshold({
+        name: "voice.gate.loneScore",
+        path: "speakerLabels.voice.gate.loneScore",
+        title: "Single sampled speaker",
+        meaning: "Require this score when only one participant has a sample.",
+    }),
+    threshold({
+        name: "voice.gate.unsampledScore",
+        path: "speakerLabels.voice.gate.unsampledScore",
+        title: "Participant without a sample",
+        meaning: "Require this score when someone attending has no sample.",
+    }),
+    threshold({
+        name: "voice.gate.strangerScore",
+        path: "speakerLabels.voice.gate.strangerScore",
+        title: "Different voice on a seat",
+        meaning: "Question the seat owner's name when the voice scores below this value.",
+    }),
+    threshold({
+        name: "voice.minSeconds",
+        path: "speakerLabels.voice.minSeconds",
+        title: "Minimum voice duration",
+        meaning: "Compare a line to voice samples only when it lasts this many seconds.",
+        min: 0,
+        max: 60,
+        step: 0.1,
+    }),
 ];
 const defaults = meetingsConfigSchema.parse({});
 const byName = new Map(catalog.map((row) => [row.name, row]));
@@ -182,7 +186,7 @@ export function thresholdEdits(values: Record<string, number>) {
             !Number.isFinite(value) ||
             value < row.min ||
             (row.max !== undefined && value > row.max) ||
-            (row.step === 1 && !Number.isInteger(value))
+            (row.step === 1 && !Number.isSafeInteger(value))
         ) {
             throw new Error(
                 `${name} needs ${row.step === 1 ? "an integer" : "a number"} from ${row.min}${row.max === undefined ? " upwards" : ` to ${row.max}`}`
@@ -199,6 +203,15 @@ function describe(config: MeetingsConfig, raw: unknown, record?: MeetingRecord):
         const globalValue = numeric(config, row.path);
         let value = globalValue;
         let source = configValueAt(raw, row.path.split(".")) === undefined ? "default" : row.path;
+        const version = configValueAt(raw, ["version"]);
+        if (
+            row.name === "term.applyAbove" &&
+            source === "default" &&
+            (typeof version !== "number" || version < MEETINGS_CONFIG_VERSION) &&
+            typeof configValueAt(raw, ["global", "suggest", "applyAbove"]) === "number"
+        ) {
+            source = "global.suggest.applyAbove (migrated)";
+        }
         if (row.name === "fuzzy.apply" || row.name === "fuzzy.suggest") {
             const key = row.name === "fuzzy.apply" ? "apply" : "suggest";
             value = dictionary.fuzzy?.[key] ?? globalValue;
@@ -217,10 +230,18 @@ function describe(config: MeetingsConfig, raw: unknown, record?: MeetingRecord):
 type State = NonNullable<ThresholdChange["before"]>;
 type Located = { kind: string; state: State; atSec?: number; text: string; reason: string };
 
-function snapshot(record: MeetingRecord, config: MeetingsConfig, transcript: TranscriptEntry[]) {
-    const corrected = correctTranscript({ record, config, transcript, format: "json", withSuggested: true });
-    const outcomes = new Map(corrected.outcomes.map((outcome) => [outcome.item, outcome]));
-    const keys = new Map(record.items.map((item) => [item.id, itemKey(item)]));
+function snapshot(options: {
+    stored: MeetingRecord;
+    regenerated: MeetingRecord;
+    retainedIds: ReadonlySet<string>;
+    regeneratedRetainedIds: ReadonlySet<string>;
+    config: MeetingsConfig;
+    transcript: TranscriptEntry[];
+}) {
+    const { stored, regenerated, retainedIds, regeneratedRetainedIds, config, transcript } = options;
+    const render = (record: MeetingRecord) =>
+        correctTranscript({ record, config, transcript, format: "json", withSuggested: true });
+    const corrected = render(stored);
     const byTime = new Map<number, TranscriptEntry>();
     for (const line of transcript) {
         if (line.startSec !== undefined && !byTime.has(line.startSec)) {
@@ -228,34 +249,57 @@ function snapshot(record: MeetingRecord, config: MeetingsConfig, transcript: Tra
         }
     }
     const rows = new Map<string, Located>();
-    for (const item of record.items) {
-        const index = lineOf(item);
-        const atSec = "fromSec" in item ? item.fromSec : item.atSec;
-        const line = index !== undefined ? transcript[index] : atSec !== undefined ? byTime.get(atSec) : undefined;
-        const kind =
-            item.kind === "question" ? `${item.about} question` : item.kind === "term" ? "term proposal" : item.kind;
-        const outcome = outcomes.get(item.id);
-        // New suggestion IDs depend on how many earlier rules fired. Compare questions by what they decide.
-        const key =
-            item.kind === "question"
-                ? SafeJSON.stringify([
-                      item.kind,
-                      item.group,
-                      item.about,
-                      item.fromSec,
-                      item.toSec,
-                      item.heard,
-                      item.decides.map((id) => keys.get(id) ?? id).sort(),
-                  ])
-                : keys.get(item.id)!;
-        rows.set(key, {
-            kind,
-            atSec: line?.startSec ?? atSec,
-            text: line?.text ?? itemWhat(item),
-            state: { status: outcome?.status ?? item.status, confidence: item.confidence, description: itemWhat(item) },
-            reason: outcome && "reason" in outcome ? outcome.reason : meetingRuleNames(item.rules).join(" "),
-        });
-    }
+
+    const items = (
+        record: MeetingRecord,
+        outcomes: ReturnType<typeof render>["outcomes"],
+        regeneratedItems: boolean
+    ) => {
+        const byId = new Map(outcomes.map((outcome) => [outcome.item, outcome]));
+        const keys = new Map(
+            record.items.map((item) => [item.id, retainedIds.has(item.id) ? `saved:${item.id}` : itemKey(item)])
+        );
+        for (const item of record.items) {
+            const retained = retainedIds.has(item.id);
+            if (regeneratedItems && retained && !regeneratedRetainedIds.has(item.id)) {
+                continue;
+            }
+            const index = lineOf(item);
+            const atSec = "fromSec" in item ? item.fromSec : item.atSec;
+            const line = index !== undefined ? transcript[index] : atSec !== undefined ? byTime.get(atSec) : undefined;
+            const kind =
+                item.kind === "question"
+                    ? `${item.about} question`
+                    : item.kind === "term"
+                      ? "term proposal"
+                      : item.kind;
+            const outcome = byId.get(item.id);
+            // New suggestion IDs depend on how many earlier rules fired. Compare questions by what they decide.
+            const semanticKey = retained
+                ? `saved:${item.id}`
+                : item.kind === "question"
+                  ? SafeJSON.stringify([
+                        item.kind,
+                        item.group,
+                        item.about,
+                        item.fromSec,
+                        item.toSec,
+                        item.heard,
+                        item.decides.map((id) => keys.get(id) ?? id).sort(),
+                    ])
+                  : keys.get(item.id)!;
+            const what = itemWhat(item);
+            rows.set(regeneratedItems ? `regenerated:${semanticKey}` : `saved:${item.id}`, {
+                kind: regeneratedItems ? `regenerated ${kind}` : kind,
+                atSec: line?.startSec ?? atSec,
+                text: line?.text ?? what,
+                state: { status: outcome?.status ?? item.status, confidence: item.confidence, description: what },
+                reason: outcome && "reason" in outcome ? outcome.reason : meetingRuleNames(item.rules).join(" "),
+            });
+        }
+    };
+    items(stored, corrected.outcomes, false);
+    items(regenerated, render(regenerated).outcomes, true);
     // Direct dictionary replacements have no item ID. Compare the rendered lines too, including every occurrence.
     const repeats = new Map<string, number>();
     for (const line of corrected.entries) {
@@ -337,11 +381,31 @@ export async function meetingThresholds(options: {
     const { previewSuggestionRuns } = await import("./suggest-run");
     const run = await previewSuggestionRuns(opened, config, draft, signal);
     signal?.throwIfAborted();
+    const beforeStatuses = new Map(run.before.items.map((item) => [item.id, item.status]));
+    const regeneratedRetainedIds = new Set(
+        run.after.items
+            .filter((item) => run.retainedIds.has(item.id) && item.status !== beforeStatuses.get(item.id))
+            .map((item) => item.id)
+    );
     return {
         thresholds,
         ...thresholdDifferences(
-            snapshot(run.before, config, run.transcript),
-            snapshot(run.after, draft, run.transcript),
+            snapshot({
+                stored: opened.record,
+                regenerated: run.before,
+                retainedIds: run.retainedIds,
+                regeneratedRetainedIds,
+                config,
+                transcript: run.transcript,
+            }),
+            snapshot({
+                stored: opened.record,
+                regenerated: run.after,
+                retainedIds: run.retainedIds,
+                regeneratedRetainedIds,
+                config: draft,
+                transcript: run.transcript,
+            }),
             changed.join(", ")
         ),
         warnings: run.warnings,

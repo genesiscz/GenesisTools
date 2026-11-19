@@ -378,13 +378,13 @@ export class OpenedMeeting {
 
     /** The stretches where the call's channel stayed silent (the call played through the room); E1 says nothing there. */
     async silentCallSpans(): Promise<SilentCallSpan[]> {
-        const stored = this.current.evidence?.channels?.callSilent;
-
-        if (stored) {
-            return stored;
+        const stored = this.current.evidence?.channels;
+        const energy = await this.energy();
+        if (energy.share && stored?.callSilent && stored.layout === energy.calibration?.layout) {
+            return stored.callSilent;
         }
 
-        return callSilentSpans(await this.energy(), await this.transcriptEndSec());
+        return callSilentSpans(energy, energy.share ? await this.transcriptEndSec() : 0);
     }
 
     /** The meetings config, read once. */

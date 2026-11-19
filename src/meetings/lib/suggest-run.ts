@@ -11,6 +11,7 @@ import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { VoiceProgress } from "@genesiscz/utils/meetings/voice";
 import { type LineVoice, lineVoices, voiceFrames } from "@genesiscz/utils/meetings/voice-features";
 import { collectVoiceFrames } from "@genesiscz/utils/meetings/voice-frame-cache";
+import { readVoiceStore } from "@genesiscz/utils/meetings/voice-store";
 import { profiler } from "@genesiscz/utils/profile";
 import { mergeDictionaries } from "@genesiscz/utils/transcribe/dictionary";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
@@ -26,7 +27,7 @@ import { type MeetingReviewDoor, requestMeetingQuestionReview } from "./person-d
 import { errorText } from "./shared";
 import { preparePreviewLabels, proposeSpeakerLabels } from "./speaker-labels";
 import { directoryMatcher, type SamePerson } from "./speaker-scores";
-import { knownWord, type SuggestRule, settledTermItems, suggestItems } from "./suggest";
+import { knownWord, restoreThresholdRetirements, type SuggestRule, settledTermItems, suggestItems } from "./suggest";
 import { anchoredMeetingVoices } from "./voice";
 import { VOICE_PASS_HISTORY } from "./voice-readiness";
 import type { WordCheckChoice } from "./word-check";
@@ -449,7 +450,16 @@ export async function previewSuggestionRuns(
             return copy;
         };
         signal?.throwIfAborted();
-        const scoreLabels = await preparePreviewLabels(opened, current.global.speakerLabels, inputs.presence, signal);
+        // Both sides of one preview see the same enrollment, including a recalculated attendance pass.
+        let voiceStore: ReturnType<typeof readVoiceStore> | undefined;
+        const voiceStoreFor = (project: string) => (voiceStore ??= readVoiceStore(project));
+        const scoreLabels = await preparePreviewLabels({
+            opened,
+            settings: current.global.speakerLabels,
+            presence: inputs.presence,
+            voiceStoreFor,
+            signal,
+        });
         const labels = await scoreLabels(current.global.speakerLabels.voice, current.global.suggest.applyAbove);
         const before = run(current, labels, inputs.presence);
         const staysChanged = draft.global.suggest.leaveSilenceMinutes !== current.global.suggest.leaveSilenceMinutes;
@@ -457,7 +467,13 @@ export async function previewSuggestionRuns(
         const presence = staysChanged ? await next.presence() : inputs.presence;
         let afterLabels = labels;
         if (staysChanged) {
-            const score = await preparePreviewLabels(next, draft.global.speakerLabels, presence, signal);
+            const score = await preparePreviewLabels({
+                opened: next,
+                settings: draft.global.speakerLabels,
+                presence,
+                voiceStoreFor,
+                signal,
+            });
             afterLabels = await score(draft.global.speakerLabels.voice, draft.global.suggest.applyAbove);
         } else if (
             current.global.suggest.applyAbove !== draft.global.suggest.applyAbove ||
@@ -465,7 +481,13 @@ export async function previewSuggestionRuns(
         ) {
             afterLabels = await scoreLabels(draft.global.speakerLabels.voice, draft.global.suggest.applyAbove);
         }
-        return { before, after: run(draft, afterLabels, presence), transcript: inputs.meeting.transcript, warnings };
+        return {
+            before,
+            after: run(draft, afterLabels, presence),
+            retainedIds: new Set(seed.items.map((item) => item.id)),
+            transcript: inputs.meeting.transcript,
+            warnings,
+        };
     } finally {
         inputs.wordCheck?.dispose();
     }
@@ -502,6 +524,11 @@ function applySuggestionRun(
         }
 
         retired.push(...settled.keys());
+        restoreThresholdRetirements({
+            record: current,
+            dictionary: inputs.dictionary,
+            unknownCandidate: config.global.suggest.terms.unknownCandidate,
+        });
     }
     const suggested = current.items.filter((item) => item.status === "suggested");
     const fresh = prof.measure("suggestItems", () =>

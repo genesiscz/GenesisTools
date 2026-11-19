@@ -3,7 +3,7 @@
  * Positive offset means looking later in the audio. The sweep uses the original calibration's mean RMS share
  * and 1.5 s minimum duration. Both the numerator and denominator are measured in the production cache's units.
  */
-import { existsSync, mkdtempSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
@@ -41,57 +41,68 @@ async function census(baseCheckout: string): Promise<void> {
         join(resolve(baseCheckout), "src/utils/meetings/energy.ts")
     );
     const scratch = mkdtempSync(join(tmpdir(), "meetings-census-"));
-    const records = [];
-    const changes = [];
-    const failures = [];
-    for (const entry of readdirSync(store.root, { withFileTypes: true })) {
-        const id = entry.name;
-        if (!entry.isDirectory() || !existsSync(join(store.root, id, MEETING_FILE))) {
-            continue;
-        }
-        let base: ChannelCalibration | undefined, head: ChannelCalibration | undefined;
-        let stored: ChannelCalibration | undefined;
-        let unavailable: string | undefined;
-        try {
-            const record = store.read(id);
-            if (!record) {
-                throw new Error("Record failed schema validation");
+    try {
+        let compared = 0;
+        const records = [];
+        const changes = [];
+        const failures = [];
+        for (const entry of readdirSync(store.root, { withFileTypes: true })) {
+            const id = entry.name;
+            if (!entry.isDirectory() || !existsSync(join(store.root, id, MEETING_FILE))) {
+                continue;
             }
-            stored = record.evidence?.channels;
-            const opened = OpenedMeeting.of(store, record);
-            const evidence = opened.sourceRef ? await opened.sourceEvidence() : null;
-            if (evidence?.audioPath) {
-                // Only the scratch cache is writable. Both revisions receive the same samples and tagged spans.
-                const energy =
-                    readCachedChannelEnergy(join(store.folder(id), "evidence", "energy.bin"), evidence.audioPath) ??
-                    (await channelEnergy(evidence.audioPath, join(scratch, Bun.hash(evidence.audioPath).toString())));
-                if (!energy) {
-                    throw new Error("Could not read channel energy");
+            let base: ChannelCalibration | undefined, head: ChannelCalibration | undefined;
+            let stored: ChannelCalibration | undefined;
+            let unavailable: string | undefined;
+            try {
+                const record = store.read(id);
+                if (!record) {
+                    throw new Error("Record failed schema validation");
                 }
-                base = baseline.calibrateChannels(energy, evidence.segments);
-                head = calibrateChannels(energy, evidence.segments, {
-                    minSeparation: (await opened.config()).global.speakerLabels.channels.minSeparation,
-                    sourceLayout: (await opened.linked()).source.sourceLayout,
-                });
-            } else {
-                unavailable = "no source audio";
+                stored = record.evidence?.channels;
+                const opened = OpenedMeeting.of(store, record);
+                const evidence = opened.sourceRef ? await opened.sourceEvidence() : null;
+                if (evidence?.audioPath) {
+                    // Only the scratch cache is writable. Both revisions receive the same samples and tagged spans.
+                    const energy =
+                        readCachedChannelEnergy(join(store.folder(id), "evidence", "energy.bin"), evidence.audioPath) ??
+                        (await channelEnergy(
+                            evidence.audioPath,
+                            join(scratch, Bun.hash(evidence.audioPath).toString())
+                        ));
+                    if (!energy) {
+                        throw new Error("Could not read channel energy");
+                    }
+                    base = baseline.calibrateChannels(energy, evidence.segments);
+                    head = calibrateChannels(energy, evidence.segments, {
+                        minSeparation: (await opened.config()).global.speakerLabels.channels.minSeparation,
+                        sourceLayout: (await opened.linked()).source.sourceLayout,
+                    });
+                    compared++;
+                } else {
+                    unavailable = "no source audio";
+                }
+            } catch (error) {
+                unavailable = error instanceof Error ? error.message : String(error);
+                failures.push({ id, reason: unavailable });
             }
-        } catch (error) {
-            unavailable = error instanceof Error ? error.message : String(error);
-            failures.push({ id, reason: unavailable });
+            const row = { id, stored: stored?.layout ?? null, base: base ?? null, head: head ?? null, unavailable };
+            records.push(row);
+            if (head && (base?.layout !== head.layout || (stored && stored.layout !== head.layout))) {
+                changes.push(id);
+            }
+            if (
+                [base, stored].some((before) => before && before.layout !== "unknown" && before.layout !== head?.layout)
+            ) {
+                failures.push({ id, reason: "formerly known layout changed or could not be checked" });
+            }
         }
-        const row = { id, stored: stored?.layout ?? null, base: base ?? null, head: head ?? null, unavailable };
-        records.push(row);
-        if (head && (base?.layout !== head.layout || (stored && stored.layout !== head.layout))) {
-            changes.push(id);
+        out.result({ compared, records, changes, failures });
+        if (compared === 0 || failures.length) {
+            process.exitCode = 1;
         }
-        if ([base, stored].some((before) => before && before.layout !== "unknown" && before.layout !== head?.layout)) {
-            failures.push({ id, reason: "formerly known layout changed or could not be checked" });
-        }
-    }
-    out.result({ records, changes, failures });
-    if (!records.length || failures.length) {
-        process.exitCode = 1;
+    } finally {
+        rmSync(scratch, { recursive: true, force: true });
     }
 }
 

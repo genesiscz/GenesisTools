@@ -184,7 +184,7 @@ export function median(values: number[]): number | undefined {
 
 type TaggedSpan = { startSec: number; endSec: number; channel: string };
 
-/** Each tag votes once, on audio where only its source is tagged. Keep short tags in the overlap mask. */
+/** Each vote uses distinct audio blocks where only its source is tagged. Short tags still mask the other source. */
 function uncontestedShares(energy: ChannelEnergy, segments: TaggedSpan[]) {
     const shares: Record<"mic" | "system", number[]> = { mic: [], system: [] };
     const mask = new Uint8Array(Math.min(energy.left.length, energy.right.length));
@@ -206,11 +206,13 @@ function uncontestedShares(energy: ChannelEnergy, segments: TaggedSpan[]) {
             spans.push({ from, to, channel: segment.channel, bit });
         }
     }
-    for (const { from, to, channel, bit } of spans) {
+    // Earlier-ending votes leave the most audio available to subsequent tags, irrespective of input order.
+    const usedThrough = { mic: 0, system: 0 };
+    for (const { from, to, channel, bit } of spans.sort((a, b) => a.to - b.to || a.from - b.from)) {
         let left = 0,
             right = 0,
             blocks = 0;
-        for (let i = from; i < to; i++) {
+        for (let i = Math.max(from, usedThrough[channel]); i < to; i++) {
             if (mask[i] === bit) {
                 left += energy.left[i]!;
                 right += energy.right[i]!;
@@ -219,6 +221,7 @@ function uncontestedShares(energy: ChannelEnergy, segments: TaggedSpan[]) {
         }
         if (blocks >= CALIBRATION_MIN_SEC * ENERGY_BLOCKS_PER_SEC && left + right >= QUIET * blocks) {
             shares[channel].push(left / (left + right));
+            usedThrough[channel] = to;
         }
     }
     return shares;

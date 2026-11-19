@@ -1,3 +1,4 @@
+import GenesisKit
 import SwiftUI
 
 extension MeetingsAPI {
@@ -61,6 +62,10 @@ struct ThresholdDraft: Equatable {
         else { values[row.name] = value }
     }
 
+    mutating func clearIfUnchanged(since submitted: Self) {
+        if self == submitted { self = Self() }
+    }
+
     func edits(_ rows: [MeetingsAPI.ThresholdPreview.Row]) -> [MeetingsAPI.ConfigEdit.Edit] {
         rows.compactMap { row in
             values[row.name].map { .init(path: row.path, value: .number($0), expect: .number(row.globalValue)) }
@@ -68,10 +73,21 @@ struct ThresholdDraft: Equatable {
     }
 }
 
+@MainActor
+func thresholdFailureReport(_ error: Error, outcome: String, action: String, call: ToolsCallLedger.Call?) -> FailureReport {
+    if let failure = error as? MeetingsCLI.Failure {
+        var report = failure.report(outcome: outcome, action: action)
+        report.call = call
+        return report
+    }
+    return .toolsCall(error, outcome: outcome, action: action, call: call, area: "meetings")
+}
+
 struct MeetingsThresholdsPage: View {
     @Bindable var model: MeetingsSettingsModel
     @Environment(\.nativeSettingsIndexing) private var indexing
-    @State private var meetingListError: String?
+    @State private var meetingListError: FailureReport?
+    @State private var meetingListReload = 0
     @State private var draft = ThresholdDraft()
 
     var body: some View {
@@ -80,20 +96,27 @@ struct MeetingsThresholdsPage: View {
                                  options: model.dictionaryPreviewMeetings.options,
                                  selection: $model.dictionaryPreviewMeetings.selection)
             if let meetingListError {
-                Text(meetingListError).font(.callout).foregroundStyle(.secondary)
+                FailureInline(meetingListError, form: .compact) { meetingListReload += 1 }
             }
             ThresholdEditor(model: model, meeting: model.dictionaryPreviewMeetings.selection, draft: $draft)
                 .id(model.dictionaryPreviewMeetings.selection)
         }
         .modifier(PageNotices(model: model.notices, shown: !indexing))
-        .task {
+        .task(id: meetingListReload) {
             guard !indexing else { return }
+            let ledger = ToolsCallLedger()
             do {
-                let overview = try await MeetingsWindowModel.overviewRead(days: MeetingsPreferences.days(.standard)).run(service: model.service)
+                let overview = try await ledger.record {
+                    try await MeetingsWindowModel.overviewRead(days: MeetingsPreferences.days(.standard)).run(service: model.service)
+                }
                 try Task.checkCancellation()
                 model.dictionaryPreviewMeetings.receive(overview.meetings)
+                meetingListError = nil
             } catch {
-                if !Task.isCancelled { meetingListError = asFailure(error).sentence }
+                if !Task.isCancelled {
+                    meetingListError = thresholdFailureReport(error, outcome: "Could not read meetings",
+                                                              action: "Load meetings for threshold preview", call: ledger.failed)
+                }
             }
         }
     }
@@ -107,7 +130,7 @@ private struct ThresholdEditor: View {
     @Binding var draft: ThresholdDraft
     @State private var result: API.Result?
     @State private var accepted: [String: Double]?
-    @State private var failure: String?
+    @State private var failure: FailureReport?
     @State private var saving = false
     @State private var reload = 0
 
@@ -147,10 +170,7 @@ private struct ThresholdEditor: View {
                 ProgressView("Reading thresholds…").controlSize(.small)
             }
             if let failure {
-                HStack {
-                    Text(failure).foregroundStyle(.red).textSelection(.enabled)
-                    Button("Reload") { reload += 1 }
-                }
+                FailureInline(failure, form: .compact) { reload += 1 }
             }
         }
         .task(id: request) { await compare(request) }
@@ -214,14 +234,17 @@ private struct ThresholdEditor: View {
         guard !indexing else { return }
         let previewValues = meeting.isEmpty ? [:] : asked.values
         if meeting.isEmpty, result != nil, !asked.values.isEmpty, failure == nil { return }
+        let ledger = ToolsCallLedger()
         do {
             if !previewValues.isEmpty { try await Task.sleep(for: .milliseconds(350)) }
             var args = ["thresholds"] + (meeting.isEmpty ? [] : [meeting]) + ["--json"]
             if !previewValues.isEmpty {
                 args += ["--preview", "--set"] + previewValues.keys.sorted().map { "\($0)=\(previewValues[$0]!)" }
             }
-            let current = try await model.readLibrary(API.self, .init(meeting: meeting.isEmpty ? nil : meeting, values: previewValues),
-                                                      orRun: args)
+            let current = try await ledger.record {
+                try await model.readLibrary(API.self, .init(meeting: meeting.isEmpty ? nil : meeting, values: previewValues),
+                                            orRun: args)
+            }
             try Task.checkCancellation()
             guard request == asked else { return }
             result = current
@@ -230,7 +253,8 @@ private struct ThresholdEditor: View {
             failure = nil
         } catch {
             if !Task.isCancelled && request == asked {
-                failure = asFailure(error).sentence
+                failure = thresholdFailureReport(error, outcome: "Could not preview thresholds",
+                                                 action: "Compare meeting thresholds", call: ledger.failed)
                 model.thresholdsReady = true
                 accepted = nil
             }
@@ -238,20 +262,27 @@ private struct ThresholdEditor: View {
     }
 
     private func save(_ rows: [API.Row]) async {
-        let edits = draft.edits(rows)
+        let submitted = draft
+        let edits = submitted.edits(rows)
         guard model.writes, !saving, !edits.isEmpty, meeting.isEmpty || previewed else { return }
         saving = true
         defer { saving = false }
+        let ledger = ToolsCallLedger()
         do {
             let data = try JSONEncoder().encode(edits)
-            _ = try await model.writeLibrary(MeetingsAPI.ConfigEdit.self, .init(edits: edits),
+            _ = try await ledger.record {
+                try await model.writeLibrary(MeetingsAPI.ConfigEdit.self, .init(edits: edits),
                                              orRun: ["config", "edit", String(decoding: data, as: UTF8.self)])
+            }
             model.loadSettings()
-            draft = ThresholdDraft()
+            draft.clearIfUnchanged(since: submitted)
             reload += 1
             model.notices.push(StackedNotice(text: "Saved global meeting thresholds"))
         } catch {
-            failure = asFailure(error).sentence
+            let report = thresholdFailureReport(error, outcome: "Could not save thresholds",
+                                                action: "Save global meeting thresholds", call: ledger.failed)
+            model.notices.push(StackedNotice(text: report.headline, tone: .error,
+                                              actions: [.details(report)], lasting: .untilDismissed))
         }
     }
 }

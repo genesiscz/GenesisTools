@@ -2,6 +2,7 @@ import { fileIdentity } from "@genesiscz/utils/fs/identity-cache";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
+import { readVoiceStore, type VoiceStore } from "@genesiscz/utils/meetings/voice-store";
 import { profiler } from "@genesiscz/utils/profile";
 import { lineChannelShares } from "@genesiscz/utils/transcribe/evidence";
 import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
@@ -162,7 +163,13 @@ export async function proposeSpeakerLabels(
 // Keep one meeting's embeddings while its editor is open. Track, clock, source identity or span changes invalidate it.
 let lastEmbeddings: { key: string; lines: VoiceLine[] } | undefined;
 
-async function previewVoiceLines(opened: OpenedMeeting, context: LabelContext, model: string, signal?: AbortSignal) {
+async function previewVoiceLines(options: {
+    opened: OpenedMeeting;
+    context: LabelContext;
+    model: string;
+    signal?: AbortSignal;
+}) {
+    const { opened, context, model, signal } = options;
     const { voiceReadMeeting } = await import("../voices");
     const sound = await (await voiceReadMeeting(opened)).sound();
     const identities = new Map<string, ReturnType<typeof fileIdentity>>();
@@ -193,12 +200,14 @@ async function previewVoiceLines(opened: OpenedMeeting, context: LabelContext, m
     return lines;
 }
 
-export async function preparePreviewLabels(
-    opened: OpenedMeeting,
-    settings: MeetingsConfig["global"]["speakerLabels"],
-    presence: Presence[] | undefined,
-    signal?: AbortSignal
-) {
+export async function preparePreviewLabels(options: {
+    opened: OpenedMeeting;
+    settings: MeetingsConfig["global"]["speakerLabels"];
+    presence?: Presence[];
+    signal?: AbortSignal;
+    voiceStoreFor?: (project: string) => VoiceStore;
+}) {
+    const { opened, settings, presence, signal } = options;
     type VoiceSettings = typeof settings.voice;
     if (!settings.seat.enabled && !settings.voice.enabled) {
         return (_voice: VoiceSettings, _applyAbove: number): LineLabel[] => [];
@@ -213,16 +222,20 @@ export async function preparePreviewLabels(
         return (_voice: VoiceSettings, _applyAbove: number) => seats;
     }
     const { voiceLabeler } = await import("./voice");
+    const voiceStore = (options.voiceStoreFor ?? readVoiceStore)(context.project);
     let embeddings: { model: string; lines: Promise<VoiceLine[]> } | undefined;
     const previewLines = (inputs: LabelContext, model: string) => {
         if (embeddings?.model !== model) {
-            embeddings = { model, lines: previewVoiceLines(opened, inputs, model, signal) };
+            embeddings = { model, lines: previewVoiceLines({ opened, context: inputs, model, signal }) };
         }
         return embeddings.lines;
     };
     return async (voice: VoiceSettings, applyAbove: number) => {
         const inputs = await forVoice(labels.get("seat") ?? [], applyAbove);
-        labels.set("voice", await voiceLabeler({ opened, settings: voice, readLines: previewLines }).propose(inputs));
+        labels.set(
+            "voice",
+            await voiceLabeler({ opened, settings: voice, readLines: previewLines, voiceStore }).propose(inputs)
+        );
         return mergeLineLabels(labels);
     };
 }
