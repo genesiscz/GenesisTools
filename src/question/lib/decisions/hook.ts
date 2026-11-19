@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
 import type { TurnBoundary } from "@genesiscz/utils/agent-sessions/types";
 import { safeSessionId } from "@genesiscz/utils/agents/session-id";
@@ -504,25 +505,39 @@ export async function runDecisionStop(
     }
 
     let reminder: StopHookOutput | null = null;
-    if (deps.todoReminder && decisionStopWanted({ decisions: config })) {
-        const tasks = readDecisions(deps.log.file)
-            .filter(
-                (row) =>
-                    kindOf(row) === "todo" &&
-                    row.sessionId === session &&
-                    row.for?.toLowerCase() !== "human" &&
-                    (row.state === "open" || row.state === "acknowledged")
-            )
-            .sort((a, b) => a.number - b.number);
-        const list = tasks
-            .map((row) => `TODO ${row.number}: ${(row.title || row.prompt).split("\n")[0].slice(0, 80)}`)
-            .join(", ");
-        if ((deps.todoReminder.read(session) ?? "") !== list) {
-            await deps.todoReminder.save(session, list);
-            if (list) {
-                reminder = { systemMessage: `Your open tasks: ${list}` };
+    try {
+        if (deps.todoReminder && decisionStopWanted({ decisions: config })) {
+            const tasks = readDecisions(deps.log.file)
+                .filter(
+                    (row) =>
+                        kindOf(row) === "todo" &&
+                        row.sessionId === session &&
+                        row.for?.toLowerCase() !== "human" &&
+                        (row.state === "open" || row.state === "acknowledged")
+                )
+                .sort((a, b) => a.number - b.number);
+            const previous = deps.todoReminder.read(session) ?? "";
+            const hash = createHash("sha256");
+            for (const row of tasks) {
+                hash.update(SafeJSON.stringify([row.id, row.state, row.title, row.prompt]));
+            }
+            const fingerprint = tasks.length ? hash.digest("hex") : "";
+            if (previous !== fingerprint) {
+                await deps.todoReminder.save(session, fingerprint);
+                if (tasks.length) {
+                    const preview = tasks
+                        .slice(0, 8)
+                        .map((row) => `TODO ${row.number}: ${(row.title || row.prompt).split("\n", 1)[0].slice(0, 80)}`)
+                        .join(", ");
+                    const omitted = tasks.length - 8;
+                    reminder = {
+                        systemMessage: `Your open tasks: ${preview}${omitted > 0 ? ` (+${omitted} more)` : ""}`,
+                    };
+                }
             }
         }
+    } catch (err) {
+        deps.diag("Task reminder failed; the reply checks still run", { err, session });
     }
     return mergedStop([chat, reminder, await runReplyChecks(payload, session, config, deps)]);
 }
