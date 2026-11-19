@@ -20,7 +20,7 @@ import type { ItemState } from "@genesiscz/utils/work/model/vocab";
 import { randomItemSuffix } from "@genesiscz/utils/work/service";
 import { applyChange } from "@genesiscz/utils/work/store/apply";
 import { openWorkDb, workDbPath } from "@genesiscz/utils/work/store/db";
-import { selectItem } from "@genesiscz/utils/work/store/rows";
+import { type ItemRow, rowToItem } from "@genesiscz/utils/work/store/rows";
 import { nanoid } from "nanoid";
 import { captureContext } from "./context";
 import { applyFilters, defaultStorageRoot, projectHash } from "./file-store";
@@ -107,36 +107,37 @@ interface Row {
     todoId: string;
 }
 
-function rowsOf(db: Database, where: { projectRoot?: string; todoId?: string }): Row[] {
-    const clauses = ["kind = ?"];
+function rowsOf(db: Database, where: { projectRoot?: string; todoId?: string; itemId?: string }): Row[] {
+    const clauses = ["p.kind = ?"];
     const params: string[] = [POINTER];
 
     if (where.todoId !== undefined) {
-        clauses.push("target = ?");
+        clauses.push("p.target = ?");
         params.push(where.todoId);
     }
 
     if (where.projectRoot !== undefined) {
-        clauses.push("json_extract(meta, '$.projectRoot') = ?");
+        clauses.push("json_extract(p.meta, '$.projectRoot') = ?");
         params.push(where.projectRoot);
     }
 
-    const pointers = db
-        .query<{ item: string; target: string; meta: string }, string[]>(
-            `SELECT item, target, meta FROM pointers WHERE ${clauses.join(" AND ")} ORDER BY ts, item`
-        )
-        .all(...params);
-    const rows: Row[] = [];
-
-    for (const pointer of pointers) {
-        const item = selectItem(db, pointer.item);
-
-        if (item !== null) {
-            rows.push({ item, meta: SafeJSON.parse(pointer.meta) as PointerMeta, todoId: pointer.target });
-        }
+    if (where.itemId !== undefined) {
+        clauses.push("p.item = ?");
+        params.push(where.itemId);
     }
 
-    return rows;
+    return db
+        .query<ItemRow & { todoId: string; pointerMeta: string }, string[]>(`
+            SELECT i.*, p.target AS todoId, p.meta AS pointerMeta
+            FROM pointers p JOIN items i ON i.id = p.item
+            WHERE ${clauses.join(" AND ")} ORDER BY p.ts, p.item
+        `)
+        .all(...params)
+        .map((row) => ({
+            item: rowToItem(row),
+            meta: SafeJSON.parse(row.pointerMeta) as PointerMeta,
+            todoId: row.todoId,
+        }));
 }
 
 function inTransaction<T>(db: Database, fn: () => T): T {
@@ -332,7 +333,10 @@ export class TodoStore {
     }
 
     async get(id: string): Promise<Todo | null> {
-        return (await this.list()).find((t) => t.id === id) ?? null;
+        return this.withDb((db) => {
+            const row = rowsOf(db, { projectRoot: this.projectRoot, todoId: id })[0];
+            return row ? todoOf(row.item, row.meta) : null;
+        });
     }
 
     /** One native side effect per todo at a time, without holding the store's own write. */
@@ -436,7 +440,7 @@ export class TodoStore {
         );
     }
 
-    private static allRows(storageRoot?: string): Row[] {
+    private static allRows(storageRoot?: string, where: Parameters<typeof rowsOf>[1] = {}): Row[] {
         const root = storageRoot ?? defaultStorageRoot();
         const dbPath = storageRoot !== undefined ? join(root, "work.db") : workDbPath();
         mkdirSync(dirname(dbPath), { recursive: true });
@@ -444,7 +448,7 @@ export class TodoStore {
 
         try {
             importAllFiles(db, root, dbPath);
-            return rowsOf(db, {});
+            return rowsOf(db, where);
         } finally {
             db.close();
         }
@@ -474,8 +478,8 @@ export class TodoStore {
     /** Locates a todo by id in every project, so a command can name the project that holds it. */
     /** The todo an item of the work store holds, for the reminders connector. */
     static async findByItem(itemId: string, storageRoot?: string): Promise<{ todo: Todo; projectRoot: string } | null> {
-        for (const row of TodoStore.allRows(storageRoot)) {
-            const todo = row.item.id === itemId ? todoOf(row.item, row.meta) : null;
+        for (const row of TodoStore.allRows(storageRoot, { itemId })) {
+            const todo = todoOf(row.item, row.meta);
 
             if (todo !== null) {
                 return { todo, projectRoot: row.meta.projectRoot };
@@ -487,7 +491,7 @@ export class TodoStore {
 
     /** Records that a todo is paired with an outside item (made by `--sync-to`), so the store knows the pairing. */
     async recordPairing(todoId: string, connector: string, remoteKey: string): Promise<void> {
-        const row = this.rows().find((r) => r.todoId === todoId);
+        const row = this.withDb((db) => rowsOf(db, { projectRoot: this.projectRoot, todoId })[0]);
 
         if (row === undefined) {
             return;
@@ -499,8 +503,8 @@ export class TodoStore {
     }
 
     static async findTodo(id: string, storageRoot?: string): Promise<{ todo: Todo; projectRoot: string } | null> {
-        for (const row of TodoStore.allRows(storageRoot)) {
-            const todo = row.todoId === id ? todoOf(row.item, row.meta) : null;
+        for (const row of TodoStore.allRows(storageRoot, { todoId: id })) {
+            const todo = todoOf(row.item, row.meta);
 
             if (todo !== null) {
                 return { todo, projectRoot: row.meta.projectRoot };
