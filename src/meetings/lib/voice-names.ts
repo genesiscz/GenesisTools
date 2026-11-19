@@ -1,3 +1,4 @@
+import { IntervalIndex } from "@genesiscz/utils/array";
 import { DEFAULT_APPLY_ABOVE, type MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import type { ChannelEmbedding, LineEmbedding } from "@genesiscz/utils/meetings/voice";
 import type { VoiceStore } from "@genesiscz/utils/meetings/voice-store";
@@ -65,7 +66,15 @@ interface Profile {
     sum: number[];
     count: number;
     windows: WindowPrint[];
+    /** The same-meeting windows by their line time, and by their source audio and channel, for the overlap lookups. */
+    byTime: IntervalIndex<WindowPrint>;
+    byAudio: Map<string, IntervalIndex<WindowPrint>>;
+    spans: Set<string>;
     external: number[][];
+}
+
+function audioKey(voice: ReadyVoice): string {
+    return `${voice.source.audioPath}\0${voice.channel}`;
 }
 
 function profileKey(person: string, sample: VoiceVector): string {
@@ -95,13 +104,24 @@ function voiceProfiles(options: NamingInputs, people: string[]) {
             sum: Array<number>(vector.length).fill(0),
             count: 0,
             windows: [],
+            byTime: new IntervalIndex(),
+            byAudio: new Map(),
+            spans: new Set(),
             external: [],
         };
         if (window) {
-            if (profile.windows.some((w) => w.fromSec === window.fromSec && w.toSec === window.toSec)) {
+            const span = `${window.fromSec}:${window.toSec}`;
+            if (profile.spans.has(span)) {
                 return;
             }
+            profile.spans.add(span);
             profile.windows.push(window);
+            profile.byTime.add(window.fromSec, window.toSec, window);
+            if (window.voice) {
+                const byAudio = profile.byAudio.get(audioKey(window.voice)) ?? new IntervalIndex();
+                byAudio.add(window.voice.fromSec, window.voice.toSec, window);
+                profile.byAudio.set(audioKey(window.voice), byAudio);
+            }
         } else {
             profile.external.push(vector);
         }
@@ -159,14 +179,16 @@ function voiceProfiles(options: NamingInputs, people: string[]) {
     return { profiles, enrolled };
 }
 
-function overlapsWindow(w: WindowPrint, { fromSec, toSec, voice }: Target): boolean {
-    return (
-        (w.fromSec < toSec && w.toSec > fromSec) ||
-        (w.voice?.source.audioPath === voice.source.audioPath &&
-            w.voice.channel === voice.channel &&
-            w.voice.fromSec < voice.toSec &&
-            w.voice.toSec > voice.fromSec)
-    );
+/**
+ * The same-meeting windows that overlap the target in line time, or in the same source audio and channel. Looked up in
+ * the profile's indexes, so a long meeting does not scan every training window for every target line.
+ */
+function overlappingWindows(profile: Profile, { fromSec, toSec, voice }: Target): Set<WindowPrint> {
+    const found = new Set(profile.byTime.overlapping(fromSec, toSec));
+    for (const window of profile.byAudio.get(audioKey(voice))?.overlapping(voice.fromSec, voice.toSec) ?? []) {
+        found.add(window);
+    }
+    return found;
 }
 
 function dot(a: number[], b: number[]): number {
@@ -178,11 +200,11 @@ function dot(a: number[], b: number[]): number {
 }
 
 function profileScore(profile: Profile, target: Target) {
-    const overlaps = profile.windows.filter((w) => overlapsWindow(w, target));
-    if (overlaps.length === profile.count) {
+    const overlaps = overlappingWindows(profile, target);
+    if (overlaps.size === profile.count) {
         return undefined;
     }
-    const sum = overlaps.length ? [...profile.sum] : profile.sum;
+    const sum = overlaps.size ? [...profile.sum] : profile.sum;
     for (const print of overlaps) {
         addVector(sum, print.vector, -1);
     }
@@ -199,8 +221,9 @@ function closestPrint(profile: Profile, target: Target): number {
     for (const print of profile.external) {
         closest = Math.max(closest, dot(target.vector, print));
     }
+    const overlaps = overlappingWindows(profile, target);
     for (const print of profile.windows) {
-        if (!overlapsWindow(print, target)) {
+        if (!overlaps.has(print)) {
             closest = Math.max(closest, dot(target.vector, print.vector));
         }
     }
