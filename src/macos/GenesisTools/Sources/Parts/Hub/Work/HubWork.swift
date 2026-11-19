@@ -145,11 +145,13 @@ struct WorkProjectRow: View, Equatable {
 /// The main view: the header in the title bar, then the Items or the Notifications pane.
 struct WorkMain: View {
     @State private var findRequest = 0
+    @State private var focusAfterReturn = false
+    @FocusState private var workFocus: Bool
+    @GenReduceMotion private var reduceMotion
     @StateObject private var inspectorDrafts = WorkItemInspectorDrafts()
     @ObservedObject var screen: WorkScreenModel
     /// A section a title bar count asked for; the Items scroll view brings its header to the top.
     @State private var jump: String?
-    @GenReduceMotion private var reduceMotion
 
     @ObservedObject var preferences: HubPreferences
     var mainCheckout: String?
@@ -215,24 +217,52 @@ struct WorkMain: View {
         } else {
             GeometryReader { geometry in
                 // Work fills the trailing edge. The sidebar contributes to window width, even when folded.
-                if geometry.frame(in: .global).maxX >= 900 {
-                    HStack(spacing: 0) {
-                        itemList
-                        ResizableSidePanel(key: "work.inspector", edge: .trailing, title: "Item details",
-                                           defaultWidth: 420, minWidth: 320,
-                                           maxWidth: min(640, max(320, geometry.size.width - 270)),
-                                           collapsedStore: HubDefaults.store) { inspector }
+                let beside = geometry.frame(in: .global).maxX >= 900 && preferences.workDetailPlacement == "beside"
+                Group {
+                    if beside {
+                        HStack(spacing: 0) {
+                            itemList
+                            ResizableSidePanel(key: "work.inspector", edge: .trailing, title: "Item details",
+                                               defaultWidth: 420, minWidth: 320,
+                                               maxWidth: min(640, max(320, geometry.size.width - 270)),
+                                               collapsedStore: HubDefaults.store) { inspector }
+                        }
+                    } else if screen.selection != nil {
+                        VStack(alignment: .leading, spacing: 0) {
+                            Button(action: screen.closeItem) { Label("All items", systemImage: "chevron.left") }
+                                .buttonStyle(.genHoverPlain())
+                                .accessibilityIdentifier("work.detail.allItems")
+                                .padding(.leading, 14).padding(.vertical, 6)
+                            Divider()
+                            inspector
+                        }
+                    } else { itemList }
+                }
+                .focusable()
+                .focused($workFocus)
+                .onKeyPress(keys: [.upArrow, .downArrow, .return, .escape]) { press in
+                    guard press.modifiers.isEmpty,
+                          !(NSApp.keyWindow?.firstResponder is NSTextView) else { return .ignored }
+                    switch press.key {
+                    case .upArrow: screen.moveSelection(-1)
+                    case .downArrow: screen.moveSelection(1)
+                    case .return:
+                        guard let ref = screen.selection,
+                              screen.results?.containers.contains(where: { $0.ref == ref }) == true else { return .ignored }
+                        screen.toggleContainer(ref)
+                    case .escape:
+                        guard screen.selection != nil else { return .ignored }
+                        screen.closeItem()
+                    default: return .ignored
                     }
-                } else if screen.selection != nil {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Button(action: screen.closeItem) { Label("All items", systemImage: "chevron.left") }
-                            .buttonStyle(.genHoverPlain())
-                            .accessibilityIdentifier("work.detail.allItems")
-                            .padding(.leading, 14).padding(.vertical, 6)
-                        Divider()
-                        inspector
-                    }
-                } else { itemList }
+                    return .handled
+                }
+                .panelFindNative("work.items") {
+                    if !beside, screen.selection != nil {
+                        focusAfterReturn = true
+                        screen.closeItem()
+                    } else { findRequest += 1 }
+                }
             }
         }
     }
@@ -254,7 +284,7 @@ struct WorkMain: View {
                         WorkItemsView(snapshot: snapshot, projection: rows, filter: screen.filter,
                                       selection: screen.selection, pending: screen.pending,
                                       indexLoading: screen.indexLoading, indexFailure: screen.indexFailure,
-                                      select: { screen.select($0) }, toggleExpansion: { ref, _ in screen.toggleContainer(ref) },
+                                      select: { workFocus = true; screen.select($0) }, toggleExpansion: { ref, _ in screen.toggleContainer(ref) },
                                       showMore: screen.showMore, clearFilters: { screen.filter = .default },
                                       retryIndex: screen.loadIndexIfNeeded,
                                       perform: { action in Task { await screen.perform(action) } })
@@ -271,6 +301,14 @@ struct WorkMain: View {
                         }
                         jump = nil
                     }
+                    .onChange(of: screen.selection) { _, ref in
+                        guard let ref else { return }
+                        if reduceMotion { reader.scrollTo(ref, anchor: nil) }
+                        else { withAnimation(.easeOut(duration: 0.12)) { reader.scrollTo(ref, anchor: nil) } }
+                    }
+                    .onChange(of: screen.selection.map { screen.visibleRefs.contains($0) } ?? false) { _, nowVisible in
+                        if nowVisible, let ref = screen.selection { reader.scrollTo(ref, anchor: nil) }
+                    }
                 }
             } else if let failure = screen.listFailure ?? (screen.selection == nil ? screen.failure : nil) {
                 FailureInline(.unexpected(failure, outcome: "The work items did not load", action: "Read the work items"),
@@ -284,6 +322,12 @@ struct WorkMain: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .onAppear {
+            if focusAfterReturn {
+                focusAfterReturn = false
+                findRequest += 1
+            }
+        }
         .task(id: screen.filter.fullRef) {
             guard let ref = screen.filter.fullRef else { return }
             try? await Task.sleep(for: .milliseconds(350))
@@ -292,7 +336,6 @@ struct WorkMain: View {
                   !snapshot.triage.contains(where: { $0.ref == ref }) else { return }
             screen.select(ref)
         }
-        .panelFindNative("work.items") { findRequest += 1 }
     }
 }
 

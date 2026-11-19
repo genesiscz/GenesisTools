@@ -180,6 +180,7 @@ public final class HubPreferences: ObservableObject {
         public static let navigationLimit = "hub.nav.limit"
         public static let agentNavigation = "hub.nav.agentNavigation"
         public static let agentsMotion = "hub.agents.motion"
+        public static let workDetailPlacement = "hub.work.detailPlacement"
     }
 
     public static let shared = HubPreferences()
@@ -212,7 +213,16 @@ public final class HubPreferences: ObservableObject {
         didSet { if oldValue != agentsMotion { persist(.agentsMotion) } }
     }
 
-    private enum Field { case style, glass, processEnergy, cleanupIdleDays, navigationLimit, agentNavigation, agentsMotion }
+    /// Wide Work windows show the selected item beside the list by default; narrow windows always replace it.
+    @Published public var workDetailPlacement: String {
+        didSet {
+            let valid = Self.validWorkDetailPlacement(workDetailPlacement)
+            if workDetailPlacement != valid { workDetailPlacement = valid }
+            if oldValue != workDetailPlacement { persist(.workDetailPlacement) }
+        }
+    }
+
+    private enum Field { case style, glass, processEnergy, cleanupIdleDays, navigationLimit, agentNavigation, agentsMotion, workDetailPlacement }
     public let notificationNamespace: String
     public let notificationName: Notification.Name
     private let defaults: UserDefaults
@@ -240,6 +250,7 @@ public final class HubPreferences: ObservableObject {
         navigationLimit = Self.storedNavigationLimit(defaults)
         agentNavigation = Self.storedAgentNavigation(defaults)
         agentsMotion = Self.storedAgentsMotion(defaults)
+        workDetailPlacement = Self.validWorkDetailPlacement(defaults.string(forKey: Key.workDetailPlacement))
         if observeExternalChanges {
             observer = DistributedNotificationCenter.default().addObserver(
                 forName: notificationName, object: notificationNamespace, queue: .main
@@ -264,6 +275,7 @@ public final class HubPreferences: ObservableObject {
         let storedLimit = Self.storedNavigationLimit(defaults)
         let storedAgent = Self.storedAgentNavigation(defaults)
         let storedMotion = Self.storedAgentsMotion(defaults)
+        let storedPlacement = Self.validWorkDetailPlacement(defaults.string(forKey: Key.workDetailPlacement))
         applyingExternal = true
         if style != storedStyle { style = storedStyle }
         if glass != storedGlass { glass = storedGlass }
@@ -272,6 +284,7 @@ public final class HubPreferences: ObservableObject {
         if navigationLimit != storedLimit { navigationLimit = storedLimit }
         if agentNavigation != storedAgent { agentNavigation = storedAgent }
         if agentsMotion != storedMotion { agentsMotion = storedMotion }
+        if workDetailPlacement != storedPlacement { workDetailPlacement = storedPlacement }
         applyingExternal = false
     }
 
@@ -297,6 +310,10 @@ public final class HubPreferences: ObservableObject {
         HubListMotion(rawValue: defaults.string(forKey: Key.agentsMotion) ?? "") ?? .inPlace
     }
 
+    private static func validWorkDetailPlacement(_ raw: String?) -> String {
+        raw == "replace" ? "replace" : "beside"
+    }
+
     private func persist(_ field: Field) {
         guard !applyingExternal else { return }
         switch field {
@@ -311,6 +328,7 @@ public final class HubPreferences: ObservableObject {
             defaults.set(clamped, forKey: Key.navigationLimit)
         case .agentNavigation: defaults.set(agentNavigation.rawValue, forKey: Key.agentNavigation)
         case .agentsMotion: defaults.set(agentsMotion.rawValue, forKey: Key.agentsMotion)
+        case .workDetailPlacement: defaults.set(workDetailPlacement, forKey: Key.workDetailPlacement)
         }
         guard broadcasts else { return }
         if !defaults.synchronize() { log.warning("Could not flush the hub preferences") }

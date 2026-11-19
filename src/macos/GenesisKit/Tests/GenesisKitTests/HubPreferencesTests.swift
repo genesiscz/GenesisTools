@@ -1,6 +1,8 @@
+import Vision
 import Combine
 import Foundation
 import Observation
+import SwiftUI
 import XCTest
 
 @testable import GenesisKitBase
@@ -17,6 +19,121 @@ final class HubPreferencesTests: XCTestCase {
                              observe: Bool = false) -> HubPreferences {
         HubPreferences(defaults: defaults, notificationNamespace: namespace, broadcasts: broadcasts,
                        observeExternalChanges: observe)
+    }
+
+    func testWorkDetailsDefaultToBesideAndPersistOnlyThePlacementChoice() {
+        let (defaults, name) = suite()
+        defer { defaults.removePersistentDomain(forName: name) }
+        defaults.set(HubWorkOpeningProject.lastOpened.rawValue, forKey: HubWorkOpeningProject.key)
+        let hub = preferences(defaults, name)
+        XCTAssertEqual(hub.workDetailPlacement, "beside")
+        XCTAssertNil(defaults.object(forKey: HubPreferences.Key.workDetailPlacement), "Reading the default does not write it")
+        hub.workDetailPlacement = "replace"
+        defaults.synchronize()
+        let reopened = UserDefaults(suiteName: name)!
+        XCTAssertEqual(reopened.string(forKey: "hub.work.detailPlacement"), "replace")
+        XCTAssertEqual(preferences(reopened, name).workDetailPlacement, "replace")
+        XCTAssertEqual(reopened.string(forKey: HubWorkOpeningProject.key), "lastOpened")
+        hub.workDetailPlacement = "beside"
+        defaults.synchronize()
+        XCTAssertEqual(UserDefaults(suiteName: name)!.string(forKey: HubPreferences.Key.workDetailPlacement), "beside")
+    }
+
+    func testUnknownWorkPlacementLoadsAsBesideWithoutRewritingTheDomain() {
+        let (defaults, name) = suite()
+        defer { defaults.removePersistentDomain(forName: name) }
+        defaults.set("some-future-placement", forKey: HubPreferences.Key.workDetailPlacement)
+        let hub = preferences(defaults, name)
+        XCTAssertEqual(hub.workDetailPlacement, "beside")
+        XCTAssertEqual(defaults.string(forKey: HubPreferences.Key.workDetailPlacement), "some-future-placement")
+        defaults.set("replace", forKey: HubPreferences.Key.workDetailPlacement)
+        hub.reloadFromDefaults()
+        XCTAssertEqual(hub.workDetailPlacement, "replace")
+        defaults.set("unknown", forKey: HubPreferences.Key.workDetailPlacement)
+        hub.reloadFromDefaults()
+        XCTAssertEqual(hub.workDetailPlacement, "beside")
+        XCTAssertEqual(defaults.string(forKey: HubPreferences.Key.workDetailPlacement), "unknown")
+        hub.workDetailPlacement = "replace"
+        hub.workDetailPlacement = "unsupported"
+        XCTAssertEqual(hub.workDetailPlacement, "beside")
+        XCTAssertEqual(defaults.string(forKey: HubPreferences.Key.workDetailPlacement), "beside")
+    }
+
+    func testWorkPlacementReachesAnOpenReaderThroughTheDistributedNotification() async {
+        let (defaults, name) = suite()
+        defer { defaults.removePersistentDomain(forName: name) }
+        let writer = preferences(defaults, name, broadcasts: true)
+        let reader = preferences(UserDefaults(suiteName: name)!, name, observe: true)
+        let arrived = expectation(description: "Work placement reloads in the open reader")
+        arrived.assertForOverFulfill = false
+        let subscription = reader.objectWillChange.sink {
+            DispatchQueue.main.async {
+                if reader.workDetailPlacement == "replace" { arrived.fulfill() }
+            }
+        }
+        writer.workDetailPlacement = "replace"
+        await fulfillment(of: [arrived], timeout: 3)
+        withExtendedLifetime(subscription) {}
+        XCTAssertEqual(reader.workDetailPlacement, "replace")
+    }
+
+    func testSnapshotWorkPlacementUsesInjectedDefaultsAndDoesNotTellTheOpenReader() async throws {
+        let (defaults, name) = suite()
+        defer { defaults.removePersistentDomain(forName: name) }
+        let scripted = preferences(defaults, name)
+        let reader = preferences(UserDefaults(suiteName: name)!, name, observe: true)
+        scripted.workDetailPlacement = "replace"
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(reader.workDetailPlacement, "beside")
+        reader.reloadFromDefaults()
+        XCTAssertEqual(reader.workDetailPlacement, "replace", "Positive control for the observer's read path")
+        let (otherDefaults, otherName) = suite()
+        defer { otherDefaults.removePersistentDomain(forName: otherName) }
+        XCTAssertEqual(preferences(otherDefaults, otherName).workDetailPlacement, "beside")
+        XCTAssertNil(otherDefaults.object(forKey: HubPreferences.Key.workDetailPlacement))
+    }
+
+    func testTheSharedWorkSettingsRowsDrawTheirLabelsAndInjectedSelectionInEveryLayout() throws {
+        let (defaults, name) = suite()
+        defer { defaults.removePersistentDomain(forName: name) }
+        defaults.set(HubWorkOpeningProject.firstInList.rawValue, forKey: HubWorkOpeningProject.key)
+        let hub = preferences(defaults, name)
+        let appearance = NativeSettingsAppearance(defaults: defaults, notificationNamespace: name, observeExternalChanges: false)
+        // These are the exact shared content and row modifiers used in the classic and A/B Work sections.
+        for layout in ["classic", "a", "b"] {
+            for placement in ["beside", "replace"] {
+                hub.workDetailPlacement = placement
+                let row: AnyView
+                switch layout {
+                case "a": row = AnyView(HubWorkOpeningProjectPicker().usageSketchRowA())
+                case "b": row = AnyView(HubWorkOpeningProjectPicker().usageSketchRowB())
+                default: row = AnyView(HubWorkOpeningProjectPicker())
+                }
+                let view = row
+                    .environmentObject(hub)
+                    .environmentObject(appearance)
+                    .defaultAppStorage(defaults)
+                    .padding(20)
+                    .frame(width: 900, height: 270, alignment: .topLeading)
+                    .background(Color.black)
+                    .environment(\.colorScheme, .dark)
+                let (window, host) = HostedShot.host(view, size: CGSize(width: 900, height: 270))
+                defer { window.close() }
+                RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+                let bitmap = try XCTUnwrap(HostedShot.bitmap(host))
+                let request = VNRecognizeTextRequest()
+                request.recognitionLevel = .accurate
+                request.usesLanguageCorrection = false
+                try readWorkScreenshot(try XCTUnwrap(bitmap.cgImage), with: request)
+                let drawn = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+                for expected in ["Opening project", "First in the list", "Item details",
+                                 "Beside the list, or in place of the list",
+                                 placement == "beside" ? "Beside the list" : "In place of the list"] {
+                    XCTAssertTrue(drawn.contains(expected), "\(layout), \(placement), missing \(expected):\n\(drawn)")
+                }
+                XCTAssertEqual(defaults.string(forKey: HubWorkOpeningProject.key), HubWorkOpeningProject.firstInList.rawValue)
+            }
+        }
     }
 
     func testLayoutDefaultsAndSavedChoicesSurviveReopeningTheDomain() {
