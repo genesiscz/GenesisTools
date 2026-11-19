@@ -2414,6 +2414,38 @@ test("a session with more waiting entries than the cap still lists its newest un
     expect(listedInboxItems(asks)).toHaveLength(INBOX_ITEMS_PER_SESSION);
 });
 
+test("visible todos cannot take a counted unread item's reserved slot", () => {
+    const waiting = Array.from({ length: 8 }, (_, i) => ({
+        id: `ask${i}`,
+        sourceId: `ask${i}`,
+        kind: "decision" as const,
+        key: "k",
+        at: i,
+        needsAnswer: true,
+    }));
+    const other = [
+        { id: "answer", sourceId: "answer", kind: "answer" as const, key: "k", at: 10, needsAnswer: false },
+        ...Array.from({ length: 3 }, (_, i) => ({
+            id: `todo${i}`,
+            sourceId: `todo${i}`,
+            kind: "todo" as const,
+            key: "k",
+            at: 20 + i,
+            needsAnswer: false,
+        })),
+    ];
+    expect(listedInboxItems([...waiting, ...other]).map((entry) => entry.id)).toEqual([
+        "ask7",
+        "ask6",
+        "ask5",
+        "ask4",
+        "ask3",
+        "ask2",
+        "ask1",
+        "answer",
+    ]);
+});
+
 test("alert preferences default on with the Glass sound, load from an older state, and refuse a bad sound", async () => {
     const directory = await root();
     await writeFile(
@@ -6719,7 +6751,7 @@ describe("inbox card images and agent messages", () => {
 
     test("an opened answer reads its whole text with its image lifted out as an attachment", async () => {
         const directory = await root();
-        const shot = png(join(directory, "after.png"));
+        const shots = Array.from({ length: 9 }, (_, index) => png(join(directory, `receipt-${index}.png`)));
         await env.testing.withOverrides(
             { GENESIS_TOOLS_HOME: directory, QUESTION_LOG_BASE: join(directory, "log") },
             async () => {
@@ -6727,7 +6759,12 @@ describe("inbox card images and agent messages", () => {
                 try {
                     db.query(
                         "INSERT INTO entries (id,ts,session_id,agent,project,cwd,tag,source,question,answer_md,refs_json) VALUES (?,?,'s1','claude','Orchard','/fixture',NULL,'agent',?,?,'[]')"
-                    ).run("answer-img", Date.now(), "How does the panel look?", `It looks right.\n\n![After](${shot})`);
+                    ).run(
+                        "answer-img",
+                        Date.now(),
+                        "How does the panel look?",
+                        ["It looks right.", ...shots.map((shot) => `![After](${shot})`)].join("\n\n")
+                    );
                 } finally {
                     db.close();
                 }
@@ -6735,8 +6772,8 @@ describe("inbox card images and agent messages", () => {
                 const read = await readWidgetMessageBody("answer-img");
                 expect(read.question).toBe("How does the panel look?");
                 expect(read.body).toContain("It looks right.");
-                expect(read.body).not.toContain(shot);
-                expect(read.attachments.map((image) => image.path)).toEqual([shot]);
+                expect(read.body).not.toContain(shots[0]);
+                expect(read.attachments.map((image) => image.path)).toEqual(shots);
                 expect(read.attachments[0]?.label).toBe("After");
             }
         );

@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { Reply } from "@genesiscz/utils/output/reply";
 import { workMethods } from "./api";
 import { originFor, type Pairing } from "./connectors/types";
 import { callWork, type WorkSession } from "./handlers";
+import { mirrorSessionTodos } from "./legacy/session-todos";
 import type { Actor } from "./model/item";
 import { resolveWorkRules } from "./rules/resolve";
 import { type WorkContext, write } from "./service";
@@ -65,6 +67,70 @@ function recordPairing(
 }
 
 describe("the wire schemas of the read methods match what the handlers return", () => {
+    test("list pages across the 5000-row boundary with stable ordering for tied timestamps", async () => {
+        const db = openWorkDb(":memory:");
+        try {
+            const fixture = ctx(db);
+            const ts = "2026-11-19T06:00:00.000Z";
+            db.run(
+                `WITH RECURSIVE numbers(i) AS (VALUES(0) UNION ALL SELECT i + 1 FROM numbers WHERE i < 5000)
+                 INSERT INTO items (id, type, state, project, rev, title, created_by, created_ts, updated_ts)
+                 SELECT printf('w_%08d', i), 'task', 'done', 'App', 1, 'Closed fixture', ?, ?, ? FROM numbers`,
+                [SafeJSON.stringify(fixture.actor), ts, ts]
+            );
+            const session: WorkSession = {
+                ctx: fixture,
+                call: {},
+                alive: async () => null,
+                context: async () => {
+                    throw new Error("Unexpected request for context");
+                },
+            };
+            const params = { project: "App", fields: ["ref"], limit: 5000 };
+            const first = workMethods.list.result.parse(data(await callWork("list", params, session)));
+            expect(first).toHaveLength(5000);
+            expect(data(await callWork("list", { ...params, after: first.at(-1)?.ref }, session))).toEqual([
+                { ref: "w_00005000" },
+            ]);
+        } finally {
+            db.close();
+        }
+    });
+    test("show resolves old session-task IDs through the Work door before and after import", async () => {
+        const db = openWorkDb(":memory:");
+        try {
+            const row = {
+                id: "t_1_fixture",
+                sessionId: "fixture",
+                number: 1,
+                prompt: "Check the export",
+                state: "implemented",
+                project: "Orchard",
+                updatedTs: "2026-11-19T06:00:00.000Z",
+            };
+            const session: WorkSession = {
+                ctx: ctx(db),
+                call: {},
+                alive: async () => null,
+                context: async () => {
+                    throw new Error("Unexpected request for context");
+                },
+                legacySessionTodo: (ref) => (ref === row.id ? row : undefined),
+            };
+
+            expect(data(await callWork("show", { ref: row.id }, session))).toMatchObject({
+                item: { id: row.id, state: "done", title: row.prompt, project: "Orchard" },
+                log: [],
+            });
+            mirrorSessionTodos(db, [row], () => "fixture1");
+            expect(data(await callWork("show", { ref: row.id }, session))).toMatchObject({
+                item: { id: "w_fixture1", state: "done" },
+                log: [{ kind: "created" }, { kind: "pointed" }],
+            });
+        } finally {
+            db.close();
+        }
+    });
     test("list, tree and triage parse with the result schema of the method table", async () => {
         const db = openWorkDb(":memory:");
 

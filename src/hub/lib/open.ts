@@ -46,6 +46,7 @@ export interface OpenHubOptions {
     repo?: string;
     /** Opens the Worktrees mode on this checkout folder. */
     worktree?: string;
+    /** Opens a Work item by canonical ref, a handoff slot (`h_<id>:t5`), or a legacy task ledger id. */
     work?: string;
     workProject?: string;
     /** Opens the Inbox at this decision or todo card (`d_3_<session>`). */

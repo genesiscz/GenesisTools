@@ -4,8 +4,10 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { makeTempDir } from "@genesiscz/utils/paths";
-import type { Actor } from "../model/item";
+import { callWork } from "../handlers";
+import { type Actor, asItemId } from "../model/item";
 import { type WorkContext, write } from "../service";
+import { applyChange } from "../store/apply";
 import { openWorkDb } from "../store/db";
 import { migrateWorkConfig, WORK_CONFIG_VERSION, type WorkConfigMigration } from "./config";
 import { loadWorkRules, readWorkConfig, setWorkConfigValue } from "./load";
@@ -24,6 +26,67 @@ beforeEach(() => {
 
 afterEach(() => {
     db.close();
+});
+
+test("notification edits and restores obey repository rules for a different project", async () => {
+    const initialized = Bun.spawnSync(["git", "init", "-q", dir], { env: process.env });
+    expect(initialized.exitCode).toBe(0);
+    writeFileSync(
+        join(dir, ".git", "genesis-tools.config.json"),
+        SafeJSON.stringify({ work: { version: 1, rules: { notify: { "*": { spotted: "off" } } } } })
+    );
+    writeFileSync(configPath, SafeJSON.stringify({ version: WORK_CONFIG_VERSION, projects: { App: {} } }));
+    applyChange(db, {
+        v: 1,
+        ts: "2026-11-19T06:00:00.000Z",
+        item: asItemId("w_fixture1"),
+        actor: { ...actor("fixture"), project: "Orchard", repoRoot: dir },
+        origin: { via: "local" },
+        kind: "created",
+        payload: { type: "bug", state: "spotted", project: "Orchard", title: "Check export", tags: [], fields: {} },
+    });
+    const session = {
+        ctx: ctx("caller"),
+        call: {},
+        configPath,
+        alive: async () => null,
+        context: async () => {
+            throw new Error("Unexpected request for context");
+        },
+    };
+    const project = "Orchard";
+    const cell = { type: "bug", action: "spotted" };
+    const before = readFileSync(configPath, "utf8");
+    for (const edit of [{ notify: { ...cell, level: "inbox" } }, { restore: [{ ...cell, from: "inbox", to: null }] }]) {
+        expect(await callWork("configSet", { project, scope: "project", ...edit }, session)).toMatchObject({
+            ok: false,
+            diagnostics: [{ code: "REPO_RULE_LOCKED" }],
+        });
+    }
+    expect(readFileSync(configPath, "utf8")).toBe(before);
+    expect(
+        await callWork(
+            "configSet",
+            {
+                project,
+                scope: "project",
+                notify: { type: "bug", action: "finished", level: "inbox" },
+            },
+            session
+        )
+    ).toMatchObject({ ok: true });
+    expect(readWorkConfig(configPath).value.projects?.[project]?.rules?.notify?.bug?.finished).toBe("inbox");
+    expect(
+        await callWork(
+            "configSet",
+            {
+                scope: "project",
+                notify: { type: "bug", action: "finished", level: "off" },
+            },
+            session
+        )
+    ).toMatchObject({ ok: true });
+    expect(readWorkConfig(configPath).value.projects?.App?.rules?.notify?.bug?.finished).toBe("off");
 });
 
 function actor(sessionId: string, kind: Actor["kind"] = "agent"): Actor {

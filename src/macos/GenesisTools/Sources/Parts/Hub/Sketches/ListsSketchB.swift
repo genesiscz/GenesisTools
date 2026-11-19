@@ -709,11 +709,15 @@ extension ListsSketchB {
                 }
                 // A banner or a deep link: clear the filters, open the line and scroll to it. Each request scrolls, also
                 // when the line is open already, after the layout that the filter change causes.
-                .onChange(of: inbox.focusRequest, initial: true) { _, _ in
-                    guard let id = inbox.focusedItemID, all.contains(where: { $0.id == id }) else { return }
+                .onChange(of: inbox.focusRequest, initial: true) { _, request in
+                    guard let id = inbox.focusedItemID,
+                          ListsSketchB.entries(inbox, filter: "").contains(where: { $0.id == id }) else { return }
                     pick.clearFilters()
                     pick.open = id
-                    DispatchQueue.main.async { proxy.scrollTo(id, anchor: .center) }
+                    DispatchQueue.main.async {
+                        guard inbox.focusRequest == request else { return }
+                        proxy.scrollTo(id, anchor: .center)
+                    }
                 }
                 }
             }

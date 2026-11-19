@@ -78,7 +78,8 @@ struct WidgetInboxEntryDetail: View {
     var focusRow = false
     var surface: WidgetSurfaceID?
     @State private var earlierOpen = false
-    @State private var entries: [WidgetGroupEntry]?
+    /// The pages read so far. `loadedLimit` is 0 until the first read returns, so an empty array is a real answer.
+    @State private var entries: [WidgetGroupEntry] = []
     @State private var groupFailure: FailureReport?
     @State private var groupAttempt = 0
     @State private var groupLimit = 5
@@ -177,7 +178,7 @@ struct WidgetInboxEntryDetail: View {
         return GenDisclosure(isExpanded: $earlierOpen, minHeight: 22,
                       identifier: "widget.overview.earlier." + item.id, accessibilityTitle: title) {
             VStack(alignment: .leading, spacing: 8) {
-                if let entries {
+                if loadedLimit > 0 {
                     ForEach(entries) { entry in
                         VStack(alignment: .leading, spacing: 3) {
                             LiveAgo(date: Date(timeIntervalSince1970: entry.at / 1000), style: .spelled)

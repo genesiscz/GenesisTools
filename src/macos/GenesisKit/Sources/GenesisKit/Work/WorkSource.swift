@@ -6,7 +6,7 @@ private let workSourceLog = Logger(subsystem: "genesiskit", category: "work.sour
 
 // The hub's Work screen (work-items P8): the open handoffs of a project with their tasks, the spotted items, the items
 // reopened with nobody working on them, and who hears about each kind of change. The data comes from the `work` area of
-// the actions service through the generated client. A session TODO still in the old ledger has its own read door.
+// the actions service through the generated client.
 
 public struct WorkPairingValue: Identifiable, Equatable, Sendable, Decodable {
     public enum State: String, Decodable, Sendable {
@@ -225,7 +225,7 @@ public enum WorkScreenAction: Equatable, Sendable {
     }
 }
 
-/// The answer of a write: ok, or the first reason it did not happen.
+/// A write's outcome. A partial sync can push some pairings even when `ok` is false.
 public struct WorkActionOutcome: Equatable, Sendable {
     public var ok: Bool
     public var message: String
@@ -252,6 +252,10 @@ public struct WorkSourceError: LocalizedError, Equatable, Sendable {
     public var errorDescription: String? { message }
 }
 
+public enum WorkSourceEvent: Sendable {
+    case localChange, serviceChange, serviceDisconnected
+}
+
 /// Where the Work screen reads and writes. Tests give a fake; the app gives LiveWorkSource.
 @MainActor
 public protocol WorkSource: AnyObject {
@@ -261,8 +265,8 @@ public protocol WorkSource: AnyObject {
     func detail(ref: String) async throws -> WorkItemDetail
     func notify(project: String) async throws -> [WorkNotifyRow]
     func perform(_ action: WorkScreenAction, project: String) async throws -> WorkActionOutcome
-    /// A tick for each change of the store, from any writer (the service's `work.changed`, a CLI or MCP write).
-    func changes() -> AsyncStream<Void>
+    /// Store changes from any writer and the service's connection state.
+    func changes() -> AsyncStream<WorkSourceEvent>
     // MARK: - Notify
     func setNotify(project: String?, scope: WorkNotifyScope, type: String, action: String, level: String?) async throws -> WorkActionOutcome
     func restoreNotify(project: String?, scope: WorkNotifyScope, changes: [WorkNotifyChange]) async throws -> WorkActionOutcome
@@ -355,23 +359,6 @@ public final class LiveWorkSource: WorkSource {
     public func detail(ref: String) async throws -> WorkItemDetail {
         let span = PerfSpans.begin("work.detail.load", awaits: true)
         defer { span.end() }
-        if ref.hasPrefix("t_") {
-            // An older listing, or a TODO before its first import, has only the id used by question show.
-            struct Todo: Decodable {
-                var id: String
-                var title: String?
-                var prompt: String
-                var state: String
-                var project: String?
-            }
-            let result = try await ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath())
-                .run(subcommand: "question", args: ["show", ref, "--json"])
-            guard result.exitCode == 0 else { throw WorkSourceError(result.stderr) }
-            let todo = try JSONDecoder().decode(Todo.self, from: Data(result.stdout.utf8))
-            return WorkItemDetail(item: .init(id: todo.id, title: todo.title ?? todo.prompt, type: "task",
-                                              state: WidgetTask.label(for: todo.state), project: todo.project,
-                                              body: todo.prompt, acceptance: nil))
-        }
         return try reply(await rpc.work.show(WorkShowParams(ref: ref)))
     }
 
@@ -381,10 +368,28 @@ public final class LiveWorkSource: WorkSource {
         let span = PerfSpans.begin("work.index.load", awaits: true)
         defer { span.end() }
         let fields = ["ref", "state", "type", "severity", "worker", "title", "project", "slot"]
-        let rows: [WorkRowValue] = try reply(await rpc.work.list(.init(project: project, fields: fields, limit: 5000,
-                                                                       call: .init(project: project))))
-        // work.list orders by ascending creation time. The archive reads from newest to oldest.
+        let rows: [WorkRowValue] = try await listRows(project: project, fields: fields, ref: { $0.ref })
+        // The archive reads from newest to oldest.
         return Array(rows.reversed())
+    }
+
+    private func listRows<Row: Decodable>(project: String? = nil, fields: [String],
+                                          ref: (Row) -> String?) async throws -> [Row] {
+        let limit = 5000
+        let call = project.map { WorkListParamsCall(project: $0) }
+        var rows: [Row] = []
+        var after: String?
+        repeat {
+            try Task.checkCancellation()
+            let page: [Row] = try reply(await rpc.work.list(.init(project: project, fields: fields, limit: limit,
+                                                                  after: after, call: call)))
+            rows.append(contentsOf: page)
+            if page.count < limit { return rows }
+            guard let last = page.last.flatMap(ref), last != after else {
+                throw WorkSourceError("The Work service could not advance the index past the last item.")
+            }
+            after = last
+        } while true
     }
 
     public func notify(project: String) async throws -> [WorkNotifyRow] {
@@ -477,9 +482,9 @@ public final class LiveWorkSource: WorkSource {
         return WorkActionOutcome(ok: false, message: outcome.skipped.first?.reason ?? "The work service could not run it")
     }
 
-    public func changes() -> AsyncStream<Void> {
+    public func changes() -> AsyncStream<WorkSourceEvent> {
         let rpc = rpc
-        let wal = walPath
+        let wal = DirectoryWatcher.normalizedEventPath(walPath)
         let directory = (wal as NSString).deletingLastPathComponent
         let config = (directory as NSString).appendingPathComponent("config.json")
         return AsyncStream { continuation in
@@ -488,14 +493,14 @@ public final class LiveWorkSource: WorkSource {
             let events = Task { @MainActor in
                 // The event stream ends, with an error, when the service connection closes; the screen then reads as stopped.
                 do {
-                    for try await _ in rpc.events.workChanged { continuation.yield(()) }
+                    for try await _ in rpc.events.workChanged { continuation.yield(.serviceChange) }
                 } catch {
                     workSourceLog.notice("work.changed ended: \(error.localizedDescription, privacy: .public)")
                 }
-                continuation.finish()
+                if !Task.isCancelled { continuation.yield(.serviceDisconnected) }
             }
             let watcher = DirectoryWatcher(paths: [directory], latency: 0.3,
-                                           accepts: { $0 == wal || $0 == config }) { _ in continuation.yield(()) }
+                                           accepts: { $0 == wal || $0 == config }) { _ in continuation.yield(.localChange) }
             continuation.onTermination = { _ in
                 events.cancel()
                 watcher.stop()

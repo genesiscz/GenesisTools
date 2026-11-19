@@ -43,12 +43,13 @@ struct WidgetWorkLink {
     }
 
     /// Plain paths in prose, including backtick-quoted paths with spaces. Markdown links go through PathLink.
-    private static let planPattern = try! NSRegularExpression(
+    private static let planPattern = try? NSRegularExpression(
         pattern: #"(?<![\w/:.-])(?:[\x60"']((?:[~/][^\x60"'\n]*?/)?\.claude/plans/[^\x60"'\n]+)[\x60"']|((?:[~/][^\s\x60"'()<>]*?/)?\.claude/plans/[^\s\x60"'()<>,;:#]+))"#)
 
     var plan: URL? {
         guard title.contains(".claude/plans/") || body?.contains(".claude/plans/") == true else { return nil }
         let text = [title, body].compactMap { $0 }.joined(separator: "\n")
+        guard let pattern = Self.planPattern else { return nil }
         func resolve(_ path: String) -> URL? {
             let url: URL
             if let absolute = PathLink.fileURL(path) { url = absolute }
@@ -60,7 +61,7 @@ struct WidgetWorkLink {
             if let url = resolve(link.path) { return url }
         }
         let raw = text as NSString
-        for match in Self.planPattern.matches(in: text, range: NSRange(location: 0, length: raw.length)) {
+        for match in pattern.matches(in: text, range: NSRange(location: 0, length: raw.length)) {
             let quoted = match.range(at: 1)
             let path = raw.substring(with: quoted.location == NSNotFound ? match.range(at: 2) : quoted)
             if let url = resolve(path.hasSuffix(".") ? String(path.dropLast()) : path) { return url }
@@ -79,11 +80,9 @@ struct WidgetWorkButton<Label: View>: View {
     var body: some View {
         let plan = item.plan ?? parentPlan?()
         HStack(spacing: 4) {
-            Button(action: open) {
+            LiveButton(tooltip: showTooltip ? item.tooltip : nil, pressable: true, action: open) {
                 label().frame(maxWidth: .infinity, minHeight: 26, alignment: .leading).contentShape(Rectangle())
             }
-            .buttonStyle(RowButtonStyle())
-            .instantTooltip(showTooltip ? item.tooltip : "")
             .accessibilityLabel(item.title)
             .accessibilityValue(item.acceptance ?? "")
             .accessibilityHint("Opens this item in Work")

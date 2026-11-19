@@ -4,7 +4,22 @@ struct WidgetEntryBody: Decodable, Sendable {
     let body: String
     let question: String?
     /// The pictures the receipt carries or its text names, lifted out of the body (an older CLI sends none).
-    var attachments: [WidgetImageReference]? = nil
+    let attachments: [WidgetImageReference]
+
+    private enum CodingKeys: String, CodingKey { case body, question, attachments }
+
+    init(body: String, question: String?, attachments: [WidgetImageReference] = []) {
+        self.body = body
+        self.question = question
+        self.attachments = attachments
+    }
+
+    init(from decoder: Decoder) throws {
+        let fields = try decoder.container(keyedBy: CodingKeys.self)
+        body = try fields.decode(String.self, forKey: .body)
+        question = try fields.decodeIfPresent(String.self, forKey: .question)
+        attachments = try fields.decodeIfPresent([WidgetImageReference].self, forKey: .attachments) ?? []
+    }
 }
 
 struct WidgetGroupEntry: Decodable, Identifiable, Sendable {

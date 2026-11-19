@@ -42,7 +42,7 @@ struct WidgetClaimedHandoffSection: View {
                         .font(.caption.weight(.semibold)).frame(width: 26, height: 26).contentShape(Rectangle())
                 }
                 .buttonStyle(RowButtonStyle())
-                .instantTooltip(expanded.wrappedValue ? "Hide tasks" : "Show tasks")
+                .instantTooltip("\(expanded.wrappedValue ? "Collapse" : "Expand") \(handoff.title)")
                 .accessibilityLabel("\(expanded.wrappedValue ? "Collapse" : "Expand") \(handoff.title)")
                 .accessibilityValue(expanded.wrappedValue ? "Expanded" : "Collapsed")
                 .accessibilityIdentifier("tasks-handoff-\(handoff.id)")

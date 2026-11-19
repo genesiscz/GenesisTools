@@ -272,7 +272,7 @@ export function registerNavCommands(program: Command): void {
         .option("--commit <sha>", "a commit (7 to 40 hex characters) or <from>..<to>, in --pr or in --repo")
         .option("--repo <path|owner/repo>", "with --commit and no --pr: the commit's checkout or forge project")
         .option("--worktree <path>", "open the Worktrees mode on this checkout")
-        .option("--work <ref>", "open a task or handoff in Work")
+        .option("--work <ref>", "open a Work item, handoff slot, or legacy task ledger id")
         .option("--session <id>", "select this session (id or prefix)")
         .option("--agent <id>", "open this agent in the Agents mode")
         .option("--mode <mode>", HUB_MODES.join("|"))

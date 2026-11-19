@@ -151,9 +151,15 @@ describe("the work area (work-items P7)", () => {
                 });
             },
         });
-        await runAreaAction(AREAS, "work.configSet", { ...params, call: { dryRun: true } }, session);
-        await runAreaAction(AREAS, "work.configSet", params, session);
-        await runAreaAction(AREAS, "work.configSet", params, session);
+        const preview = await runAreaAction(AREAS, "work.configSet", { ...params, call: { dryRun: true } }, session);
+        expect(preview.status).toBe("ran");
+        expect(events).toEqual([]);
+        const edit = await runAreaAction(AREAS, "work.configSet", params, session);
+        expect(edit.status).toBe("ran");
+        expect(events).toEqual([{ method: "configSet", items: [] }]);
+        const unchanged = await runAreaAction(AREAS, "work.configSet", params, session);
+        expect(unchanged.status).toBe("ran");
+        expect(events).toHaveLength(1);
         const refused = await runAreaAction(AREAS, "work.configSet", params, deps(bus, { agent: true }));
         expect(refused.status).toBe("unreachable");
         expect(calls).toBe(3);

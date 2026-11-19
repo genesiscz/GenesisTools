@@ -268,9 +268,9 @@ public struct LiveWidgetView: View {
             } else if model.inboxOverview {
                 if model.stagedView == nil { WidgetStagedChip(model: model) }
                 if model.stagedView != nil {
-                    overviewScroll { WidgetStagedList(model: model) }
+                    overviewScroll(.staged) { WidgetStagedList(model: model) }
                 } else {
-                    WidgetInboxOverview(model: model, viewport: { content in AnyView(overviewScroll { content }) })
+                    WidgetInboxOverview(model: model, viewport: { content in AnyView(overviewScroll(.overview) { content }) })
                 }
             } else if model.selected == nil {
                 if model.inbox.sessions.isEmpty {
@@ -290,6 +290,7 @@ public struct LiveWidgetView: View {
                 // under the top fade (Martin's image 24, 2026-10-23).
                 if section == "Inbox", !model.cards.isEmpty { inboxFilterBar }
                 if section == "Inbox", model.stagedView == nil { WidgetStagedChip(model: model) }
+                let measurement = WidgetContentFit.Scroll.session(Self.scrollID(model))
                 ScrollViewReader { reader in
                     ScrollView {
                         // The inbox is eager: a session holds tens of cards, and a lazy stack's estimated height
@@ -303,13 +304,13 @@ public struct LiveWidgetView: View {
                             }
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 2)
                             .scrollOverflowContent()
-                            .modifier(DocumentHeight(onScrollView: false) { fit.document = $0; reportFit() })
+                            .modifier(DocumentHeight(onScrollView: false) { fit.scrolls[measurement, default: .init()].document = $0; reportFit() })
                     }
                         .modifier(LatestScrollAnchor(enabled: section == "Conversation", identity: model.selectedKey))
                         // A new view (section or session) starts at its own top: the Sessions list's deep offset,
                         // kept for the much shorter inbox, drew its rows over the header (Martin, 2026-10-23). The
                         // session list keeps its place when Up and Down pick another session in it.
-                        .id(section == "Sessions" ? section : section + "|" + model.selectedKey)
+                        .id(measurement)
                         // A decision link brings its card or chat turn to the middle of the list; on appear too, since
                         // the link usually switches the tab or the session, which makes this a new scroll view.
                         .task(id: model.revealScroll) {
@@ -335,9 +336,9 @@ public struct LiveWidgetView: View {
                                 reader.scrollTo(model.selectedKey)
                             }
                         }
-                        .modifier(DocumentHeight(onScrollView: true) { fit.document = $0; reportFit() })
-                        .onGeometryChange(for: CGFloat.self, of: \.size.height) { fit.viewport = $0; reportFit() }
-                        .onDisappear { fit.viewport = nil; fit.document = nil; reportFit() }
+                        .modifier(DocumentHeight(onScrollView: true) { fit.scrolls[measurement, default: .init()].document = $0; reportFit() })
+                        .onGeometryChange(for: CGFloat.self, of: \.size.height) { fit.scrolls[measurement, default: .init()].viewport = $0; reportFit() }
+                        .onDisappear { fit.scrolls[measurement] = nil; reportFit() }
                         // Outermost, so the scroll view's own anchor modifiers still sit directly on it.
                         .scrollOverflowHints()
                 }
@@ -392,16 +393,16 @@ public struct LiveWidgetView: View {
         }
     }
 
-    private func overviewScroll(@ViewBuilder content: () -> some View) -> some View {
+    private func overviewScroll(_ measurement: WidgetContentFit.Scroll, @ViewBuilder content: () -> some View) -> some View {
         ScrollView {
             content()
                 .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 2)
                 .scrollOverflowContent()
-                .modifier(DocumentHeight(onScrollView: false) { fit.document = $0; reportFit() })
+                .modifier(DocumentHeight(onScrollView: false) { fit.scrolls[measurement, default: .init()].document = $0; reportFit() })
         }
-        .modifier(DocumentHeight(onScrollView: true) { fit.document = $0; reportFit() })
-        .onGeometryChange(for: CGFloat.self, of: \.size.height) { fit.viewport = $0; reportFit() }
-        .onDisappear { fit.viewport = nil; fit.document = nil; reportFit() }
+        .modifier(DocumentHeight(onScrollView: true) { fit.scrolls[measurement, default: .init()].document = $0; reportFit() })
+        .onGeometryChange(for: CGFloat.self, of: \.size.height) { fit.scrolls[measurement, default: .init()].viewport = $0; reportFit() }
+        .onDisappear { fit.scrolls[measurement] = nil; reportFit() }
         .scrollOverflowHints()
     }
 
@@ -414,15 +415,25 @@ public struct LiveWidgetView: View {
         DispatchQueue.main.async { [fit, model] in
             fit.scheduled = false
             guard let outer = fit.outer else { return }
-            // The same condition that chooses the list over the connecting / nothing-selected placeholders.
-            if model.snapshot != nil, model.selected != nil || model.inboxOverview {
-                // The list is shown but not measured yet: wait instead of reporting the placeholder for a moment.
-                guard let viewport = fit.viewport, let document = fit.document else { return }
-                model.reportAgentFit(outer - viewport + document)
-            } else {
+            guard let measurement = Self.activeScroll(model) else {
                 model.reportAgentFit(WidgetContentFit.placeholderHeight)
+                return
             }
+            // Outgoing measurements may still arrive during a transition.
+            guard let viewport = fit.scrolls[measurement]?.viewport,
+                  let document = fit.scrolls[measurement]?.document else { return }
+            model.reportAgentFit(outer - viewport + document)
         }
+    }
+
+    private static func scrollID(_ model: WidgetModel) -> String {
+        model.section == "Sessions" ? model.section : model.section + "|" + model.selectedKey
+    }
+
+    private static func activeScroll(_ model: WidgetModel) -> WidgetContentFit.Scroll? {
+        guard model.snapshot != nil, model.selected != nil || model.snapshot?.rosterLoading != true else { return nil }
+        if model.inboxOverview { return model.stagedView == nil ? .overview : .staged }
+        return model.selected == nil ? nil : .session(scrollID(model))
     }
 
     private var header: some View {
@@ -1926,9 +1937,15 @@ final class WidgetLedgerUndo: ObservableObject {
 /// Measured heights of LiveWidgetView's pane, its scroll viewport and the scroll document.
 final class WidgetContentFit {
     static let placeholderHeight: CGFloat = 360
+    enum Scroll: Hashable { case overview, staged, session(String) }
+
+    struct Measurement {
+        var viewport: CGFloat?
+        var document: CGFloat?
+    }
+
     var outer: CGFloat?
-    var viewport: CGFloat?
-    var document: CGFloat?
+    var scrolls: [Scroll: Measurement] = [:]
     var scheduled = false
 }
 

@@ -828,6 +828,7 @@
       "worker": "fixture",
       "fields": [],
       "limit": 1,
+      "after": "fixture",
       "call": {
         "request": "fixture",
         "dryRun": true,
@@ -876,6 +877,7 @@
         "fixture"
       ],
       "limit": 1,
+      "after": "fixture",
       "call": {
         "request": "fixture",
         "dryRun": true,

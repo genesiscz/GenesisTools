@@ -25,6 +25,8 @@ public final class WidgetTasksStore: ObservableObject {
     @Published public private(set) var isCreating = false
     @Published public private(set) var error: String?
     @Published private(set) var failures: [WidgetTaskFailure] = []
+    @Published private(set) var earlierFailureCount = 0
+    private static let retainedFailureLimit = 4
     @Published public private(set) var receipt: String?
     @Published public private(set) var undo: WidgetTaskUndo?
     @Published var resumeRequest: WidgetTaskResumeRequest?
@@ -594,6 +596,7 @@ public final class WidgetTasksStore: ObservableObject {
 
     public func clearFeedback() {
         failures = []
+        clearEarlierFailures()
         error = nil
         receipt = nil
         undo = nil
@@ -639,6 +642,8 @@ public final class WidgetTasksStore: ObservableObject {
         error = failures.last?.message
     }
 
+    func clearEarlierFailures() { earlierFailureCount = 0 }
+
     private func report(_ failure: Error, operation: WidgetTaskFailure.Operation, headline: String,
                         decodingMessage: String = "The task list could not be read. Try again in a moment.",
                         stoppedMessage: String? = nil) {
@@ -658,6 +663,10 @@ public final class WidgetTasksStore: ObservableObject {
                                    action: headline, log: failure.localizedDescription, app: .launch, area: "widget")
         failures.removeAll { $0.id == operation }
         failures.append(WidgetTaskFailure(id: operation, report: report, message: message))
+        if failures.count > Self.retainedFailureLimit {
+            failures.removeFirst()
+            earlierFailureCount += 1
+        }
         error = message
         PerfLog.mark("widget.tasks \(failure.localizedDescription)")
     }

@@ -83,6 +83,7 @@ struct HubRequest {
     var worktree: String?
     /// --work <ref> opens one task or handoff in Work.
     var workItem: String?
+    /// --work-project <name> opens the named project's Items pane.
     var workProject: String?
     /// Inbox mode: opens the resume dialog (`--inbox-resume <id>`) or the session info popover
     /// (`--inbox-info <id>`) for this session (id or prefix) once the list has loaded; for snapshots.
@@ -946,7 +947,14 @@ final class HubModel {
             prs.$selectedID.map { _ in () }.eraseToAnyPublisher(),
             inbox.$selectedID.map { _ in () }.eraseToAnyPublisher(),
             agents.$selectedID.map { _ in () }.eraseToAnyPublisher(),
-            work.screen.$itemRef.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            work.screen.$itemRef.dropFirst().handleEvents(receiveOutput: { [weak self] next in
+                // The publisher still sees the list here. The deferred recorder would only see the open item
+                // if the list and its first keyboard selection happened in the same main-queue turn.
+                guard let self, next != nil, !self.navRestoring, self.mode == .work,
+                      self.work.screen.itemRef == nil, self.work.screen.project != nil,
+                      self.work.screen.pane == .items else { return }
+                self.recordPlace()
+            }).map { _ in () }.eraseToAnyPublisher(),
             work.screen.$project.dropFirst().map { _ in () }.receive(on: DispatchQueue.main).eraseToAnyPublisher(),
         ]
         navRecorder = Publishers.MergeMany(changes).sink { [weak self] in
@@ -1118,7 +1126,9 @@ final class HubModel {
     @MainActor
     func navRequestMatches(_ asked: HubNavRequest) -> Bool {
         if let ref = asked.workItem { return mode == .work && work.screen.itemRef == ref }
-        if let project = asked.workProject { return mode == .work && work.screen.itemRef == nil && work.screen.project == project }
+        if let project = asked.workProject {
+            return mode == .work && work.screen.itemRef == nil && work.screen.project == project && work.screen.pane == .items
+        }
         if let pr = asked.pr {
             return mode == .prs && prs.selected.map(pr.matches) == true
         }
@@ -1138,7 +1148,7 @@ final class HubModel {
             return mode == .sessions && (selectedID == session || selected?.sessionId.hasPrefix(session) == true)
         }
         if let wanted = asked.mode {
-            return mode == wanted
+            return mode == wanted && (wanted != .work || work.screen.itemRef == nil)
         }
         return false
     }
@@ -1174,7 +1184,10 @@ final class HubModel {
         case .sessions: return HubNavEntry(mode: .sessions, selection: selectedID)
         case .worktrees: return HubNavEntry(mode: .worktrees, selection: selectedWorktree)
         case .model(let model):
-            return HubNavEntry(mode: mode, selection: model.navSelection, workItem: mode == .work ? work.screen.itemRef : nil)
+            if mode == .work, let ref = work.screen.itemRef {
+                return HubNavEntry(mode: .work, selection: nil, workItem: ref)
+            }
+            return HubNavEntry(mode: mode, selection: model.navSelection)
         }
     }
 
@@ -1234,8 +1247,8 @@ final class HubModel {
     @MainActor
     private func restorePlace(_ entry: HubNavEntry, commit: String?, repo: String?) {
         setMode(entry.mode)
-        if entry.mode == .work, let ref = entry.workItem {
-            work.screen.openItem(ref)
+        if entry.mode == .work {
+            restoreWorkItem(entry.workItem, project: entry.selection)
             return
         }
         guard let id = entry.selection else { return }
@@ -2088,12 +2101,8 @@ final class HubModel {
         }
         if request.mode == .work {
             MainActor.assumeIsolated {
-                if let ref = request.workItem { work.screen.openItem(ref) }
-                else if let project = request.workProject { work.openLinkedProject(project) }
-                else {
-                    work.screen.closeItem()
-                    work.screen.pane = .items
-                }
+                if request.workItem == nil, let project = request.workProject { work.openLinkedProject(project) }
+                else { restoreWorkItem(request.workItem) }
             }
         }
         if let text = request.filter {
@@ -2151,6 +2160,16 @@ final class HubModel {
         }
         if let id = request.timelineOpen {
             MainActor.assumeIsolated { openTimelineRequest(id, action: request.timelineAction) }
+        }
+    }
+
+    @MainActor
+    private func restoreWorkItem(_ ref: String?, project: String? = nil) {
+        if let ref { work.screen.openItem(ref) }
+        else {
+            if let project, project != work.screen.project { work.openProject(project) }
+            else { work.screen.closeItem() }
+            work.screen.pane = .items
         }
     }
 

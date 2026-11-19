@@ -1884,6 +1884,13 @@ export function readDecisions(file: string, scope?: DecisionReadScope): Decision
     return readDecisionsWithIntegrity(file, scope).rows;
 }
 
+/** Reads a session task that has yet to be imported. The Work reader has already checked the store. */
+export function readLegacySessionTodo(file: string, id: string): DecisionRecord | undefined {
+    return decisionLog(file)
+        .read()
+        .rows.find((row) => row.id === id && kindOf(row) === "todo");
+}
+
 /** The same decision read, including whether the file was missing or any torn or invalid row was skipped. */
 export function readDecisionsWithIntegrity(
     file: string,

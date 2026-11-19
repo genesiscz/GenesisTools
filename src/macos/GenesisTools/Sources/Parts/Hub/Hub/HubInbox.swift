@@ -274,6 +274,8 @@ struct InboxSession: Decodable, Identifiable, Hashable {
 struct InboxEnvelope: Decodable {
     let sessions: [InboxSession]
     let elapsedMs: Int?
+    /// Omitted by older CLI builds. Only a complete set can confirm that a hidden form closed.
+    var pendingFormIDs: Set<String>? = nil
 }
 
 /// What `tools question inbox send|answer` printed: the delivery, or `{ error }`.
@@ -436,7 +438,7 @@ final class HubInboxModel: ObservableObject {
     private(set) lazy var staging = makeStaging()
     private let decisionLog = HubInboxDecisionLog()
     private var stagingChanges: AnyCancellable?
-    /// The write runner of the staging engine's adapter (tests replace it), and the reload after a decision's writes.
+    /// The write runner for decisions and forms (tests replace it), and the reload after a confirmed write.
     var captureWrite: @Sendable ([String]) throws -> ProcessCapture {
         get { decisionLog.capture }
         set { decisionLog.capture = newValue }
@@ -494,14 +496,20 @@ final class HubInboxModel: ObservableObject {
     /// A newly built lazy card restores an unsaved note before falling back to the ledger.
     func noteForCard(_ item: InboxItem) -> String { noteTexts[item.id] ?? item.draft ?? "" }
     /// A hidden kind, a shorter page or a mode switch can temporarily remove a still-open form.
-    /// Only confirmed submission releases its answers and staged files.
+    /// A draft ends on confirmed closure or explicit discard.
     private var formDrafts: [String: InboxFormDraft] = [:]
+    private var pendingFormIDs: Set<String>?
 
     func formDraft(for id: String) -> InboxFormDraft {
         if let draft = formDrafts[id] { return draft }
         let draft = InboxFormDraft()
         formDrafts[id] = draft
         return draft
+    }
+
+    func discardFormDraft(_ id: String, removedImages: Set<String> = []) {
+        guard !sending.contains(id) else { return }
+        formDrafts.removeValue(forKey: id)?.discard(excluding: removedImages)
     }
     /// The decision card the number keys act on (1 to 9 pick its options), moved by Up and Down in the list (F8).
     @Published var keyCardID: String?
@@ -580,6 +588,12 @@ final class HubInboxModel: ObservableObject {
     }
 
     func received(_ envelope: InboxEnvelope) {
+        pendingFormIDs = envelope.pendingFormIDs
+        if let pendingFormIDs {
+            for id in formDrafts.keys.filter({ !pendingFormIDs.contains($0) }) {
+                discardFormDraft(id)
+            }
+        }
         staging.reconcile(Self.stagingRows(envelope.sessions))
         if sessions != envelope.sessions {
             HubMainBusy.measure("inbox.render")
@@ -1186,7 +1200,7 @@ final class HubInboxModel: ObservableObject {
         }
 
         // The answering process reads the staged images in place; once it is done they are not needed.
-        run(args, item: item, staged: imagePaths.values.flatMap { $0 })
+        sendFormAnswer(args, item: item, staged: imagePaths.values.flatMap { $0 })
     }
 
     /// Pure: the argv `answerForm` sends to `tools question inbox answer`
@@ -1279,19 +1293,23 @@ final class HubInboxModel: ObservableObject {
         }
     }
 
-    private func run(_ args: [String], item: InboxItem, staged: [String] = []) {
+    private func sendFormAnswer(_ args: [String], item: InboxItem, staged: [String]) {
         guard !sending.contains(item.id) else { return }
         sending.insert(item.id)
         deliveries[item.id] = nil
         HubPerf.log("inbox.answer \(item.id)")
-        DispatchQueue.global(qos: .userInitiated).async {
+        DispatchQueue.global(qos: .userInitiated).async { [captureWrite] in
             let span = HubPerf.begin("inbox.answer")
             let delivery: InboxDelivery
             do {
-                let capture = try HubSource.bridge.capture(args)
-                delivery = (try? JSONDecoder().decode(InboxDelivery.self, from: capture.stdout))
-                    ?? .failure("The answer was not sent. Try again.",
-                                raw: ToolsFailure(argv: args, capture: capture).summary)
+                let capture = try captureWrite(args)
+                let decoded = try? JSONDecoder().decode(InboxDelivery.self, from: capture.stdout)
+                if let decoded, decoded.isError || (capture.status == 0 && decoded.delivered == true) {
+                    delivery = decoded
+                } else {
+                    delivery = .failure("The answer was not confirmed. Check the form before trying again.",
+                                        raw: ToolsFailure(argv: args, capture: capture).summary)
+                }
             } catch {
                 delivery = .failure("The answer was not sent: the hub could not run tools.", raw: "\(error)")
             }
@@ -1306,10 +1324,11 @@ final class HubInboxModel: ObservableObject {
                     self.sending.remove(item.id)
                     self.deliveries[item.id] = delivery
                     GenAnnounce.post(delivery.summary)
+                    if !delivery.isError || self.pendingFormIDs?.contains(item.id) == false {
+                        self.discardFormDraft(item.id, removedImages: delivery.isError ? [] : Set(staged))
+                    }
                     if !delivery.isError {
-                        // The answering process read the images; the form leaves the list on this load.
-                        self.formDrafts[item.id] = nil
-                        self.load()
+                        if let reload = self.reloadAfterWrite { reload() } else { self.load() }
                     }
                 }
             }
@@ -1619,7 +1638,8 @@ struct InboxAddTaskButton: View {
                     if triedToAdd, let error = tasks.error { InboxTaskFailure(message: error) }
                     HStack {
                         Spacer()
-                        Button("Close") { addingTask = false }.keyboardShortcut(.cancelAction)
+                        Button("Close") { addingTask = false }
+                            .buttonStyle(.genHover()).keyboardShortcut(.cancelAction)
                         Button(tasks.isCreating ? "Adding…" : "Add task") {
                             triedToAdd = true
                             tasks.create(sendImmediately: sendImmediately && tasks.draft.owner == "agent"
@@ -1750,12 +1770,17 @@ struct InboxMain: View {
                     instant.disablesAnimations = true
                     withTransaction(instant) { proxy.scrollTo(id, anchor: .top) }
                 }
-                .onChange(of: inbox.focusRequest) { _, _ in
+                .onChange(of: inbox.focusRequest, initial: true) { _, request in
                     guard let id = inbox.focusedItemID else { return }
-                    // The section first, so the lazy stack builds the card; then the card itself.
-                    if let session = inbox.selectedID { proxy.scrollTo(session, anchor: .top) }
+                    // Let the unfiltered list lay out, then reveal the section before its lazy card.
+                    let session = inbox.selectedID
                     DispatchQueue.main.async {
-                        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) { proxy.scrollTo(id, anchor: .top) }
+                        guard inbox.focusRequest == request else { return }
+                        if let session { proxy.scrollTo(session, anchor: .top) }
+                        DispatchQueue.main.async {
+                            guard inbox.focusRequest == request else { return }
+                            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) { proxy.scrollTo(id, anchor: .top) }
+                        }
                     }
                 }
             }
@@ -3212,9 +3237,15 @@ final class InboxFormDraft {
     private(set) var images: [String: [QaAttachedImage]] = [:]
     var fieldError: [String: String] = [:]
     private var pending: [String: Int] = [:]
+    private var discarded = false
     var importingImages: Bool { !pending.isEmpty }
+    var hasContent: Bool {
+        importingImages || picked.values.contains { !$0.isEmpty } || texts.values.contains { !$0.isEmpty }
+            || fileTagsText.values.contains { !$0.isEmpty } || images.values.contains { !$0.isEmpty }
+    }
 
     func reserveImage(for id: String) -> Bool {
+        guard !discarded else { return false }
         guard images[id, default: []].count + pending[id, default: 0] < QaFormFields.maxImagesPerAnswer else {
             fieldError[id] = "Only \(QaFormFields.maxImagesPerAnswer) images fit. Remove one to add another."
             return false
@@ -3230,12 +3261,29 @@ final class InboxFormDraft {
     }
 
     func finishImage(_ outcome: QaAttachedImage.Outcome, for id: String) {
+        guard !discarded else {
+            if case .staged(let image) = outcome { QaAttachedImage.remove(image.path) }
+            return
+        }
         let remaining = pending[id, default: 1] - 1
         pending[id] = remaining > 0 ? remaining : nil
         switch outcome {
         case .failed(let message): fieldError[id] = message
         case .staged(let image): images[id, default: []].append(image)
         }
+    }
+
+    func discard(excluding removedImages: Set<String>) {
+        discarded = true
+        for image in images.values.joined() where !removedImages.contains(image.path) {
+            QaAttachedImage.remove(image.path)
+        }
+        images = [:]
+        picked = [:]
+        texts = [:]
+        fileTagsText = [:]
+        fieldError = [:]
+        pending = [:]
     }
 }
 
@@ -3347,6 +3395,11 @@ struct InboxFormCard: View {
                     InboxDeliveryLine(delivery: delivery)
                 }
                 Spacer()
+                if draft.hasContent && !sending {
+                    Button("Discard draft") { inbox.discardFormDraft(item.id) }
+                        .buttonStyle(.genHover())
+                        .instantTooltip("Clear your answers and remove staged images")
+                }
                 if !oneClick || questions.contains(where: { $0.freeText || $0.fileTags || $0.imagePaste }) {
                     Button {
                         submit()
@@ -3485,6 +3538,7 @@ struct InboxFormCard: View {
     }
 
     private func chooseImage(itemId: String) {
+        let owner = draft
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
@@ -3495,8 +3549,7 @@ struct InboxFormCard: View {
         panel.begin { response in
             guard response == .OK else { return }
             for url in panel.urls {
-                guard !sending, draft.reserveImage(for: itemId) else { continue }
-                let owner = draft
+                guard !sending, owner.reserveImage(for: itemId) else { continue }
                 DispatchQueue.global(qos: .userInitiated).async {
                     let outcome = QaAttachedImage.stage(NSImage(contentsOf: url))
                     DispatchQueue.main.async { owner.finishImage(outcome, for: itemId) }

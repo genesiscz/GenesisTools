@@ -238,12 +238,20 @@ public final class WidgetModel: ObservableObject {
             appearance.reduceTransparency = reduceTransparency
         }
     }
-    @Published private var hostDialogOpen = false
+    @Published private var hostDialogOpen = false {
+        didSet { if oldValue && !hostDialogOpen { resumeHoverExit() } }
+    }
     /// Set by the session chooser alone, so closing it (or its view going away) cannot release a window still open.
-    @Published public var sessionChooserOpen = false
+    @Published public var sessionChooserOpen = false {
+        didSet { if oldValue && !sessionChooserOpen { resumeHoverExit() } }
+    }
     /// Set by a session's cmux popover alone, for the same reason.
-    @Published public var cmuxPopoverOpen = false
-    @Published private(set) var previewOpenItemID: String?
+    @Published public var cmuxPopoverOpen = false {
+        didSet { if oldValue && !cmuxPopoverOpen { resumeHoverExit() } }
+    }
+    @Published private(set) var previewOpenItemID: String? {
+        didSet { if oldValue != nil && previewOpenItemID == nil { resumeHoverExit() } }
+    }
     public var previewEntryOpen: Bool { previewOpenItemID != nil }
 
     func togglePreviewEntry(_ item: WidgetInboxItem) {
@@ -258,8 +266,29 @@ public final class WidgetModel: ObservableObject {
     func closePreviewEntry() {
         guard previewEntryOpen else { return }
         previewOpenItemID = nil
-        if let surface = hoveredSurface, !pointerInside.contains(surface.key), !dialogOpen {
-            hover(surface, inside: false)
+    }
+
+    private func resumeHoverExit() {
+        guard !stopping, !dialogOpen, let surface = hoveredSurface,
+              !pointerInside.contains(surface.key) else { return }
+        scheduleHoverExit(surface)
+    }
+
+    private func scheduleHoverExit(_ surface: WidgetSurfaceID) {
+        guard layout.hoverPreviews else { return }
+        if dragging {
+            exitedDuringDrag = surface
+            return
+        }
+        hoverTask?.cancel()
+        hoverTask = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(220)) } catch { return }
+            guard let self, !self.dialogOpen, !self.pointerInside.contains(surface.key) else { return }
+            if self.hoveredSession?.surface == surface { self.cancelHoverPrewarm() }
+            guard self.hoveredSurface == surface else { return }
+            self.hoveredSurface = nil
+            if self.expanded == nil { self.transcriptCache.cancelPending() }
+            self.presentationChanged?()
         }
     }
 
@@ -456,6 +485,7 @@ public final class WidgetModel: ObservableObject {
     /// Sending replaces the composer; bindings retained by its disposed field cannot write into the new draft.
     @Published private var composerGeneration = 0
     var actionRunner: ((WidgetJSON) async throws -> WidgetJSON)?
+    var entryBodyReader: ((String) async throws -> WidgetEntryBody)?
     private var submittedAssets: Set<String> = []
     private var submittedCards: Set<String> = []
     private var lastSelected: WidgetSession?
@@ -1132,15 +1162,7 @@ public final class WidgetModel: ObservableObject {
                 self.presentationChanged?()
             }
         } else {
-            hoverTask = Task { [weak self] in
-                do { try await Task.sleep(for: .milliseconds(220)) } catch { return }
-                guard let self else { return }
-                if self.hoveredSession?.surface == surface { self.cancelHoverPrewarm() }
-                guard self.hoveredSurface == surface else { return }
-                self.hoveredSurface = nil
-                if self.expanded == nil { self.transcriptCache.cancelPending() }
-                self.presentationChanged?()
-            }
+            scheduleHoverExit(surface)
         }
     }
 
@@ -1750,7 +1772,7 @@ public final class WidgetModel: ObservableObject {
         openModule("agents", on: surface)
     }
 
-    /// The inbox button: every session's entries in one list. A second click while that list is open hides the panel.
+    /// With no filter, toggles the inbox overview. A filter opens or selects that tab without changing the saved default.
     public func toggleInboxOverview(on surface: WidgetSurfaceID, filter: String? = nil) {
         guard !stopping else { return }
         if filter == nil, presentation(for: surface) == .expanded, activeModuleID == "agents", inboxOverview {
@@ -3026,10 +3048,8 @@ public final class WidgetModel: ObservableObject {
         try await entryBody(id: item.sourceId)
     }
 
-    var entryBodyRequest: ((String) async throws -> WidgetEntryBody)?
-
     func entryBody(id: String) async throws -> WidgetEntryBody {
-        if let entryBodyRequest { return try await entryBodyRequest(id) }
+        if let entryBodyReader { return try await entryBodyReader(id) }
         let result = try await bridge.run(subcommand: "hub", args: widgetArgs + ["message-body", id],
                                           timeoutSeconds: 8)
         try Task.checkCancellation()

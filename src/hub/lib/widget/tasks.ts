@@ -22,7 +22,12 @@ import {
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
-import { type ClaimedHandoff, claimedHandoffTree, handoffClaimantIds } from "@genesiscz/utils/work/claimed-handoffs";
+import {
+    type ClaimedHandoff,
+    claimedHandoffTree,
+    handoffClaimantIds,
+    widgetWorkPreview,
+} from "@genesiscz/utils/work/claimed-handoffs";
 import { SESSION_TODO_POINTER, sessionTodoKey } from "@genesiscz/utils/work/legacy/session-todos";
 import { type ProjectCounts, projectCounts } from "@genesiscz/utils/work/read";
 import { workDbPath } from "@genesiscz/utils/work/store/db";
@@ -337,7 +342,8 @@ export async function listLiveWidgetTasks({
                 const byTarget = new Map(snapshot.tasks.map((task) => [sessionTodoKey(task), task]));
                 const links = db
                     .query<{ target: string; item: string; acceptance: string | null }, [string, string]>(
-                        `SELECT p.target, p.item, i.acceptance FROM pointers p JOIN items i ON i.id = p.item
+                        `SELECT p.target, p.item, ${widgetWorkPreview("i.acceptance")} AS acceptance
+                     FROM pointers p JOIN items i ON i.id = p.item
                      WHERE p.kind = ? AND p.target IN (SELECT value FROM json_each(?))`
                     )
                     .all(SESSION_TODO_POINTER, SafeJSON.stringify([...byTarget.keys()], { strict: true }));

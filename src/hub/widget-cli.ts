@@ -51,22 +51,24 @@ widget
     .option("--limit <n>", "Maximum earlier answers (1 to 20)", "5")
     .action(async (id: string, options: { limit: string }, command) => {
         const root = command.optsWithGlobals().stateRoot;
+        const request = { id, limit: Number(options.limit) };
         const now = Date.now();
         const window = widgetInboxWindow((await readWidgetState(root)).inboxClearedAt, now);
-        const limit = Number(options.limit);
-        const entries = readInboxGroupEntries({ id, limit, window: { ...window, staleBefore: 0 } });
+        const entries = readInboxGroupEntries({ ...request, window: { ...window, staleBefore: 0 } });
 
-        if (entries.some((entry) => entry.at < window.staleBefore)) {
-            // Only a live or recently active session counts older entries. Use the snapshot's own count for it.
-            const snapshot = await widgetSnapshot({ root, now, sources: await oneShotWidgetSources(root) });
-            const head = snapshot.notifications?.sessions
-                .flatMap((session) => session.items ?? [])
-                .find((item) => item.id === `answer:${id}`);
-            out.result({ entries: entries.slice(0, (head?.count ?? 1) - 1) });
+        // When all candidates qualify by age alone, the roster cannot affect membership.
+        if (entries.every((entry) => entry.at >= window.staleBefore)) {
+            out.result({ entries });
             return;
         }
 
-        out.result({ entries });
+        const snapshot = await widgetSnapshot({
+            root,
+            now,
+            sources: await oneShotWidgetSources(root),
+            answerGroup: request,
+        });
+        out.result({ entries: snapshot.groupEntries ?? [] });
     });
 widget
     .command("pin <session>")

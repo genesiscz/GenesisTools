@@ -1003,6 +1003,10 @@ describe("loadInbox", () => {
         expect(queue.total).toBe(3);
         expect(queue.sessions.flatMap((entry) => entry.items.map((item) => item.id))).toEqual(["ask_listed"]);
 
+        const hub = await loadInbox({ deps });
+        expect(hub.pendingFormIDs).toEqual(["ask_listed", "ask_old_1", "ask_old_2"]);
+        expect(hub.sessions.flatMap((session) => session.items.map((item) => item.id))).toEqual(["ask_listed"]);
+
         const withoutHeads = await loadWaitingQueue({ deps: { ...deps, formHeads: undefined }, now });
         expect(withoutHeads.total).toBe(1);
     });
@@ -2051,6 +2055,7 @@ test("the head and its earlier answers use the same unread partition and clear w
             insert.run("read", 4, "codex", "Read?", "Read", "question", 5);
             insert.run("other", 6, "grok", "Other?", "Other", "question", null);
             insert.run("note", 7, "codex", "Note", "Message", "message", null);
+            insert.run("older-note", 6, "codex", "Older note", "Earlier message", "message", null);
         } finally {
             db.close();
         }
@@ -2060,12 +2065,52 @@ test("the head and its earlier answers use the same unread partition and clear w
             (row) => row.provider === "codex" && row.itemTag !== "message"
         );
         expect(heads).toHaveLength(1);
-        expect(heads[0]).toMatchObject({ id: "a4", afterClear: 3, answerText: "Answer 4", questionText: "Question 4" });
+        expect(heads[0]).toMatchObject({
+            id: "a4",
+            afterClear: 3,
+            reply: { text: "Answer 4", question: "Question 4" },
+        });
         expect(readInboxGroupEntries({ id: "a4", limit: 5, window })).toEqual([
             { id: "a3", at: 3, question: "Question 3", text: "Answer 3" },
             { id: "a2", at: 2, question: "Question 2", text: "Answer 2" },
         ]);
-        expect(readInboxGroupEntries({ id: "a3", limit: 5, window })).toEqual([]);
+        expect(readInboxGroupEntries({ id: "a3", limit: 5, window })).toEqual([
+            { id: "a2", at: 2, question: "Question 2", text: "Answer 2" },
+        ]);
+        expect(readInboxGroupEntries({ id: "note", limit: 5, window })).toEqual([]);
         expect(readInboxGroupEntries({ id: "a4", limit: 5, window: { ...window, staleBefore: 3 } })).toHaveLength(1);
+        expect(
+            readInboxGroupEntries({
+                id: "a4",
+                limit: 5,
+                window: { ...window, staleBefore: 3 },
+                sessionIsFresh: () => true,
+            })
+        ).toHaveLength(2);
+    });
+});
+test("overview previews skip long media context and end on complete code points", async () => {
+    const root = mkdtempSync(join(tmpdir(), "inbox-preview-"));
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: root, QUESTION_LOG_BASE: join(root, "log") }, () => {
+        const db = openReadModel(toolDataDir("question", "qa.db"));
+        const hidden = "hidden ".repeat(10_000);
+        const question = "q".repeat(1199);
+        const text = "a".repeat(799);
+        try {
+            db.query(
+                "INSERT INTO entries (id, ts,session_id,agent,question,answer_md,tag) VALUES ('fixture',2,'alpha','codex',?,?,'question')"
+            ).run(
+                `\u00a0<fromImage>${hidden}</fromImage>${question}🍐tail`,
+                `<fromVideo>${hidden}</fromVideo>${text}🍐tail`
+            );
+        } finally {
+            db.close();
+        }
+
+        expect(readInboxData({ clearedAt: 0, staleBefore: 0 }).answers[0]?.reply).toEqual({
+            question,
+            text,
+            more: true,
+        });
     });
 });

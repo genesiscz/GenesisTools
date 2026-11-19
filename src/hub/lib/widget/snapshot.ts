@@ -4,6 +4,7 @@ import {
     inboxReply,
     MESSAGE_PREVIEW_CHARS,
     readInboxData,
+    readInboxGroupEntries,
     type WidgetInboxData,
     type WidgetInboxWindow,
 } from "@app/question/lib/inbox/unread";
@@ -51,6 +52,7 @@ import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
+import { sliceWhole } from "@genesiscz/utils/string";
 import { workerSourceHome } from "@genesiscz/utils/worker/delivery";
 import { hubAgents } from "../agents";
 import type { AgentNode, AgentsTree } from "../agents/types";
@@ -258,7 +260,7 @@ export function widgetTitle(text: string | null | undefined): string | undefined
         return undefined;
     }
 
-    return line.length > WIDGET_TITLE_MAX ? `${line.slice(0, WIDGET_TITLE_MAX - 1)}…` : line;
+    return line.length > WIDGET_TITLE_MAX ? `${sliceWhole(line, WIDGET_TITLE_MAX - 1)}…` : line;
 }
 export interface WidgetSources {
     sessions(refresh: boolean): Promise<AgentSessionRow[]>;
@@ -362,7 +364,7 @@ export const ANSWERED_ELSEWHERE_MAX = 20;
 /** The entries one session lists in the widget's inbox overview; its counts still cover every item. */
 export const INBOX_ITEMS_PER_SESSION = 8;
 
-/** The newest entries that do not wait for an answer, which a session keeps listed however many entries wait. */
+/** The newest counted unread entries a session keeps listed however many entries wait. */
 export const INBOX_UNREAD_KEPT_PER_SESSION = 3;
 
 /**
@@ -373,10 +375,15 @@ export const INBOX_UNREAD_KEPT_PER_SESSION = 3;
 export function listedInboxItems(items: WidgetInboxItem[]): WidgetInboxItem[] {
     const newest = (a: WidgetInboxItem, b: WidgetInboxItem) => b.at - a.at;
     const waiting = items.filter((item) => item.needsAnswer).sort(newest);
-    const unread = items.filter((item) => !item.needsAnswer).sort(newest);
-    const keptUnread = Math.min(unread.length, INBOX_UNREAD_KEPT_PER_SESSION);
-    const listedWaiting = waiting.slice(0, INBOX_ITEMS_PER_SESSION - keptUnread);
-    return [...listedWaiting, ...unread.slice(0, INBOX_ITEMS_PER_SESSION - listedWaiting.length)];
+    const other = items.filter((item) => !item.needsAnswer).sort(newest);
+    const reserved = other
+        .filter((item) => item.kind === "answer" || item.kind === "result")
+        .slice(0, INBOX_UNREAD_KEPT_PER_SESSION);
+    const listedWaiting = waiting.slice(0, INBOX_ITEMS_PER_SESSION - reserved.length);
+    const remaining = other
+        .filter((item) => !reserved.includes(item))
+        .slice(0, INBOX_ITEMS_PER_SESSION - listedWaiting.length - reserved.length);
+    return [...listedWaiting, ...[...reserved, ...remaining].sort(newest)];
 }
 export interface WidgetInboxSummary {
     badgeCount?: number;
@@ -578,14 +585,13 @@ async function widgetResult(node: AgentNode): Promise<string> {
         // The last reply of a transcript too large to parse whole, from its tail, through the turn parser of its
         // harness (`TranscriptParser.fromLines`), so a large file shows the reply a small one does.
         const resolved = await resolveTranscript(node.filePath, {}, node.harness);
-        text = (await lastAssistantTextOf(resolved, size)).slice(0, 32_000);
+        text = await lastAssistantTextOf(resolved, size);
     } else {
         const resolved = await resolveTranscript(node.filePath, {}, node.harness);
         const envelope = await transcriptEnvelope(resolved, { limit: 20 });
-        text =
-            envelope.turns.findLast((turn) => turn.role === "assistant" && turn.text.trim())?.text.slice(0, 32_000) ??
-            "";
+        text = envelope.turns.findLast((turn) => turn.role === "assistant" && turn.text.trim())?.text ?? "";
     }
+    text = sliceWhole(text, 32_000);
     if (resultCache.size >= 100) {
         resultCache.clear();
     }
@@ -836,7 +842,7 @@ export function decisionSummary(row: DecisionRecord): { summary?: string } {
         return { summary: prompt };
     }
 
-    const cut = prompt.slice(0, SUMMARY_LIMIT);
+    const cut = sliceWhole(prompt, SUMMARY_LIMIT);
     const space = cut.lastIndexOf(" ");
     return { summary: `${(space > SUMMARY_LIMIT / 2 ? cut.slice(0, space) : cut).trimEnd()}…` };
 }
@@ -852,8 +858,10 @@ export async function widgetSnapshot({
     onImagesDeferred,
     warm = 0,
     decisionLookup,
+    answerGroup,
 }: {
     root?: string;
+    answerGroup?: { id: string; limit: number };
     selectedKey?: string;
     decisionLookup?: { id: string; token: string };
     refresh?: boolean;
@@ -943,8 +951,7 @@ export async function widgetSnapshot({
                   count: 1,
                   itemTitle: row.question,
                   itemTag: row.tag,
-                  questionText: row.question,
-                  answerText: row.answerMd,
+                  ...(row.tag !== "message" ? { reply: inboxReply(row.question, row.answerMd) } : {}),
                   messageText: row.tag === "message" ? row.answerMd : undefined,
                   sender: row.agentLabel?.trim() || row.source,
                   ...inboxWindowCounts([row.ts], inboxWindow),
@@ -1052,6 +1059,11 @@ export async function widgetSnapshot({
         );
         return matches.length === 1 ? matches[0] : undefined;
     };
+    const findInboxSession = (row: { sessionId: string; provider: string; cwd: string }) =>
+        findSession(row.sessionId, row.provider === "unknown" ? undefined : row.provider) ??
+        sessions.get(widgetSessionKey(targetOf(row, row.sessionId)));
+    const sessionIsFresh = (session: WidgetSession) =>
+        live.has(session.key) || session.activityAt >= inboxWindow.staleBefore;
     // A worker reusing an indexed session keeps that session's id; `agentId` is what names the worker then.
     const findResultSession = (node: AgentNode) => {
         const provider = widgetProvider(node.harness);
@@ -1217,6 +1229,16 @@ export async function widgetSnapshot({
             addSession(target, target.sessionId, target.cwd, 0);
         }
     }
+    const groupEntries =
+        answerGroup &&
+        readInboxGroupEntries({
+            ...answerGroup,
+            window: inboxWindow,
+            sessionIsFresh: (anchor) => {
+                const session = findInboxSession(anchor);
+                return session !== undefined && sessionIsFresh(session);
+            },
+        });
     const inboxSessions = new Map<string, WidgetInboxSession>();
     const putInbox = (session: WidgetSession, item: WidgetInboxItem, count: number) => {
         const kind = item.kind === "answer" && item.tag === "message" ? "message" : item.kind;
@@ -1237,7 +1259,7 @@ export async function widgetSnapshot({
             entry.latest = item;
         }
         const target = item.needsAnswer ? "pendingItem" : "unreadItem";
-        if (!entry[target] || item.at > entry[target].at) {
+        if (count > 0 && (!entry[target] || item.at > entry[target].at)) {
             entry[target] = item;
         }
 
@@ -1384,7 +1406,7 @@ export async function widgetSnapshot({
     for (const row of inboxData.answers) {
         // "unknown" is the SQL fallback, not evidence: match by session id alone, as the card loops do.
         const session =
-            findSession(row.sessionId, row.provider === "unknown" ? undefined : row.provider) ??
+            findInboxSession(row) ??
             addSession(
                 targetOf({ sessionId: row.sessionId, provider: row.provider, cwd: row.cwd }, row.id),
                 row.title,
@@ -1392,8 +1414,7 @@ export async function widgetSnapshot({
                 row.at
             );
         // A working or lately active session counts every answer after the watermark, a quiet one only its recent ones.
-        const sessionFresh = live.has(session.key) || session.activityAt >= inboxWindow.staleBefore;
-        const items = sessionFresh ? row.afterClear : row.recentAfterClear;
+        const items = sessionIsFresh(session) ? row.afterClear : row.recentAfterClear;
         const key = row.itemTag === "message" ? "message" : "answer";
         const policy = kinds[key];
         if (!policy.show) {
@@ -1414,7 +1435,7 @@ export async function widgetSnapshot({
             row.itemTag === "message"
                 ? {
                       text: widgetMessageBody(
-                          (row.messageText ?? "").slice(0, MESSAGE_PREVIEW_CHARS),
+                          sliceWhole(row.messageText ?? "", MESSAGE_PREVIEW_CHARS),
                           row.itemTitle ?? ""
                       ),
                       ...((row.messageText?.length ?? 0) > MESSAGE_PREVIEW_CHARS ? { more: true as const } : {}),
@@ -1432,9 +1453,7 @@ export async function widgetSnapshot({
                 needsAnswer: false,
                 ...(title ? { title } : {}),
                 ...(message ? { tag: "message" as const, message } : {}),
-                ...(!message && row.answerText != null
-                    ? { reply: inboxReply(row.questionText ?? row.itemTitle ?? "", row.answerText) }
-                    : {}),
+                ...(!message && row.reply ? { reply: row.reply } : {}),
             },
             items
         );
@@ -1547,7 +1566,7 @@ export async function widgetSnapshot({
             ...decisionTitle(row),
             options: decisionOptionLabels(row.prompt, row.options),
             ...(row.option ? { option: row.option } : {}),
-            ...(answer ? { answer: answer.slice(0, 300) } : {}),
+            ...(answer ? { answer: sliceWhole(answer, 300) } : {}),
             answeredVia: via,
         });
     }
@@ -2023,6 +2042,7 @@ export async function widgetSnapshot({
         version: 1,
         state,
         ...inboxMetadata,
+        ...(groupEntries ? { groupEntries } : {}),
         ...(rosterStatus ? { rosterLoading: rosterStatus.loading } : {}),
         activity,
         sessions: [...sessions.values()].sort(

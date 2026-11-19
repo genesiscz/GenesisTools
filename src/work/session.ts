@@ -7,6 +7,8 @@ import type { Actor } from "@genesiscz/utils/work/model/item";
 import { runNotifyOnce } from "@genesiscz/utils/work/notify";
 import { projectRuleLoader } from "@genesiscz/utils/work/rules/load";
 import { openWorkDb } from "@genesiscz/utils/work/store/db";
+import { decisionFiles } from "../question/lib/decisions/paths";
+import { readLegacySessionTodo } from "../question/lib/decisions/store";
 import { legacyHandoffs, sessionDelivery, t3Lineage } from "./adapters";
 import { actorHere } from "./adapters/actor";
 import { contextHere } from "./adapters/context";
@@ -55,6 +57,7 @@ export async function openSession(
             },
             call,
             loadRules,
+            legacySessionTodo: (ref) => readLegacySessionTodo(decisionFiles().file, ref),
             alive: async (sessionId, harness) => (await delivery.place(sessionId, harness))?.live ?? null,
             context: async (network) => (await contextHere({ actor, db, network })).report,
         };

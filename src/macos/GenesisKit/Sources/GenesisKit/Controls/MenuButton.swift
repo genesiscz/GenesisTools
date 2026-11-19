@@ -105,7 +105,8 @@ public enum MenuButtonPresenter {
         return menu
     }
 
-    /// Opens the menu where the click was (from the keyboard or VoiceOver: at the pointer).
+    /// Opens at the explicit anchor in the host window's coordinate space when supplied.
+    /// Otherwise it uses the click location, or the pointer for keyboard and VoiceOver activation.
     public static func pop(_ items: [MenuButtonItem], in host: NSWindow? = nil, at anchor: NSPoint? = nil) {
         let event = NSApp.currentEvent
         guard let window = host ?? event?.window ?? NSApp.keyWindow, let content = window.contentView else { return }

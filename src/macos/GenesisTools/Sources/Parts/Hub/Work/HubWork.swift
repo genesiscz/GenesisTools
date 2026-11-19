@@ -160,6 +160,7 @@ struct WorkProjectRow: View, Equatable {
 /// The main view: the header in the title bar, then the Items or the Notifications pane.
 struct WorkMain: View {
     @State private var findRequest = 0
+    @State private var findClearRequest = 0
     @State private var focusAfterReturn = false
     @FocusState private var workFocus: Bool
     @GenReduceMotion private var reduceMotion
@@ -167,7 +168,11 @@ struct WorkMain: View {
     @StateObject private var drafts = WorkItemInspectorDrafts()
     @ObservedObject var screen: WorkScreenModel
     /// A section a title bar count asked for; the Items scroll view brings its header to the top.
-    @State private var jump: String?
+    private struct SectionJump: Equatable {
+        let id = UUID()
+        let section: String
+    }
+    @State private var jump: SectionJump?
     @State private var foldedSections: Set<String> = []
     @AppStorage(HubWorkSections.foldLongListsKey, store: HubDefaults.store) private var foldLongLists = true
 
@@ -221,11 +226,22 @@ struct WorkMain: View {
 
     private var header: some View {
         WorkHeader(screen: screen, onJump: { section in
-            // A count opens what it counts: a state filter that hides the open sections gives way to it.
-            if !WorkItemsView.showsOpenSections(screen.filter) { screen.filter = .default }
+            if screen.filter.isActive, !Self.hasCountTarget(section, filter: screen.filter, rows: screen.results) {
+                screen.filter = .default
+            }
             foldedSections.remove(section)
-            jump = section
+            jump = SectionJump(section: section)
         })
+    }
+
+    static func hasCountTarget(_ section: String, filter: WorkFilter, rows: WorkItemsProjection?) -> Bool {
+        guard WorkItemsView.showsOpenSections(filter), let rows else { return false }
+        switch section {
+        case WorkItemsView.containersTitle: return !rows.containers.isEmpty
+        case WorkItemsView.spottedTitle: return !rows.spotted.isEmpty
+        case WorkItemsView.reopenedTitle: return !rows.reopened.isEmpty
+        default: return false
+        }
     }
 
     private var inspector: some View {
@@ -331,7 +347,7 @@ struct WorkMain: View {
             WorkFindBar(filter: $screen.filter,
                         matchedCount: screen.results?.matchedCount ?? 0,
                         totalCount: screen.results?.totalCount ?? 0,
-                        focusRequest: findRequest, filterNotice: screen.filterNotice,
+                        focusRequest: findRequest, clearRequest: findClearRequest, filterNotice: screen.filterNotice,
                         onClear: { screen.filter = .default },
                         onSubmit: { if let ref = screen.filter.fullRef { screen.select(ref) } })
                 .id(screen.project)
@@ -345,7 +361,10 @@ struct WorkMain: View {
                                       indexLoading: screen.indexLoading, indexFailure: screen.indexFailure,
                                       foldedSections: $foldedSections, drafts: drafts,
                                       select: { workFocus = true; screen.select($0) }, toggleExpansion: { ref, _ in screen.toggleContainer(ref) },
-                                      showMore: screen.showMore, clearFilters: { screen.filter = .default },
+                                      showMore: screen.showMore, clearFilters: {
+                                          findClearRequest += 1
+                                          screen.filter = .default
+                                      },
                                       retryIndex: screen.loadIndexIfNeeded, perform: screen.write)
                             .padding(.horizontal, 16)
                             .padding(.vertical, 12)
@@ -371,12 +390,16 @@ struct WorkMain: View {
                         }
                     }
                     // initial: a count clicked on the Notify pane switches to this list and sets the jump in one step.
-                    .onChange(of: jump, initial: true) { _, section in
-                        guard let section else { return }
-                        GenMotion.perform(expanding: true, reduceMotion: reduceMotion) {
-                            reader.scrollTo(WorkItemsView.sectionID(section), anchor: .top)
+                    .onChange(of: jump, initial: true) { _, request in
+                        guard let request else { return }
+                        DispatchQueue.main.async {
+                            guard jump == request, screen.pane == .items, screen.itemRef == nil else { return }
+                            foldedSections.remove(request.section)
+                            GenMotion.perform(expanding: true, reduceMotion: reduceMotion) {
+                                reader.scrollTo(WorkItemsView.sectionID(request.section), anchor: .top)
+                            }
+                            jump = nil
                         }
-                        jump = nil
                     }
                 }
             } else if screen.project == nil, screen.selection == nil {
@@ -395,14 +418,6 @@ struct WorkMain: View {
                 focusAfterReturn = false
                 findRequest += 1
             }
-        }
-        .task(id: screen.filter.fullRef) {
-            guard let ref = screen.filter.fullRef else { return }
-            try? await Task.sleep(for: .milliseconds(350))
-            guard !Task.isCancelled, screen.filter.fullRef == ref, let snapshot = screen.snapshot,
-                  !snapshot.containers.contains(where: { $0.ref == ref || $0.members.contains(where: { $0.ref == ref && $0.isOpen }) }),
-                  !snapshot.triage.contains(where: { $0.ref == ref }) else { return }
-            screen.select(ref)
         }
     }
 
@@ -500,7 +515,8 @@ struct HubWorkContent: View {
 
     var body: some View {
         let origin = screen.itemDetail?.item.checkoutPath
-        let known = screen.project.flatMap { name in
+        let detailProject = screen.itemDetail?.item.project
+        let known = detailProject.flatMap { name in
             model.worktrees.first { $0.isMain && $0.repo.caseInsensitiveCompare(name) == .orderedSame }?.path
                 ?? PRsModel.projectRoot(name, in: model.prs.allProjects)
         }

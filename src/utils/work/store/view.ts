@@ -132,6 +132,7 @@ export interface ListFilter {
     ids?: string[];
     workerSession?: string;
     limit?: number;
+    after?: string;
 }
 
 /** One indexed query; rows carry no relations. */
@@ -165,6 +166,10 @@ export function selectItems(db: Database, filter: ListFilter): Item[] {
     if (filter.workerSession !== undefined) {
         clauses.push("json_extract(worker, '$.sessionId') = ?");
         params.push(filter.workerSession);
+    }
+    if (filter.after !== undefined) {
+        clauses.push("(created_ts, id) > (SELECT created_ts, id FROM items WHERE id = ?)");
+        params.push(filter.after);
     }
 
     const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";

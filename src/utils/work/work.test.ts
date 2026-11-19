@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { claimedHandoffTree, handoffClaimantIds } from "./claimed-handoffs";
+import { claimedHandoffTree, handoffClaimantIds, WIDGET_WORK_PREVIEW_CHARS } from "./claimed-handoffs";
 import type { ChangeKind } from "./model/change";
 import type { Actor } from "./model/item";
 import { asItemId } from "./model/item";
@@ -132,6 +132,11 @@ test("claimed handoffs use active local sessions and keep each member slot and i
         { id: "ship", title: "ship", state: "active", slot: "t2" },
         { id: "check", title: "check", state: "done", slot: "t10" },
     ]);
+    const long = "a".repeat(WIDGET_WORK_PREVIEW_CHARS * 2);
+    change("ship", "edited", { set: { body: long, acceptance: long } });
+    const member = claimedHandoffTree(db, live)[1].members[0];
+    expect(member.body).toBe(`${long.slice(0, WIDGET_WORK_PREVIEW_CHARS - 1)}…`);
+    expect(member.acceptance).toBe(member.body);
 
     change("ship", "moved", { from: "active", to: "done" });
     change("pack", "released", {}, "s-a");

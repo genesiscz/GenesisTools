@@ -116,16 +116,25 @@ private final class WorkFindSource: WorkSource {
     var delayedRef: String?
     var delayedDetail: CheckedContinuation<WorkItemDetail, Never>?
     var delayedReturned = false
-    private var changesContinuation: AsyncStream<Void>.Continuation?
+    private var changesContinuation: AsyncStream<WorkSourceEvent>.Continuation?
+    var additionalTriage: [WorkTriageValue] = []
+    var holdNextIndex = false
+    var heldIndex: CheckedContinuation<Void, Never>?
 
     func projects() async throws -> [String] { [WorkFindFixture.project, "Meadow"] }
     func snapshot(project: String) async throws -> WorkSnapshotValue {
         var value = WorkFindFixture.snapshot
         value.project = project
+        value.triage += additionalTriage
         return value
     }
     func list(project: String) async throws -> [WorkRowValue] {
         listedProjects.append(project)
+        if holdNextIndex {
+            holdNextIndex = false
+            await withCheckedContinuation { heldIndex = $0 }
+            heldIndex = nil
+        }
         return WorkFindFixture.index.map { row in
             var value = row
             value.project = project
@@ -149,8 +158,8 @@ private final class WorkFindSource: WorkSource {
     func perform(_ action: WorkScreenAction, project: String) async throws -> WorkActionOutcome {
         writeOutcome ?? WorkActionOutcome(ok: true, message: action.done)
     }
-    func changes() -> AsyncStream<Void> { AsyncStream { changesContinuation = $0 } }
-    func tick() { changesContinuation?.yield(()) }
+    func changes() -> AsyncStream<WorkSourceEvent> { AsyncStream { changesContinuation = $0 } }
+    func tick() { changesContinuation?.yield(.serviceChange) }
     func finishDelayed() {
         guard let ref = delayedRef else { return }
         delayedDetail?.resume(returning: detailValue(ref: ref))
@@ -306,6 +315,81 @@ final class WorkFindTests: XCTestCase {
         XCTAssertEqual(WorkItemsProjection(snapshot: snapshot, filter: mine, index: [indexedContainer]).containers.map(\.ref), [container.ref])
         let row = WorkRowValue(ref: triage.ref, state: triage.state, type: triage.type, title: triage.title)
         XCTAssertEqual(WorkItemsProjection(snapshot: snapshot, filter: .init(text: "thumbnail"), index: [row]).other, [row])
+    }
+
+    func testUppercaseReferenceMatchesOnlyItsItem() {
+        let filter = WorkFilter(text: "W_ABCD1234")
+        let target = WorkFilter.Row(ref: "w_abcd1234", title: "Find work by ref", type: "task", state: "open")
+        let mention = WorkFilter.Row(ref: "w_other001", title: "See w_abcd1234", type: "task", state: "open")
+        XCTAssertEqual(filter.fullRef, target.ref)
+        XCTAssertTrue(filter.matches(target))
+        // One row still matches a mention (the fallback when the item is not loaded); the list keeps only the item.
+        XCTAssertTrue(filter.matches(mention))
+        let snapshot = WorkSnapshotValue(project: "Orchard", containers: [], triage: [
+            WorkTriageValue(ref: mention.ref, group: "spotted", type: "task", state: "spotted", title: mention.title),
+            WorkTriageValue(ref: target.ref, group: "spotted", type: "task", state: "spotted", title: target.title),
+        ])
+        XCTAssertEqual(WorkItemsProjection(snapshot: snapshot, filter: filter).visibleRefs, [target.ref])
+        XCTAssertEqual(WorkItemsProjection(snapshot: snapshot, filter: WorkFilter(text: "w_abcd1234")).visibleRefs,
+                       [target.ref])
+        XCTAssertEqual(WorkFilter(text: "H_ABCD1234:T5").fullRef, "h_abcd1234:T5")
+    }
+
+    func testArchivedIndexRowUsesItsOwnStateAndTheTriageSearchText() {
+        let ref = "w_filing01"
+        let stale = WorkTriageValue(ref: ref, group: "reopened-no-worker", type: "task", state: "reopened",
+                                   title: "File the receipt", why: "The export timed out")
+        let snapshot = WorkSnapshotValue(project: "Orchard", containers: [], triage: [stale])
+        let closed = WorkRowValue(ref: ref, state: "done", type: "task", title: "File the receipt")
+        let filter = WorkFilter(text: "timed", states: [.done])
+        XCTAssertEqual(WorkItemsProjection(snapshot: snapshot, filter: filter, index: [closed]).archive, [closed])
+        XCTAssertTrue(WorkFilter(severities: ["high"]).requiresIndex)
+    }
+
+    @MainActor
+    func testDeactivationDiscardsABlockedDetailAndActivationReadsItAgain() async {
+        let source = WorkFindSource()
+        let model = WorkScreenModel(source: source)
+        model.activate()
+        await settle { model.snapshot != nil }
+        let ref = "w_delayed1"
+        source.delayedRef = ref
+        model.select(ref)
+        await settle { source.delayedDetail != nil }
+        model.deactivate()
+        source.finishDelayed()
+        await settle { source.delayedReturned }
+        XCTAssertNil(model.itemDetail)
+        XCTAssertFalse(model.isLoading)
+        source.delayedRef = nil
+        model.activate()
+        defer { model.deactivate() }
+        await settle { model.itemDetail?.item.id == ref }
+        XCTAssertEqual(source.detailRefs, [ref, ref])
+    }
+
+    @MainActor
+    func testMineLoadsOwnershipAndChangesDoNotStarveTheIndexOrAnOpenList() async {
+        let source = WorkFindSource()
+        let model = WorkScreenModel(source: source, reloadInterval: 0.02, settle: 0.01)
+        model.activate()
+        defer { source.heldIndex?.resume(); model.deactivate() }
+        await settle { model.snapshot != nil }
+        model.select("w_fixture01")
+        await settle { model.itemDetail?.item.id == "w_fixture01" && !model.isLoading }
+        source.holdNextIndex = true
+        model.filter = WorkFilter(mine: true)
+        await settle { source.heldIndex != nil }
+        XCTAssertEqual(source.listedProjects, ["Orchard"])
+        source.additionalTriage = [.init(ref: "w_new00001", group: "spotted", type: "bug", state: "spotted", title: "New work")]
+        let reloads = model.changeReloads
+        source.tick()
+        await settle { model.changeReloads > reloads && model.snapshot?.spotted.contains { $0.ref == "w_new00001" } == true }
+        XCTAssertEqual(source.listedProjects, ["Orchard"])
+        source.heldIndex?.resume()
+        await settle { source.listedProjects.count == 2 && !model.indexLoading }
+        XCTAssertEqual(model.itemDetail?.item.id, "w_fixture01")
+        XCTAssertFalse(model.index.isEmpty)
     }
 
     @MainActor

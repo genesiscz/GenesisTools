@@ -26,7 +26,7 @@ public struct WorkFilter: Equatable, Sendable {
     public static let `default` = WorkFilter()
     public var isActive: Bool { self != .default }
     public var requiresIndex: Bool {
-        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || states.isEmpty
+        mine || !severities.isEmpty || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || states.isEmpty
             || states.contains(.done) || states.contains(.dropped)
     }
 
@@ -36,13 +36,13 @@ public struct WorkFilter: Equatable, Sendable {
         let parts = candidate.split(separator: ":", omittingEmptySubsequences: false)
         guard parts.count <= 2, let base = parts.first else { return nil }
         let bits = base.split(separator: "_", omittingEmptySubsequences: false)
-        guard bits.count == 2, ["w", "h", "t"].contains(String(bits[0])),
+        guard bits.count == 2, ["w", "h", "t"].contains(bits[0].lowercased()),
               bits[1].count == 8, bits[1].allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { return nil }
         if parts.count == 2 {
             guard !parts[1].isEmpty,
                   parts[1].allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }) else { return nil }
         }
-        return candidate
+        return base.lowercased() + (parts.count == 2 ? ":" + String(parts[1]) : "")
     }
 
     public struct Row: Equatable, Sendable {
@@ -149,15 +149,15 @@ public struct WorkItemsProjection: Equatable, Sendable {
         // Keep the section order when a title mentions the full ref of an item in a later section.
         // A known exact hit is the result; the container around a matching member supplies context.
         let hasExact: Bool = filter.fullRef != nil && (
-            index.contains { $0.ref == exactRef && filter.matches(.init($0)) }
-            || snapshot.triage.contains { $0.ref == exactRef && filter.matches(.init($0)) }
+            index.contains { WorkFilter.fold($0.ref) == exactRef && filter.matches(.init($0)) }
+            || snapshot.triage.contains { WorkFilter.fold($0.ref) == exactRef && filter.matches(.init($0)) }
             || snapshot.containers.contains { container in
-                (container.ref == exactRef && (!filter.mine || containerFacts[container.ref] != nil)
+                (WorkFilter.fold(container.ref) == exactRef && (!filter.mine || containerFacts[container.ref] != nil)
                     && filter.matches(containerFacts[container.ref].map(WorkFilter.Row.init) ?? .init(container)))
-                    || container.members.contains { $0.ref == exactRef && filter.matches(.init($0)) }
+                    || container.members.contains { WorkFilter.fold($0.ref) == exactRef && filter.matches(.init($0)) }
             })
         func matches(_ row: WorkFilter.Row) -> Bool {
-            (!hasExact || row.ref == exactRef) && filter.matches(row, words: words, exactRef: exactRef)
+            (!hasExact || WorkFilter.fold(row.ref) == exactRef) && filter.matches(row, words: words, exactRef: exactRef)
         }
         var matched = Set<String>()
         var all = Set<String>()
@@ -197,7 +197,10 @@ public struct WorkItemsProjection: Equatable, Sendable {
         let triageContext = Dictionary(snapshot.triage.map { ($0.ref, $0) }, uniquingKeysWith: { first, _ in first })
         for row in index + closedMembers {
             all.insert(row.ref)
-            guard indexed.insert(row.ref).inserted, matches(triageContext[row.ref].map(WorkFilter.Row.init) ?? .init(row)) else { continue }
+            guard indexed.insert(row.ref).inserted else { continue }
+            var facts = WorkFilter.Row(row)
+            if let triage = triageContext[row.ref] { facts.text += WorkFilter.Row(triage).text }
+            guard matches(facts) else { continue }
             if ["done", "dropped"].contains(row.state) {
                 // Closed members belong to the archive, not to a second copy beneath their container.
                 if !matched.contains(row.ref) { archived.append(row) }

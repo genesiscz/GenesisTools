@@ -6,7 +6,7 @@
  */
 import type { Database } from "bun:sqlite";
 import { SafeJSON } from "@genesiscz/utils/json";
-import type { Actor, ItemId } from "../model/item";
+import type { Actor, Item, ItemId } from "../model/item";
 import { asItemId } from "../model/item";
 import type { ItemPatch } from "../model/payloads";
 import type { ItemState } from "../model/vocab";
@@ -166,6 +166,25 @@ function actorOf(row: SessionTodoRow): Actor {
 
 function mirrorTitle(row: Pick<SessionTodoRow, "title" | "prompt" | "number">): string {
     return (row.title || row.prompt.split("\n")[0] || `TODO ${row.number}`).slice(0, 500);
+}
+
+/** A ledger row that has no imported Work item yet, presented through the Work read interface. */
+export function legacySessionTodoItem(row: SessionTodoRow): Item {
+    return {
+        id: asItemId(row.id),
+        type: "task",
+        state: sessionTodoState(row.state),
+        project: projectOf(row),
+        rev: row.revision ?? 1,
+        title: row.title ?? row.prompt,
+        body: row.prompt,
+        ...(row.for !== undefined ? { for: row.for } : {}),
+        tags: [SESSION_TODO_TAG],
+        fields: {},
+        createdBy: actorOf(row),
+        createdTs: row.createdTs ?? row.updatedTs,
+        updatedTs: row.updatedTs,
+    };
 }
 
 function metaOf(row: SessionTodoRow): SessionTodoMeta {
