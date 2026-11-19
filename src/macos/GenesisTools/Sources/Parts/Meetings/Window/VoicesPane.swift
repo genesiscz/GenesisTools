@@ -461,11 +461,14 @@ struct VoicesPane: View {
         case .idle, .loading(previous: nil):
             HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Reading the samples…").font(.system(size: 11.5)).foregroundStyle(.secondary) }
                 .padding(.vertical, 6)
-        case .failed(let failure, nil):
-            FailureInline(FailureReport.unexpected(failure.detail ?? failure.sentence, outcome: failure.sentence,
-                                                   action: "Read the voice samples", title: "Voices did not load", area: "meetings"),
-                          form: .compact) { model.load(project: project, quiet: true) }
         default:
+            // A failed read shows with Retry also over the last read's samples, which stay and say they are old (eve t105).
+            if let failure = model.people.failure {
+                FailureInline(FailureReport.unexpected(failure.detail ?? failure.sentence, outcome: failure.sentence,
+                                                       action: "Read the voice samples", title: "Voices did not load", area: "meetings"),
+                              form: .compact) { model.load(project: project, quiet: true) }
+                staleNote(model.people)
+            }
             if let people = model.people.value {
                 if people.inMeeting.isEmpty {
                     Text("Nobody of this meeting is known to the project yet.").font(.system(size: 11.5)).foregroundStyle(.secondary)
@@ -625,14 +628,15 @@ struct VoicesPane: View {
             EmptyView()
         case .loading(previous: nil):
             EmptyView()
-        case .failed(let failure, nil):
-            Divider().padding(.vertical, 6)
-            FailureInline(FailureReport.unexpected(failure.detail ?? failure.sentence, outcome: failure.sentence,
-                                                   action: "Preview the voice names", title: "The voice preview failed", area: "meetings"),
-                          form: .compact) { model.runPreview() }
         default:
+            Divider().padding(.vertical, 6)
+            if let failure = model.preview.failure {
+                FailureInline(FailureReport.unexpected(failure.detail ?? failure.sentence, outcome: failure.sentence,
+                                                       action: "Preview the voice names", title: "The voice preview failed", area: "meetings"),
+                              form: .compact) { model.runPreview() }
+                staleNote(model.preview)
+            }
             if let summary = model.preview.value {
-                Divider().padding(.vertical, 6)
                 sectionTitle("Preview")
                 Text(summary.headline).font(.system(size: 11.5).monospacedDigit()).foregroundStyle(.secondary).padding(.bottom, 4)
                 ForEach(summary.lines.prefix(showAllPreview ? summary.lines.count : Self.shownPreviewRows)) { line in previewRow(line) }
@@ -642,6 +646,19 @@ struct VoicesPane: View {
                 }
             }
         }
+    }
+
+    /// Under a failure that kept the last read's data: the rows below are from before the failed try.
+    @ViewBuilder
+    private func staleNote<Value: Equatable>(_ state: Loadable<Value>) -> some View {
+        if let note = Self.staleNote(state) {
+            Text(note).font(.system(size: 11)).foregroundStyle(.secondary).padding(.bottom, 4)
+        }
+    }
+
+    static func staleNote<Value: Equatable>(_ state: Loadable<Value>) -> String? {
+        guard case .failed(_, previous: _?) = state else { return nil }
+        return "The rows below are from the last read that worked."
     }
 
     private func previewRow(_ line: VoicePreviewLine) -> some View {

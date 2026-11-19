@@ -135,4 +135,12 @@ final class MeetingsWindowReviewSwiftUITests: XCTestCase {
         let row = SidePanelCatalog.windowSections(defaults).first { $0.id == "panes" }?.rows.first { $0.id == setting.key }
         XCTAssertNotNil(row, "the Settings page and the side panel offer it")
     }
+
+    /// eve t105: a failed refresh that kept the last read's data says so under its failure line.
+    func testAFailedVoicesRefreshSaysTheRowsAreOld() {
+        let failure = MeetingsCLI.Failure(sentence: "No answer.", detail: "timeout")
+        XCTAssertNotNil(VoicesPane.staleNote(Loadable<Int>.failed(failure, previous: 3)))
+        XCTAssertNil(VoicesPane.staleNote(Loadable<Int>.failed(failure, previous: nil)), "nothing old to show")
+        XCTAssertNil(VoicesPane.staleNote(Loadable<Int>.loaded(3)))
+    }
 }
