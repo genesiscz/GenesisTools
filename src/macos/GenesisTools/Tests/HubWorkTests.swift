@@ -26,8 +26,16 @@ private final class FakeWorkSource: WorkSource {
         held?.resume()
     }
 
+    /// Done rows for the project index, newest last as the store returns them. Empty unless a test fills it.
+    var archive: [WorkRowValue] = []
+    func list(project: String) async throws -> [WorkRowValue] { archive.filter { $0.project == project } }
+
     func detail(ref: String) async throws -> WorkItemDetail {
         requestedItems.append(ref)
+        if let row = archive.first(where: { $0.ref == ref }) {
+            return WorkItemDetail(item: .init(id: ref, title: "Inspector copy of the routed row", type: row.type,
+                                              state: row.state, project: row.project ?? "App"))
+        }
         if ref == "h_build001:t2" {
             return WorkItemDetail(item: .init(id: ref, title: "Verify the release", type: "task", state: "active",
                 project: "App", body: "Inspect the release archive.", acceptance: "The archive contains the receipt."))
@@ -739,6 +747,57 @@ extension HubWorkTests {
         XCTAssertTrue(text.contains("All items"), text)
         XCTAssertTrue(text.contains("Where"), text)
         XCTAssertFalse(text.contains("Handoffs and epics"), "replace must hide the list:\n\(text)")
+    }
+
+    /// A route to a done item far below the fold scrolls the list to its row, beside its details: when the row is
+    /// revealed under an open list, and when the list first appears with the row already revealed.
+    func testARoutedArchiveRowFarBelowTheFoldIsScrolledIntoView() async throws {
+        for windowFirst in [true, false] {
+            let text = try await routedArchiveListText(windowFirst: windowFirst)
+            XCTAssertTrue(text.contains("The routed archive row"),
+                          "the routed row must be on screen (window first: \(windowFirst)):\n\(text)")
+        }
+    }
+
+    private func routedArchiveListText(windowFirst: Bool) async throws -> String {
+        let source = FakeWorkSource()
+        source.archive = (1...120).map { n in
+            WorkRowValue(ref: String(format: "w_arch%04d", n), state: "done", type: "task",
+                         title: n == 30 ? "The routed archive row" : "Archived fixture item \(n)", project: "App")
+        }
+        let model = HubWorkModel(source: source, defaults: isolatedDefaults())
+        defer { model.deactivate() }
+        await enter(model)
+        let preferences = HubPreferences(defaults: isolatedDefaults(), broadcasts: false, observeExternalChanges: false)
+        let size = NSSize(width: 1500, height: 900)
+        let view = WorkMain(screen: model.screen, preferences: preferences).frame(width: size.width, height: size.height)
+            .background(Color.black).environment(\.colorScheme, .dark)
+        var window: NSWindow?
+        if windowFirst { window = interactionWindow(AnyView(view), size: size) }
+        defer { window?.close() }
+        model.screen.openItem("w_arch0030")
+        await waitForDetail(model.screen, ref: "w_arch0030")
+        let deadline = Date().addingTimeInterval(3)
+        while !model.screen.visibleRefs.contains("w_arch0030") && Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(model.screen.visibleRefs.contains("w_arch0030"), "the route must reveal the archive row")
+        if window == nil { window = interactionWindow(AnyView(view), size: size) }
+        let content = try XCTUnwrap(window?.contentView)
+        // A hidden window draws only when asked. Each await returns to the run loop, so a scroll queued for the next
+        // turn runs too.
+        for _ in 0..<3 {
+            content.layoutSubtreeIfNeeded()
+            content.displayIfNeeded()
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+        content.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(content.bitmapImageRepForCachingDisplay(in: content.bounds))
+        content.cacheDisplay(in: content.bounds, to: bitmap)
+        // Only the list column: the inspector shows its own title, so the row must be found in the list itself.
+        let image = try XCTUnwrap(bitmap.cgImage)
+        let list = try XCTUnwrap(image.cropping(to: CGRect(x: 0, y: 0, width: image.width * 900 / 1500, height: image.height)))
+        return try HubInboxUXTests.drawnText(NSBitmapImageRep(cgImage: list))
     }
 
     /// This is the keyboard selection handler and the hub's real Back/Forward actions, without a global key monitor.
