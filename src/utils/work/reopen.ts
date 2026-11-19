@@ -28,11 +28,6 @@ export interface ReopenInput {
     dryRun?: boolean;
 }
 
-function lastSeq(ctx: WorkContext, item: string): number {
-    const row = ctx.db.query("SELECT MAX(seq) AS seq FROM changes WHERE item = ?").get(item) as { seq: number | null };
-    return row.seq ?? 0;
-}
-
 export function reopenMessage(item: Item, why: string): string {
     return [
         `Reopened ${item.id} "${item.title}".`,
@@ -88,8 +83,43 @@ export async function reopen(ctx: WorkContext, input: ReopenInput): Promise<Repl
         );
     }
 
-    const key = `work-reopen:${item.id}:${lastSeq(ctx, item.id)}`;
+    const seq = moved.data.changes.at(-1);
+    if (seq === undefined) {
+        return okReply(
+            "reopen",
+            { item, worker, place: null, receipt: null, key: null },
+            {
+                diagnostics: moved.diagnostics,
+            }
+        );
+    }
+
+    const key = `work-reopen:${item.id}:${seq}`;
     const place = worker?.sessionId ? await ctx.ports.delivery.place(worker.sessionId, worker.harness) : null;
+    const env = await envOf(ctx);
+    const principal = principalOf(env);
+    const attempt = input.request === undefined ? key : `${input.request}#reopen`;
+    const prior = ctx.db
+        .transaction(() => {
+            const replay = replayOf(ctx.db, principal, attempt);
+            if (replay !== null) {
+                return replay as Reply<ReopenData>;
+            }
+            const unknown: DeliveryReceipt = { outcome: "unknown", to: worker, at: env.now };
+            storeReply(
+                ctx.db,
+                principal,
+                attempt,
+                okReply("reopen", { item, worker, place, receipt: unknown, key }),
+                env.now
+            );
+            return null;
+        })
+        .immediate();
+    if (prior !== null) {
+        return prior;
+    }
+
     let receipt: DeliveryReceipt;
 
     if (worker === null || worker.sessionId === null || place?.live === false) {
@@ -117,10 +147,7 @@ export async function reopen(ctx: WorkContext, input: ReopenInput): Promise<Repl
         { diagnostics: [...moved.diagnostics, ...logged.diagnostics], next }
     );
 
-    if (input.request !== undefined) {
-        const env = await envOf(ctx);
-        storeReply(ctx.db, principalOf(env), `${input.request}#reopen`, reply, env.now);
-    }
+    storeReply(ctx.db, principal, attempt, reply, env.now);
 
     return reply;
 }
