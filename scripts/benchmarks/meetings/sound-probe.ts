@@ -152,7 +152,8 @@ function gapRows(rows: readonly AudioRow[]): GapRow[] {
                 ...(previousEnd !== undefined ? { gapMs: Math.round(zero - previousEnd) } : {}),
                 kept: row.kept ?? "normal",
             });
-            previousEnd = zero + row.durationMs;
+            // A short piece inside a longer one must not move the covered end back.
+            previousEnd = Math.max(previousEnd ?? zero, zero + row.durationMs);
         }
     }
 
