@@ -64,7 +64,7 @@ public final class RecordingBarModel: ObservableObject {
         openingSetup = setup
         self.defaults = defaults
         self.countdownTick = countdownTick
-        capabilities = engine.capabilities.effective(for: setup.target)
+        capabilities = engine.capabilities
         expanded = defaults.bool(forKey: "recorder.bar.expandedByDefault")
         let events = engine.events
         eventTask = Task { [weak self] in
@@ -396,8 +396,8 @@ public final class RecordingBarModel: ObservableObject {
     }
 
     private func refreshCapabilities() {
-        let effective = engine.capabilities.effective(for: setup.target)
-        if effective != capabilities { capabilities = effective }
+        let current = engine.capabilities
+        if current != capabilities { capabilities = current }
     }
 
     private func end(_ result: RecordingBarPhase) {

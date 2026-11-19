@@ -104,12 +104,7 @@ final class ToolsRecorderEngine: RecordingEngineAdapter {
         var targets = Set(RecordingTargetKind.allCases)
         if frames { targets = [.display, .displays] }
         else if methods != nil { targets.remove(.displays) }
-        // A window or app movie never carries sound in this recorder, before a take as well as during it.
-        var reasons = [
-            "camera": "The camera starts with the recording",
-            "windowAudio": "A window movie has no audio. Choose a display or an area to record sound.",
-            "appAudio": "An app movie has no audio. Choose a display or an area to record sound.",
-        ]
+        var reasons = ["camera": "The camera starts with the recording"]
         if !supports("restart") { reasons["restart"] = "This recorder does not offer Restart." }
         if !supports("audio.mute") {
             reasons["microphone"] = "This recorder keeps the audio sources chosen at start."
@@ -176,6 +171,7 @@ final class ToolsRecorderEngine: RecordingEngineAdapter {
         let ids = Array(Set(excludeWindowIDs + preparation.previewWindows)).filter { $0 > 0 }.sorted()
         let args = try CaptureOptions.barArguments(setup, threshold: threshold, shortcuts: shortcuts, excluding: ids,
                                                    screens: NSScreen.screens.map(\.frame), displayIDs: CaptureChoice.screenIDs,
+                                                   systemAudioScope: SystemAudioScope.load(),
                                                    keepOverlays: CaptureOptions.load().keepOverlays)
         let id: String = try await withCheckedThrowingContinuation { continuation in
             started = continuation

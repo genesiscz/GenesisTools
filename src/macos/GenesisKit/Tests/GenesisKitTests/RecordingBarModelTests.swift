@@ -128,17 +128,19 @@ final class RecordingBarModelTests: XCTestCase {
         XCTAssertNil(LiveRecordingCommand.setFrameRate(active: 24, still: 1).parameters["threshold"])
     }
 
-    func testWindowAudioReasonPreservesTheChoiceAndBlocksALiveCall() async {
+    /// A window take records sound as a display take does (2026-11-19: "all should have audio available"), so the
+    /// engine's live sound controls stay offered and a mute reaches the engine.
+    func testAWindowTakeKeepsTheEnginesLiveSoundControls() async {
         let source = MicrophoneSetup(enabled: true, muted: false, deviceID: "desk")
         let (model, engine) = await recording(target: .window(ids: [7], app: nil, title: nil, pid: nil), mic: source)
-        XCTAssertFalse(model.capabilities.liveMicrophoneMute)
-        XCTAssertFalse(model.capabilities.liveSystemAudioMute)
-        model.apply(.microphone(MicrophoneSetup(enabled: true, muted: true, deviceID: "desk")))
+        XCTAssertTrue(model.capabilities.liveMicrophoneMute)
+        XCTAssertTrue(model.capabilities.liveSystemAudioMute)
+        let muted = MicrophoneSetup(enabled: true, muted: true, deviceID: "desk")
+        model.apply(.microphone(muted))
         await model.pendingCommand?.value
-        XCTAssertEqual(model.setup.microphone, source)
-        XCTAssertEqual(model.notice?.message, model.capabilities.reasonUnavailable["microphone"])
-        XCTAssertNotNil(model.notice?.message)
-        XCTAssertEqual(engine.calls.count, 1)
+        XCTAssertEqual(model.setup.microphone, muted)
+        XCTAssertNil(model.notice)
+        XCTAssertEqual(engine.calls.count, 2)
     }
 
     func testDiscardFromManualPauseKeepsTheSetupForAnotherTake() async {
@@ -267,23 +269,21 @@ final class RecordingBarModelTests: XCTestCase {
         XCTAssertEqual(engine.calls.suffix(2), [.stop, .stop])
     }
 
-    /// The defect: the widget's setup bar drew the microphone, system audio and camera as on and clickable for a
-    /// display or area take, and the movie had no sound and no camera. Its engine names the sources it records.
-    func testTheWidgetsSilentVideoDisablesItsSoundAndCameraBeforeATake() {
+    /// The defect: the widget's setup bar drew the camera as on and clickable, and the movie had no camera. Its engine
+    /// names the sources it records: sound for every target (2026-11-19), no camera.
+    func testTheWidgetsMovieDisablesItsCameraBeforeATakeAndKeepsItsSound() {
         let widget = WidgetSessionEngine.movieCapabilities
-        for control in ["microphone", "microphoneDevice", "systemAudio", "camera", "cameraSize"] {
+        for control in ["camera", "cameraSize", "cameraShape"] {
             XCTAssertNotNil(widget.missingSourceReason(control), control)
         }
-        XCTAssertNil(widget.missingSourceReason("frameRate"))
-        XCTAssertNotNil(widget.unavailableReason(for: .microphone(MicrophoneSetup(enabled: true)), in: RecordingSetup()))
-        for target in [display, RecordingTarget.area(rect: CGRect(x: 0, y: 0, width: 200, height: 100), display: 0)] {
-            XCTAssertEqual(RecordingBarView.audioNote(for: target, capabilities: widget),
-                           "Widget recordings are silent video. Record sound with the full recorder (⌘7).")
+        for control in ["microphone", "microphoneDevice", "systemAudio", "frameRate"] {
+            XCTAssertNil(widget.missingSourceReason(control), control)
         }
+        XCTAssertNotNil(widget.unavailableReason(for: .camera(CameraSetup(enabled: true)), in: RecordingSetup()))
 
         let full = RecordingCapabilities(targets: [.display])
         XCTAssertNil(full.missingSourceReason("microphone"), "a recorder records every source unless it says otherwise")
-        XCTAssertNil(RecordingBarView.audioNote(for: display, capabilities: full))
+        XCTAssertNil(full.missingSourceReason("camera"))
     }
 
     /// The defect: a Small preset saved by the full recorder showed as the widget's Quality, and the widget records at

@@ -476,8 +476,6 @@ export function segmentJoiner(audioTitles: string[] = []): SegmentJoiner {
     return (input) => joinSegments({ ...input, audioTitles });
 }
 
-export const ffmpegSegmentJoiner: SegmentJoiner = (input) => joinSegments({ ...input, audioTitles: [] });
-
 const joinSegments = async ({
     segments,
     output,

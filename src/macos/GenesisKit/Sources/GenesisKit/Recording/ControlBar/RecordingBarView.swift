@@ -135,14 +135,6 @@ public struct RecordingBarView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityHidden(help != nil)
             phaseDetails
-            if let audioReason {
-                HStack {
-                    InfoStrip(audioReason, tone: .warning)
-                    if caps.targets.contains(.area) {
-                        word("Select an Area", "area", reason: reason("target", live: caps.liveTargetSwitch)) { pick(.area) }
-                    }
-                }
-            }
             if follows {
                 HStack {
                     let captured = actions.followedDisplay?.wrappedValue
@@ -224,14 +216,7 @@ public struct RecordingBarView: View {
         return Button { pick(nil) } label: {
             HStack(spacing: 4) {
                 Image(systemName: setup.target?.symbol ?? "display")
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(title).lineLimit(1).truncationMode(.middle)
-                    // Only when the target decides it: a recorder that is always silent says so in its strip, and
-                    // the word wrapped letter by letter in the narrow chip.
-                    if audioReason != nil, !caps.sources.isDisjoint(with: [.microphone, .systemAudio]) {
-                        Text("No audio").font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    }
-                }
+                Text(title).lineLimit(1).truncationMode(.middle)
             }.frame(minWidth: 28, maxWidth: .infinity, minHeight: 26, alignment: .leading)
         }
         .buttonStyle(.genHoverRow())
@@ -243,26 +228,10 @@ public struct RecordingBarView: View {
         model.beginTargetSelection { actions.chooseTarget(kind) }
     }
 
-    private var audioReason: String? { Self.audioNote(for: setup.target, capabilities: caps) }
-
     /// The movie preset the Quality row shows: the recorder's fixed one (the widget's native size), else the setup's.
     /// The saved preset stays in the setup for the full recorder.
     public static func shownMovieQuality(setup: RecordingSetup, capabilities caps: RecordingCapabilities) -> MovieQuality {
         caps.fixedMovieQuality ?? setup.movieQuality
-    }
-
-    /// What the target's movie leaves out of sound, said in view under the source line; nil when it records sound.
-    public static func audioNote(for target: RecordingTarget?, capabilities caps: RecordingCapabilities) -> String? {
-        if caps.sources.isDisjoint(with: [.microphone, .systemAudio]) {
-            return caps.reasonUnavailable["no.microphone"] ?? caps.missingSourceReason("microphone")
-        }
-        guard let target else { return nil }
-        let live = caps.reasonUnavailable["microphone"] ?? caps.reasonUnavailable["systemAudio"]
-        switch target {
-        case .window: return caps.reasonUnavailable["windowAudio"] ?? live
-        case .app: return caps.reasonUnavailable["appAudio"] ?? live
-        default: return nil
-        }
     }
 
     private func soundState(_ enabled: Bool, _ muted: Bool) -> String {
@@ -271,7 +240,6 @@ public struct RecordingBarView: View {
 
     private var sourceSummary: String {
         let scope = configuring ? "Next recording" : "This take"
-        if audioReason != nil { return "\(scope) · No audio track" }
         let mic = soundState(setup.microphone.enabled, setup.microphone.muted).lowercased()
         let system = soundState(setup.systemAudio.enabled, setup.systemAudio.muted).lowercased()
         return "\(scope) · Microphone \(mic) · System audio \(system)"

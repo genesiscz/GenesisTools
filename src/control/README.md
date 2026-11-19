@@ -826,7 +826,9 @@ tools control capture session \
 
 `capture session` takes `--target` (`{"kind":"window","windowIds":[n]}`, `{"kind":"app","app":"Finder"}` or
 `{"kind":"display","screenIndex":0}`; default the front window), `--exclude-window-ids`, `--fps` (default 60),
-`--no-indicator`, `--max-seconds` (1 to 600) and `--output` (default `~/.genesis-tools/control/recordings/`). It is
+`--no-indicator`, `--max-seconds` (1 to 600), `--output` (default `~/.genesis-tools/control/recordings/`), and the
+sound of `tools recorder start` for every target: `--audio system,mic`, `--mic-device <uid>` and
+`--system-audio-scope all|app` (a window or app keeps everything the Mac plays, or only its app). It is
 made of segments: one recorder run stops after 180 s, so a longer recording chains runs, and stop joins them into one
 movie.
 

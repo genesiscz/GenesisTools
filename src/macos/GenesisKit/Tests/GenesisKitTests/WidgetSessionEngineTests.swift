@@ -53,6 +53,26 @@ final class WidgetSessionEngineTests: XCTestCase {
         ])
     }
 
+    /// The defect (2026-11-19): "a window movie has no audio? why the hell not? all should have audio available." The
+    /// widget started every take silent; now the draft's sources reach the session for every target, system first.
+    func testStartRecordsTheDraftSoundForEveryTargetWithTheSystemScopeOnlyForAWindowOrApp() async throws {
+        let sound = RecordingSetup(target: window, microphone: .init(enabled: true, deviceID: "input"),
+                                   systemAudio: .init(enabled: true))
+        let pipe = WidgetSessionPipe()
+        let engine = WidgetSessionEngine(makeController: pipe.makeController, showsBorder: { true }, systemScope: { .app })
+        try await engine.start(sound, excludeWindowIDs: [])
+        XCTAssertEqual(Array(pipe.arguments.suffix(6)),
+                       ["--audio", "system,mic", "--mic-device", "input", "--system-audio-scope", "app"])
+
+        var display = sound
+        display.target = .display(index: 0, name: nil)
+        display.microphone.muted = true
+        let second = WidgetSessionPipe()
+        try await WidgetSessionEngine(makeController: second.makeController, showsBorder: { true }, systemScope: { .app })
+            .start(display, excludeWindowIDs: [])
+        XCTAssertEqual(Array(second.arguments.suffix(2)), ["--audio", "system"], "a muted source and a display scope stay out")
+    }
+
     /// The dimmer setting (`recording.keepsOverlays`, default off) is the only way the widget keeps HazeOver in the movie.
     func testKeepsOverlaysAddsTheFlagOnlyWhenOn() async throws {
         let pipe = WidgetSessionPipe()

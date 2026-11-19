@@ -16,7 +16,7 @@ public enum RecordingSource: String, CaseIterable, Sendable {
 public struct RecordingCapabilities: Equatable, Sendable {
     public var targets: Set<RecordingTargetKind>
     /// The sources the recorder's movie holds at all. A source outside it is drawn off and disabled with its reason
-    /// in setup too (the widget's movie is silent video with no camera).
+    /// in setup too (the widget's movie has no camera).
     public var sources: Set<RecordingSource>
     public var liveTargetSwitch: Bool
     public var liveMicrophoneMute: Bool
@@ -51,24 +51,6 @@ public struct RecordingCapabilities: Equatable, Sendable {
         self.liveDisplaysAddRemove = liveDisplaysAddRemove
         self.maxDurationMs = maxDurationMs
         self.reasonUnavailable = reasonUnavailable
-    }
-
-    /// Requested sources stay in the draft when the chosen capture format has no sound track.
-    func effective(for target: RecordingTarget?) -> Self {
-        let reason: String
-        switch target {
-        case .window: reason = "A window movie has no audio."
-        case .app: reason = "An app movie has no audio."
-        default: return self
-        }
-        var result = self
-        result.liveMicrophoneMute = false
-        result.liveMicrophoneDevice = false
-        result.liveSystemAudioMute = false
-        result.reasonUnavailable["microphone"] = reason
-        result.reasonUnavailable["microphoneDevice"] = reason
-        result.reasonUnavailable["systemAudio"] = reason
-        return result
     }
 
     /// Why a source's control does nothing for this recorder, before a take as well as during one; nil when its
