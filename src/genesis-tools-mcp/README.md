@@ -54,7 +54,7 @@ environment variable `GENESIS_TOOLS_MCP_CAPABILITIES` configures it (see [Config
 
 ## Tools and capabilities
 
-Every tool belongs to a capability. Unset, a host gets every capability except the opt-in `alza`, `waze` and `work`.
+Every tool belongs to a capability. Unset, a host gets every capability except the opt-in `alza` and `waze`.
 
 - `question_answer`: `question_answer`, `inbox_send`.
 - `inbox`: `inbox_send` alone.

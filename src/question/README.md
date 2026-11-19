@@ -660,8 +660,9 @@ Throw `TransclusionError` for an expected failure; its message becomes the reaso
 
 ## How it works
 
-Everything lives under `~/.genesis-tools/question/`. `GENESIS_TOOLS_HOME` replaces the home folder, so the data
-moves to `$GENESIS_TOOLS_HOME/.genesis-tools/question/`:
+The question logs, database, settings and assets live under `~/.genesis-tools/question/`. Numbered to-dos live
+under `~/.genesis-tools/work/`. `GENESIS_TOOLS_HOME` replaces the home folder for both paths. The paths below
+are relative to the question directory.
 
 | Path | What it holds |
 |------|---------------|
