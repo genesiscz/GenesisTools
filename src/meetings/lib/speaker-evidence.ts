@@ -41,13 +41,15 @@ export class LineSpeakers {
             roomPeople: wholeMeetingRoomPeople(record.seats),
         });
         const selfStays = presence?.map((stay) => (stay.self && selfName ? { ...stay, name: selfName } : stay));
+        const transcriptLabels = new Set(lines.map((line) => line.label));
         const people = [
             ...new Set([
                 ...record.participants.map((p) => p.name),
                 ...meeting.participants.map((p) => p.name),
-                ...(!presence?.length
-                    ? meeting.speakers.filter((p) => p.origin === "platform").map((p) => p.name)
-                    : []),
+                // Attendance may list only the joiner. R20 also knows the platform labels actually used in the call.
+                ...meeting.speakers
+                    .filter((p) => p.origin === "platform" && (!presence?.length || transcriptLabels.has(p.name)))
+                    .map((p) => p.name),
                 ...Object.values(record.speakers.labels),
                 ...(options.people ?? []),
                 ...record.items.flatMap((item) =>
