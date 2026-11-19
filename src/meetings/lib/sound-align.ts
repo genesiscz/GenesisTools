@@ -6,6 +6,8 @@
 
 /** How far from its stamp a piece is searched, each way. */
 export const ALIGN_SEARCH_SEC = 3;
+/** How much of a piece is matched: each lag costs one product per 10 ms of it, so the work stays bounded. */
+export const ALIGN_MATCH_SEC = 54;
 /** The envelope step: one energy value per 10 ms. */
 const STEP_SEC = 0.01;
 /** The peak's correlation must reach this (the envelopes are normalised, so 1 is a perfect match)… */
@@ -74,6 +76,7 @@ export function alignReferenceFromSec(stampSec: number): number {
 
 /**
  * The offset of a recorder piece against the source's call channel, by energy envelope, within plus or minus 3 s.
+ * At most the first `ALIGN_MATCH_SEC` of the piece is matched.
  * `reference` holds the source channel from `alignReferenceFromSec(stampSec)` on, at the same `rate` as `piece`.
  * `clear` is false when no lag stands out (silence, a flat hum, two lags alike); `zeroSec` is then the stamp.
  */
@@ -83,8 +86,12 @@ export function alignPiece(options: { piece: Float32Array; reference: Float32Arr
 } {
     const { rate, stampSec } = options;
     const unclear = { zeroSec: stampSec, clear: false };
-    const piece = envelope(options.piece, rate);
-    const reference = envelope(options.reference, rate);
+    // Only the start of a longer piece is matched, and only the reference a lag of it can reach.
+    const piece = envelope(options.piece.subarray(0, Math.round(ALIGN_MATCH_SEC * rate)), rate);
+    const reference = envelope(
+        options.reference.subarray(0, Math.round((ALIGN_MATCH_SEC + 2 * ALIGN_SEARCH_SEC) * rate)),
+        rate
+    );
 
     if (!piece || !reference) {
         return unclear;
