@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
+import { audioFactsSchema } from "@genesiscz/utils/recording-editor/audio-lanes";
 import { editOpSchema, editProjectSchema } from "@genesiscz/utils/recording-editor/project";
 import { RECORDER_METHODS } from "@genesiscz/utils/screen-recorder/control";
 import { liveEntrySchema, liveSocketPath } from "@genesiscz/utils/screen-recorder/live";
@@ -105,12 +106,14 @@ export const serviceApi = defineApi({
             name: "session.open",
             params: z.object({ path, holder }),
             // undoDepth and redoDepth: the undo and redo steps the edit keeps (they outlive a close), so a reopened
-            // window can undo and redo them.
+            // window can undo and redo them. audioFacts: the recording's sound sources, so a window can name the lanes
+            // of an older or one-source edit that never saved them.
             result: z.object({
                 path,
                 ...project,
                 undoDepth: z.number().int().nonnegative().optional(),
                 redoDepth: z.number().int().nonnegative().optional(),
+                audioFacts: audioFactsSchema.optional(),
             }),
             doc: "Opens (or holds once more) the edit session of a recording; the connection's holder holds it until session.close or the connection's end. Opening it again for the same holder reads it and adds no hold.",
             effect: "read",

@@ -3954,6 +3954,48 @@
             "type": "integer",
             "minimum": 0,
             "maximum": 9007199254740991
+          },
+          "audioFacts": {
+            "type": "object",
+            "properties": {
+              "movieTracks": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "mixedFrom": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "source": {
+                      "type": "string",
+                      "enum": [
+                        "mic",
+                        "system"
+                      ]
+                    },
+                    "file": {
+                      "type": "string"
+                    },
+                    "offsetMs": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "source",
+                    "file",
+                    "offsetMs"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "movieTracks",
+              "mixedFrom"
+            ],
+            "additionalProperties": false
           }
         },
         "required": [

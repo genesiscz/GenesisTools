@@ -21,11 +21,13 @@ export const audioLanesSchema = z
     .array(audioLaneSchema)
     .refine((lanes) => new Set(lanes.map((lane) => lane.id)).size === lanes.length, "Audio lane IDs must be unique");
 
-export interface AudioFacts {
-    movieTracks: number;
+/** What a recording's sound is made of, measured once per open; the lanes of an edit that never saved them come from it. */
+export const audioFactsSchema = z.object({
+    movieTracks: z.number().int().nonnegative(),
     /** The source files mixed into track 0 of a frames proxy. Their offsets are relative to the movie. */
-    mixedFrom: Array<{ source: "mic" | "system"; file: string; offsetMs: number }>;
-}
+    mixedFrom: z.array(z.object({ source: z.enum(["mic", "system"]), file: z.string(), offsetMs: z.number() })),
+});
+export type AudioFacts = z.infer<typeof audioFactsSchema>;
 
 function voiceoverLaneId(id: string): string {
     // Ordinary clip IDs keep their saved lane identity. Disambiguate reserved recording and music IDs.

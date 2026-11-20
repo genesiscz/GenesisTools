@@ -2442,6 +2442,18 @@ describe("the protocol fixture the Swift host tests read", () => {
         expect(SafeJSON.parse(SafeJSON.stringify(protocolJsonSchemas()), { strict: true })).toEqual(schemasFixture);
     });
 
+    test("session.open declares the recording's audio facts, so a reader of the schema keeps them", () => {
+        const open = serviceApi.methods.find((method) => method.name === "session.open");
+        const audioFacts = { movieTracks: 1, mixedFrom: [{ source: "mic", file: "mic.m4a", offsetMs: 120 }] };
+        const reply = {
+            path: "/rec/edit.json",
+            project: wholeProject({ video: "/rec/screen.mp4", durationUs: 1_000_000, width: 100, height: 100 }),
+            revision: 0,
+            audioFacts,
+        };
+        expect(open?.result.parse(reply)).toMatchObject({ audioFacts });
+    });
+
     test("the editor golden file is what the TypeScript side makes (bun scripts/recorder/write-protocol-fixtures.ts)", () => {
         expect(SafeJSON.parse(SafeJSON.stringify(editorGolden()), { strict: true })).toEqual(goldenFixture);
     });
