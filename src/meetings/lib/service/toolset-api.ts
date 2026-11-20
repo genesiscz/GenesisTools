@@ -473,7 +473,7 @@ export const locate = defineMethod({
     result: z.unknown(),
     resultName: "{ store, setting? } | null",
     effect: "read",
-    doc: "Which meetings store holds this exact id: this one (no setting), the ordinary home or an agent scratch home (setting names the GENESIS_TOOLS_HOME to use), or null. A missing meeting never searches the other stores by itself. CLI: tools meetings locate <id>.",
+    doc: `Which meetings store holds this exact id: this one (no setting), the ordinary home or an agent scratch home (setting names the GENESIS_TOOLS_HOME to use), or null. A missing meeting never searches the other stores by itself. CLI: ${toolCommand("meetings", "locate")} <id>.`,
 });
 export const overview = defineMethod({
     name: "overview",
@@ -546,14 +546,14 @@ export const recordStart = defineMethod({
         .strict(),
     result: z.unknown(),
     effect: "reversible",
-    doc: "Start a recording (tools meetings record start). Returns the meeting id, capturing identity, whether frames were omitted, and any partial-start reason.",
+    doc: `Start a recording (${toolCommand("meetings", "record", "start")}). Returns the meeting id, capturing identity, whether frames were omitted, and any partial-start reason.`,
 });
 export const watchOnceMethod = defineMethod({
     name: "watchOnce",
     params: z.object({}).strict(),
     result: z.string(),
     effect: "reversible",
-    doc: "Run one tools meetings watch --once tick, including recording permission preflight, and return its outcome.",
+    doc: `Run one ${toolCommand("meetings", "watch", "--once")} tick, including recording permission preflight, and return its outcome.`,
 });
 export const autostartMethod = defineMethod({
     name: "autostart",
@@ -561,7 +561,7 @@ export const autostartMethod = defineMethod({
     positional: ["mode"],
     result: z.unknown(),
     effect: "reversible",
-    doc: "Read or change tools meetings autostart. Returns enabled, running and the last failed or partial start with its time and delivery receipts.",
+    doc: `Read or change ${toolCommand("meetings", "autostart")}. Returns enabled, running and the last failed or partial start with its time and delivery receipts.`,
 });
 export const captureCostMethod = defineMethod({
     name: "captureCost",

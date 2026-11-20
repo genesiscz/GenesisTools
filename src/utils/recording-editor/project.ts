@@ -4558,7 +4558,7 @@ function hidePrivate(
         style: op.style,
         exclude: op.exclude,
         by: "hidePrivate",
-        request: requestOf({ kinds: op.kinds, names: op.names }),
+        request: keptHideRequest({ kinds: op.kinds, names: op.names }),
     });
 }
 
@@ -4586,7 +4586,7 @@ function hideText(
         exclude: op.exclude,
         label: op.label,
         by: "hideText",
-        request: requestOf({
+        request: keptHideRequest({
             text: op.text,
             pattern: op.pattern,
             texts: op.texts,
@@ -4597,7 +4597,7 @@ function hideText(
 }
 
 /** A hide request as a part keeps it (R6 7): only the keys the op was given. */
-function requestOf(request: NonNullable<NonNullable<EditRedaction["hide"]>["request"]>) {
+function keptHideRequest(request: NonNullable<NonNullable<EditRedaction["hide"]>["request"]>) {
     const kept = Object.fromEntries(Object.entries(request).filter(([, value]) => value !== undefined));
     return Object.keys(kept).length > 0 ? kept : undefined;
 }
