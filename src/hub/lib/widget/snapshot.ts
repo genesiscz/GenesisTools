@@ -1,6 +1,8 @@
 import { type WidgetTask, widgetTask } from "@app/question/lib/decisions/todo-view";
 import {
     cleanVisibleContext,
+    EXTERNAL_SESSION_ID,
+    externalMessageOrigin,
     inboxReply,
     MESSAGE_PREVIEW_CHARS,
     readInboxData,
@@ -715,9 +717,6 @@ export function widgetMessageBody(body: string, title: string): string {
     return withoutLeadingLine(cleanVisibleContext(body), title);
 }
 
-function messageOrigin(project: string, sender?: string | null): string {
-    return [project, sender].filter(Boolean).join(" · ") || "External sender";
-}
 function flattenAgents(nodes: AgentNode[]): AgentNode[] {
     return nodes.flatMap((node) => [node, ...flattenAgents(node.children)]);
 }
@@ -1439,7 +1438,9 @@ export async function widgetSnapshot({
                           row.itemTitle ?? ""
                       ),
                       ...((row.messageText?.length ?? 0) > MESSAGE_PREVIEW_CHARS ? { more: true as const } : {}),
-                      ...(row.sessionId === "unknown" ? { origin: messageOrigin(row.project, row.sender) } : {}),
+                      ...(row.sessionId === EXTERNAL_SESSION_ID
+                          ? { origin: externalMessageOrigin(row.project, row.sender) }
+                          : {}),
                   }
                 : undefined;
         putInbox(
@@ -1746,7 +1747,7 @@ export async function widgetSnapshot({
             id: `answer:${row.id}`,
             kind: "answer",
             ...(row.tag === "message" && row.sessionId === "unknown"
-                ? { messageOrigin: messageOrigin(row.project, row.agentLabel?.trim() || row.source) }
+                ? { messageOrigin: externalMessageOrigin(row.project, row.agentLabel?.trim() || row.source) }
                 : {}),
             ...(!inboxKind(kinds, row.tag === "message" ? "message" : "answer").show
                 ? { hiddenFromInbox: true as const }

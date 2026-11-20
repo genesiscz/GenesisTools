@@ -357,6 +357,38 @@ describe("scanTurns", () => {
 });
 
 describe("buildInbox", () => {
+    test("standalone messages keep one group per sender, each named by its origin", () => {
+        const message = (id: string, project: string, sender: string) => ({
+            id,
+            sessionId: "unknown",
+            provider: "unknown",
+            title: `${sender} session`,
+            project,
+            cwd: "",
+            at: Date.parse("2026-03-01T08:00:00.000Z"),
+            count: 1,
+            itemTitle: `from ${sender}`,
+            itemTag: "message",
+            sender,
+            afterClear: 1,
+            recentAfterClear: 1,
+            recentAfterClearTotal: 2,
+        });
+        const inbox = buildInbox({
+            sessions: [],
+            scans: new Map(),
+            rows: [],
+            forms: [],
+            unread: [message("q1", "Alpha", "deploy-bot"), message("q2", "Beta", "ci")],
+        });
+        expect(
+            inbox.map((session) => [session.sessionId, session.title, session.items.map((item) => item.id)])
+        ).toEqual([
+            ["unknown", "Alpha · deploy-bot", ["message:q1"]],
+            ["unknown", "Beta · ci", ["message:q2"]],
+        ]);
+    });
+
     test("transcript decisions, open store rows and pending forms, grouped by session", () => {
         const stored: DecisionRecord = {
             id: "d_9_s-beta",

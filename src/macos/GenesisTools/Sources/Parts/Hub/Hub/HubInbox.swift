@@ -238,7 +238,12 @@ struct InboxSession: Decodable, Identifiable, Hashable {
     /// What this session adds to the "waiting" badges: nothing once it is quiet for three days.
     var countedWaiting: Int { isStale ? 0 : waiting }
 
-    var id: String { sessionId ?? "form:\(cwd ?? "")" }
+    /// Messages no session sent share the session id "unknown"; the hub lists one group per sender (its title), so
+    /// the title keeps their ids apart.
+    var id: String {
+        guard let sessionId else { return "form:\(cwd ?? "")" }
+        return sessionId == "unknown" ? "unknown:\(title ?? "")" : sessionId
+    }
     var date: Date? { HubFormat.date(lastAt) }
     /// Decisions with an unsent pick or note, ready for the session's Send.
     var draftedItems: [InboxItem] {

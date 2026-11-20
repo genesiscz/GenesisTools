@@ -17,7 +17,7 @@ import { type WidgetTask, widgetTask } from "../decisions/todo-view";
 import type { AskForm } from "../pending/types";
 import { INBOX_STALE_MS, inboxSessionFresh, waitsOnHuman } from "../waiting/set";
 import { DEFAULT_INBOX_KINDS, type InboxKinds, inboxKind } from "./kinds";
-import type { WidgetInboxGroup } from "./unread";
+import { EXTERNAL_SESSION_ID, externalMessageOrigin, type WidgetInboxGroup } from "./unread";
 
 /**
  * The "Waiting for you" inbox: every session whose last reply asks a ❓ DECISION, every open or
@@ -733,12 +733,16 @@ export function buildInbox({
         });
     }
     for (const entry of unread) {
-        const target = group(entry.sessionId, entry.sessionId);
+        const kind = entry.itemTag === "message" ? "message" : "answer";
+        // Messages no session sent share one session id; each sender keeps its own group, named by its origin, so
+        // one sender's metadata never heads another's messages (the widget splits them the same way).
+        const external = kind === "message" && entry.sessionId === EXTERNAL_SESSION_ID;
+        const origin = external ? externalMessageOrigin(entry.project, entry.sender) : null;
+        const target = group(origin ? `${EXTERNAL_SESSION_ID}:${origin}` : entry.sessionId, entry.sessionId);
         target.info.provider ??= entry.provider;
-        target.info.title ??= entry.title;
+        target.info.title ??= origin ?? entry.title;
         target.info.cwd ??= entry.cwd;
         target.info.project ??= entry.project;
-        const kind = entry.itemTag === "message" ? "message" : "answer";
         target.items.push({
             kind,
             id: `${kind}:${entry.id}`,
