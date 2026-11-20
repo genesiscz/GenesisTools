@@ -1597,7 +1597,8 @@ final class EditorModel {
         let part = exportPart
         let rendered = Self.exportedProject(project, part: part)
         let facts = sourceAudioFacts
-        let url = EditExporter.outputURL(for: project)
+        // A part takes its own `-part-<from>-<to>` name, so it never lands on the whole edit's file name.
+        let url = EditExporter.outputURL(for: project, part: part)
         // The revision the export renders, for the export ledger; nil while the edit has no file yet.
         let editFile = store.url
         let revision: Int? = FileManager.default.fileExists(atPath: editFile.path) ? project.revision : nil
