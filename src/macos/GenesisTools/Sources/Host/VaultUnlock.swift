@@ -659,7 +659,7 @@ enum VaultGrants {
     }
 
     /// The runtime a grant is keyed by. Bun and GenesisTools' `gt-<tool>` launchers are one program: every launcher is
-    /// a hard link of `~/.bun/bin/bun`, and which one starts a script depends on the tool that spawned it. The usage
+    /// a copy of `~/.bun/bin/bun` (an APFS clone since 2026-11-20, a hard link before), and which one starts a script depends on the tool that spawned it. The usage
     /// daemon ran as bun, gt-services, gt-claude and gt-codex on one morning (2026-10-15), and each asked again for the
     /// same script after "Always". A binary elsewhere that calls itself bun still asks.
     ///

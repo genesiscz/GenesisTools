@@ -2,6 +2,7 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, statSync } f
 import { dirname, join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { createGit } from "../git/core";
+import { foreignAncestor } from "./foreign-ancestor";
 
 // The no-delete convention as code: a folder that should go is moved into the day's
 // `/tmp/<YYYYMMDD>-agents-removals/<context>` folder, which only this user can enter, and the space
@@ -41,7 +42,7 @@ export function claimPrivateFolder(path: string): string | null {
         const above = foreignAncestor(path);
 
         if (above) {
-            return above;
+            return `${above}, so nothing is moved into ${path}`;
         }
 
         if ((info.mode & 0o077) !== 0) {
@@ -52,60 +53,6 @@ export function claimPrivateFolder(path: string): string | null {
     } catch (error) {
         log.warn({ error, path }, "move-aside: the private folder could not be prepared");
         return `${path} could not be prepared as a private folder (${error instanceof Error ? error.message : String(error)}), so nothing is moved into it`;
-    }
-}
-
-/**
- * Why another local user could swap `path` for a folder of theirs, or null. The folder is only as
- * private as everything above it: a /tmp/<date>-agents-removals planted by someone else lets them rename
- * the claimed folder away and put their own in its place between two moves. So every folder and symlink
- * on the way must be this user's or root's, and a folder others can write needs the sticky bit (as
- * /tmp has), which keeps them from renaming what they do not own.
- */
-function foreignAncestor(path: string): string | null {
-    const uid = process.getuid?.();
-
-    // No POSIX owners or modes to read (Windows).
-    if (uid === undefined) {
-        return null;
-    }
-
-    const problem = (at: string, info: { uid: number; mode: number }, folder: boolean): string | null => {
-        if (info.uid !== uid && info.uid !== 0) {
-            return `${at} belongs to another user, who could swap the folder below it, so nothing is moved into ${path}`;
-        }
-
-        if (folder && (info.mode & 0o022) !== 0 && (info.mode & 0o1000) === 0) {
-            return `${at} can be changed by other users, who could swap the folder below it, so nothing is moved into ${path}`;
-        }
-
-        return null;
-    };
-
-    // The path as written (a symlinked /tmp, a planted date folder), then the real folders it leads to.
-    for (let at = dirname(path); ; at = dirname(at)) {
-        const entry = lstatSync(at);
-        const found = problem(at, entry, entry.isDirectory());
-
-        if (found) {
-            return found;
-        }
-
-        if (at === dirname(at)) {
-            break;
-        }
-    }
-
-    for (let at = dirname(realpathSync(path)); ; at = dirname(at)) {
-        const found = problem(at, statSync(at), true);
-
-        if (found) {
-            return found;
-        }
-
-        if (at === dirname(at)) {
-            return null;
-        }
     }
 }
 
