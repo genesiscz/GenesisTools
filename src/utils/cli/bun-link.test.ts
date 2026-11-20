@@ -117,6 +117,23 @@ describe.skipIf(skip.onWindows)("namedBunExecPath", () => {
             expect(statSync(fakeBun).nlink).toBe(1);
         });
 
+        it("the first clone also turns every other hard link of bun into a clone", () => {
+            placeNamedBun({ name: "claude", bunPath: fakeBun, binDir, kind: "link" });
+            placeNamedBun({ name: "codex", bunPath: fakeBun, binDir, kind: "link" });
+            writeFileSync(join(binDir, "codex-tools"), "#!/bin/zsh\n");
+            expect(statSync(fakeBun).nlink).toBe(3);
+
+            clone("hub");
+
+            expect(statSync(fakeBun).nlink).toBe(1);
+            for (const name of ["gt-claude", "gt-codex", "gt-hub"]) {
+                expect(statSync(join(binDir, name)).nlink).toBe(1);
+                expect(readFileSync(join(binDir, name), "utf8")).toBe(readFileSync(fakeBun, "utf8"));
+            }
+            expect(readFileSync(join(binDir, "codex-tools"), "utf8")).toBe("#!/bin/zsh\n");
+            expect(readdirSync(binDir).sort()).toEqual(["codex-tools", "gt-claude", "gt-codex", "gt-hub"]);
+        });
+
         it("makes the clone again after the bun binary changed", () => {
             const path = clone("du");
             const staleIno = statSync(path).ino;

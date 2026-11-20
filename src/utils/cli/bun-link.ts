@@ -1,4 +1,13 @@
-import { type BigIntStats, existsSync, linkSync, mkdirSync, renameSync, statSync, unlinkSync } from "node:fs";
+import {
+    type BigIntStats,
+    existsSync,
+    linkSync,
+    mkdirSync,
+    readdirSync,
+    renameSync,
+    statSync,
+    unlinkSync,
+} from "node:fs";
 import { basename, join } from "node:path";
 import { type CopyFile, cloneOrCopy } from "@genesiscz/utils/fs/clone";
 import { logger } from "@genesiscz/utils/logger";
@@ -30,7 +39,9 @@ export type BunNameKind = "clone" | "link" | "none";
  * inode). A clone costs no disk space, takes about 0.2 ms, keeps bun's code
  * signature valid, and macOS keeps its grant when a new clone replaces it at
  * the same path. Its cost: macOS checks each new clone at its first start
- * (about 0.7 s more, once per tool after each bun upgrade).
+ * (about 0.7 s more, once per tool after each bun upgrade). A name that is
+ * still a hard link of bun (made by an older version) becomes a clone on its
+ * next use, and that first clone turns the other hard links into clones too.
  *
  * Elsewhere it stays a hard link. Windows and test processes get the bun
  * binary itself: a test home is removed at exit, and removing an executable
@@ -86,8 +97,18 @@ export function placeNamedBun({
     try {
         const source = statSync(bunPath, { bigint: true });
 
-        if (kind === "clone" && placeClone({ bunPath, source, target, binDir, copyFile, beforePublish })) {
-            return target;
+        if (kind === "clone") {
+            if (isCurrentClone(target, source)) {
+                return target;
+            }
+
+            if (placeClone({ bunPath, source, target, binDir, copyFile, beforePublish })) {
+                if (source.nlink > 1n) {
+                    cloneOtherHardLinks({ bunPath, source, binDir, copyFile });
+                }
+
+                return target;
+            }
         }
 
         placeLink({ bunPath, source, target, binDir });
@@ -128,10 +149,6 @@ function placeClone({
     copyFile?: CopyFile;
     beforePublish?: () => void;
 }): boolean {
-    if (isCurrentClone(target, source)) {
-        return true;
-    }
-
     mkdirSync(binDir, { recursive: true });
     const tmp = join(binDir, `.${basename(target)}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`);
     const placement = cloneOrCopy({ source: bunPath, destination: tmp, mode: 0o755, mayCopy: false, copyFile });
@@ -153,6 +170,36 @@ function placeClone({
     } catch (err) {
         unlinkSync(tmp);
         throw err;
+    }
+}
+
+/**
+ * Turns every other `gt-*` hard link of bun in `binDir` into a clone, once. A name nobody starts again would keep
+ * bun's inode shared, and the kernel would still name every bun process by one of them. About 0.2 ms per name.
+ */
+function cloneOtherHardLinks({
+    bunPath,
+    source,
+    binDir,
+    copyFile,
+}: {
+    bunPath: string;
+    source: BigIntStats;
+    binDir: string;
+    copyFile?: CopyFile;
+}): void {
+    for (const entry of readdirSync(binDir)) {
+        const path = join(binDir, entry);
+
+        try {
+            const stat = entry.startsWith("gt-") ? statSync(path, { bigint: true, throwIfNoEntry: false }) : undefined;
+
+            if (stat?.ino === source.ino && stat.dev === source.dev) {
+                placeClone({ bunPath, source, target: path, binDir, copyFile });
+            }
+        } catch (err) {
+            logger.debug({ err, path }, "[bun-link] could not turn an old hard link of bun into a clone");
+        }
     }
 }
 
