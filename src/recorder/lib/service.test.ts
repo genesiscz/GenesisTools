@@ -1760,6 +1760,20 @@ describe("the REPL's and the CLI's way to the service", () => {
         // A bare ~ is the home folder, as a shell reads it.
         expect(callerParams("duplicate", { to: "~" })).toEqual({ to: homedir() });
         expect(callerParams("duplicate", { to: "~/copy" })).toEqual({ to: join(homedir(), "copy") });
+        // A layer's file is beside the movie, as the in-process layerAdd reads it, so it goes as written.
+        expect(
+            callerParams("apply", {
+                ops: [
+                    { op: "layerAdd", kind: "image", file: "logo.png" },
+                    { op: "layer", id: "m1", file: "intro.mp4" },
+                ],
+            })
+        ).toEqual({
+            ops: [
+                { op: "layerAdd", kind: "image", file: "logo.png" },
+                { op: "layer", id: "m1", file: "intro.mp4" },
+            ],
+        });
     });
 
     // Regression test: every `file` was resolved against the caller's cwd, so a bare camera name sent
