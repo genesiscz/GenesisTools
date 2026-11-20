@@ -787,7 +787,8 @@ function insertLocked(
         source.rootMeeting = recordedRoot(new MeetingStore(), source.rootMeeting);
     }
     const model = nonblank.parse(input.model);
-    if (library.model && library.model !== model) {
+    // The model binds only the prints that remain: after the last one is removed, a new model may enrol.
+    if (library.model && library.samples.length > 0 && library.model !== model) {
         throw new Error(
             `Voice model changed: project '${project}' supplied '${model}', library uses '${library.model}'`
         );

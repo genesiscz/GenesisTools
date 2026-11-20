@@ -79,3 +79,11 @@ test("invalid project paths, mismatched seats and changed models cannot overwrit
     expect(() => addVoicePrint("model-voice-fixture", "Alice Example", print, "other-model")).toThrow("model changed");
     expect(readVoiceStore("model-voice-fixture").model).toBe("first-model");
 });
+
+test("a new voice model enrols once the last print of the old model is removed", () => {
+    addVoicePrint("model-reset-fixture", "Alice Example", print, "first-model");
+    expect(removeVoicePrint("model-reset-fixture", "Alice Example", print)).toBe(1);
+    addVoicePrint("model-reset-fixture", "Alice Example", print, "other-model");
+    expect(readVoiceStore("model-reset-fixture").model).toBe("other-model");
+    expect(readVoiceStore("model-reset-fixture").people["Alice Example"]?.samples).toHaveLength(1);
+});

@@ -267,7 +267,7 @@ export async function learnMeetingVoices(options: {
                     skip(row, "confirmed person's identity changed");
                     continue;
                 }
-                if (view.library.model && view.library.model !== change.model) {
+                if (view.library.model && view.library.samples.length > 0 && view.library.model !== change.model) {
                     skip(row, "sample uses a different voice model from the project");
                     continue;
                 }
