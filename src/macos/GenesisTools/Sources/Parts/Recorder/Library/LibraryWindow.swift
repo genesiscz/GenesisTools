@@ -292,11 +292,17 @@ final class LibraryModel {
         RecordingActions.run(.trash, item) { [weak self] in self?.handle($0) }
     }
 
-    /// Moves the last trashed recording back to its folder.
-    func putBack() {
-        guard let trashed else { return }
+    /// Moves `shown`, the trashed recording the strip names, back to its folder. A recording trashed after the strip
+    /// was drawn stays in the Trash for its own strip; `shown` nil puts back the last one.
+    func putBack(_ shown: RecordingTrash.Entry? = nil) {
+        guard let trashed = shown ?? trashed else { return }
         do {
-            if try trash.putBack(trashed) != nil { selected = trashed.from }
+            if try trash.putBack(trashed) != nil {
+                selected = trashed.from
+            } else if let now = trash.last {
+                HubPerf.log("recorder.library: put back \(trashed.from.path) skipped: \(now.from.path) was trashed after the strip showed")
+                failure = "“\(trashed.title)” was not put back: “\(now.title)” went to the Trash after it. Put Back now restores “\(now.title)”."
+            }
         } catch {
             HubPerf.log("recorder.library: put back \(trashed.from.path) failed: \(error.localizedDescription)")
             failure = RecordingTrash.failureMessage(trashed, error)
@@ -373,11 +379,11 @@ struct LibraryView: View {
             }
             if let trashed = model.trashed {
                 InfoStrip("Moved “\(trashed.title)” to the Trash. Click here or press ⌘Z to put it back.", tone: .info,
-                          symbol: "arrow.uturn.backward", action: { model.putBack() }, actionTooltip: "Put it back where it was",
+                          symbol: "arrow.uturn.backward", action: { model.putBack(trashed) }, actionTooltip: "Put it back where it was",
                           dismiss: { model.dismissTrashed() })
                     .padding(.horizontal, 20).padding(.top, 8)
                     .background {
-                        Button("Put Back") { model.putBack() }
+                        Button("Put Back") { model.putBack(trashed) }
                             .keyboardShortcut("z", modifiers: .command)
                             .opacity(0).frame(width: 0, height: 0)
                             .accessibilityHidden(true)

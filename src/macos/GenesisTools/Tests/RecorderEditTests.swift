@@ -600,6 +600,10 @@ final class RecorderEditTests: XCTestCase {
         trash.keep(.init(title: "Newer", from: root.appendingPathComponent("library/newer"), to: root.appendingPathComponent("Trash/newer")))
         XCTAssertNil(try trash.putBack(shown))
         XCTAssertEqual(trash.last?.title, "Newer", "the newer entry stays for its own row")
+        // The library's strip passes the entry it names too: it never restores Newer for a strip that said Shown.
+        library.putBack(shown)
+        XCTAssertEqual(trash.last?.title, "Newer")
+        XCTAssertEqual(library.failure?.hasPrefix("“Shown” was not put back"), true)
         trash.keep(shown)
         XCTAssertEqual(try trash.putBack(shown)?.title, "Shown")
 
