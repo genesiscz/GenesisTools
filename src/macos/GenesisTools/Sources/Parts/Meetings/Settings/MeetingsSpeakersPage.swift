@@ -180,36 +180,64 @@ struct MeetingsVoiceNamingCard: View {
             Divider()
             NativeSettingsToggle("Offer the only unsampled person",
                                  detail: "When the sampled voices on a seat clearly differ from a line, offer the one person on that seat with no sample for review.",
-                                 identifier: "meetings.voice.exclusion.enabled",
-                                 isOn: Binding(get: { naming.exclusion.enabled }, set: { chooseExclusion("enabled", $0) }))
+                                 identifier: "meetings.voice.exclusion.enabled", isOn: exclusionEnabled)
             if naming.exclusion.enabled {
-                exclusionSlider("margin", "Distance below a match",
-                                detail: "How far under the score that names a person the sampled voices must stay. A larger margin keeps borderline lines undecided.",
-                                value: naming.exclusion.margin, in: MeetingsVoiceNaming.Exclusion.marginRange)
-                exclusionSlider("maxConfidence", "Highest confidence of an offer",
-                                detail: "An offer never reaches the confidence that applies a name by itself, so a person reviews it first.",
-                                value: naming.exclusion.maxConfidence, in: 0...1)
-                exclusionSlider("coherence", "Voices must agree",
-                                detail: "How alike the lines of the group must sound (mean score to their centre), so two different strangers are not offered as one.",
-                                value: naming.exclusion.coherence, in: 0...1)
+                ForEach(Self.exclusionSliders, id: \.key) { exclusionSlider($0) }
                 NativeSettingsRow("Lines in one stay", detail: "The fewest lines in the same stay before an offer, so one stray sound names nobody.") {
                     NativeSettingsNumberPicker("Lines in one stay", range: 1..<(MeetingsVoiceNaming.Exclusion.maxLines + 1),
                                                identifier: "meetings.voice.exclusion.minLines", suffix: .counted("line"),
-                                               value: Binding(get: { naming.exclusion.minLines }, set: { chooseExclusion("minLines", $0) }))
+                                               value: exclusionMinLines)
                 }
             }
         }
     }
 
-    private func exclusionSlider(_ key: String, _ title: String, detail: String, value: Double,
-                                 in range: ClosedRange<Double>) -> some View {
+    /// One slider of `voice.exclusion`: the config key it writes and the read value it shows.
+    struct ExclusionSlider {
+        let key: String
+        let title: String
+        let detail: String
+        let value: KeyPath<MeetingsVoiceNaming.Exclusion, Double>
+        let range: ClosedRange<Double>
+    }
+
+    /// The sliders the card draws, in order. The tests read each one's key and value from this list.
+    static var exclusionSliders: [ExclusionSlider] {
+        [
+            .init(key: "margin", title: "Distance below a match",
+                  detail: "How far under the score that names a person the sampled voices must stay. A larger margin keeps borderline lines undecided.",
+                  value: \.margin, range: MeetingsVoiceNaming.Exclusion.marginRange),
+            .init(key: "maxConfidence", title: "Highest confidence of an offer",
+                  detail: "An offer never reaches the confidence that applies a name by itself, so a person reviews it first.",
+                  value: \.maxConfidence, range: 0...1),
+            .init(key: "coherence", title: "Voices must agree",
+                  detail: "How alike the lines of the group must sound (mean score to their centre), so two different strangers are not offered as one.",
+                  value: \.coherence, range: 0...1),
+        ]
+    }
+
+    /// The "Offer the only unsampled person" switch.
+    var exclusionEnabled: Binding<Bool> {
+        Binding(get: { naming.exclusion.enabled }, set: { chooseExclusion("enabled", $0) })
+    }
+
+    /// The "Lines in one stay" count.
+    var exclusionMinLines: Binding<Int> {
+        Binding(get: { naming.exclusion.minLines }, set: { chooseExclusion("minLines", $0) })
+    }
+
+    /// The end of a slider's gesture: its one write.
+    func commit(_ slider: ExclusionSlider, _ value: Double) { chooseExclusion(slider.key, value) }
+
+    private func exclusionSlider(_ slider: ExclusionSlider) -> some View {
         Group {
             Divider()
-            NativeSettingsSlider(title, detail: detail, identifier: "meetings.voice.exclusion.\(key)",
-                                 value: Binding(get: { drafts[key] ?? value }, set: { drafts[key] = $0 }),
-                                 in: range, step: 0.01, format: VoiceScore.text, onCommit: { committed in
-                drafts[key] = nil
-                chooseExclusion(key, committed)
+            NativeSettingsSlider(slider.title, detail: slider.detail, identifier: "meetings.voice.exclusion.\(slider.key)",
+                                 value: Binding(get: { drafts[slider.key] ?? naming.exclusion[keyPath: slider.value] },
+                                                set: { drafts[slider.key] = $0 }),
+                                 in: slider.range, step: 0.01, format: VoiceScore.text, onCommit: { committed in
+                drafts[slider.key] = nil
+                commit(slider, committed)
             })
         }
     }

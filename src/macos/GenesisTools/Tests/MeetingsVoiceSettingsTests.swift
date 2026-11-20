@@ -57,17 +57,29 @@ final class MeetingsVoiceSettingsTests: XCTestCase {
         XCTAssertEqual(read.maxConfidence, 0.69)
         XCTAssertEqual(read.minLines, MeetingsVoiceNaming.Exclusion.maxLines, "a huge count is clamped, never a trap")
 
+        // The controls the card draws: each shows its own key's value and writes that key.
         var writes = [String: String]()
-        let card = MeetingsVoiceNamingCard(naming: MeetingsVoiceNaming(raw: nil)) { path, value in
+        let card = MeetingsVoiceNamingCard(naming: MeetingsVoiceNaming(raw: set)) { path, value in
             writes[path.joined(separator: ".")] = "\(value)"
         }
-        card.chooseExclusion("enabled", false)
-        card.chooseExclusion("minLines", 4)
-        card.chooseExclusion("coherence", 0.8)
+        let sliders = MeetingsVoiceNamingCard.exclusionSliders
+        XCTAssertEqual(sliders.map(\.key), ["margin", "maxConfidence", "coherence"], "three sliders, in the card's order")
+        let configured: [String: Double] = ["margin": 0.3, "maxConfidence": 0.5, "coherence": 0.9]
+        for slider in sliders {
+            XCTAssertEqual(card.naming.exclusion[keyPath: slider.value], configured[slider.key], "\(slider.key) shows its own value")
+        }
+        XCTAssertFalse(card.exclusionEnabled.wrappedValue)
+        XCTAssertEqual(card.exclusionMinLines.wrappedValue, 5)
+        card.exclusionEnabled.wrappedValue = true
+        card.exclusionMinLines.wrappedValue = 4
+        let committed: [String: Double] = ["margin": 0.4, "maxConfidence": 0.6, "coherence": 0.7]
+        for slider in sliders { card.commit(slider, committed[slider.key] ?? 0) }
         XCTAssertEqual(writes, [
-            "global.speakerLabels.voice.exclusion.enabled": "false",
+            "global.speakerLabels.voice.exclusion.enabled": "true",
             "global.speakerLabels.voice.exclusion.minLines": "4",
-            "global.speakerLabels.voice.exclusion.coherence": "0.8",
+            "global.speakerLabels.voice.exclusion.margin": "0.4",
+            "global.speakerLabels.voice.exclusion.maxConfidence": "0.6",
+            "global.speakerLabels.voice.exclusion.coherence": "0.7",
         ])
     }
 
