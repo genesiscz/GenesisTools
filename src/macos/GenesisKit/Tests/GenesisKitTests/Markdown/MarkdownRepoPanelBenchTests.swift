@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import Darwin
 @testable import GenesisKit
+import GenesisKitTestSupport
 import SwiftUI
 import Vision
 import XCTest

@@ -1,4 +1,5 @@
 import AppKit
+import GenesisKitTestSupport
 import Vision
 
 /// The text a view draws, read back with Vision. SwiftUI's list rows are neither views nor in-process accessibility

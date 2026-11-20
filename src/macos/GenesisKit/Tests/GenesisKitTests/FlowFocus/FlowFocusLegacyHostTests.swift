@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import GenesisKitTestSupport
 import SwiftUI
 import Vision
 import XCTest
