@@ -542,6 +542,25 @@ final class RecorderEditTests: XCTestCase {
     /// The defect: the menu bar's Recent rows and the library both move a recording to the Trash, but only the library
     /// kept where it went, so a recording trashed from the menu had no Put Back. Both now read one kept entry.
     @MainActor
+    /// Reduce noise turned off while a preview is made: the answer that arrives later never starts playing.
+    @MainActor
+    func testASoundPreviewWhoseControlsWentAwayNeverPlays() throws {
+        let preview = AudioPreviewPlayer()
+        let missing = URL(fileURLWithPath: "/nonexistent/preview.m4a")
+        let token = preview.begin()
+        XCTAssertTrue(preview.making)
+        preview.cancel()
+        XCTAssertFalse(preview.making)
+        XCTAssertFalse(try preview.play(missing, for: token), "the request is no longer current, so nothing opens")
+        XCTAssertFalse(preview.isPlaying)
+
+        let current = preview.begin()
+        XCTAssertThrowsError(try preview.play(missing, for: current), "a current request opens the file")
+        preview.failed(current)
+        XCTAssertFalse(preview.making)
+        XCTAssertFalse(preview.isPlaying)
+    }
+
     func testATrashedRecordingIsPutBackFromTheOneKeptEntry() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("trash-\(UUID().uuidString)")
         let from = root.appendingPathComponent("library/2026-11-04_10-00-demo")
