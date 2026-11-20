@@ -131,6 +131,9 @@ export function codexChangesWindow(sessionId: string, request: ChangesWindowRequ
                 throw new Error("rollout changed between facts and window");
             }
         }
+        // The parse, and the full read a complete window falls back to, rebuild update states from the files on disk
+        // now. Every path a change named is such a file, so a reused answer rechecks them all, missing ones included.
+        const working = [...facts.writers.keys()].map((file) => [file, fileIdentity(file)] as const);
         const transcript = parseCodexRollout(
             sessionId,
             complete ? [] : (cache.lines?.state ?? []),
@@ -148,7 +151,9 @@ export function codexChangesWindow(sessionId: string, request: ChangesWindowRequ
             window: {
                 transcriptPath: path,
                 unchanged: () =>
-                    findCodexRollout(sessionId) === path && isDeepStrictEqual(fileIdentity(path), identity),
+                    findCodexRollout(sessionId) === path &&
+                    isDeepStrictEqual(fileIdentity(path), identity) &&
+                    working.every(([file, before]) => isDeepStrictEqual(fileIdentity(file), before)),
                 transcript,
                 earlierTurns,
                 editedDirs: [...facts.dirs],
