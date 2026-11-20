@@ -10,7 +10,7 @@ import { macosPermissionsCommand } from "@genesiscz/utils/genesis-tools/tools/sy
 import { GENESIS_APP_NAME } from "@genesiscz/utils/macos/genesis-app";
 import type { PermissionKindId } from "@genesiscz/utils/macos/permission-kinds";
 
-/** Phase 2 fills it with the methods a connected face serves. */
+/** Callback methods a connected face can advertise to the service. */
 export type ServiceClientMethod = "request.present";
 
 export type NeedSpec =

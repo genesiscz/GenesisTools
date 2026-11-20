@@ -997,7 +997,8 @@ describe("the service client", () => {
             dir,
             sourceRoot: genesisToolsSourceRoot(),
             deps: {
-                facts: fakeFacts(),
+                // The service's own terminal: a remote caller must not be told it can use it.
+                facts: fakeFacts({ hasTerminal: () => true }),
                 app: {
                     rpc: async <T>() => {
                         await Bun.sleep(300);
@@ -1035,6 +1036,12 @@ describe("the service client", () => {
             await expect(client.call("actions.run", { id: "config.set", args: {} })).rejects.toThrow(
                 'no action "config.set"'
             );
+            const explained = await client.call<{
+                first: string | null;
+                ways: Array<{ needs: Array<{ ok: boolean }> }>;
+            }>("actions.explain", { id: "terminal.prompt" });
+            expect(explained.first).toBeNull();
+            expect(explained.ways[0]?.needs.map((need) => need.ok)).toEqual([false]);
         } finally {
             client?.close();
             start.host.stop("test");

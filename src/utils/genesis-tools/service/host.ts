@@ -183,7 +183,8 @@ export async function startGenesisToolsService(
                 signal: call.signal,
             });
         },
-        "actions.explain": (params) => explainAction(AREAS, params.id, deps, params),
+        // The caller's facts, as actions.run uses: explain names the way a run from this caller would take.
+        "actions.explain": (params, call) => explainAction(AREAS, params.id, callerDeps(call.connection), params),
         "config.get": (params) => (params.path.includes(".") ? config.get(params.path) : config.resolve(params.path)),
         "config.set": async (params, { signal }) => {
             await config.set(params.path, params.value, { signal });
