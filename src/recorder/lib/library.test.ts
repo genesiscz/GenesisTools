@@ -27,6 +27,7 @@ import { LiveRecordingServer } from "@genesiscz/utils/screen-recorder/live";
 import { recordingStoreOf } from "@genesiscz/utils/screen-recorder/recording-stores";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
+import * as edits from "./edit";
 import {
     computeEdit,
     exportAs,
@@ -63,7 +64,7 @@ import {
     proxyCanvas,
     proxyVideoFilter,
 } from "./proxy";
-import { currentGif, shareableMovie, trashRecording, trashRecordings } from "./quick-actions";
+import { copyRecording, currentGif, shareableMovie, trashRecording, trashRecordings } from "./quick-actions";
 import { screenHitsWithOps } from "./screen-ops";
 import { findOnScreen } from "./screen-search";
 import * as serviceClient from "./service-client";
@@ -899,6 +900,25 @@ describe("a recording's quick actions", () => {
             [join(outside, "chosen.mp4"), "screen-edited.mp4"].sort()
         );
         expect(readExportLedger(folder).files["screen-edited.mp4"]?.revision).toBe(2);
+    });
+
+    it("refuses to copy an export when the edit changed while it ran", async () => {
+        const folder = folderWith([["screen.mp4", 0]]);
+        writeFileSync(join(folder, "edit.json"), SafeJSON.stringify({ revision: 2 }));
+        const exported = join(folder, "screen-edited.mp4");
+        const spy = spyOn(edits, "exportAs").mockImplementation(async () => {
+            writeFileSync(exported, "movie");
+            await recordExport({ folder, file: exported, revision: 2 });
+            // A cut saved in the editor while the export rendered revision 2.
+            writeFileSync(join(folder, "edit.json"), SafeJSON.stringify({ revision: 3 }));
+            return { ok: true, path: exported, bytes: 5, seconds: 0 };
+        });
+
+        try {
+            await expect(copyRecording(folder)).rejects.toThrow("the edit changed while its export ran");
+        } finally {
+            spy.mockRestore();
+        }
     });
 
     it("waits for another writer's ledger lock, so an export that writer recorded meanwhile is kept", async () => {

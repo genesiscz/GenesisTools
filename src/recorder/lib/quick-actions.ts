@@ -104,7 +104,16 @@ async function currentMovie(folder: string): Promise<{ path: string | undefined;
         throw new Error(`${shareable.reason}, and the export failed: ${answer.error ?? "no file"}`);
     }
 
-    return { path: answer.path, exported: true };
+    // The export renders the revision it opened; an edit saved while it ran makes that file stale before the copy.
+    const after = shareableMovie(folder);
+
+    if (after.kind !== "file") {
+        throw new Error(
+            `the edit changed while its export ran, so ${answer.path} no longer shows it; copy again to export the new edit`
+        );
+    }
+
+    return { path: after.path, exported: true };
 }
 
 /**
