@@ -1508,27 +1508,39 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
     test("meeting.suggest stops when its caller cancels: the run's signal aborts and the call rejects", async () => {
         const { client } = await ADAPTERS[kind]();
         const suggest = await import("../suggest-run");
-        let seen: AbortSignal | undefined;
+        // Each step wakes on its own event, and each wait has a deadline that fails the test by name.
+        const started = Promise.withResolvers<AbortSignal | undefined>();
+        const heard = Promise.withResolvers<void>();
+        const within = <T>(promise: Promise<T>, what: string) => {
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            const expired = new Promise<never>((_resolve, reject) => {
+                timer = setTimeout(() => reject(new Error(`${what} did not happen within 3 s`)), 3000);
+            });
+            return Promise.race([promise, expired]).finally(() => clearTimeout(timer));
+        };
         const run = spyOn(suggest, "runSuggest").mockImplementation(async ({ signal }) => {
-            seen = signal;
+            started.resolve(signal);
             await new Promise((_resolve, reject) => {
-                signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+                signal?.addEventListener(
+                    "abort",
+                    () => {
+                        heard.resolve();
+                        reject(signal.reason);
+                    },
+                    { once: true }
+                );
             });
             return { fresh: [], retired: [], warnings: [] };
         });
         closing.push(() => run.mockRestore());
         const controller = new AbortController();
         const call = client.call("meeting.suggest", { meeting: REVIEW.id }, { signal: controller.signal });
-        for (let waited = 0; waited < 3000 && !seen; waited += 10) {
-            await Bun.sleep(10);
-        }
+        const seen = await within(started.promise, "the suggest run start");
         expect(seen?.aborted).toBe(false);
         controller.abort();
         await expect(call).rejects.toThrow();
         // Over a socket the service hears `$/cancel` a moment after the caller gave up.
-        for (let waited = 0; waited < 3000 && !seen?.aborted; waited += 10) {
-            await Bun.sleep(10);
-        }
+        await within(heard.promise, "the run's abort");
         expect(seen?.aborted).toBe(true);
     });
 
