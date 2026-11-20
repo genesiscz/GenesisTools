@@ -1033,15 +1033,19 @@ describe("shared indicator and departure APIs", () => {
                 people: [{ name: "River Example", fromSec: 0, toSec: 29, leftAtExact: false }],
             },
         });
-        const boundedLeave = personStays({
+        const boundedPerson = personStays({
             record: bounded,
             durationSec: 900,
             lines,
             speaking: [{ tSec: 27, speaking: ["River Example"] }],
             silenceMinutes: 10,
             callSilent: [{ fromSec: 31, toSec: 900 }],
-        }).find((person) => person.name === "River Example")?.stays[0]?.toSec;
-        expect(boundedLeave).toBe(29);
+        }).find((person) => person.name === "River Example");
+        const boundedStay = boundedPerson?.stays[0];
+        expect(boundedStay?.toSec).toBe(29);
+        // The silence did not shorten it, so the bound stays inexact and is not a silence departure.
+        expect(boundedStay?.leaveSource).not.toBe("silence");
+        expect(boundedStay && boundedPerson?.inexactEnds?.has(boundedStay)).toBe(true);
     });
 
     test("an answered sign-off names a witnessed joiner, and the answer may come before or after the sign-off", () => {
