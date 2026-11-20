@@ -1158,6 +1158,20 @@ describe("the record's own copy of its source", () => {
         expect((await opened.meeting()).transcript.map((entry) => entry.text)).toEqual(["Ahoj.", "Čau."]);
     });
 
+    test("once the record keeps a copy, a read stays on this Mac and never asks a remote service", async () => {
+        const { store, record } = await newRecord();
+        const live = fakeSource();
+        const load = spyOn(live, "load");
+        const clock = spyOn(live, "recordingClock");
+        const backed = copyBackedSource(live, store.folder(record.id));
+        await backed.load("abc");
+        expect(load).toHaveBeenLastCalledWith("abc", {});
+        await backed.load("abc");
+        await backed.recordingClock("abc");
+        expect(load).toHaveBeenLastCalledWith("abc", { remote: false });
+        expect(clock).toHaveBeenLastCalledWith("abc", { remote: false });
+    });
+
     test("a record whose source code cannot be opened reads its copy", async () => {
         const { store, record } = await newRecord();
         const folder = store.folder(record.id);
