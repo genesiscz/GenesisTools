@@ -431,7 +431,7 @@ const movieMethods = [
     }),
     editById(
         "layer",
-        `Changes a layer's placement, visibility, shape, name or source times (microseconds); changes.file (and changes.kind when it turns a picture into a video) replaces its source in one undo step, keeping its id and place. Hiding the camera keeps its recording. Returns the edit summary from the layer op in ${toolCommand("recorder apply")}.`
+        `Changes a layer's placement, visibility, shape, name or source times (microseconds); changes.file replaces its source in one undo step, keeping its id and place; a bare file name is beside the movie, and changes.kind is needed when the new file is another kind (a picture for a video, or a video for a picture). Hiding the camera keeps its recording. Returns the edit summary from the layer op in ${toolCommand("recorder apply")}.`
     ),
     edit(
         "moveLayer",
