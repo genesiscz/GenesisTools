@@ -20,6 +20,7 @@ import { MeetingsConflictError } from "@genesiscz/utils/meetings/conflict";
 import { appendCorrections, type Correction, teachesDictionary } from "@genesiscz/utils/meetings/corrections";
 import {
     type DecisionActor,
+    isPersonActor,
     MEETING_UNCHANGED,
     type MeetingChange,
     type MeetingItem,
@@ -1683,7 +1684,7 @@ const NO_DICTIONARY_PLAN: DictionaryPlan = { undo: [], warnings: [] };
 const DICTIONARY_ACTIONS = new Set<JournalActionKind>(["answer", "confirm", "respell", "revert"]);
 
 const AGENT_ADDS =
-    "Only a person adds a word to the dictionary; an agent leaves the dictionary question open for them (the owner's rule).";
+    "Only a person adds a word to the dictionary; an agent, a rule or an unrecorded actor leaves the dictionary question open for them (the owner's rule).";
 
 function scopeName(scope: DictionaryScope): string {
     return scope.kind === "global" ? "global" : scope.project;
@@ -1718,7 +1719,7 @@ function dictionaryPlan(options: {
             question?.about === "dictionary" ? action.answer.trim().toLowerCase() === "add" : action.learn === "add";
 
         if (yes && question?.heard && typeof fixed === "string" && fixed && fixed.toLowerCase() !== NONE_OF_THESE) {
-            if (actor.kind === "agent") {
+            if (!isPersonActor(actor.kind)) {
                 throw new Error(AGENT_ADDS);
             }
 

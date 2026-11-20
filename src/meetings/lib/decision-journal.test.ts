@@ -1874,13 +1874,16 @@ describe("decision journal", () => {
         const entries = async () => (await config.read()).projects.work?.dictionary?.entries ?? [];
         const agent = { kind: "agent", harness: "claude", session: null } as const;
 
-        await expect(
-            fx.journal.apply({
-                meeting: fx.meeting.id,
-                action: { kind: "answer", question: "i2", answer: "sorb", learn: "add" },
-                actor: agent,
-            })
-        ).rejects.toThrow("person");
+        // Not only an agent: a rule and an unrecorded actor are not a person either.
+        for (const actor of [agent, { kind: "rule", rule: "fixture" } as const, { kind: "unknown" } as const]) {
+            await expect(
+                fx.journal.apply({
+                    meeting: fx.meeting.id,
+                    action: { kind: "answer", question: "i2", answer: "sorb", learn: "add" },
+                    actor,
+                })
+            ).rejects.toThrow("person");
+        }
         const answered = await fx.journal.apply({
             meeting: fx.meeting.id,
             action: { kind: "answer", question: "i2", answer: "sorb" },

@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
 import { type FileIdentity, fileIdentity } from "@genesiscz/utils/fs/identity-cache";
 import { sha256Json } from "@genesiscz/utils/hash";
-import { voiceRootMeeting } from "@genesiscz/utils/meetings/record";
+import { isPersonActor, voiceRootMeeting } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import {
@@ -150,7 +150,7 @@ export interface VoiceTarget {
 }
 
 export function answeredVoiceTargets(entry: JournalEntry, people: readonly string[]): VoiceTarget[] {
-    if (!["answer", "confirm"].includes(entry.action.kind) || !["window", "listen", "cli"].includes(entry.actor.kind)) {
+    if (!["answer", "confirm"].includes(entry.action.kind) || !isPersonActor(entry.actor.kind)) {
         return [];
     }
     // Listen replayed an earlier human answer: that answer already gave its samples, so it is not a second confirmation.

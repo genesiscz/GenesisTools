@@ -1,5 +1,5 @@
 import { IntervalIndex } from "@genesiscz/utils/math";
-import type { MeetingItem } from "@genesiscz/utils/meetings/record";
+import { isPersonActor, type MeetingItem } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
@@ -12,7 +12,7 @@ import { needsSpeakerReview } from "../speaker-scores";
 import { ATTENDANCE_CONFIDENCE } from "./seat";
 import type { LabelContext, LineLabel } from "./types";
 
-const human = (kind?: string) => kind === "listen" || kind === "window" || kind === "cli";
+const human = isPersonActor;
 
 /** A current human choice outranks the independent rules. A split or a disagreement supplies no training audio. */
 export function meetingVoiceSeeds(options: {

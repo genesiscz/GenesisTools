@@ -146,6 +146,14 @@ export const decisionActorSchema = z.discriminatedUnion("kind", [
 ]);
 export type DecisionActor = z.infer<typeof decisionActorSchema>;
 
+/** The actors that are a person: the window, the terminal listening session and the command line. */
+const PERSON_ACTORS: ReadonlySet<string> = new Set<DecisionActor["kind"]>(["window", "listen", "cli"]);
+
+/** Whether a decision came from a person; an agent, a rule and an unrecorded actor (`unknown`) are not one. */
+export function isPersonActor(kind: string | undefined): boolean {
+    return kind !== undefined && PERSON_ACTORS.has(kind);
+}
+
 /** What a decision did, as the decision journal names its actions (src/meetings/lib/decision-journal.ts). */
 export const DECISION_ACTIONS = [
     "confirm",
