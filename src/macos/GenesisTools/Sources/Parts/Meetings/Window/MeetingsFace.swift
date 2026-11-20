@@ -368,8 +368,7 @@ private func meetingsSnapshotPart(_ request: MeetingsRequest, model: MeetingsWin
     guard let detail = model.detail else { return nil }
     if let id = request.card {
         if case .idle = detail.rows { detail.loadRows() }
-        _ = await waitUntil(60) { detail.rows.value != nil || detail.rows.failure != nil }
-        let rows = detail.rows.value?.rows ?? []
+        guard let rows = await snapshotRead("review rows", { detail.rows })?.rows else { return nil }
         return rows.first { $0.id == id }.map { row in
             // The window's dock builds the card inside the meeting's view; the picture gives it the same detail.
             AnyView(PinCard(row: row, reference: { id in rows.first { $0.id == id }.map(ReviewRowView.reference) })
@@ -378,25 +377,25 @@ private func meetingsSnapshotPart(_ request: MeetingsRequest, model: MeetingsWin
     }
     if let sheet = request.sheet, sheet == "history" || sheet.hasPrefix("history:") {
         if case .idle = detail.rows { detail.loadRows() }
-        _ = await waitUntil(60) { detail.rows.value != nil || detail.rows.failure != nil }
+        guard await snapshotRead("review rows", { detail.rows }) != nil else { return nil }
         detail.openHistory(item: sheet.hasPrefix("history:") ? String(sheet.dropFirst(8)) : nil)
-        _ = await waitUntil(30) { detail.history?.entries.value != nil || detail.history?.entries.failure != nil }
+        guard await snapshotRead("history", seconds: 30, { detail.history?.entries ?? .idle }) != nil else { return nil }
         return detail.history.map { AnyView(HistorySheetView(detail: detail, history: $0)) }
     }
     if let sheet = request.sheet, sheet == "voice-tools" || sheet == "voice-tools:details" {
         if case .idle = detail.speakers { detail.loadSpeakers() }
-        _ = await waitUntil(60) { detail.speakers.value != nil || detail.speakers.failure != nil }
+        guard await snapshotRead("speakers", { detail.speakers }) != nil else { return nil }
         return AnyView(MeetingVoiceToolsSheet(detail: detail, evidenceOpen: sheet.hasSuffix(":details"), close: {}))
     }
     if request.sheet == "word-timings" {
         // The pane's "Word timings…" with nothing selected: the range from the line at the start.
         if case .idle = detail.transcript { detail.loadTranscript() }
-        _ = await waitUntil(60) { detail.transcript.value != nil || detail.transcript.failure != nil }
-        _ = await waitUntil(30) { model.settings.value != nil || model.settings.failure != nil }
-        let lines = (detail.transcript.value?.entries ?? []).lazy.map { (start: $0.startSec, end: $0.endSec) }
+        guard let transcript = await snapshotRead("transcript", { detail.transcript }),
+              let settings = await snapshotRead("settings", seconds: 30, { model.settings }) else { return nil }
+        let lines = transcript.entries.lazy.map { (start: $0.startSec, end: $0.endSec) }
         typealias Transcript = MeetingsPreferences.Transcript
         let choice = Transcript.timingLanguage.value(model.defaults)
-        let code = Transcript.timingLanguageCode(choice, meeting: model.settings.value?.global.language)
+        let code = Transcript.timingLanguageCode(choice, meeting: settings.global.language)
         return AnyView(WordTimingOptions(range: .near(lines, position: 0),
                                          model: SidePanelWords.choice(Transcript.timingModel.value(model.defaults).rawValue,
                                                                       key: Transcript.timingModel.key),
@@ -411,8 +410,8 @@ private func meetingsSnapshotPart(_ request: MeetingsRequest, model: MeetingsWin
     }
     if request.sheet == "people-details" {
         if case .idle = detail.rows { detail.loadRows() }
-        _ = await waitUntil(60) { detail.rows.value != nil || detail.rows.failure != nil }
-        let attendance = detail.rows.value?.attendanceDetail ?? detail.rows.value?.attendanceWarning
+        guard let rows = await snapshotRead("review rows", { detail.rows }) else { return nil }
+        let attendance = rows.attendanceDetail ?? rows.attendanceWarning
         return AnyView(MeetingPeopleDetailsSheet(attendance: attendance, notes: detail.suggestionWarnings, close: {}))
     }
     if request.sheet == "seats" {
@@ -436,10 +435,10 @@ private func meetingsSnapshotPart(_ request: MeetingsRequest, model: MeetingsWin
         let bounds = sheet.dropFirst("selection:".count).split(separator: "-", omittingEmptySubsequences: false)
         guard bounds.count == 2, let first = Int(bounds[0]), let last = Int(bounds[1]), first >= 0, first <= last else { return nil }
         if case .idle = detail.transcript { detail.loadTranscript() }
-        _ = await waitUntil(60) { detail.transcript.value != nil || detail.transcript.failure != nil }
         if case .idle = detail.rows { detail.loadRows() }
-        _ = await waitUntil(60) { detail.rows.value != nil || detail.rows.failure != nil }
-        let entries = detail.transcript.value?.entries ?? []
+        guard let transcript = await snapshotRead("transcript", { detail.transcript }),
+              await snapshotRead("review rows", { detail.rows }) != nil else { return nil }
+        let entries = transcript.entries
         guard entries.indices.contains(last) else { return nil }
         let projection = TranscriptPaneProjection.make(.init(entries: entries, applyAbove: 70, items: detail.record.value?.items ?? [],
                                                              evidence: detail.rows.value?.lineEvidence ?? [],
@@ -458,6 +457,17 @@ private func meetingsSnapshotPart(_ request: MeetingsRequest, model: MeetingsWin
         return AnyView(PersonStayEditor(detail: detail, original: name.isEmpty ? nil : PersonStay.of(name, in: detail.record.value),
                                         duration: model.meeting(detail.id)?.durationSec, close: {}))
     }
+    return nil
+}
+
+/// Waits for a read the picture needs and gives its answer. A failed read or a timeout writes why to stderr and gives
+/// nil, so the snapshot ends without a picture instead of drawing the sheet with no data.
+@MainActor
+private func snapshotRead<Value>(_ what: String, seconds: Double = 60, _ read: () -> Loadable<Value>) async -> Value? {
+    _ = await waitUntil(seconds) { if case .loaded = read() { true } else { read().failure != nil } }
+    if case .loaded(let value) = read() { return value }
+    let why = read().failure.map { "did not load: \($0.sentence)" } ?? "read timed out after \(Int(seconds)) s"
+    FileHandle.standardError.write(Data("meetings snapshot: the \(what) \(why)\n".utf8))
     return nil
 }
 
