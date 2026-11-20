@@ -275,7 +275,7 @@ interface SettledEntry {
     events: number;
 }
 
-/** One journal of a scan; `view` is null for a settled journal an earlier scan already read. */
+/** One journal of a scan; `view` is null for a settled journal unless the scan was asked for settled views. */
 interface ScanRow extends SettledEntry {
     name: string;
     view: RequestView | null;
@@ -444,11 +444,23 @@ export function createRequestJournal(
         }
     }
 
+    /** The full view of settled journal `name`, from the bounded cache or read again; null when it cannot be read. */
+    function settledView(name: string): RequestView | null {
+        const view = settledViews.get(name) ?? viewAt(name);
+        if (view) {
+            keepSettledView(name, view);
+        }
+
+        return view;
+    }
+
     /**
-     * Every readable request: an open one with its view, a settled one known from an earlier scan as its entry only.
-     * One that cannot be read costs only its own row.
+     * Every readable request: an open one with its view, a settled one as its entry only, so a scan holds no more
+     * settled history than the bounded cache. `withSettledViews` returns the views of the settled journals this scan
+     * reads for the first time too, for a caller that returns every view anyway. One that cannot be read costs only
+     * its own row.
      */
-    function scan(): ScanRow[] {
+    function scan(options: { withSettledViews?: boolean } = {}): ScanRow[] {
         if (!existsSync(dir)) {
             settled.clear();
             settledViews.clear();
@@ -479,6 +491,7 @@ export function createRequestJournal(
             if (TERMINAL_STATES.has(view.state)) {
                 settled.set(name, entry);
                 keepSettledView(name, view);
+                return [{ name, ...entry, view: options.withSettledViews ? view : null }];
             }
 
             return [{ name, ...entry, view }];
@@ -523,10 +536,16 @@ export function createRequestJournal(
             signal: controller.signal,
             pollFallbackMs,
             onChange: () => {
-                // A settled journal known from an earlier scan has nothing new to publish.
+                // A settled row comes without its view: it is loaded only when this watcher has not published all of
+                // its events, because another reader of the journal (a list, a pending check) can have read it first.
                 for (const row of scan()) {
-                    if (row.view) {
-                        publish(row.view);
+                    if (row.events <= (reported.get(row.id) ?? 0)) {
+                        continue;
+                    }
+
+                    const view = row.view ?? settledView(row.name);
+                    if (view) {
+                        publish(view);
                     }
                 }
             },
@@ -583,14 +602,14 @@ export function createRequestJournal(
                 return [];
             }
 
-            const rows = scan().sort((a, b) => a.postedAt.localeCompare(b.postedAt));
+            // A whole list returns every view anyway, so its scan keeps the settled views it reads; a page loads
+            // only its own rows.
+            const rows = scan({ withSettledViews: limit === undefined }).sort((a, b) =>
+                a.postedAt.localeCompare(b.postedAt)
+            );
             const page = limit === undefined ? rows : rows.slice(-limit);
             return page.flatMap((row) => {
-                const view = row.view ?? settledViews.get(row.name) ?? viewAt(row.name);
-                if (view && !row.view) {
-                    keepSettledView(row.name, view);
-                }
-
+                const view = row.view ?? settledView(row.name);
                 return view ? [view] : [];
             });
         },

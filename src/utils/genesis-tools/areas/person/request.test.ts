@@ -776,6 +776,38 @@ test("the list returns the newest requests by post time and reads a settled jour
     expect(() => journal.list({ limit: -1 })).toThrow("zero or more");
 });
 
+test("a change watcher reports a settlement that another reader of the journal saw first", async () => {
+    const dir = scratch();
+    const watcher = createRequestJournal({ dir, now });
+    const worker = createRequestJournal({ dir, now });
+    await worker.post({ input });
+    const armed = Promise.withResolvers<void>();
+    const done = Promise.withResolvers<RequestView>();
+    const off = watcher.followChanges((view) => {
+        if (view.id === "notice:armed") {
+            armed.resolve();
+        }
+
+        if (view.id === input.id && view.state === "done") {
+            done.resolve(view);
+        }
+    }, 100);
+    try {
+        await worker.post({ input: { ...input, id: "notice:armed" } });
+        await withTimeout(armed.promise, 2_000, new Error("the watcher never reported the arming post"));
+        // Both appends and the list run in one tick, so the list reads the settled journal before the folder event
+        // reaches the watcher.
+        const at = now().toISOString();
+        worker.append(input.id, { type: "accepted", at, via: "fixture", elevation: null, method: "click" });
+        worker.append(input.id, { type: "finished", at, exitCode: 0, outputTail: "", verified: null });
+        expect(watcher.list().find((view) => view.id === input.id)?.state).toBe("done");
+        const reported = await withTimeout(done.promise, 2_000, new Error("the watcher never reported the settlement"));
+        expect(reported).toEqual(worker.get(input.id) ?? undefined);
+    } finally {
+        off();
+    }
+});
+
 test("a surface's reason for a failure or a decline is the outcome's reason, also after a reopen", async () => {
     const dir = scratch();
     const journal = createRequestJournal({ dir, now });
