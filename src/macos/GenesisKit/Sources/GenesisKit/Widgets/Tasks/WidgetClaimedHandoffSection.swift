@@ -78,10 +78,10 @@ struct WidgetClaimedHandoffSection: View {
                                 .accessibilityHidden(true)
                             Text(member.title).font(.system(size: 12))
                             Spacer(minLength: 4)
-                            Text(member.state.capitalized).font(.caption).foregroundStyle(.secondary)
+                            Text(WorkWords.state(member.state)).font(.caption).foregroundStyle(.secondary)
                         }
                     }
-                    .accessibilityValue([member.state.capitalized, member.acceptance].compactMap { $0 }.joined(separator: ". "))
+                    .accessibilityValue([WorkWords.state(member.state), member.acceptance].compactMap { $0 }.joined(separator: ". "))
                 }
             }
             .padding(.leading, 12)
