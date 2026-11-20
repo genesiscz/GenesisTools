@@ -22,8 +22,11 @@ const ledgerSchema = z.object({
     files: z.record(
         z.string(),
         z.object({
-            /** edit.json's revision the export rendered; null when the recording had no edit.json. */
-            revision: z.number().int().nonnegative().nullable(),
+            /**
+             * edit.json's revision the export rendered; null when the recording had no edit.json. A missing key is read
+             * as null: the window's ledger left it out for an unedited recording before it wrote null.
+             */
+            revision: z.number().int().nonnegative().nullable().default(null),
             writtenAt: z.string(),
         })
     ),

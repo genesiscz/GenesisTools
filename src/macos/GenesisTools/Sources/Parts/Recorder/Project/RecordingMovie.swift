@@ -93,6 +93,16 @@ enum ExportLedger {
         /// edit.json's revision the export rendered; nil when the recording had no edit.json.
         var revision: Int?
         var writtenAt: String
+
+        private enum CodingKeys: String, CodingKey { case revision, writtenAt }
+
+        /// Writes a nil revision as an explicit `null`, the shape `recordExport` writes. Synthesized Codable left the key
+        /// out; reading still takes a missing key as nil, as older builds wrote it.
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(revision, forKey: .revision)
+            try container.encode(writtenAt, forKey: .writtenAt)
+        }
     }
 
     private struct Ledger: Codable {

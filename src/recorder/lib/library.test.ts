@@ -15,6 +15,7 @@ import { basename, dirname, join } from "node:path";
 import * as cli from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { tryWithPathArbitration } from "@genesiscz/utils/process/path-arbitration";
+import exportLedgerCase from "@genesiscz/utils/recording-editor/__fixtures__/export-ledger.json";
 import recordingMovies from "@genesiscz/utils/recording-editor/__fixtures__/recording-movies.json";
 import screenSearch from "@genesiscz/utils/recording-editor/__fixtures__/screen-search.json";
 import { analysisCachePath } from "@genesiscz/utils/recording-editor/analysis-cache";
@@ -900,6 +901,16 @@ describe("a recording's quick actions", () => {
             [join(outside, "chosen.mp4"), "screen-edited.mp4"].sort()
         );
         expect(readExportLedger(folder).files["screen-edited.mp4"]?.revision).toBe(2);
+    });
+
+    // The Swift window reads the same case (RecorderEditTests.swift).
+    it("reads an unedited export's revision as null whether the writer wrote null or left the key out", () => {
+        const folder = folderWith([]);
+        writeFileSync(join(folder, EXPORT_LEDGER_FILE), SafeJSON.stringify(exportLedgerCase.ledger));
+        const revisions = Object.fromEntries(
+            Object.entries(readExportLedger(folder).files).map(([file, entry]) => [file, entry.revision])
+        );
+        expect(revisions).toEqual(exportLedgerCase.revisions);
     });
 
     it("refuses to copy an export when the edit changed while it ran", async () => {

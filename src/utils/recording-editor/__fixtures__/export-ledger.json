@@ -1,0 +1,24 @@
+{
+    "about": "exports.json as each writer leaves it, read by readExportLedger (src/utils/recording-editor/exports.ts) and ExportLedger.read (Parts/Recorder/Project/RecordingMovie.swift); both run this case. recordExport and the window write an unedited recording's export with \"revision\": null; older window builds left the key out, and both readers take that as null too.",
+    "ledger": {
+        "version": 1,
+        "files": {
+            "plain.mp4": {
+                "revision": null,
+                "writtenAt": "2026-11-04T10:00:00.000Z"
+            },
+            "older-window.mp4": {
+                "writtenAt": "2026-11-04T10:01:00.000Z"
+            },
+            "edited.mp4": {
+                "revision": 3,
+                "writtenAt": "2026-11-04T10:02:00.000Z"
+            }
+        }
+    },
+    "revisions": {
+        "plain.mp4": null,
+        "older-window.mp4": null,
+        "edited.mp4": 3
+    }
+}

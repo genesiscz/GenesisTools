@@ -460,6 +460,23 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(RecordingMovie.shareable(in: folder), .stale(revision: 5))
     }
 
+    /// The defect: the window's ledger left `revision` out for an unedited recording, and readExportLedger refused the
+    /// whole ledger for it. The window writes null now, and both readers take a missing key as null (library.test.ts
+    /// reads the same case).
+    func testTheExportLedgerWritesAndReadsAnUneditedExportAsNull() throws {
+        let item = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: SharedEditorFixture.url("export-ledger.json"))) as? [String: Any])
+        let folder = try recordingFolder([["plain.mp4", 0], ["older-window.mp4", 0], ["edited.mp4", 0]])
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try JSONSerialization.data(withJSONObject: try XCTUnwrap(item["ledger"])).write(to: folder.appendingPathComponent(ExportLedger.file))
+        let expected = try XCTUnwrap(item["revisions"] as? [String: Any]).mapValues { ($0 as? NSNumber)?.intValue }
+        XCTAssertEqual(ExportLedger.read(folder).mapValues(\.revision), expected)
+
+        try ExportLedger.record(folder.appendingPathComponent("plain.mp4"), revision: nil, in: folder)
+        let written = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: folder.appendingPathComponent(ExportLedger.file))) as? [String: Any])
+        let plain = try XCTUnwrap((written["files"] as? [String: Any])?["plain.mp4"] as? [String: Any])
+        XCTAssertTrue(plain["revision"] is NSNull, "nil is written as null, never left out")
+    }
+
     /// The defect: a search hit showed "00:17 marker one" under the card, but VoiceOver read only "title, 00:31, not
     /// edited", so it never said why the card matched (review 2026-11-06).
     func testALibraryCardSaysItsSearchHitToVoiceOver() {
