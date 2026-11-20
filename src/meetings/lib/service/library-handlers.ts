@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { type DictionaryScope, MeetingsConfigStore, resolveDictionary } from "@genesiscz/utils/meetings/config";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { applyDictionary } from "@genesiscz/utils/transcribe/dictionary";
@@ -270,14 +271,19 @@ export async function testDictionaryPhrase(
 
     const store = deps.store?.() ?? new MeetingStore();
     const record = recordOf(store, params.meeting);
-    const opened = OpenedMeeting.of(store, record, deps.linkedSource?.(record));
-    const transcript = (await opened.meeting()).transcript;
-    const spans = new TranscriptLines(transcript);
     const dictionary = resolveDictionary(config, { project: record.project, meeting: record.dictionary });
     const draft = {
         ...dictionary,
         entries: [...dictionary.entries.filter((entry) => entry.value !== params.entry!.value), params.entry],
     };
+    // A draft equal to the saved entry changes no line: no transcript load and no correction pass.
+    if (isDeepStrictEqual(draft.entries, dictionary.entries)) {
+        return { ...tested, lines: [] };
+    }
+
+    const opened = OpenedMeeting.of(store, record, deps.linkedSource?.(record));
+    const transcript = (await opened.meeting()).transcript;
+    const spans = new TranscriptLines(transcript);
     const before = applyDictionary(transcript, dictionary).entries;
     const after = applyDictionary(transcript, draft).entries;
     const lines = transcript.flatMap((entry, index) => {
