@@ -11,7 +11,9 @@ import {
     rmSync,
     statSync,
 } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { aclAllows } from "@genesiscz/utils/fs/acl";
+import { canonicalDir } from "@genesiscz/utils/fs/canonical";
 import { type CopyFile, cloneOrCopy } from "@genesiscz/utils/fs/clone";
 import { foreignAncestor } from "@genesiscz/utils/fs/foreign-ancestor";
 import { logger } from "@genesiscz/utils/logger";
@@ -172,8 +174,9 @@ const tmpBeside = (target: string): string =>
 /**
  * Whether only this user can put a file under a name in `dir`, which has to exist. The returned path is opened
  * later by its name, so nobody else may be able to write to the folder or to swap it: it is a folder of this
- * user that group and others cannot write to, and nothing above it can be changed by another user
- * (`foreignAncestor`, which also follows the symbolic links on the way).
+ * user that group and others cannot write to, with no access control list that allows anybody anything, and
+ * nothing above it can be changed by another user (`foreignAncestor`, which also follows the symbolic links on
+ * the way).
  */
 function isPrivateDir(dir: string): boolean {
     const stat = lstatSync(dir, { bigint: true });
@@ -182,6 +185,7 @@ function isPrivateDir(dir: string): boolean {
         stat.isDirectory() &&
         stat.uid === ownUid() &&
         (stat.mode & OTHERS_MAY_WRITE) === 0n &&
+        aclAllows(dir) === false &&
         foreignAncestor(dir) === null
     );
 }
@@ -203,7 +207,7 @@ function isOlderImage({
     target: string;
     source: BigIntStats;
 }): boolean {
-    if (resolve(dirname(bunPath)) !== resolve(binDir)) {
+    if (canonicalDir(dirname(bunPath)) !== canonicalDir(binDir)) {
         return false;
     }
 
@@ -214,9 +218,9 @@ function isOlderImage({
 /**
  * Whether `target` is already a clone of the current bun. The path is started as bun, so it has to be what this
  * code put there: a regular file and no symbolic link, of this user, that this user can run and nobody else can
- * write to, in a folder nobody else can write to or swap (`isPrivateDir`), on bun's volume (a clone cannot leave
- * it), with one name only (a hard link of bun has more), and with bun's size and modification time, which a clone
- * keeps (checked 2026-11-20). `bun upgrade` writes a new file, so the stamp changes and the clone is made again.
+ * write to (by its mode or by an access control list), in a folder nobody else can write to or swap
+ * (`isPrivateDir`), on bun's volume (a clone cannot leave it), with one name only (a hard link of bun has more),
+ * and with bun's size and modification time, which a clone keeps (checked 2026-11-20). `bun upgrade` writes a new file, so the stamp changes and the clone is made again.
  * Its bytes are not compared: that would read 60 MB on every start. A file that passes all of this was put there
  * by this user, who can replace bun itself too.
  */
@@ -235,7 +239,8 @@ function isCurrentClone(target: string, source: BigIntStats): boolean {
         (stat.mode & OTHERS_MAY_WRITE) === 0n &&
         (stat.mode & OWNER_MAY_RUN) !== 0n &&
         stat.size === source.size &&
-        stat.mtimeNs === source.mtimeNs
+        stat.mtimeNs === source.mtimeNs &&
+        aclAllows(target) === false
     );
 }
 
@@ -265,7 +270,8 @@ function takeLock(binDir: string): number | undefined {
  * Clones bun beside `target` and renames the clone over it, so a start never sees a half-written file.
  * `unsupported`: this volume cannot clone. The last check and the rename happen under the lock of the folder, so
  * two starts never both rename: the second one finds the first one's clone and keeps it, and a binary that may
- * have just started is never replaced. `busy`: another start holds the lock and this name is not current yet.
+ * have just started is never replaced. `busy`: the caller uses its own binary, because another start holds the
+ * lock and this name is not current yet, or because a start on a newer bun placed the name in the meantime.
  */
 function placeClone({
     bunPath,
@@ -298,6 +304,11 @@ function placeClone({
         }
 
         try {
+            // Asked again under the lock: a start on a newer bun may have placed the name while this clone was made.
+            if (isOlderImage({ bunPath, binDir, target, source })) {
+                return "busy";
+            }
+
             if (!isCurrentClone(target, source)) {
                 renameSync(tmp, target);
             }
@@ -346,7 +357,8 @@ function cloneOtherHardLinks({
 /**
  * A hard link of bun, made again when bun's inode changed (`bun upgrade` writes a new one). The new link is made
  * beside `target` and renamed over it, so the name is never missing. It needs no lock: two starts that both do
- * this leave the same link.
+ * this leave the same link. A symbolic link under the name is not a hard link, even one that names bun: it is
+ * replaced.
  */
 function placeLink({
     bunPath,
@@ -359,7 +371,7 @@ function placeLink({
     target: string;
     binDir: string;
 }): void {
-    const stat = statSync(target, { bigint: true, throwIfNoEntry: false });
+    const stat = lstatSync(target, { bigint: true, throwIfNoEntry: false });
 
     if (stat?.ino === source.ino && stat.dev === source.dev) {
         return;

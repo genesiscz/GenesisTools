@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { spawnSync } from "node:child_process";
 import {
     chmodSync,
     closeSync,
@@ -24,6 +25,17 @@ import { bunNameFor, namedBunExecPath, placeNamedBun } from "./bun-link";
 const LOCK_FILE = ".names.lock";
 /** As the code opens it: 0x20 is macOS's "also lock the file" flag, which node:fs has no name for. */
 const LOCK_FLAGS = constants.O_CREAT | constants.O_RDWR | constants.O_NONBLOCK | 0x20;
+/** A process that takes the lock, says so, and then only waits. */
+const HOLD_LOCK = `require("node:fs").openSync(process.env.LOCK_PATH, Number(process.env.LOCK_FLAGS), 0o600); console.log("held"); setInterval(() => {}, 1000);`;
+
+/** Adds an access control list entry that allows everyone `permissions` on `path` (macOS). */
+function allowEveryone(path: string, permissions: string): void {
+    const result = spawnSync("/bin/chmod", ["+a", `everyone allow ${permissions}`, path], { env: env.getProcessEnv() });
+
+    if (result.status !== 0) {
+        throw new Error(`chmod +a failed: ${result.stderr}`);
+    }
+}
 
 // Nothing here starts a file it made: macOS checks every new executable at its first start, and a test home goes at
 // exit (tests.md, "Test traps"). The fake bun is a plain file that is only cloned, linked and read.
@@ -100,6 +112,17 @@ describe.skipIf(skip.onWindows)("namedBunExecPath", () => {
             expect(readdirSync(binDir)).toEqual(["gt-du"]);
         });
 
+        it("a symbolic link under the name is not kept, even one that names bun: a hard link replaces it", () => {
+            mkdirSync(binDir, { recursive: true });
+            symlinkSync(fakeBun, join(binDir, "gt-sym"));
+
+            const path = link("sym");
+
+            expect(lstatSync(path).isSymbolicLink()).toBe(false);
+            expect(statSync(path).ino).toBe(statSync(fakeBun).ino);
+            expect(readdirSync(binDir)).toEqual(["gt-sym"]);
+        });
+
         it("falls back to the bun binary when linking fails", () => {
             const missing = join(home, "does-not-exist");
 
@@ -160,6 +183,19 @@ describe.skipIf(skip.onWindows)("namedBunExecPath", () => {
 
             expect(clone("via-link")).toBe(fakeBun);
             expect(readdirSync(binDir)).toEqual([]);
+        });
+
+        it("a symbolic link that reaches a private folder through a link in a folder others can write to is never used", () => {
+            const real = join(home, "real", "tools");
+            const shared = join(home, "shared");
+            mkdirSync(join(real, "bin"), { recursive: true, mode: 0o755 });
+            mkdirSync(shared);
+            chmodSync(shared, 0o777);
+            symlinkSync(real, join(shared, "hop"));
+            symlinkSync(join(shared, "hop"), join(home, ".genesis-tools"));
+
+            expect(clone("hop")).toBe(fakeBun);
+            expect(readdirSync(join(real, "bin"))).toEqual([]);
         });
 
         it("a volume that cannot clone gets a hard link", () => {
@@ -297,9 +333,22 @@ describe.skipIf(skip.onWindows)("namedBunExecPath", () => {
             }
         });
 
-        it("a lock file that a start left behind holds nothing: the kernel drops the lock with its process", () => {
+        it("a lock whose process was killed holds nothing: the kernel drops it with the process", async () => {
             mkdirSync(binDir, { recursive: true });
-            closeSync(openSync(join(binDir, LOCK_FILE), LOCK_FLAGS, 0o600));
+            const holder = Bun.spawn([process.execPath, "-e", HOLD_LOCK], {
+                env: { ...env.getProcessEnv(), LOCK_PATH: join(binDir, LOCK_FILE), LOCK_FLAGS: String(LOCK_FLAGS) },
+                stdout: "pipe",
+                stderr: "inherit",
+            });
+
+            try {
+                const { value } = await holder.stdout.getReader().read();
+                expect(new TextDecoder().decode(value)).toContain("held");
+                expect(clone("dead")).toBe(fakeBun);
+            } finally {
+                holder.kill("SIGKILL");
+                await holder.exited;
+            }
 
             expect(clone("dead")).toBe(join(binDir, "gt-dead"));
             expect(names()).toEqual(["gt-dead"]);
@@ -354,6 +403,49 @@ describe.skipIf(skip.onWindows)("namedBunExecPath", () => {
             expect(statSync(path).ino).toBe(before);
             expect(statSync(join(binDir, "gt-codex")).nlink).toBe(1);
             expect(statSync(fakeBun).nlink).toBe(1);
+        });
+
+        it("a folder of the names with an access control list that allows others is never used", () => {
+            mkdirSync(binDir, { recursive: true, mode: 0o755 });
+            allowEveryone(binDir, "add_file,delete_child");
+
+            expect(clone("acl")).toBe(fakeBun);
+            expect(readdirSync(binDir)).toEqual([]);
+        });
+
+        it("a folder above the names with an access control list that allows others is never used", () => {
+            mkdirSync(binDir, { recursive: true, mode: 0o755 });
+            allowEveryone(join(home, ".genesis-tools"), "add_file,delete_child");
+
+            expect(clone("acl")).toBe(fakeBun);
+            expect(readdirSync(binDir)).toEqual([]);
+        });
+
+        it("a file under the name that an access control list lets others write to is made again", () => {
+            const path = clone("acl");
+            const before = statSync(path).ino;
+            allowEveryone(path, "write");
+
+            clone("acl");
+
+            expect(statSync(path).ino).not.toBe(before);
+        });
+
+        it("a start on a newer bun that places the name while an older worker makes its clone wins", () => {
+            const worker = clone("hub");
+            upgradeBun();
+
+            const path = placeNamedBun({
+                name: "tools",
+                bunPath: worker,
+                binDir,
+                kind: "clone",
+                // The worker saw no gt-tools yet; a start on the upgraded bun places it before the worker's lock.
+                beforePublish: () => clone("tools"),
+            });
+
+            expect(path).toBe(worker);
+            expect(readFileSync(join(binDir, "gt-tools"), "utf8")).toContain("# upgraded");
         });
 
         it("the sweep leaves a symbolic link to bun as it is", () => {
