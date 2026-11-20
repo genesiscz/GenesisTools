@@ -57,7 +57,10 @@ export async function meetingSource(id: string): Promise<TranscriptSource> {
     }
 
     const source = await MEETING_SOURCES[id].open();
-    return { ...source, load: async (sourceMeetingId) => composedMeeting(await source.load(sourceMeetingId)) };
+    return {
+        ...source,
+        load: async (sourceMeetingId, options) => composedMeeting(await source.load(sourceMeetingId, options)),
+    };
 }
 
 /** The meeting this Mac's provider records right now (the source-audio passes' live lookup in production). */
