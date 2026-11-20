@@ -389,18 +389,25 @@ export class OpenedMeeting {
         }
     }
 
-    /** `detail`: the failure's full text for the record's history; nothing when the lookup succeeded. */
+    /**
+     * `detail`: the failure's full text for the record's history; nothing when the lookup succeeded. The history is a
+     * note beside the result: a failed write is logged and never replaces the attendance result or its fallback.
+     */
     private async rememberAttendanceAttempt(detail?: string): Promise<void> {
-        const updated = await this.store.updateIf(
-            this.current.id,
-            {
-                command: detail ? "attendance-failed" : "attendance-recovered",
-                change: detail ?? "attendance lookup succeeded",
-            },
-            (record) => (detail ? attendanceDetail(record) !== detail : attendanceDetail(record) !== undefined)
-        );
-        if (updated) {
-            this.current = updated;
+        try {
+            const updated = await this.store.updateIf(
+                this.current.id,
+                {
+                    command: detail ? "attendance-failed" : "attendance-recovered",
+                    change: detail ?? "attendance lookup succeeded",
+                },
+                (record) => (detail ? attendanceDetail(record) !== detail : attendanceDetail(record) !== undefined)
+            );
+            if (updated) {
+                this.current = updated;
+            }
+        } catch (err) {
+            log.warn({ err, meeting: this.current.id }, "the attendance attempt could not be written to the history");
         }
     }
 

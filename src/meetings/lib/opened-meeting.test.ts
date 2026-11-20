@@ -564,6 +564,24 @@ describe("suggest attendance resilience", () => {
             reader.mockRestore();
         }
     });
+    test("a failed history write keeps the attendance warning and the roster fallback", async () => {
+        const { store, record } = await newRecord();
+        const { MEETING_PLATFORMS } = await import("./platforms");
+        const reader = spyOn(MEETING_PLATFORMS.teams, "attendance").mockRejectedValue(
+            new AttendanceUnavailableError("Fixture chat missing")
+        );
+        const write = spyOn(store, "updateIf").mockRejectedValue(new Error("fixture disk full"));
+        try {
+            const opened = OpenedMeeting.of(store, record, { source: fakeSource(), sourceMeetingId: "abc" });
+            const warnings: string[] = [];
+            expect(await opened.suggestionPresence({ attendance: "teams", warnings })).toBeUndefined();
+            expect(warnings).toHaveLength(1);
+            expect(write).toHaveBeenCalled();
+        } finally {
+            write.mockRestore();
+            reader.mockRestore();
+        }
+    });
     test("attendance failures survive reopening and a later successful lookup clears the warning", async () => {
         const { store, record } = await newRecord();
         const { MEETING_PLATFORMS } = await import("./platforms");
