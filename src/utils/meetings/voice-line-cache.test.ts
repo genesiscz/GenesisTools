@@ -274,16 +274,22 @@ test("a cancel that lands while the finished lines are saved rejects the call an
     const f = await fixture();
     const controller = new AbortController();
     const save = VoiceLineCache.prototype.save;
+    const entered = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    // The save is already pending when the cancel lands: the call must still see it after the save resolves.
     const saving = spyOn(VoiceLineCache.prototype, "save").mockImplementation(async function (
         this: InstanceType<typeof VoiceLineCache>
     ) {
-        controller.abort(new Error("cancelled during the save"));
+        entered.resolve();
+        await gate.promise;
         await save.call(this);
     });
     spies.push(saving);
-    await expect(voice.embedVoiceLines({ ...f.options, signal: controller.signal })).rejects.toThrow(
-        "cancelled during the save"
-    );
+    const call = voice.embedVoiceLines({ ...f.options, signal: controller.signal });
+    await entered.promise;
+    controller.abort(new Error("cancelled during the save"));
+    gate.resolve();
+    await expect(call).rejects.toThrow("cancelled during the save");
     saving.mockRestore();
     f.compute.mockClear();
     await voice.embedVoiceLines(f.options);
