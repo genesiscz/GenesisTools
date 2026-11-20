@@ -27,6 +27,7 @@ import {
 } from "@app/meetings/lib/sound";
 import { toFloat32AudioWindow } from "@genesiscz/utils/audio/converter";
 import { out } from "@genesiscz/utils/logger";
+import { IntervalIndex, median } from "@genesiscz/utils/math";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { formatTable } from "@genesiscz/utils/table";
 import { Command } from "commander";
@@ -112,15 +113,6 @@ function correlation(a: readonly number[], b: readonly number[]): number | undef
     return spreadA > 0 && spreadB > 0 ? cross / Math.sqrt(spreadA * spreadB) : undefined;
 }
 
-function median(values: number[]): number | undefined {
-    if (values.length === 0) {
-        return undefined;
-    }
-
-    const sorted = values.toSorted((a, b) => a - b);
-    return sorted[Math.floor(sorted.length / 2)];
-}
-
 /** The time of day with milliseconds; the shared `localTime` gives a date to the minute. */
 function clockWithMs(ms: number): string {
     return new Date(ms).toLocaleTimeString("en-GB", {
@@ -163,20 +155,26 @@ function gapRows(rows: readonly AudioRow[]): GapRow[] {
 async function micRows(inputs: SoundInputs, loudDb: number): Promise<MicRow[]> {
     const result: MicRow[] = [];
     const mics = inputs.rows.filter((row) => row.source === "mic" && row.durationMs > 0);
+    // The system pieces, indexed by their wall-clock span once: each mic piece visits only the ones it overlaps.
+    const systems = new IntervalIndex(
+        inputs.rows
+            .filter((row) => row.source === "system" && row.durationMs > 0)
+            .map((row) => ({ row, zero: audioRowZeroMs(row) })),
+        (one) => ({ from: one.zero, to: one.zero + one.row.durationMs })
+    );
 
     for (const mic of mics) {
         const micZero = audioRowZeroMs(mic);
         const micEnd = micZero + Math.min(mic.durationMs, 60_000);
         // Each source's track starts on its own first sample, so the system piece of the same seconds is the one
         // that overlaps the microphone's time the most, not one with the same stamp.
-        const system = inputs.rows
-            .filter((row) => row.source === "system" && row.durationMs > 0)
-            .map((row) => {
-                const zero = audioRowZeroMs(row);
-                return { row, zero, overlapMs: Math.min(micEnd, zero + row.durationMs) - Math.max(micZero, zero) };
-            })
-            .filter((one) => one.overlapMs > 0)
-            .toSorted((a, b) => b.overlapMs - a.overlapMs)[0];
+        let system: { row: AudioRow; zero: number; overlapMs: number } | undefined;
+        for (const one of systems.overlapping(micZero, micEnd)) {
+            const overlapMs = Math.min(micEnd, one.zero + one.row.durationMs) - Math.max(micZero, one.zero);
+            if (overlapMs > 0 && (!system || overlapMs > system.overlapMs)) {
+                system = { ...one, overlapMs };
+            }
+        }
         // Both curves cover the same wall-clock seconds: `from`/`to` are ms on the wall clock.
         let window: { from: number; to: number; reference: (fromSec: number, toSec: number) => Promise<Float32Array> };
         let kind: MicRow["reference"] = "recorder-system";
@@ -283,14 +281,22 @@ async function main(): Promise<void> {
             overLimit: values.filter((value) => value > GAP_LIMIT_MS).length,
         };
     });
-    const micDb = median(mic.flatMap((row) => (row.micDb !== undefined ? [row.micDb] : [])));
-    const callMatch = median(mic.flatMap((row) => (row.callMatch !== undefined ? [row.callMatch] : [])));
+    // Level and correlation must come from the same pieces: a loud uncorrelated piece and a quiet correlated one
+    // together prove nothing. The verdict is the majority of the pieces that measured both.
+    const paired = mic.flatMap((row) =>
+        row.micDb !== undefined && row.callMatch !== undefined ? [{ micDb: row.micDb, callMatch: row.callMatch }] : []
+    );
+    const rawPieces = paired.filter((row) => row.micDb > RAW_MIC_DB && row.callMatch >= RAW_MIC_MATCH).length;
+    const micDb = median(paired.map((row) => row.micDb));
+    const callMatch = median(paired.map((row) => row.callMatch));
     const summary = {
         meeting: record.id,
         gaps: gapSummary,
         micDb,
         callMatch,
-        micRaw: micDb === undefined ? undefined : micDb > RAW_MIC_DB && (callMatch ?? 0) >= RAW_MIC_MATCH,
+        pairedPieces: paired.length,
+        rawPieces,
+        micRaw: paired.length === 0 ? undefined : rawPieces * 2 > paired.length,
         clock: measured?.clock,
     };
 
@@ -342,8 +348,8 @@ async function main(): Promise<void> {
     );
     out.println(
         micDb === undefined
-            ? "mic level: no microphone piece with a loud call"
-            : `mic level: median ${micDb} dB while the call is loud, follows the call r=${callMatch ?? "?"}; ${summary.micRaw ? "the call is on the microphone track (raw)" : micDb > RAW_MIC_DB ? `loud, but its level does not follow the call (r below ${RAW_MIC_MATCH}): local speech or noise, not proven raw` : `below ${RAW_MIC_DB} dB (processed, or the call was quiet)`}`
+            ? "mic level: no microphone piece measured both its level during a loud call and its match to the call"
+            : `mic level (${paired.length} pieces with both measures, ${rawPieces} raw): median ${micDb} dB while the call is loud, follows the call r=${callMatch ?? "?"}; ${summary.micRaw ? "the call is on the microphone track (raw)" : micDb > RAW_MIC_DB ? `loud, but its level does not follow the call (r below ${RAW_MIC_MATCH}): local speech or noise, not proven raw` : `below ${RAW_MIC_DB} dB (processed, or the call was quiet)`}`
     );
     out.println(
         clock.length === 0
