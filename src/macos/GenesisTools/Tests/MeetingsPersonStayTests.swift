@@ -122,6 +122,28 @@ final class MeetingsPersonStayTests: XCTestCase {
         XCTAssertEqual(twice.count, 0)
     }
 
+    /// w_b2dqtbgc: a person whose saved seats move from the call into the room has no single side. The engine answers
+    /// unsure with confidence 1 and keeps both rows, and Use suggestion keeps both until the person is picked by hand.
+    func testUseSuggestionKeepsASavedMoveBetweenTheCallAndTheRoom() throws {
+        let moving = try JSONDecoder().decode(MeetingsAPI.SeatsSuggest.Suggestion.self, from: Data(#"""
+        {"seats":{"room":[{"name":"Fern","fromSec":600}],"remote":[{"name":"Fern","fromSec":0,"toSec":600}]},
+         "people":[{"name":"Fern","seat":"unsure","reason":"Saved room and remote intervals.","confidence":1},
+                   {"name":"Lake","seat":"unsure","reason":"Muted on both reads.","confidence":0}]}
+        """#.utf8))
+        var draft = MeetingSeatChoices(moving)
+        XCTAssertEqual(draft.keptAsSaved, ["Fern"], "an engine guess with no rows is not a saved move")
+        XCTAssertEqual(draft.count, 1, "the saved move enables Use suggestion")
+        XCTAssertEqual(draft.seats(record: nil), moving.seats)
+
+        draft.set(.remote, for: "Fern")
+        XCTAssertEqual(draft.count, 1)
+        XCTAssertEqual(draft.seats(record: nil).remote, moving.seats.remote)
+        XCTAssertTrue(draft.seats(record: nil).roomRows.isEmpty, "a hand pick of one side drops the other")
+        draft.set(.unsure, for: "Fern")
+        XCTAssertEqual(draft.count, 1)
+        XCTAssertEqual(draft.seats(record: nil), moving.seats)
+    }
+
     /// w_sbxfmxen: the seats sheet seats picked people and picks a device; nothing is typed as an id or a comma list,
     /// and Save writes the engine's shape (`self`, `device:<owner>` with the owner, room or remote members only).
     func testTheSeatsSheetSeatsPickedPeopleOnDevicesItOffers() {
