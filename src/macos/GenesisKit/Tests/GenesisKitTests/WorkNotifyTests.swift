@@ -184,6 +184,27 @@ final class WorkNotifyTests: XCTestCase {
         XCTAssertEqual(chosen, [.widget])
     }
 
+    func testACellTheRepositoryDecidesStillOffersTheHubAndWidgetScopes() throws {
+        let cell = WorkNotifyCell(action: "spotted", level: "off", from: "config.repo", layers: [
+            .init(layer: "default", level: "list"),
+            .init(layer: "config.repo", level: "off", rule: .level("off")),
+            .init(layer: "config.project", level: nil),
+            .init(layer: "surface.hub", level: nil),
+            .init(layer: "surface.widget", level: nil),
+        ])
+        XCTAssertFalse(cell.writable(at: .project))
+        let target = WorkNotifyMenu.Target(type: "bug", action: "spotted", cells: [cell])
+        var chosen: [WorkNotifyScope] = []
+        let native = MenuButtonPresenter.menu(WorkNotifyMenu.items(target: target, scope: .project, enabled: true,
+            chooseScope: { chosen.append($0) }, apply: { _, _, _, _ in XCTFail("a locked cell sets no level") }))
+        XCTAssertTrue(native.items.contains { $0.title.hasPrefix("Set in ") })
+        XCTAssertNil(native.item(withTitle: "Inbox line"), "a locked cell offers no level")
+        XCTAssertEqual(native.item(withTitle: "For this project")?.state, .on)
+        try choose("In the hub, for this project", in: native)
+        try choose("In the widget, for this project", in: native)
+        XCTAssertEqual(chosen, [.hub, .widget])
+    }
+
     func testResetThatExposesARepositoryRuleDoesNotOfferUndo() async throws {
         let source = NotifyFixtureSource()
         let repo = try XCTUnwrap(source.rows[0].cells[0].layers.firstIndex { $0.layer == "config.repo" })

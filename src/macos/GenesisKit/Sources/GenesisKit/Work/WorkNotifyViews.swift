@@ -105,12 +105,24 @@ enum WorkNotifyMenu {
                       chooseScope: @escaping (WorkNotifyScope) -> Void,
                       apply: @escaping (WorkNotifyScope, String, String, String?) -> Void) -> [MenuButtonItem] {
         let id = "work-notify-menu-\(target.type)-\(target.action)"
+        // The scope is shared by the whole grid, so every menu offers it: a cell the repository's file decides at one
+        // scope can still be set at another (the hub or the widget).
+        var scopes: [MenuButtonItem] = [
+            .divider,
+            .action("For this project", checked: scope == .project, systemImage: "folder", identifier: id + "-project") { chooseScope(.project) },
+            .action("For all projects", checked: scope == .global, systemImage: "square.stack", identifier: id + "-global") { chooseScope(.global) },
+            .action("In the hub, for this project", checked: scope == .hub, systemImage: "macwindow",
+                    identifier: id + "-hub") { chooseScope(.hub) },
+            .action("In the widget, for this project", checked: scope == .widget, systemImage: "rectangle.topthird.inset.filled",
+                    identifier: id + "-widget") { chooseScope(.widget) }]
+        if !enabled { scopes.append(.note("Changes need the GenesisTools service; it is not running.")) }
+        if busy { scopes.append(.note("Saving the previous change.")) }
         if let cell = target.cell, !cell.writable(at: scope) {
             var items: [MenuButtonItem] = [.note("Set in \(cell.repoPath.map(PathDisplay.tilde) ?? "this repository's file")")]
             if let file = cell.repoPath {
                 items.append(.action("Open the file", systemImage: "doc.text", identifier: id + "-file") { PathOpener.primary(file) })
             }
-            return items
+            return items + scopes
         }
         let writable = target.cells.contains { $0.writable(at: scope) }
         let current = Set(target.cells.map(\.level))
@@ -143,16 +155,7 @@ enum WorkNotifyMenu {
         if target.cells.contains(where: { !$0.writable(at: scope) }) {
             items.append(.note("Rules set in the repository file stay unchanged."))
         }
-        items += [.divider,
-                  .action("For this project", checked: scope == .project, systemImage: "folder", identifier: id + "-project") { chooseScope(.project) },
-                  .action("For all projects", checked: scope == .global, systemImage: "square.stack", identifier: id + "-global") { chooseScope(.global) },
-                  .action("In the hub, for this project", checked: scope == .hub, systemImage: "macwindow",
-                          identifier: id + "-hub") { chooseScope(.hub) },
-                  .action("In the widget, for this project", checked: scope == .widget, systemImage: "rectangle.topthird.inset.filled",
-                          identifier: id + "-widget") { chooseScope(.widget) }]
-        if !enabled { items.append(.note("Changes need the GenesisTools service; it is not running.")) }
-        if busy { items.append(.note("Saving the previous change.")) }
-        return items
+        return items + scopes
     }
 
 }
