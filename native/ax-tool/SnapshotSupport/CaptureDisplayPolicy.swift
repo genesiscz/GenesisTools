@@ -178,6 +178,14 @@ public func capLongSide(_ size: CGSize, maxLongSide: Int?, even: Bool) -> CGSize
     return CGSize(width: CGFloat(Int(width) & ~1), height: CGFloat(Int(height) & ~1))
 }
 
+/// The recorded size from Standard's size: capped by `--max-long-side` first, then sized by the movie preset, so Small
+/// is always half of the capped Standard size. Halving first left Small at Standard's pixels whenever the cap was at
+/// most half the source, with half of Standard's bit rate. `h264Movie` false (frames, ProRes) only caps.
+public func cappedMovieSize(standard: CGSize, maxLongSide: Int?, h264Movie: Bool, quality: MovieQuality) -> CGSize {
+    let capped = capLongSide(standard, maxLongSide: maxLongSide, even: h264Movie)
+    return h264Movie ? quality.movieSize(capped) : capped
+}
+
 /// `--max-mb` as bytes.
 public func maxBytes(megabytes: Double?) -> Int? {
     guard let megabytes, megabytes > 0 else { return nil }

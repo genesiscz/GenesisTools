@@ -1383,12 +1383,15 @@ func cmdCaptureScreen() {
     if !recorder.videoSucceeded { exit(1) }
 }
 
-/// The stream output size: the selection's size at the display scale, then capped by `--max-long-side`.
+/// The stream output size: the selection's Standard size at the display scale, capped by `--max-long-side`, then
+/// sized by `quality` (default: the `--movie-quality` preset) for an H.264 movie.
 private func recordOutputSize(_ options: RecordOptions, points: CGSize, scale: CGFloat,
                               maxLongSide: Int?? = nil, quality: MovieQuality? = nil) -> CGSize {
     let video = options.videoOut != nil
-    let size = options.selection.dimensions(points: points, nativeScale: scale, video: video, quality: quality)
-    return capLongSide(size, maxLongSide: maxLongSide ?? options.maxLongSide, even: video && options.selection.codec == "h264")
+    let standard = options.selection.dimensions(points: points, nativeScale: scale, video: video, quality: .standard)
+    return cappedMovieSize(standard: standard, maxLongSide: maxLongSide ?? options.maxLongSide,
+                           h264Movie: video && options.selection.codec == "h264",
+                           quality: quality ?? options.selection.movieQuality)
 }
 
 /// `no-permission` when ScreenCaptureKit says the user declined, else `failed`.

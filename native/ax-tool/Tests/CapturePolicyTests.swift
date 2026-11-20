@@ -141,6 +141,20 @@ final class CaptureCapTests: XCTestCase {
         XCTAssertEqual(capLongSide(CGSize(width: 801, height: 600), maxLongSide: nil, even: true),
                        CGSize(width: 800, height: 600))
     }
+
+    /// Small halves the capped Standard size: a 3840 × 2160 source capped at 1920 records 1920 × 1080 at Standard and
+    /// 960 × 540 at Small, never Standard's pixels at half its bit rate.
+    func testSmallHalvesTheCappedStandardSize() {
+        let source = CGSize(width: 3840, height: 2160)
+        XCTAssertEqual(cappedMovieSize(standard: source, maxLongSide: 1920, h264Movie: true, quality: .standard),
+                       CGSize(width: 1920, height: 1080))
+        XCTAssertEqual(cappedMovieSize(standard: source, maxLongSide: 1920, h264Movie: true, quality: .small),
+                       CGSize(width: 960, height: 540))
+        XCTAssertEqual(cappedMovieSize(standard: source, maxLongSide: nil, h264Movie: true, quality: .small),
+                       CGSize(width: 1920, height: 1080))
+        XCTAssertEqual(cappedMovieSize(standard: source, maxLongSide: 1920, h264Movie: false, quality: .small),
+                       CGSize(width: 1920, height: 1080), "frames and ProRes only cap")
+    }
 }
 
 final class HeartbeatAndQuietTests: XCTestCase {
