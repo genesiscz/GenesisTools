@@ -828,9 +828,9 @@ test("a list reads a settled journal again once the view cache dropped it, and k
 
     const journal = createRequestJournal({ dir, now });
     // A page reads every journal once and keeps at most SETTLED_VIEWS_KEPT full views.
-    expect(journal.list({ limit: 1 }).map((view) => view.id)).toEqual([ids.at(-1)]);
+    expect(journal.list({ limit: 1 }).map((view) => view.id)).toEqual(ids.slice(-1));
     const fresh = createRequestJournal({ dir, now });
-    expect(journal.list()).toEqual(ids.map((id) => fresh.get(id)));
+    expect(journal.list()).toEqual(ids.flatMap((id) => fresh.get(id) ?? []));
     // That list used the views in post order, so the two oldest are the ones the cache dropped: damaged copies leave
     // out exactly those two, which a list has to read again.
     for (const id of ids) {
@@ -866,7 +866,7 @@ test("a change watcher reports a settlement that another reader of the journal s
         worker.append(input.id, { type: "finished", at, exitCode: 0, outputTail: "", verified: null });
         expect(watcher.list().find((view) => view.id === input.id)?.state).toBe("done");
         const reported = await withTimeout(done.promise, 2_000, new Error("the watcher never reported the settlement"));
-        expect(reported).toEqual(worker.get(input.id) ?? undefined);
+        expect(worker.get(input.id)).toEqual(reported);
     } finally {
         off();
     }
