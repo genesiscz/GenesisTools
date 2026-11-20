@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
 import { fileIdentity } from "@genesiscz/utils/fs/identity-cache";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -50,24 +50,45 @@ function readChannel(bytes: Buffer, offset: number): ChannelVoice {
     };
 }
 
-function readFrames(cachePath: string, key: string): VoiceFrame[] | undefined {
+/** How long a cache read holds the event loop before it yields, like the decoder's own time slices. */
+const READ_SLICE_MS = 20;
+const HASH_CHUNK_BYTES = 4 * 1024 * 1024;
+
+function yieldToLoop(): Promise<void> {
+    return new Promise<void>((resolve) => setImmediate(resolve));
+}
+
+/** An eight-hour cache holds about 46 MB: it is read, hashed and decoded in slices, never in one blocking pass. */
+async function readFrames(cachePath: string, key: string): Promise<VoiceFrame[] | undefined> {
     try {
-        const stat = statSync(cachePath, { throwIfNoEntry: false });
-        if (!stat || stat.size > DIGEST_BYTES + MAX_VOICE_FRAMES * FRAME_BYTES) {
+        const info = await stat(cachePath).catch(() => undefined);
+        if (!info || info.size > DIGEST_BYTES + MAX_VOICE_FRAMES * FRAME_BYTES) {
             return undefined;
         }
 
-        const bytes = readFileSync(cachePath);
-        if (
-            (bytes.length - DIGEST_BYTES) % FRAME_BYTES !== 0 ||
-            !bytes.subarray(0, DIGEST_BYTES).equals(digest(bytes, key))
-        ) {
+        const bytes = await readFile(cachePath);
+        if ((bytes.length - DIGEST_BYTES) % FRAME_BYTES !== 0) {
+            return undefined;
+        }
+
+        const hash = createHash("sha256").update(key);
+        for (let offset = DIGEST_BYTES; offset < bytes.length; offset += HASH_CHUNK_BYTES) {
+            hash.update(bytes.subarray(offset, Math.min(bytes.length, offset + HASH_CHUNK_BYTES)));
+            await yieldToLoop();
+        }
+
+        if (!bytes.subarray(0, DIGEST_BYTES).equals(hash.digest())) {
             return undefined;
         }
 
         const frames: VoiceFrame[] = [];
+        let sliceStart = performance.now();
         for (let offset = DIGEST_BYTES; offset < bytes.length; offset += FRAME_BYTES) {
             frames.push({ channels: [readChannel(bytes, offset), readChannel(bytes, offset + CHANNEL_BYTES)] });
+            if (performance.now() - sliceStart > READ_SLICE_MS) {
+                await yieldToLoop();
+                sliceStart = performance.now();
+            }
         }
         return frames;
     } catch (error) {
@@ -89,7 +110,7 @@ export async function collectVoiceFrames({
         return voiceFrames({ audioPath });
     }
 
-    const cached = readFrames(cachePath, key);
+    const cached = await readFrames(cachePath, key);
     if (cached && sourceKey(audioPath) === key) {
         return cached;
     }
@@ -106,7 +127,7 @@ export async function collectVoiceFrames({
                 }
 
                 // Another process may have finished collecting while this one waited for the lock.
-                const saved = readFrames(cachePath, current);
+                const saved = await readFrames(cachePath, current);
                 if (saved && sourceKey(audioPath) === current) {
                     return saved;
                 }
