@@ -585,10 +585,20 @@ final class AudioSessionTests: XCTestCase {
         audio.setMuted(.mic, true)
         audio.setPaused(true)
         XCTAssertLessThan(Date().timeIntervalSince(started), 2, "no call waited for the blocked reader")
-        XCTAssertFalse(audio.output.drain(timeout: 0.1))
+        // Finish retires the segment while the reader is still blocked, and must wait for its rows.
+        let finished = DispatchSemaphore(value: 0)
+        let finishing = Task {
+            defer { finished.signal() }
+            try await audio.finish()
+        }
+        XCTAssertFalse(audio.output.drain(timeout: 0.2))
+        XCTAssertEqual(finished.wait(timeout: .now()), .timedOut, "finish waits for the blocked reader")
+        lock.lock()
+        XCTAssertEqual(lines.count, 0, "no row was written while the reader was blocked")
+        lock.unlock()
         release.signal()
         release.signal()
-        try await audio.finish()
+        try await finishing.value
         lock.lock()
         let rows = lines
         lock.unlock()
