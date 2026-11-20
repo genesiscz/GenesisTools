@@ -92,6 +92,11 @@ export const widgetTaskEditSchema = z.object({
     ...taskTextSchema,
     expected: shownTaskSchema,
 });
+/** Sessions by title; two harnesses can share a title, so the id breaks the tie and the order never depends on the read. */
+function bySessionTitle(a: { id: string; title: string }, b: { id: string; title: string }): number {
+    return a.title.localeCompare(b.title) || a.id.localeCompare(b.id);
+}
+
 interface ListedWidgetTask extends WidgetTask {
     workRef?: string;
     acceptance?: string;
@@ -230,7 +235,7 @@ export function listWidgetTasks({
                     },
                 ])
             ).values(),
-        ].sort((a, b) => a.title.localeCompare(b.title)),
+        ].sort(bySessionTitle),
         tasks: structuredClone(selected.slice(0, options.limit)),
         total: selected.length,
         activeCount: tasks.filter((task) => ["open", "acknowledged"].includes(task.state)).length,
@@ -384,7 +389,7 @@ export async function listLiveWidgetTasks({
         }
 
         snapshot.projects = [...projects].sort();
-        snapshot.sessions = [...sessions.values()].sort((a, b) => a.title.localeCompare(b.title));
+        snapshot.sessions = [...sessions.values()].sort(bySessionTitle);
         const { projects: projectFilter = [], sessions: sessionFilter = [] } = options.filters ?? {};
         snapshot.claimedHandoffs = tree.filter(
             (handoff) =>
