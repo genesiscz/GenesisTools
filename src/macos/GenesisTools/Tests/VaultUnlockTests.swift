@@ -627,6 +627,21 @@ final class VaultUnlockTests: XCTestCase {
         XCTAssertEqual(VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: [],
                                                            startedAt: later, config: linked),
                        ["bunfig.toml preload (\(linked) is a symbolic link)"])
+
+        // A config reached through a linked folder is not trusted either: the folder can be pointed elsewhere.
+        let linkedFolder = checkout + "/linked-folder"
+        try FileManager.default.createSymbolicLink(atPath: linkedFolder, withDestinationPath: checkout)
+        let throughLink = linkedFolder + "/target.bunfig.toml"
+        XCTAssertEqual(VaultCaller.replaceableLink(in: throughLink), linkedFolder)
+        XCTAssertEqual(VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: [],
+                                                           startedAt: later, config: throughLink),
+                       ["bunfig.toml preload (\(throughLink) is reached through the symbolic link \(linkedFolder))"])
+        // The system links of the temporary folder (`/var` is root's) do not count.
+        XCTAssertNil(VaultCaller.replaceableLink(in: target))
+        // A relative config is the working folder's file.
+        XCTAssertEqual(VaultCaller.untrustedBunfigPreloads(cwd: linkedFolder, home: home, xdgConfigHome: nil, own: [],
+                                                           startedAt: later, config: "target.bunfig.toml"),
+                       ["bunfig.toml preload (\(throughLink) is reached through the symbolic link \(linkedFolder))"])
     }
 
     func testARememberedApprovalCoversOnlyTheSameExecutableAndScriptUntilItEnds() {

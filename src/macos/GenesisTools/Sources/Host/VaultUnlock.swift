@@ -232,7 +232,12 @@ struct VaultCaller {
     static func untrustedBunfigPreloads(cwd: String?, home: String, xdgConfigHome: String?, own: Set<String>,
                                         startedAt: Date?, config: String? = nil,
                                         fileManager: FileManager = .default) -> [String] {
-        let config = config.flatMap { path in path.isEmpty ? nil : path }
+        // A relative `--config=` file is the working folder's (Bun resolves it there), not this app's.
+        let config = config.flatMap { path -> String? in
+            if path.isEmpty { return nil }
+            guard !path.hasPrefix("/"), let cwd, !cwd.isEmpty else { return path }
+            return ((cwd as NSString).appendingPathComponent(path) as NSString).standardizingPath
+        }
         var files: [(path: String, base: String)] = []
         if let cwd, !cwd.isEmpty {
             files.append(config.map { path in (path, cwd) } ?? ((cwd as NSString).appendingPathComponent("bunfig.toml"), cwd))
@@ -250,6 +255,10 @@ struct VaultCaller {
                 // The read below follows the link, while the change time is the link's own: a change of its target
                 // would go unseen, so a linked file is never trusted.
                 found.append("bunfig.toml preload (\(watched) is a symbolic link)")
+            } else if let link = Self.replaceableLink(in: watched) {
+                // A linked folder above it is the same hole: a preload can point the folder elsewhere after the start,
+                // and the change time read here is then the new target's.
+                found.append("bunfig.toml preload (\(watched) is reached through the symbolic link \(link))")
             } else if let startedAt {
                 if let changed = Self.changeTime(of: watched), changed >= startedAt {
                     found.append("bunfig.toml preload (\(watched) changed after the process started)")
@@ -279,6 +288,26 @@ struct VaultCaller {
     private static func isSymbolicLink(_ path: String) -> Bool {
         var info = stat()
         return lstat(path, &info) == 0 && (info.st_mode & S_IFMT) == S_IFLNK
+    }
+
+    /// The first folder of the path that is a symbolic link someone other than root could point elsewhere, or nil.
+    /// A system link (`/var`, `/tmp`: owned by root, in a folder only root may write) cannot be replaced by a preload,
+    /// so it does not count.
+    static func replaceableLink(in path: String) -> String? {
+        let parts = (path as NSString).standardizingPath.split(separator: "/").map(String.init).dropLast()
+        var prefix = ""
+        for part in parts {
+            let parent = prefix.isEmpty ? "/" : prefix
+            prefix += "/" + part
+            var info = stat()
+            guard lstat(prefix, &info) == 0 else { return nil }
+            guard (info.st_mode & S_IFMT) == S_IFLNK else { continue }
+            var folder = stat()
+            let systemLink = info.st_uid == 0 && stat(parent, &folder) == 0 && folder.st_uid == 0
+                && (folder.st_mode & (S_IWGRP | S_IWOTH)) == 0
+            if !systemLink { return prefix }
+        }
+        return nil
     }
 
     /// The inode change time of a path (a rename, a delete inside a folder and a write all move it), or nil.
