@@ -1,9 +1,11 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import type { MeetingItem } from "@genesiscz/utils/meetings/record";
 import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { Storage } from "@genesiscz/utils/storage/storage";
-import { groupSpeakerQuestions, refreshSpeakerQuestions } from "./questions";
+import type { LineEvidence } from "@genesiscz/utils/transcribe/evidence";
+import { MutedCallLines } from "./call-mutes";
+import { groupSpeakerQuestions, questionFor, refreshSpeakerQuestions } from "./questions";
 import { LineSpeakers } from "./speaker-evidence";
 import { applySuggestionChanges, planSuggestions, type SuggestInputs } from "./suggest";
 
@@ -204,4 +206,84 @@ test("R3 planning on frozen input preserves old range edits, choices and departu
         expect.objectContaining({ label: "Local", fromSec: 10, toSec: 10, speaker: owner })
     );
     expect(replay.fresh).toEqual([]);
+});
+
+describe("callers read line eligibility when it is given", () => {
+    const at = "2026-11-01T09:00:00Z";
+    const meeting: SourceMeeting = {
+        sourceMeetingId: "eligibility",
+        title: "Eligibility",
+        start: at,
+        participants: [],
+        speakers: [],
+        folders: [],
+        transcript: [],
+    };
+    const words = "Tak to bychom měli, ten export dat do nového systému připravíme do konce příštího týdne.";
+    // A strong call line that Bob's call stay covers: line eligibility offers him.
+    const callLine = (muted?: string[]): LineEvidence => ({
+        index: 0,
+        startSec: 120,
+        endSec: 126,
+        label: "Speaker 5",
+        text: words,
+        micShare: 0.1,
+        speaking: {},
+        ...(muted ? { muted } : {}),
+    });
+    const record = (items: unknown[] = []) =>
+        meetingRecordSchema.parse({
+            id: "eligibility",
+            title: meeting.title,
+            start: at,
+            createdAt: at,
+            createdBy: "new",
+            participants: [{ name: "Bob Example" }, { name: "Carol Example" }],
+            items,
+        });
+    const speakers = (target = record()) =>
+        new LineSpeakers({
+            record: target,
+            meeting,
+            lines: [callLine()],
+            presence: [{ name: "Bob Example", fromSec: 0, toSec: 200 }],
+        });
+    const range = {
+        id: "i1",
+        kind: "speaker-range",
+        status: "suggested",
+        label: "Speaker 5",
+        fromSec: 120,
+        toSec: 120,
+        speaker: "Bob Example",
+        candidates: ["Carol Example"],
+        confidence: 0.45,
+        rules: [],
+        evidence: { listen: true, endSec: 126 },
+        suggestedAt: at,
+    };
+    const transcript = [{ speaker: "Speaker 5", startSec: 120, text: words }];
+    // The fallback inputs say Bob left before 120 s and was muted on the call through the line.
+    const presence = [{ name: "Bob Example", fromSec: 150, toSec: 200 }];
+    const callMutes = new MutedCallLines([callLine(["Bob Example"])]);
+
+    test("a speaker question offers the eligible person the presence window and the mute index rule out", () => {
+        const item = record([range]).items[0]!;
+        const fallback = { listenBelow: 0.6, transcript, points: [], presence, callMutes };
+        expect(questionFor(item, fallback)).toBeUndefined();
+        expect(questionFor(item, { ...fallback, speakers: speakers() })).toMatchObject({
+            about: "speaker",
+            choices: ["Bob Example", "Carol Example"],
+        });
+    });
+
+    test("a grouped review question offers the eligible person the presence window rules out", () => {
+        const item = record([{ ...range, evidence: { reviewOnly: true, endSec: 126 } }]).items[0]!;
+        const fallback = { listenBelow: 0.6, transcript, points: [], presence };
+        expect(groupSpeakerQuestions([item], new Set(), fallback)[0]?.choices).toEqual(["Carol Example"]);
+        expect(groupSpeakerQuestions([item], new Set(), { ...fallback, speakers: speakers() })[0]?.choices).toEqual([
+            "Bob Example",
+            "Carol Example",
+        ]);
+    });
 });
