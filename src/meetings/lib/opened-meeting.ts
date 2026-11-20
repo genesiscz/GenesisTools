@@ -31,6 +31,8 @@ import { assessIndicator } from "./speaker-indicator";
 import { configuredWordChecks, type WordCheckChoice, wordCheckFor } from "./word-check";
 
 const { log } = logger.scoped("meetings-opened");
+/** The component log, exported so a test can assert the diagnostics this module promises. */
+export const openedMeetingLog = log;
 
 export interface CollectOutcome {
     record: MeetingRecord;
