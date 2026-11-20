@@ -3073,7 +3073,7 @@ export const editOpSchema = z.discriminatedUnion("op", [
         .strict(),
     /** Mutes a part of one sound lane over a source range; the part is an item of its own (a cough, a doorbell). */
     z.object({ op: z.literal("audioMute"), id: audioLaneSchema.shape.id, ...rangeFields }).strict(),
-    /** Plays a sound lane again over a source range, or deletes one of its muted parts by its `part` id. */
+    /** Plays a sound lane again over a source range, or deletes one of its muted parts by its `part` id: one of the two. */
     z
         .object({
             op: z.literal("audioUnmute"),
@@ -3082,7 +3082,23 @@ export const editOpSchema = z.discriminatedUnion("op", [
             to: sourceTimeSchema.optional(),
             part: z.string().min(1).optional(),
         })
-        .strict(),
+        .strict()
+        .superRefine((op, ctx) => {
+            const ranged = op.from !== undefined || op.to !== undefined;
+            if (op.part !== undefined ? ranged : op.from === undefined || op.to === undefined) {
+                ctx.addIssue({
+                    code: "custom",
+                    message: "audioUnmute takes a part id, or a from and to range (source seconds), not both",
+                });
+            }
+        })
+        // The two shapes the rule above accepts, for the JSON Schema that schema-driven clients read.
+        .meta({
+            oneOf: [
+                { required: ["part"], not: { anyOf: [{ required: ["from"] }, { required: ["to"] }] } },
+                { required: ["from", "to"], not: { required: ["part"] } },
+            ],
+        }),
     z.object({ op: z.literal("layerAdd"), kind: layerFields.kind, file: layerFields.file, ...layerPlacement }).strict(),
     z
         .object({
@@ -3116,6 +3132,18 @@ export const editOpSchema = z.discriminatedUnion("op", [
 export type EditOp = z.infer<typeof editOpSchema>;
 
 export const EDIT_OP_NAMES = editOpSchema.options.map((option) => option.shape.op.value);
+
+/**
+ * An edit op's own fields: its `editOpSchema` variant without the `op` tag, with the variant's cross-field rules and
+ * schema notes kept. zod 4 refuses `.omit()` on a refined object (audioUnmute takes a part, or from and to), so the
+ * variant is cloned with the shape that has no tag, which keeps its rules, and its notes are attached again.
+ */
+export function editOpFields(variant: z.ZodObject): z.ZodObject {
+    const { op: _op, ...shape } = variant.shape;
+    const fields = variant.clone({ ...variant.def, shape });
+    const meta = z.globalRegistry.get(variant);
+    return meta ? fields.meta(meta) : fields;
+}
 
 /** One op or a list of them from untrusted JSON, with one readable line per problem. */
 export function parseEditOps(raw: unknown): EditOp[] {

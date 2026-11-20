@@ -21,6 +21,7 @@ import * as denoise from "@genesiscz/utils/recording-editor/denoise";
 import {
     applyOp,
     type EditOp,
+    editOpFields,
     editOpSchema,
     readProject,
     wholeProject,
@@ -2390,7 +2391,7 @@ describe("the movie method of every edit op", () => {
             const taken = jsonOf(method.params);
             const properties = Object.entries(taken.properties ?? {}).filter(([field]) => !extra.includes(field));
             const withoutExtra = extra.length ? { ...taken, properties: Object.fromEntries(properties) } : taken;
-            const expected = expectedParams(tag, variant.omit({ op: true }));
+            const expected = expectedParams(tag, editOpFields(variant));
             const same = SafeJSON.stringify(withoutExtra) === SafeJSON.stringify(jsonOf(expected));
 
             if (tag in OTHER_ACTION ? same : !same) {

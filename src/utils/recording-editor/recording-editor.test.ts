@@ -4525,6 +4525,15 @@ describe("recording layer contract", () => {
         ]);
     });
 
+    test("audioUnmute takes a part id or a from and to range, which its schema says", () => {
+        const parse = (raw: unknown) => editOpSchema.safeParse(raw).success;
+        expect(parse({ op: "audioUnmute", id: "mic", part: "u1" })).toBe(true);
+        expect(parse({ op: "audioUnmute", id: "mic", from: 1, to: 2 })).toBe(true);
+        expect(parse({ op: "audioUnmute", id: "mic" })).toBe(false);
+        expect(parse({ op: "audioUnmute", id: "mic", from: 1 })).toBe(false);
+        expect(parse({ op: "audioUnmute", id: "mic", part: "u1", from: 1, to: 2 })).toBe(false);
+    });
+
     test("a lane's muted parts reach the mix as silent stretches on the source clock", () => {
         const lanes: AudioLane[] = [
             {

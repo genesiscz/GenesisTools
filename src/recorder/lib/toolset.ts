@@ -49,6 +49,7 @@ import {
     type EditOp,
     type EditProject,
     type EditZoom,
+    editOpFields,
     editOpSchema,
     effectsOnSourceTime,
     findInTranscript,
@@ -254,7 +255,7 @@ function opParams(tag: EditOp["op"]): z.ZodObject {
         throw new Error(`no edit op "${tag}" in editOpSchema`);
     }
 
-    return variant.omit({ op: true });
+    return editOpFields(variant);
 }
 
 /** The method of a plain edit op: `edit()` with the op's own params. */
