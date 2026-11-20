@@ -14,7 +14,9 @@ tools video encode ./clips --dry-run                         # what a batch re-e
 tools video stream download ./page.har --list                # every source a saved HAR leads to
 tools video stream download ./page.har --out talk.mp4        # download one; run it again to resume
 tools video kick list-clips "https://kick.com/somechannel/clips?sort=date&range=day"  # a channel's clips
-tools video kick download somechannel --range day --out-dir ./clips    # save them as MP4
+tools video kick download somechannel --range day --out-dir ./clips    # save them as MP4, with a manifest
+tools video twitch download somechannel --range week --out-dir ./clips  # the same for Twitch
+tools video kick download-vod --clip <clip url> --out-dir ./vods        # the clip's moment cut from its VOD
 ```
 
 `probe`, `frames`, `shrink` and `encode` need `ffmpeg` and `ffprobe` on the PATH (`brew install ffmpeg` installs both).
@@ -23,15 +25,19 @@ tools video kick download somechannel --range day --out-dir ./clips    # save th
 
 ## Commands
 
-| Command                      | What it does                                          |
-|------------------------------|-------------------------------------------------------|
-| `probe <input>`              | Print a video's facts as JSON                         |
-| `frames <input>`             | Sample frames into PNGs and labeled contact sheets    |
-| `shrink <file>`              | Measure the presets, recommend one, encode, check     |
-| `encode <paths...>`          | Re-encode files or folders, keep only verified output |
-| `stream download [source]`   | Save a broadcast from a HAR, a URL or a browser page  |
-| `kick list-clips <channel>`  | List a Kick channel's clips                           |
-| `kick download <targets...>` | Save Kick clips as MP4 (no re-encode)                 |
+| Command                      | What it does                                             |
+|------------------------------|----------------------------------------------------------|
+| `probe <input>`              | Print a video's facts as JSON                            |
+| `frames <input>`             | Sample frames into PNGs and labeled contact sheets       |
+| `shrink <file>`              | Measure the presets, recommend one, encode, check        |
+| `encode <paths...>`          | Re-encode files or folders, keep only verified output    |
+| `stream download [source]`   | Save a broadcast from a HAR, a URL or a browser page     |
+| `kick list-clips <channel>`  | List a Kick channel's clips                              |
+| `kick download <targets...>` | Save Kick clips as MP4 (no re-encode) with a manifest    |
+| `kick vods <channel>`        | List a Kick channel's VODs and their access              |
+| `kick download-vod [vod]`    | Cut a Kick VOD, a time range of it, or a clip's moment   |
+| `kick manifest <dir>`        | Show a folder's clips by VOD; `--backfill` records files |
+| `twitch …`                   | The same five commands for Twitch                        |
 
 `-v, --verbose` turns on debug logging, `--readme` prints this page, and `tools video help <command>` (or
 `<command> --help`) prints a command's flags.
@@ -397,34 +403,69 @@ playlist they were captured for, never to another host a playlist points at.
 A new platform is one file in `stream/providers/` that implements `StreamProvider` (find its answers in a HAR, ask the
 API now) and one entry in `STREAM_PROVIDERS`.
 
-### kick: list and download Kick clips
+### kick, twitch: clips, VODs and the clips manifest
+
+`tools video kick …` and `tools video twitch …` have the same five commands. Each site is one `ClipProvider`
+(`src/video/kick/provider.ts`, `src/video/twitch/provider.ts`) in the `CLIP_PROVIDERS` table
+(`src/video/clips/providers.ts`); the commands, the download, the manifest and the VOD cut in `src/video/clips/` are
+shared. A new site is one folder and one entry in that table.
 
 ```sh
 tools video kick list-clips "https://kick.com/somechannel/clips?sort=date&range=day"
-tools video kick list-clips somechannel --sort view --range week --limit 50 --json
-tools video kick download "https://kick.com/somechannel/clips/clip_01ABCDEFGHJKMNPQRSTVWXYZ01"
-tools video kick download somechannel --range day --limit 10 --out-dir ./clips
 tools video kick download somechannel --since 12h --limit 0 --out-dir ./clips
+tools video twitch list-clips "https://www.twitch.tv/somechannel/clips?filter=clips&range=7d" --limit 50
+tools video twitch download https://www.twitch.tv/somechannel/clip/<slug> --out-dir ./clips
+tools video kick vods somechannel
+tools video kick download-vod https://kick.com/somechannel/videos/<uuid> --from 1:00:00 --to 1:05:00
+tools video twitch download-vod --clip <clip url> --pad 30s --quality 720p --out-dir ./vods
+tools video kick manifest ./clips --backfill
 ```
 
-- `list-clips <channel>` takes a slug, a channel page, or a clips page URL copied from the browser. The page's own
-  `sort` and `range` are used; `--sort` and `--range` override them.
-- `download <targets...>` takes clip URLs (`kick.com/<channel>/clips/clip_…` or `?clip=clip_…`), bare clip ids, and
-  channel or clips page URLs. A channel downloads the clips that `list-clips` shows for the same flags.
-- `--sort date|view` (default `date`), `--range day|week|month|all` (default `all`), `--limit <n>` clips per channel
-  (default 20, `0` for all; the list is read page by page until the limit).
+- `list-clips <channel>` takes a name, a channel page, or a clips page URL copied from the browser. The page's own
+  sort (Kick) and range are used; `--sort` and `--range` override them.
+- `download <targets...>` takes clip URLs, bare clip ids (Kick `clip_…`, Twitch slugs) and channel or clips page
+  URLs. A channel downloads the clips that `list-clips` shows for the same flags.
+- `--sort`: Kick `date` (default) or `view`; Twitch `view` (default), `trending` or `date`. Twitch's API refuses a date
+  order, so Twitch `date` reads every page of the range by views and sorts it here. `--range day|week|month|all`
+  (default Kick `all`, Twitch `week`), `--limit <n>` clips per channel (default 20, `0` for all).
 - `--since <when>` keeps only clips made since then: a duration back from now (`12h`, `90m`, `2d`), `HH:MM` today, or
-  an ISO date. With `--sort date` the pages stop at the first page that reaches back past it.
+  an ISO date. With Kick `--sort date` the pages stop at the first page that reaches back past it.
 - `--out-dir <dir>` (default the current folder), `--jobs <n>` clips at once (default 3), `--force` downloads a clip
   again. Without `--force` a clip whose file exists is skipped, so a rerun only fetches new clips.
-- `--json` prints the clips (`list-clips`) or one row per clip with `status` `saved`, `exists` or `failed`
-  (`download`). A failed clip sets exit code 1.
+- `--json` prints the clips (`list-clips`) or one row per clip with `status` `saved`, `exists` or `failed` and its
+  `source` (`download`). A failed clip sets exit code 1.
 
-Files are named `<channel>-<YYYY-MM-DD>-<title>-<id>.mp4`. Kick serves a clip as one HLS playlist with byte-range
-segments (1080p H.264 and AAC on the clips checked on 2026-11-19); `ffmpeg -c copy` remuxes it into `<file>.part` and
-renames it only after ffmpeg exits 0. It needs `ffmpeg` on the PATH. The tool reads Kick's public web API
-(`kick.com/api/v2/channels/<channel>/clips` and `/api/v2/clips/<id>`), which needs no login. An HTTP 403 with a
-Cloudflare page means Kick refused the request for now; try again later.
+Clip files are named `<channel>-<YYYY-MM-DD>-<title>-<id>.mp4` (Kick: the clip id without `clip_`; Twitch:
+`tw_<slug>`). `ffmpeg -c copy` copies Kick's HLS playlist or Twitch's MP4 into `<file>.part` and renames it only after
+ffmpeg exits 0. Everything needs `ffmpeg` on the PATH and no login: Kick's public web API, and Twitch's GQL with the
+client id twitch.tv itself sends.
+
+**The manifest.** `download` writes `clips-manifest.json` into the folder, one section per site
+(`providers.kick`, `providers.twitch`), each with `clips` (by clip id), `vods` (by stream id) and `vodParts` (by file).
+A clip record holds the title, the clip page URL, the media URL, channel, creator, category, views, length, its file
+and its `source`: the stream id, the VOD id and page, the stream time it covers (`startAt`, `endAt`) and its place in
+the VOD (`vodOffsetSec`, `vodEndOffsetSec`, and Twitch's `vodUrlAtClip` with `?t=`). Kick clips have no description;
+Twitch's API gives none either. `offsetFrom` says how the place was found:
+
+- `site`: Twitch names the offset (`videoOffsetSeconds`).
+- `vod-playlist`: Kick clip and VOD playlists both carry the stream time of every segment (also for a clip cut from a
+  VOD later), so the offset is their difference. Measured 2026-11-20 on one fattypillow clip: the clip's audio matched
+  the cut at that offset within 0.07 s.
+- `stream-start`: the VOD is subscriber-only, so its playlist is closed and the offset counts from Kick's stream start,
+  a few seconds off. `manifest` marks these with `~`.
+
+`manifest <dir>` prints the clips by VOD, sorted by their place, and names the clips that overlap another clip by at
+least 90% of the shorter one ("same as …"). `--json` prints the manifest and every overlapping pair. `--backfill` reads
+every clip file of that site in the folder from the site again and records it: use it for files saved before the
+manifest existed.
+
+**VOD cuts.** `vods <channel>` lists the streams and their VOD access. `download-vod [vod]` cuts the VOD (a VOD URL or
+id) with `ffmpeg -ss … -t … -c copy` into `<channel>-<date>-<title>-<VOD id>[-<from>_<to>]-<quality>.mp4` and records
+it in `vodParts`; `--from` and `--to` take `1:02:03`, `62:03`, seconds or `90m`. `--clip <clip>` cuts the clip's moment
+plus `--pad` (default `30s`) on each side, and finds the VOD itself. `--quality` picks a variant (`1080p`, `720p`,
+`480p`; default the highest). A cut whose size estimate (variant bitrate times length) does not fit on the disk with
+2 GB to spare is refused. A subscriber-only VOD (Kick `subscriber_only`, Twitch's CDN answering 403) cannot be cut
+without a login.
 
 ## How it works
 
