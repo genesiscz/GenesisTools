@@ -4526,6 +4526,31 @@ describe("recording layer contract", () => {
         expect(placed.camera?.y).toBeCloseTo(y);
     });
 
+    test("Replace File changes a layer's source in one op and keeps its id, place and times", () => {
+        const facts = { playheadUs: 1_000_000, videoDurationUs: 2_000_000 };
+        const first = applyOp(
+            withCamera(),
+            editOpSchema.parse({ op: "layerAdd", kind: "video", file: "a.mov" }),
+            facts
+        );
+        const second = applyOp(first, editOpSchema.parse({ op: "layerAdd", kind: "image", file: "logo.png" }), facts);
+        const id = first.layers!.media[0].id;
+        const looped = applyOp(second, editOpSchema.parse({ op: "layer", id, videoSound: true, loop: true }));
+        const replaced = applyOp(looped, editOpSchema.parse({ op: "layer", id, file: "b.mov" }));
+        expect(replaced.layers?.order).toEqual(looped.layers?.order);
+        expect(replaced.layers?.media[0]).toMatchObject({ id, kind: "video", file: "b.mov", loop: true });
+        expect(replaced.layers?.media[0].startUs).toBe(looped.layers?.media[0].startUs);
+        const picture = applyOp(replaced, editOpSchema.parse({ op: "layer", id, file: "still.png", kind: "image" }));
+        expect(picture.layers?.media[0]).toMatchObject({
+            id,
+            kind: "image",
+            file: "still.png",
+            videoSound: false,
+            loop: false,
+        });
+        expect(() => applyOp(picture, editOpSchema.parse({ op: "layer", id, loop: true }))).toThrow("require a video");
+    });
+
     test("video duration and edits use source time, clamp to the movie and clear a shape", () => {
         const add = editOpSchema.parse({ op: "layerAdd", kind: "video", file: "inset.mov" });
         const facts = { playheadUs: 3_000_000, videoDurationUs: 2_500_000 };

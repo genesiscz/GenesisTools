@@ -3068,6 +3068,10 @@ export const editOpSchema = z.discriminatedUnion("op", [
         .object({
             op: z.literal("layer"),
             id: layerFields.id,
+            /** Replace File: the layer's new source (a bare name is beside the source movie); it keeps its id and place. */
+            file: layerFields.file.optional(),
+            /** The new source's kind, when Replace File changes an image to a video or back. */
+            kind: layerFields.kind.optional(),
             ...layerPlacement,
             // The camera width is measured against the canvas, so a small bubble on a wide canvas can be below 0.05.
             width: z.number().positive().max(1).optional(),
