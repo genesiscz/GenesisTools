@@ -1106,6 +1106,10 @@ describe("RecordingSession", () => {
 });
 
 describe("nativeSegmentRecorder", () => {
+    // The watch falls back to a one-second poll, and a loaded Mac (Swift builds beside the suite) delays its timers:
+    // 2 s failed once there. A wait ends at the switch, so a generous ceiling costs a passing run nothing.
+    const SWITCH_WAIT_MS = 10_000;
+
     let root: string;
 
     beforeEach(async () => {
@@ -1244,7 +1248,7 @@ describe("nativeSegmentRecorder", () => {
             onRecording?.({ sessionDir });
             await writeFile(`${status}.new`, metadata(second));
             await fs.rename(`${status}.new`, status);
-            await withTimeout(changed.promise, 2_000, new Error("no display switch"));
+            await withTimeout(changed.promise, SWITCH_WAIT_MS, new Error("no display switch"));
             return { sessionDir, warnings: [] } as unknown as Awaited<
                 ReturnType<typeof captureRunner.runCapturePlanWithSignal>
             >;
@@ -1273,7 +1277,11 @@ describe("nativeSegmentRecorder", () => {
                 join(sessionDir, "movie-start.json"),
                 SafeJSON.stringify({ firstFrameEpochMs: 1234, display })
             );
-            await withTimeout(changed.promise, 3_000, new Error("no display switch without a directory watch"));
+            await withTimeout(
+                changed.promise,
+                SWITCH_WAIT_MS,
+                new Error("no display switch without a directory watch")
+            );
             return { sessionDir, warnings: [] } as unknown as Awaited<
                 ReturnType<typeof captureRunner.runCapturePlanWithSignal>
             >;
