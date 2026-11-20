@@ -1160,10 +1160,37 @@ final class MeetingsReviewRowTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         XCTAssertEqual(Rows.spellingMarks.value(defaults), .sparkle)
         XCTAssertEqual(Rows.SpellingMarks.sparkle.style, .sparkle)
-        defaults.set("accent", forKey: Rows.spellingMarks.key)
+        // The Rows section of the side panel offers the setting and writes it.
+        let key = Rows.spellingMarks.key
+        let offered = try XCTUnwrap(SidePanelCatalog.windowSections(defaults).first { $0.id == "rows" }?.rows.first { $0.id == key })
+        XCTAssertEqual(offered.value, .text("sparkle"))
+        XCTAssertEqual(offered.choices.map(\.title), ["Sparkle", "Accent, still"])
+        SidePanelCatalog.write(.text("accent"), key: key, to: defaults)
         XCTAssertEqual(Rows.spellingMarks.value(defaults).style, .accent)
-        let row = SidePanelCatalog.row(Rows.spellingMarks, value: Rows.spellingMarks.value(defaults))
-        XCTAssertEqual(row.choices.map(\.title), ["Sparkle", "Accent, still"])
+        let written = try XCTUnwrap(SidePanelCatalog.windowSections(defaults).first { $0.id == "rows" }?.rows.first { $0.id == key })
+        XCTAssertEqual(written.value, .text("accent"))
+
+        // The spelling dialog draws its marks in the style the setting holds: the two styles draw two pictures.
+        let reach = try JSONDecoder().decode(DecisionReach.self, from: Data(#"""
+        {"items":[],"dictionary":[],"spelling":{"heard":"Zorb","proposed":"ZORB","dictionary":true,"occurrences":[
+          {"line":2,"atSec":15,"speaker":"Speaker 1","text":"The Zorb is ready.","selected":true,"primary":true,
+           "ranges":[{"location":4,"length":4}]}]}}
+        """#.utf8))
+        let pending = MeetingDetailModel.PendingReach(row: try rows().rows.required(0), action: .respell("i1", to: "ZORB"),
+                                                      reason: nil, reach: reach)
+        let detail = MeetingDetailModel(id: "m", window: nil)
+        func dialog() throws -> Data {
+            // Reduce Motion draws the sparkle still, so one picture of each style is the same every time.
+            let renderer = ImageRenderer(content: ReachSheet(pending: pending, detail: detail)
+                .frame(width: 520).background(Color.white).environment(\.colorScheme, .light)
+                .environment(\.nativeSettingsReduceMotion, true).defaultAppStorage(defaults))
+            renderer.scale = 2
+            return try XCTUnwrap(XCTUnwrap(renderer.cgImage).dataProvider?.data as Data?)
+        }
+        let accent = try dialog()
+        XCTAssertEqual(try dialog(), accent, "the same setting draws the same picture")
+        SidePanelCatalog.write(.text("sparkle"), key: key, to: defaults)
+        XCTAssertNotEqual(try dialog(), accent, "the dialog follows the setting")
     }
 
     /// U14: the folded line of a rejected row showed "i132 …" and then the agent's whole reason, cut at the window's edge.
