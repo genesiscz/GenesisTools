@@ -198,6 +198,16 @@ export async function listProjectVoices(options: VoicesAccess & Browse) {
                 : scope.kind !== "project" || record.project === scope.project,
     }).records;
     const listed = new Map(records.map((record) => [record.id, record]));
+    // A meeting the bounded listing did not enumerate (a linked folder) is read here; an unreadable record makes its
+    // samples unavailable instead of failing the whole listing.
+    const readUnlisted = (meeting: string): MeetingRecord | undefined => {
+        try {
+            return options.store.read(meeting);
+        } catch (error) {
+            log.debug({ error, meeting }, "voice sample record unreadable");
+            return undefined;
+        }
+    };
     const readRecords = new Map<string, MeetingRecord | undefined>();
     const openedMeetings = new Map<string, OpenedMeeting>();
     const spokenIn = new Map<string, Promise<SpokenIndex>>();
@@ -209,7 +219,7 @@ export async function listProjectVoices(options: VoicesAccess & Browse) {
             let words = "";
             let available = false;
             if (!readRecords.has(sample.meeting)) {
-                readRecords.set(sample.meeting, listed.get(sample.meeting) ?? options.store.read(sample.meeting));
+                readRecords.set(sample.meeting, listed.get(sample.meeting) ?? readUnlisted(sample.meeting));
             }
             const record = readRecords.get(sample.meeting);
             if (record) {
@@ -570,7 +580,12 @@ async function resolveCorrectionSource(access: VoicesAccess, sample: VoiceSample
     if (sample.source.spanKey) {
         return sample.source;
     }
-    const record = access.store.read(sample.meeting);
+    let record: MeetingRecord | undefined;
+    try {
+        record = access.store.read(sample.meeting);
+    } catch (error) {
+        log.debug({ error, meeting: sample.meeting }, "voice correction record unreadable");
+    }
     if (!record) {
         return sample.source;
     }
