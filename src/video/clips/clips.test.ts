@@ -98,12 +98,13 @@ function clip(id: string, fromSec: number, toSec: number, streamId = "s1"): Mani
 }
 
 describe("findOverlaps", () => {
-    it("pairs clips of one stream that overlap and marks a near-full overlap as a duplicate", () => {
+    it("pairs clips of one stream that overlap, and tells a duplicate from a clip inside a longer one", () => {
         const clips = [
             clip("a", 100, 130),
             clip("b", 101, 130),
             clip("c", 125, 160),
-            clip("d", 200, 230),
+            clip("d", 200, 300),
+            clip("f", 210, 240),
             clip("e", 100, 130, "s2"),
         ];
         const manifest: ClipsManifest = {
@@ -117,13 +118,14 @@ describe("findOverlaps", () => {
             overlap.a.id,
             overlap.b.id,
             overlap.overlapSec,
-            overlap.duplicate,
+            overlap.duplicate ? "duplicate" : overlap.contained ? "contained" : "overlap",
         ]);
 
         expect(pairs).toEqual([
-            ["a", "b", 29, true],
-            ["a", "c", 5, false],
-            ["b", "c", 5, false],
+            ["a", "b", 29, "duplicate"],
+            ["a", "c", 5, "overlap"],
+            ["b", "c", 5, "overlap"],
+            ["d", "f", 30, "contained"],
         ]);
     });
 });

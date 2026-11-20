@@ -103,8 +103,10 @@ export interface ClipOverlap {
     a: ManifestClip;
     b: ManifestClip;
     overlapSec: number;
-    /** The overlap covers at least 90% of the shorter clip: the same moment, clipped twice. */
+    /** The overlap covers at least 90% of the longer clip: the same span, clipped twice. */
     duplicate: boolean;
+    /** Not a duplicate, but the shorter clip lies (90% or more) inside the other one. */
+    contained: boolean;
 }
 
 export function manifestPath(dir: string): string {
@@ -237,14 +239,16 @@ export function findOverlaps(manifest: ClipsManifest): ClipOverlap[] {
                     }
 
                     const overlapSec = Math.min(first.end, second.end) - second.start;
-                    const shorter = Math.min(first.end - first.start, second.end - second.start);
+                    const lengths = [first.end - first.start, second.end - second.start];
+                    const duplicate = overlapSec >= Math.max(...lengths) * 0.9;
                     overlaps.push({
                         provider,
                         streamId,
                         a: first.clip,
                         b: second.clip,
                         overlapSec: Math.round(overlapSec * 10) / 10,
-                        duplicate: overlapSec >= shorter * 0.9,
+                        duplicate,
+                        contained: !duplicate && overlapSec >= Math.min(...lengths) * 0.9,
                     });
                 }
             }

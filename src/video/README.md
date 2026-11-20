@@ -454,10 +454,11 @@ Twitch's API gives none either. `offsetFrom` says how the place was found:
 - `stream-start`: the VOD is subscriber-only, so its playlist is closed and the offset counts from Kick's stream start,
   a few seconds off. `manifest` marks these with `~`.
 
-`manifest <dir>` prints the clips by VOD, sorted by their place, and names the clips that overlap another clip by at
-least 90% of the shorter one ("same as …"). `--json` prints the manifest and every overlapping pair. `--backfill` reads
-every clip file of that site in the folder from the site again and records it: use it for files saved before the
-manifest existed.
+`manifest <dir>` prints the clips by VOD, sorted by their place. It names a clip that overlaps another by at least
+90% of the longer one ("same as …", the same span clipped twice) and a clip that lies inside a longer clip
+("inside …"). `--json` prints the manifest and every overlapping pair with `duplicate` and `contained`. `--backfill`
+reads every clip file of that site in the folder from the site again and records it: use it for files saved before
+the manifest existed.
 
 **VOD cuts.** `vods <channel>` lists the streams and their VOD access. `download-vod [vod]` cuts the VOD (a VOD URL or
 id) with `ffmpeg -ss … -t … -c copy` into `<channel>-<date>-<title>-<VOD id>[-<from>_<to>]-<quality>.mp4` and records
