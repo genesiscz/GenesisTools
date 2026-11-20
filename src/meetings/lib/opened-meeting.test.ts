@@ -18,7 +18,10 @@ import type { MicEnergy } from "./energy";
 import * as energyModule from "./energy";
 import { attendanceWarning, OpenedMeeting, openedMeetingLog } from "./opened-meeting";
 import { faceTimePlatform } from "./platforms/facetime";
+import { showText } from "./show-text";
 import { preserveSourceAudio } from "./source-audio";
+import { copyBackedSource, copyOnlySource, readSourceCopy } from "./source-copy";
+import { speakerStatsRead } from "./window-reads";
 
 let stores = 0;
 
@@ -1135,4 +1138,88 @@ test("a final call-channel goodbye uses a matched voice and later speech reopens
     expect(await collect()).toEqual(first);
     later = true;
     expect((await collect())[1]).toEqual({ fromSec: 10, source: "platform-roster", confidence: 1 });
+});
+
+describe("the record's own copy of its source", () => {
+    const ref = { sourceId: "wisprflow", sourceMeetingId: "abc" };
+
+    test("a read saves the copy, and a source that later fails answers from it", async () => {
+        const { store, record } = await newRecord();
+        const folder = store.folder(record.id);
+        const live = fakeSource();
+        const backed = copyBackedSource(live, folder);
+        const meeting = await backed.load("abc");
+        await backed.evidence("abc");
+        await backed.recordingClock("abc");
+        expect(readSourceCopy(folder, "meeting", ref)?.value.transcript).toHaveLength(2);
+        const savedAt = readSourceCopy(folder, "meeting", ref)?.savedAt;
+        await backed.load("abc");
+        // An unchanged answer leaves the file as it was.
+        expect(readSourceCopy(folder, "meeting", ref)?.savedAt).toBe(savedAt);
+
+        const gone: TranscriptSource = {
+            ...live,
+            load: async () => {
+                throw new Error("the import was removed");
+            },
+            revision: async () => {
+                throw new Error("the import was removed");
+            },
+            // Wispr answers null when the meeting's raw folder is gone.
+            evidence: async () => null,
+            recordingClock: async () => {
+                throw new Error("the import was removed");
+            },
+        };
+        const fallback = copyBackedSource(gone, folder);
+        expect(await fallback.load("abc")).toEqual(meeting);
+        expect((await fallback.evidence("abc"))?.selfName).toBe("Alice Example");
+        expect((await fallback.recordingClock("abc"))?.startedAt).toBe("2026-11-02T15:00:05.000Z");
+        expect(await fallback.revision("abc")).toStartWith("source-copy:");
+        // A copy of another meeting never answers.
+        await expect(fallback.load("other")).rejects.toThrow("the import was removed");
+
+        const opened = OpenedMeeting.of(store, record, { source: fallback, sourceMeetingId: "abc" });
+        expect((await opened.meeting()).transcript.map((entry) => entry.text)).toEqual(["Ahoj.", "Čau."]);
+    });
+
+    test("a record whose source code cannot be opened reads its copy", async () => {
+        const { store, record } = await newRecord();
+        const folder = store.folder(record.id);
+        expect(copyOnlySource("wisprflow", folder, "abc")).toBeUndefined();
+        await copyBackedSource(fakeSource(), folder).load("abc");
+        const only = copyOnlySource("wisprflow", folder, "abc");
+        expect((await only?.load("abc"))?.title).toBe("Planning");
+        expect(await only?.evidence("abc")).toBeNull();
+        expect(await only?.revision("abc")).toStartWith("source-copy:");
+    });
+
+    test("a meeting someone else recorded names its self as the recorder, not the user", async () => {
+        const { store, record } = await newRecord({
+            recordedBy: { owner: false, person: "Alice Example", from: "wisprflow" },
+        });
+        expect(showText(record)).toContain("people: Alice Example (recorded the call)");
+        const source = fakeSource();
+        const recorded: TranscriptSource = {
+            ...source,
+            load: async (id) => {
+                const meeting = await source.load(id);
+                return {
+                    ...meeting,
+                    transcript: meeting.transcript.map((entry, index) => ({ ...entry, speakerId: index + 1 })),
+                    speakers: [{ speakerId: 1, name: "Alice Example", origin: "self", isSelf: true }],
+                };
+            },
+        };
+        const stats = await speakerStatsRead({
+            store,
+            record,
+            gapSec: 120,
+            linked: { source: recorded, sourceMeetingId: "abc" },
+        });
+        expect(stats.speakers.find((stat) => stat.label === "Alice Example")?.origin).toBe("recorder");
+
+        const own = await newRecord();
+        expect(showText(own.record)).toContain("people: Alice Example (you)");
+    });
 });

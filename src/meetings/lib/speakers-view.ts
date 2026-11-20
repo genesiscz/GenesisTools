@@ -4,7 +4,7 @@ import type { SpeakerAssignment } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
-import type { PresenceRange, SpeakerHint, SpeakerStats } from "@genesiscz/utils/transcribe/speakers";
+import type { PresenceRange, SpeakerHint, SpeakerStat, SpeakerStats } from "@genesiscz/utils/transcribe/speakers";
 import pc from "picocolors";
 import { assignmentText } from "./speaker-assign";
 
@@ -71,7 +71,11 @@ function hintText(hint: SpeakerHint, attendance: string): string {
 
 /** The speaker table and its hints, for any source: `tools meetings speakers` and `tools wisprflow meetings speakers`. */
 export function printSpeakerStats(
-    stats: SpeakerStats & { assignments?: SpeakerAssignment[] },
+    stats: Omit<SpeakerStats, "speakers"> & {
+        /** A view may name an origin the engine does not (`recorder` in a meeting someone else recorded). */
+        speakers: Array<Omit<SpeakerStat, "origin"> & { origin: string }>;
+        assignments?: SpeakerAssignment[];
+    },
     options: {
         untimedHint?: string;
         /** Where the stays came from, as the hints name it: `Microsoft Teams attendance`. */

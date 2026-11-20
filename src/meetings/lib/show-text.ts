@@ -1,6 +1,6 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { type Block, json2md } from "@genesiscz/utils/json2md";
-import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
+import { type MeetingRecord, selfMark } from "@genesiscz/utils/meetings/record";
 import { truncateDisplay } from "@genesiscz/utils/table";
 import { formatClock, localTime } from "@genesiscz/utils/transcribe/render";
 import { recordingSummary } from "./screen";
@@ -42,7 +42,7 @@ export function showText(record: MeetingRecord): string {
 
     if (record.participants.length > 0) {
         facts.push(
-            `people: ${record.participants.map((person) => person.name + (person.self ? " (you)" : "")).join(", ")}`
+            `people: ${record.participants.map((person) => person.name + (person.self ? selfMark(record) : "")).join(", ")}`
         );
     }
 

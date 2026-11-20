@@ -18,6 +18,7 @@ import { formatClock } from "@genesiscz/utils/transcribe/render";
 import { resolveProject } from "./project";
 import { type SourceAudioSync, syncSourceAudio } from "./source-audio";
 import { withSourceAudioRecordLock } from "./source-audio-discovery";
+import { captureSourceCopy } from "./source-copy";
 import { meetingSource } from "./sources";
 
 const { log } = logger.scoped("meetings-link");
@@ -119,6 +120,11 @@ export function applySource(options: {
     }
 
     record.participants = mergeParticipants(record.participants, meeting.participants);
+    if (meeting.recordedBy) {
+        record.recordedBy = { ...meeting.recordedBy, from: options.sourceId };
+    } else if (record.recordedBy?.from === options.sourceId) {
+        delete record.recordedBy;
+    }
     if (meeting.observations) {
         record.evidence ??= {};
         record.evidence.indicator = meeting.observations;
@@ -249,6 +255,13 @@ async function linkSourceUnlocked(options: {
     // explicit `audio apply` still copies it.
     const preserveAudio = (await options.config.read()).sources[source.id].preserveAudio;
     const linked = async (record: MeetingRecord, created: boolean): Promise<LinkResult> => {
+        // The record keeps its own copy of the transcript: the source is one driver, and it may not answer later.
+        await captureSourceCopy({ folder: options.store.folder(record.id), source, meeting }).catch(
+            (error: unknown) => {
+                log.warn({ error, meeting: record.id }, "the record's source copy could not be saved");
+            }
+        );
+
         if (!preserveAudio) {
             return { record, created };
         }
@@ -279,6 +292,7 @@ async function linkSourceUnlocked(options: {
             ...(meeting.end ? { end: meeting.end } : {}),
             sources: { [ref.source]: block },
             participants: meeting.participants,
+            ...(meeting.recordedBy ? { recordedBy: { ...meeting.recordedBy, from: ref.source } } : {}),
             ...(meeting.observations ? { evidence: { indicator: meeting.observations } } : {}),
             ...(meeting.calendar ? { calendar: meeting.calendar } : {}),
         },

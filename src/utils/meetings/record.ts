@@ -27,6 +27,11 @@ export const MEETING_FILE = "meeting.json";
  */
 export const MOMENTS_FOLDER = "moments";
 /**
+ * The folder in a meeting's folder that holds the record's own copy of what its source answered (the transcript, the
+ * evidence, the clock; src/meetings/lib/source-copy.ts), so the record still reads when the source cannot.
+ */
+export const SOURCE_COPY_FOLDER = "source-copy";
+/**
  * What a `MeetingStore.update` mutate returns when it found nothing to change: the record stays as it was, with no
  * history line. A symbol, so no value a mutate returns by accident (an assignment's `false`) skips a change.
  */
@@ -83,6 +88,15 @@ const participantSchema = z.object({
         .optional(),
     /** Where the name came from: a source id, "calendar", or "user". */
     from: z.array(z.string()).default([]),
+});
+
+/** Who recorded the meeting when it was not the user: an export imported from another Mac. */
+export const recordedBySchema = z.object({
+    owner: z.literal(false),
+    /** The person at the recording microphone, the participant marked `self`. */
+    person: z.string().optional(),
+    /** The source that said so. */
+    from: z.string(),
 });
 
 export const calendarSchema = z.object({
@@ -627,6 +641,11 @@ export const meetingRecordSchema = z.object({
     audio: z.object({ sources: z.record(z.string().min(1), preservedSourceAudioSchema) }).optional(),
     calendar: calendarSchema.optional(),
     participants: z.array(participantSchema).default([]),
+    /**
+     * Absent when the user recorded the meeting. Set when someone else did (an imported export): the participant marked
+     * `self` is then the person at that microphone, which channel attribution needs, but not the user.
+     */
+    recordedBy: recordedBySchema.optional(),
     seats: storedMeetingSeatsSchema.optional(),
     review: z
         .object({
@@ -716,6 +735,11 @@ export const meetingRecordSchema = z.object({
     history: z.array(historySchema).default([]),
 });
 export type MeetingRecord = z.infer<typeof meetingRecordSchema>;
+
+/** The words after the `self` participant's name: the user, or the person who recorded an imported meeting. */
+export function selfMark(record: Pick<MeetingRecord, "recordedBy">): string {
+    return record.recordedBy ? " (recorded the call)" : " (you)";
+}
 export type MeetingCalendar = z.infer<typeof calendarSchema>;
 export type MeetingParticipant = z.infer<typeof participantSchema>;
 export type MeetingContext = z.infer<typeof contextSchema>;

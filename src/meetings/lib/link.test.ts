@@ -59,6 +59,7 @@ import {
     type LocalSourceAudio,
     planSourceAudio,
 } from "./source-audio-discovery";
+import { readSourceCopy } from "./source-copy";
 import * as sources from "./sources";
 
 /**
@@ -1463,6 +1464,50 @@ describe("permanent source audio", () => {
                 raw.sources = { wisprflow: { preserveAudio: true } };
             });
             expect((await link("wisprflow:source-one")).audio).toBe("preserved");
+        } finally {
+            pick.mockRestore();
+        }
+    });
+
+    test("a link keeps the record's own copy of the transcript and marks a meeting someone else recorded", async () => {
+        const f = await fixture();
+        const config = new MeetingsConfigStore(new Storage(`source-copy-config-${process.pid}-${stores}`));
+        await config.update((raw) => {
+            raw.sources = { wisprflow: { preserveAudio: false } };
+        });
+        let imported = true;
+        const source = {
+            ...wisprflowSource,
+            load: async (sourceMeetingId: string): Promise<SourceMeeting> => ({
+                sourceMeetingId,
+                title: "Planning",
+                start: "2026-11-12T14:00:00.000Z",
+                participants: [{ name: "Alice Example", self: true, from: ["wisprflow"] }],
+                speakers: [],
+                transcript: [{ speaker: "Alice Example", startSec: 0, text: "Ahoj." }],
+                folders: [],
+                ...(imported ? { recordedBy: { owner: false as const, person: "Alice Example" } } : {}),
+            }),
+            liveRecording: async () => null,
+            recordingClock: async () => ({ startedAt: "2026-11-12T14:00:00.000Z" }),
+            evidence: async () => ({ selfName: "Alice Example", segments: [], speaking: [], files: [] }),
+        };
+        const pick = spyOn(sources, "meetingSource").mockResolvedValue(source);
+        const link = (sourceRef: string) =>
+            linkSource({ store: f.store, config, sourceRef, command: "test", createdBy: "link", quiet: true });
+
+        try {
+            const created = await link("wisprflow:source-two");
+            const folder = f.store.folder(created.record.id);
+            expect(created.record.recordedBy).toEqual({ owner: false, person: "Alice Example", from: "wisprflow" });
+            const ref = { sourceId: "wisprflow", sourceMeetingId: "source-two" };
+            expect(readSourceCopy(folder, "meeting", ref)?.value.transcript).toHaveLength(1);
+            expect(readSourceCopy(folder, "evidence", ref)?.value?.selfName).toBe("Alice Example");
+            expect(readSourceCopy(folder, "clock", ref)?.value?.startedAt).toBe("2026-11-12T14:00:00.000Z");
+
+            imported = false;
+            const refreshed = await link("wisprflow:source-two");
+            expect(refreshed.record.recordedBy).toBeUndefined();
         } finally {
             pick.mockRestore();
         }

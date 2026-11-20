@@ -288,7 +288,7 @@ export class OpenedMeeting {
 
     /** The linked source and its meeting id. Throws a message ready to print when none is linked. */
     linked(): Promise<LinkedSource> {
-        this.linkedOnce ??= linkedSource(this.current);
+        this.linkedOnce ??= linkedSource(this.current, this.store);
         return this.linkedOnce;
     }
 

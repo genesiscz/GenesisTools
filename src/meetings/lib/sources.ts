@@ -1,6 +1,7 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { logger } from "@genesiscz/utils/logger";
 import { MeetingsStateError } from "@genesiscz/utils/meetings/conflict";
-import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
+import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import {
     MEETING_SOURCE_IDS,
     type MeetingSourceId,
@@ -10,6 +11,9 @@ import {
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { joinedSource, joinedTranscript } from "./joined-source";
 import type { LocalSourceAudio } from "./source-audio-discovery";
+import { copyBackedSource, copyOnlySource } from "./source-copy";
+
+const { log } = logger.scoped("meetings-sources");
 
 /** Source capabilities live together; a local preview must never use an automatic remote fallback. */
 const MEETING_SOURCES: Record<
@@ -99,8 +103,10 @@ export interface LinkedSource {
 /**
  * The first linked source that names a meeting of its own, with that meeting's id; on a joined record, the joined
  * source of all its recordings on one clock. Throws a message ready to print.
+ * With the record's `store`, the source keeps the record's own copy of its answers (source-copy.ts) and answers from
+ * that copy when it cannot read: its source code cannot be opened, or a read fails.
  */
-export async function linkedSource(record: MeetingRecord): Promise<LinkedSource> {
+export async function linkedSource(record: MeetingRecord, store?: MeetingStore): Promise<LinkedSource> {
     if (record.join) {
         return {
             source: await joinedSource(record, meetingSource),
@@ -117,12 +123,34 @@ export async function linkedSource(record: MeetingRecord): Promise<LinkedSource>
         );
     }
 
-    return { source: await meetingSource(ref.sourceId), sourceMeetingId: ref.sourceMeetingId };
+    if (!store) {
+        return { source: await meetingSource(ref.sourceId), sourceMeetingId: ref.sourceMeetingId };
+    }
+
+    const folder = store.folder(record.id);
+
+    try {
+        return {
+            source: copyBackedSource(await meetingSource(ref.sourceId), folder),
+            sourceMeetingId: ref.sourceMeetingId,
+        };
+    } catch (error) {
+        const copy = isMeetingSourceId(ref.sourceId)
+            ? copyOnlySource(ref.sourceId, folder, ref.sourceMeetingId)
+            : undefined;
+
+        if (!copy) {
+            throw error;
+        }
+
+        log.warn({ error, meeting: record.id }, "the source cannot be opened; the record's own copy answers");
+        return { source: copy, sourceMeetingId: ref.sourceMeetingId };
+    }
 }
 
-/** The linked source's transcript, on its own labels. */
-export async function meetingTranscript(record: MeetingRecord): Promise<TranscriptEntry[]> {
-    const { source, sourceMeetingId } = await linkedSource(record);
+/** The linked source's transcript, on its own labels; with `store`, the record's copy answers when the source cannot. */
+export async function meetingTranscript(record: MeetingRecord, store?: MeetingStore): Promise<TranscriptEntry[]> {
+    const { source, sourceMeetingId } = await linkedSource(record, store);
     return (await source.load(sourceMeetingId)).transcript;
 }
 
