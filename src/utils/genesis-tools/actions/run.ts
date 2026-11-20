@@ -248,6 +248,7 @@ function contextFor(params: {
     area: Area;
     args: unknown;
     config: Record<string, unknown>;
+    areaConfig: Record<string, unknown>;
     deps: EngineDeps;
     timeoutMs: number;
     signal: AbortSignal;
@@ -261,7 +262,7 @@ function contextFor(params: {
         app: deps.app,
         args: params.args,
         config: params.config,
-        areaConfig: deps.config.resolve(areaName),
+        areaConfig: params.areaConfig,
         state: {
             get: (key) => deps.state.get(areaName, key),
             report: (key, value) => deps.state.report(areaName, key, value, { signal: params.signal }),
@@ -303,7 +304,8 @@ export async function runAreaAction(
         throw new ActionArgsError(id, issuesText(parsedArgs.error));
     }
 
-    const config = deps.config.resolve(areaName, name);
+    // One read of config.json per run: every way sees the same choices, and a fallback rereads nothing.
+    const { area: areaConfig, action: config } = deps.config.snapshot(areaName, name);
     const env = needEnv(deps, { fresh: false, write: true });
     const skipped: SkippedWay[] = [];
     const skip = (way: WayName, code: UnavailableCode, reason: string, fix: Fix | null = null) => {
@@ -383,6 +385,7 @@ export async function runAreaAction(
                 area,
                 args: parsedArgs.data,
                 config,
+                areaConfig,
                 deps,
                 timeoutMs: Math.max(1, deadline.remainingMs()),
                 signal: deadline.signal,

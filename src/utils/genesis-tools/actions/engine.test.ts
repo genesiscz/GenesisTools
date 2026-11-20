@@ -519,6 +519,66 @@ describe("config resolution", () => {
         await expect(store.set("demo.nope", 1)).rejects.toThrow('no config key "nope"');
     });
 
+    test("a set reads back as the value set, under a transforming schema too", async () => {
+        const prefixed = defineArea({
+            area: "prefixed",
+            summary: "",
+            config: z.object({
+                label: z
+                    .string()
+                    .transform((value) => `prefix:${value}`)
+                    .optional(),
+            }),
+            actions: {},
+        });
+        const store = createConfigStore({
+            registry: { prefixed },
+            file: join(mkdtempSync(join(tmpdir(), "gt-actions-config-")), "config.json"),
+        });
+
+        await store.set("prefixed.label", "work");
+        expect(store.read().areas.prefixed).toEqual({ label: "work" });
+        expect(store.get("prefixed.label")).toBe("prefix:work");
+        expect(store.get("prefixed.label")).toBe("prefix:work");
+    });
+
+    test("an action key follows the action's schema: a stored area value of another type keeps the action default", async () => {
+        const mixed = defineArea({
+            area: "mixed",
+            summary: "",
+            config: z.object({ size: z.string().default("large") }),
+            actions: {
+                act: defineAction({
+                    summary: "",
+                    args: z.object({}),
+                    result: z.object({}),
+                    config: z.object({ size: z.number().default(3) }),
+                    native: () => ({}),
+                }),
+            },
+        });
+        const store = createConfigStore({
+            registry: { mixed },
+            file: join(mkdtempSync(join(tmpdir(), "gt-actions-config-")), "config.json"),
+        });
+
+        await store.set("mixed.size", "small");
+        expect(store.resolve("mixed")).toEqual({ size: "small" });
+        expect(store.resolve("mixed", "act")).toEqual({ size: 3 });
+        expect(store.snapshot("mixed", "act")).toEqual({ area: { size: "small" }, action: { size: 3 } });
+    });
+
+    test("an inherited member is no config key, area or action", async () => {
+        const file = join(mkdtempSync(join(tmpdir(), "gt-actions-config-")), "config.json");
+        writeFileSync(file, SafeJSON.stringify({ version: 1, areas: { demo: { constructor: 1, toString: "x" } } }));
+        const store = createConfigStore({ registry: REGISTRY, file });
+
+        expect(store.resolve("demo", "greet")).toEqual({ tone: "area-default", loud: false });
+        expect(() => store.get("demo.constructor")).toThrow('no config key "constructor"');
+        expect(() => store.get("demo.toString.loud")).toThrow('has no action "toString"');
+        expect(() => store.resolve("constructor")).toThrow('no area "constructor"');
+    });
+
     test("a broken file refuses a set and resolves to the defaults", async () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-actions-config-"));
         const file = join(dir, "config.json");
