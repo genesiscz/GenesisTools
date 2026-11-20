@@ -1459,7 +1459,11 @@ final class MeetingsServiceTests: XCTestCase {
             try await service.call(MeetingsAPI.MeetingSuggest.self, .init(meeting: Self.design, attendance: nil), timeout: 0.6) { _ in }
         }
         let armedSilent = await waitUntil(5) { clock.armed > before }
-        XCTAssertTrue(armedSilent, "the silent call armed its deadline")
+        // The fake never answers this call: without an armed deadline, awaiting it would stall the suite.
+        guard armedSilent else {
+            silent.cancel()
+            return XCTFail("the silent call never armed its deadline")
+        }
         clock.advance(by: 0.7)
         do {
             _ = try await silent.value
