@@ -4,7 +4,7 @@
  */
 import type { ZodType } from "zod";
 import type { Item, ItemId } from "../model/item";
-import type { ItemState, ItemType, Severity } from "../model/vocab";
+import type { ItemState, ItemType, LinkKind, Severity } from "../model/vocab";
 
 export const SYNCED_FACTS = ["title", "body", "type", "parent", "tags", "state", "severity"] as const;
 export type SyncedFact = (typeof SYNCED_FACTS)[number];
@@ -52,6 +52,10 @@ export interface PushIntent {
     pairing: Pairing | null;
     /** The labels the outside item carries: the local id and each container that holds it. */
     labels: string[];
+    /** The outside key of the item's parent on this connector; absent when it has none or the parent is not made yet. */
+    parentKey?: string;
+    /** The item's own links to items this connector already made outside. */
+    links?: { kind: LinkKind; remoteKey: string }[];
 }
 
 export type PushResult = { ok: true; remoteKey: string } | { ok: false; error: string; remoteKey?: string };
@@ -80,7 +84,14 @@ export interface ConnectorContext<S = unknown> {
 export interface Connector<S = unknown> {
     readonly id: string;
     readonly settings: ZodType<S>;
-    readonly can: { create: boolean; pull: boolean; labels: boolean; comments: boolean; parents: boolean };
+    readonly can: {
+        create: boolean;
+        pull: boolean;
+        labels: boolean;
+        comments: boolean;
+        parents: boolean;
+        links: boolean;
+    };
     status(ctx: ConnectorContext<S>): Promise<{ ok: boolean; detail: string }>;
     push(intents: readonly PushIntent[], ctx: ConnectorContext<S>): Promise<PushResult[]>;
     pull(ask: { remoteKeys: readonly string[] }, ctx: ConnectorContext<S>): Promise<RemoteItem[]>;

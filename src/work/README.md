@@ -73,3 +73,16 @@ MCP group `work` (enabled by default, `src/work/mcp/genesis-tools.ts`) serves `w
 - `reopen` moves the item, sends the reason to the last finisher (else the last claimer) with the key
   `work-reopen:<item>:<seq>`, and records the receipt: `delivered`, `queued`, `nobody-alive` or `unknown`. An unknown
   outcome is never sent again.
+
+## Connectors
+
+A project's `rules.connectors.<id>` section turns a connector on (`enabled`), gives its `settings`, the types it makes
+outside (`createTypes`; empty makes nothing, and `sync` says so) and who may push each type (`push`). `scope` limits
+which new items it makes: the tasks of a handoff only with `scope.handoffTasks: true`, and, when `scope.under` or
+`scope.tags` is set, only items under one of the listed ids or carrying one of the listed tags. A paired item always
+syncs. The tracker connector sends an item's parent as the outside task's parent, its links as task links, and cuts a
+title over `settings.titleLimit` (500) with the full title at the top of the body.
+
+`tools work sync` prints each held or failed item with its reason, and what it did not make and why. `--dry-run`
+lists the items a pass would make, update and hold, and sends nothing. `--all` pushes every paired item again, for
+example after a connector learns a new fact.
