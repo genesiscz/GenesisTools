@@ -40,7 +40,14 @@ export const requestEventSchema = z.discriminatedUnion("type", [
         elevation: z.string().nullable(),
         method: z.enum(["click", "touch-id", "password", "terminal"]),
     }),
-    z.object({ type: z.literal("declined"), at, via, note: z.string().nullable() }),
+    // `reason`: why a surface settled it (not a person's note, not command output); missing in older journals.
+    z.object({
+        type: z.literal("declined"),
+        at,
+        via,
+        note: z.string().nullable(),
+        reason: z.string().nullable().optional(),
+    }),
     z.object({
         type: z.literal("started"),
         at,
@@ -53,6 +60,7 @@ export const requestEventSchema = z.discriminatedUnion("type", [
         exitCode: z.number().int(),
         outputTail: z.string(),
         verified: z.boolean().nullable(),
+        reason: z.string().nullable().optional(),
     }),
     z.object({ type: z.literal("obsolete"), at, reason: z.string() }),
     z.object({ type: z.literal("withdrawn"), at, reason: z.string() }),
@@ -126,12 +134,19 @@ function step(fold: Fold, entry: RequestEvent): void {
                 exitCode: entry.exitCode,
                 outputTail: entry.outputTail,
                 verified: entry.verified,
+                reason: entry.reason ?? fold.outcome.reason,
             };
             fold.ended = true;
             break;
         case "declined":
             fold.state = "declined";
-            fold.outcome = { ...fold.outcome, status: "declined", via: entry.via, note: entry.note };
+            fold.outcome = {
+                ...fold.outcome,
+                status: "declined",
+                via: entry.via,
+                note: entry.note,
+                reason: entry.reason ?? fold.outcome.reason,
+            };
             fold.ended = true;
             break;
         case "obsolete":
@@ -249,6 +264,23 @@ interface FileRequestJournal extends RequestJournal {
     followChanges(listener: (view: RequestView) => void, pollFallbackMs: number): () => void;
 }
 
+/** How many full views of settled journals stay in memory: a default list page and some room. */
+const SETTLED_VIEWS_KEPT = 128;
+
+/** A settled journal as the journal keeps it in memory. */
+interface SettledEntry {
+    id: string;
+    postedAt: string;
+    /** Its event count: a change watcher has published every one of them. */
+    events: number;
+}
+
+/** One journal of a scan; `view` is null for a settled journal an earlier scan already read. */
+interface ScanRow extends SettledEntry {
+    name: string;
+    view: RequestView | null;
+}
+
 /** The longest file name the common file systems accept (ext4, APFS, NTFS). */
 const MAX_NAME_BYTES = 255;
 
@@ -274,8 +306,25 @@ export function createRequestJournal(
     const alive = (pid: number, since: number) =>
         options.alive ? options.alive(pid) : isProcessAliveSince(pid, since);
     const listeners = new Set<(view: RequestView) => void>();
-    /** Settled views by file name: a settled journal never changes state again, so it is read once. */
-    const settled = new Map<string, RequestView>();
+    /**
+     * What is kept of a settled journal, by file name: a settled journal never changes state again, so it is read once,
+     * and only its id, post time and length stay in memory for good.
+     */
+    const settled = new Map<string, SettledEntry>();
+    /** The full views of the settled journals used last, at most {@link SETTLED_VIEWS_KEPT}; a list reads others again. */
+    const settledViews = new Map<string, RequestView>();
+
+    function keepSettledView(name: string, view: RequestView): void {
+        settledViews.delete(name);
+        settledViews.set(name, view);
+        for (const oldest of settledViews.keys()) {
+            if (settledViews.size <= SETTLED_VIEWS_KEPT) {
+                break;
+            }
+
+            settledViews.delete(oldest);
+        }
+    }
 
     function eventsAt(file: string): RequestEvent[] {
         if (!existsSync(file)) {
@@ -384,10 +433,25 @@ export function createRequestJournal(
         emit(id);
     }
 
-    /** Every readable request, with settled ones from memory. One that cannot be read costs only its own entry. */
-    function views(): RequestView[] {
+    /** The view in journal `name`, or null when it cannot be read or holds another request. */
+    function viewAt(name: string): RequestView | null {
+        try {
+            const view = stateOf(eventsAt(join(dir, name)), alive);
+            return view && belongsTo(name, view.id) ? view : null;
+        } catch (error) {
+            logger.warn({ error, name }, "request journal: leaving out a journal that cannot be read");
+            return null;
+        }
+    }
+
+    /**
+     * Every readable request: an open one with its view, a settled one known from an earlier scan as its entry only.
+     * One that cannot be read costs only its own row.
+     */
+    function scan(): ScanRow[] {
         if (!existsSync(dir)) {
             settled.clear();
+            settledViews.clear();
             return [];
         }
 
@@ -396,30 +460,28 @@ export function createRequestJournal(
         for (const name of settled.keys()) {
             if (!present.has(name)) {
                 settled.delete(name);
+                settledViews.delete(name);
             }
         }
 
-        return names.flatMap((name) => {
+        return names.flatMap((name): ScanRow[] => {
             const known = settled.get(name);
             if (known) {
-                return [known];
+                return [{ name, ...known, view: null }];
             }
 
-            try {
-                const view = stateOf(eventsAt(join(dir, name)), alive);
-                if (!view || !belongsTo(name, view.id)) {
-                    return [];
-                }
-
-                if (TERMINAL_STATES.has(view.state)) {
-                    settled.set(name, view);
-                }
-
-                return [view];
-            } catch (error) {
-                logger.warn({ error, name }, "request journal: leaving out a journal that cannot be read");
+            const view = viewAt(name);
+            if (!view) {
                 return [];
             }
+
+            const entry: SettledEntry = { id: view.id, postedAt: postedAt(view), events: view.events.length };
+            if (TERMINAL_STATES.has(view.state)) {
+                settled.set(name, entry);
+                keepSettledView(name, view);
+            }
+
+            return [{ name, ...entry, view }];
         });
     }
 
@@ -450,8 +512,8 @@ export function createRequestJournal(
             }
         }
 
-        for (const view of views()) {
-            reported.set(view.id, view.events.length);
+        for (const row of scan()) {
+            reported.set(row.id, row.events);
         }
 
         const off = journal.onChange(publish);
@@ -461,8 +523,11 @@ export function createRequestJournal(
             signal: controller.signal,
             pollFallbackMs,
             onChange: () => {
-                for (const view of views()) {
-                    publish(view);
+                // A settled journal known from an earlier scan has nothing new to publish.
+                for (const row of scan()) {
+                    if (row.view) {
+                        publish(row.view);
+                    }
                 }
             },
         });
@@ -509,10 +574,27 @@ export function createRequestJournal(
         },
         get: read,
         list: (query?: { limit?: number }) => {
-            const all = views().sort((a, b) => postedAt(a).localeCompare(postedAt(b)));
-            return query?.limit === undefined ? all : all.slice(-query.limit);
+            const limit = query?.limit;
+            if (limit !== undefined && (!Number.isInteger(limit) || limit < 0)) {
+                throw new RangeError(`request list limit must be a whole number of zero or more, got ${limit}`);
+            }
+
+            if (limit === 0) {
+                return [];
+            }
+
+            const rows = scan().sort((a, b) => a.postedAt.localeCompare(b.postedAt));
+            const page = limit === undefined ? rows : rows.slice(-limit);
+            return page.flatMap((row) => {
+                const view = row.view ?? settledViews.get(row.name) ?? viewAt(row.name);
+                if (view && !row.view) {
+                    keepSettledView(row.name, view);
+                }
+
+                return view ? [view] : [];
+            });
         },
-        pending: () => views().filter((view) => view.outcome.status === "pending"),
+        pending: () => scan().flatMap((row) => (row.view?.outcome.status === "pending" ? [row.view] : [])),
         append: (id, event) => writeEvents(id, [event]),
         settle: (id, status, reason = null, detail = {}) =>
             serialized(id, async () => {
@@ -540,12 +622,22 @@ export function createRequestJournal(
                         { type: "finished", at: stamp, exitCode: 0, outputTail: "", verified: null },
                     ]);
                 } else if (status === "declined") {
-                    writeEvents(id, [{ type: "declined", at: stamp, via: detail.via ?? "notice", note: reason }]);
+                    writeEvents(id, [
+                        { type: "declined", at: stamp, via: detail.via ?? "notice", note: reason, reason },
+                    ]);
                 } else if (status === "obsolete") {
                     writeEvents(id, [{ type: "obsolete", at: stamp, reason: reason ?? "The condition went away." }]);
                 } else {
+                    // The surface's reason is no command output: it is kept as the outcome's reason.
                     writeEvents(id, [
-                        { type: "finished", at: stamp, exitCode: 1, outputTail: reason ?? status, verified: null },
+                        {
+                            type: "finished",
+                            at: stamp,
+                            exitCode: 1,
+                            outputTail: "",
+                            verified: null,
+                            reason: reason ?? status,
+                        },
                     ]);
                 }
 

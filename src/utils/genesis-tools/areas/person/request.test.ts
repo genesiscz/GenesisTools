@@ -742,6 +742,24 @@ test("the list returns the newest requests by post time and reads a settled jour
     // A settled journal is not read again: a damaged copy on disk does not change the listed view.
     appendFileSync(join(dir, requestFileName("notice:c")), '{"type":"unknown"}\n');
     expect(journal.list().find((view) => view.id === "notice:c")).toEqual(settledView);
+    expect(journal.list({ limit: 0 })).toEqual([]);
+    expect(() => journal.list({ limit: -1 })).toThrow("zero or more");
+});
+
+test("a surface's reason for a failure or a decline is the outcome's reason, also after a reopen", async () => {
+    const dir = scratch();
+    const journal = createRequestJournal({ dir, now });
+    await journal.post({ input });
+    await journal.post({ input: { ...input, id: "notice:declined" } });
+
+    const failed = await journal.settle(input.id, "failed", "the dialog could not open");
+    expect(failed).toMatchObject({ status: "failed", reason: "the dialog could not open", outputTail: "" });
+    const declined = await journal.settle("notice:declined", "declined", "the person said no");
+    expect(declined).toMatchObject({ status: "declined", reason: "the person said no" });
+
+    const reopened = createRequestJournal({ dir, now });
+    expect(reopened.get(input.id)?.outcome).toEqual(failed);
+    expect(reopened.get("notice:declined")?.outcome).toEqual(declined);
 });
 
 test("one worker at a time presents a waiting request, and a settled request is not presented", async () => {

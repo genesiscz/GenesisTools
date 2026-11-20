@@ -2895,7 +2895,8 @@
           "type": "declined",
           "at": "2026-11-17T12:00:00.000Z",
           "via": "fixture",
-          "note": null
+          "note": null,
+          "reason": null
         }
       ],
       "outcome": {
@@ -3012,7 +3013,8 @@
           "at": "2026-11-17T12:00:00.000Z",
           "exitCode": -9007199254740991,
           "outputTail": "fixture",
-          "verified": null
+          "verified": null,
+          "reason": null
         }
       ],
       "outcome": {
@@ -3459,7 +3461,8 @@
             "type": "declined",
             "at": "2026-11-17T12:00:00.000Z",
             "via": "fixture",
-            "note": null
+            "note": null,
+            "reason": null
           }
         ],
         "outcome": {
@@ -3556,7 +3559,8 @@
             "at": "2026-11-17T12:00:00.000Z",
             "exitCode": -9007199254740991,
             "outputTail": "fixture",
-            "verified": null
+            "verified": null,
+            "reason": null
           }
         ],
         "outcome": {
