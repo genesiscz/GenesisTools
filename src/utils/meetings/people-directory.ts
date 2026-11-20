@@ -836,14 +836,21 @@ export class PeopleDirectory {
         const wanted = options.kinds;
         const limit = Math.max(options.limit ?? DEFAULT_LIMIT, DEFAULT_LIMIT);
         const asked = this.options.sources.filter((source) => !wanted || wanted.includes(source.kind));
-        // A source may only support a phrase substring. Filter all words after grouping its candidates.
-        const sourceText =
-            query
-                .trim()
-                .split(/\s+/u)
-                .sort((a, b) => b.length - a.length)[0] ?? "";
+        // A source may only support a phrase substring, so a reordered name needs a word search too. The phrase is
+        // still asked: the word search is capped by `limit` before the other words filter it, and can miss the person
+        // the phrase finds. Filter all words after grouping its candidates.
+        const phrase = query.trim();
+        const longest = phrase.split(/\s+/u).sort((a, b) => b.length - a.length)[0] ?? "";
+        const texts = longest && longest !== phrase ? [phrase, longest] : [phrase];
         const answers = await Promise.all(
-            asked.map(async (source) => ({ source, answer: await read(source, { text: sourceText, limit }) }))
+            asked.map(async (source) => {
+                const replies = await Promise.all(texts.map((text) => read(source, { text, limit })));
+                const ok = replies.filter((reply) => reply.state === "ok");
+                const answer: SourceAnswer = ok.length
+                    ? { state: "ok", people: ok.flatMap((reply) => reply.people) }
+                    : replies[0]!;
+                return { source, answer };
+            })
         );
         const identities = new IdentityGroups();
         const book = this.options.book.read();
