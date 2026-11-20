@@ -207,6 +207,7 @@ describe("RecordingSession", () => {
             measure?: ConstructorParameters<typeof RecordingSession>[0]["measure"];
             /** Sees every event after the test's own list does. */
             emit?: (event: RecordingSessionEvent) => void;
+            finishSingle?: ConstructorParameters<typeof RecordingSession>[0]["finishSingle"];
         } = {}
     ) {
         const { emit, ...rest } = extra;
@@ -948,6 +949,60 @@ describe("RecordingSession", () => {
             expect(joined).toHaveLength(1);
             expect(measured).toEqual([]);
             expect(events.find((event) => event.event === "done")).toMatchObject({ durationMs: 2000, segments: 2 });
+        });
+
+        // The defect: the recorder titled a one-segment movie's audio tracks after `done`, and a widget host had moved
+        // the movie by then, so a player listed its tracks as "Core Media Audio".
+        it("a one-segment movie is finished at the output before it is measured and before done goes out", async () => {
+            const order: string[] = [];
+            const { recorder } = fakeRecorder({ movieMs: 990 });
+            const recording = session(recorder, {
+                finishSingle: async (movie) => {
+                    order.push(`finish ${movie}`);
+                },
+                measure: async () => {
+                    order.push("measure");
+                    return 980;
+                },
+                emit: (event) => {
+                    if (event.event === "done") {
+                        order.push("done");
+                    }
+                },
+            });
+            await recording.start();
+            await recording.command({ cmd: "stop" });
+            expect(await recording.finished).toBe("done");
+            expect(order).toEqual([`finish ${join(root, "out.mp4")}`, "measure", "done"]);
+        });
+
+        it("a one-segment finish that fails keeps the movie as recorded and the session still ends done", async () => {
+            const { recorder } = fakeRecorder({ movieMs: 990 });
+            const recording = session(recorder, {
+                finishSingle: async () => {
+                    throw new Error("ffmpeg is missing");
+                },
+            });
+            await recording.start();
+            await recording.command({ cmd: "stop" });
+            expect(await recording.finished).toBe("done");
+            expect(events.find((event) => event.event === "done")).toMatchObject({ durationMs: 1000, segments: 1 });
+        });
+
+        it("a joined movie is not finished again", async () => {
+            const finished: string[] = [];
+            const { recorder } = fakeRecorder();
+            const recording = session(recorder, {
+                finishSingle: async (movie) => {
+                    finished.push(movie);
+                },
+            });
+            await recording.start();
+            await recording.command({ cmd: "pause" });
+            await recording.command({ cmd: "resume" });
+            await recording.command({ cmd: "stop" });
+            expect(await recording.finished).toBe("done");
+            expect(finished).toEqual([]);
         });
 
         it("a one-segment movie the probe cannot read still saves, with the recorder's movie length", async () => {

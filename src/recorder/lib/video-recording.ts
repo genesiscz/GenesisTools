@@ -415,7 +415,6 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
 
     const warnings: string[] = [];
     let durationMs: number | undefined;
-    let segments = 0;
     let frameStats: { frames?: number; averageFps?: number } = {};
     let live: LiveRecordingServer | undefined;
     let control: SessionRecorderControl | undefined;
@@ -460,7 +459,6 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
 
         if (event.event === "done") {
             durationMs = event.durationMs;
-            segments = event.segments;
             frameStats = {
                 ...(event.frames === undefined ? {} : { frames: event.frames }),
                 ...(event.averageFps === undefined ? {} : { averageFps: event.averageFps }),
@@ -484,6 +482,8 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
         output: movie,
         recorder: nativeSegmentRecorder(segmentOptions),
         join: segmentJoiner(audioTrackTitles(options.audio)),
+        // One segment is moved, not joined, so its tracks still read "Core Media Audio": one stream copy titles them.
+        finishSingle: (movie) => titleAudioTracks(movie, audioTrackTitles(options.audio)),
         measure: movieLengthMs,
         emit,
         maxSeconds: options.maxSeconds ?? VIDEO_RECORDING_MAX_SECONDS,
@@ -561,24 +561,6 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
     }
 
     const spans = session.movieSpans();
-    // One segment is moved, not joined, so its tracks still read "Core Media Audio": title them by one stream copy.
-    if (outcome === "done" && segments === 1 && options.audio?.length && existsSync(movie)) {
-        await titleAudioTracks(movie, audioTrackTitles(options.audio)).catch((error: unknown) => {
-            log.warn({ error, movie }, "the audio tracks keep their untitled names");
-        });
-        // Stream-copying track metadata can change the final container's rounded end by one audio packet.
-        try {
-            durationMs = await movieLengthMs(movie);
-            if (spans.length === 1) {
-                spans[0].lengthMs = durationMs;
-            }
-            if (frameStats.frames !== undefined) {
-                frameStats.averageFps = durationMs > 0 ? Math.round((frameStats.frames * 10_000) / durationMs) / 10 : 0;
-            }
-        } catch (error) {
-            log.warn({ error, movie }, "the titled movie keeps its previously measured duration");
-        }
-    }
     const cameraProblem = cameraStarted
         ? await endRecordingCamera({ folder, outcome, spans, host: options.cameraHost })
         : undefined;

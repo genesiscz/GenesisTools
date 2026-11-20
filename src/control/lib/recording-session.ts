@@ -287,6 +287,12 @@ export class RecordingSession {
             slowStartMs?: number;
             /** The movie's rates; a session with them can change them while it records (`retune`). */
             rates?: MovieRates;
+            /**
+             * Finishes a one-segment movie at `output`, which is moved instead of joined, before it is measured and
+             * before `done` goes out (a host moves the movie at once): the recorder titles its audio tracks here. A
+             * failure keeps the movie as it is.
+             */
+            finishSingle?: (movie: string) => Promise<void>;
         }
     ) {
         this.target = options.target;
@@ -717,6 +723,7 @@ export class RecordingSession {
         try {
             if (ordered.length === 1) {
                 await this.moveMovie(ordered[0].path);
+                await this.finishSingle();
                 durationMs = await this.savedLengthMs(ordered[0]);
                 // Camera spans and marks after stopping use the length of the saved file, like cursor joins do.
                 ordered[0].movieMs = durationMs;
@@ -746,6 +753,14 @@ export class RecordingSession {
             ...movieFrameStats(ordered, durationMs),
         });
         this.end("done");
+    }
+
+    private async finishSingle(): Promise<void> {
+        try {
+            await this.options.finishSingle?.(this.options.output);
+        } catch (error) {
+            log.warn({ error, output: this.options.output }, "the one-segment movie keeps its tracks as recorded");
+        }
     }
 
     /**
