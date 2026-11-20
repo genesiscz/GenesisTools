@@ -266,7 +266,7 @@ interface FileRequestJournal extends RequestJournal {
 }
 
 /** How many full views of settled journals stay in memory: a default list page and some room. */
-const SETTLED_VIEWS_KEPT = 128;
+export const SETTLED_VIEWS_KEPT = 128;
 
 /** A settled journal as the journal keeps it in memory. */
 interface SettledEntry {

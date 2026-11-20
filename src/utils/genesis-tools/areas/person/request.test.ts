@@ -35,6 +35,7 @@ import {
     requestEventSchema,
     requestFileName,
     requestViewSchema,
+    SETTLED_VIEWS_KEPT,
     stateOf,
 } from "./journal";
 import {
@@ -769,11 +770,41 @@ test("the list returns the newest requests by post time and reads a settled jour
     expect(journal.pending().map((view) => view.id)).toEqual(["notice:a", "notice:b"]);
     const settledView = journal.list().find((view) => view.id === "notice:c");
     expect(settledView?.state).toBe("done");
-    // A settled journal is not read again: a damaged copy on disk does not change the listed view.
+    // A settled journal in the view cache is not read again: a damaged copy on disk does not change the listed view.
     appendFileSync(join(dir, requestFileName("notice:c")), '{"type":"unknown"}\n');
     expect(journal.list().find((view) => view.id === "notice:c")).toEqual(settledView);
     expect(journal.list({ limit: 0 })).toEqual([]);
     expect(() => journal.list({ limit: -1 })).toThrow("zero or more");
+});
+
+test("a list reads a settled journal again once the view cache dropped it, and keeps the post-time order", () => {
+    const dir = scratch();
+    const ids = Array.from({ length: SETTLED_VIEWS_KEPT + 2 }, (_, index) => `notice:old-${index}`);
+    // The journal names are digests, so the folder order is not the post order.
+    for (const [index, id] of ids.entries()) {
+        const at = new Date(Date.UTC(2026, 10, 17, 12, 0, index)).toISOString();
+        const events = [
+            { type: "posted", at, request: { ...input, id, createdAt: at }, asker: null },
+            { type: "finished", at, exitCode: 0, outputTail: "", verified: null },
+        ];
+        writeFileSync(
+            join(dir, requestFileName(id)),
+            `${events.map((event) => SafeJSON.stringify(event)).join("\n")}\n`
+        );
+    }
+
+    const journal = createRequestJournal({ dir, now });
+    // A page reads every journal once and keeps at most SETTLED_VIEWS_KEPT full views.
+    expect(journal.list({ limit: 1 }).map((view) => view.id)).toEqual([ids.at(-1)]);
+    const fresh = createRequestJournal({ dir, now });
+    expect(journal.list()).toEqual(ids.map((id) => fresh.get(id)));
+    // That list used the views in post order, so the two oldest are the ones the cache dropped: damaged copies leave
+    // out exactly those two, which a list has to read again.
+    for (const id of ids) {
+        appendFileSync(join(dir, requestFileName(id)), '{"type":"unknown"}\n');
+    }
+
+    expect(journal.list().map((view) => view.id)).toEqual(ids.slice(2));
 });
 
 test("a change watcher reports a settlement that another reader of the journal saw first", async () => {
