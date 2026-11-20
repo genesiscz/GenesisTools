@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync, isMissingFileError } from "@genesiscz/utils/storage/atomic-file";
@@ -80,7 +81,13 @@ export function loadClaudeFacts(session: string): Map<string, FoldedFacts> {
     }
 }
 
+/** Writes nothing under `GENESIS_TOOLS_CHANGES_READ_ONLY=1`, which a diagnostic (an audit, a benchmark) sets. */
 export function saveClaudeFacts(session: string, folds: ReadonlyMap<string, FoldedFacts>): void {
+    if (env.agents.isChangesReadOnly()) {
+        logger.debug({ session }, "read-only changes: Claude changes facts not saved");
+        return;
+    }
+
     const files = Object.fromEntries(
         Array.from(folds, ([path, { ino, consumed, mark, state }]) => [
             path,

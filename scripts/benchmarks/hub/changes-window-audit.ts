@@ -2,6 +2,7 @@
 import { type Dirent, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { auditClaudeChanges, auditClaudeFacts } from "@genesiscz/utils/agent-sessions/readers/claude-changes-audit";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { nativeSessionRoots } from "@genesiscz/utils/providers/session-paths";
@@ -69,7 +70,8 @@ for (const [index, file] of files.sort((a, b) => b.mtime - a.mtime).entries()) {
     }
 }
 
-if (process.argv.includes("--equal")) {
+// The equality audit reads the user's real sessions: it may read the saved Claude facts, never write them.
+const equalAudit = async () => {
     const { excludedOf, turnChangesJson } = await import("../../../src/agents/lib/changes/tool-changes");
     const { changeLogPath, readChangeLog } = await import("@genesiscz/utils/agents/change-log");
     const { loadSessionChanges, loadRecentSessionChanges, lastChangedTurns, mergeTurnFiles } = await import(
@@ -132,6 +134,9 @@ if (process.argv.includes("--equal")) {
             break;
         }
     }
+};
+if (process.argv.includes("--equal")) {
+    await env.withScoped({ GENESIS_TOOLS_CHANGES_READ_ONLY: "1" }, equalAudit);
 }
 
 out.result({ ...totals, unreadable });
