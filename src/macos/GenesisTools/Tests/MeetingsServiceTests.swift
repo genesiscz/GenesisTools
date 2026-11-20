@@ -1607,7 +1607,8 @@ final class MeetingsServiceTests: XCTestCase {
                    "result": ["names": ["E3": "The call shows who is speaking."]]])
         let shown = await waitUntil(3) { !model.notices.notices.isEmpty }
         XCTAssertTrue(shown, "the notice comes once the read lands")
-        XCTAssertEqual(model.notices.notices.map(\.text), ["A rule (the call shows who is speaking) confirmed i1"])
+        XCTAssertEqual(model.notices.notices.map(\.text), ["m: A rule (the call shows who is speaking) confirmed i1"],
+                       "the rule's sentence, with the meeting that is not open named")
     }
 
     func testALinkCandidateSaysItsSourceTimeAndWhoHoldsIt() {
