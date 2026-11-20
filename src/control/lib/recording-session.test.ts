@@ -9,6 +9,7 @@ import { chosenPlan } from "@app/recorder/lib/proxy";
 import { withTimeout } from "@genesiscz/utils/async";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { killWithEscalation } from "@genesiscz/utils/process/killWithEscalation";
 import { framesDurationUs } from "@genesiscz/utils/recording-editor/source";
 import { type AudioSource, RPC_ERRORS } from "@genesiscz/utils/screen-recorder/control";
 import { LiveRecordingServer, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
@@ -2593,7 +2594,15 @@ describe("live sound on a movie take", () => {
             ]);
         } finally {
             proc.stdin.end();
-            await proc.exited;
+            // The fake exits when its stdin ends; one that ignores the end is killed, so the cleanup below still runs.
+            const exited = await withTimeout(proc.exited, 5_000).then(
+                () => true,
+                () => false
+            );
+            if (!exited) {
+                await killWithEscalation(proc, { graceMs: 1_000, reapMs: 2_000 });
+            }
+
             await stderr;
             await recording.command({ cmd: "discard" });
         }
