@@ -7,6 +7,7 @@ import { type WorkMethodName, type WorkParams, workMethods } from "./api";
 import {
     type PullReport,
     pairItem,
+    previewSync,
     pullRemote,
     pushPairing,
     releaseHeld,
@@ -724,9 +725,10 @@ export const workHandlers: WorkHandlers = {
             );
 
         if (p.release === undefined) {
+            const options = p.all === true ? { all: true } : {};
             return session.call.dryRun === true
-                ? preview("Would sync queued connector changes.")
-                : okReply("sync", await runSyncOnce(sync.deps));
+                ? okReply("sync", await previewSync(sync.deps, options), { dryRun: true })
+                : okReply("sync", await runSyncOnce(sync.deps, options));
         }
 
         const found = itemOf(session, "sync", p.release);

@@ -20,6 +20,7 @@ import { applyChange } from "../store/apply";
 import { selectChangesAfter, selectItem, selectPairings } from "../store/rows";
 import { sqlView } from "../store/view";
 import { connectorConfigOf } from "./config";
+import { type ConnectorScope, outOfScope, outsideRefs, referencedItems } from "./scope";
 import {
     type Connector,
     type ConnectorContext,
@@ -42,6 +43,8 @@ export interface ConnectorConfig {
     labelTemplate: string;
     /** The types whose new items are made outside by the push. */
     createTypes: readonly ItemType[];
+    /** Which new items of those types are made outside (handoff tasks, a subtree, tags). */
+    scope: ConnectorScope;
     /** Who may push a change of an item of this type; `undefined` takes the default of its level. */
     push(type: ItemType): readonly Role[] | "anyone" | undefined;
 }
@@ -158,6 +161,14 @@ function containersOf(db: Database, item: ItemId): string[] {
     ];
 }
 
+/** One held or failed item of a pass, with the reason. */
+export interface SyncProblem {
+    item: ItemId;
+    connector: string;
+    state: "held" | "failed";
+    note: string;
+}
+
 export interface SyncReport {
     pushed: number;
     held: number;
@@ -166,12 +177,28 @@ export interface SyncReport {
     drift: number;
     skipped?: "lease";
     cursor: number;
+    /** Each held or failed item of this pass, with its reason. */
+    problems?: SyncProblem[];
+    /** What the pass did not make outside, and why: an empty createTypes, the connector's scope. */
+    notes?: string[];
+    /** Only in a preview: what a real pass would do now. Nothing was sent and nothing was written. */
+    preview?: { create: ItemId[]; update: ItemId[]; hold: ItemId[] };
 }
 
 type PushMode =
-    | { kind: "sync"; cursor: number; lease: string; touched: ReadonlySet<ItemId>; retryBefore: string }
+    | {
+          kind: "sync";
+          cursor: number;
+          lease: string;
+          touched: ReadonlySet<ItemId>;
+          retryBefore: string;
+          /** Plan only: no lease, no write, no connector call. */
+          preview: boolean;
+      }
     | { kind: "release" }
     | { kind: "pair"; connector: string };
+
+const HELD_NOTE = "a change needs a lead or the owner to release it";
 
 function pushActors(db: Database, id: ItemId, after: number): Actor[] {
     return db
@@ -194,6 +221,14 @@ function newPairing(item: ItemId, connector: string, now: string): Pairing {
     };
 }
 
+function addProblem(report: SyncReport, problem: SyncProblem): void {
+    report.problems = [...(report.problems ?? []), problem];
+}
+
+function addNote(report: SyncReport, note: string): void {
+    report.notes = [...(report.notes ?? []), note];
+}
+
 async function pushItems(input: { deps: SyncDeps; items: Item[]; mode: PushMode; report: SyncReport }): Promise<void> {
     const { deps, items, mode, report } = input;
     const projects = await loadRulesForItems(
@@ -213,6 +248,162 @@ async function pushItems(input: { deps: SyncDeps; items: Item[]; mode: PushMode;
     }
 }
 
+/** One push the plan made: the item's facts now, and the items whose outside keys it names (parent, links). */
+interface Planned {
+    intent: PushIntent;
+    generation: number | null;
+    waitsFor: ItemId[];
+}
+
+/** New items the plan did not make outside, by reason; they become the report's notes. */
+interface LeftOut {
+    noCreateTypes: number;
+    handoffTasks: number;
+    notUnder: number;
+}
+
+function planPushes(input: {
+    deps: SyncDeps;
+    items: Item[];
+    mode: PushMode;
+    project: string;
+    connectorId: string;
+    connector: Connector<unknown>;
+    config: ConnectorConfig;
+    report: SyncReport;
+}): { planned: Planned[]; left: LeftOut } {
+    const { deps, items, mode, project, connectorId: id, connector, config, report } = input;
+    const { db } = deps;
+    const view = sqlView(db);
+    const live = mode.kind !== "sync" || !mode.preview;
+    const planned: Planned[] = [];
+    const left: LeftOut = { noCreateTypes: 0, handoffTasks: 0, notUnder: 0 };
+
+    for (const candidate of items) {
+        const item = selectItem(db, candidate.id);
+
+        if (item === null || item.project !== project) {
+            continue;
+        }
+
+        const pairing = selectPairings(db, { item: item.id, connector: id })[0] ?? null;
+        const canCreate = connector.can.create && config.createTypes.includes(item.type);
+
+        if (mode.kind === "release" && pairing?.state !== "held") {
+            continue;
+        }
+
+        if (mode.kind === "pair" && pairing === null) {
+            continue;
+        }
+
+        if (!pairing?.remoteKey) {
+            if (!canCreate) {
+                if (connector.can.create && config.createTypes.length === 0) {
+                    left.noCreateTypes++;
+                }
+
+                continue;
+            }
+
+            const out = outOfScope(view, item, config.scope);
+
+            if (out !== null) {
+                if (out === "handoff-task") {
+                    left.handoffTasks++;
+                } else {
+                    left.notUnder++;
+                }
+
+                continue;
+            }
+        }
+
+        if (mode.kind === "sync") {
+            if (!mode.touched.has(item.id) && (pairing?.state !== "failed" || pairing.updatedTs > mode.retryBefore)) {
+                continue;
+            }
+
+            const rule = config.push(item.type) ?? defaultPush(item.type);
+            const actors = rule === "anyone" ? [] : pushActors(db, item.id, mode.cursor);
+            const blocked = actors.some(
+                (actor) =>
+                    !allows(
+                        rule,
+                        rolesOf(view, item, {
+                            lineage: actor.sessionId !== null ? [actor.sessionId] : [],
+                            ownerKind: actor.kind === "owner",
+                            sessionId: actor.sessionId,
+                        })
+                    )
+            );
+
+            if (pairing?.state === "held" || blocked) {
+                if (live && pairing?.state !== "held") {
+                    writePairing(db, deps, {
+                        ...(pairing ?? newPairing(item.id, id, deps.now())),
+                        state: "held",
+                        note: HELD_NOTE,
+                    });
+                }
+
+                report.held++;
+                report.preview?.hold.push(item.id);
+                addProblem(report, {
+                    item: item.id,
+                    connector: id,
+                    state: "held",
+                    note: `${pairing?.state === "held" ? (pairing.note ?? HELD_NOTE) : HELD_NOTE}; release it with \`sync --release ${item.id}\``,
+                });
+                continue;
+            }
+        }
+
+        const machine = deps.machinePrefix;
+        const labels = [item.id, ...containersOf(db, item.id)].map((target) =>
+            pairingLabelFor(config.labelTemplate || DEFAULT_LABEL_TEMPLATE, {
+                machine,
+                project: item.project,
+                id: target,
+            })
+        );
+        planned.push({
+            intent: { item, pairing, labels },
+            generation: pairingGeneration(db, item.id, id),
+            waitsFor: referencedItems(db, item.id),
+        });
+    }
+
+    return { planned, left };
+}
+
+function noteLeftOut(report: SyncReport, where: string, left: LeftOut): void {
+    if (left.noCreateTypes > 0) {
+        addNote(report, `${where}: ${left.noCreateTypes} new item(s) not made outside, because createTypes is empty`);
+    }
+
+    if (left.handoffTasks > 0) {
+        addNote(
+            report,
+            `${where}: ${left.handoffTasks} handoff task(s) not made outside, because scope.handoffTasks is off`
+        );
+    }
+
+    if (left.notUnder > 0) {
+        addNote(report, `${where}: ${left.notUnder} new item(s) not made outside, outside scope.under and scope.tags`);
+    }
+}
+
+/**
+ * Waves: an item goes after the items it names (its parent, its link targets) when those have no outside key yet,
+ * so a child's first push already carries its parent's key. A cycle falls back to one wave.
+ */
+function nextWave(rest: readonly Planned[]): Planned[] {
+    const unmade = new Set(rest.filter((p) => !p.intent.pairing?.remoteKey).map((p) => p.intent.item.id));
+    const ready = rest.filter((p) => p.waitsFor.every((dep) => dep === p.intent.item.id || !unmade.has(dep)));
+    return ready.length > 0 ? ready : [...rest];
+}
+
 async function pushProject({
     deps,
     items,
@@ -229,7 +420,7 @@ async function pushProject({
     report: SyncReport;
 }): Promise<void> {
     const { db } = deps;
-    const view = sqlView(db);
+    const live = mode.kind !== "sync" || !mode.preview;
 
     for (const [id, connector] of Object.entries(deps.connectors)) {
         if (mode.kind === "pair" && mode.connector !== id) {
@@ -246,183 +437,125 @@ async function pushProject({
             continue;
         }
 
-        if (mode.kind === "sync" && !renewLease(db, mode.lease, deps.now())) {
+        if (mode.kind === "sync" && live && !renewLease(db, mode.lease, deps.now())) {
             return;
         }
 
-        const intents: PushIntent[] = [];
-        const generations: (number | null)[] = [];
+        const input = { deps, items, mode, project, connectorId: id, connector, config, report };
+        let plan: ReturnType<typeof planPushes> = {
+            planned: [],
+            left: { noCreateTypes: 0, handoffTasks: 0, notUnder: 0 },
+        };
 
-        inTransaction(db, () => {
-            for (const candidate of items) {
-                const item = selectItem(db, candidate.id);
+        if (live) {
+            inTransaction(db, () => {
+                plan = planPushes(input);
+            });
+        } else {
+            plan = planPushes(input);
+        }
 
-                if (item === null || item.project !== project) {
-                    continue;
-                }
+        noteLeftOut(report, `${id} in ${project}`, plan.left);
 
-                const pairing = selectPairings(db, { item: item.id, connector: id })[0] ?? null;
-                const canCreate = connector.can.create && config.createTypes.includes(item.type);
-
-                if (mode.kind === "release" && pairing?.state !== "held") {
-                    continue;
-                }
-
-                if (mode.kind === "pair" && pairing === null) {
-                    continue;
-                }
-
-                if (!pairing?.remoteKey && !canCreate) {
-                    continue;
-                }
-
-                if (mode.kind === "sync") {
-                    if (
-                        !mode.touched.has(item.id) &&
-                        (pairing?.state !== "failed" || pairing.updatedTs > mode.retryBefore)
-                    ) {
-                        continue;
-                    }
-
-                    const rule = config.push(item.type) ?? defaultPush(item.type);
-                    const actors = rule === "anyone" ? [] : pushActors(db, item.id, mode.cursor);
-                    const blocked = actors.some(
-                        (actor) =>
-                            !allows(
-                                rule,
-                                rolesOf(view, item, {
-                                    lineage: actor.sessionId !== null ? [actor.sessionId] : [],
-                                    ownerKind: actor.kind === "owner",
-                                    sessionId: actor.sessionId,
-                                })
-                            )
-                    );
-
-                    if (pairing?.state === "held" || blocked) {
-                        if (pairing?.state !== "held") {
-                            writePairing(db, deps, {
-                                ...(pairing ?? newPairing(item.id, id, deps.now())),
-                                state: "held",
-                                note: noteOf({
-                                    reason: "a change needs a lead or the owner to release it",
-                                    local: pairing ? localDriftFacts(pairing) : [],
-                                }),
-                            });
-                        }
-
-                        report.held++;
-                        continue;
-                    }
-                }
-
-                const machine = deps.machinePrefix;
-                const labels = [item.id, ...containersOf(db, item.id)].map((target) =>
-                    pairingLabelFor(config.labelTemplate || DEFAULT_LABEL_TEMPLATE, {
-                        machine,
-                        project: item.project,
-                        id: target,
-                    })
-                );
-                intents.push({ item, pairing, labels });
-                generations.push(pairingGeneration(db, item.id, id));
+        if (!live) {
+            for (const { intent } of plan.planned) {
+                (intent.pairing?.remoteKey ? report.preview?.update : report.preview?.create)?.push(intent.item.id);
             }
-        });
 
-        if (intents.length === 0) {
             continue;
         }
 
-        const ctx: ConnectorContext = {
-            settings: config.settings,
-            project,
-            machinePrefix: deps.machinePrefix,
-        };
-        const results = await connector.push(intents, ctx).catch((error: unknown): PushResult[] => {
-            logger.warn({ connector: id, project, err: error }, "work sync: connector push failed");
-            return intents.map(() => ({
-                ok: false as const,
-                error: error instanceof Error ? error.message : String(error),
-            }));
-        });
+        let rest = plan.planned;
 
-        inTransaction(db, () => {
+        while (rest.length > 0) {
+            const wave = nextWave(rest);
+            rest = rest.filter((p) => !wave.includes(p));
+
             if (mode.kind === "sync" && !renewLease(db, mode.lease, deps.now())) {
                 return;
             }
 
-            intents.forEach((intent, index) => {
-                if (pairingGeneration(db, intent.item.id, id) !== generations[index]) {
-                    return;
+            if (connector.can.parents || connector.can.links) {
+                for (const { intent } of wave) {
+                    const refs = outsideRefs(db, intent.item.id, id);
+
+                    if (connector.can.parents && refs.parentKey !== undefined) {
+                        intent.parentKey = refs.parentKey;
+                    }
+
+                    if (connector.can.links) {
+                        intent.links = refs.links;
+                    }
                 }
+            }
 
-                const result = results[index] ?? { ok: false as const, error: "the connector answered no result" };
-                const base = intent.pairing ?? newPairing(intent.item.id, id, deps.now());
-
-                const local = localDriftFacts(base);
-
-                if (result.ok) {
-                    writePairing(db, deps, {
-                        ...base,
-                        remoteKey: result.remoteKey,
-                        state: local.length > 0 ? "drift" : "in-sync",
-                        note: noteOf({ local }),
-                    });
-                    report.pushed++;
-                } else {
-                    writePairing(db, deps, {
-                        ...base,
-                        remoteKey: result.remoteKey ?? base.remoteKey,
-                        state: "failed",
-                        note: noteOf({ reason: result.error, local }),
-                    });
-                    report.failed++;
-                }
-            });
-        });
+            await pushWave({ deps, connectorId: id, connector, config, project, mode, wave, report });
+        }
     }
 }
 
-/** A failed or held pairing's note starts with its reason, kept to one line so it never reads as a drift line. */
-function hasReasonLine(pairing: Pick<Pairing, "state">): boolean {
-    return pairing.state === "failed" || pairing.state === "held";
-}
-
-/**
- * The facts of a pairing's local-drift line: facts the outside owns that were changed here. A push never sends them, so
- * a successful push leaves that difference in place and the pairing stays drift; a remote-drift line (a fact owned
- * here) is settled by the push. The reason line of a failed or held pairing is skipped, so a connector error that
- * happens to start with the drift prefix is never read as drift.
- */
-function localDriftFacts(pairing: Pick<Pairing, "state" | "note">): SyncedFact[] {
-    const lines = (pairing.note ?? "").split("\n").slice(hasReasonLine(pairing) ? 1 : 0);
-    const named = lines
-        .filter((line) => line.startsWith(DRIFT_NOTE_PREFIX.local))
-        .flatMap((line) => line.slice(DRIFT_NOTE_PREFIX.local.length).split(","))
-        .map((word) => word.trim());
-    return SYNCED_FACTS.filter((fact) => named.includes(fact));
-}
-
-/** The reason line of a failed or held pairing's note, when it has one. */
-function reasonOf(pairing: Pick<Pairing, "state" | "note">): string | undefined {
-    return hasReasonLine(pairing) ? pairing.note?.split("\n")[0] || undefined : undefined;
-}
-
-/** A pairing note from its parts: a one-line reason first, then a remote-drift and a local-drift line. */
-function noteOf({
-    reason,
-    remote = [],
-    local = [],
+async function pushWave({
+    deps,
+    connectorId: id,
+    connector,
+    config,
+    project,
+    mode,
+    wave,
+    report,
 }: {
-    reason?: string;
-    remote?: readonly SyncedFact[];
-    local?: readonly SyncedFact[];
-}): string | undefined {
-    const lines = [
-        reason?.replace(/\s+/g, " ").trim() || undefined,
-        remote.length > 0 ? `${DRIFT_NOTE_PREFIX.remote} ${remote.join(", ")}` : undefined,
-        local.length > 0 ? `${DRIFT_NOTE_PREFIX.local} ${local.join(", ")}` : undefined,
-    ].filter((line): line is string => line !== undefined);
-    return lines.length > 0 ? lines.join("\n") : undefined;
+    deps: SyncDeps;
+    connectorId: string;
+    connector: Connector<unknown>;
+    config: ConnectorConfig;
+    project: string;
+    mode: PushMode;
+    wave: readonly Planned[];
+    report: SyncReport;
+}): Promise<void> {
+    const { db } = deps;
+    const intents = wave.map(({ intent }) => intent);
+    const ctx: ConnectorContext = {
+        settings: config.settings,
+        project,
+        machinePrefix: deps.machinePrefix,
+    };
+    const results = await connector.push(intents, ctx).catch((error: unknown): PushResult[] => {
+        logger.warn({ connector: id, project, err: error }, "work sync: connector push failed");
+        return intents.map(() => ({
+            ok: false as const,
+            error: error instanceof Error ? error.message : String(error),
+        }));
+    });
+
+    inTransaction(db, () => {
+        if (mode.kind === "sync" && !renewLease(db, mode.lease, deps.now())) {
+            return;
+        }
+
+        wave.forEach(({ intent, generation }, index) => {
+            if (pairingGeneration(db, intent.item.id, id) !== generation) {
+                return;
+            }
+
+            const result = results[index] ?? { ok: false as const, error: "the connector answered no result" };
+            const base = intent.pairing ?? newPairing(intent.item.id, id, deps.now());
+
+            if (result.ok) {
+                writePairing(db, deps, { ...base, remoteKey: result.remoteKey, state: "in-sync", note: undefined });
+                report.pushed++;
+            } else {
+                writePairing(db, deps, {
+                    ...base,
+                    remoteKey: result.remoteKey ?? base.remoteKey,
+                    state: "failed",
+                    note: result.error,
+                });
+                report.failed++;
+                addProblem(report, { item: intent.item.id, connector: id, state: "failed", note: result.error });
+            }
+        });
+    });
 }
 
 /**
@@ -442,15 +575,16 @@ function markLocalDrift(deps: SyncDeps, changes: readonly Change[], report: Sync
             const owned = SYNCED_FACTS.filter((fact) => pairing.origin[fact] === "remote" && keys.includes(fact));
 
             if (owned.length > 0) {
-                const local = localDriftFacts(pairing);
                 inTransaction(deps.db, () =>
                     writePairing(deps.db, deps, {
                         ...pairing,
-                        state: hasReasonLine(pairing) ? pairing.state : "drift",
-                        note: noteOf({
-                            reason: reasonOf(pairing),
-                            local: SYNCED_FACTS.filter((fact) => local.includes(fact) || owned.includes(fact)),
-                        }),
+                        state: pairing.state === "failed" || pairing.state === "held" ? pairing.state : "drift",
+                        note: [
+                            pairing.state === "failed" || pairing.state === "held" ? pairing.note : undefined,
+                            `${DRIFT_NOTE_PREFIX.local} ${owned.join(", ")}`,
+                        ]
+                            .filter(Boolean)
+                            .join("\n"),
                     })
                 );
                 report.drift++;
@@ -459,8 +593,77 @@ function markLocalDrift(deps: SyncDeps, changes: readonly Change[], report: Sync
     }
 }
 
+export interface SyncOptions {
+    /** Push every paired item again, not only the changed ones (after a connector learns a new fact, such as parents). */
+    all?: boolean;
+}
+
+function pairedItems(db: Database): ItemId[] {
+    return db
+        .query<{ item: ItemId }, []>("SELECT DISTINCT item FROM pairings")
+        .all()
+        .map(({ item }) => item);
+}
+
+function failedBefore(db: Database, retryBefore: string): ItemId[] {
+    return db
+        .query<{ item: ItemId }, [string, number]>(
+            "SELECT DISTINCT item FROM pairings WHERE state = 'failed' AND updated_ts <= ? ORDER BY updated_ts LIMIT ?"
+        )
+        .all(retryBefore, BATCH)
+        .map(({ item }) => item);
+}
+
+/**
+ * What `runSyncOnce` would do now, without its lease and without a write or a connector call: the items it would
+ * make outside, update or hold, and its notes. The cursor does not move.
+ */
+export async function previewSync(deps: SyncDeps, options: SyncOptions = {}): Promise<SyncReport> {
+    const { db } = deps;
+    const report: SyncReport = {
+        pushed: 0,
+        held: 0,
+        failed: 0,
+        drift: 0,
+        cursor: -1,
+        preview: { create: [], update: [], hold: [] },
+    };
+    const start =
+        db.query<{ seq: number }, [string]>("SELECT seq FROM cursors WHERE consumer = ?").get(CURSOR)?.seq ?? 0;
+    const retryBefore = new Date(Date.parse(deps.now()) - RETRY_AFTER_MS).toISOString();
+    const touched = new Set<ItemId>(options.all === true ? pairedItems(db) : []);
+    let cursor = start;
+
+    for (;;) {
+        const changes = selectChangesAfter(db, cursor, BATCH);
+
+        if (changes.length === 0) {
+            break;
+        }
+
+        for (const change of changes) {
+            if (change.origin.via !== "connector") {
+                touched.add(change.item);
+            }
+        }
+
+        cursor = changes.at(-1)?.seq ?? cursor;
+    }
+
+    report.cursor = cursor;
+    const ids = new Set([...touched, ...failedBefore(db, retryBefore)]);
+    const items = [...ids].map((id) => selectItem(db, id)).filter((item) => item !== null);
+    await pushItems({
+        deps,
+        items,
+        mode: { kind: "sync", cursor: start, lease: "", touched, retryBefore, preview: true },
+        report,
+    });
+    return report;
+}
+
 /** Drain committed journal pages under one lease. Release only after atomically checking for more entries. */
-export async function runSyncOnce(deps: SyncDeps): Promise<SyncReport> {
+export async function runSyncOnce(deps: SyncDeps, options: SyncOptions = {}): Promise<SyncReport> {
     const { db } = deps;
     const now = deps.now();
     const lease = `${deps.owner}:${randomUUID()}`;
@@ -477,7 +680,7 @@ export async function runSyncOnce(deps: SyncDeps): Promise<SyncReport> {
         let retryFailed = true;
         for (;;) {
             const changes = selectChangesAfter(db, cursor, BATCH);
-            const touched = new Set<ItemId>();
+            const touched = new Set<ItemId>(retryFailed && options.all === true ? pairedItems(db) : []);
 
             for (const change of changes) {
                 // A change a connector made (a pull, a pairing) is not pushed back.
@@ -486,17 +689,16 @@ export async function runSyncOnce(deps: SyncDeps): Promise<SyncReport> {
                 }
             }
 
-            const retries = retryFailed
-                ? db
-                      .query<{ item: ItemId }, [string, number]>(
-                          "SELECT DISTINCT item FROM pairings WHERE state = 'failed' AND updated_ts <= ? ORDER BY updated_ts LIMIT ?"
-                      )
-                      .all(retryBefore, BATCH)
-                : [];
+            const retries = retryFailed ? failedBefore(db, retryBefore) : [];
             retryFailed = false;
-            const ids = new Set([...touched, ...retries.map(({ item }) => item)]);
+            const ids = new Set([...touched, ...retries]);
             const items = [...ids].map((id) => selectItem(db, id)).filter((item) => item !== null);
-            await pushItems({ deps, items, mode: { kind: "sync", cursor, lease, touched, retryBefore }, report });
+            await pushItems({
+                deps,
+                items,
+                mode: { kind: "sync", cursor, lease, touched, retryBefore, preview: false },
+                report,
+            });
 
             if (!renewLease(db, lease, deps.now())) {
                 return { ...report, cursor, skipped: "lease" };
@@ -660,8 +862,6 @@ export async function pullRemote(
 
             const set: ItemPatch = {};
             const drifted: SyncedFact[] = [];
-            // Facts the outside owns that this pull leaves equal to the remote: their local drift is resolved.
-            const settled: SyncedFact[] = [];
 
             for (const fact of SYNCED_FACTS) {
                 const theirs = remoteFact(remote, fact);
@@ -670,11 +870,6 @@ export async function pullRemote(
                     fact === "state" && connector.stateMatches !== undefined
                         ? connector.stateMatches(remote, item.state)
                         : SafeJSON.stringify(theirs) === SafeJSON.stringify(factOf(item, fact));
-
-                if (theirs !== undefined && pairing.origin[fact] === "remote") {
-                    settled.push(fact);
-                }
-
                 if (theirs === undefined || matches) {
                     continue;
                 }
@@ -705,23 +900,13 @@ export async function pullRemote(
                 report.updated.push(item.id);
             }
 
-            const before = localDriftFacts(pairing);
-            const local = before.filter((fact) => !settled.includes(fact));
-
             if (drifted.length > 0) {
                 writePairing(db, deps, {
                     ...pairing,
                     state: "drift",
-                    note: noteOf({ remote: drifted, local }),
+                    note: `${DRIFT_NOTE_PREFIX.remote} ${drifted.join(", ")}`,
                 });
                 report.drift.push(item.id);
-            } else if (local.length < before.length) {
-                const keep = hasReasonLine(pairing) || pairing.state === "pending";
-                writePairing(db, deps, {
-                    ...pairing,
-                    state: keep ? pairing.state : local.length > 0 ? "drift" : "in-sync",
-                    note: noteOf({ reason: reasonOf(pairing), local }),
-                });
             }
         }
     });

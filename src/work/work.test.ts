@@ -5,7 +5,7 @@ import { executeHandoffActions, getHandoff, type HandoffDeps, postHandoff } from
 import { byFor, freshEnv, type TestEnv } from "@app/handoff/test-utils";
 import { makeTempDir } from "@genesiscz/utils/paths";
 import { parityOf } from "@genesiscz/utils/work/legacy/shadow";
-import type { Actor } from "@genesiscz/utils/work/model/item";
+import { type Actor, asItemId, type Item } from "@genesiscz/utils/work/model/item";
 import type { SessionDelivery } from "@genesiscz/utils/work/ports";
 import { listItems, showItem } from "@genesiscz/utils/work/read";
 import { reopen } from "@genesiscz/utils/work/reopen";
@@ -17,6 +17,7 @@ import { legacyHandoffs } from "./adapters";
 import { ownerAtSurface } from "./adapters/actor";
 import { openLegacySource } from "./adapters/legacy-source";
 import { connectorPort, syncNeededAfter } from "./connectors";
+import { hasLink, linksOf, patchOf } from "./connectors/tracker";
 
 const actor: Actor = {
     kind: "agent",
@@ -285,5 +286,51 @@ describe("add-member (P5 decision 5)", () => {
         expect(getHandoff({ id: handoff }, deps).handoff.tasks.map((t) => t.text)).toContain(
             "the owner moves this one in"
         );
+    });
+});
+
+describe("the tracker connector", () => {
+    const item: Item = {
+        id: asItemId("w_fixture1"),
+        type: "task",
+        state: "open",
+        project: "App",
+        rev: 1,
+        title: "x".repeat(510),
+        body: "the text",
+        tags: [],
+        fields: {},
+        createdBy: actor,
+        createdTs: "2026-11-20T00:00:00.000Z",
+        updatedTs: "2026-11-20T00:00:00.000Z",
+    };
+
+    test("a title over the limit is cut there, the full title opens the body, and the parent goes by its id", () => {
+        const patch = patchOf({ item, pairing: null, labels: [], parentKey: "3540" }, true, {
+            server: "tracker",
+            project: "app",
+        });
+        expect(Array.from(String(patch.title))).toHaveLength(500);
+        expect(String(patch.title).endsWith("…")).toBe(true);
+        expect(patch.body).toBe(`${"x".repeat(510)}\n\nthe text`);
+        expect(patch.parentId).toBe(3540);
+        expect(
+            patchOf({ item, pairing: null, labels: [], parentKey: "3540" }, false, { server: "t", project: "a" })
+        ).toEqual({
+            status: "todo",
+        });
+    });
+
+    test("links read back from either side; relates counts both ways, the others only from their own side", () => {
+        const links = linksOf({
+            id: 3528,
+            links: [
+                { direction: "out", id: 1, rel: "relates", task: { id: 3540 } },
+                { direction: "in", id: 2, rel: "blocks", task: { id: 3541 } },
+            ],
+        });
+        expect(hasLink(links, { rel: "relates", target: "3540" })).toBe(true);
+        expect(hasLink(links, { rel: "blocks", target: "3541" })).toBe(false);
+        expect(hasLink(links, { rel: "relates", target: "3541" })).toBe(false);
     });
 });
