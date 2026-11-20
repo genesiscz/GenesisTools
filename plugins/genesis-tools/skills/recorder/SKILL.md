@@ -105,7 +105,7 @@ To hear noise reduction before an export, use `movie.denoisePreview(12)` or
 `tools recorder denoise-preview <recording> --at 12`. It cleans 5 s from source second 12 into the denoise cache.
 Copy Movie (`movie.copy()`, `tools recorder copy`) hands out only an export of the edit as it is now.
 When the edit changed after its last export, it exports first.
-Use Standard quality for movies. For frames, High and Max use `maxLongSide` or `--max-long-side` with 3840 or 16384.
+For frames, High and Max use `maxLongSide` or `--max-long-side` with 3840 or 16384.
 Picker feedback, camera appearance, saved defaults and panel layout use the native controls.
 For a saved movie, `m.show()` opens the editor and `m.reveal()` opens Finder.
 The CLI commands are `tools recorder edit last` and `tools recorder reveal last`.
