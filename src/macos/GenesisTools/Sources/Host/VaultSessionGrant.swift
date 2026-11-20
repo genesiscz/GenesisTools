@@ -127,9 +127,12 @@ extension VaultProcess {
         var current = parent(pid)
         while let ancestor = current, ancestor > 1, entries.count < limit {
             guard let start = startedAt(ancestor) else { break }
+            // The generation is read before and after the name, so both describe one image: an exec between the reads
+            // would pair the old harness name with the new image's generation.
+            let generation = VaultRecipient.execGeneration(ancestor)
             let name = path(ancestor).map { ($0 as NSString).lastPathComponent } ?? ""
-            entries.append(VaultLineageEntry(pid: ancestor, startedAt: start, name: name,
-                                             execGeneration: VaultRecipient.execGeneration(ancestor)))
+            guard VaultRecipient.execGeneration(ancestor) == generation else { break }
+            entries.append(VaultLineageEntry(pid: ancestor, startedAt: start, name: name, execGeneration: generation))
             current = parent(ancestor)
         }
 
