@@ -98,4 +98,30 @@ describe("IntervalIndex", () => {
             );
         }
     });
+    it("keeps a fractional interval whose end is the query, though `point - longest` rounds above its start", () => {
+        const index = new IntervalIndex<string>();
+        index.add(0.3, 1, "fraction");
+        expect(1 - 0.7).toBeGreaterThan(0.3);
+        expect(index.containing(1)).toEqual(["fraction"]);
+        expect(index.containing(0.3)).toEqual(["fraction"]);
+        expect(index.overlapping(0.9999999999999999, 2)).toEqual(["fraction"]);
+
+        let seed = 11;
+        const next = () => {
+            seed = (seed * 48271) % 2147483647;
+            return seed / 2147483647;
+        };
+        const spans: Array<[number, number]> = [];
+        const fractions = new IntervalIndex<number>();
+        for (let i = 0; i < 300; i++) {
+            const from = next() * 100;
+            const span: [number, number] = [from, from + next() * 5];
+            spans.push(span);
+            fractions.add(span[0], span[1], i);
+        }
+        for (const [i, [from, to]] of spans.entries()) {
+            expect(fractions.containing(to)).toContain(i);
+            expect(fractions.containing(from)).toContain(i);
+        }
+    });
 });

@@ -78,24 +78,8 @@ export class IntervalIndex<T> {
 
     overlapping(from: number, to: number): T[] {
         const items = this.items;
-        if (!this.sorted) {
-            items.sort((a, b) => a.from - b.from);
-            this.sorted = true;
-        }
-
         // An interval that starts before `from - longest` ends at or before `from`, so it cannot overlap.
-        const floor = from - this.longest;
-        let low = 0;
-        let high = items.length;
-        while (low < high) {
-            const mid = (low + high) >> 1;
-            if (items[mid]!.from < floor) {
-                low = mid + 1;
-            } else {
-                high = mid;
-            }
-        }
-
+        const low = this.firstFrom(from);
         const found: T[] = [];
         for (let at = low; at < items.length && items[at]!.from < to; at++) {
             if (items[at]!.to > from) {
@@ -109,12 +93,30 @@ export class IntervalIndex<T> {
     /** The intervals that hold `point`, both ends included (`from <= point <= to`), in start order. */
     containing(point: number): T[] {
         const items = this.items;
+        const low = this.firstFrom(point);
+        const found: T[] = [];
+        for (let at = low; at < items.length && items[at]!.from <= point; at++) {
+            if (items[at]!.to >= point) {
+                found.push(items[at]!.value);
+            }
+        }
+
+        return found;
+    }
+
+    /**
+     * The first index whose interval can still reach `point`: every interval before it ends before `point`.
+     * `point - longest` rounds, and `longest` is itself a rounded difference, so the bound is lowered by a margin
+     * that covers both roundings. A lower bound only scans a few more intervals; the end checks stay exact.
+     */
+    private firstFrom(point: number): number {
+        const items = this.items;
         if (!this.sorted) {
             items.sort((a, b) => a.from - b.from);
             this.sorted = true;
         }
 
-        const floor = point - this.longest;
+        const floor = point - this.longest - (Math.abs(point) + 2 * this.longest) * Number.EPSILON * 2;
         let low = 0;
         let high = items.length;
         while (low < high) {
@@ -126,13 +128,6 @@ export class IntervalIndex<T> {
             }
         }
 
-        const found: T[] = [];
-        for (let at = low; at < items.length && items[at]!.from <= point; at++) {
-            if (items[at]!.to >= point) {
-                found.push(items[at]!.value);
-            }
-        }
-
-        return found;
+        return low;
     }
 }
