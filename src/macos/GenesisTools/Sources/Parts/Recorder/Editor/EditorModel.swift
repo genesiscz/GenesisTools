@@ -1365,7 +1365,7 @@ final class EditorModel {
         guard !new.isEmpty else { return }
         let change = EditChange(at: Date(), by: "Renderer", revision: project.revision,
                                 lines: new.map { .init(symbol: "exclamationmark.triangle", text: $0.message) },
-                                itemIDs: [], startUs: nil, touchesPicture: false, action: "warning")
+                                itemIDs: [], startUs: nil, touchesPicture: false, action: EditChange.warning)
         changes.append(change)
         if changes.count > 3 { changes.removeFirst(changes.count - 3) }
         scheduleBannerRemoval(change.id)

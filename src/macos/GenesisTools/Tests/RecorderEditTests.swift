@@ -1413,6 +1413,12 @@ final class RecorderEditTests: XCTestCase {
                        ["Removed 2 spotlights", "Removed the marker “Intro”", "Hid the captions", "Hid the cursor"])
         XCTAssertEqual(edited.title, "agent")
         XCTAssertEqual(edited.hint, "⌘Z puts it back")
+        // A renderer warning (a missing file) is no edit: its footer never offers an undo.
+        let warning = EditChange(at: Date(), by: "Renderer", revision: 3, lines: [], itemIDs: [], startUs: nil,
+                                 touchesPicture: false, action: EditChange.warning)
+        XCTAssertTrue(warning.isWarning)
+        XCTAssertEqual(warning.hint, "No edit caused this, so ⌘Z does not change it")
+        XCTAssertEqual(warning.title, "Renderer")
     }
 
     // Regression test: deep test 2026-11-07 R2-RE3 — an undo of Replace All (three caption lines fixed) said "Turned
