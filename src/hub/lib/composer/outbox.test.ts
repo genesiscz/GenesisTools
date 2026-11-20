@@ -806,17 +806,40 @@ describe("widget source and delivery contracts", () => {
      * file, whatever the runner's privileges (a read-only mode does not stop root). Returns the undo.
      */
     async function refuseRecord(files: { file: string; events: string }): Promise<() => Promise<void>> {
+        const kept: string[] = [];
+
         for (const path of [files.file, files.events]) {
-            await rename(path, `${path}.kept`).catch(() => undefined);
+            if (await moveAside(path)) {
+                kept.push(path);
+            }
+
             await mkdir(path);
         }
 
+        // Only a file that was moved aside comes back, and a failed restore fails the test.
         return async () => {
             for (const path of [files.file, files.events]) {
                 await rmdir(path);
-                await rename(`${path}.kept`, path).catch(() => undefined);
+
+                if (kept.includes(path)) {
+                    await rename(`${path}.kept`, path);
+                }
             }
         };
+    }
+
+    /** Moves a log file to `<path>.kept`. A log the run never wrote is the one failure tolerated: it has nothing to keep. */
+    async function moveAside(path: string): Promise<boolean> {
+        try {
+            await rename(path, `${path}.kept`);
+            return true;
+        } catch (err) {
+            if (err instanceof Error && "code" in err && err.code === "ENOENT") {
+                return false;
+            }
+
+            throw err;
+        }
     }
 
     test("a delivered answer whose record failed says delivered, so the widget does not offer Send again", async () => {
