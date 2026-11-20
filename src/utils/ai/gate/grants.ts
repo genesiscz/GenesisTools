@@ -226,6 +226,16 @@ function isOptionalString(value: unknown): boolean {
     return value === undefined || value === null || typeof value === "string";
 }
 
+/** A value Swift's `Int32` decoder accepts: an integer in its range. */
+function isInt32(value: unknown): boolean {
+    return Number.isInteger(value) && (value as number) >= -2_147_483_648 && (value as number) <= 2_147_483_647;
+}
+
+/** A value Swift's `Int64` decoder accepts here: an integer (a JSON number past 2^53 already lost its digits). */
+function isInt64(value: unknown): boolean {
+    return Number.isSafeInteger(value);
+}
+
 /**
  * The fields the app's decoder requires (`VaultSessionGrant` in VaultSessionGrant.swift), so this list never shows a
  * record the app cannot read, nor hides one it honours.
@@ -235,15 +245,15 @@ function isVaultSessionGrant(value: unknown): value is VaultSessionGrant {
         isJsonObject(value) &&
         isJsonObject(value.anchor) &&
         typeof value.anchor.harness === "string" &&
-        typeof value.anchor.pid === "number" &&
-        typeof value.anchor.startedAt === "number" &&
+        isInt32(value.anchor.pid) &&
+        isInt64(value.anchor.startedAt) &&
         (value.anchor.execGeneration === undefined ||
             value.anchor.execGeneration === null ||
-            typeof value.anchor.execGeneration === "number") &&
+            isInt32(value.anchor.execGeneration)) &&
         isOptionalString(value.sessionId) &&
         isOptionalString(value.title) &&
-        typeof value.grantedAt === "number" &&
-        typeof value.until === "number" &&
+        isInt64(value.grantedAt) &&
+        isInt64(value.until) &&
         typeof value.method === "string"
     );
 }

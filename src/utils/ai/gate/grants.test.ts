@@ -155,6 +155,21 @@ describe("grants", () => {
         for (const file of [
             { version: 1, grants: [grant(640, "s-one", T(60)), noMethod] },
             { version: 1, grants: [{ ...grant(640, "s-one", T(60)), title: 7 }] },
+            // Swift decodes these fields as fixed-width integers and refuses a value outside the range or a fraction.
+            {
+                version: 1,
+                grants: [
+                    {
+                        ...grant(640, "s-one", T(60)),
+                        anchor: { ...grant(640, "s-one", T(60)).anchor, execGeneration: 2_147_483_648 },
+                    },
+                ],
+            },
+            {
+                version: 1,
+                grants: [{ ...grant(640, "s-one", T(60)), anchor: { ...grant(640, "s-one", T(60)).anchor, pid: 1.5 } }],
+            },
+            { version: 1, grants: [{ ...grant(640, "s-one", T(60)), until: T(60) + 0.5 }] },
             { version: 2, grants: [grant(640, "s-one", T(60))] },
         ]) {
             const path = `${vaultSessionGrantsPath()}.malformed`;
