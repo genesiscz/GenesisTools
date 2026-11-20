@@ -158,8 +158,11 @@ export const wisprflowSource: TranscriptSource = {
     sourceLayout: "left-mic",
     label: "Wispr Flow",
 
-    async load(sourceMeetingId) {
-        const loaded = await loadMeeting(sourceMeetingId, { source: "auto", transcript: true });
+    async load(sourceMeetingId, options) {
+        const loaded = await loadMeeting(sourceMeetingId, {
+            source: options?.remote === false ? "local" : "auto",
+            transcript: true,
+        });
         log.debug({ id: sourceMeetingId, source: loaded.source, notes: loaded.notes }, "wisprflow meeting loaded");
         return toSourceMeeting(loaded);
     },
@@ -195,9 +198,12 @@ export const wisprflowSource: TranscriptSource = {
         return localAvailable() ? dictionaryCandidates() : [];
     },
 
-    async recordingClock(sourceMeetingId) {
+    async recordingClock(sourceMeetingId, options) {
         // Transcript second 0 is the meeting's start (checked 2026-11-02 against Teams leave times, within 4 s).
-        const loaded = await loadMeeting(sourceMeetingId, { source: "auto", transcript: false });
+        const loaded = await loadMeeting(sourceMeetingId, {
+            source: options?.remote === false ? "local" : "auto",
+            transcript: false,
+        });
         return { startedAt: loaded.data.start };
     },
 

@@ -32,6 +32,16 @@ export interface SourceMeeting {
     recordedBy?: { owner: false; person?: string };
 }
 
+/** How far a read may go. */
+export interface SourceReadOptions {
+    /**
+     * False: answer only from what is on this Mac (the app's own data, an imported export), never a remote service. A
+     * record that keeps its own copy reads this way, so a plain read never dials a server or asks for the vault key;
+     * `new`, `link` and a refresh read with the default (true).
+     */
+    remote?: boolean;
+}
+
 /** A word the source was taught to spell, for `dictionary suggest`. */
 export interface DictionaryCandidate {
     value: string;
@@ -85,7 +95,7 @@ export interface TranscriptSource {
     /** A short name for messages. */
     readonly label: string;
     /** The source's meeting with its transcript. Throws when it does not exist. */
-    load(sourceMeetingId: string): Promise<SourceMeeting>;
+    load(sourceMeetingId: string, options?: SourceReadOptions): Promise<SourceMeeting>;
     /**
      * A token that changes whenever what `load` and `recordingClock` return for this meeting can change, read without
      * the transcript. Null when the source cannot tell (a meeting it would ask a remote service for): the caller then
@@ -97,7 +107,7 @@ export interface TranscriptSource {
     /** The source's own word list. */
     dictionary(): Promise<DictionaryCandidate[]>;
     /** Where the source's transcript clock starts for this meeting; null when the source has no times. */
-    recordingClock(sourceMeetingId: string): Promise<RecordingClock | null>;
+    recordingClock(sourceMeetingId: string, options?: SourceReadOptions): Promise<RecordingClock | null>;
     /** Speaker evidence beside the transcript (channels, the platform's speaking indicator); null when it keeps none. */
     evidence(sourceMeetingId: string): Promise<MeetingEvidence | null>;
     /** A recording running now, for the autostart; null when none is. */

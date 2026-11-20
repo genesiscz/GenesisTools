@@ -178,9 +178,15 @@ function copyRevision(folder: string, ref: SourceCopyRef): string | undefined {
 /**
  * The source, with the record's copy behind the reads a record needs: each answer refreshes the copy, and a read that
  * fails answers from the copy when one is saved. Without a copy the source's error is thrown as before.
+ *
+ * With a saved copy, the source is read only from this Mac (`remote: false`): a plain read (`show`, `transcript`, the
+ * window) never dials a remote service or asks for the vault key. `new`, `link` and a refresh read the source directly
+ * and may go remote, which brings a server-only change into the copy (D41, 2026-11-20).
  */
 export function copyBackedSource(source: TranscriptSource, folder: string): TranscriptSource {
     const refOf = (sourceMeetingId: string) => ({ sourceId: source.id, sourceMeetingId });
+    const reach = (sourceMeetingId: string) =>
+        readSourceCopy(folder, "meeting", refOf(sourceMeetingId)) ? { remote: false } : {};
 
     async function backed<P extends SourceCopyPart>(
         part: P,
@@ -218,7 +224,7 @@ export function copyBackedSource(source: TranscriptSource, folder: string): Tran
             backed(
                 "meeting",
                 id,
-                () => source.load(id),
+                () => source.load(id, reach(id)),
                 (meeting) => {
                     saveSourceCopy(folder, "meeting", refOf(id), meeting);
                     return meeting;
@@ -235,7 +241,7 @@ export function copyBackedSource(source: TranscriptSource, folder: string): Tran
             backed(
                 "clock",
                 id,
-                () => source.recordingClock(id),
+                () => source.recordingClock(id, reach(id)),
                 (clock) => keep(folder, "clock", refOf(id), clock)
             ),
         revision: async (id) => {
