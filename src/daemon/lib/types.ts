@@ -78,6 +78,7 @@ export interface RunUsage {
     systemMs: number;
     /** userMs + systemMs; cpuMs / wallMs is the average number of cores the run kept busy. */
     cpuMs: number;
+    /** The largest peak resident memory of one process (the task or a child it waited for), not a sum over children. */
     maxRssMb: number;
     /**
      * Monotonic milliseconds from the spawn to the process's exit, without the wait for its output pipes that

@@ -449,6 +449,8 @@ export async function embedVoiceLines(options: {
     cachePath?: string;
     /** Reuse matching entries and compute misses in memory. A preview never persists them. */
     readOnlyCache?: boolean;
+    /** Another pass's cache, read for hits only; computed lines are saved to `cachePath`, never into it. */
+    fallbackCachePath?: string;
     workerPrefix?: readonly string[];
     /** The worker takes itself out of background first (`clearOwnBackground`): the voice pass at normal priority. */
     clearBackground?: boolean;
@@ -478,6 +480,7 @@ export async function embedVoiceLines(options: {
                 source,
                 model: backend.model,
                 cachePath: options.cachePath ?? (await voiceLineCachePath(audioPath)),
+                fallbackCachePath: options.fallbackCachePath,
             });
         } catch (error) {
             logger.debug({ error }, "Voice line cache unavailable; computing without it");
@@ -553,8 +556,6 @@ export async function embedVoiceLines(options: {
             })
         )
     );
-    const aborted = options.signal?.aborted === true;
-
     // Commit in input order, independent of worker completion. For repeated millisecond keys the first
     // cacheable result wins, just as if each line had looked up the one before it in a serial pass.
     for (const line of pending) {
@@ -574,10 +575,11 @@ export async function embedVoiceLines(options: {
         }
     }
     if (!options.readOnlyCache) {
-        cache?.save();
+        await cache?.save();
     }
-    if (aborted) {
-        throw options.signal?.reason;
+    // Read after the save: a cancel that lands while the finished lines are saved still rejects the call.
+    if (options.signal?.aborted) {
+        throw options.signal.reason;
     }
 
     for (const outcome of filled) {

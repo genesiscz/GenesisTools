@@ -55,7 +55,7 @@ class GrantRecorder extends FrameRecorder {
         audio: true,
     };
 
-    constructor(private readonly stop: () => void) {
+    constructor(private readonly stop: () => Promise<unknown>) {
         super();
     }
 
@@ -94,14 +94,26 @@ class GrantRecorder extends FrameRecorder {
             });
         }
 
-        this.stop();
-        await new Promise<void>((resolve) => {
+        // The stop request must abort this capture. A later piece's stop may meet "already stopping", which is fine
+        // while the abort still comes; a stop that never aborts fails the test after a deadline, naming the stop's
+        // error, instead of stalling the suite.
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        let stopError: unknown;
+        this.stop().catch((error: unknown) => {
+            stopError = error;
+        });
+        await new Promise<void>((resolve, reject) => {
             if (signal?.aborted) {
                 resolve();
+                return;
             }
 
             signal?.addEventListener("abort", () => resolve(), { once: true });
-        });
+            timer = setTimeout(
+                () => reject(new Error(`the recorder stop request did not abort the capture: ${String(stopError)}`)),
+                5_000
+            );
+        }).finally(() => clearTimeout(timer));
 
         return {
             startedAtMs: firstFrameMs,
@@ -124,9 +136,9 @@ async function recordWithoutMicrophone() {
     mkdirSync(leftBehind, { recursive: true });
     writeFileSync(join(leftBehind, "audio-mic.m4a"), "sound of a capture that was killed");
     const liveDir = mkdtempSync(join(tmpdir(), "live-sound-"));
-    const recorder = new GrantRecorder(() => {
-        void callRecorder({ id: meetingLiveId(created.id), method: "stop", dir: liveDir }).catch(() => undefined);
-    });
+    const recorder = new GrantRecorder(() =>
+        callRecorder({ id: meetingLiveId(created.id), method: "stop", dir: liveDir })
+    );
     const state = await runRecorder({
         store,
         meetingId: created.id,
@@ -155,9 +167,9 @@ test("a stalled sound recovery ends the stop at its deadline and keeps .piece/ f
     );
     const folder = store.folder(created.id);
     const liveDir = mkdtempSync(join(tmpdir(), "live-sound-deadline-"));
-    const recorder = new GrantRecorder(() => {
-        void callRecorder({ id: meetingLiveId(created.id), method: "stop", dir: liveDir }).catch(() => undefined);
-    });
+    const recorder = new GrantRecorder(() =>
+        callRecorder({ id: meetingLiveId(created.id), method: "stop", dir: liveDir })
+    );
     const original = MeetingRun.prototype.salvageTracks;
     let calls = 0;
     // begin() recovers as usual; every later recovery never settles.
@@ -269,11 +281,9 @@ test.each(["requested", "paused"] as const)(
                 capture: meetingsConfigSchema.parse({}).global.capture,
                 audio: sources,
                 deps: {
-                    recorder: new GrantRecorder(() => {
-                        void callRecorder({ id: meetingLiveId(meeting.id), method: "stop", dir: liveDir }).catch(
-                            () => undefined
-                        );
-                    }),
+                    recorder: new GrantRecorder(() =>
+                        callRecorder({ id: meetingLiveId(meeting.id), method: "stop", dir: liveDir })
+                    ),
                     toJpeg: async (_png, jpg) => {
                         await Bun.write(jpg, "jpeg");
                     },
@@ -442,7 +452,7 @@ describe("the recorder keeps the meeting's sound", () => {
                           }
                 ).global.capture,
                 deps: {
-                    recorder: new MeterRecorder(() => {}),
+                    recorder: new MeterRecorder(async () => undefined),
                     liveDir,
                     startOcr: () => {},
                     notify: async () => {},

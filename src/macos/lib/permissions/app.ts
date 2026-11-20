@@ -59,6 +59,7 @@ import {
 import { type ShareBundleResourcesReport, shareBundleResources } from "./bundle-resources";
 import { changedKeyLabels, codesignTrustClickCommand, keychainDialogOpen } from "./codesign-trust";
 import { SWIFT_FACE_TABLE_PATH, syncSwiftFaceTable } from "./face-table";
+import { type BuildLinkCheck, checkBuildLinks } from "./links";
 import {
     ALL_PART_IDS,
     APP_PARTS,
@@ -535,6 +536,8 @@ export interface BuildResult {
     identity: CodesignIdentity;
     signature: SignatureInfo;
     manifest: AppManifest;
+    /** Every build runs the launcher check (`.claude/rules/macos.md`); the caller shows it. */
+    links: BuildLinkCheck;
 }
 
 /** Stamp version and build number into the Info.plist template; throws when a marker is missing. */
@@ -602,6 +605,20 @@ function appBuildLockPath(): string {
 export function withAppBuildSlot<T>(run: () => Promise<T>): Promise<T> {
     return withFileLock(appBuildLockPath(), run, BUILD_LOCK_TIMEOUT_MS);
 }
+
+/**
+ * Compiler warnings that fail every Swift build: package builds (`scripts/native/swift-package.ts`), the app build and
+ * the app tests (`appSwiftArgs`). A cold build of the app and its tests without the flag listed no such call on
+ * 2026-11-20 before it was turned on for the app. Swift 5 mode binds an unlabeled trailing closure to the LAST
+ * closure parameter when forward and backward matching differ, and only warns: when `EmptyState` gained a second
+ * closure, every `EmptyState(...) { }` silently moved to it and seven empty states lost their button.
+ */
+export const SWIFT_WARNINGS_AS_ERRORS: readonly string[] = [
+    "-Xswiftc",
+    "-Werror",
+    "-Xswiftc",
+    "TrailingClosureMatching",
+];
 
 /** SwiftPM accepts both the short and long jobs option. Preserve a caller's explicit worker budget. */
 export function swiftJobArgs(args: readonly string[]): string[] {
@@ -726,6 +743,7 @@ function appSwiftArgs(
         "debug",
         "-Xswiftc",
         "-O",
+        ...SWIFT_WARNINGS_AS_ERRORS,
         // No `-Xswiftc -module-cache-path`: the Swift Build engine (SwiftPM 6.4's default) sets its own module
         // cache, `<scratch>/out/ModuleCache.noindex`, so the flag had no effect. Measured 2026-11-05: cold builds
         // given `.build/mc-<name>` or `~/Library/Caches/GenesisTools/swift-module-cache` never created either.
@@ -1648,9 +1666,13 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
     });
     logger.info({ daemon }, "daemon after the bundle swap");
 
+    // On every build path (the build command, `tools update`, the build offer, a part build), not only the command.
+    step("check that a launcher run never checks in with Launch Services");
+    const links = await checkBuildLinks(bundlePath);
+
     logger.info({ bundlePath, signedWith: signature.authority }, "GenesisTools.app built");
 
-    return { bundlePath, identity, signature, manifest };
+    return { bundlePath, identity, signature, manifest, links };
 }
 
 /**

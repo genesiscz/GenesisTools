@@ -115,6 +115,7 @@ enum EditOpDiff {
             var base = saved
             base.volume = 1
             base.name = nil
+            base.mutedRanges = nil
             switch base.source {
             case .music: base.muted = false
             case .voiceover:
@@ -221,6 +222,13 @@ enum EditOpDiff {
                     add("Change \(name) Volume", "Changed \(name) volume to \(b.volume.formatted(.percent))", "speaker.wave.2")
                 }
                 if a.name != b.name { add("Rename \(a.displayName)", "Renamed \(a.displayName) to \(name)", "pencil") }
+                if a.mutedRanges != b.mutedRanges {
+                    // A split part counts once more but plays longer, so compare the silent length.
+                    func silent(_ lane: EditProject.AudioLane) -> Int64 { (lane.mutedRanges ?? []).reduce(0) { $0 + $1.endUs - $1.startUs } }
+                    let more = silent(b) > silent(a)
+                    add(more ? "Mute Part of \(name)" : "Unmute Part of \(name)",
+                        more ? "Muted a part of \(name)" : "Unmuted a part of \(name)", "speaker.slash")
+                }
             }
         }
         guard old.layers != new.layers else { return changes }

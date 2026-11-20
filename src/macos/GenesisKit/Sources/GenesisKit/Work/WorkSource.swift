@@ -145,10 +145,30 @@ public struct WorkNotifyCell: Identifiable, Equatable, Sendable {
     public var minSeverity: String?
     public var repoPath: String?
     public var builtInLevel: String
-    public var writable: Bool { from != "config.repo" }
+    /// False while the repository's file decides the project rule (no project override above it).
+    public var writable: Bool { writable(at: .project) }
+    /// A hub or widget override is applied after the repository's file, so that file never locks it.
+    public func writable(at scope: WorkNotifyScope) -> Bool {
+        if scope.surface != nil { return true }
+        let repo = layers.first { $0.layer == "config.repo" }?.level != nil
+        let project = layers.first { $0.layer == "config.project" }?.level != nil
+        return !repo || project
+    }
+    /// The level of the rule a write at this scope edits: the scope's own layer, or what that layer inherits from the
+    /// layers under it when it sets none. The hub and the widget never see each other's override.
+    public func level(at scope: WorkNotifyScope) -> String {
+        let order = WorkNotifyScope.layerOrder
+        let rank = order.firstIndex(of: scope.layer) ?? 0
+        let visible = layers.compactMap { entry -> (index: Int, level: String)? in
+            guard let level = entry.level, let index = order.firstIndex(of: entry.layer), index <= rank,
+                  !entry.layer.hasPrefix("surface.") || entry.layer == scope.layer else { return nil }
+            return (index, level)
+        }
+        return visible.max { $0.index < $1.index }?.level ?? builtInLevel
+    }
     /// The strongest rule left when the concrete override at this scope is removed.
     public func inheriting(_ scope: WorkNotifyScope) -> (level: String, layer: String) {
-        let removed = scope == .project ? "config.project" : "config.global"
+        let removed = scope.layer
         for entry in layers.reversed() {
             let value = entry.layer == removed && !entry.wildcard ? entry.fallback : entry.level
             if let value { return (value, entry.layer) }
@@ -272,7 +292,31 @@ public protocol WorkSource: AnyObject {
     func restoreNotify(project: String?, scope: WorkNotifyScope, changes: [WorkNotifyChange]) async throws -> WorkActionOutcome
 }
 
-public enum WorkNotifyScope: String, Sendable { case project, global }
+/// Where a notification rule is written: the project, every project, or one surface's override for the project.
+public enum WorkNotifyScope: String, Sendable, CaseIterable {
+    case project, global, hub, widget
+
+    /// The rule layer this scope writes, as the config read names it.
+    public var layer: String {
+        switch self {
+        case .project: return "config.project"
+        case .global: return "config.global"
+        case .hub: return "surface.hub"
+        case .widget: return "surface.widget"
+        }
+    }
+
+    /// The surface whose override this scope writes (`projects.<p>.surfaces.<surface>.notify`), or nil.
+    public var surface: String? {
+        switch self {
+        case .hub, .widget: return rawValue
+        case .project, .global: return nil
+        }
+    }
+
+    /// The order the rules apply in; a later layer decides over an earlier one.
+    public static let layerOrder = ["default", "config.global", "config.repo", "config.project", "surface.hub", "surface.widget"]
+}
 
 /// Raw values at the edited layer. Inheritance encodes as an explicit JSON null in the Undo request.
 public enum WorkNotifyRule: Codable, Equatable, Sendable {
@@ -421,13 +465,18 @@ public final class LiveWorkSource: WorkSource {
         let choice = level.flatMap(WorkConfigSetParamsNotifyLevel.init(rawValue:))
         guard level == nil || choice != nil else { throw WorkSourceError("Choose a known notification level.") }
         return try await changeNotify(.init(scope: scope == .global ? .value1 : .value0, project: project,
+                                             surface: Self.surface(scope),
                                              notify: .init(type: type, action: action, level: choice), call: .init(project: project)))
     }
 
     public func restoreNotify(project: String?, scope: WorkNotifyScope, changes: [WorkNotifyChange]) async throws -> WorkActionOutcome {
         let restore = try JSONDecoder().decode([WorkConfigSetParamsRestoreItem].self, from: JSONEncoder().encode(changes))
         return try await changeNotify(.init(scope: scope == .global ? .value1 : .value0, project: project,
-                                             restore: restore, call: .init(project: project)))
+                                             surface: Self.surface(scope), restore: restore, call: .init(project: project)))
+    }
+
+    private static func surface(_ scope: WorkNotifyScope) -> WorkConfigSetParamsSurface? {
+        scope.surface.flatMap(WorkConfigSetParamsSurface.init(rawValue:))
     }
 
     private func changeNotify(_ params: WorkConfigSetParams) async throws -> WorkActionOutcome {

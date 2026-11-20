@@ -86,4 +86,33 @@ final class RecorderPictureTests: XCTestCase {
         XCTAssertLessThan(imageRow.minY, cameraRow.minY)
         for lane in ["mic", "system"] { XCTAssertNotNil(FrameProbe.frames["recorder.timeline.sound." + lane]) }
     }
+
+    /// The still of a layer menu draws each command's title, enabled or not. The frame alone passed while only the
+    /// separators were drawn, so the words are read back from the picture.
+    func testTheLayerMenuStillDrawsEveryCommandTitle() throws {
+        guard #available(macOS 14.4, *) else { throw XCTSkip("the menu still needs macOS 14.4") }
+        let menu = NSMenu()
+        menu.addItem(withTitle: "Bring Forward", action: nil, keyEquivalent: "")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Delete Layer", action: nil, keyEquivalent: "").isEnabled = false
+        let still = NativeMenuStill.MenuItems(menu)
+        let size = still.intrinsicContentSize
+        still.frame = NSRect(origin: .zero, size: size)
+        // At twice the size, on white as the menu's material shows it, in the light appearance: Vision reads it then.
+        let scale: CGFloat = 2
+        let context = try XCTUnwrap(CGContext(data: nil, width: Int(size.width * scale), height: Int(size.height * scale),
+                                              bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(NSColor.white.cgColor)
+        context.fill(CGRect(x: 0, y: 0, width: size.width * scale, height: size.height * scale))
+        context.translateBy(x: 0, y: size.height * scale)
+        context.scaleBy(x: scale, y: -scale)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
+        try XCTUnwrap(NSAppearance(named: .aqua)).performAsCurrentDrawingAppearance { still.draw(still.bounds) }
+        NSGraphicsContext.restoreGraphicsState()
+        let text = try EditorShots.text(try XCTUnwrap(context.makeImage()))
+        XCTAssertTrue(text.contains("Bring Forward"), text)
+        XCTAssertTrue(text.contains("Delete Layer"), text)
+    }
 }

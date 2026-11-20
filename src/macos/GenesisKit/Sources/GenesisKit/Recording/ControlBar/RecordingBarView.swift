@@ -219,6 +219,7 @@ public struct RecordingBarView: View {
     /// A disabled live control keeps its engine's reason. Phase changes never turn a disabled button into
     /// an edit of preferences behind the running take.
     private func reason(_ key: String, live supported: Bool, fallback: String = "Choose this before recording.") -> String? {
+        if let missing = caps.missingSourceReason(key) { return missing }
         if configuring { return nil }
         if live { return supported ? nil : caps.reasonUnavailable[key] ?? fallback }
         return "Available when setting up a recording."
@@ -395,9 +396,18 @@ public struct RecordingBarView: View {
         enabled ? (muted ? "Muted" : "On") : "Off"
     }
 
+    /// The sources as the movie will hold them: one this recorder cannot record shows off, whatever the saved choice.
+    private var shownMicrophone: MicrophoneSetup { caps.sources.contains(.microphone) ? setup.microphone : MicrophoneSetup() }
+    private var shownSystemAudio: SystemAudioSetup { caps.sources.contains(.systemAudio) ? setup.systemAudio : SystemAudioSetup() }
+    private var shownCamera: CameraSetup {
+        var camera = setup.camera
+        if !caps.sources.contains(.camera) { camera.enabled = false }
+        return camera
+    }
+
     @ViewBuilder private var soundControls: some View {
-        let mic = setup.microphone
-        let system = setup.systemAudio
+        let mic = shownMicrophone
+        let system = shownSystemAudio
         let micReason = reason("microphone", live: caps.liveMicrophoneMute && mic.enabled,
                                fallback: "Turn the microphone on before recording.")
         let systemReason = reason("systemAudio", live: caps.liveSystemAudioMute && system.enabled,
@@ -425,7 +435,7 @@ public struct RecordingBarView: View {
             model.apply(.systemAudio(next))
         }
         let cameraReason = reason("camera", live: caps.liveCamera)
-        sourceCell(on: setup.camera.enabled, muted: false, symbol: setup.camera.enabled ? "video.fill" : "video.slash",
+        sourceCell(on: shownCamera.enabled, muted: false, symbol: shownCamera.enabled ? "video.fill" : "video.slash",
                    label: "Camera", id: "camera", reason: cameraReason) {
             var next = setup.camera
             next.enabled.toggle()
@@ -682,7 +692,17 @@ public struct RecordingBarView: View {
     private var thresholdReason: String? {
         setup.stillFrameRate == 0 || setup.stillFrameRate == Double(setup.frameRate)
             ? "The active and still frame rates are the same."
-            : (actions.changeThreshold == nil ? "This recorder has no change threshold." : reason("threshold", live: false))
+            : (actions.changeThreshold == nil ? "This recorder has no change threshold."
+                : reason("threshold", live: caps.liveFrameRate))
+    }
+
+    /// During a take the recorder applies it from its next segment; the bar shows it once it took it.
+    private func selectThreshold(_ value: Double) {
+        if live {
+            model.changeThreshold(value) { applied in if applied { draftThreshold = value } }
+        } else {
+            draftThreshold = value
+        }
     }
 
     private var cameraOptionReason: String? {
@@ -697,10 +717,23 @@ public struct RecordingBarView: View {
     private var recordsFrames: Bool { setup.target?.kind == .displays }
     /// A frames recording keeps an explicit still rate; "Same" is only a movie's.
     private var stillRates: [Double] { RecordingSetup.stillFrameRates.filter { !recordsFrames || $0 > 0 } }
-    /// High and Max scale a frames recording; a movie records at its target's native size.
-    private var qualities: [RecordingQuality] { recordsFrames ? RecordingQuality.allCases : [.standard] }
+    /// High and Max scale a frames recording; a movie takes a movie preset (Standard, High, Small) before the take.
     private var qualityReason: String? {
-        recordsFrames ? nil : (caps.reasonUnavailable["quality"] ?? "Movies record at the target’s native size.")
+        recordsFrames ? reason("quality", live: false) : (caps.reasonUnavailable["quality"] ?? reason("quality", live: false))
+    }
+
+    /// The movie preset the Quality row shows: the recorder's fixed one (the widget's native size), else the setup's.
+    /// The saved preset stays in the setup for the full recorder.
+    public static func shownMovieQuality(setup: RecordingSetup, capabilities caps: RecordingCapabilities) -> MovieQuality {
+        caps.fixedMovieQuality ?? setup.movieQuality
+    }
+
+    private var qualityItems: [MenuButtonItem] {
+        recordsFrames
+            ? choiceItems(RecordingQuality.allCases, current: setup.quality, title: { $0.rawValue.capitalized },
+                          reason: qualityReason) { model.apply(.quality($0)) }
+            : choiceItems(MovieQuality.allCases, current: Self.shownMovieQuality(setup: setup, capabilities: caps),
+                          title: \.title, reason: qualityReason) { model.apply(.movieQuality($0)) }
     }
     private static let thresholds: [Double] = [0.5, 1, 2.5, 5]
     private static func stillTitle(_ rate: Double) -> String { rate == 0 ? "Same" : "\(number(rate)) fps" }
@@ -717,12 +750,11 @@ public struct RecordingBarView: View {
     /// The setup menu: the macOS screenshot toolbar's "Options" menu, with this recorder's choices.
     private var optionItems: [MenuButtonItem] {
         var items: [MenuButtonItem] = [
-            .submenu("Quality", choiceItems(qualities, current: setup.quality, title: { $0.rawValue.capitalized },
-                                            reason: qualityReason) { model.apply(.quality($0)) }),
+            .submenu("Quality", qualityItems),
             .submenu("While still", choiceItems(stillRates, current: setup.stillFrameRate, title: Self.stillTitle,
                                                 reason: stillReason) { model.changeFrameRate(still: $0) }),
             .submenu("Change needed", choiceItems(Self.thresholds, current: draftThreshold, title: { "\(Self.number($0))%" },
-                                                  reason: thresholdReason) { draftThreshold = $0 }),
+                                                  reason: thresholdReason) { selectThreshold($0) }),
             .submenu("Countdown", choiceItems(Array(0...10), current: setup.countdownSeconds ?? 0,
                                               title: { $0 == 0 ? "Off" : "\($0) s" }, reason: nil) {
                 model.setup.countdownSeconds = $0 == 0 ? nil : $0
@@ -903,8 +935,14 @@ public struct RecordingBarView: View {
     @ViewBuilder private var setupRows: some View {
         row {
             pair("Quality") {
-                segmented("Quality", "quality", values: qualities, current: setup.quality,
-                          title: { $0.rawValue.capitalized }, reason: qualityReason) { model.apply(.quality($0)) }
+                if recordsFrames {
+                    segmented("Quality", "quality", values: RecordingQuality.allCases, current: setup.quality,
+                              title: { $0.rawValue.capitalized }, reason: qualityReason) { model.apply(.quality($0)) }
+                } else {
+                    segmented("Quality", "quality", values: MovieQuality.allCases,
+                              current: Self.shownMovieQuality(setup: setup, capabilities: caps),
+                              title: \.title, reason: qualityReason) { model.apply(.movieQuality($0)) }
+                }
             }
             pair("Pointer") {
                 segmented("Pointer", "drawsCursor", values: [true, false], current: setup.drawsCursor,
@@ -915,7 +953,7 @@ public struct RecordingBarView: View {
             pair("While still") { stillChoice }
             pair("Change needed") {
                 segmented("Change needed", "threshold", values: Self.thresholds, current: draftThreshold,
-                          title: { "\(Self.number($0))%" }, reason: thresholdReason) { draftThreshold = $0 }
+                          title: { "\(Self.number($0))%" }, reason: thresholdReason) { selectThreshold($0) }
             }
         }
         row {

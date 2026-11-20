@@ -49,6 +49,7 @@ import {
     type EditOp,
     type EditProject,
     type EditZoom,
+    editOpFields,
     editOpSchema,
     effectsOnSourceTime,
     findInTranscript,
@@ -96,6 +97,7 @@ import {
     exportAs,
     exportProgressPrinter,
     openProject,
+    previewDenoise,
     previewTranscriptCuts,
     recordingLaneFacts,
     transcriptWords,
@@ -255,7 +257,7 @@ function opParams(tag: EditOp["op"]): z.ZodObject {
         throw new Error(`no edit op "${tag}" in editOpSchema`);
     }
 
-    return variant.omit({ op: true });
+    return editOpFields(variant);
 }
 
 /** The method of a plain edit op: `edit()` with the op's own params. */
@@ -402,6 +404,16 @@ const movieMethods = [
         "audioLane",
         `Mutes, sets volume (0–2), or renames one sound lane. Returns the edit summary from the audioLane op in ${toolCommand("recorder apply")}.`
     ),
+    opEdit(
+        "audioMute",
+        "Mutes one sound lane (an id from audioLanes()) from `from` to `to` (SOURCE seconds, so it moves with a cut): a cough or a doorbell without muting the whole lane. Each call adds a muted part of its own (mutedRanges on the lane, with an id).",
+        ["id", "from", "to"]
+    ),
+    opEdit(
+        "audioUnmute",
+        "Plays a sound lane again from `from` to `to`: its muted parts lose that stretch (one may split in two). audioUnmute({ id, part }) deletes one muted part by its id instead.",
+        ["id", "from", "to", "part"]
+    ),
     defineMethod({
         name: "layers",
         params: z.object({}).strict(),
@@ -425,7 +437,7 @@ const movieMethods = [
     }),
     editById(
         "layer",
-        `Changes a layer's placement, visibility, shape or source times (microseconds). Hiding the camera keeps its recording. Returns the edit summary from the layer op in ${toolCommand("recorder apply")}.`
+        `Changes a layer's placement, visibility, shape, name or source times (microseconds); changes.file replaces its source in one undo step, keeping its id and place; a bare file name is beside the movie, and changes.kind is needed when the new file is another kind (a picture for a video, or a video for a picture). Hiding the camera keeps its recording. Returns the edit summary from the layer op in ${toolCommand("recorder apply")}.`
     ),
     edit(
         "moveLayer",
@@ -722,6 +734,18 @@ const movieMethods = [
         effect: "reversible",
     }),
     defineMethod({
+        name: "denoisePreview",
+        params: z.object({ at: surveyTimeSchema.optional(), seconds: z.number().min(1).max(30).optional() }).strict(),
+        positional: ["at", "seconds"],
+        result: z.unknown(),
+        resultName: "{ path, fromSec, seconds, reductionDb, made, removed }",
+        doc:
+            "Makes the noise reduction audible before an export: 5 s (seconds) of the recording's sound from SOURCE seconds `at` (0), every lane the export mixes cleaned with the edit's noise reduction (the default strength when it is off) through the export's own filters, as one .m4a in the denoise cache beside the movie. Each new preview removes the earlier ones; the same start and strength reuse the file (made: false). The editor's Preview button beside the strength plays it; " +
+            toolCommand("recorder denoise-preview") +
+            " does the same.",
+        effect: "reversible",
+    }),
+    defineMethod({
         name: "find",
         params: z.object({ text: z.string().min(1) }).strict(),
         positional: ["text"],
@@ -894,7 +918,10 @@ const movieMethods = [
         params: z.object({ gif: z.boolean().optional() }).strict(),
         result: z.unknown(),
         resultName: '{ path, kind: "movie" | "gif", exported }',
-        doc: "Puts the recording's movie on the clipboard as a file (the newest export beside it, else its own movie), so a paste in Finder, Slack or Mail gets it; it replaces what the user's clipboard held. gif: true copies a GIF of the edit, exporting one when none is newer than the edit (exported says so). The menu bar's Recent list and the library window do the same.",
+        doc:
+            "Puts the recording's movie on the clipboard as a file (the newest export of the edit as it is now, exported first when the edit changed after the last one; the recording's own movie only when it has no edit), so a paste in Finder, Slack or Mail gets it; it replaces what the user's clipboard held. gif: true copies a GIF of the edit, exporting one when none is newer than the edit (exported says so for both). The menu bar's Recent list, the library window and " +
+            toolCommand("recorder copy") +
+            " do the same.",
         effect: "destructive",
         reaches: ["user"],
     }),
@@ -1284,7 +1311,7 @@ export const moviesApi = defineApi({
             params: recordOptionsSchema,
             result: z.unknown(),
             resultName: "MovieRecording",
-            doc: `Starts a movie recording in its own process: the screen in use (it follows the pointer and the focus from display to display; display: "follow" says so explicitly, as --display follow does), or display (an index), app, window (CG ids) or region ("x,y,width,height" in points). The options are the flags of ${toolCommand("recorder start")} with the same limits: fps, idleFps (the rate while nothing moves), threshold (the % that must change to leave it), countdown (seconds on screen before it records; true is 3), systemCursor, shortcuts (false: no keys overlay), micDevice (with audio: ["mic"]), excludeWindowIds, camera (needs the menu bar recorder running), controls, indicator, maxSeconds, title. It records what the user's screen shows. It starts at once unless countdown is given (true is 3 s), and a red border marks what it records unless indicator is false. It resolves once the movie has its first frame, so what you do after await movies.record() is in the movie.`,
+            doc: `Starts a movie recording in its own process: the screen in use (it follows the pointer and the focus from display to display; display: "follow" says so explicitly, as --display follow does), or display (an index), app, window (CG ids) or region ("x,y,width,height" in points). The options are the flags of ${toolCommand("recorder start")} with the same limits: fps, idleFps (the rate while nothing moves), threshold (the % that must change to leave it), countdown (seconds on screen before it records; true is 3), systemCursor, shortcuts (false: no keys overlay), micDevice (with audio: ["mic"]), excludeWindowIds, keepOverlays (keep screen dimmers such as HazeOver, left out by default), camera (needs the menu bar recorder running), controls, indicator, maxSeconds, title. It records what the user's screen shows. It starts at once unless countdown is given (true is 3 s), and a red border marks what it records unless indicator is false. It resolves once the movie has its first frame, so what you do after await movies.record() is in the movie.`,
             effect: "reversible",
             reaches: ["user"],
         }),
@@ -1977,6 +2004,22 @@ export class Movie {
         return this.apply([{ ...changes, op: "audioLane", id }]);
     }
 
+    async audioMute(id: string, from: z.infer<typeof timeSchema>, to: z.infer<typeof timeSchema>) {
+        return this.apply([{ op: "audioMute", id, from, to }]);
+    }
+
+    async audioUnmute(id: string, from?: z.infer<typeof timeSchema>, to?: z.infer<typeof timeSchema>, part?: string) {
+        return this.apply([
+            {
+                op: "audioUnmute",
+                id,
+                ...(from === undefined ? {} : { from }),
+                ...(to === undefined ? {} : { to }),
+                ...(part === undefined ? {} : { part }),
+            },
+        ]);
+    }
+
     async layers() {
         const { project } = await openProject(this.recording);
         return layerOrderOf(project);
@@ -2571,6 +2614,10 @@ export class Movie {
                       warnings: [`${seconds(askedUs)} s is past the end; this is the last moment, ${seconds(outUs)} s`],
                   }),
         };
+    }
+
+    async denoisePreview(at: z.infer<typeof timeSchema> = 0, seconds?: number) {
+        return previewDenoise(this.recording, { atSec: timeToUs(at) / 1_000_000, seconds });
     }
 
     async still(at: z.infer<typeof timeSchema> = 0, keep?: string, full?: boolean, source?: boolean) {

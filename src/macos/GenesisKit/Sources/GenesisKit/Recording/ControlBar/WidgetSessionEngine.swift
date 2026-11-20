@@ -7,7 +7,9 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
     public var capabilities: RecordingCapabilities { Self.movieCapabilities }
     public static let movieCapabilities = RecordingCapabilities(
         targets: [.window, .app, .display, .area, .follow], liveTargetSwitch: true, liveFrameRate: true,
-        maxDurationMs: RecordingSessionController.maximumDurationMs, reasonUnavailable: [
+        maxDurationMs: RecordingSessionController.maximumDurationMs, sources: [.microphone, .systemAudio],
+        fixedMovieQuality: .standard, reasonUnavailable: [
+            "no.camera": "Add a camera with the full recorder (⌘7).",
             "displays": "Record several displays with the full recorder (⌘7).",
             "microphone": "The widget keeps the sound chosen at start.",
             "microphoneDevice": "The widget keeps the microphone chosen at start.",
@@ -22,6 +24,7 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
     private let makeController: @MainActor () -> RecordingSessionController
     private let showsBorder: @MainActor () -> Bool
     private let systemScope: @MainActor () -> SystemAudioScope
+    private let keepsOverlays: @MainActor () -> Bool
     private let finishTimeout: Duration
     private var controller: RecordingSessionController?
     private var take: String?
@@ -38,15 +41,17 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
 
     public convenience init(bridge: ToolsBridge, settings: RecordingSettings? = nil) {
         self.init(makeController: { RecordingSessionController(bridge: bridge) },
-                  showsBorder: { (settings ?? RecordingSettings.shared).showsBorder })
+                  showsBorder: { (settings ?? RecordingSettings.shared).showsBorder },
+                  keepsOverlays: { (settings ?? RecordingSettings.shared).keepsOverlays })
     }
 
     init(makeController: @escaping @MainActor () -> RecordingSessionController, showsBorder: @escaping @MainActor () -> Bool,
          systemScope: @escaping @MainActor () -> SystemAudioScope = { SystemAudioScope.load() },
-         finishTimeout: Duration = .seconds(240)) {
+         keepsOverlays: @escaping @MainActor () -> Bool = { false }, finishTimeout: Duration = .seconds(240)) {
         self.makeController = makeController
         self.showsBorder = showsBorder
         self.systemScope = systemScope
+        self.keepsOverlays = keepsOverlays
         self.finishTimeout = finishTimeout
         (events, output) = AsyncStream.makeStream(of: RecordingEngineEvent.self)
     }
@@ -87,7 +92,7 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
         do {
             try session.start(target: target, excludeWindowIDs: excludeWindowIDs, frameRate: setup.frameRate,
                               showsBorder: showsBorder(), stillFrameRate: setup.stillFrameRate,
-                              sound: RecordingSessionSound(setup, systemScope: systemScope()))
+                              sound: RecordingSessionSound(setup, systemScope: systemScope()), keepsOverlays: keepsOverlays())
         } catch {
             controller = nil
             take = nil
@@ -125,13 +130,14 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
             } else {
                 _ = try await command(.switchTo(target))
             }
-        case let .frameRate(active, still):
+        // The widget has no Change needed control, so a frame-rate change never carries a threshold here.
+        case let .frameRate(active, still, _):
             guard (1...120).contains(active), still == 0 || still == Double(active)
                     || ((0.1...5).contains(still) && still <= Double(active)) else {
                 throw Failure("Choose a supported active and still frame rate.")
             }
             _ = try await command(.rates(active, still == Double(active) ? 0 : still))
-        case .microphone, .systemAudio, .camera, .quality, .drawsCursor:
+        case .microphone, .systemAudio, .camera, .quality, .movieQuality, .drawsCursor:
             throw RecordingEngineError.unsupported(capabilities.reasonUnavailable[change.controlID]
                 ?? "The widget cannot apply this change.")
         }

@@ -2,10 +2,13 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as door from "@genesiscz/utils/ai/transcripts/door";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { drainSpool } from "@genesiscz/utils/metrics/spool";
 import { MetricsStore } from "@genesiscz/utils/metrics/store";
+import { promptCancelSymbol } from "@genesiscz/utils/prompts/cancel";
+import * as prompts from "@genesiscz/utils/prompts/p";
 import { Command } from "commander";
 import { coldComparison } from "../lib/sessions/cold-resumes";
 import { spoolContextItems } from "../lib/sessions/session-context";
@@ -29,6 +32,69 @@ async function run(args: string[]): Promise<{ exitCode: typeof process.exitCode;
 
 afterEach(() => {
     process.exitCode = 0;
+});
+
+/** Runs `work` with stdin reporting `tty`, which is what decides whether a bare --provider may ask. */
+async function withStdinTTY<T>(tty: boolean, work: () => Promise<T>): Promise<T> {
+    const saved = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+    Object.defineProperty(process.stdin, "isTTY", { value: tty, configurable: true });
+    try {
+        return await work();
+    } finally {
+        if (saved) {
+            Object.defineProperty(process.stdin, "isTTY", saved);
+        } else {
+            Reflect.deleteProperty(process.stdin, "isTTY");
+        }
+    }
+}
+
+describe("sessions --provider without a value", () => {
+    test("without a terminal it lists the harnesses and asks nothing", async () => {
+        const select = spyOn(prompts, "select");
+        try {
+            const { exitCode, errors } = await withStdinTTY(false, () =>
+                run(["sessions", "tail", "session-1", "--provider"])
+            );
+            expect(exitCode).toBe(1);
+            expect(errors.join("\n")).toContain("claude");
+            expect(select).not.toHaveBeenCalled();
+        } finally {
+            select.mockRestore();
+        }
+    });
+
+    test("in a terminal the picked harness reaches the transcript read", async () => {
+        const select = spyOn(prompts, "select").mockResolvedValue("codex");
+        const read = spyOn(door, "runTranscriptDoor").mockResolvedValue(undefined);
+        try {
+            const { exitCode, errors } = await withStdinTTY(true, () =>
+                run(["sessions", "tail", "session-1", "--provider"])
+            );
+            expect({ exitCode, errors }).toEqual({ exitCode: 0, errors: [] });
+            expect(select).toHaveBeenCalledTimes(1);
+            expect(read).toHaveBeenCalledWith(expect.objectContaining({ provider: "codex", query: "session-1" }));
+        } finally {
+            select.mockRestore();
+            read.mockRestore();
+        }
+    });
+
+    test("a cancelled pick reads no transcript", async () => {
+        const select = spyOn(prompts, "select").mockResolvedValue(promptCancelSymbol);
+        const read = spyOn(door, "runTranscriptDoor").mockResolvedValue(undefined);
+        try {
+            const { exitCode, errors } = await withStdinTTY(true, () =>
+                run(["sessions", "tail", "session-1", "--provider"])
+            );
+            expect({ exitCode, errors }).toEqual({ exitCode: 0, errors: [] });
+            expect(select).toHaveBeenCalledTimes(1);
+            expect(read).not.toHaveBeenCalled();
+        } finally {
+            select.mockRestore();
+            read.mockRestore();
+        }
+    });
 });
 
 describe("sessions range flags", () => {
@@ -333,7 +399,7 @@ describe("sessions range flags", () => {
     // Negative control: whole numbers get past the range checks and stop at the next check instead.
     test("whole numbers pass the range checks", async () => {
         const tail = await run(["sessions", "tail", "session-1", "--limit", "5", "--offset", "0", "--provider", "x"]);
-        expect(tail.errors).toEqual([expect.stringContaining("--provider must be one of")]);
+        expect(tail.errors).toEqual([expect.stringContaining('--provider does not accept "x". Possible: claude')]);
 
         const grep = await run(["sessions", "grep", "session-1", "", "--limit", "5"]);
         expect(grep.errors).toEqual(["<query> must not be empty"]);

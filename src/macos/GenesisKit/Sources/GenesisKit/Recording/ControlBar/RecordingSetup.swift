@@ -58,6 +58,23 @@ public struct CameraSetup: Equatable, Codable, Sendable {
 
 public enum RecordingQuality: String, Codable, CaseIterable, Sendable { case standard, high, max }
 
+/// A movie's size and bit rate (`tools recorder start --movie-quality`): Standard is the target's native size at the
+/// recorder's own bit rate and stays the default; High keeps the size at twice the bit rate; Small halves the width,
+/// the height and the bit rate.
+public enum MovieQuality: String, Codable, CaseIterable, Sendable {
+    case standard, high, small
+
+    public var title: String { rawValue.capitalized }
+
+    public var detail: String {
+        switch self {
+        case .standard: "The target’s native size."
+        case .high: "The native size at twice the bit rate: sharper scrolling text, larger files."
+        case .small: "Half the width and height at half the bit rate: smaller files."
+        }
+    }
+}
+
 /// The choices for one take. Editing this value never writes preferences.
 public struct RecordingSetup: Equatable, Codable, Sendable {
     public static let frameRates = [5, 10, 15, 24, 30, 60]
@@ -79,13 +96,15 @@ public struct RecordingSetup: Equatable, Codable, Sendable {
     public var frameRate: Int
     public var stillFrameRate: Double
     public var quality: RecordingQuality
+    /// The movie's preset; a frames recording (several displays) uses `quality` instead.
+    public var movieQuality: MovieQuality
     public var countdownSeconds: Int?
     public var drawsCursor: Bool
 
     public init(target: RecordingTarget? = nil, microphone: MicrophoneSetup = .init(),
                 systemAudio: SystemAudioSetup = .init(), camera: CameraSetup = .init(), frameRate: Int = 60,
-                stillFrameRate: Double = 0, quality: RecordingQuality = .standard, countdownSeconds: Int? = 3,
-                drawsCursor: Bool = true) {
+                stillFrameRate: Double = 0, quality: RecordingQuality = .standard, movieQuality: MovieQuality = .standard,
+                countdownSeconds: Int? = 3, drawsCursor: Bool = true) {
         self.target = target
         self.microphone = microphone
         self.systemAudio = systemAudio
@@ -93,6 +112,7 @@ public struct RecordingSetup: Equatable, Codable, Sendable {
         self.frameRate = frameRate
         self.stillFrameRate = stillFrameRate
         self.quality = quality
+        self.movieQuality = movieQuality
         self.countdownSeconds = countdownSeconds
         self.drawsCursor = drawsCursor
     }
@@ -115,6 +135,7 @@ public struct RecordingSetup: Equatable, Codable, Sendable {
         let shape = read(Key.cameraShape, setup.camera.shape)
         if ["circle", "rounded", "square"].contains(shape) { setup.camera.shape = shape }
         setup.drawsCursor = read(Key.cursor, true)
+        setup.movieQuality = defaults.string(forKey: Key.movieQuality).flatMap(MovieQuality.init(rawValue:)) ?? .standard
         return setup
     }
 
@@ -132,6 +153,7 @@ public struct RecordingSetup: Equatable, Codable, Sendable {
         defaults.set(camera.size, forKey: Key.cameraSize)
         defaults.set(camera.shape, forKey: Key.cameraShape)
         if target?.kind == .displays { defaults.set(quality.rawValue, forKey: Key.quality) }
+        else { defaults.set(movieQuality.rawValue, forKey: Key.movieQuality) }
         defaults.set(drawsCursor, forKey: Key.cursor)
     }
 
@@ -149,13 +171,25 @@ public struct RecordingSetup: Equatable, Codable, Sendable {
         static let cameraSize = "recorder.camera.bubbleSize"
         static let cameraShape = "recorder.camera.shape"
         static let quality = "recorder.capture.quality"
+        /// Shared with CaptureOptions (the menu's Record Screen rows start with it too).
+        static let movieQuality = "recorder.capture.movieQuality"
         static let cursor = "recorder.record.drawCursor"
     }
 }
 
 public enum RecordingSetupChange: Equatable, Sendable {
     case target(RecordingTarget), microphone(MicrophoneSetup), systemAudio(SystemAudioSetup), camera(CameraSetup)
-    case frameRate(Int, still: Double), quality(RecordingQuality), drawsCursor(Bool)
+    /// The active and still frame rates; `threshold` (percent of the picture that must change before a still frame
+    /// counts as active) goes with them when the bar's Change needed changes during a take, nil otherwise.
+    case frameRate(Int, still: Double, threshold: Double? = nil), quality(RecordingQuality), drawsCursor(Bool)
+    /// The movie's preset; the same Quality row as `quality`, so it shares its control id and its reasons.
+    case movieQuality(MovieQuality)
+
+    /// The change threshold this change carries, nil for every change but a frame-rate change that names one.
+    public var threshold: Double? {
+        if case let .frameRate(_, _, threshold) = self { return threshold }
+        return nil
+    }
 
     public var controlID: String {
         switch self {
@@ -164,7 +198,7 @@ public enum RecordingSetupChange: Equatable, Sendable {
         case .systemAudio: return "systemAudio"
         case .camera: return "camera"
         case .frameRate: return "frameRate"
-        case .quality: return "quality"
+        case .quality, .movieQuality: return "quality"
         case .drawsCursor: return "drawsCursor"
         }
     }
@@ -175,10 +209,11 @@ public enum RecordingSetupChange: Equatable, Sendable {
         case let .microphone(value): setup.microphone = value
         case let .systemAudio(value): setup.systemAudio = value
         case let .camera(value): setup.camera = value
-        case let .frameRate(active, still):
+        case let .frameRate(active, still, _):
             setup.frameRate = active
             setup.stillFrameRate = still
         case let .quality(value): setup.quality = value
+        case let .movieQuality(value): setup.movieQuality = value
         case let .drawsCursor(value): setup.drawsCursor = value
         }
     }

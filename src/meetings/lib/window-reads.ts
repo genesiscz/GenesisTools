@@ -301,12 +301,15 @@ export async function rowsRead(options: {
         minPriority,
         ...(options.lowPriority ? { lowPriority: options.lowPriority } : {}),
     });
+    // A guess is judged on the item's confidence: a voice range's row shows its cosine, while the gate decided it.
+    const confidences = new Map(record.items.map((item) => [item.id, item.confidence]));
     for (const row of rows.rows) {
+        const confidence = confidences.get(row.id);
         if (
             row.kind === "speaker-range" &&
             row.status === "suggested" &&
-            row.confidence !== undefined &&
-            row.confidence < applyAbove
+            confidence !== undefined &&
+            confidence < applyAbove
         ) {
             row.guess = true;
         }

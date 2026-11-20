@@ -530,17 +530,28 @@ function renderOverview(stats: DaemonStats): void {
     );
 }
 
-/** "12.3 s CPU, 0.4 cores, 210 MB" for a run that logged its usage, empty for an older one. */
+/**
+ * "12.3 s CPU (0.4 cores), 210 MB peak" for a run that logged its usage, empty for an older one. CPU and memory show
+ * on their own: a damaged CPU figure does not hide a valid memory one.
+ */
 function runCost(run: StatsRun): string {
-    if (run.cpuMs === null) {
-        return "";
+    const parts: string[] = [];
+
+    if (run.cpuMs !== null) {
+        // The process's own lifetime when logged: `durationMs` also holds the wait for its output pipes.
+        const lifetime = run.wallMs ?? run.durationMs;
+        const cores =
+            lifetime !== null && Number.isFinite(lifetime) && lifetime > 0
+                ? ` (${(run.cpuMs / lifetime).toFixed(1)} cores)`
+                : "";
+        parts.push(`${formatMs(run.cpuMs)} CPU${cores}`);
     }
 
-    // The process's own lifetime when logged: `durationMs` also holds the wait for its output pipes.
-    const lifetime = run.wallMs ?? run.durationMs;
-    const cores = lifetime ? ` (${(run.cpuMs / lifetime).toFixed(1)} cores)` : "";
-    const memory = run.maxRssMb === null ? "" : `, ${run.maxRssMb} MB`;
-    return `${formatMs(run.cpuMs)} CPU${cores}${memory}`;
+    if (run.maxRssMb !== null) {
+        parts.push(`${run.maxRssMb} MB peak`);
+    }
+
+    return parts.join(", ");
 }
 
 /** Why a run shows no cost: the absence alone does not date it. */

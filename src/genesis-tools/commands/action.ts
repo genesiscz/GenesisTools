@@ -95,6 +95,15 @@ export function registerActionCommand(program: Command): void {
                     return;
                 }
 
+                // `target` belongs to explain: a run with an extra word (`action windows.open explain`) is a mistake.
+                if (target !== undefined) {
+                    out.error(
+                        `unexpected argument "${target}": only ${toolCommand("genesis-tools action explain")} <area>.<action> takes a second word`
+                    );
+                    process.exitCode = 1;
+                    return;
+                }
+
                 // The id is checked before the service is reached, so only an action name is ever sent.
                 const { action } = findAction(AREAS, id);
                 const override = options.timeoutMs === undefined ? undefined : Number(options.timeoutMs);

@@ -817,14 +817,16 @@ public final class WorkScreenModel: ObservableObject {
     public func setNotify(scope: WorkNotifyScope, type: String, action: String, level: String?) async {
         guard let project, pane == .notify else { return }
         if case .stopped = live { return }
-        let layer = scope == .global ? "config.global" : "config.project"
+        let layer = scope.layer
+        let rank = WorkNotifyScope.layerOrder.firstIndex(of: layer) ?? 0
         var previews: [String: String] = [:]
         var exposesRepository = Set<String>()
         for row in notifyRows where type == "*" || type == row.type {
-            for cell in row.cells where cell.writable && (action == "*" || action == cell.action) {
+            for cell in row.cells where cell.writable(at: scope) && (action == "*" || action == cell.action) {
                 let key = "notify:\(row.type):\(cell.action)"
-                // A project override remains visible when its global default is edited.
-                if scope == .global && ["config.project", "config.repo"].contains(cell.from) {
+                // A stronger layer stays visible when a weaker one is edited (a project override over the global
+                // default, a hub override over the project rule).
+                if (WorkNotifyScope.layerOrder.firstIndex(of: cell.from) ?? 0) > rank {
                     previews[key] = cell.level
                 } else if let level {
                     previews[key] = level
@@ -908,7 +910,7 @@ public final class WorkScreenModel: ObservableObject {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         guard let json = try? String(decoding: encoder.encode(change.to), as: UTF8.self) else { return nil }
-        if scope == .project && project.contains(".") {
+        if scope != .global && project.contains(".") {
             // A dotted CLI path cannot represent this project. The typed command takes the name as one word.
             let newLevel: String?
             switch change.to {
@@ -918,6 +920,7 @@ public final class WorkScreenModel: ObservableObject {
             let object: [String: Any] = ["type": change.type, "action": change.action, "level": newLevel as Any]
             guard let bytes = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else { return nil }
             return "tools work config-set --scope project --project " + ShellWords.word(project) +
+                (scope.surface.map { " --surface " + $0 } ?? "") +
                 " --notify " + ShellWords.quoted(String(decoding: bytes, as: UTF8.self))
         }
         return "tools work config set " + ShellWords.word(change.path) + " " + ShellWords.quoted(json)

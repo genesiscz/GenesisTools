@@ -8,6 +8,7 @@ import { out } from "@genesiscz/utils/logger";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { localVoiceBackend } from "@genesiscz/utils/meetings/voice";
 import { type VoiceStore, voicePrintSchema } from "@genesiscz/utils/meetings/voice-store";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 import { formatTable } from "@genesiscz/utils/table";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
@@ -146,18 +147,24 @@ async function embeddings(meeting: InputMeeting, onlySamples: boolean): Promise<
             throw new Error("Embedding checkpoint saved; repeat the same command to continue");
         }
         const batch = await embedSeatLines({ lines: lines.slice(start, start + 25), sound });
-        writeFileSync(batchFile, SafeJSON.stringify(batch));
+        // Published atomically: a checkpoint resumes because its file exists, so an interrupted write must leave none.
+        atomicWriteFileSync(batchFile, SafeJSON.stringify(batch));
         result.push(...batch);
         batches++;
         out.print(`cached ${meeting.key} lines ${start + 1}-${Math.min(start + 25, lines.length)}\n`);
     }
-    writeFileSync(file, SafeJSON.stringify(result));
+    atomicWriteFileSync(file, SafeJSON.stringify(result));
     return result;
 }
 
 // Training is built from this run's --samples only, in memory: a persisted store would keep the samples of an
 // earlier run with other inputs. The scratch home still isolates the embedding caches.
 const store: VoiceStore = { version: 1, model: "", people: {} };
+// An own data property for every name: a plain assignment of "__proto__" runs the prototype setter and stores nothing.
+function setPerson(people: VoiceStore["people"], name: string, person: VoiceStore["people"][string]): void {
+    Object.defineProperty(people, name, { value: person, enumerable: true, writable: true, configurable: true });
+}
+
 await env.testing.withOverrides({ GENESIS_TOOLS_HOME: voiceHome }, async () => {
     for (const meeting of meetings) {
         const embedded = await embeddings(meeting, meeting.id !== target.id);
@@ -172,8 +179,9 @@ await env.testing.withOverrides({ GENESIS_TOOLS_HOME: voiceHome }, async () => {
                 throw new Error("The samples were embedded by two voice models; clear the cache and run again");
             }
             store.model = channel.model;
-            const person = store.people[sample.person] ?? { samples: [] };
-            store.people[sample.person] = person;
+            // An own key only: a name such as "constructor" must not resolve to an inherited property.
+            const person = Object.hasOwn(store.people, sample.person) ? store.people[sample.person]! : { samples: [] };
+            setPerson(store.people, sample.person, person);
             if (person.samples.some((print) => print.meeting === meeting.id && print.fromSec === line.fromSec)) {
                 continue;
             }
@@ -308,7 +316,7 @@ if (target.scenario) {
         )
         .slice(0, 5);
     const training = structuredClone(store);
-    training.people[scenario.roomPerson] = {
+    setPerson(training.people, scenario.roomPerson, {
         samples: extra.flatMap((line) => {
             const embedded = targetLines.find((embedded) => embedded.index === line.index)!;
             const channel = embedded.channels[0];
@@ -327,7 +335,7 @@ if (target.scenario) {
                   ]
                 : [];
         }),
-    };
+    });
     const after = labelsFor(target.attended, training);
     summary.scenario = {
         lateJoinerNamed: labels.filter((label) => label.person === scenario.lateJoiner).length,
@@ -342,5 +350,9 @@ if (target.scenario) {
         ).length,
     };
 }
-writeFileSync(join(cache, `summary-${target.key}.json`), SafeJSON.stringify(summary));
+// The key is free text from the input file: the file name is its digest, so it always stays inside --cache.
+writeFileSync(
+    join(cache, `summary-${createHash("sha256").update(target.key).digest("hex").slice(0, 16)}.json`),
+    SafeJSON.stringify({ key: target.key, ...summary })
+);
 out.print(`SUMMARY ${SafeJSON.stringify(summary)}\n`);

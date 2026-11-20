@@ -44,15 +44,15 @@ final class MeetingsUXTests: XCTestCase {
 
     func testSourceAudioStatusDecodesAlongsideOlderServiceReplies() throws {
         let old = try JSONDecoder().decode(MeetingsOverview.self, from: Self.overviewJSON())
-        XCTAssertNil(old.meetings[0].sourceAudio)
+        XCTAssertNil(try old.meetings.required(0).sourceAudio)
         var document = try XCTUnwrap(JSONSerialization.jsonObject(with: Self.overviewJSON()) as? [String: Any])
         var rows = try XCTUnwrap(document["meetings"] as? [[String: Any]])
         rows[0]["sourceAudio"] = ["sources": ["wisprflow"], "bytes": 42]
         document["meetings"] = rows
         let current = try JSONDecoder().decode(MeetingsOverview.self, from: JSONSerialization.data(withJSONObject: document))
-        XCTAssertEqual(current.meetings[0].sourceAudio?.bytes, 42)
-        XCTAssertEqual(current.meetings[0].sourceAudio?.sources, ["wisprflow"])
-        XCTAssertNil(current.meetings[1].sourceAudio)
+        XCTAssertEqual(try current.meetings.required(0).sourceAudio?.bytes, 42)
+        XCTAssertEqual(try current.meetings.required(0).sourceAudio?.sources, ["wisprflow"])
+        XCTAssertNil(try current.meetings.required(1).sourceAudio)
     }
 
     // MARK: Fixtures
@@ -162,12 +162,14 @@ final class MeetingsUXTests: XCTestCase {
         model.select("a")
         let detail = try XCTUnwrap(model.detail)
         let items = try JSONDecoder().decode([MeetingItem].self, from: Self.itemsJSON())
+        let confirmed = try items.required(0)
+        let rejected = try items.required(3)
 
-        detail.showDecided(items[0], confirm: true, token: "t-1")
+        detail.showDecided(confirmed, confirm: true, token: "t-1")
         clock.advance(by: 10)
-        detail.showDecided(items[3], confirm: false, token: "t-2")
+        detail.showDecided(rejected, confirm: false, token: "t-2")
         XCTAssertEqual(detail.notices.notices.map(\.text),
-                       ["Confirmed \(MeetingsWords.itemTitle(items[0]))", "Rejected \(MeetingsWords.itemTitle(items[3]))"],
+                       ["Confirmed \(MeetingsWords.itemTitle(confirmed))", "Rejected \(MeetingsWords.itemTitle(rejected))"],
                        "the second decision adds a notice; it does not replace the first")
         XCTAssertEqual(detail.notices.notices.map { $0.actions.map(\.label) }, [["Undo"], ["Undo"]],
                        "each decision keeps its own Undo")
@@ -175,9 +177,9 @@ final class MeetingsUXTests: XCTestCase {
         clock.advance(by: 19.9)
         XCTAssertEqual(detail.notices.notices.count, 2, "a notice with Undo stays 30 s by default (R15)")
         clock.advance(by: 0.1)
-        XCTAssertEqual(detail.notices.notices.map(\.text), ["Rejected \(MeetingsWords.itemTitle(items[3]))"],
+        XCTAssertEqual(detail.notices.notices.map(\.text), ["Rejected \(MeetingsWords.itemTitle(rejected))"],
                        "each notice leaves after its own time")
-        detail.showDecided(items[0], confirm: true, token: nil)
+        detail.showDecided(confirmed, confirm: true, token: nil)
         XCTAssertEqual(detail.notices.notices.last?.actions.count, 0, "no token, no Undo: it could take back a decision made elsewhere")
     }
 
@@ -197,7 +199,7 @@ final class MeetingsUXTests: XCTestCase {
         model.select("a")
         let detail = try XCTUnwrap(model.detail)
         let items = try JSONDecoder().decode([MeetingItem].self, from: Self.itemsJSON())
-        let id = detail.showDecided(items[0], confirm: true, token: "t-1")
+        let id = detail.showDecided(try items.required(0), confirm: true, token: "t-1")
         XCTAssertEqual(detail.notices.remaining(id), 8, "the setting decides how long the Undo stays")
     }
 
@@ -221,8 +223,8 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertNil(FrameProbe.frames["notice-stack"], "no notices, no stack")
 
         let items = try JSONDecoder().decode([MeetingItem].self, from: Self.itemsJSON())
-        detail.showDecided(items[0], confirm: true, token: "t-1")
-        detail.showDecided(items[3], confirm: false, token: "t-2")
+        detail.showDecided(try items.required(0), confirm: true, token: "t-1")
+        detail.showDecided(try items.required(3), confirm: false, token: "t-2")
         RunLoop.main.run(until: Date().addingTimeInterval(0.5))
 
         let after = try XCTUnwrap(FrameProbe.frames["meetings.detail.content"])
@@ -349,8 +351,8 @@ final class MeetingsUXTests: XCTestCase {
         [{"id":"r1","kind":"speaker-range","status":"suggested","fromSec":20,"toSec":30,"label":"Speaker 1","speaker":"Alice"},
          {"id":"r2","kind":"speaker-range","status":"suggested","fromSec":20.2,"toSec":20.8,"label":"Speaker 1"}]
         """.utf8))
-        XCTAssertEqual(MeetingsWords.itemTitle(items[0]), "Speaker 1 from 00:20 to 00:30 is Alice", "MU17")
-        XCTAssertEqual(MeetingsWords.itemTitle(items[1]), "Speaker 1 at 00:20 is someone else")
+        XCTAssertEqual(MeetingsWords.itemTitle(try items.required(0)), "Speaker 1 from 00:20 to 00:30 is Alice", "MU17")
+        XCTAssertEqual(MeetingsWords.itemTitle(try items.required(1)), "Speaker 1 at 00:20 is someone else")
     }
 
     func testTheMeetingLanguageReadsAsItsName() {
@@ -365,8 +367,8 @@ final class MeetingsUXTests: XCTestCase {
          "hints":[{"kind":"several-people","label":"Speaker 2","share":0.4,"strength":"weak"},
                   {"kind":"label-drift","label":"Speaker 2"}]}
         """.utf8))
-        XCTAssertEqual(MeetingsWords.speakerSpan(stats.speakers[0]), "00:12 to 25:40", "MU8")
-        XCTAssertNil(MeetingsWords.speakerSpan(stats.speakers[1]))
+        XCTAssertEqual(MeetingsWords.speakerSpan(try stats.speakers.required(0)), "00:12 to 25:40", "MU8")
+        XCTAssertNil(MeetingsWords.speakerSpan(try stats.speakers.required(1)))
         let line = MeetingsWords.factsLine(["1 h 02 min spoken", "00:03 to 2:25:58"])
         XCTAssertEqual(line.components(separatedBy: " "), ["1\u{00A0}h\u{00A0}02\u{00A0}min\u{00A0}spoken", "·", "00:03\u{00A0}to\u{00A0}2:25:58"],
                        "the line may break only around the dot between two facts")
@@ -384,8 +386,8 @@ final class MeetingsUXTests: XCTestCase {
         [{"id":"c1","kind":"note","ref":"Budget is fixed","title":"Budget","addedAt":"2026-11-05T12:00:00.000Z"},
          {"id":"c2","kind":"file","ref":"/tmp/spec.md","note":"the second part","addedAt":"2026-11-05T12:00:00.000Z"}]
         """.utf8))
-        XCTAssertEqual(MeetingDetailModel.readdArgs(meeting: "a", refs[0]), ["context", "add", "a", "--note", "Budget is fixed", "--title", "Budget"])
-        XCTAssertEqual(MeetingDetailModel.readdArgs(meeting: "a", refs[1]), ["context", "add", "a", "/tmp/spec.md", "--note", "the second part"])
+        XCTAssertEqual(MeetingDetailModel.readdArgs(meeting: "a", try refs.required(0)), ["context", "add", "a", "--note", "Budget is fixed", "--title", "Budget"])
+        XCTAssertEqual(MeetingDetailModel.readdArgs(meeting: "a", try refs.required(1)), ["context", "add", "a", "/tmp/spec.md", "--note", "the second part"])
     }
 
     func testUndoRestoresPinnedContextAfterTheSourceChanges() throws {
@@ -587,7 +589,7 @@ final class MeetingsUXTests: XCTestCase {
         let notices = NoticeStackModel(clock: ManualNoticeClock(), announces: false)
         var fails = true
         let model = MeetingsSettingsModel(writes: false, notices: notices, command: { args in
-            let phrase = args[2]
+            let phrase = try args.required(2)
             if fails { throw MeetingsCLI.Failure(sentence: "The dictionary test failed.", detail: phrase) }
             return Data("""
             {"phrase":"\(phrase)","text":"\(phrase)","fired":[],"suggestions":[]}
@@ -810,8 +812,8 @@ final class MeetingsUXTests: XCTestCase {
         // Each line carries the stretches its chips play or show; a silence's times are a chip, not plain text.
         XCTAssertEqual(MeetingsWords.speakerHintLines(hints, for: "Alice").map(\.ranges),
                        [[SpeakerHint.Range(lines: 0, fromSec: 375, toSec: 1800)]])
-        XCTAssertEqual(MeetingsWords.speakerHintLines(hints, for: "Bob")[0].ranges.count, 2)
-        XCTAssertEqual(MeetingsWords.speakerHintLines(hints, for: "Carol")[0].ranges, [])
+        XCTAssertEqual(try MeetingsWords.speakerHintLines(hints, for: "Bob").required(0).ranges.count, 2)
+        XCTAssertEqual(try MeetingsWords.speakerHintLines(hints, for: "Carol").required(0).ranges, [])
     }
 
     func testSeveralSilencesOfOneLabelAreOneLineWithAChipEach() throws {
@@ -839,8 +841,8 @@ final class MeetingsUXTests: XCTestCase {
         """.utf8))
         XCTAssertEqual(MeetingsWords.speakerHintLines(mixed, for: "Alice").map(\.strength), ["strong", "normal", "weak"],
                        "the strongest sign stands first; a weak note stood above the warning it sat with")
-        XCTAssertEqual(lines[0].ranges.map(\.fromSec), [74, 3167, 4594])
-        XCTAssertEqual(HintChip.chips(for: lines[0].ranges).chips.map(\.action), [.show, .show, .show], "a long silence zooms the timeline")
+        XCTAssertEqual(try lines.required(0).ranges.map(\.fromSec), [74, 3167, 4594])
+        XCTAssertEqual(HintChip.chips(for: try lines.required(0).ranges).chips.map(\.action), [.show, .show, .show], "a long silence zooms the timeline")
         XCTAssertEqual(MeetingsWords.speakerHintLines(hints, for: "Bob").map(\.text),
                        ["Silent from 00:10 to 00:20 while in the call, so the voice is under other labels"])
     }
@@ -851,8 +853,8 @@ final class MeetingsUXTests: XCTestCase {
          {"id":"c2","kind":"note","ref":"Budget is fixed","addedAt":"2026-11-05T12:00:00.000Z"},
          {"id":"c3","kind":"url","ref":"https://example.com","note":"the spec","addedAt":"2026-11-05T12:00:00.000Z"}]
         """.utf8))
-        XCTAssertEqual(MeetingsWords.contextNote(refs[0]), "Budget is fixed", "R2-MU2: the title alone hid the note")
-        XCTAssertNil(MeetingsWords.contextNote(refs[1]), "an untitled note's text is already its title")
-        XCTAssertEqual(MeetingsWords.contextNote(refs[2]), "the spec")
+        XCTAssertEqual(MeetingsWords.contextNote(try refs.required(0)), "Budget is fixed", "R2-MU2: the title alone hid the note")
+        XCTAssertNil(MeetingsWords.contextNote(try refs.required(1)), "an untitled note's text is already its title")
+        XCTAssertEqual(MeetingsWords.contextNote(try refs.required(2)), "the spec")
     }
 }

@@ -1468,15 +1468,21 @@ const dictionaryTest = defineMethod({
             entry: dictionaryEntrySchema.optional(),
             /** With a meeting, the answer also lists the lines of that meeting the draft entry would change. */
             meeting: meetingRef.optional(),
+            /** The most changed lines the answer lists (default 200); `totalChanged` still counts every one. */
+            limit: z.number().int().positive().optional(),
         })
         .strict(),
     result: phraseTestSchema.extend({
         lines: z
             .array(windowDecidedLineSchema.omit({ text: true }).extend({ before: z.string(), after: z.string() }))
             .optional(),
+        /** With `lines`: how many lines the draft changes in all. */
+        totalChanged: z.number().int().nonnegative().optional(),
+        /** True when `lines` stops at `limit` before `totalChanged`. */
+        truncated: z.boolean().optional(),
     }),
-    resultName: "{ phrase, text, fired, suggestions, counts, lines? }",
-    doc: "What the scope's dictionary does to one phrase, with each entry that fired, as `dictionary test --json` prints it. With `meeting`, also each line of that meeting the draft entry would change, before and after. Reads only.",
+    resultName: "{ phrase, text, fired, suggestions, counts, lines?, totalChanged?, truncated? }",
+    doc: "What the scope's dictionary does to one phrase, with each entry that fired, as `dictionary test --json` prints it. With `meeting`, also the first `limit` (default 200) lines of that meeting the draft entry would change, before and after, with `totalChanged` and `truncated: true` when more changed. Reads only.",
     effect: "read",
 });
 

@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import Foundation
+import GenesisKitTestSupport
 import SwiftUI
 import Vision
 import XCTest
@@ -302,7 +303,7 @@ private enum WindowWriteControls {
         let ocr = VNRecognizeTextRequest()
         ocr.recognitionLevel = .accurate
         ocr.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: XCTUnwrap(bitmap.cgImage)).perform([ocr])
+        try recognizeText(in: XCTUnwrap(bitmap.cgImage), with: ocr)
         for line in ocr.results ?? [] {
             guard let text = line.topCandidates(1).first,
                   !whole || text.string.trimmingCharacters(in: .whitespaces) == words,
@@ -636,7 +637,7 @@ final class MeetingsServiceTests: XCTestCase {
                     XCTAssertEqual(row.choices.first?.confidence, 0.82, "\(label): the suggested choice's confidence")
                     XCTAssertNil(row.choices.dropFirst().first?.confidence, "\(label): a speaker candidate shows none")
                     XCTAssertEqual(row.decision?.by, "an agent (Claude Code, session 11111111)", label)
-                    XCTAssertEqual(row.choices[1].action.decision(on: row), .confirm(["i1"], speaker: "Dana Example"))
+                    XCTAssertEqual(try row.choices.required(1).action.decision(on: row), .confirm(["i1"], speaker: "Dana Example"))
                 }
             case MeetingsAPI.CommentStage.name:
                 try roundTrip(MeetingsAPI.CommentStage.Params.self, params, label)
@@ -1458,7 +1459,11 @@ final class MeetingsServiceTests: XCTestCase {
             try await service.call(MeetingsAPI.MeetingSuggest.self, .init(meeting: Self.design, attendance: nil), timeout: 0.6) { _ in }
         }
         let armedSilent = await waitUntil(5) { clock.armed > before }
-        XCTAssertTrue(armedSilent, "the silent call armed its deadline")
+        // The fake never answers this call: without an armed deadline, awaiting it would stall the suite.
+        guard armedSilent else {
+            silent.cancel()
+            return XCTFail("the silent call never armed its deadline")
+        }
         clock.advance(by: 0.7)
         do {
             _ = try await silent.value
@@ -1590,6 +1595,24 @@ final class MeetingsServiceTests: XCTestCase {
         XCTAssertEqual(model.ruleNames?["E3"], "The call shows who is speaking.")
         model.ensureRuleNames()
         XCTAssertEqual(fake.count("rules.names"), 1, "one read for the window")
+    }
+
+    /// The first rule notice of a cold window waits for the rule sentences, so its text (and what VoiceOver reads) says
+    /// what the rule looked at, even when `rules.names` answers late.
+    func testTheFirstRuleNoticeWaitsForALateRuleSentenceRead() async throws {
+        try writeServiceEntry()
+        fake.silent = ["rules.names"]
+        let model = MeetingsWindowModel(noticeClock: ManualNoticeClock(), service: makeService(), loadDetail: { _ in })
+        let json = #"{"token":"t1","at":"2026-11-09T17:32:38.000Z","meeting":"m","actor":{"kind":"rule","rule":"E3"},"action":{"kind":"confirm","items":["i1"]},"decided":["i1"],"changes":[{"id":"i1","before":{"id":"i1","kind":"term","status":"suggested"},"after":{"id":"i1","kind":"term","status":"confirmed"}}]}"#
+        model.noteDecision(try JSONDecoder().decode(JournalEntry.self, from: Data(json.utf8)), meeting: "m")
+        let asked = try await Task.detached { [fake] in try fake!.line { $0["method"] as? String == "rules.names" } }.value
+        XCTAssertTrue(model.notices.notices.isEmpty, "no notice says only \"a rule\" before the sentences are read")
+        fake.send(["jsonrpc": "2.0", "id": try XCTUnwrap(asked["id"]),
+                   "result": ["names": ["E3": "The call shows who is speaking."]]])
+        let shown = await waitUntil(3) { !model.notices.notices.isEmpty }
+        XCTAssertTrue(shown, "the notice comes once the read lands")
+        XCTAssertEqual(model.notices.notices.map(\.text), ["m: A rule (the call shows who is speaking) confirmed i1"],
+                       "the rule's sentence, with the meeting that is not open named")
     }
 
     func testALinkCandidateSaysItsSourceTimeAndWhoHoldsIt() {
@@ -2086,8 +2109,8 @@ extension MeetingsServiceTests {
         let encoded = try MeetingsService.paramsObject(action)
         let segments = try XCTUnwrap(encoded["segments"] as? [[String: Any]])
         XCTAssertEqual(segments.count, 2)
-        XCTAssertEqual(segments[1]["fromWord"] as? Int, 3)
-        XCTAssertEqual(segments[1]["speaker"] as? String, "Bob Example")
+        XCTAssertEqual(try segments.required(1)["fromWord"] as? Int, 3)
+        XCTAssertEqual(try segments.required(1)["speaker"] as? String, "Bob Example")
     }
 }
 

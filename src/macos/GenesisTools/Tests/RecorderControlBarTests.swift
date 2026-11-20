@@ -157,6 +157,19 @@ final class RecorderControlBarTests: XCTestCase {
         XCTAssertEqual(message.params["idleFps"] as? Double, 0.5)
     }
 
+    /// The defect: Same during an adaptive take above 5 fps was refused ("accepts an explicit still rate up to 5
+    /// fps"), because the patch could only name an idle rate. It now sends rate "same" for one steady rate.
+    func testLiveSameRateSendsOneSteadyRateAtAnyFrameRate() async throws {
+        let recorder = Recorder(), engine = recorder.engine()
+        try await engine.start(RecordingSetup(frameRate: 30, stillFrameRate: 1), excludeWindowIDs: [])
+        try await engine.apply(.frameRate(30, still: 0))
+        let message = try XCTUnwrap(recorder.calls.first)
+        XCTAssertEqual(message.method, "settings.set")
+        XCTAssertEqual(message.params["activeFps"] as? Int, 30)
+        XCTAssertEqual(message.params["rate"] as? String, "same")
+        XCTAssertNil(message.params["idleFps"])
+    }
+
     func testForeignBarRegistersAtStartupAndAttachesWithoutStartingAnotherTake() async throws {
         _ = RecorderMenu.shared
         XCTAssertNotNil(LiveRecordingBarPresentation.resolve)
@@ -382,5 +395,18 @@ final class RecorderControlBarTests: XCTestCase {
                                    "--idle-fps", "0.5", "--exclude-window-ids", "72", "--json"])
         XCTAssertThrowsError(try CaptureOptions.barArguments(setup, threshold: 0.5, shortcuts: true, excluding: [72],
                                                             screens: screens, displayIDs: [55, nil]))
+    }
+
+    /// The movie preset reaches `tools recorder start`; Standard (the default) adds no flag, so today's movie stays.
+    func testTheMoviePresetGoesToTheStartCommandOnlyWhenItIsNotStandard() throws {
+        let screens = [CGRect(x: 0, y: 0, width: 800, height: 600)]
+        var setup = RecordingSetup(target: .display(index: 0, name: nil))
+        let standard = try CaptureOptions.barArguments(setup, threshold: 0.5, shortcuts: true, excluding: [],
+                                                      screens: screens, displayIDs: [55])
+        XCTAssertFalse(standard.contains("--movie-quality"))
+        setup.movieQuality = .high
+        let high = try CaptureOptions.barArguments(setup, threshold: 0.5, shortcuts: true, excluding: [],
+                                                  screens: screens, displayIDs: [55])
+        XCTAssertEqual(high.firstIndex(of: "--movie-quality").map { high[$0 + 1] }, "high")
     }
 }

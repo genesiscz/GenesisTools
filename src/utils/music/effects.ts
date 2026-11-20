@@ -1,4 +1,5 @@
 import { type Curve, gain, RATE, type Stereo, Svf } from "./dsp";
+import { musicCheckpoint } from "./process";
 import type { Effects, EqBand } from "./types";
 
 const CONTROL = 32;
@@ -220,53 +221,63 @@ export function duck(buffer: Stereo, options: NonNullable<Effects["duck"]>, trig
 }
 
 /** The chain in its fixed order. The room send is the mixer's job. */
-export function applyEffects(options: {
+export async function applyEffects(options: {
     buffer: Stereo;
     effects: Effects;
     lanes: Map<string, Curve>;
     triggers: (part: string) => number[];
-}): void {
+}): Promise<void> {
     const { buffer, effects, lanes } = options;
     const highpass = lanes.get("highpass") ?? effects.highpass;
     const lowpass = lanes.get("lowpass") ?? effects.lowpass;
 
     if (highpass !== undefined) {
+        await musicCheckpoint();
         filterPass(buffer, "highpass", highpass);
     }
 
     if (lowpass !== undefined) {
+        await musicCheckpoint();
         filterPass(buffer, "lowpass", lowpass);
     }
 
     for (const band of effects.eq ?? []) {
+        await musicCheckpoint();
         equalize(buffer, band);
     }
 
     if (effects.drive) {
+        await musicCheckpoint();
         saturate(buffer, effects.drive);
     }
 
     if (effects.crush) {
+        await musicCheckpoint();
         crush(buffer, effects.crush);
     }
 
     if (effects.compressor) {
+        await musicCheckpoint();
         compress(buffer, effects.compressor);
     }
 
     if (effects.delay) {
+        await musicCheckpoint();
         delay(buffer, effects.delay);
     }
 
     if (effects.width !== undefined || effects.monoBelow !== undefined) {
+        await musicCheckpoint();
         widen(buffer, effects.width ?? 1, effects.monoBelow);
     }
 
     if (effects.duck) {
+        await musicCheckpoint();
         duck(buffer, effects.duck, effects.duck.by.flatMap(options.triggers));
     }
 
     if (effects.gain) {
+        await musicCheckpoint();
         scale(buffer, gain(effects.gain));
     }
 }

@@ -1,6 +1,7 @@
 // Helpers for the twins of the first half of harness/coordinator/loop_test.go
 // (coordinator.loop-a.test.ts) that testing/driver.ts does not carry yet.
 
+import { errorMessage } from "@genesiscz/utils/error-message";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { AsyncQueue } from "../async-queue";
 import { drainTasks, VirtualClock } from "../clock";
@@ -101,9 +102,7 @@ export function errorsIs(error: unknown, target: unknown): boolean {
     return false;
 }
 
-export function errorMessage(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
-}
+export { errorMessage };
 
 /** The message a synchronous call throws, or `null` when it returns. */
 export function thrownMessage(fn: () => unknown): string | null {

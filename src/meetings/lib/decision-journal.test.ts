@@ -26,6 +26,7 @@ import {
     meetingRecordSchema,
 } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
+import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import {
     correctVoiceSample,
     insertVoiceSample,
@@ -76,11 +77,12 @@ import { InProcessMeetingsClient, SocketMeetingsClient } from "./service/client"
 import { startMeetingsService } from "./service/service";
 import type { MeetingVoiceJobs } from "./service/voice-jobs";
 import { assignmentReach } from "./speaker-assign";
+import { LineSpeakers } from "./speaker-evidence";
 import * as voiceLabeler from "./speaker-labels/voice";
 import { correctTranscript } from "./transcript-corrections";
 import { looksLikeOnePerson } from "./voice-backfill";
 import { enrolRemoteVoices, remoteStays, scoreRemoteLines } from "./voice-enrolment";
-import { answeredVoiceTargets, replayAnsweredVoiceSamples } from "./voice-samples";
+import { answeredVoiceTargets, replayAnsweredVoiceSamples, transitionAnsweredVoiceSamples } from "./voice-samples";
 
 const now = "2026-11-09T18:00:00.000Z";
 let stores = 0;
@@ -1339,6 +1341,99 @@ describe("speaker answers and their project voice prints", () => {
         }
     });
 
+    test("withdrawing a legacy confirmation puts back the print it replaced only while that print's own confirmation is live", () => {
+        const window = { meeting: "m-legacy", sourceSha: "sha-legacy", fromSec: 0, toSec: 5 };
+        const older: VoicePrint = {
+            ...window,
+            seat: "mic",
+            track: "source-mic",
+            embedding: [1, 0],
+            confirmedAt: "2026-11-09T17:10:00.000Z",
+            question: "i8",
+        };
+        const newer: VoicePrint = {
+            ...older,
+            embedding: [0, 1],
+            confirmedAt: "2026-11-09T17:20:00.000Z",
+            question: "i9",
+        };
+        const asked = (id: string, token?: string) => ({
+            id,
+            kind: "question",
+            about: "speaker",
+            fromSec: 0,
+            toSec: 10,
+            question: "Who speaks here?",
+            choices: ["Alice Example", "Bob Example"],
+            decides: [],
+            rules: [],
+            suggestedAt: now,
+            ...(token
+                ? {
+                      status: "confirmed",
+                      answer: "Alice Example",
+                      decidedAt: now,
+                      decision: { token, previous: { status: "suggested" } },
+                  }
+                : { status: "suggested" }),
+        });
+        const entry = (token: string, at: string, rest: Record<string, unknown>) =>
+            journalEntrySchema.parse({ token, at, meeting: "m-legacy", actor: person, ...rest });
+        const answer = (token: string, at: string, item: string, voice: Record<string, unknown>) =>
+            entry(token, at, {
+                action: { kind: "answer", question: item, answer: "Alice Example" },
+                question: item,
+                changes: [{ id: item, before: asked(item), after: asked(item, token) }],
+                voices: [{ person: "Alice Example", model: "fixture-model", item, ...voice }],
+            });
+        const withdraw = (token: string, at: string, item: string, of: string) =>
+            entry(token, at, {
+                action: { kind: "revert", token: of },
+                changes: [{ id: item, before: asked(item, of), after: asked(item) }],
+            });
+
+        for (const firstWithdrawn of [false, true]) {
+            const project = `journal-voice-legacy-${++stores}`;
+            const confirmedOlder = answer("ta", "2026-11-09T17:10:00.000Z", "i8", { project, after: older });
+            // The legacy store kept one print per window: the newer confirmation replaced the older one's print.
+            const confirmedNewer = answer("tb", "2026-11-09T17:20:00.000Z", "i9", {
+                project,
+                before: older,
+                after: newer,
+            });
+            insertVoiceSample({
+                project,
+                owner: { name: "Alice Example" },
+                model: "fixture-model",
+                print: newer,
+                source: sourceForVoicePrint(newer),
+                origin: "answer",
+                acquiredBy: "live",
+                decision: { token: "tb", item: "i9" },
+            });
+            const saved = [
+                ...(firstWithdrawn ? [withdraw("wa", "2026-11-09T17:30:00.000Z", "i8", "ta")] : []),
+                confirmedNewer,
+                confirmedOlder,
+            ];
+            const known = new Map(saved.map((one) => [one.token, one]));
+            const outcome = transitionAnsweredVoiceSamples({
+                entry: withdraw("wb", "2026-11-09T17:40:00.000Z", "i9", "tb"),
+                entryOf: (token) => known.get(token),
+                journal: () => saved,
+                project,
+            });
+            const samples = readVoiceStore(project).people["Alice Example"]?.samples ?? [];
+            if (firstWithdrawn) {
+                expect(samples).toEqual([]);
+                expect(outcome.notRestored.map((change) => change.before?.confirmedAt)).toEqual([older.confirmedAt]);
+            } else {
+                expect(samples.map((print) => print.confirmedAt)).toEqual([older.confirmedAt]);
+                expect(outcome.notRestored).toEqual([]);
+            }
+        }
+    });
+
     test("agent answers, model confirmations, and meetings without a project never seed a voice", async () => {
         for (const mode of ["agent", "confirm", "no-project"] as const) {
             const fx = await voiceAnswerFixture(mode === "no-project" ? "" : undefined);
@@ -1872,13 +1967,16 @@ describe("decision journal", () => {
         const entries = async () => (await config.read()).projects.work?.dictionary?.entries ?? [];
         const agent = { kind: "agent", harness: "claude", session: null } as const;
 
-        await expect(
-            fx.journal.apply({
-                meeting: fx.meeting.id,
-                action: { kind: "answer", question: "i2", answer: "sorb", learn: "add" },
-                actor: agent,
-            })
-        ).rejects.toThrow("person");
+        // Not only an agent: a rule and an unrecorded actor are not a person either.
+        for (const actor of [agent, { kind: "rule", rule: "fixture" } as const, { kind: "unknown" } as const]) {
+            await expect(
+                fx.journal.apply({
+                    meeting: fx.meeting.id,
+                    action: { kind: "answer", question: "i2", answer: "sorb", learn: "add" },
+                    actor,
+                })
+            ).rejects.toThrow("person");
+        }
         const answered = await fx.journal.apply({
             meeting: fx.meeting.id,
             action: { kind: "answer", question: "i2", answer: "sorb" },
@@ -4029,6 +4127,33 @@ test("shared-call unknown ranges retain remote candidates only inside their stay
         evidence: { sharedCallUnknown: true },
     });
     expect(ranges[0]!.speaker).toBeUndefined();
+});
+
+test("shared-call unknown ranges judge the call side from the line's eligibility when it is given", () => {
+    const record = meetingRecord("shared-eligibility", {
+        participants: [
+            { name: "Bob Example", from: ["user"] },
+            { name: "Carol Example", from: ["user"] },
+        ],
+        seats: { room: [], remote: [{ name: "Bob Example" }, { name: "Carol Example" }] },
+    });
+    const lines = lineEvidence([{ startSec: 700, speaker: "Bob Example", text: "An uncertain call turn." }], {
+        speaking: [],
+        segments: [{ startSec: 0, endSec: 3000, channel: "system", liveName: "Bob Example" }],
+    });
+    expect(uncertainSharedCallRanges({ record, lines })).toHaveLength(1);
+    // The eligibility read the same line as a microphone line, so the strong call check fails on its channel.
+    const meeting: SourceMeeting = {
+        sourceMeetingId: "shared-eligibility",
+        title: "Shared",
+        start: now,
+        participants: [],
+        speakers: [],
+        folders: [],
+        transcript: [],
+    };
+    const speakers = new LineSpeakers({ record, meeting, lines: lines.map((line) => ({ ...line, micShare: 0.9 })) });
+    expect(uncertainSharedCallRanges({ record, lines, speakers })).toEqual([]);
 });
 
 test("the terminal clip bar keeps the asked forty-to-sixty percent span as its play head moves", () => {

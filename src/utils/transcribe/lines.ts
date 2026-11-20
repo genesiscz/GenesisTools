@@ -154,7 +154,10 @@ export class TranscriptLines {
      * reported as ambiguous, never guessed.
      */
     at(sec: number, accept: (entry: TranscriptEntry, index: number) => boolean = () => true): LineLookup {
-        const indexes = this.entries.flatMap((entry, index) =>
+        // The start index narrows the lines to the tolerance window, so a batch of time lookups does not scan the
+        // whole transcript for each one. The window is widened by a rounding margin; the exact test below decides.
+        const reach = LINE_AT_TOLERANCE_SEC + (Math.abs(sec) + LINE_AT_TOLERANCE_SEC) * Number.EPSILON * 4;
+        const indexes = this.startingBetween(sec - reach, sec + reach).flatMap(({ entry, index }) =>
             entry.startSec !== undefined &&
             Math.abs(entry.startSec - sec) <= LINE_AT_TOLERANCE_SEC &&
             entry.text.trim() &&

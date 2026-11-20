@@ -5,7 +5,15 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
-import { type AudioFacts, audioLaneSchema, audioLanesSchema, setAudioLane, syncExtraAudioLanes } from "./audio-lanes";
+import {
+    type AudioFacts,
+    audioLaneSchema,
+    audioLanesSchema,
+    muteAudioLaneRange,
+    setAudioLane,
+    syncExtraAudioLanes,
+    unmuteAudioLaneRange,
+} from "./audio-lanes";
 import { bubbleRect, CAMERA_CORNERS, CAMERA_SHAPES, cameraBubbleSchema, hideCamera, showCamera } from "./camera";
 import { cursorSmoothSchema } from "./cursor-smooth";
 import { DENOISE_METHODS, denoiseSchema } from "./denoise";
@@ -3063,11 +3071,43 @@ export const editOpSchema = z.discriminatedUnion("op", [
             name: audioLaneSchema.shape.name,
         })
         .strict(),
+    /** Mutes a part of one sound lane over a source range; the part is an item of its own (a cough, a doorbell). */
+    z.object({ op: z.literal("audioMute"), id: audioLaneSchema.shape.id, ...rangeFields }).strict(),
+    /** Plays a sound lane again over a source range, or deletes one of its muted parts by its `part` id: one of the two. */
+    z
+        .object({
+            op: z.literal("audioUnmute"),
+            id: audioLaneSchema.shape.id,
+            from: sourceTimeSchema.optional(),
+            to: sourceTimeSchema.optional(),
+            part: z.string().min(1).optional(),
+        })
+        .strict()
+        .superRefine((op, ctx) => {
+            const ranged = op.from !== undefined || op.to !== undefined;
+            if (op.part !== undefined ? ranged : op.from === undefined || op.to === undefined) {
+                ctx.addIssue({
+                    code: "custom",
+                    message: "audioUnmute takes a part id, or a from and to range (source seconds), not both",
+                });
+            }
+        })
+        // The two shapes the rule above accepts, for the JSON Schema that schema-driven clients read.
+        .meta({
+            oneOf: [
+                { required: ["part"], not: { anyOf: [{ required: ["from"] }, { required: ["to"] }] } },
+                { required: ["from", "to"], not: { required: ["part"] } },
+            ],
+        }),
     z.object({ op: z.literal("layerAdd"), kind: layerFields.kind, file: layerFields.file, ...layerPlacement }).strict(),
     z
         .object({
             op: z.literal("layer"),
             id: layerFields.id,
+            /** Replace File: the layer's new source (a bare name is beside the source movie); it keeps its id and place. */
+            file: layerFields.file.optional(),
+            /** The new source's kind, when Replace File changes an image to a video or back. */
+            kind: layerFields.kind.optional(),
             ...layerPlacement,
             // The camera width is measured against the canvas, so a small bubble on a wide canvas can be below 0.05.
             width: z.number().positive().max(1).optional(),
@@ -3092,6 +3132,18 @@ export const editOpSchema = z.discriminatedUnion("op", [
 export type EditOp = z.infer<typeof editOpSchema>;
 
 export const EDIT_OP_NAMES = editOpSchema.options.map((option) => option.shape.op.value);
+
+/**
+ * An edit op's own fields: its `editOpSchema` variant without the `op` tag, with the variant's cross-field rules and
+ * schema notes kept. zod 4 refuses `.omit()` on a refined object (audioUnmute takes a part, or from and to), so the
+ * variant is cloned with the shape that has no tag, which keeps its rules, and its notes are attached again.
+ */
+export function editOpFields(variant: z.ZodObject): z.ZodObject {
+    const { op: _op, ...shape } = variant.shape;
+    const fields = variant.clone({ ...variant.def, shape });
+    const meta = z.globalRegistry.get(variant);
+    return meta ? fields.meta(meta) : fields;
+}
 
 /** One op or a list of them from untrusted JSON, with one readable line per problem. */
 export function parseEditOps(raw: unknown): EditOp[] {
@@ -3492,6 +3544,30 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
     switch (op.op) {
         case "audioLane":
             return setAudioLane(project, op, facts);
+        case "audioMute": {
+            const fromUs = timeToUs(op.from);
+            const toUs = Math.min(project.source.durationUs, timeToUs(op.to));
+            checkRange(project, fromUs, toUs);
+            return muteAudioLaneRange({ project, id: op.id, fromUs, toUs, facts });
+        }
+        case "audioUnmute": {
+            if (op.part !== undefined) {
+                if (op.from !== undefined || op.to !== undefined) {
+                    throw new RangeError("audioUnmute takes a part id or a from and to range, not both");
+                }
+
+                return unmuteAudioLaneRange({ project, id: op.id, facts, part: op.part });
+            }
+
+            if (op.from === undefined || op.to === undefined) {
+                throw new RangeError("audioUnmute needs from and to (source seconds), or a part id");
+            }
+
+            const fromUs = timeToUs(op.from);
+            const toUs = Math.min(project.source.durationUs, timeToUs(op.to));
+            checkRange(project, fromUs, toUs);
+            return unmuteAudioLaneRange({ project, id: op.id, facts, range: { fromUs, toUs } });
+        }
         case "layerAdd":
             return addMediaLayer(project, op, facts);
         case "layerMove":
@@ -3512,11 +3588,11 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 throw new Error("no layer camera");
             }
 
-            const { op: _op, id: _id, x, y, width, shape, hidden, ...mediaOnly } = op;
+            const { op: _op, id: _id, x, y, width, shape, hidden, name, ...mediaOnly } = op;
             const unsupported = Object.keys(mediaOnly);
             if (unsupported.length) {
                 throw new Error(
-                    `the camera layer takes x, y, width, shape and hidden; unsupported: ${unsupported.join(", ")}`
+                    `the camera layer takes x, y, width, shape, hidden and name; unsupported: ${unsupported.join(", ")}`
                 );
             }
 
@@ -3536,6 +3612,8 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                     size,
                     shape: shape === null ? undefined : (shape ?? camera.shape),
                     show: hidden === undefined ? camera.show : !hidden,
+                    // "" gives the row its default name back.
+                    name: name === undefined ? camera.name : name || undefined,
                 }),
             };
         }
@@ -4480,7 +4558,7 @@ function hidePrivate(
         style: op.style,
         exclude: op.exclude,
         by: "hidePrivate",
-        request: requestOf({ kinds: op.kinds, names: op.names }),
+        request: keptHideRequest({ kinds: op.kinds, names: op.names }),
     });
 }
 
@@ -4508,7 +4586,7 @@ function hideText(
         exclude: op.exclude,
         label: op.label,
         by: "hideText",
-        request: requestOf({
+        request: keptHideRequest({
             text: op.text,
             pattern: op.pattern,
             texts: op.texts,
@@ -4519,7 +4597,7 @@ function hideText(
 }
 
 /** A hide request as a part keeps it (R6 7): only the keys the op was given. */
-function requestOf(request: NonNullable<NonNullable<EditRedaction["hide"]>["request"]>) {
+function keptHideRequest(request: NonNullable<NonNullable<EditRedaction["hide"]>["request"]>) {
     const kept = Object.fromEntries(Object.entries(request).filter(([, value]) => value !== undefined));
     return Object.keys(kept).length > 0 ? kept : undefined;
 }

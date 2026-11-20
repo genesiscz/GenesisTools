@@ -195,10 +195,12 @@ export async function pickAnchorSurface(workspaceId: string): Promise<{ paneId: 
  */
 export async function openSplitInWorkspace(
     workspaceId: string,
-    options: { background?: boolean } = {}
+    options: { background?: boolean; signal?: AbortSignal } = {}
 ): Promise<OpenSplitResult> {
     const split = async () => {
         const { surfaceId } = await pickAnchorSurface(workspaceId);
+        // A cancel seen while the anchor was picked places nothing.
+        options.signal?.throwIfAborted();
         const split = await runCmuxJSON<SurfaceSplitResult>([
             "new-split",
             "right",
@@ -225,9 +227,10 @@ export async function openSplitInWorkspace(
 export async function openSurfaceInPane(
     workspaceId: string,
     paneId: string,
-    options: { background?: boolean } = {}
+    options: { background?: boolean; signal?: AbortSignal } = {}
 ): Promise<{ surfaceId: string }> {
     const create = async () => {
+        options.signal?.throwIfAborted();
         const created = await runCmuxJSON<Pick<SurfaceSplitResult, "surface_id">>([
             "new-surface",
             "--workspace",

@@ -28,8 +28,11 @@ final class LibraryModel {
     /// The spoken search is running (the empty state waits for it); `searchFailed` is its last error.
     private(set) var searching = false
     private(set) var searchFailed: String?
-    /// The last recording moved to the Trash (where it was, where it went), for Put Back; and the last failure.
-    private(set) var trashed: (title: String, from: URL, to: URL)?
+    /// The last recording moved to the Trash (where it was, where it went), for Put Back. It is the menu bar's too: a
+    /// recording trashed from a Recent row shows here as well.
+    @ObservationIgnored var trash = RecordingActions.trash
+    var trashed: RecordingTrash.Entry? { trash.last }
+    /// The last failure.
     private(set) var failure: String?
     /// The last quick action's short notice ("Copied a GIF…"), shown in a pill that fades.
     private(set) var notice: String?
@@ -245,9 +248,7 @@ final class LibraryModel {
             notice = text
         case let .failed(text):
             failure = text
-        case let .trashed(from, to):
-            let title = items.first { $0.folder == from }?.title ?? from.lastPathComponent
-            trashed = (title, from, to)
+        case let .trashed(from, _):
             if selected == from { selected = nil }
             load()
         case .renamed:
@@ -257,7 +258,7 @@ final class LibraryModel {
 
     func dismissFailure() { failure = nil }
     func dismissNotice() { notice = nil }
-    func dismissTrashed() { trashed = nil }
+    func dismissTrashed() { trash.dismiss() }
 
     /// Moves the keyboard selection by `delta` cards through the visible list, in the order the sections show it.
     func moveSelection(_ delta: Int) {
@@ -291,16 +292,20 @@ final class LibraryModel {
         RecordingActions.run(.trash, item) { [weak self] in self?.handle($0) }
     }
 
-    /// Moves the last trashed recording back to its folder.
-    func putBack() {
-        guard let trashed else { return }
+    /// Moves `shown`, the trashed recording the strip names, back to its folder. A recording trashed after the strip
+    /// was drawn stays in the Trash for its own strip; `shown` nil puts back the last one.
+    func putBack(_ shown: RecordingTrash.Entry? = nil) {
+        guard let trashed = shown ?? trashed else { return }
         do {
-            try FileManager.default.moveItem(at: trashed.to, to: trashed.from)
-            self.trashed = nil
-            selected = trashed.from
+            if try trash.putBack(trashed) != nil {
+                selected = trashed.from
+            } else if let now = trash.last {
+                HubPerf.log("recorder.library: put back \(trashed.from.path) skipped: \(now.from.path) was trashed after the strip showed")
+                failure = "“\(trashed.title)” was not put back: “\(now.title)” went to the Trash after it. Put Back now restores “\(now.title)”."
+            }
         } catch {
             HubPerf.log("recorder.library: put back \(trashed.from.path) failed: \(error.localizedDescription)")
-            failure = "“\(trashed.title)” could not be put back: \(error.localizedDescription). It is still in the Trash."
+            failure = RecordingTrash.failureMessage(trashed, error)
         }
         load()
     }
@@ -323,7 +328,7 @@ struct LibraryView: View {
                     .font(.system(size: 12.5).monospacedDigit()).foregroundStyle(RecorderPalette.dim)
                 Spacer()
                 GhostButton("Record", symbol: "record.circle", tooltip: "Record the screen (the recorder's menu has more ways)",
-                            identifier: "recorder.library.record") { RecorderMenu.shared.startRecording(audio: false) }
+                            identifier: "recorder.library.record") { RecorderMenu.shared.startRecording(sound: .saved) }
                 HStack(spacing: 4) {
                     Image(systemName: "magnifyingglass").foregroundStyle(RecorderPalette.dim).font(.system(size: 12))
                     TextField("Search titles, speech and markers", text: $model.filter)
@@ -374,11 +379,11 @@ struct LibraryView: View {
             }
             if let trashed = model.trashed {
                 InfoStrip("Moved “\(trashed.title)” to the Trash. Click here or press ⌘Z to put it back.", tone: .info,
-                          symbol: "arrow.uturn.backward", action: { model.putBack() }, actionTooltip: "Put it back where it was",
+                          symbol: "arrow.uturn.backward", action: { model.putBack(trashed) }, actionTooltip: "Put it back where it was",
                           dismiss: { model.dismissTrashed() })
                     .padding(.horizontal, 20).padding(.top, 8)
                     .background {
-                        Button("Put Back") { model.putBack() }
+                        Button("Put Back") { model.putBack(trashed) }
                             .keyboardShortcut("z", modifiers: .command)
                             .opacity(0).frame(width: 0, height: 0)
                             .accessibilityHidden(true)
@@ -393,7 +398,7 @@ struct LibraryView: View {
                         .fixedSize(horizontal: false, vertical: true)
                     if model.items.isEmpty {
                         GhostButton("Record the Screen", symbol: "record.circle", tooltip: "Start a recording of the screen",
-                                    identifier: "recorder.library.recordEmpty") { RecorderMenu.shared.startRecording(audio: false) }
+                                    identifier: "recorder.library.recordEmpty") { RecorderMenu.shared.startRecording(sound: .saved) }
                     }
                     if !model.items.isEmpty && !model.searching {
                         GhostButton("Clear Search", symbol: "xmark.circle", tooltip: "Show every recording again",
@@ -597,10 +602,21 @@ struct LibraryCard: View {
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityAction(named: "Open in Editor", open)
         .simultaneousGesture(TapGesture(count: 2).onEnded { open() })
-        // Drag the movie into a chat, a mail or an issue: the newest export, else the recording itself.
+        // Drag the movie into a chat, a mail or an issue: the export of the edit as it is now, or the recording itself
+        // when it has no edit. A drag cannot wait for an export, so a changed edit gives nothing and says why.
         .onDrag {
-            guard let movie = RecordingMovie.shareable(in: item.folder) else { return NSItemProvider() }
-            return NSItemProvider(contentsOf: movie) ?? NSItemProvider()
+            switch RecordingMovie.shareable(in: item.folder) {
+            case let .file(movie):
+                return NSItemProvider(contentsOf: movie) ?? NSItemProvider()
+            case .stale:
+                report(.failed("“\(item.title)” changed after its last export, so there is no movie of the edit to drag. Copy Movie exports it first."))
+                return NSItemProvider()
+            case .none:
+                return NSItemProvider()
+            case .unreadable:
+                report(.failed("“\(item.title)” has an edit.json that could not be read, so no export can be shown to match the edit."))
+                return NSItemProvider()
+            }
         }
         .contextMenu { RecordingActionsMenu(item: item, report: report) }
         .contentShape(Rectangle())

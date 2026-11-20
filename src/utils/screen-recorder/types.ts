@@ -21,6 +21,8 @@ export interface CaptureRequest {
     target: CaptureTarget;
     /** CG window IDs the display filter must exclude. */
     excludeWindowIds?: number[];
+    /** Keep the windows of screen dimmers (HazeOver and the like), which the display filter leaves out by default. */
+    keepOverlays?: boolean;
     /** At most 180. */
     durationSec: number;
     activeFps: number;

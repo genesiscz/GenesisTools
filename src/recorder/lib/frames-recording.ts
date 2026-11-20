@@ -54,6 +54,7 @@ const MOVIE_ONLY: ReadonlyArray<readonly [string, (flags: StartFlags) => boolean
         (flags) => flags.systemAudioScope !== undefined,
     ],
     ["--camera", (flags) => flags.camera === true],
+    ["--movie-quality", (flags) => flags.movieQuality !== undefined && flags.movieQuality !== false],
     ["--system-cursor", (flags) => flags.systemCursor === true],
     ["--no-shortcuts", (flags) => flags.shortcuts === false],
     ["--no-indicator", (flags) => flags.indicator === false],
@@ -82,6 +83,7 @@ const FRAMES_FLAGS = {
     title: "--title",
     displays: "--displays",
     excludeWindowIds: "--exclude-window-ids",
+    keepOverlays: "--keep-overlays",
     audio: "--audio",
     "audio.micDeviceId": "--mic-device",
     fps: "--fps",
@@ -159,6 +161,7 @@ export function framesStartOf(flags: StartFlags): FramesStart {
             ...(flags.excludeWindowIds === undefined
                 ? {}
                 : { excludeWindowIds: parseWindowIdList(flags.excludeWindowIds, "--exclude-window-ids") }),
+            ...(flags.keepOverlays ? { keepOverlays: true } : {}),
             audio: audio
                 ? {
                       mic: audio.includes("mic"),

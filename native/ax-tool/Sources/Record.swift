@@ -59,6 +59,9 @@ struct RecordOptions {
     let maxMb: Double?
     /// `--control-stdin`: JSON-line commands on stdin, JSON-line events on stderr.
     let controlStdin: Bool
+    /// `--keep-overlays`: a display or area recording keeps the windows of screen dimmers (HazeOver and the like),
+    /// which it leaves out by default (`DimmingOverlayRule`).
+    let keepOverlays: Bool
     /// `--audio system,mic`: the audio sources, each its own track.
     let audioSources: [CaptureAudioSource]
     /// `--mic-device <uid>` from `ax-tool audio-devices`; nil is the default input.
@@ -207,6 +210,7 @@ private func recordOptions(startWarnings: [String]) -> RecordOptions {
         heartbeatSec: number("--heartbeat-sec", default: 0, min: 0, max: 3600),
         maxMb: optionalNumber("--max-mb", min: 0.01, max: 1_000_000),
         controlStdin: controlStdin,
+        keepOverlays: CommandLine.arguments.contains("--keep-overlays"),
         audioSources: audioSources,
         micDevice: micDevice,
         audioSidecar: audioSidecar,
@@ -678,7 +682,8 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         }
     }
 
-    func prepareVideo(width: Int, height: Int) throws {
+    /// `standard` is the size the movie would have at `--movie-quality standard`, which its bit rate is computed from.
+    func prepareVideo(width: Int, height: Int, standard: CGSize) throws {
         guard let path = options.videoOut else { return }
         let url = URL(fileURLWithPath: path)
         guard !FileManager.default.fileExists(atPath: path) else {
@@ -697,7 +702,7 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             AVVideoHeightKey: height,
         ]
         if options.selection.codec != "prores4444" {
-            settings[AVVideoCompressionPropertiesKey] = h264Compression(width: width, height: height, fps: options.activeFps)
+            settings[AVVideoCompressionPropertiesKey] = h264Compression(standard: standard, fps: options.activeFps)
         }
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         input.expectsMediaDataInRealTime = true
@@ -720,9 +725,10 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         self.adaptor = adaptor
     }
 
-    private func h264Compression(width: Int, height: Int, fps: Double) -> [String: Any] {
+    private func h264Compression(standard: CGSize, fps: Double) -> [String: Any] {
         [
-            AVVideoAverageBitRateKey: screenMovieBitRate(width: width, height: height, fps: fps),
+            AVVideoAverageBitRateKey: options.selection.movieQuality.bitRate(standardWidth: Int(standard.width),
+                                                                             standardHeight: Int(standard.height), fps: fps),
             AVVideoExpectedSourceFrameRateKey: Int(fps.rounded()),
             AVVideoMaxKeyFrameIntervalKey: max(1, Int((fps * 2).rounded())),
             AVVideoAllowFrameReorderingKey: false,
@@ -1160,6 +1166,7 @@ func cmdCaptureScreen() {
             errorExit("\(error.localizedDescription), so nothing was recorded; try again", code: "failed")
         }
         let excluded = indicator.windowIDs.union(options.selection.excludedWindowIDs)
+            .union(overlayExclusions(in: content, keep: options.keepOverlays))
         filter = SCContentFilter(display: scDisplay, excludingWindows: content.windows.filter { excluded.contains($0.windowID) })
         pointSize = sourceRect?.size ?? display.bounds.size
     }
@@ -1169,6 +1176,7 @@ func cmdCaptureScreen() {
     // been configured one pixel smaller. The adaptor then refused every append and only a
     // generic writer-status warning said so.
     let output = recordOutputSize(options, points: pointSize, scale: display.scale)
+    let standard = recordOutputSize(options, points: pointSize, scale: display.scale, quality: .standard)
     let width = Int(output.width)
     let height = Int(output.height)
     configuration.width = width
@@ -1191,7 +1199,7 @@ func cmdCaptureScreen() {
 
     let recorder = NativeRecorder(options: options, configuration: configuration, displayID: display.id)
     do {
-        try recorder.prepareVideo(width: width, height: height)
+        try recorder.prepareVideo(width: width, height: height, standard: standard)
     } catch {
         errorExit("cannot open --video-out: \(error.localizedDescription)")
     }
@@ -1394,12 +1402,15 @@ func cmdCaptureScreen() {
     if !recorder.videoSucceeded { exit(1) }
 }
 
-/// The stream output size: the selection's size at the display scale, then capped by `--max-long-side`.
+/// The stream output size: the selection's Standard size at the display scale, capped by `--max-long-side`, then
+/// sized by `quality` (default: the `--movie-quality` preset) for an H.264 movie.
 private func recordOutputSize(_ options: RecordOptions, points: CGSize, scale: CGFloat,
-                              maxLongSide: Int?? = nil) -> CGSize {
+                              maxLongSide: Int?? = nil, quality: MovieQuality? = nil) -> CGSize {
     let video = options.videoOut != nil
-    let size = options.selection.dimensions(points: points, nativeScale: scale, video: video)
-    return capLongSide(size, maxLongSide: maxLongSide ?? options.maxLongSide, even: video && options.selection.codec == "h264")
+    let standard = options.selection.dimensions(points: points, nativeScale: scale, video: video, quality: .standard)
+    return cappedMovieSize(standard: standard, maxLongSide: maxLongSide ?? options.maxLongSide,
+                           h264Movie: video && options.selection.codec == "h264",
+                           quality: quality ?? options.selection.movieQuality)
 }
 
 /// `no-permission` when ScreenCaptureKit says the user declined, else `failed`.
@@ -1742,7 +1753,8 @@ private final class ScreenStreamHost {
                 guard let scDisplay = content.displays.first(where: { $0.displayID == target }) else {
                     throw NSError(domain: "ax-tool", code: 2, userInfo: [NSLocalizedDescriptionKey: "display \(target) is not shareable"])
                 }
-                let windows = content.windows.filter { excluded.contains($0.windowID) }
+                let overlays = overlayExclusions(in: content, keep: options.keepOverlays)
+                let windows = content.windows.filter { excluded.contains($0.windowID) || overlays.contains($0.windowID) }
                 let filter = SCContentFilter(display: scDisplay, excludingWindows: windows)
                 restoreFilter = content.displays.first(where: { $0.displayID == previousDisplay.id })
                     .map { SCContentFilter(display: $0, excludingWindows: windows) }
@@ -1810,7 +1822,7 @@ private final class ScreenStreamHost {
             let content = try awaitResult(timeoutSeconds: 10) { try await listedContent(requested) }
             guard let scDisplay = content.displays.first(where: { $0.displayID == target }) else { return }
             indicator.update([geometry.bounds])
-            let excluded = excludedWindowIDs
+            let excluded = excludedWindowIDs.union(overlayExclusions(in: content, keep: options.keepOverlays))
             let filter = SCContentFilter(display: scDisplay, excludingWindows: content.windows.filter { excluded.contains($0.windowID) })
             if let size = outputSize(for: geometry) {
                 _ = recorder.setOutputSize(width: Int(size.width), height: Int(size.height), for: target)
@@ -1880,6 +1892,27 @@ func shareableContent(listing windowIDs: Set<CGWindowID>, timeout: TimeInterval 
         FileHandle.standardError.write(Data("ax-tool: listing the windows again failed (\(reason)); the movie may show the recording border or a window it leaves out\n".utf8))
     }
     return polled.value
+}
+
+/// The windows of screen dimmers in `content` (`DimmingOverlayRule`), which a display filter leaves out unless the
+/// recording keeps them (`--keep-overlays`). Each found window is logged once per filter, so a movie that lost a
+/// window someone wanted can be traced.
+func overlayExclusions(in content: SCShareableContent, keep: Bool) -> Set<CGWindowID> {
+    guard !keep else { return [] }
+    let facts = content.windows.map { window in
+        let pid = window.owningApplication?.processID
+        let policy = pid.flatMap { NSRunningApplication(processIdentifier: $0)?.activationPolicy }
+        return OverlayWindowFacts(windowID: window.windowID, ownerBundleID: window.owningApplication?.bundleIdentifier,
+                                  layer: window.windowLayer, frame: window.frame,
+                                  ownerIsAgent: policy != nil && policy != .regular)
+    }
+    let found = DimmingOverlayRule.overlayIDs(facts, displays: content.displays.map(\.frame))
+    if !found.isEmpty {
+        let owners = Set(content.windows.filter { found.contains($0.windowID) }
+            .map { $0.owningApplication?.bundleIdentifier ?? "unknown" }).sorted().joined(separator: ",")
+        FileHandle.standardError.write(Data("ax-tool: leaving out \(found.count) dimming overlay window(s) of \(owners); --keep-overlays keeps them\n".utf8))
+    }
+    return found
 }
 
 /// Throws when a window the caller asked the movie to leave out still exists but `content` does not list it: a display

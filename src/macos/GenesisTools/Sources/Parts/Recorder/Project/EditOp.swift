@@ -31,6 +31,8 @@ enum EditOp: Equatable {
     case mute(Mute)
     case audio(Audio)
     case audioLane(AudioLane)
+    case audioMute(AudioMute)
+    case audioUnmute(AudioUnmute)
     case layerAdd(LayerAdd)
     case layer(Layer)
     case layerMove(LayerMove)
@@ -102,7 +104,7 @@ enum EditOp: Equatable {
         Split.self, Cut.self, Keep.self, Speed.self, Zoom.self, Unzoom.self, Redact.self, Spotlight.self, Unredact.self,
         Text.self, Untext.self, Marker.self, Unmarker.self, Retime.self, Shape.self, Unshape.self, FixLine.self,
         UnfixLine.self, AutoZoom.self, AnnotateClicks.self, Volume.self, Mute.self, Audio.self, Music.self,
-        AudioLane.self, LayerAdd.self, Layer.self, LayerMove.self, LayerRemove.self,
+        AudioLane.self, AudioMute.self, AudioUnmute.self, LayerAdd.self, Layer.self, LayerMove.self, LayerRemove.self,
         ExportSettings.self, Reset.self, Clicks.self, Keys.self, Captions.self, Motion.self, Cursor.self, Frame.self,
         Camera.self, CameraHide.self, CameraShow.self, RemoveIdle.self, CutWords.self, CutFillers.self, Denoise.self,
         Normalize.self, Lanes.self, AddLane.self, RemoveLane.self, MoveLane.self, MoveToLane.self, RangeAction.self,
@@ -149,6 +151,8 @@ enum EditOp: Equatable {
         case let .mute(op): op
         case let .audio(op): op
         case let .audioLane(op): op
+        case let .audioMute(op): op
+        case let .audioUnmute(op): op
         case let .layerAdd(op): op
         case let .layer(op): op
         case let .layerMove(op): op
@@ -261,6 +265,25 @@ extension EditOp {
         var volume: Double?
         var name: String?
         var op: EditOp { .audioLane(self) }
+    }
+
+    /// Mutes source seconds `from` to `to` of lane `id` as a muted part of its own.
+    struct AudioMute: EditOpPayload {
+        static let tag = "audioMute"
+        var id: String
+        var from: Double
+        var to: Double
+        var op: EditOp { .audioMute(self) }
+    }
+
+    /// Plays lane `id` again over source seconds `from` to `to`, or deletes its muted part `part`.
+    struct AudioUnmute: EditOpPayload {
+        static let tag = "audioUnmute"
+        var id: String
+        var from: Double?
+        var to: Double?
+        var part: String?
+        var op: EditOp { .audioUnmute(self) }
     }
 
     struct LayerAdd: EditOpPayload {

@@ -404,6 +404,29 @@ public func screenMovieBitRate(width: Int, height: Int, fps: Double) -> Int {
     return Int(min(160_000_000, max(6_000_000, bits)))
 }
 
+/// `--movie-quality`: an H.264 screen movie's size and bit rate against Standard, which is the stream's native size at
+/// `screenMovieBitRate`. High keeps the size at twice that rate; Small halves both sides (even) at half the rate the
+/// native size would get.
+public enum MovieQuality: String, CaseIterable, Sendable {
+    case standard, high, small
+
+    /// The movie's pixels for `size`, the even H.264 size Standard records.
+    public func movieSize(_ size: CGSize) -> CGSize {
+        guard self == .small else { return size }
+        return CGSize(width: max(2, Int(size.width / 2) & ~1), height: max(2, Int(size.height / 2) & ~1))
+    }
+
+    /// The average bit rate of the movie, from the size Standard records (`standardWidth` × `standardHeight`, before
+    /// `movieSize` halves it for Small): Small's even rounding of the halved sides never changes its rate.
+    public func bitRate(standardWidth width: Int, standardHeight height: Int, fps: Double) -> Int {
+        switch self {
+        case .standard: screenMovieBitRate(width: width, height: height, fps: fps)
+        case .high: 2 * screenMovieBitRate(width: width, height: height, fps: fps)
+        case .small: screenMovieBitRate(width: width, height: height, fps: fps) / 2
+        }
+    }
+}
+
 /// Output stays fixed during a movie. The live canvas fits without stretching; global CG
 /// coordinates are translated before Core Image's bottom-left coordinate flip.
 public struct CaptureCanvasGeometry {

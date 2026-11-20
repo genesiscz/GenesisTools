@@ -703,7 +703,7 @@ private struct NeedsYouList: View {
                     // "Suggestions" count those at or above the apply line on every surface; the line is said once,
                     // here, instead of at the end of every row (window audit L1).
                     Section(group.title == MeetingsOverview.NeedsYou.readyTitle
-                            ? "\(group.title) at \(Int(overview.applyAbove * 100)) % or more" : group.title) {
+                            ? "\(group.title) at \(TranscriptBlocksPane.percentText(overview.applyAbove * 100)) or more" : group.title) {
                         ForEach(group.rows, id: \.id) { row in
                             if let meeting = model.meeting(row.id) {
                                 NeedsRow(meeting: meeting, reason: row.reason()).tag(row.tag)

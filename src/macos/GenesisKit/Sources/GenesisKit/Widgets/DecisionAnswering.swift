@@ -215,6 +215,12 @@ public struct WidgetDecisionSendOutcome {
                     failedSessions[session] = error
                     continue
                 }
+                // `delivered`: the agent got them and only the hub's record of it failed, so Send again would type
+                // them twice; the hub's error stays in its log.
+                if entry["delivered"] == .bool(true) {
+                    deliveredSessions.insert(session)
+                    continue
+                }
                 waiting.append((session, title, Self.storedSentence, error, later))
                 continue
             }

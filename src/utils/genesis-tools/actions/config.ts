@@ -8,7 +8,8 @@ import type { AnyActionDef, AreaDef } from "./define";
 
 /**
  * `~/.genesis-tools/genesis-tools/config.json`: what the person chose, per area and per action. Only changed keys are
- * stored; a resolved config is the schema defaults, then the area's values, then the action's.
+ * stored, each as the value that was set (the input its schema accepted, never the parsed output); a resolved config
+ * is the schema defaults, then the area's values, then the action's, each parsed once on the way out.
  */
 
 export interface AreaConfigValues {
@@ -30,6 +31,8 @@ export interface ConfigStore {
     read(): GenesisToolsConfigFile;
     /** Defaults, then the area's stored values, then the action's. */
     resolve(area: string, action?: string): Record<string, unknown>;
+    /** The area's and the action's resolved config from one read of the file, so the two never describe different edits. */
+    snapshot(area: string, action: string): { area: Record<string, unknown>; action: Record<string, unknown> };
     /** `<area>.<key>` or `<area>.<action>.<key>`; the resolved value. */
     get(path: string): unknown;
     /** `signal`: a cancel seen before the file is replaced stops the write. */
@@ -66,6 +69,16 @@ export class ConfigError extends Error {
     }
 }
 
+/** `record[key]` when `key` is the record's own: an inherited member such as `constructor` is no key, area or action. */
+function own<T>(record: Readonly<Record<string, T>> | undefined, key: string): T | undefined {
+    return record !== undefined && Object.hasOwn(record, key) ? record[key] : undefined;
+}
+
+/** The schema of `key` in a config object schema, own keys only. */
+function fieldOf(schema: z.ZodObject | undefined, key: string): z.ZodType | undefined {
+    return own<z.ZodType>(schema?.shape, key);
+}
+
 interface ConfigTarget {
     area: string;
     action: string | null;
@@ -76,7 +89,7 @@ interface ConfigTarget {
 /** Resolves `<area>.<key>` or `<area>.<action>.<key>` to the schema that owns the key, or throws naming the keys. */
 export function configTarget(registry: Record<string, AnyArea>, path: string): ConfigTarget {
     const parts = path.split(".");
-    const areaDef = registry[parts[0] ?? ""];
+    const areaDef = own(registry, parts[0] ?? "");
 
     if (!areaDef) {
         throw new ConfigError(`no area "${parts[0]}"; areas: ${Object.keys(registry).join(", ")}`);
@@ -84,7 +97,7 @@ export function configTarget(registry: Record<string, AnyArea>, path: string): C
 
     if (parts.length === 2) {
         const key = parts[1] ?? "";
-        const schema = areaDef.config?.shape[key];
+        const schema = fieldOf(areaDef.config, key);
 
         if (!schema) {
             throw new ConfigError(`area ${areaDef.area} has no config key "${key}"; keys: ${keysOf(areaDef.config)}`);
@@ -95,13 +108,13 @@ export function configTarget(registry: Record<string, AnyArea>, path: string): C
 
     if (parts.length === 3) {
         const [, action = "", key = ""] = parts;
-        const actionDef = areaDef.actions[action];
+        const actionDef = own(areaDef.actions, action);
 
         if (!actionDef) {
             throw new ConfigError(`area ${areaDef.area} has no action "${action}"`);
         }
 
-        const schema = actionDef.config?.shape[key] ?? areaDef.config?.shape[key];
+        const schema = fieldOf(actionDef.config, key) ?? fieldOf(areaDef.config, key);
 
         if (!schema) {
             throw new ConfigError(
@@ -146,8 +159,9 @@ function decodeConfigFile(raw: unknown): GenesisToolsConfigFile {
 }
 
 /**
- * The stored values their schema accepts, as the schema parses them. The file can be edited by hand or written under an
- * older schema, so a value the schema refuses keeps its default (with a warning) and an unknown key is left out.
+ * The stored values their schema accepts, as the schema parses them (once: a set stores the input, so a transforming
+ * schema never sees its own output). The file can be edited by hand or written under an older schema, so a value the
+ * schema refuses keeps its default (with a warning) and an unknown key is left out.
  */
 function checkedValues(
     values: Record<string, unknown>,
@@ -180,28 +194,27 @@ function checkedValues(
     return checked;
 }
 
-/** The pure resolution: defaults (area, then action), then stored area values, then stored action values. */
+/**
+ * The pure resolution: defaults (area, then action), then stored area values, then stored action values. A key the
+ * action declares follows the action's schema everywhere in its config, so a stored area value of that key that the
+ * action's schema refuses keeps the action's default instead of giving `ctx.config` a value of the wrong type.
+ */
 export function resolveConfig(
     file: GenesisToolsConfigFile,
     areaDef: AnyArea,
     action?: string
 ): Record<string, unknown> {
-    const { actions: storedActions, ...storedArea } = file.areas[areaDef.area] ?? {};
-    const actionDef = action ? areaDef.actions[action] : undefined;
-    const storedAction = action && isObject(storedActions) ? storedActions[action] : undefined;
-    const areaSchema = (key: string): z.ZodType | undefined => areaDef.config?.shape[key];
+    const { actions: storedActions, ...storedArea } = own(file.areas, areaDef.area) ?? {};
+    const actionDef = action ? own(areaDef.actions, action) : undefined;
+    const storedAction = action && isObject(storedActions) ? own(storedActions, action) : undefined;
+    const schemaOf = (key: string): z.ZodType | undefined =>
+        fieldOf(actionDef?.config, key) ?? fieldOf(areaDef.config, key);
 
     return {
         ...schemaDefaults(areaDef.config),
         ...schemaDefaults(actionDef?.config),
-        ...checkedValues(storedArea, areaSchema, areaDef.area),
-        ...(isObject(storedAction)
-            ? checkedValues(
-                  storedAction,
-                  (key) => actionDef?.config?.shape[key] ?? areaSchema(key),
-                  `${areaDef.area}.${action}`
-              )
-            : {}),
+        ...checkedValues(storedArea, schemaOf, areaDef.area),
+        ...(isObject(storedAction) ? checkedValues(storedAction, schemaOf, `${areaDef.area}.${action}`) : {}),
     };
 }
 
@@ -268,9 +281,10 @@ export function createConfigStore(options: ConfigStoreOptions): ConfigStore {
         }
     }
 
+    /** Stores the value as it was set: a read parses it once, so a set reads back as the same value. */
     async function write(path: string, value: unknown, signal: AbortSignal | undefined): Promise<void> {
         const target = configTarget(options.registry, path);
-        let stored = value;
+        let resolved = value;
 
         if (value !== undefined) {
             const parsed = target.schema.safeParse(value);
@@ -279,36 +293,45 @@ export function createConfigStore(options: ConfigStoreOptions): ConfigStore {
                 throw new ConfigError(`${path}: ${parsed.error.issues.map((issue) => issue.message).join("; ")}`);
             }
 
-            stored = parsed.data;
+            resolved = parsed.data;
         }
 
-        await document.update((current) => ({ write: withKey(current, target, stored), result: undefined }), {
+        await document.update((current) => ({ write: withKey(current, target, value), result: undefined }), {
             signal,
         });
 
         // The value is written; a listener that throws must not tell the caller the set failed.
         for (const listener of listeners) {
             try {
-                listener({ path, value: stored });
+                listener({ path, value: resolved });
             } catch (error) {
                 logger.warn({ error, path }, "genesis-tools config: a change listener threw");
             }
         }
     }
 
-    function resolve(area: string, action?: string): Record<string, unknown> {
-        const areaDef = options.registry[area];
+    function areaOf(area: string): AnyArea {
+        const areaDef = own(options.registry, area);
 
         if (!areaDef) {
             throw new ConfigError(`no area "${area}"`);
         }
 
-        return resolveConfig(readOrDefaults(), areaDef, action);
+        return areaDef;
+    }
+
+    function resolve(area: string, action?: string): Record<string, unknown> {
+        return resolveConfig(readOrDefaults(), areaOf(area), action);
     }
 
     return {
         read,
         resolve,
+        snapshot(area, action) {
+            const areaDef = areaOf(area);
+            const file = readOrDefaults();
+            return { area: resolveConfig(file, areaDef), action: resolveConfig(file, areaDef, action) };
+        },
         get(path) {
             const target = configTarget(options.registry, path);
             return resolve(target.area, target.action ?? undefined)[target.key];

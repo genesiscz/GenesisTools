@@ -17,6 +17,7 @@ import { env } from "@genesiscz/utils/env";
 import { readLines } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { endDetachedGroup } from "@genesiscz/utils/process/killWithEscalation";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 
 export interface ParseJsonlTranscriptOptions {
@@ -226,19 +227,30 @@ async function probeClaudeCandidate(input: {
     shell: string;
     timeoutMs: number;
 }): Promise<ClaudeCandidateVerdict> {
-    const proc = findClaudeCommandTestHooks?.spawnProbe
-        ? findClaudeCommandTestHooks.spawnProbe(input.candidate, input.shell)
-        : Bun.spawn({
-              cmd: [input.shell, "-ic", probeScript(input.candidate)],
-              stdio: ["ignore", "pipe", "pipe"],
-          });
+    let proc: ReturnType<typeof Bun.spawn> | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let outputOpen = true;
 
     try {
+        // Detached, so the probe leads its own process group and a wrapper's child ends with it.
+        const started = findClaudeCommandTestHooks?.spawnProbe
+            ? findClaudeCommandTestHooks.spawnProbe(input.candidate, input.shell)
+            : Bun.spawn({
+                  cmd: [input.shell, "-ic", probeScript(input.candidate)],
+                  stdio: ["ignore", "pipe", "pipe"],
+                  detached: true,
+              });
+        proc = started;
+        const output = new Response(started.stdout).text().finally(() => {
+            outputOpen = false;
+        });
+        // The deadline covers the exit too: a wrapper can close stdout and keep running.
         const stdout = await Promise.race([
-            new Response(proc.stdout).text(),
-            new Promise<string>((_, reject) => setTimeout(() => reject(new Error("timeout")), input.timeoutMs)),
+            Promise.all([output, started.exited]).then(([text]) => text),
+            new Promise<string>((_, reject) => {
+                timer = setTimeout(() => reject(new Error("timeout")), input.timeoutMs);
+            }),
         ]);
-        await proc.exited;
 
         if (proc.exitCode === NOT_DEFINED_EXIT) {
             return "not-claude";
@@ -253,7 +265,12 @@ async function probeClaudeCandidate(input: {
         // Timeout or spawn failure
         return "no-answer";
     } finally {
-        proc.kill();
+        clearTimeout(timer);
+
+        if (proc) {
+            endDetachedGroup(proc, { outputOpen, what: "claude probe" });
+            proc.kill();
+        }
     }
 }
 

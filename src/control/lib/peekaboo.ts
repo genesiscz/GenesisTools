@@ -12,6 +12,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { wrapWithGenesisApp } from "@genesiscz/utils/macos/genesis-app";
 import { tmpdir } from "@genesiscz/utils/paths";
 import { childPids } from "@genesiscz/utils/process/processes";
+import { readLines } from "@genesiscz/utils/screen-recorder/process";
 import type { Coords, CropTarget, RelativeTo } from "./capture-plan";
 import { parseNativeWindowList, parseScreenList, type ScreenInfo, type WindowBounds } from "./native-record";
 import { refuseRealMachineInTest } from "./runner";
@@ -872,7 +873,9 @@ export function recordingErrorFromStdout(stdout: string): string {
 }
 
 export interface CaptureAttempt {
-    proc: Bun.Subprocess<"ignore", "pipe", "pipe">;
+    proc: Bun.Subprocess<"ignore" | "pipe", "pipe", "pipe">;
+    /** Writes to the recorder's stdin; only when it started with a control channel (`startCapture`'s `control`). */
+    write?: (text: string) => void;
     sessionDir: string | null;
     stdoutText: Promise<string>;
     stderrText: Promise<string>;
@@ -890,8 +893,14 @@ export interface CaptureAttempt {
 /**
  * `signal` cancels arming: a recorder that has not written its first frame is stopped and the
  * attempt comes back without a session dir, so the caller never waits out the 15 s deadline.
+ * `control` keeps stdin open for the recorder's `--control-stdin` commands (the attempt's `write`) and hands each
+ * stderr line, where its answers arrive, to `onStderrLine`; the end of stdin stops such a recorder.
  */
-export async function startCapture(argv: string[], signal?: AbortSignal): Promise<CaptureAttempt> {
+export async function startCapture(
+    argv: string[],
+    signal?: AbortSignal,
+    control?: { onStderrLine: (line: string) => void }
+): Promise<CaptureAttempt> {
     const sessionsRoot = captureSessionsRoot();
     mkdirSync(sessionsRoot, { recursive: true });
     const outputAt = argv.indexOf("--out");
@@ -913,12 +922,25 @@ export async function startCapture(argv: string[], signal?: AbortSignal): Promis
     const tool = argv[0].split("/").pop() ?? argv[0];
     // killTree walks `pgrep -P` recursively, so the two launcher stages in front of the recorder
     // are killed together with it; the launcher also proxies the recorder's exit status.
-    const p = Bun.spawn(wrapWithGenesisApp(argv), { stdout: "pipe", stderr: "pipe" });
+    const p = Bun.spawn(wrapWithGenesisApp(argv), {
+        stdin: control ? "pipe" : "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+    });
     // Drain both pipes from spawn time: an undrained 64KB pipe blocks peekaboo
     // mid-write (large final JSON on long captures, or visualizer logs when
     // PEEKABOO_VISUALIZER_STDOUT=true) and is indistinguishable from a hang.
     const stdoutText = new Response(p.stdout).text();
-    const stderrText = new Response(p.stderr).text();
+    const stderrText = control ? readLines(p.stderr, control.onStderrLine) : new Response(p.stderr).text();
+    const sink = control ? p.stdin : undefined;
+    const write = sink
+        ? (text: string) => {
+              if (p.exitCode === null) {
+                  sink.write(text);
+                  void sink.flush();
+              }
+          }
+        : undefined;
 
     let dir: string | null = null;
     let exitedEarly = false;
@@ -973,7 +995,7 @@ export async function startCapture(argv: string[], signal?: AbortSignal): Promis
         ].join(" · ");
     }
 
-    return { proc: p, sessionDir: dir, stdoutText, stderrText, failDiag, tool };
+    return { proc: p, sessionDir: dir, stdoutText, stderrText, failDiag, tool, ...(write ? { write } : {}) };
 }
 
 export function stripBypassFlags(a: string[]): string[] {

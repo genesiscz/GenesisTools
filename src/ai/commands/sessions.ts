@@ -1,5 +1,4 @@
 import { hoursArg, limitArg } from "@app/hub/commands/agents-args";
-import { ACCOUNT_PROVIDER_ALIASES, isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { runTranscriptDoor } from "@genesiscz/utils/ai/transcripts/door";
 import { THOUGHT_MODES, TRANSCRIPT_FORMATS } from "@genesiscz/utils/ai/transcripts/render";
 import { resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
@@ -12,6 +11,7 @@ import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import { formatDuration } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
+import { pickSessionProvider, sessionProviderOption } from "./session-provider";
 import { registerSessionAnalysis } from "./sessions-analysis";
 import { registerSessionsReportCommand } from "./sessions-report";
 import { registerSessionsWorkflowsCommand } from "./sessions-workflows";
@@ -68,16 +68,6 @@ function printSessionAgents(result: Omit<SessionAgents, "subagents"> & { subagen
     }
 }
 
-function parseProvider(value: string | undefined): TranscriptProvider | undefined {
-    if (!value) {
-        return undefined;
-    }
-    if (!isAccountProviderAlias(value)) {
-        throw new Error(`--provider must be one of ${ACCOUNT_PROVIDER_ALIASES.join(", ")} (got "${value}")`);
-    }
-    return value;
-}
-
 /** A non-negative decimal integer, or null: `2oops`, `1.5` and `3x` are refused, never truncated. */
 function wholeNumber(value: string): number | null {
     const trimmed = value.trim();
@@ -119,7 +109,7 @@ export function registerSessionsCommands(program: Command): void {
         .option("--thoughts [value]", `reasoning in the compact and events formats: ${THOUGHT_MODES.join(" | ")}`)
         .option("--json", "alias of --format json (the Genesis Session Details envelope)")
         .option("-f, --follow", "Follow the JSONL for new turns until Ctrl-C")
-        .option("--provider <name>", "claude | grok | codex (auto-detect if omitted)")
+        .addOption(sessionProviderOption())
         .option("--offset <n>", "Start at this turn index (default: last --limit turns)")
         .option("--limit <n>", "Max turns to emit", String(DEFAULT_TURN_LIMIT))
         .option("--turns <list>", "Exactly these 0-based turns, e.g. 3,17,902 (each gets its `index`)")
@@ -136,7 +126,7 @@ export function registerSessionsCommands(program: Command): void {
                     json?: boolean;
                     follow?: boolean;
                     live?: boolean;
-                    provider?: string;
+                    provider?: string | boolean;
                     offset?: string;
                     limit?: string;
                     turns?: string;
@@ -177,14 +167,12 @@ export function registerSessionsCommands(program: Command): void {
                     return;
                 }
 
-                let provider: TranscriptProvider | undefined;
-                try {
-                    provider = parseProvider(opts.provider);
-                } catch (error) {
-                    process.exitCode = 2;
-                    out.printlnErr(error instanceof Error ? error.message : String(error));
+                const picked = await pickSessionProvider(opts.provider, ["sessions", "tail"]);
+                if (!picked) {
                     return;
                 }
+
+                const provider: TranscriptProvider | undefined = picked.provider;
 
                 await runTranscriptDoor({
                     tool: `${toolCommand("ai sessions tail")}`,
@@ -205,14 +193,18 @@ export function registerSessionsCommands(program: Command): void {
         .command("grep <session-id> <query>")
         .description("Find the turns of a whole session that show <query> (case-insensitive)")
         .option("--json", "print { sessionId, total, turns, truncated }")
-        .option("--provider <name>", "claude | grok | codex (auto-detect if omitted)")
+        .addOption(sessionProviderOption())
         .option(
             "--limit <n>",
             "Max turn indices to return (total still counts every match)",
             String(DEFAULT_SEARCH_LIMIT)
         )
         .action(
-            async (sessionId: string, query: string, opts: { json?: boolean; provider?: string; limit?: string }) => {
+            async (
+                sessionId: string,
+                query: string,
+                opts: { json?: boolean; provider?: string | boolean; limit?: string }
+            ) => {
                 const limit = parseLimit(opts.limit ?? String(DEFAULT_SEARCH_LIMIT));
                 if (limit === null) {
                     process.exitCode = 2;
@@ -226,8 +218,13 @@ export function registerSessionsCommands(program: Command): void {
                     return;
                 }
 
+                const picked = await pickSessionProvider(opts.provider, ["sessions", "grep"]);
+                if (!picked) {
+                    return;
+                }
+
                 try {
-                    const resolved = await resolveTranscript(sessionId, {}, parseProvider(opts.provider));
+                    const resolved = await resolveTranscript(sessionId, {}, picked.provider);
                     const result = await searchTranscript(resolved, { query, limit });
                     if (opts.json) {
                         out.result(result);
@@ -255,7 +252,7 @@ export function registerSessionsCommands(program: Command): void {
             "--json",
             "print { sessionId, subagents: [{ id, name, description, state, workflow: { runId, label, phase } | null, … }], workflowRuns: [{ runId, name, status, startedAt, durationMs, agents, results }], workflowReader }"
         )
-        .option("--provider <name>", "claude | grok | codex (auto-detect if omitted)")
+        .addOption(sessionProviderOption())
         .option("--all", `every session in the window with its agents (same as \`${toolCommand("hub agents")}\`)`)
         .option("--since <dur>", "with --all: window, 90m, 24h, 7d (default 24h)", hoursArg)
         .option("--limit <n>", "with --all: at most this many sessions", limitArg)
@@ -266,7 +263,7 @@ export function registerSessionsCommands(program: Command): void {
                 sessionId: string | undefined,
                 opts: {
                     json?: boolean;
-                    provider?: string;
+                    provider?: string | boolean;
                     all?: boolean;
                     since?: number;
                     limit?: number;
@@ -293,8 +290,13 @@ export function registerSessionsCommands(program: Command): void {
                     return;
                 }
 
+                const picked = await pickSessionProvider(opts.provider, ["sessions", "subagents"]);
+                if (!picked) {
+                    return;
+                }
+
                 try {
-                    const resolved = await resolveTranscript(sessionId, {}, parseProvider(opts.provider));
+                    const resolved = await resolveTranscript(sessionId, {}, picked.provider);
                     const listed = await listSessionAgents(resolved);
                     const now = Date.now();
                     const result = {

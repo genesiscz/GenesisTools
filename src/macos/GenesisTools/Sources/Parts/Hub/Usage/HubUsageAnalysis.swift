@@ -25,11 +25,11 @@ struct UsageAttributionSection: View {
                 }
                 HStack(alignment: .top, spacing: 24) {
                     SunburstChart(root: Self.tree(bar), focus: $focus, maxDepth: 3, identifier: "usage.attribution",
-                                  valueText: { UsageFormat.usd($0) }) { id in
+                                  valueText: { UsageFormat.usd($0) }, onSelect: { id in
                         if let session = bar.sessions.first(where: { "s:" + $0.id == id }) {
                             usage.openSession(session.sessionId, harness: session.agent)
                         }
-                    }
+                    })
                     .frame(width: 320, height: 320)
                     VStack(alignment: .leading, spacing: 2) {
                         UsageSectionTitle(text: "Top sessions", detail: "points of the bar each took")

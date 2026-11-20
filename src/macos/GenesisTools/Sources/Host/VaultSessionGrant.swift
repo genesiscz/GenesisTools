@@ -20,6 +20,9 @@ struct VaultLineageEntry: Equatable {
     var startedAt: Int64
     /// The executable's file name (`claude`, `zsh`, `gt-claude`).
     var name: String
+    /// The kernel's exec generation (`p_idversion`): an exec in place keeps the pid and start, never this. nil when
+    /// the kernel did not say.
+    var execGeneration: Int32? = nil
 }
 
 /// The process a session approval is for: the nearest agent harness (`claude`, `codex`, `grok`) above the caller.
@@ -27,16 +30,25 @@ struct VaultSessionAnchor: Codable, Equatable {
     var harness: String
     var pid: Int32
     var startedAt: Int64
+    /// The harness image the person approved. An approval written before this field (nil) matches no process, so it
+    /// is asked for again once, and an agent that execs another program in place loses its approval.
+    var execGeneration: Int32? = nil
 
     /// The nearest parent whose executable is an agent harness. A harness started inside another one (a headless
-    /// `claude -p` under a Claude session) is the narrower scope, so the nearest wins.
+    /// `claude -p` under a Claude session) is the narrower scope, so the nearest wins. A harness whose exec generation
+    /// the kernel did not give is not offered: no approval of it could ever match.
     static func nearest(in lineage: [VaultLineageEntry],
                         harnesses: Set<String> = Set(Harness.allCases.map(\.binary))) -> VaultSessionAnchor? {
-        lineage.first { harnesses.contains($0.name) }.map { VaultSessionAnchor(harness: $0.name, pid: $0.pid, startedAt: $0.startedAt) }
+        guard let entry = lineage.first(where: { harnesses.contains($0.name) }), let execGeneration = entry.execGeneration else {
+            return nil
+        }
+
+        return VaultSessionAnchor(harness: entry.name, pid: entry.pid, startedAt: entry.startedAt, execGeneration: execGeneration)
     }
 
     func isIn(_ lineage: [VaultLineageEntry]) -> Bool {
-        lineage.contains { $0.pid == pid && $0.startedAt == startedAt }
+        guard let execGeneration else { return false }
+        return lineage.contains { $0.pid == pid && $0.startedAt == startedAt && $0.execGeneration == execGeneration }
     }
 
     /// `claude (pid 83427)`.
@@ -57,6 +69,9 @@ struct VaultSessionGrant: Codable, Equatable {
 }
 
 struct VaultSessionGrantsFile: Codable {
+    /// The only version this reads, as `tools ai gate status` does (`isVaultSessionGrantsFile` in grants.ts).
+    static let currentVersion = 1
+
     var version: Int
     var grants: [VaultSessionGrant]
 }
@@ -68,8 +83,9 @@ enum VaultSessionGrants {
 
     static func load(from path: String = path) -> VaultSessionGrantsFile {
         guard let data = FileManager.default.contents(atPath: path),
-              let file = try? JSONDecoder().decode(VaultSessionGrantsFile.self, from: data) else {
-            return VaultSessionGrantsFile(version: 1, grants: [])
+              let file = try? JSONDecoder().decode(VaultSessionGrantsFile.self, from: data),
+              file.version == VaultSessionGrantsFile.currentVersion else {
+            return VaultSessionGrantsFile(version: VaultSessionGrantsFile.currentVersion, grants: [])
         }
 
         return file
@@ -111,8 +127,12 @@ extension VaultProcess {
         var current = parent(pid)
         while let ancestor = current, ancestor > 1, entries.count < limit {
             guard let start = startedAt(ancestor) else { break }
+            // The generation is read before and after the name, so both describe one image: an exec between the reads
+            // would pair the old harness name with the new image's generation.
+            let generation = VaultRecipient.execGeneration(ancestor)
             let name = path(ancestor).map { ($0 as NSString).lastPathComponent } ?? ""
-            entries.append(VaultLineageEntry(pid: ancestor, startedAt: start, name: name))
+            guard VaultRecipient.execGeneration(ancestor) == generation else { break }
+            entries.append(VaultLineageEntry(pid: ancestor, startedAt: start, name: name, execGeneration: generation))
             current = parent(ancestor)
         }
 

@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import GenesisKit
+import GenesisKitTestSupport
 import SwiftUI
 import Vision
 import XCTest
@@ -26,6 +27,60 @@ final class MeetingsVoiceSettingsTests: XCTestCase {
         card.chooseScope("all")
         card.chooseThreshold(-0.12)
         XCTAssertEqual(writes, ["global.speakerLabels.voice.sampleScope": "all", "global.speakerLabels.voice.outlierBelow": "-0.12"])
+    }
+
+    /// w_x5qig18n: the voice support on seat lines is a switch on the Speakers page, not only `tools meetings config set`.
+    func testSeatLineSupportReadsItsDefaultAndWritesTheVoiceSetting() throws {
+        XCTAssertTrue(MeetingsVoiceNaming(raw: nil).supportOnSeatLines, "the engine's default is on")
+        let off = try raw(#"{"global":{"speakerLabels":{"voice":{"supportOnSeatLines":false}}}}"#)
+        XCTAssertFalse(MeetingsVoiceNaming(raw: off).supportOnSeatLines)
+        var writes = [String: String]()
+        let card = MeetingsVoiceNamingCard(naming: MeetingsVoiceNaming(raw: off)) { path, value in
+            writes[path.joined(separator: ".")] = "\(value)"
+        }
+        card.chooseSupport(true)
+        XCTAssertEqual(writes, ["global.speakerLabels.voice.supportOnSeatLines": "true"])
+    }
+
+    /// w_pg962cdp: the five voice exclusion settings read the engine's defaults, refuse values the config refuses, and
+    /// each control writes its own key under `global.speakerLabels.voice.exclusion`.
+    func testVoiceExclusionReadsItsDefaultsAndWritesEachKey() throws {
+        XCTAssertEqual(MeetingsVoiceNaming(raw: nil).exclusion, MeetingsVoiceNaming.Exclusion())
+        let set = try raw(#"""
+        {"global":{"speakerLabels":{"voice":{"exclusion":{"enabled":false,"margin":0.3,"maxConfidence":0.5,"minLines":5,"coherence":0.9}}}}}
+        """#)
+        XCTAssertEqual(MeetingsVoiceNaming(raw: set).exclusion,
+                       .init(enabled: false, margin: 0.3, maxConfidence: 0.5, minLines: 5, coherence: 0.9))
+        let wrong = try raw(#"{"global":{"speakerLabels":{"voice":{"exclusion":{"margin":3,"maxConfidence":1.5,"minLines":1e300}}}}}"#)
+        let read = MeetingsVoiceNaming(raw: wrong).exclusion
+        XCTAssertEqual(read.margin, 0.15)
+        XCTAssertEqual(read.maxConfidence, 0.69)
+        XCTAssertEqual(read.minLines, MeetingsVoiceNaming.Exclusion.maxLines, "a huge count is clamped, never a trap")
+
+        // The controls the card draws: each shows its own key's value and writes that key.
+        var writes = [String: String]()
+        let card = MeetingsVoiceNamingCard(naming: MeetingsVoiceNaming(raw: set)) { path, value in
+            writes[path.joined(separator: ".")] = "\(value)"
+        }
+        let sliders = MeetingsVoiceNamingCard.exclusionSliders
+        XCTAssertEqual(sliders.map(\.key), ["margin", "maxConfidence", "coherence"], "three sliders, in the card's order")
+        let configured: [String: Double] = ["margin": 0.3, "maxConfidence": 0.5, "coherence": 0.9]
+        for slider in sliders {
+            XCTAssertEqual(card.naming.exclusion[keyPath: slider.value], configured[slider.key], "\(slider.key) shows its own value")
+        }
+        XCTAssertFalse(card.exclusionEnabled.wrappedValue)
+        XCTAssertEqual(card.exclusionMinLines.wrappedValue, 5)
+        card.exclusionEnabled.wrappedValue = true
+        card.exclusionMinLines.wrappedValue = 4
+        let committed: [String: Double] = ["margin": 0.4, "maxConfidence": 0.6, "coherence": 0.7]
+        for slider in sliders { card.commit(slider, committed[slider.key] ?? 0) }
+        XCTAssertEqual(writes, [
+            "global.speakerLabels.voice.exclusion.enabled": "true",
+            "global.speakerLabels.voice.exclusion.minLines": "4",
+            "global.speakerLabels.voice.exclusion.margin": "0.4",
+            "global.speakerLabels.voice.exclusion.maxConfidence": "0.6",
+            "global.speakerLabels.voice.exclusion.coherence": "0.7",
+        ])
     }
 
     func testRoomDeviceThresholdReadsAndWritesTheSeatSetting() throws {
@@ -115,7 +170,7 @@ final class MeetingsVoiceSettingsTests: XCTestCase {
             let request = VNRecognizeTextRequest()
             request.recognitionLevel = .accurate
             request.usesLanguageCorrection = false
-            try VNImageRequestHandler(cgImage: image).perform([request])
+            try recognizeText(in: image, with: request)
             let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
             for word in expected {
                 XCTAssertTrue(text.contains(word), "drawn: \(word) in\n\(text)")

@@ -7,10 +7,9 @@ import type { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { TranscriptLines as Lines } from "@genesiscz/utils/transcribe/lines";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { type ClipPlan, cutClip, probeAudio } from "./audio";
-import { clipPlan, itemMoment, type ListenSettings } from "./moment";
+import { clipPlan, itemMoment, type ListenSettings, meetingWordTimedLines } from "./moment";
 import { type QuestionItem, questionLabel } from "./questions";
 import { resolveToneSound, type ToneSound } from "./tone-sound";
-import { meetingWordTimingCache } from "./word-timings";
 
 export type { ClipPlan } from "./audio";
 export { type ListenSettings, SPEAKER_PAD_SEC } from "./moment";
@@ -21,6 +20,11 @@ export interface ClipSettings {
     pads: ListenPads;
     /** The tone's sound (`resolveToneSound`); absent when the tone is off. */
     toneSound?: ToneSound;
+    /**
+     * The meeting's corrected lines with their cached word times (`meetingWordTimedLines`). A "Who says" clip cuts at its
+     * quoted words when they cover its line; absent when the meeting has no ready word timing cache.
+     */
+    wordTimedLines?: readonly TranscriptEntry[];
 }
 
 /** The clip settings of a run: a sound file's length is read here once, not for each question. */
@@ -32,6 +36,14 @@ export async function clipSettings(listen: ListenSettings, pads: ListenPads): Pr
         ui.warn(toneSound.fallback);
     }
     return { listen, pads, ...(toneSound ? { toneSound } : {}) };
+}
+
+/** A run's word-timed lines (`meetingWordTimedLines`), to spread into its clip settings. */
+export async function wordTimedClips(
+    options: Parameters<typeof meetingWordTimedLines>[0]
+): Promise<Pick<ClipSettings, "wordTimedLines">> {
+    const wordTimedLines = await meetingWordTimedLines(options);
+    return wordTimedLines ? { wordTimedLines } : {};
 }
 
 /**
@@ -46,13 +58,11 @@ export function questionClip(
         transcript: readonly TranscriptEntry[] | TranscriptLines;
     } & ClipSettings
 ): ClipPlan {
-    const { question, pads, toneSound, ...input } = options;
+    const { question, pads, toneSound, wordTimedLines, ...input } = options;
     const entries = options.transcript instanceof Lines ? options.transcript.entries : options.transcript;
     const quote = question.question.match(/^Who says "(.+)"/s)?.[1];
     if (quote) {
-        const timed = entries.some((line) => line.words?.length)
-            ? entries
-            : meetingWordTimingCache(options.record.id).read(entries).entries;
+        const timed = entries.some((line) => line.words?.length) ? entries : (wordTimedLines ?? []);
         for (const line of timed) {
             const start = line.text.indexOf(quote);
             const first = line.words?.find(

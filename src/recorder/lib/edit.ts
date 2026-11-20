@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
@@ -8,15 +8,23 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { fillerListsOf, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { isArbitrationBusy, withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
-import { type AudioFacts, audioLanesOf } from "@genesiscz/utils/recording-editor/audio-lanes";
+import { type AudioFacts, audioLanesOf, movieTracksPlayed } from "@genesiscz/utils/recording-editor/audio-lanes";
 import { bubbleFromSidecar, cameraMoviePath, readCameraSidecar } from "@genesiscz/utils/recording-editor/camera";
 import { cutIssues, type EditIssue } from "@genesiscz/utils/recording-editor/check";
 import {
     audioTrackCount,
+    DENOISE_PREVIEW_SECONDS,
+    type DenoisePreviewInput,
     denoisedSourcePath,
+    denoiseFilter,
+    denoisePreviewArgv,
+    denoisePreviewPath,
+    denoiseSchema,
     ensureDenoisedSource,
+    removeOldDenoisePreviews,
     syncDenoisedTranscript,
 } from "@genesiscz/utils/recording-editor/denoise";
+import { isMovieExportFormat, recordExport } from "@genesiscz/utils/recording-editor/exports";
 import { exportVideoArgv } from "@genesiscz/utils/recording-editor/ffmpeg";
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
 import { integratedLoudness, recordingLaneInputs } from "@genesiscz/utils/recording-editor/loudness";
@@ -718,7 +726,7 @@ async function probeFacts({
     audioFacts?: AudioFacts;
     playheadUs?: number;
 }): Promise<OpFacts> {
-    if (op.op === "audioLane" && !project.audio.lanes) {
+    if ((op.op === "audioLane" || op.op === "audioMute" || op.op === "audioUnmute") && !project.audio.lanes) {
         return { audioFacts: audioFacts ?? (await audioFactsOf(project.source.video, { prepare: true })) };
     }
 
@@ -1459,6 +1467,97 @@ async function cleanRecordingAudio(options: {
 }
 
 /**
+ * The noise reduction of the edit made audible before an export: `seconds` (5) of the recording's sound from SOURCE
+ * second `atSec`, mixed as the export mixes it (EditRenderer): nothing when the edit's sound is off, else every lane of
+ * `audioLanesOf` (the saved lanes, or the ones the movie's tracks and sidecars make, muted tracks included) that is not
+ * muted or silent, at its volume times the recording's volume, a sidecar from its offset. Each goes through the
+ * filters the export uses (`denoiseFilter`, a sidecar lane at track 0's strength, as `cleanRecordingAudio` cleans it)
+ * into one file in the denoise cache beside the movie. The edit's noise reduction is used, or the default strength when
+ * it is off. Each new preview removes the earlier ones of the movie; the same start, settings and mix reuse the file.
+ */
+export async function previewDenoise(
+    value: string,
+    options: { atSec: number; seconds?: number }
+): Promise<{ path: string; fromSec: number; seconds: number; reductionDb: number; made: boolean; removed: number }> {
+    const { project } = await openProject(value);
+
+    if (!project.audio.include) {
+        throw new Error("the edit's sound is off, so there is nothing to preview");
+    }
+
+    const settings = project.audio.denoise ?? denoiseSchema.parse({});
+    const source = project.source.video;
+    const seconds = options.seconds ?? DENOISE_PREVIEW_SECONDS;
+    const fromSec = Math.max(0, Math.round(options.atSec * 1000) / 1000);
+    const facts = await recordingLaneFacts(project, false);
+    const lanes = audioLanesOf(project, facts);
+    const played = new Set(movieTracksPlayed(lanes, facts));
+    const cleans = (track: number) => settings.tracks?.includes(track) ?? true;
+    const gain = (volume: number) => volume * project.audio.volume;
+    const inputs: DenoisePreviewInput[] = [];
+    // The renderer mixes music and voiceovers apart; a muted lane or a silent one adds nothing.
+    const playing = lanes.filter(
+        (lane) => lane.source !== "music" && lane.source !== "voiceover" && !lane.muted && gain(lane.volume) > 0
+    );
+    const tracks = playing.flatMap((lane) =>
+        !lane.file && lane.track !== undefined && played.has(lane.track)
+            ? [
+                  {
+                      track: lane.track,
+                      volume: gain(lane.volume),
+                      ...(cleans(lane.track) ? { filter: denoiseFilter(settings, lane.track) } : {}),
+                  },
+              ]
+            : []
+    );
+
+    if (tracks.length > 0) {
+        inputs.push({ file: source, fromSec, tracks });
+    }
+
+    for (const lane of playing) {
+        const file = lane.file ? resolve(dirname(source), lane.file) : undefined;
+        // A lane that starts after the preview's window ends adds nothing to it.
+        const laneFromSec = fromSec - lane.offsetMs / 1000;
+
+        if (!file || !existsSync(file) || laneFromSec + seconds <= 0) {
+            continue;
+        }
+
+        const clean = cleans(0) && (lane.source === "mic" || lane.source === "system");
+        inputs.push({
+            file,
+            fromSec: laneFromSec,
+            tracks: [{ track: 0, volume: gain(lane.volume), ...(clean ? { filter: denoiseFilter(settings, 0) } : {}) }],
+        });
+    }
+
+    const output = denoisePreviewPath({ source, settings, fromSec, seconds, inputs });
+    const removed = removeOldDenoisePreviews({ source, keep: output }).length;
+    const answer = { path: output, fromSec, seconds, reductionDb: settings.reductionDb, removed };
+
+    if (existsSync(output)) {
+        return { ...answer, made: false };
+    }
+
+    mkdirSync(dirname(output), { recursive: true });
+    const partial = `${output.slice(0, -4)}.${process.pid}.partial.m4a`;
+
+    try {
+        await runVideoCommand({
+            command: denoisePreviewArgv({ inputs, seconds, output: partial }),
+            timeoutMs: 120_000,
+        });
+        await rename(partial, output);
+    } finally {
+        await rm(partial, { force: true });
+    }
+
+    log.debug({ value, output, fromSec, seconds, inputs: inputs.length, removed }, "made a noise reduction preview");
+    return { ...answer, made: true };
+}
+
+/**
  * Runs `render` on the edit as it should export: the edit itself, or with `audio.denoise` a copy in a scratch folder
  * (`denoisedRenderProject`) whose source is the cleaned movie (`ensureDenoisedSource`, cached beside the source). The
  * renderer reads the transcript beside its source movie for captions and ducking, so the source's transcript is copied
@@ -1530,6 +1629,7 @@ export async function exportAs(
                 part: options.part,
             });
             log.debug({ value, part: options.part, clips: trimmed.clips.length, out }, "exporting a part of the edit");
+            // A part is never recorded in the export ledger, so Copy Movie never hands it out as the movie.
             const answer = await renderExport(copy, {
                 out,
                 format: asked,
@@ -1545,21 +1645,42 @@ export async function exportAs(
         }
     }
 
+    const rendered: RenderedExport = { revision: null };
+    const answer = await renderExport(value, options, rendered);
+
+    // Copy Movie and a drag hand out only a movie export of the edit as it is now (shareableMovieOf); a GIF is no movie.
+    if (answer.ok && answer.path && rendered.format !== undefined && isMovieExportFormat(rendered.format)) {
+        await recordExport({ folder: dirname(editPathOf(value)), file: answer.path, revision: rendered.revision });
+    }
+
     // finishExport applies the edit's export.subtitles default, which a GIF leaves out.
-    return finishExport({ value, answer: await renderExport(value, options), subtitles: options.subtitles });
+    return finishExport({ value, answer, subtitles: options.subtitles });
 }
 
-/** Renders the whole edit into its export target in the asked format; finishExport adds the subtitles and chapters. */
+/** What `renderExport` rendered, for the export ledger: the edit's revision (null without an edit.json) and format. */
+interface RenderedExport {
+    revision: number | null;
+    format?: ExportFormat;
+}
+
+/**
+ * Renders the whole edit into its export target in the asked format; finishExport adds the subtitles and chapters.
+ * `rendered` gets the edit's revision it rendered and the format, for the export ledger.
+ */
 async function renderExport(
     value: string,
-    options: { out?: string; format?: ExportFormat } & ExportRun
+    options: { out?: string; format?: ExportFormat } & ExportRun,
+    rendered: RenderedExport = { revision: null }
 ): Promise<ExportAnswer & { replaced?: boolean }> {
     const opened = await openProject(value);
+    rendered.revision = opened.fresh ? null : opened.project.revision;
     const asked = askedExportFormat({ format: options.format, out: options.out, project: opened.project });
 
     if (!isExportFormat(asked)) {
         return formatRefusal(asked);
     }
+
+    rendered.format = asked;
 
     const host = { size: options.size, onProgress: options.onProgress };
     const output = exportTargetOf({
@@ -1603,7 +1724,7 @@ async function renderExport(
     const format = asked;
 
     if (opened.fresh) {
-        writeProject(opened.path, opened.project);
+        rendered.revision = writeProject(opened.path, opened.project).revision;
     }
 
     if (existsSync(output) && !options.overwrite) {

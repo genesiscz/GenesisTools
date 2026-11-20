@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import GenesisKitTestSupport
 import SwiftUI
 import Vision
 import XCTest
@@ -33,7 +34,7 @@ final class MeetingsReviewRowTests: XCTestCase {
             if let captured = await WindowSnapshot.capture(panel), let image = captured.image.cgImage {
                 let request = VNRecognizeTextRequest()
                 request.recognitionLevel = .fast
-                try VNImageRequestHandler(cgImage: image).perform([request])
+                try recognizeText(in: image, with: request)
                 shot = captured.image
                 text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
                 if expected.allSatisfy(text.contains) { break }
@@ -56,14 +57,14 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertEqual(word.wordSuggestion, "Zorb")
         XCTAssertEqual(word.dictionaryQuestion(in: [old, pending])?.id, "dict")
         let rows = try rows().rows
-        var dictionary = rows[0]
+        var dictionary = try rows.required(0)
         dictionary = try JSONDecoder().decode(ReviewRow.self, from: Data(#"{"id":"dict","label":"Q2","kind":"question","kindWord":"Question","status":"suggested","priority":31,"group":"words","what":"Add Zorb?","parts":[],"choices":[],"edit":"none","sources":[],"target":{"kind":"item","id":"dict"}}"#.utf8))
         XCTAssertEqual(ItemsTab.wordRows(rows + [dictionary], items: [word, pending]).map(\.id), rows.map(\.id))
         let action = DecisionAction.answer("dict", "add")
         let encoded = try JSONDecoder().decode(DecisionAction.self, from: JSONEncoder().encode(action))
         XCTAssertEqual(encoded.answer, "add")
         let reach = try JSONDecoder().decode(DecisionReach.self, from: Data(#"{"items":[],"dictionary":[{"project":"work","heard":"zorb","fixed":"Zorb","seenBefore":0,"teaches":true,"adds":true}]}"#.utf8))
-        XCTAssertEqual(ReachList.dictionaryWords(reach.dictionary[0]), "Adds “zorb” → “Zorb” to the work dictionary now")
+        XCTAssertEqual(ReachList.dictionaryWords(try reach.dictionary.required(0)), "Adds “zorb” → “Zorb” to the work dictionary now")
     }
 
     func testRepeatedWordRowsDecodeCountsAndKeepTheEngineOrderAfterAnAnswer() throws {
@@ -78,7 +79,7 @@ final class MeetingsReviewRowTests: XCTestCase {
         let row = try JSONDecoder().decode(ReviewRow.self, from: Data(json.utf8))
         XCTAssertEqual(row.group, "words")
         XCTAssertEqual(row.occurrences, 31)
-        XCTAssertNil(rows[2].occurrences, "older replies still decode")
+        XCTAssertNil(try rows.required(2).occurrences, "older replies still decode")
         XCTAssertEqual(ItemsTab.questionGroups.map(\.title), ["Rules", "Spot check", "Long stretches", "Repeated words"])
     }
 
@@ -241,7 +242,7 @@ final class MeetingsReviewRowTests: XCTestCase {
 
     func testAChangedRowPatchReconcilesOptimisticStatusAndKeepsNewerDecisions() throws {
         let initial = try rows()
-        let before = initial.rows[0]
+        let before = try initial.rows.required(0)
         var after = before
         after.status = "confirmed"
         after.answer = "Dana Example"
@@ -249,23 +250,23 @@ final class MeetingsReviewRowTests: XCTestCase {
         var optimistic = before
         optimistic.status = "confirmed"
         let current = ReviewRows(meeting: "m", rows: [optimistic] + initial.rows.dropFirst(), hidden: initial.hidden)
-        XCTAssertEqual(patch.applying(to: current, token: "ours", latest: [before.id: "ours"]).rows[0], after,
+        XCTAssertEqual(try patch.applying(to: current, token: "ours", latest: [before.id: "ours"]).rows.required(0), after,
                        "the event can set the status before the response brings the complete row")
-        XCTAssertEqual(patch.applying(to: current, token: "ours", latest: [before.id: "later"]).rows[0], optimistic,
+        XCTAssertEqual(try patch.applying(to: current, token: "ours", latest: [before.id: "later"]).rows.required(0), optimistic,
                        "a newer event can have exactly the same status, so its token must still protect it")
         var newer = after
         newer.answer = "Alex Example"
         let reloaded = ReviewRows(meeting: "m", rows: [newer] + initial.rows.dropFirst(), hidden: initial.hidden)
-        XCTAssertEqual(patch.applying(to: reloaded, token: "ours", latest: [:]).rows[0], newer,
+        XCTAssertEqual(try patch.applying(to: reloaded, token: "ours", latest: [:]).rows.required(0), newer,
                        "a newer full read is protected by its row value too")
-        XCTAssertEqual(patch.applying(to: initial, token: "ours", latest: [:]).rows[1], initial.rows[1],
+        XCTAssertEqual(try patch.applying(to: initial, token: "ours", latest: [:]).rows.required(1), try initial.rows.required(1),
                        "unrelated rows are kept")
     }
 
     func testAFullRowsReadReconcilesOldEventTokensBeforeTheNextPatch() throws {
         let detail = MeetingDetailModel(id: "m", window: nil)
         let full = try rows()
-        let before = full.rows[2]
+        let before = try full.rows.required(2)
         detail.rowDecisionTokens[before.id] = "old-event"
         detail.rows = .loaded(full)
         detail.rowsLanded(full)
@@ -273,25 +274,25 @@ final class MeetingsReviewRowTests: XCTestCase {
         var after = before
         after.status = "rejected"
         let patch = rowPatch([.init(id: before.id, before: before, after: after)], order: full.rows.map(\.id))
-        XCTAssertEqual(patch.applying(to: full, token: "ours", latest: detail.rowDecisionTokens).rows[2], after,
+        XCTAssertEqual(try patch.applying(to: full, token: "ours", latest: detail.rowDecisionTokens).rows.required(2), after,
                        "a reconnect or full read must clear markers that predate its snapshot")
         let newer = try entry(token: "newer-event", action: #"{"kind":"reject","items":["i3"]}"#,
                               changes: [("i3", "confirmed", "rejected")])
         detail.markRows(newer)
-        XCTAssertEqual(patch.applying(to: full, token: "ours", latest: detail.rowDecisionTokens).rows[2], before,
+        XCTAssertEqual(try patch.applying(to: full, token: "ours", latest: detail.rowDecisionTokens).rows.required(2), before,
                        "an event after that full read still protects the newer decision")
     }
 
     func testARowPatchAddsRemovesOrdersAndUpdatesVisibilityWithoutDroppingConcurrentRows() throws {
         let initial = try rows()
         let current = ReviewRows(meeting: "m", rows: Array(initial.rows.prefix(2)), hidden: .init(lowPriority: 1, minPriority: 0.5))
-        let patch = rowPatch([.init(id: "i2", before: initial.rows[1], after: nil),
-                              .init(id: "i3", before: nil, after: initial.rows[2])], order: ["i3", "q1"], hiddenBefore: 1)
+        let patch = rowPatch([.init(id: "i2", before: try initial.rows.required(1), after: nil),
+                              .init(id: "i3", before: nil, after: try initial.rows.required(2))], order: ["i3", "q1"], hiddenBefore: 1)
         let patched = patch.applying(to: current, token: "ours", latest: [:])
         XCTAssertEqual(patched.rows.map(\.id), ["i3", "q1"])
         XCTAssertEqual(patched.hidden.lowPriority, 0)
         let concurrent = ReviewRows(meeting: "m", rows: initial.rows, hidden: current.hidden)
-        let remove = rowPatch([.init(id: "i2", before: initial.rows[1], after: nil)], order: ["q1"], hiddenBefore: 1)
+        let remove = rowPatch([.init(id: "i2", before: try initial.rows.required(1), after: nil)], order: ["q1"], hiddenBefore: 1)
         XCTAssertEqual(remove.applying(to: concurrent, token: "ours", latest: [:]).rows.map(\.id), ["q1", "i3"],
                        "an added row not present in the response's order survives")
         let protected = patch.applying(to: current, token: "ours", latest: ["i2": "later"])
@@ -316,17 +317,17 @@ final class MeetingsReviewRowTests: XCTestCase {
         let row = try XCTUnwrap(detail.rows.value?.rows.first)
         XCTAssertEqual(row.status, "confirmed")
         XCTAssertEqual(row.answer, "Dana Example", "the held row's choices mark the answer, and its fold shows it")
-        XCTAssertEqual(DecisionState.of(row.choices[0], in: row), .confirmed)
+        XCTAssertEqual(DecisionState.of(try row.choices.required(0), in: row), .confirmed)
         XCTAssertEqual(ReviewRowView.decidedWords(row), "Confirmed by you: heard it twice")
 
-        var after = initial.rows[0]
+        var after = try initial.rows.required(0)
         after.status = "confirmed"
         after.answer = "Dana Example"
         after.decision = .init(token: "t-answer", actor: .window, by: "you", action: "answer", reason: "heard it twice",
                                question: "q1", at: "2026-11-09T17:32:38.123Z")
-        let patch = rowPatch([.init(id: "q1", before: initial.rows[0], after: after)], order: initial.rows.map(\.id))
+        let patch = rowPatch([.init(id: "q1", before: try initial.rows.required(0), after: after)], order: initial.rows.map(\.id))
         let current = try XCTUnwrap(detail.rows.value)
-        XCTAssertEqual(patch.applying(to: current, token: "t-answer", latest: detail.rowDecisionTokens).rows[0], after,
+        XCTAssertEqual(try patch.applying(to: current, token: "t-answer", latest: detail.rowDecisionTokens).rows.required(0), after,
                        "the marked row is this decision's row, so the service's complete row replaces it")
     }
 
@@ -362,15 +363,15 @@ final class MeetingsReviewRowTests: XCTestCase {
         let entry = try entry(token: "ours", action: #"{"kind":"confirm","items":["i2"]}"#, changes: [("i2", "suggested", "confirmed")])
         let legacy = DecisionResult(entry: entry, skipped: [], warnings: nil)
         XCTAssertFalse(detail.patchDecision(legacy), "a response from an older service retains the full read fallback")
-        var after = initial.rows[1]
+        var after = try initial.rows.required(1)
         after.status = "confirmed"
-        let patch = rowPatch([.init(id: "i2", before: initial.rows[1], after: after)], order: initial.rows.map(\.id))
+        let patch = rowPatch([.init(id: "i2", before: try initial.rows.required(1), after: after)], order: initial.rows.map(\.id))
         var result = legacy
         result.rows = patch
         detail.markRows(entry)
         XCTAssertTrue(detail.patchDecision(result))
-        XCTAssertEqual(detail.rows.value?.rows[1], after)
-        XCTAssertEqual(detail.record.value?.items[0].status, "confirmed")
+        XCTAssertEqual(try detail.rows.value?.rows.required(1), after)
+        XCTAssertEqual(try detail.record.value?.items.required(0).status, "confirmed")
         XCTAssertEqual(detail.record.value?.title, "After")
         var newer = try XCTUnwrap(detail.record.value)
         newer.title = "Someone else's title"
@@ -386,7 +387,7 @@ final class MeetingsReviewRowTests: XCTestCase {
         // A suggestion is an open item at the apply line (the meeting list's count); i3 is decided with no confidence.
         XCTAssertEqual(ItemsFilter.suggestions.rows(rows, atLine: ["i2"], applyAbove: 0.5).map(\.id), ["i2"])
         XCTAssertEqual(ItemsFilter.suggestions.rows(rows, atLine: [], applyAbove: 0.9).map(\.id), [], "below the line: under All only")
-        var confirmed = rows[1]
+        var confirmed = try rows.required(1)
         confirmed.status = "confirmed"
         XCTAssertTrue(ItemsFilter.isSuggestion(confirmed, atLine: [], applyAbove: 0.5), "a row confirmed here keeps its place in the filter")
         XCTAssertEqual(ItemsFilter.effective(.questions, questions: 1, suggestions: 1), .questions)
@@ -415,12 +416,12 @@ final class MeetingsReviewRowTests: XCTestCase {
                        "priority is the engine's order, the one listen asks in")
         XCTAssertEqual(MeetingDetailModel.visibleRows(rows, order: .time, decided: .inPlace).map(\.id), ["i3", "i2", "q1"])
         XCTAssertEqual(MeetingDetailModel.visibleRows(rows, order: .priority, decided: .hidden).map(\.id), ["q1", "i2"])
-        XCTAssertEqual(rows[1].whenText, "05:09")
-        XCTAssertEqual(rows[2].whenText, "00:12–00:30")
-        XCTAssertEqual(ReviewRowView.decidedWords(rows[2]), "Confirmed by an agent (Claude Code, session 11111111): the calendar says so",
+        XCTAssertEqual(try rows.required(1).whenText, "05:09")
+        XCTAssertEqual(try rows.required(2).whenText, "00:12–00:30")
+        XCTAssertEqual(ReviewRowView.decidedWords(try rows.required(2)), "Confirmed by an agent (Claude Code, session 11111111): the calendar says so",
                        "R35: who decided it and why")
-        XCTAssertEqual(ReviewRowView.actorGlyph(rows[2]), "sparkles", "a narrow folded row still marks a decision an agent made")
-        XCTAssertNil(ReviewRowView.actorGlyph(rows[1]), "a row nobody decided, or the reader decided, has no mark")
+        XCTAssertEqual(ReviewRowView.actorGlyph(try rows.required(2)), "sparkles", "a narrow folded row still marks a decision an agent made")
+        XCTAssertNil(ReviewRowView.actorGlyph(try rows.required(1)), "a row nobody decided, or the reader decided, has no mark")
     }
 
     func testAHeldDecidedRowKeepsItsChoicesAndHeight() throws {
@@ -454,7 +455,7 @@ final class MeetingsReviewRowTests: XCTestCase {
                 }, "OCR needs a CPU device for \(stage)")
                 request.setComputeDevice(cpu, for: stage)
             }
-            try VNImageRequestHandler(cgImage: held).perform([request])
+            try recognizeText(in: held, with: request)
             let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
             XCTAssertTrue(text.contains("Dana Example"), text)
             XCTAssertTrue(text.contains("Alex Example"), "the other answer stays available: \(text)")
@@ -472,17 +473,17 @@ final class MeetingsReviewRowTests: XCTestCase {
 
     func testReturnEditsOrConfirmsAndNumberedChoicesCarryTheirDecision() throws {
         let rows = try rows().rows
-        XCTAssertEqual(ItemsTab.returnAction(for: rows[1], key: .edit), .edit, "R11: Return opens the editor")
-        XCTAssertEqual(ItemsTab.returnAction(for: rows[1], key: .confirm), .choose(rows[1].choices[0]), "or takes the suggestion")
-        XCTAssertEqual(ItemsTab.returnAction(for: rows[1], key: .edit, editing: true), .submit,
+        XCTAssertEqual(ItemsTab.returnAction(for: try rows.required(1), key: .edit), .edit, "R11: Return opens the editor")
+        XCTAssertEqual(ItemsTab.returnAction(for: try rows.required(1), key: .confirm), .choose(try rows.required(1).choices.required(0)), "or takes the suggestion")
+        XCTAssertEqual(ItemsTab.returnAction(for: try rows.required(1), key: .edit, editing: true), .submit,
                        "the second Return saves the existing draft instead of reopening its editor")
-        XCTAssertEqual(ItemsTab.returnAction(for: rows[0], key: .confirm, editing: true), .submit,
+        XCTAssertEqual(ItemsTab.returnAction(for: try rows.required(0), key: .confirm, editing: true), .submit,
                        "an active custom answer takes precedence over the suggested choice")
-        XCTAssertEqual(rows[1].choices[0].action.decision(on: rows[1]), .confirm(["i2"]))
-        XCTAssertEqual(rows[1].choices[1].action.decision(on: rows[1]), .reject(["i2"]))
-        XCTAssertEqual(rows[0].choices[0].action.decision(on: rows[0]), .answer("q1", "Dana Example"))
-        XCTAssertEqual(rows[1].choices[0].confidence, 0.82, "R49: the suggestion's confidence")
-        XCTAssertNil(rows[1].choices[1].confidence)
+        XCTAssertEqual(try rows.required(1).choices.required(0).action.decision(on: try rows.required(1)), .confirm(["i2"]))
+        XCTAssertEqual(try rows.required(1).choices.required(1).action.decision(on: try rows.required(1)), .reject(["i2"]))
+        XCTAssertEqual(try rows.required(0).choices.required(0).action.decision(on: try rows.required(0)), .answer("q1", "Dana Example"))
+        XCTAssertEqual(try rows.required(1).choices.required(0).confidence, 0.82, "R49: the suggestion's confidence")
+        XCTAssertNil(try rows.required(1).choices.required(1).confidence)
     }
 
     func testAQuestionFlowsAsWordsAroundItsTimesAndAFoldedQuestionShowsItsAnswer() throws {
@@ -495,21 +496,21 @@ final class MeetingsReviewRowTests: XCTestCase {
                        "the text between two times is its words, so a time sits inside its sentence")
         XCTAssertEqual(flow.map(\.spaceAfter), [true, true, true, true, false, false, true, true, true, true, true, true, false],
                        "a space is the trailing room of the item before it: no line starts with one, and \"(\" keeps its time")
-        XCTAssertEqual(flow[5].piece.target, .time(1210), "a time stays one piece and keeps its Moment")
+        XCTAssertEqual(try flow.required(5).piece.target, .time(1210), "a time stays one piece and keeps its Moment")
         XCTAssertEqual(ReviewRowView.units(flow).map { $0.map(\.piece.text).joined() },
                        ["Who", "asks", "'Rename", "it?'", "(20:10;", "the", "answer", "at", "20:16", "is", "'Sure'?"],
                        "a line breaks only at a space: the bracket keeps its time, and the time keeps its semicolon")
 
-        var answered = rows[0]
+        var answered = try rows.required(0)
         answered.status = "confirmed"
         answered.answer = "Dana Example"
         XCTAssertEqual(ReviewRowView.foldedText(answered), "20:00 Who speaks at 20:10", "a folded question reads as its time and what it asked")
         XCTAssertEqual(ReviewRowView.foldedAnswer(answered), "Dana Example", "and its answer is its own text, which never truncates")
         XCTAssertEqual(ReviewRowView.title(answered), "Who speaks at 20:10", "the pin's card titles a question by what it asks")
-        XCTAssertEqual(ReviewRowView.title(rows[1]), "OMP → EMP")
-        XCTAssertEqual(ReviewRowView.foldedText(rows[2]), "Speaker 3 00:12–00:30 → Alex Example")
-        XCTAssertNil(ReviewRowView.foldedAnswer(rows[2]), "a range's line already ends in its speaker")
-        XCTAssertEqual(ReviewRowView.reference(rows[2]), "Speaker range 00:12–00:30", "another row names it in words, not by its item id")
+        XCTAssertEqual(ReviewRowView.title(try rows.required(1)), "OMP → EMP")
+        XCTAssertEqual(ReviewRowView.foldedText(try rows.required(2)), "Speaker 3 00:12–00:30 → Alex Example")
+        XCTAssertNil(ReviewRowView.foldedAnswer(try rows.required(2)), "a range's line already ends in its speaker")
+        XCTAssertEqual(ReviewRowView.reference(try rows.required(2)), "Speaker range 00:12–00:30", "another row names it in words, not by its item id")
 
         // A source line that the row already quotes shows its time only.
         let quoting = TimelineFixture.questionRow
@@ -517,7 +518,7 @@ final class MeetingsReviewRowTests: XCTestCase {
                      "the row's said line holds these words: the same sentence twice was noise")
         XCTAssertEqual(ReviewRowView.sourceQuote("We ship on Friday.", in: quoting), "We ship on Friday.")
         XCTAssertNil(ReviewRowView.sourceQuote(nil, in: quoting))
-        XCTAssertEqual(ReviewRowView.sourceQuote("Who speaks?", in: rows[0]), "Who speaks?", "a row that quotes nothing keeps its source's words")
+        XCTAssertEqual(ReviewRowView.sourceQuote("Who speaks?", in: try rows.required(0)), "Who speaks?", "a row that quotes nothing keeps its source's words")
     }
 
     func testCommentAndWordSplitReachTheJournalIntactWithoutTheService() throws {
@@ -533,7 +534,7 @@ final class MeetingsReviewRowTests: XCTestCase {
                 XCTFail("The fallback dropped the structured answer for \(action.question ?? "the question"): \(args)")
                 continue
             }
-            let payload = try JSONDecoder().decode(DecisionAction.self, from: Data(args[3].utf8))
+            let payload = try JSONDecoder().decode(DecisionAction.self, from: Data(try args.required(3).utf8))
             XCTAssertEqual(payload, action)
             XCTAssertEqual(Array(args.dropFirst(4)), ["--reason", "by ear", "--json"])
         }
@@ -545,7 +546,7 @@ final class MeetingsReviewRowTests: XCTestCase {
         only.lookAlikes = "leave"
         let args = try XCTUnwrap(MeetingDetailModel.commandArgs(meeting: "m", action: only, reason: nil))
         XCTAssertEqual(Array(args.prefix(3)), ["decide", "m", "--action"])
-        let decoded = try JSONDecoder().decode(DecisionAction.self, from: Data(args[3].utf8))
+        let decoded = try JSONDecoder().decode(DecisionAction.self, from: Data(try args.required(3).utf8))
         XCTAssertEqual(decoded, only)
         let wire = try XCTUnwrap(String(data: JSONEncoder().encode(only), encoding: .utf8))
         XCTAssertTrue(wire.contains(#""lookAlikes":"leave""#), wire)
@@ -591,13 +592,13 @@ final class MeetingsReviewRowTests: XCTestCase {
         let reach = try JSONDecoder().decode(DecisionReach.self, from: Self.reachJSON)
         XCTAssertEqual(reach.items.map(\.role), [.sets, .lookAlike, .same])
         XCTAssertEqual(reach.judged.map(\.id), ["i3", "q2"], "the same question over the same span is not judged again")
-        XCTAssertEqual(reach.items[0].row?.whenText, "00:12–00:30", "each item carries its own time and play target")
+        XCTAssertEqual(try reach.items.required(0).row?.whenText, "00:12–00:30", "each item carries its own time and play target")
         let onlySame = DecisionReach(items: [.init(id: "q3", role: .same)], lines: nil, dictionary: [])
         XCTAssertTrue(onlySame.isEmpty, "a reach that is only the asked question itself opens no sheet")
         let old = try JSONDecoder().decode(DecisionReach.self, from: Data(#"{"items":[{"id":"q2","match":"same"}],"dictionary":[]}"#.utf8))
         XCTAssertEqual(old.items.first?.role, .lookAlike, "an engine older than the roles listed only look-alikes")
 
-        let pending = MeetingDetailModel.PendingReach(row: try rows().rows[0], action: .answer("q1", "Dana Example"), reason: nil, reach: reach)
+        let pending = MeetingDetailModel.PendingReach(row: try rows().rows.required(0), action: .answer("q1", "Dana Example"), reason: nil, reach: reach)
         XCTAssertEqual(pending.initiallyStruck(), ["q2"], "what the replaced answer left out starts struck")
         XCTAssertEqual(pending.initiallyStruck(remembered: ["i3", "gone"]), ["q2", "i3"], "only items the sheet shows can start struck")
     }
@@ -607,7 +608,7 @@ final class MeetingsReviewRowTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         let window = MeetingsWindowModel(defaults: defaults, service: nil, loadDetail: { _ in })
         let detail = MeetingDetailModel(id: "m", window: window)
-        let row = try rows().rows[0]
+        let row = try rows().rows.required(0)
         let pending = MeetingDetailModel.PendingReach(row: row, action: .answer("q1", "Dana Example"), reason: nil,
             reach: try JSONDecoder().decode(DecisionReach.self, from: Self.reachJSON))
         detail.busyItems.insert(row.id) // isolate the checkbox from the asynchronous write
@@ -658,7 +659,7 @@ final class MeetingsReviewRowTests: XCTestCase {
         let detail = MeetingDetailModel(id: "m", window: window)
         detail.rows = .loaded(try rows())
         let reach = try JSONDecoder().decode(DecisionReach.self, from: Self.reachJSON)
-        let pending = MeetingDetailModel.PendingReach(row: try rows().rows[0], action: .answer("q1", "Dana Example"), reason: nil, reach: reach)
+        let pending = MeetingDetailModel.PendingReach(row: try rows().rows.required(0), action: .answer("q1", "Dana Example"), reason: nil, reach: reach)
         detail.pendingReach = pending
         detail.pendingStruck = pending.initiallyStruck()
         detail.toggleStruck("i3")
@@ -687,7 +688,7 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertEqual(MeetingDetailModel.commandArgs(meeting: "m", action: struck, reason: nil),
                        ["listen", "m", "--item", "q1", "--answer", "Dana Example", "--except", "i3", "q2", "--json"])
 
-        XCTAssertNil(MeetingDetailModel.changing(answer, on: rows[0]).replaces, "an open question is answered, not changed")
+        XCTAssertNil(MeetingDetailModel.changing(answer, on: try rows.required(0)).replaces, "an open question is answered, not changed")
         let decided = try JSONDecoder().decode(ReviewRow.self, from: Data("""
         {"id":"q1","label":"Q1","kind":"question","kindWord":"Question","status":"confirmed","what":"Who says this?","edit":"answer","sources":[],"parts":[],
          "choices":[{"value":"Dana Example","label":"Dana Example","role":"suggested","action":{"kind":"answer","answer":"Dana Example"}},
@@ -701,9 +702,9 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertTrue(wire.contains(#""replaces":"t-old""#) && wire.contains(#""except":["i3"]"#), wire)
 
         // Suggested, confirmed and rejected each have their own state, so their own hue and glyph.
-        XCTAssertEqual(DecisionState.of(rows[0].choices[0], in: rows[0]), .suggested)
-        XCTAssertEqual(DecisionState.of(decided.choices[1], in: decided), .confirmed, "the answer of a decided row is confirmed")
-        XCTAssertEqual(DecisionState.of(decided.choices[0], in: decided), .suggested)
+        XCTAssertEqual(DecisionState.of(try rows.required(0).choices.required(0), in: try rows.required(0)), .suggested)
+        XCTAssertEqual(DecisionState.of(try decided.choices.required(1), in: decided), .confirmed, "the answer of a decided row is confirmed")
+        XCTAssertEqual(DecisionState.of(try decided.choices.required(0), in: decided), .suggested)
         for state in [DecisionState.suggested, .confirmed, .rejected] {
             XCTAssertNotNil(state.glyph(.hueAndGlyph))
             XCTAssertNotNil(state.hue(.hueAndGlyph))
@@ -734,16 +735,16 @@ final class MeetingsReviewRowTests: XCTestCase {
 
     func testADraftDecidesByTheRowsEditKind() throws {
         let rows = try rows().rows
-        XCTAssertEqual(MeetingDetailModel.draftDecision("  EMP ", on: rows[1]), .respell("i2", to: "EMP"), "a spelling is a respell")
-        XCTAssertEqual(MeetingDetailModel.draftDecision("Dana Example", on: rows[0]), .answer("q1", "Dana Example"))
-        XCTAssertEqual(MeetingDetailModel.draftDecision("Bob", on: rows[2]), .respell("i3", to: "Bob"), "a person is a respell")
-        XCTAssertNil(MeetingDetailModel.draftDecision("   ", on: rows[1]))
+        XCTAssertEqual(MeetingDetailModel.draftDecision("  EMP ", on: try rows.required(1)), .respell("i2", to: "EMP"), "a spelling is a respell")
+        XCTAssertEqual(MeetingDetailModel.draftDecision("Dana Example", on: try rows.required(0)), .answer("q1", "Dana Example"))
+        XCTAssertEqual(MeetingDetailModel.draftDecision("Bob", on: try rows.required(2)), .respell("i3", to: "Bob"), "a person is a respell")
+        XCTAssertNil(MeetingDetailModel.draftDecision("   ", on: try rows.required(1)))
         XCTAssertTrue(MeetingDetailModel.mayReach(.answer("q1", "x")))
         XCTAssertFalse(MeetingDetailModel.mayReach(.reject(["i2"])))
     }
 
     func testQuestionWordingAndAnswerDraftsStaySeparate() throws {
-        let row = try rows().rows[0]
+        let row = try rows().rows.required(0)
         let detail = MeetingDetailModel(id: "m", window: nil, service: nil)
         detail.drafts[row.id] = "An answer draft"
         detail.editQuestion(row)
@@ -785,6 +786,15 @@ final class MeetingsReviewRowTests: XCTestCase {
         // A rule is never named by its id on screen (w_r1n8lvx5): the row's `decision.by` from the engine says what it
         // looked at, and the window's own words say "a rule".
         XCTAssertEqual(MeetingsWords.actor(DecisionActor(kind: "rule", rule: "E2")), "a rule")
+        // w_iit450te: with the window's rule table the words name what the rule looked at, as `decision.by` does.
+        let names = ["E2": "The attendance record shows who was there."]
+        XCTAssertEqual(MeetingsWords.actor(DecisionActor(kind: "rule", rule: "E2"), ruleNames: names),
+                       "a rule (the attendance record shows who was there)")
+        XCTAssertEqual(MeetingsWords.actor(DecisionActor(kind: "rule", rule: "E9"), ruleNames: names), "a rule")
+        let ruled = try entry(token: "t9", actor: #"{"kind":"rule","rule":"E2"}"#, action: #"{"kind":"confirm","items":["i2"]}"#,
+                              changes: [("i2", "suggested", "confirmed")])
+        let notice = MeetingsWindowModel.decisionNotice(ruled, items: 1, decisions: 1, meetingTitle: nil, ruleNames: names)
+        XCTAssertTrue(notice.hasPrefix("A rule (the attendance record shows who was there) "), notice)
         XCTAssertEqual(MeetingsWords.actor(DecisionActor(kind: "unknown")), "someone, before the history existed")
         let confirm = try entry(token: "t1", action: #"{"kind":"confirm","items":["i2","i4"]}"#,
                                 changes: [("i2", "suggested", "confirmed"), ("i4", "suggested", "confirmed")])
@@ -868,8 +878,8 @@ final class MeetingsReviewRowTests: XCTestCase {
         let question = ReviewRowView.foldedShapes(isQuestion: true)
         XCTAssertEqual(question.map(\.words), [true, false, false], "who decided it goes first: the mark says it is decided")
         XCTAssertEqual(question.map(\.revertWords), [true, true, false], "then Revert and edit becomes its glyph")
-        XCTAssertNil(question[2].textWidth, "a question's answer outlives its text")
-        XCTAssertNotNil(ReviewRowView.foldedShapes(isQuestion: false)[2].textWidth, "a row without an answer of its own is its text")
+        XCTAssertNil(try question.required(2).textWidth, "a question's answer outlives its text")
+        XCTAssertNotNil(try ReviewRowView.foldedShapes(isQuestion: false).required(2).textWidth, "a row without an answer of its own is its text")
         let widths = question.compactMap(\.textWidth)
         XCTAssertEqual(widths, widths.sorted(by: >), "each shape asks for less text room than the one before")
     }
@@ -988,11 +998,11 @@ final class MeetingsReviewRowTests: XCTestCase {
         let needs = shapes.map { ReviewRowView.foldedNeed(decided, shape: $0, busy: false) }
         XCTAssertEqual(needs, needs.sorted(by: >), "each shape needs less room than the one before it")
         XCTAssertEqual(ReviewRowView.foldedFit(decided, busy: false, room: nil), 0, "the widest before the first layout")
-        XCTAssertEqual(ReviewRowView.foldedFit(decided, busy: false, room: needs[0]), 0, "a shape that fits exactly")
-        XCTAssertEqual(ReviewRowView.foldedFit(decided, busy: false, room: needs[0] - 1), 1)
-        XCTAssertEqual(ReviewRowView.foldedFit(decided, busy: false, room: needs[1] - 1), 2)
+        XCTAssertEqual(ReviewRowView.foldedFit(decided, busy: false, room: try needs.required(0)), 0, "a shape that fits exactly")
+        XCTAssertEqual(ReviewRowView.foldedFit(decided, busy: false, room: try needs.required(0) - 1), 1)
+        XCTAssertEqual(ReviewRowView.foldedFit(decided, busy: false, room: try needs.required(1) - 1), 2)
         XCTAssertEqual(ReviewRowView.foldedFit(decided, busy: false, room: 0), 2, "the narrowest when none fits, as ViewThatFits did")
-        XCTAssertGreaterThan(ReviewRowView.foldedNeed(decided, shape: shapes[0], busy: true), needs[0], "a busy row's spinner takes room")
+        XCTAssertGreaterThan(ReviewRowView.foldedNeed(decided, shape: try shapes.required(0), busy: true), try needs.required(0), "a busy row's spinner takes room")
         // The arithmetic follows the line term by term: the row's own ideal width in each shape is what it computes.
         let detail = MeetingDetailModel(id: "m", window: nil)
         for (fit, need) in needs.enumerated() {
@@ -1085,7 +1095,7 @@ final class MeetingsReviewRowTests: XCTestCase {
             }, "OCR needs a CPU device for \(stage)")
             request.setComputeDevice(cpu, for: stage)
         }
-        try VNImageRequestHandler(cgImage: XCTUnwrap(renderer.cgImage)).perform([request])
+        try recognizeText(in: XCTUnwrap(renderer.cgImage), with: request)
         return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
     }
 
@@ -1139,6 +1149,48 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertEqual(MeetingDetailModel.visibleRows(rows, order: .priority, decided: .inPlace).map(\.id), ["q5", "q1", "i2", "i3"],
                        "in place keeps the engine's order")
         XCTAssertEqual(SidePanelWords.choiceTitles["atEnd"], "At the end", "the settings name the choice in words, not its key")
+    }
+
+    /// w_mabbp07g: how the spelling dialog marks its words is a window setting with the sheen as its default, and the
+    /// still accent look stays reachable from the side panel and the Settings page.
+    func testTheSpellingMarksAreASettingWithTheSparkleAsItsDefault() throws {
+        typealias Rows = MeetingsPreferences.Rows
+        let suite = "meetings.spelling-marks.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertEqual(Rows.spellingMarks.value(defaults), .sparkle)
+        XCTAssertEqual(Rows.SpellingMarks.sparkle.style, .sparkle)
+        // The Rows section of the side panel offers the setting and writes it.
+        let key = Rows.spellingMarks.key
+        let offered = try XCTUnwrap(SidePanelCatalog.windowSections(defaults).first { $0.id == "rows" }?.rows.first { $0.id == key })
+        XCTAssertEqual(offered.value, .text("sparkle"))
+        XCTAssertEqual(offered.choices.map(\.title), ["Sparkle", "Accent, still"])
+        SidePanelCatalog.write(.text("accent"), key: key, to: defaults)
+        XCTAssertEqual(Rows.spellingMarks.value(defaults).style, .accent)
+        let written = try XCTUnwrap(SidePanelCatalog.windowSections(defaults).first { $0.id == "rows" }?.rows.first { $0.id == key })
+        XCTAssertEqual(written.value, .text("accent"))
+
+        // The spelling dialog draws its marks in the style the setting holds: the two styles draw two pictures.
+        let reach = try JSONDecoder().decode(DecisionReach.self, from: Data(#"""
+        {"items":[],"dictionary":[],"spelling":{"heard":"Zorb","proposed":"ZORB","dictionary":true,"occurrences":[
+          {"line":2,"atSec":15,"speaker":"Speaker 1","text":"The Zorb is ready.","selected":true,"primary":true,
+           "ranges":[{"location":4,"length":4}]}]}}
+        """#.utf8))
+        let pending = MeetingDetailModel.PendingReach(row: try rows().rows.required(0), action: .respell("i1", to: "ZORB"),
+                                                      reason: nil, reach: reach)
+        let detail = MeetingDetailModel(id: "m", window: nil)
+        func dialog() throws -> Data {
+            // Reduce Motion draws the sparkle still, so one picture of each style is the same every time.
+            let renderer = ImageRenderer(content: ReachSheet(pending: pending, detail: detail)
+                .frame(width: 520).background(Color.white).environment(\.colorScheme, .light)
+                .environment(\.nativeSettingsReduceMotion, true).defaultAppStorage(defaults))
+            renderer.scale = 2
+            return try XCTUnwrap(XCTUnwrap(renderer.cgImage).dataProvider?.data as Data?)
+        }
+        let accent = try dialog()
+        XCTAssertEqual(try dialog(), accent, "the same setting draws the same picture")
+        SidePanelCatalog.write(.text("sparkle"), key: key, to: defaults)
+        XCTAssertNotEqual(try dialog(), accent, "the dialog follows the setting")
     }
 
     /// U14: the folded line of a rejected row showed "i132 …" and then the agent's whole reason, cut at the window's edge.

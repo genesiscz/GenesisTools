@@ -560,11 +560,7 @@ export function QaDecisionsTab() {
                     </div>
                 ) : (
                     sessions.map((session) => (
-                        <DecisionSessionCard
-                            key={session.sessionId ?? session.lastAt}
-                            session={session}
-                            onSent={setLastSend}
-                        />
+                        <DecisionSessionCard key={session.groupId} session={session} onSent={setLastSend} />
                     ))
                 )}
             </div>

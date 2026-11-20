@@ -61,6 +61,8 @@ enum RecordingActions {
     /// Where Copy Movie writes; a test swaps in a pasteboard of its own so it never touches the user's clipboard.
     static var pasteboard = NSPasteboard.general
     static var commands = RecorderCommands()
+    /// Where a move to the Trash is kept for Put Back; a test passes its own.
+    static var trash = RecordingTrash.shared
 
     /// What an action did, for the surface to show: a short notice, a failure, or a move to the Trash (the library
     /// offers Put Back).
@@ -81,13 +83,28 @@ enum RecordingActions {
         case .firstComment:
             RecorderMenu.open(item, atSourceSeconds: item.firstOpenCommentUs.map { Double($0) / 1_000_000 })
         case .copyMovie:
-            guard let movie = RecordingMovie.shareable(in: item.folder) else {
+            switch RecordingMovie.shareable(in: item.folder) {
+            case let .file(movie):
+                pasteboard.clearContents()
+                pasteboard.writeObjects([movie as NSURL])
+                report(.notice("Copied \(movie.lastPathComponent) to the clipboard."))
+            case .stale:
+                // The edit changed after its last export: `recorder copy` exports it first, as the CLI does, so an
+                // older export or the unedited movie never leaves the library.
+                report(.working("“\(item.title)” changed after its last export; exporting it before the copy…"))
+                commands.run("movie.copy", params: ["recording": item.folder.path],
+                             argv: ["recorder", "copy", item.folder.path], timeout: 60 * 60) { result in
+                    if case .success = result {
+                        report(.notice("Exported “\(item.title)” and copied the movie to the clipboard."))
+                    } else if case let .failure(error) = result {
+                        report(.failed("“\(item.title)” was not copied: its export failed: \(error.reason)"))
+                    }
+                }
+            case .none:
                 report(.failed("“\(item.title)” has no movie to copy."))
-                return
+            case .unreadable:
+                report(.failed("“\(item.title)” was not copied: its edit.json could not be read, so no export can be shown to match the edit."))
             }
-            pasteboard.clearContents()
-            pasteboard.writeObjects([movie as NSURL])
-            report(.notice("Copied \(movie.lastPathComponent) to the clipboard."))
         case .copyGIF:
             report(.working("Making a GIF of “\(item.title)”…"))
             commands.run("movie.copy", params: ["recording": item.folder.path, "gif": true],
@@ -122,6 +139,7 @@ enum RecordingActions {
                         HubPerf.log("recorder.actions: trash \(item.folder.path) failed: \(error.localizedDescription)")
                         report(.failed("“\(item.title)” was not moved to the Trash: \(error.localizedDescription)"))
                     } else if let to = moved[item.folder] {
+                        trash.keep(.init(title: item.title, from: item.folder, to: to))
                         report(.trashed(from: item.folder, to: to))
                     }
                 }
@@ -161,6 +179,49 @@ enum RecordingActions {
             items.append(.action(action.title, run: { perform(action) }))
         }
         return items
+    }
+}
+
+/// The last recording a click moved to the Trash, from a library card or a Recent row of the menu bar. Both offer the
+/// same Put Back from it: the library's strip (and ⌘Z), and the first row of the menu's Recent list. Before, only the
+/// library kept it, so a recording trashed from the menu had no Undo.
+@MainActor
+@Observable
+final class RecordingTrash {
+    static let shared = RecordingTrash()
+
+    struct Entry: Equatable {
+        let title: String
+        let from: URL
+        let to: URL
+    }
+
+    private(set) var last: Entry?
+
+    func keep(_ entry: Entry) { last = entry }
+    func dismiss() { last = nil }
+
+    /// Moves the last trashed recording back to its folder and returns it. `expected` is the entry a row showed: when
+    /// another recording went to the Trash since, nothing moves and it returns nil, so a row never puts back a
+    /// recording it does not name. When the move fails it throws; the entry stays while its Trash copy is there to try
+    /// again, and goes when that copy is gone, since nothing can be put back then.
+    @discardableResult
+    func putBack(_ expected: Entry? = nil, files: FileManager = .default) throws -> Entry? {
+        guard let entry = last, expected == nil || expected == entry else { return nil }
+        do {
+            try files.moveItem(at: entry.to, to: entry.from)
+        } catch {
+            if !files.fileExists(atPath: entry.to.path) { last = nil }
+            throw error
+        }
+        last = nil
+        return entry
+    }
+
+    /// The note for a Put Back that failed: it says the recording is still in the Trash only while its copy is there.
+    nonisolated static func failureMessage(_ entry: Entry, _ error: Error, files: FileManager = .default) -> String {
+        let base = "“\(entry.title)” could not be put back: \(error.localizedDescription)."
+        return files.fileExists(atPath: entry.to.path) ? "\(base) It is still in the Trash." : "\(base) Its copy in the Trash is gone."
     }
 }
 

@@ -935,9 +935,9 @@ struct CaptionLinesList: View {
                            identifier: "recorder.captions.find")
                 .frame(height: 22)
             HStack(spacing: 6) {
-                AgentTextField("Replace with", text: $replacement, identifier: "recorder.captions.replace") {
+                AgentTextField("Replace with", text: $replacement, identifier: "recorder.captions.replace", onSubmit: {
                     model.replaceWords(find: find, replace: replacement)
-                }
+                })
                 .frame(height: 22)
                 GhostButton("Replace All", symbol: "text.badge.checkmark", tooltip: "Replace these words in every line (whole words, any case; ⌘Z takes it back)",
                             identifier: "recorder.captions.replaceAll") { model.replaceWords(find: find, replace: replacement) }
@@ -1492,13 +1492,15 @@ private struct AudioInspector: View {
 /// Noise reduction on export (the `denoise` op): on or off, each track in or out, and each track's strength.
 private struct NoiseReductionSection: View {
     @Bindable var model: EditorModel
+    /// The cleaned preview: whether one is being made, and whether it plays.
+    @State private var preview = AudioPreviewPlayer()
 
     var body: some View {
         let denoise = model.project.audio.denoise
         let tracks = max(1, model.audioTrackCount)
         VStack(alignment: .leading, spacing: 8) {
             SwitchRow("Reduce noise", isOn: Binding(get: { denoise != nil }, set: { on in model.setDenoise(enabled: on) }))
-                .instantTooltip("Turns fan and room hum down in the export; the preview plays the sound as recorded")
+                .instantTooltip("Turns fan and room hum down in the export; the preview plays the sound as recorded, Preview plays it cleaned")
                 .accessibilityIdentifier("recorder.audio.denoise")
             if let denoise {
                 ForEach(0..<tracks, id: \.self) { index in
@@ -1520,7 +1522,22 @@ private struct NoiseReductionSection: View {
                         }
                     }
                 }
-                Text("12 dB takes hum away; above 25 dB words start to blur. Only the export is cleaned.")
+                HStack(spacing: 6) {
+                    if preview.making {
+                        ProgressView().controlSize(.small).frame(width: 22, height: 22)
+                    } else {
+                        IconButton(systemName: preview.isPlaying ? "stop.fill" : "play.fill",
+                                   tooltip: preview.isPlaying ? "Stop the preview" : "Play 5 s from the playhead, cleaned at this strength") {
+                            togglePreview()
+                        }
+                        .accessibilityIdentifier("recorder.audio.denoise.preview")
+                    }
+                    Text(preview.making ? "Cleaning 5 s from the playhead…" : "Preview 5 s from the playhead")
+                        .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                }
+                // Reduce noise turned off while a preview is made: its answer must not start playing with no Stop.
+                .onDisappear { preview.cancel() }
+                Text("12 dB takes hum away; above 25 dB words start to blur. Only the export and Preview are cleaned.")
                     .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1528,6 +1545,34 @@ private struct NoiseReductionSection: View {
     }
 
     static func strengthLabel(_ db: Double) -> String { "\(Int(db.rounded())) dB" }
+
+    /// Stops a playing preview, else asks the engine for a new one and plays it.
+    private func togglePreview() {
+        if preview.isPlaying {
+            preview.stop()
+            return
+        }
+
+        if model.isPlaying { model.togglePlay() }
+        let token = preview.begin()
+        model.makeDenoisePreview { result in
+            guard preview.isCurrent(token) else { return }
+            switch result {
+            case let .success(url):
+                do {
+                    try preview.play(url, for: token)
+                } catch {
+                    preview.failed(token)
+                    HubPerf.log("recorder.denoise.preview failed for \(url.path): \(error.localizedDescription)")
+                    model.show("The cleaned preview could not be played: \(error.localizedDescription)", error: true)
+                }
+            case let .failure(failure):
+                preview.failed(token)
+                model.show("No cleaned preview: \(failure.reason)", error: true)
+            }
+        }
+    }
+
 }
 
 /// Music under the movie: a file, its level and how far it dips under speech.
@@ -1551,7 +1596,7 @@ private struct MusicSection: View {
     @Bindable var model: EditorModel
     /// The chosen file's length in seconds, read once per file, for the "Starts at" slider.
     @State private var fileSeconds: Double?
-    @State private var preview: AVAudioPlayer?
+    @State private var preview = AudioPreviewPlayer()
     /// Whether the chosen file is gone, read off the main thread once per file (`FileMissing`).
     @State private var musicMissing = false
 
@@ -1569,8 +1614,8 @@ private struct MusicSection: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .instantTooltip(missing ? "\(music.file) is gone; the export plays without music. Choose the file again below." : music.file)
                     if !missing {
-                        IconButton(systemName: preview?.isPlaying == true ? "stop.fill" : "play.fill",
-                                   tooltip: preview?.isPlaying == true ? "Stop the preview" : "Play the music alone from where it starts") {
+                        IconButton(systemName: preview.isPlaying ? "stop.fill" : "play.fill",
+                                   tooltip: preview.isPlaying ? "Stop the preview" : "Play the music alone from where it starts") {
                             togglePreview(music)
                         }
                         .accessibilityIdentifier("recorder.audio.music.preview")
@@ -1635,17 +1680,14 @@ private struct MusicSection: View {
 
     /// Plays the file alone at the music volume from its start, or stops it.
     private func togglePreview(_ music: EditProject.Music) {
-        if preview?.isPlaying == true {
+        if preview.isPlaying {
             stopPreview()
             return
         }
 
         do {
-            let player = try AVAudioPlayer(contentsOf: URL(fileURLWithPath: music.file))
-            player.volume = Float(max(0.2, music.volume))
-            player.currentTime = Double(music.startMs ?? 0) / 1000
-            player.play()
-            preview = player
+            try preview.play(URL(fileURLWithPath: music.file), volume: Float(max(0.2, music.volume)),
+                             from: Double(music.startMs ?? 0) / 1000)
         } catch {
             HubPerf.log("recorder.music.preview failed for \(music.file): \(error.localizedDescription)")
             model.notice = "The music file could not be played: \(error.localizedDescription)"
@@ -1654,8 +1696,7 @@ private struct MusicSection: View {
     }
 
     private func stopPreview() {
-        preview?.stop()
-        preview = nil
+        preview.stop()
     }
 }
 
@@ -2601,5 +2642,100 @@ private struct ClockLabel: View {
         .accessibilityLabel("Time")
         .accessibilityValue(PlayheadView.spoken(clock.outUs, of: durationUs))
         .accessibilityIdentifier("recorder.clock")
+    }
+}
+
+/// A sound preview of the Audio tab (the music alone, the cleaned noise reduction sample): the request in flight and
+/// the player. `isPlaying` is observed, so a Stop button turns back to Play when the sound ends on its own (a bare
+/// `AVAudioPlayer.isPlaying` is not, and the button kept showing Stop). A request whose controls went away
+/// (`cancel()`, Reduce noise turned off) never starts playing when its answer arrives.
+@MainActor
+@Observable
+final class AudioPreviewPlayer {
+    struct NotPlayed: LocalizedError {
+        var errorDescription: String? { "the player refused to start" }
+    }
+
+    private(set) var isPlaying = false
+    private(set) var making = false
+    @ObservationIgnored private var player: AVAudioPlayer?
+    @ObservationIgnored private var request = 0
+    /// The player's delegate, kept here because AVAudioPlayer holds its delegate weakly.
+    @ObservationIgnored private var finish: Finish?
+    /// The one preview that may sound: the music and the cleaned sample own separate players, and starting either
+    /// cancels the other, so the cleaned sample is never heard over the music.
+    private static weak var sounding: AudioPreviewPlayer?
+
+    /// Starts a request and stops what plays; the token stays current until the next `begin` or `cancel`.
+    func begin() -> Int {
+        claim()
+        stop()
+        request += 1
+        making = true
+        return request
+    }
+
+    /// Whether the answer to `token` may still act: its controls are on screen and no newer request started.
+    func isCurrent(_ token: Int) -> Bool { token == request }
+
+    /// Plays `url` from `seconds` at `volume`; with a `token`, only while that request is current, else it returns false
+    /// and nothing plays. Throws when the file cannot be opened or the player refuses to start.
+    @discardableResult
+    func play(_ url: URL, for token: Int? = nil, volume: Float = 1, from seconds: TimeInterval = 0) throws -> Bool {
+        if let token, !isCurrent(token) { return false }
+        claim()
+        stop()
+        making = false
+        let next = try AVAudioPlayer(contentsOf: url)
+        next.volume = volume
+        next.currentTime = seconds
+        let finish = Finish { [weak self] id in self?.finished(id) }
+        next.delegate = finish
+        self.finish = finish
+        guard next.play() else { throw NotPlayed() }
+        player = next
+        isPlaying = true
+        return true
+    }
+
+    /// The request `token` ended without a file.
+    func failed(_ token: Int) {
+        guard isCurrent(token) else { return }
+        making = false
+    }
+
+    func stop() {
+        player?.stop()
+        player = nil
+        isPlaying = false
+    }
+
+    /// The controls went away: the request in flight never plays, and what plays stops.
+    func cancel() {
+        request += 1
+        making = false
+        stop()
+    }
+
+    /// Stops another preview and cancels its request in flight before this one makes or plays a sound.
+    private func claim() {
+        if let other = Self.sounding, other !== self { other.cancel() }
+        Self.sounding = self
+    }
+
+    private func finished(_ id: ObjectIdentifier) {
+        guard let player, ObjectIdentifier(player) == id else { return }
+        self.player = nil
+        isPlaying = false
+    }
+
+    /// AVAudioPlayer's delegate; it passes only the finished player's identity back to the main actor.
+    private final class Finish: NSObject, AVAudioPlayerDelegate {
+        let done: @MainActor (ObjectIdentifier) -> Void
+        init(_ done: @escaping @MainActor (ObjectIdentifier) -> Void) { self.done = done }
+        func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+            let id = ObjectIdentifier(player)
+            Task { @MainActor in self.done(id) }
+        }
     }
 }

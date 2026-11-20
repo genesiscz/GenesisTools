@@ -267,6 +267,18 @@ function confidenceOf(value: number | undefined): { confidence?: number } {
     return value === undefined ? {} : { confidence: value };
 }
 
+/**
+ * The score a row shows for an item. A voice range that passed the cosine and margin gate keeps the gate (0.8) as its
+ * confidence, so the row shows its cosine instead (`evidence.score`), never the gate as a voice score.
+ */
+export function shownConfidence(item: MeetingItem): number | undefined {
+    return item.kind === "speaker-range" &&
+        item.evidence?.decisionGate === "cosine and margin" &&
+        typeof item.evidence.score === "number"
+        ? item.evidence.score
+        : item.confidence;
+}
+
 /** The proposed answer of a term: its spelling, else the document line it reads aloud, else what it means. */
 function termValue(item: TermItem): string | undefined {
     return item.proposed ?? item.quote?.text ?? item.meaning;
@@ -338,7 +350,7 @@ function rangeChoices(item: Extract<MeetingItem, { kind: "speaker-range" }>): Ro
                       label: item.speaker,
                       role: "suggested" as const,
                       action: { kind: "confirm" as const },
-                      ...confidenceOf(item.confidence),
+                      ...confidenceOf(shownConfidence(item)),
                   },
               ]
             : []),
@@ -426,7 +438,7 @@ function questionChoices(record: MeetingRecord, question: QuestionItem): RowChoi
         const confidence =
             question.about === "speaker"
                 ? role === "suggested" && speakerScores.size === 0
-                    ? range?.confidence
+                    ? range && shownConfidence(range)
                     : scoreOf(speakerScores, value)
                 : role === "suggested"
                   ? term?.confidence
@@ -873,7 +885,7 @@ export function reviewRow(
         kindWord: itemKindWord(item.kind),
         status: item.status,
         rules: item.rules,
-        ...confidenceOf(item.confidence),
+        ...confidenceOf(shownConfidence(item)),
         ...(item.kind === "question" && item.priority !== undefined ? { priority: item.priority } : {}),
         ...(item.kind === "question" && item.group ? { group: item.group } : {}),
         ...(item.kind === "question" && item.group === "words" ? { occurrences: heardTimes(item) } : {}),

@@ -22,6 +22,7 @@ import {
     localVoiceDecisions,
     meetingPredictionVoices,
     meetingVoiceCachePath,
+    seatVoiceCachePath,
 } from "./speaker-labels/voice";
 import { nameByVoice, type VoiceLine } from "./voice-names";
 
@@ -110,7 +111,24 @@ export function suggestSeatByVoice(input: SeatVoiceInput): ReadonlyArray<SeatVoi
                   .join(" ");
     // An opposite side with eligible but unscored lines could still carry conflicting matches.
     const incomplete = missing.some((side) => failures[side] !== undefined);
+    const sampled = new Set(
+        Object.entries(input.prediction.store.people)
+            .filter(([, saved]) => saved.samples.length > 0)
+            .map(([name]) => nameKey(name))
+    );
     return Array.from(votes, ([person, bySide]) => {
+        // Zero matches of a person with no samples is no comparison at all, so the count is not shown.
+        if (!sampled.has(nameKey(person))) {
+            return {
+                person,
+                seat: "unsure" as const,
+                confidence: 0,
+                reason: ["No voice samples yet, so the voice cannot suggest a seat.", coverage]
+                    .filter(Boolean)
+                    .join(" "),
+            };
+        }
+
         const count = { mic: 0, call: 0 };
         const weakest = { mic: 1, call: 1 };
         for (const side of sides) {
@@ -307,8 +325,9 @@ export async function readSeatVoiceHints(options: {
                 lines: spans,
                 config,
                 sound,
-                cachePath: meetingVoiceCachePath(opened),
-                readOnlyCache: true,
+                // A second open embeds only the lines whose clip changed; the suggestion pass's cache stays its own.
+                cachePath: seatVoiceCachePath(opened),
+                fallbackCachePath: meetingVoiceCachePath(opened),
             });
         } catch (error) {
             if (!(error instanceof VoiceUnavailableError)) {

@@ -201,6 +201,21 @@ test("a busy v1 writer and failures on both sides of publication recover the lat
     expect(readFileSync(newPath, "utf8")).toBe(lateBytes);
 });
 
+test("a leftover file with another model is the conflict even when its name sorts first, so the real samples stay", async () => {
+    legacy("aaa-leftover", [print(1)], first, "other-model");
+    legacy("garden", [print(2), print(3)]);
+    legacy("studio", [print(4)], second);
+    const { readVoiceLibrary, predictionPrints } = await library();
+    const view = readVoiceLibrary();
+    expect(view.library.model).toBe(model);
+    expect(view.conflicts.map((conflict) => conflict.project)).toEqual(["aaa-leftover"]);
+    expect(predictionPrints({ project: "garden", scope: "all", view }).samples.map((s) => s.project)).toEqual([
+        "garden",
+        "garden",
+        "studio",
+    ]);
+});
+
 test("model and validation conflicts identify the source, allow scoped recovery and prevent partial first or later writes", async () => {
     const one = legacy("garden", [print(1)]);
     const other = legacy("studio", [print(2)], second, "incompatible");
@@ -382,4 +397,136 @@ test("the default predictor can use all projects and the outlier threshold is a 
     });
     expect(() => settings({ sampleScope: "meeting" })).toThrow();
     expect(() => settings({ outlierBelow: 1.01 })).toThrow();
+});
+
+test("a print of the old model never returns beside prints of a new one: rollback, undo and a rewritten legacy file", async () => {
+    const {
+        changeVoiceLearning,
+        correctVoiceSample,
+        insertVoiceSample,
+        readVoiceLibrary,
+        sourceForVoicePrint,
+        upgradeVoiceLibrary,
+    } = await library();
+    const input = (n: number, voiceModel: string): ConfirmedSampleInput => ({
+        project: "garden",
+        owner: first,
+        print: print(n),
+        model: voiceModel,
+        source: sourceForVoicePrint(print(n)),
+        origin: "answer",
+        acquiredBy: "live",
+    });
+    const kept = insertVoiceSample(input(2, model));
+    if (!("id" in kept)) {
+        throw new Error("Expected a sample ID");
+    }
+
+    // One batch removes the last old-model print and enrols a new model; its rollback restores the old model too.
+    const batch = changeVoiceLearning({
+        remove: [{ project: "garden", owner: first, model, print: print(2), id: kept.id }],
+        add: [input(4, "other-model")],
+    });
+    expect(persisted().model).toBe("other-model");
+    expect(batch.rollback()).toEqual({ notRestored: [] });
+    expect(persisted()).toMatchObject({ model, samples: [{ id: kept.id }] });
+
+    // Undoing the removal of the last old-model print is refused while a new model holds the library.
+    const removal = correctVoiceSample({ kind: "remove", ids: [kept.id] });
+    expect(removal.model).toBe(model);
+    const enrolled = insertVoiceSample(input(4, "other-model"));
+    if (!("id" in enrolled)) {
+        throw new Error("Expected a sample ID");
+    }
+    expect(() => correctVoiceSample({ kind: "revert", correction: removal.token })).toThrow("another voice model");
+    correctVoiceSample({ kind: "remove", ids: [enrolled.id] });
+    correctVoiceSample({ kind: "revert", correction: removal.token });
+    expect(persisted()).toMatchObject({ model, samples: [{ id: kept.id }] });
+
+    // An imported legacy print keeps its model: a rewrite of its file that adds no print is no model conflict.
+    correctVoiceSample({ kind: "remove", ids: persisted().samples.map((s) => s.id) });
+    const old = legacy("studio", [print(5)], first, "legacy-model");
+    upgradeVoiceLibrary();
+    expect(persisted()).toMatchObject({ model: "legacy-model", samples: [{ project: "studio" }] });
+    correctVoiceSample({ kind: "remove", ids: persisted().samples.map((s) => s.id) });
+    insertVoiceSample(input(3, "other-model"));
+    writeFileSync(old.file, `${old.bytes}\n`);
+    expect(readVoiceLibrary().conflicts).toEqual([]);
+    legacy("studio", [print(5), print(6)], first, "legacy-model");
+    expect(readVoiceLibrary().conflicts).toMatchObject([{ project: "studio" }]);
+});
+
+test("a batch rollback keeps another writer's new-model print and reports the old print it cannot restore", async () => {
+    const { changeVoiceLearning, insertVoiceSample, sourceForVoicePrint } = await library();
+    const input = (n: number, voiceModel: string): ConfirmedSampleInput => ({
+        project: "garden",
+        owner: first,
+        print: print(n),
+        model: voiceModel,
+        source: sourceForVoicePrint(print(n)),
+        origin: "answer",
+        acquiredBy: "live",
+    });
+    const kept = insertVoiceSample(input(2, model));
+    if (!("id" in kept)) {
+        throw new Error("Expected a sample ID");
+    }
+
+    const batch = changeVoiceLearning({
+        remove: [{ project: "garden", owner: first, model, print: print(2), id: kept.id }],
+        add: [input(4, "other-model")],
+    });
+    // Another writer enrols a second print of the new model before the batch is rolled back.
+    const other = insertVoiceSample(input(7, "other-model"));
+    if (!("id" in other)) {
+        throw new Error("Expected a sample ID");
+    }
+
+    expect(batch.rollback().notRestored).toMatchObject([{ id: kept.id }]);
+    expect(persisted()).toMatchObject({ model: "other-model", samples: [{ id: other.id }] });
+    expect(persisted().samples).toHaveLength(1);
+});
+
+test("a correction receipt written before receipts recorded a model reverts only while its model holds the library", async () => {
+    const { correctVoiceSample, insertVoiceSample, sourceForVoicePrint } = await library();
+    const input = (n: number, voiceModel: string): ConfirmedSampleInput => ({
+        project: "garden",
+        owner: first,
+        print: print(n),
+        model: voiceModel,
+        source: sourceForVoicePrint(print(n)),
+        origin: "answer",
+        acquiredBy: "live",
+    });
+    // Rewrites the receipt on disk the way an older writer left it: with no model.
+    const removeLegacy = (id: `vs_${string}`) => {
+        const { token } = correctVoiceSample({ kind: "remove", ids: [id] });
+        const stored = persisted();
+        for (const receipt of stored.receipts) {
+            if (receipt.kind === "correct" && receipt.token === token) {
+                delete receipt.model;
+            }
+        }
+        atomicWriteFileSync(libraryPath(), SafeJSON.stringify(stored));
+        expect(persisted().receipts.find((r) => r.kind === "correct" && r.token === token)).not.toHaveProperty("model");
+        return token;
+    };
+    const kept = insertVoiceSample(input(2, model));
+    if (!("id" in kept)) {
+        throw new Error("Expected a sample ID");
+    }
+
+    // Before any model switch the revision fallback names the library's model, so the undo restores the print.
+    correctVoiceSample({ kind: "revert", correction: removeLegacy(kept.id) });
+    expect(persisted()).toMatchObject({ model, samples: [{ id: kept.id }] });
+
+    // After a switch, a receipt older than the switch cannot tell its model, so its print never returns.
+    const stale = removeLegacy(kept.id);
+    const enrolled = insertVoiceSample(input(4, "other-model"));
+    if (!("id" in enrolled)) {
+        throw new Error("Expected a sample ID");
+    }
+    correctVoiceSample({ kind: "remove", ids: [enrolled.id] });
+    expect(() => correctVoiceSample({ kind: "revert", correction: stale })).toThrow("another voice model");
+    expect(persisted().samples).toEqual([]);
 });

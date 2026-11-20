@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { meetingsPeopleCommand } from "@genesiscz/utils/genesis-tools/tools/system";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { MeetingsConfig } from "./config";
 import { mappedRoomDevices, nameKey, type PersonRef, roomDeviceAccountKeys, rosterAccountKey } from "./people";
@@ -836,14 +837,23 @@ export class PeopleDirectory {
         const wanted = options.kinds;
         const limit = Math.max(options.limit ?? DEFAULT_LIMIT, DEFAULT_LIMIT);
         const asked = this.options.sources.filter((source) => !wanted || wanted.includes(source.kind));
-        // A source may only support a phrase substring. Filter all words after grouping its candidates.
-        const sourceText =
-            query
-                .trim()
-                .split(/\s+/u)
-                .sort((a, b) => b.length - a.length)[0] ?? "";
+        // A source may only support a phrase substring, so a reordered name needs a word search too. The phrase is
+        // still asked: the word search is capped by `limit` before the other words filter it, and can miss the person
+        // the phrase finds. Filter all words after grouping its candidates.
+        const phrase = query.trim();
+        const longest = phrase.split(/\s+/u).sort((a, b) => b.length - a.length)[0] ?? "";
+        const texts = longest && longest !== phrase ? [phrase, longest] : [phrase];
         const answers = await Promise.all(
-            asked.map(async (source) => ({ source, answer: await read(source, { text: sourceText, limit }) }))
+            asked.map(async (source) => {
+                const replies = await Promise.all(texts.map((text) => read(source, { text, limit })));
+                // A refusal seen on either search is the source's state: access was withdrawn, so a sibling answer
+                // (possibly cached) is not reported. A search that merely failed keeps the other one's people.
+                const refusal = replies.find((reply) => reply.state === "refused");
+                const ok = replies.filter((reply) => reply.state === "ok");
+                const answer: SourceAnswer =
+                    refusal ?? (ok.length ? { state: "ok", people: distinctPeople(ok) } : replies[0]!);
+                return { source, answer };
+            })
         );
         const identities = new IdentityGroups();
         const book = this.options.book.read();
@@ -879,6 +889,22 @@ export class PeopleDirectory {
         ];
         return { identities: grouped, sources };
     }
+}
+
+/** The people of several answers of one source, each identical record once: both searches can return the same one. */
+function distinctPeople(answers: Array<Extract<SourceAnswer, { state: "ok" }>>): SourcePerson[] {
+    const seen = new Set<string>();
+    return answers
+        .flatMap((answer) => answer.people)
+        .filter((person) => {
+            const key = SafeJSON.stringify(person);
+            if (seen.has(key)) {
+                return false;
+            }
+
+            seen.add(key);
+            return true;
+        });
 }
 
 /** A reference split once: an `email:` id with its email, a `name:` id with its name key, or plain text. */

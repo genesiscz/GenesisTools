@@ -49,7 +49,7 @@ program
     .argument("[handoffs...]", "handoff ids or readable names; none follows every handoff")
     .option("--since <duration>", "replay events from this long ago first, e.g. 30m, 6h, 2d", "0")
     .option("--once", "print the replay and exit instead of following")
-    .option("--json", "one JSON event per line")
+    .option("--json", "one JSON event per line, without the poster's edit credential")
     .action((handoffs: string[], opts: { since: string; once?: boolean; json?: boolean }) => {
         let sinceMs: number;
 
@@ -66,6 +66,7 @@ program
             sinceMs,
             follow: !opts.once,
             onEvent: (event, names) => {
+                // The work store keeps each event without the poster's edit credential, so --json never prints it.
                 out.println(opts.json ? SafeJSON.stringify(event) : formatHandoffEvent(event, names));
             },
         });

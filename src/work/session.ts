@@ -7,7 +7,9 @@ import type { Actor } from "@genesiscz/utils/work/model/item";
 import { runNotifyOnce } from "@genesiscz/utils/work/notify";
 import { projectRuleLoader } from "@genesiscz/utils/work/rules/load";
 import { openWorkDb } from "@genesiscz/utils/work/store/db";
+// lint-rules-ignore: work reads the question tool's legacy decision log and todos to adopt them; that log has no other owner
 import { decisionFiles } from "../question/lib/decisions/paths";
+// lint-rules-ignore: the same legacy decision log, read through its own store
 import { readLegacySessionTodo } from "../question/lib/decisions/store";
 import { legacyHandoffs, sessionDelivery, t3Lineage } from "./adapters";
 import { actorHere } from "./adapters/actor";

@@ -1,23 +1,22 @@
-import { isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { type ResolvedTranscript, resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
+import { pickSessionProvider, sessionProviderOption } from "./session-provider";
 
 interface SessionOptions {
-    provider?: string;
+    provider?: string | boolean;
     json?: boolean;
 }
 
 /** The session a verb names, or null after the reason was printed. */
-async function sessionOf(sessionId: string, opts: SessionOptions): Promise<ResolvedTranscript | null> {
-    if (opts.provider !== undefined && !isAccountProviderAlias(opts.provider)) {
-        out.printlnErr(`--provider must be claude, codex or grok (got "${opts.provider}")`);
-        process.exitCode = 1;
+async function sessionOf(sessionId: string, opts: SessionOptions, verb: string): Promise<ResolvedTranscript | null> {
+    const picked = await pickSessionProvider(opts.provider, ["sessions", "workflows", verb]);
+    if (!picked) {
         return null;
     }
 
     try {
-        return await resolveTranscript(sessionId, {}, opts.provider);
+        return await resolveTranscript(sessionId, {}, picked.provider);
     } catch (error) {
         out.printlnErr(error instanceof Error ? error.message : String(error));
         process.exitCode = 1;
@@ -67,7 +66,7 @@ export function registerSessionsWorkflowsCommand(sessions: Command): void {
         .description("The runs of a session; without a session, which providers have a workflow reader")
         .option("--agents", "Each run with its agents: the whole run in --json, a table under each run otherwise")
         .option("--usage", "Read every agent transcript of every run for its calls, tokens and list-price cost")
-        .option("--provider <name>", "claude | grok | codex (auto-detect if omitted)")
+        .addOption(sessionProviderOption())
         .option(
             "--json",
             `Print { schema: "sessions.workflows@1", sessionId, provider, reader, runs, usage? }; with --agents each run is the whole run that "show --json" prints`
@@ -81,7 +80,7 @@ export function registerSessionsWorkflowsCommand(sessions: Command): void {
                 return;
             }
 
-            const session = await sessionOf(sessionId, opts);
+            const session = await sessionOf(sessionId, opts, "list");
 
             if (session) {
                 await answer(() => lib.printWorkflowList(session, opts));
@@ -94,10 +93,10 @@ export function registerSessionsWorkflowsCommand(sessions: Command): void {
             "One run (id prefix or name): its record, and each agent with its label, phase, model, state and result"
         )
         .option("--usage", "Read every agent transcript for its calls, tokens, list-price cost and tool calls")
-        .option("--provider <name>", "claude | grok | codex (auto-detect if omitted)")
+        .addOption(sessionProviderOption())
         .option("--json", `Print { schema: "sessions.workflows@1", sessionId, run, usage? }`)
         .action(async (sessionId: string, run: string, opts: SessionOptions & { usage?: boolean }) => {
-            const session = await sessionOf(sessionId, opts);
+            const session = await sessionOf(sessionId, opts, "show");
 
             if (session) {
                 const lib = await import("@app/ai/lib/sessions/session-workflows");
@@ -115,7 +114,7 @@ export function registerSessionsWorkflowsCommand(sessions: Command): void {
         .option("--before <iso>", "Skip rows at or after this ISO instant")
         .option("--max-hits <n>", "Excerpts kept per agent; every matching line is still counted (default 3)")
         .option("--context <n>", "Characters of context on each side of a match (default 100)")
-        .option("--provider <name>", "claude | grok | codex (auto-detect if omitted)")
+        .addOption(sessionProviderOption())
         .option("--json", `Print { schema: "sessions.workflows@1", sessionId, pattern, agents }`)
         .action(
             async (
@@ -154,7 +153,7 @@ export function registerSessionsWorkflowsCommand(sessions: Command): void {
                     return;
                 }
 
-                const session = await sessionOf(sessionId, opts);
+                const session = await sessionOf(sessionId, opts, "grep");
 
                 if (session) {
                     const lib = await import("@app/ai/lib/sessions/session-workflows");
@@ -177,9 +176,9 @@ export function registerSessionsWorkflowsCommand(sessions: Command): void {
         .description(
             "The final structured answer of one agent of a run (its id or a prefix, its label or a part of it), or of every agent of the run when no agent is named, as JSON"
         )
-        .option("--provider <name>", "claude | grok | codex (auto-detect if omitted)")
+        .addOption(sessionProviderOption())
         .action(async (sessionId: string, run: string, agent: string | undefined, opts: SessionOptions) => {
-            const session = await sessionOf(sessionId, opts);
+            const session = await sessionOf(sessionId, opts, "result");
 
             if (session) {
                 const lib = await import("@app/ai/lib/sessions/session-workflows");

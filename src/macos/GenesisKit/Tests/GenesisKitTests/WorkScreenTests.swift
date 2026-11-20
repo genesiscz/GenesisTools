@@ -1,4 +1,5 @@
 import Combine
+import GenesisKitTestSupport
 import SwiftUI
 import Vision
 import GenesisKitTestHooks
@@ -476,7 +477,7 @@ final class WorkScreenTests: XCTestCase {
             XCTAssertTrue(CGImageDestinationFinalize(destination))
         }
         let request = GenesisKitFixtureTextRequest()
-        try VNImageRequestHandler(cgImage: image).perform([request])
+        try recognizeText(in: image, with: request)
         return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
     }
 }

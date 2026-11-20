@@ -73,6 +73,14 @@ const UNSEEN = `unseen AS (
         AND NOT EXISTS (SELECT 1 FROM qa_pending WHERE entry_id=entries.id)
 )`;
 
+/** The session id the Q→A log files a message under when no session sent it (an external sender). */
+export const EXTERNAL_SESSION_ID = "unknown";
+
+/** Who wrote a message no session sent: its project and sender label, the words the widget and the hub show. */
+export function externalMessageOrigin(project: string, sender?: string | null): string {
+    return [project, sender].filter(Boolean).join(" · ") || "External sender";
+}
+
 export const MESSAGE_PREVIEW_CHARS = 800;
 export const REPLY_QUESTION_CHARS = 1200;
 

@@ -1,4 +1,5 @@
 import AppKit
+import GenesisKitTestSupport
 import Vision
 
 /// The text a view draws, read back with Vision. SwiftUI's list rows are neither views nor in-process accessibility
@@ -23,7 +24,7 @@ enum TreeDrawnText {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
-        try? VNImageRequestHandler(cgImage: image).perform([request])
+        try? recognizeText(in: image, with: request)
         return (request.results ?? []).compactMap { result in
             result.topCandidates(1).first.map { (text: $0.string, middle: 1 - Double(result.boundingBox.midY)) }
         }

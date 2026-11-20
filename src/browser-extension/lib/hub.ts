@@ -28,7 +28,7 @@ const FULL_SHA = /^[0-9a-f]{40}$/i;
  * The full id of the one commit that starts with `prefix`, or undefined when none or several do. `--disambiguate`
  * lists object ids only, so a branch or tag that happens to be named like the prefix cannot win.
  */
-async function resolveCommit(deps: Deps, root: string, prefix: string): Promise<string | undefined> {
+async function commitForPrefix(deps: Deps, root: string, prefix: string): Promise<string | undefined> {
     const listed = await deps.run(["git", "-C", root, "rev-parse", `--disambiguate=${prefix}`], { timeoutMs: 5_000 });
 
     if (listed.code !== 0) {
@@ -61,7 +61,7 @@ type CommitState = { state: "present" | "fetched"; sha: string } | { state: "mis
  * their stderr). A failed fetch can still have downloaded the commit, so every attempt is followed by a new lookup.
  */
 async function ensureCommit(deps: Deps, root: string, sha: string): Promise<CommitState> {
-    const present = await resolveCommit(deps, root, sha);
+    const present = await commitForPrefix(deps, root, sha);
 
     if (present) {
         return { state: "present", sha: present };
@@ -88,7 +88,7 @@ async function ensureCommit(deps: Deps, root: string, sha: string): Promise<Comm
             );
         }
 
-        const found = await resolveCommit(deps, root, sha);
+        const found = await commitForPrefix(deps, root, sha);
 
         if (found) {
             return { state: "fetched", sha: found };
@@ -129,7 +129,7 @@ export async function hubTarget(
         const short = page.commit.slice(0, 10);
 
         if (!fetchMissing) {
-            const known = await resolveCommit(deps, checkout.root, page.commit);
+            const known = await commitForPrefix(deps, checkout.root, page.commit);
 
             return {
                 options: { commit: known ?? page.commit, repo: checkout.root },

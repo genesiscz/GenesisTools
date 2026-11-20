@@ -1408,6 +1408,69 @@ test("split clips keep accepted acoustic word boundaries and at least one and a 
     expect(native).toMatchObject({ fromSec: 12.3, toSec: 13.1, padSec: 1.5, startSec: 12.3 - 1.5 });
 });
 
+test("a Who says clip reads the word timing cache with the corrected lines the cache was published for", async () => {
+    const saved = record([
+        {
+            id: "i1",
+            kind: "question",
+            about: "speaker",
+            fromSec: 10,
+            toSec: 14,
+            question: 'Who says "Second sentence"?',
+        },
+    ]);
+    const audioPath = recording("word-cache-part");
+    const fixture = await savedMeeting("meetings-moment-word-cache-part", audioPath, {
+        items: saved.items,
+        transcript: [
+            { speaker: "Voice", startSec: 10, text: "First sentence. Second sentence" },
+            { speaker: "Voice", startSec: 20, text: "Next." },
+        ],
+    });
+    const cache = meetingWordTimingCache(fixture.saved.id);
+    const model = join(dirname(audioPath), "weights.onnx");
+    writeFileSync(model, "model weights");
+    const { applied } = await correctedTranscriptRead({
+        store: fixture.store,
+        record: fixture.saved,
+        format: "json",
+        flags: { dictionary: true },
+        opened: fixture.opened,
+    });
+    await cache.publish(
+        makeWordTimingArtifact({
+            window: { fromSec: 10, toSec: 20 },
+            audio: wordTimingFile(audioPath),
+            modelFiles: [wordTimingFile(model)],
+            modelId: "test/word-model",
+            pcmSha256: "test-pcm",
+            words: [
+                { text: "First", startSec: 0.1, endSec: 0.5 },
+                { text: "sentence", startSec: 0.6, endSec: 1 },
+                { text: "Second", startSec: 2.3, endSec: 2.6 },
+                { text: "sentence", startSec: 2.7, endSec: 3.1 },
+            ],
+            lines: timedTranscriptView(fixture.saved, applied).entries,
+        })
+    );
+
+    try {
+        const clip = await clipMoment({
+            store: fixture.store,
+            record: fixture.saved,
+            opened: fixture.opened,
+            target: { kind: "item", id: "Q1" },
+            probe: oneTrack,
+            cut: async ({ outPath }) => {
+                writeFileSync(outPath, "RIFF");
+            },
+        });
+        expect(clip).toMatchObject({ fromSec: 12.3, toSec: 13.1, padSec: 1.5 });
+    } finally {
+        rmSync(cache.folder, { recursive: true, force: true });
+    }
+});
+
 test("manual clip pause holds its position and resumes the same process without replaying", () => {
     let clock = 1000;
     const signals: Array<string | number | undefined> = [];

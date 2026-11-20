@@ -1365,7 +1365,7 @@ final class EditorModel {
         guard !new.isEmpty else { return }
         let change = EditChange(at: Date(), by: "Renderer", revision: project.revision,
                                 lines: new.map { .init(symbol: "exclamationmark.triangle", text: $0.message) },
-                                itemIDs: [], startUs: nil, touchesPicture: false, action: "warning")
+                                itemIDs: [], startUs: nil, touchesPicture: false, action: EditChange.warning)
         changes.append(change)
         if changes.count > 3 { changes.removeFirst(changes.count - 3) }
         scheduleBannerRemoval(change.id)
@@ -1597,7 +1597,11 @@ final class EditorModel {
         let part = exportPart
         let rendered = Self.exportedProject(project, part: part)
         let facts = sourceAudioFacts
-        let url = EditExporter.outputURL(for: project)
+        // A part takes its own `-part-<from>-<to>` name, so it never lands on the whole edit's file name.
+        let url = EditExporter.outputURL(for: project, part: part)
+        // The revision the export renders, for the export ledger; nil while the edit has no file yet.
+        let editFile = store.url
+        let revision: Int? = FileManager.default.fileExists(atPath: editFile.path) ? project.revision : nil
         exportProgress = 0
         exportCancelled = false
         exportTask = Task { [weak self] in
@@ -1607,8 +1611,19 @@ final class EditorModel {
                                                            isCancelled: { self?.exportCancelled ?? true }) { progress in
                     self?.exportProgress = progress
                 }
-                self?.exportProgress = nil
                 HubPerf.log("recorder.export: \(result.url.path) \(ByteFormat.file(result.bytes)) in \(String(format: "%.1f", result.seconds)) s")
+                // Copy Movie and a drag hand out only an export of the edit as it is now; a part is never the movie.
+                if part == nil {
+                    let folder = editFile.deletingLastPathComponent()
+                    let exported = result.url
+                    // Off the main thread: the ledger's lock waits while a CLI export records its own entry.
+                    do { try await Task.detached { try ExportLedger.record(exported, revision: revision, in: folder) }.value } catch {
+                        HubPerf.log("recorder.export: the export ledger was not written: \(error.localizedDescription)")
+                    }
+                }
+                // Busy until the ledger is written: from here to the task's end nothing waits, so a second export
+                // cannot start while this task still owns `exportTask` and its deferred cleanup clears it.
+                self?.exportProgress = nil
                 self?.showExport("Exported \(result.url.lastPathComponent) (\(ByteFormat.file(result.bytes)), \(String(format: "%.1f", result.seconds)) s).",
                                  warnings: result.warnings)
                 self?.finishExport(result.url, part: part)

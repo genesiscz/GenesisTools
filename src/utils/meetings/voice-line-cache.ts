@@ -4,6 +4,7 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { z } from "zod";
 import type { VoiceEmbeddingProvenance } from "./voice";
 
@@ -11,6 +12,8 @@ export const voiceLineResultSchema = z.discriminatedUnion("quality", [
     z.object({ quality: z.literal("ready"), model: z.string(), embedding: z.array(z.number().finite()).min(1) }),
     z.object({ quality: z.literal("unknown"), reason: z.string() }),
 ]);
+/** How long a save waits for another pass that is merging the same cache; past it the results stay unsaved. */
+const SAVE_LOCK_MS = 30_000;
 const cacheSchema = z.object({ version: z.literal(1), entries: z.record(z.string(), voiceLineResultSchema) });
 type VoiceLineResult = z.infer<typeof voiceLineResultSchema>;
 type Entries = Record<string, VoiceLineResult>;
@@ -53,10 +56,19 @@ export class VoiceLineCache {
     private readonly changed: Entries = {};
 
     constructor(
-        private readonly options: { source: VoiceEmbeddingProvenance["source"]; model: string; cachePath?: string }
+        private readonly options: {
+            source: VoiceEmbeddingProvenance["source"];
+            model: string;
+            cachePath?: string;
+            /** Another pass's cache read for hits only: `save` never writes into it. */
+            fallbackCachePath?: string;
+        }
     ) {
         this.file = options.cachePath;
-        this.entries = this.file ? readEntries(this.file) : {};
+        this.entries = {
+            ...(options.fallbackCachePath ? readEntries(options.fallbackCachePath) : {}),
+            ...(this.file ? readEntries(this.file) : {}),
+        };
     }
 
     private key(span: Omit<VoiceEmbeddingProvenance, "source">): string {
@@ -87,15 +99,23 @@ export class VoiceLineCache {
                 : result;
     }
 
-    save(): void {
-        if (!this.file || !Object.keys(this.changed).length) {
+    /** The read, merge and replace run under one lock, so two overlapping passes both keep their results. */
+    async save(): Promise<void> {
+        const file = this.file;
+        if (!file || !Object.keys(this.changed).length) {
             return;
         }
         try {
-            const entries = { ...readEntries(this.file), ...this.changed };
-            atomicWriteFileSync(this.file, SafeJSON.stringify({ version: 1, entries }), { mode: 0o600 });
+            await withFileLock(
+                `${file}.lock`,
+                async () => {
+                    const entries = { ...readEntries(file), ...this.changed };
+                    atomicWriteFileSync(file, SafeJSON.stringify({ version: 1, entries }), { mode: 0o600 });
+                },
+                SAVE_LOCK_MS
+            );
         } catch (error) {
-            logger.debug({ error, file: this.file }, "Voice line cache could not be saved");
+            logger.debug({ error, file }, "Voice line cache could not be saved");
         }
     }
 }

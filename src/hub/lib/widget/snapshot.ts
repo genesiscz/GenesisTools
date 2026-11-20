@@ -1,6 +1,8 @@
 import { type WidgetTask, widgetTask } from "@app/question/lib/decisions/todo-view";
 import {
     cleanVisibleContext,
+    EXTERNAL_SESSION_ID,
+    externalMessageOrigin,
     inboxReply,
     MESSAGE_PREVIEW_CHARS,
     readInboxData,
@@ -355,6 +357,11 @@ export interface WidgetInboxSession {
     pendingItem?: WidgetInboxItem;
     /** The session's listed entries, the ones waiting for an answer first, then newest first; at most `INBOX_ITEMS_PER_SESSION`. */
     items?: WidgetInboxItem[];
+    /**
+     * The entries `items` leaves out for the per-session limit, counted as the overview counts listed ones (a row
+     * that stands for several entries counts each); absent when it lists them all.
+     */
+    hiddenItems?: number;
 }
 
 /** How far back, and how many, decisions answered outside the widget the snapshot carries. */
@@ -372,6 +379,11 @@ export const INBOX_UNREAD_KEPT_PER_SESSION = 3;
  * unread entries keep their places, so a session with many waiting decisions still shows its newest answer in the
  * newest-first feed.
  */
+/** How many entries some rows stand for: a row with `count` stands for that many, the overview's `representedCount`. */
+function representedEntries(items: readonly WidgetInboxItem[]): number {
+    return items.reduce((total, item) => total + Math.max(1, item.count ?? 1), 0);
+}
+
 export function listedInboxItems(items: WidgetInboxItem[]): WidgetInboxItem[] {
     const newest = (a: WidgetInboxItem, b: WidgetInboxItem) => b.at - a.at;
     const waiting = items.filter((item) => item.needsAnswer).sort(newest);
@@ -715,9 +727,6 @@ export function widgetMessageBody(body: string, title: string): string {
     return withoutLeadingLine(cleanVisibleContext(body), title);
 }
 
-function messageOrigin(project: string, sender?: string | null): string {
-    return [project, sender].filter(Boolean).join(" · ") || "External sender";
-}
 function flattenAgents(nodes: AgentNode[]): AgentNode[] {
     return nodes.flatMap((node) => [node, ...flattenAgents(node.children)]);
 }
@@ -1439,7 +1448,9 @@ export async function widgetSnapshot({
                           row.itemTitle ?? ""
                       ),
                       ...((row.messageText?.length ?? 0) > MESSAGE_PREVIEW_CHARS ? { more: true as const } : {}),
-                      ...(row.sessionId === "unknown" ? { origin: messageOrigin(row.project, row.sender) } : {}),
+                      ...(row.sessionId === EXTERNAL_SESSION_ID
+                          ? { origin: externalMessageOrigin(row.project, row.sender) }
+                          : {}),
                   }
                 : undefined;
         putInbox(
@@ -1631,7 +1642,12 @@ export async function widgetSnapshot({
         sessions: [...inboxSessions.values()]
             .sort((a, b) => b.needsAnswer - a.needsAnswer || b.unread - a.unread)
             .slice(0, 512)
-            .map((entry) => ({ ...entry, items: listedInboxItems(entry.items ?? []) })),
+            .map((entry) => {
+                const all = entry.items ?? [];
+                const items = listedInboxItems(all);
+                const hiddenItems = representedEntries(all) - representedEntries(items);
+                return { ...entry, items, ...(hiddenItems > 0 ? { hiddenItems } : {}) };
+            }),
         staged,
         ...(decisionsComplete
             ? {
@@ -1745,8 +1761,8 @@ export async function widgetSnapshot({
         cards.push({
             id: `answer:${row.id}`,
             kind: "answer",
-            ...(row.tag === "message" && row.sessionId === "unknown"
-                ? { messageOrigin: messageOrigin(row.project, row.agentLabel?.trim() || row.source) }
+            ...(row.tag === "message" && row.sessionId === EXTERNAL_SESSION_ID
+                ? { messageOrigin: externalMessageOrigin(row.project, row.agentLabel?.trim() || row.source) }
                 : {}),
             ...(!inboxKind(kinds, row.tag === "message" ? "message" : "answer").show
                 ? { hiddenFromInbox: true as const }

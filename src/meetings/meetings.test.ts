@@ -1296,6 +1296,26 @@ describe("the words a review row shows (U9, U13, U15 to U18)", () => {
         }
     });
 
+    test("a voice range that passed the cosine gate shows its cosine, never the 0.80 gate, as its voice score", async () => {
+        const { reviewRows } = await import("./lib/review-rows");
+        const { itemWhat } = await import("./lib/item-text");
+        const gated = item({
+            id: "i1",
+            kind: "speaker-range",
+            label: "Speaker 2",
+            fromSec: 60,
+            toSec: 60,
+            speaker: "Alice Example",
+            confidence: 0.8,
+            rules: [MeetingRule.VoiceEmbedding],
+            evidence: { endSec: 64, decisionGate: "cosine and margin", score: 0.71 },
+        });
+        const row = reviewRows({ ...record, items: [gated] }, { minPriority: 0 }).rows[0]!;
+        expect(row.confidence).toBe(0.71);
+        expect(row.choices.find((choice) => choice.role === "suggested")?.confidence).toBe(0.71);
+        expect(itemWhat(gated)).toEndWith("→ Alice Example by voice 0.71");
+    });
+
     test("every kind has a word from one table, and an unreliable label says what its choices do", async () => {
         const { reviewRow } = await import("./lib/review-rows");
         const label = item({
@@ -2380,7 +2400,7 @@ describe("watchOnce", () => {
     test("preflight persists the grant card at startup, reads hourly and clears it after recovery or disable", async () => {
         const home = mkdtempSync(join(tmpdir(), "recording-preflight-"));
         await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
-            const { readWidgetState } = await import("@app/hub/lib/widget/storage");
+            const { readWidgetState } = await import("@genesiscz/utils/widget/storage");
             let reads = 0;
             let enabled = true;
             let granted = false;
@@ -6063,6 +6083,9 @@ test("an interrupted recorder writes the uncovered sound span and its reason", a
     expect(rows.filter((row) => row.source === "system").every((row) => !row.lostSpans?.length)).toBe(true);
 }, 15_000);
 
+// Each wait ends on its event; the bound only has to outlast a loaded full-suite run, where 5 s was too short.
+const SOUND_STEP_MS = 15_000;
+
 test("native sound mode and each fallback reach live status, the meeting record and recorder-last.json", async () => {
     for (const [mode, fixture, reason] of [
         ["pieces", "--fixture-audio-three", undefined],
@@ -6171,10 +6194,14 @@ test("native sound mode and each fallback reach live status, the meeting record 
             const result = spyOn(out, "result").mockImplementation(() => undefined);
             try {
                 if (failsDuringCapture) {
-                    await withTimeout(secondFrame.promise, 5000, new Error("missing second frame before failure"));
+                    await withTimeout(
+                        secondFrame.promise,
+                        SOUND_STEP_MS,
+                        new Error("missing second frame before failure")
+                    );
                     writeFileSync(join(customHome, "fail-session-1"), "");
                     if (fixture === "--fixture-audio-session-dies-later") {
-                        await withTimeout(restarted.promise, 5000, new Error("sound session did not restart"));
+                        await withTimeout(restarted.promise, SOUND_STEP_MS, new Error("sound session did not restart"));
                         // An unchanged mute waits for the replacement to become the recording's active session.
                         await callRecorder({
                             id: meetingLiveId(record.id),
@@ -6184,7 +6211,7 @@ test("native sound mode and each fallback reach live status, the meeting record 
                         writeFileSync(join(customHome, "fail-session-2"), "");
                     }
                 }
-                await withTimeout(thirdFrame.promise, 5000, new Error(`missing third piece for ${fixture}`));
+                await withTimeout(thirdFrame.promise, SOUND_STEP_MS, new Error(`missing third piece for ${fixture}`));
                 const current = readRecorderState(store);
                 const sound = current.state?.sound;
                 expect(current.running).toBe(true);
@@ -6250,7 +6277,7 @@ test("native sound mode and each fallback reach live status, the meeting record 
             }
         });
     }
-}, 30_000);
+}, 120_000);
 
 test("a recycled pid's claim and an unreadable pid file are both taken over, as the daemon and chrome-devtools do", async () => {
     const store = new MeetingStore(new Storage("recorder-claim-kinds"));

@@ -466,6 +466,7 @@ live() {
 | Mute or restore a sound source | `r.audio.mute("mic")`, `r.audio.unmute("mic")`. Use `"system"` for system sound. | `live 'audio.mute("mic")'`, `live 'audio.unmute("mic")'` |
 | Read inputs and outputs or select a microphone | `r.audio.list()`, `r.audio.setInput(deviceId)` | `live 'audio.list()'`, `live 'audio.setInput("INPUT_UID")'` |
 | Read or change the active and still rates | `r.settings()`, `r.set({ fps: 30, idleFps: 2 })` | `live 'settings()'`, `live 'set({ fps: 30, idleFps: 2 })'` |
+| Change needed (the change threshold, 0 to 100) | `r.set({ threshold: 4 })` | `live 'set({ threshold: 4 })'` |
 | Add a marker | `r.mark("Step 1")` | `tools recorder mark "Step 1" LIVE_ID` |
 
 Use the display IDs from `r.displays.list()` in place of 37. Use an input ID from `r.audio.list()` in place of `INPUT_UID`.
@@ -473,6 +474,9 @@ The service forwards `switchTarget` as `target.switch`. It forwards `restart` as
 The Area tab uses `--region` at movie start. A live area switch uses a tagged target such as
 `r.switchTarget({ kind: "region", x: 20, y: 30, width: 640, height: 480 })`.
 The rate call takes `fps` in the REPL. The `settings.set` RPC takes `activeFps`.
+A new rate or threshold applies to the next segment. A running movie ends its segment and starts the next one at once.
+A paused movie applies it when it resumes. The full recorder's bar changes Change needed with the same call.
+The widget's bar has no Change needed control.
 
 Select the sources before you start. Every target records the sources you choose, each as its own track: a
 display, an area, a window and an app alike. Settings → Recorder → What the movie keeps → "System audio of a window

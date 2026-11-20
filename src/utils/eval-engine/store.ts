@@ -16,7 +16,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
 import type { CellRef, ConversationRecord } from "./conversation";
-import { EvalConfigError, type ScenarioOrigin, sha256 } from "./document";
+import { EvalConfigError, JsonSchema, type ScenarioOrigin, sha256 } from "./document";
 import type { CheckVerdict, ExpectationVerdict } from "./evaluate";
 import { type RunPlan, slug } from "./plan";
 import type { Json, SystemErrorKind, SystemInfo } from "./system";
@@ -93,7 +93,6 @@ export interface RunView {
 
 // ── Schemas of what is on disk ───────────────────────────────────────────────
 
-const JsonSchema = z.json();
 const UsageSchema = z.object({
     inputTokens: z.number(),
     outputTokens: z.number(),

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { applyCorrections } from "./apply";
-import { heardIn, TranscriptLines } from "./lines";
+import { heardIn, LINE_AT_TOLERANCE_SEC, TranscriptLines } from "./lines";
 import type { TranscriptEntry } from "./types";
 
 function line(speaker: string, startSec: number | undefined, text: string): TranscriptEntry {
@@ -84,6 +84,36 @@ describe("the line at a time", () => {
         expect(between(11, 29.9)).toEqual([3, 4]);
         expect(between(30, 30)).toEqual([0]);
         expect(between(31, 40)).toEqual([]);
+    });
+
+    test("a time lookup through the start index finds what a full scan finds, at the tolerance's edges too", () => {
+        const entries = [
+            line("Alice Example", 30.2, "late"),
+            line("Bob Example", undefined, "no time"),
+            line("Alice Example", 10.1, "first"),
+            line("Bob Example", 10.6, "close"),
+            line("Alice Example", 0.3, "early"),
+            line("Bob Example", 20, " "),
+        ];
+        const unordered = new TranscriptLines(entries);
+        const scan = (sec: number) =>
+            entries.flatMap((entry, index) =>
+                entry.startSec !== undefined &&
+                Math.abs(entry.startSec - sec) <= LINE_AT_TOLERANCE_SEC &&
+                entry.text.trim()
+                    ? [index]
+                    : []
+            );
+        for (const sec of [-0.2, 0.8, 9.6, 10.1, 10.35, 11.1, 19.5, 20, 29.7, 30.7, 31]) {
+            const found = scan(sec);
+            expect(unordered.at(sec)).toEqual(
+                found.length === 0
+                    ? { kind: "none" }
+                    : found.length === 1
+                      ? { kind: "found", index: found[0]! }
+                      : { kind: "ambiguous", indexes: found }
+            );
+        }
     });
 });
 

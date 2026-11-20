@@ -564,6 +564,45 @@ test("a goodbye takes its voice from the call seat, never from a mic-seat match 
     expect(departures).toEqual([{ name: bob.person, atSec: 0, reason: "voice" }]);
 });
 
+test("a farewell hint marks only its own label's line, not another label's line at the same second", () => {
+    const lines = lineEvidence(
+        [
+            { speaker: "Speaker 1", startSec: 0, text: "Thanks, see you." },
+            { speaker: "Speaker 2", startSec: 0, text: "Next slide please." },
+        ],
+        { segments: [{ startSec: 0, endSec: 5, channel: "system" }], speaking: [] }
+    );
+    const departures = (rows: typeof lines) =>
+        identifiedDepartures({
+            hints: [
+                {
+                    kind: "leave-then-continues" as const,
+                    label: "Speaker 1",
+                    strength: "normal" as const,
+                    leaves: [{ atSec: 0, continuesAtSec: 40, text: "Thanks, see you." }],
+                },
+            ],
+            lines: rows,
+            selfName: alice.person,
+            presence: [bob.person, "Carol Example"].map((name) => ({
+                name,
+                fromSec: 0,
+                toSec: 100,
+                leftAtExact: false,
+            })),
+            labels: [1].map((index) => ({
+                labeler: "voice" as const,
+                index,
+                seat: "call" as const,
+                person: "Carol Example",
+                score: 0.8,
+                reason: "named" as const,
+            })),
+        });
+    // Speaker 2's line has no farewell and its own voice names Carol: the hint on Speaker 1 must not make her leave.
+    expect(departures(lines)).toEqual(departures(lines.slice(0, 1)));
+});
+
 const spies: Array<{ mockRestore(): void }> = [];
 afterEach(() => {
     for (const mock of spies.splice(0).reverse()) {

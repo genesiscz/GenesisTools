@@ -53,6 +53,34 @@ export function killProcessGroup(child: GroupLeaderProcess, signal: NodeJS.Signa
     }
 }
 
+/**
+ * End a detached child's whole process group after its caller stopped waiting: a shell's own children (a wrapper's
+ * real program) go with it. While `outputOpen` (the caller still holds an unclosed pipe of the child), some member of
+ * the group holds that pipe, so the group id is still ours even after the leader exited. Returns false when nothing
+ * was signalled.
+ */
+export function endDetachedGroup(
+    child: GroupLeaderProcess,
+    { signal = "SIGKILL", outputOpen, what }: { signal?: NodeJS.Signals; outputOpen: boolean; what: string }
+): boolean {
+    if (killProcessGroup(child, signal, what)) {
+        return true;
+    }
+
+    if (!outputOpen || !child.pid) {
+        return false;
+    }
+
+    try {
+        // pid-verified: our detached group, alive because a member still holds the pipe we have not seen close.
+        process.kill(-child.pid, signal);
+        return true;
+    } catch (error) {
+        logger.debug({ error, pid: child.pid, signal }, `${what} group already ended`);
+        return false;
+    }
+}
+
 function isMissingProcessError(err: unknown): boolean {
     return typeof err === "object" && err !== null && "code" in err && (err as { code?: unknown }).code === "ESRCH";
 }

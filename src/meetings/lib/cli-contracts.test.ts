@@ -3458,6 +3458,22 @@ test("sample reads use the confirmed track and hash; removal invalidates project
         seat: "mic",
         track: "source-mic",
     });
+    // A meeting the bounded listing does not enumerate (a linked folder) with an unreadable record makes its samples
+    // unavailable; the listing still answers.
+    const unlisted = [
+        spyOn(store, "listBounded").mockReturnValue({ records: [], olderMeetings: 0 }),
+        spyOn(store, "read").mockImplementation(() => {
+            throw new Error("malformed meeting.json");
+        }),
+    ];
+    const unreadable = await listProjectVoices({ store, project });
+    for (const spy of unlisted) {
+        spy.mockRestore();
+    }
+    expect(unreadable.people.find((row) => row.person === p6Alice.person)?.samples[0]).toMatchObject({
+        available: false,
+        words: "",
+    });
     expect(await voiceSample({ store, project, person: p6Alice.person })).toMatchObject({
         path: audio,
         fileFromSec: 1,

@@ -11,6 +11,23 @@ export class DeliveryUnknownError extends Error {
     }
 }
 
+/**
+ * The answers reached the agent, then recording their delivery failed. Unlike `DeliveryUnknownError` the transport's
+ * receipt is in hand: a Send again would type them a second time. The record's own error is the `cause`.
+ */
+export class DeliveredUnrecordedError extends Error {
+    constructor(
+        readonly route: DeliveryResult,
+        cause: unknown
+    ) {
+        super(
+            `The answers reached the agent, but recording their delivery failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+            { cause }
+        );
+        this.name = "DeliveredUnrecordedError";
+    }
+}
+
 /** A delivery that did not reach the agent. The send puts the batch back to `answered`. */
 export class NotDeliveredError extends Error {
     constructor(readonly result: DeliveryResult) {

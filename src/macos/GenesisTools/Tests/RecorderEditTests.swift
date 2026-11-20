@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import GenesisKit
+import GenesisKitTestSupport
 import SwiftUI
 import Vision
 import XCTest
@@ -57,7 +58,7 @@ enum EditorShots {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: image).perform([request])
+        try recognizeText(in: image, with: request)
         // Vision reads curly quotes as straight ones, so both compare as straight.
         return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " | ")
             .replacingOccurrences(of: "“", with: "\"").replacingOccurrences(of: "”", with: "\"")
@@ -398,8 +399,15 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(run["to"] as? Double, 32.6, "where \"know\" ends")
     }
 
-    /// A recording folder with files, each `[name, seconds after a fixed time]`, as recording-movies.json lists them.
-    private func recordingFolder(_ files: [[Any]]) throws -> URL {
+    /// A recording folder with files, each `[name, seconds after a fixed time]`, as recording-movies.json lists them,
+    /// with edit.json at the case's `edit` revision and exports.json from its `exports`.
+    /// edit.json at `revision`: the fields that make it an edit (`ExportLedger.editRevision` reads no edit as unreadable).
+    private func editJSON(_ revision: Int) throws -> Data {
+        try JSONSerialization.data(withJSONObject: ["source": ["video": "screen.mp4"], "clips": [[String: Any]()], "revision": revision])
+    }
+
+    private func recordingFolder(_ files: [[Any]], edit: Int? = nil, editUnreadable: Bool = false, editNotAnEdit: Bool = false,
+                                 exports: [[Any]] = []) throws -> URL {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("movie-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let base = Date(timeIntervalSince1970: 1_793_000_000)
@@ -409,6 +417,22 @@ final class RecorderEditTests: XCTestCase {
             let offset = try XCTUnwrap(file.last as? NSNumber).doubleValue
             try FileManager.default.setAttributes([.modificationDate: base.addingTimeInterval(offset)], ofItemAtPath: url.path)
         }
+        if let edit {
+            try editJSON(edit).write(to: folder.appendingPathComponent("edit.json"))
+        }
+        if editUnreadable {
+            try Data("{ cut off by a crash".utf8).write(to: folder.appendingPathComponent("edit.json"))
+        }
+        if editNotAnEdit {
+            try Data("{}".utf8).write(to: folder.appendingPathComponent("edit.json"))
+        }
+        if !exports.isEmpty {
+            var files: [String: Any] = [:]
+            for export in exports {
+                files[try XCTUnwrap(export.first as? String)] = ["revision": export.last as? NSNumber ?? NSNull(), "writtenAt": "2026-11-04T10:00:00.000Z"]
+            }
+            try JSONSerialization.data(withJSONObject: ["version": 1, "files": files]).write(to: folder.appendingPathComponent(ExportLedger.file))
+        }
         return folder
     }
 
@@ -416,14 +440,51 @@ final class RecorderEditTests: XCTestCase {
     /// the same file as `tools recorder copy` and `movieOf`.
     func testTheMovieOfARecordingFolderMatchesTheSharedCases() throws {
         let cases = try SharedEditorFixture.cases("recording-movies.json")
-        XCTAssertGreaterThanOrEqual(cases.count, 7)
+        XCTAssertGreaterThanOrEqual(cases.count, 16)
         for item in cases {
             let name = try XCTUnwrap(item["name"] as? String)
-            let folder = try recordingFolder(try XCTUnwrap(item["files"] as? [[Any]]))
+            let folder = try recordingFolder(try XCTUnwrap(item["files"] as? [[Any]]), edit: (item["edit"] as? NSNumber)?.intValue,
+                                             editUnreadable: item["editUnreadable"] as? Bool ?? false,
+                                             editNotAnEdit: item["editNotAnEdit"] as? Bool ?? false,
+                                             exports: item["exports"] as? [[Any]] ?? [])
             defer { try? FileManager.default.removeItem(at: folder) }
+            let shareable = RecordingMovie.shareable(in: folder)
             XCTAssertEqual(RecordingMovie.own(in: folder)?.lastPathComponent, item["movie"] as? String, name)
-            XCTAssertEqual(RecordingMovie.shareable(in: folder)?.lastPathComponent, item["shareable"] as? String, name)
+            XCTAssertEqual(shareable.url?.lastPathComponent, item["shareable"] as? String, name)
+            if case .stale = shareable { XCTAssertEqual(item["stale"] as? Bool, true, name) } else { XCTAssertNil(item["stale"], name) }
+            if case .unreadable = shareable { XCTAssertEqual(item["unreadable"] as? Bool, true, name) } else { XCTAssertNil(item["unreadable"], name) }
         }
+    }
+
+    /// The defect: Copy Movie of an edited card handed out an older export or the unedited movie. The window's export
+    /// records the revision it rendered, and only that revision's export is handed out until the next change.
+    func testCopyMovieHandsOutOnlyTheExportOfTheCurrentEdit() throws {
+        let folder = try recordingFolder([["screen.mp4", 0], ["screen-edited.mp4", 10]], edit: 4)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        XCTAssertEqual(RecordingMovie.shareable(in: folder), .stale(revision: 4))
+        try ExportLedger.record(folder.appendingPathComponent("gone.mp4"), revision: 3, in: folder)
+        try ExportLedger.record(folder.appendingPathComponent("screen-edited.mp4"), revision: 4, in: folder)
+        XCTAssertEqual(RecordingMovie.shareable(in: folder).url?.lastPathComponent, "screen-edited.mp4")
+        XCTAssertEqual(Set(ExportLedger.read(folder).keys), ["screen-edited.mp4"], "a gone export leaves the ledger")
+        try editJSON(5).write(to: folder.appendingPathComponent("edit.json"))
+        XCTAssertEqual(RecordingMovie.shareable(in: folder), .stale(revision: 5))
+    }
+
+    /// The defect: the window's ledger left `revision` out for an unedited recording, and readExportLedger refused the
+    /// whole ledger for it. The window writes null now, and both readers take a missing key as null (library.test.ts
+    /// reads the same case).
+    func testTheExportLedgerWritesAndReadsAnUneditedExportAsNull() throws {
+        let item = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: SharedEditorFixture.url("export-ledger.json"))) as? [String: Any])
+        let folder = try recordingFolder([["plain.mp4", 0], ["older-window.mp4", 0], ["edited.mp4", 0]])
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try JSONSerialization.data(withJSONObject: try XCTUnwrap(item["ledger"])).write(to: folder.appendingPathComponent(ExportLedger.file))
+        let expected = try XCTUnwrap(item["revisions"] as? [String: Any]).mapValues { ($0 as? NSNumber)?.intValue }
+        XCTAssertEqual(ExportLedger.read(folder).mapValues(\.revision), expected)
+
+        try ExportLedger.record(folder.appendingPathComponent("plain.mp4"), revision: nil, in: folder)
+        let written = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: folder.appendingPathComponent(ExportLedger.file))) as? [String: Any])
+        let plain = try XCTUnwrap((written["files"] as? [String: Any])?["plain.mp4"] as? [String: Any])
+        XCTAssertTrue(plain["revision"] is NSNull, "nil is written as null, never left out")
     }
 
     /// The defect: a search hit showed "00:17 marker one" under the card, but VoiceOver read only "title, 00:31, not
@@ -503,6 +564,92 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual((pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL])?.first?.lastPathComponent, "proxy.mp4")
         guard case let .notice(text) = outcome else { return XCTFail("Copy Movie did not copy: \(String(describing: outcome))") }
         XCTAssertEqual(text, "Copied proxy.mp4 to the clipboard.")
+    }
+
+    /// Reduce noise turned off while a preview is made: the answer that arrives later never starts playing.
+    @MainActor
+    func testASoundPreviewWhoseControlsWentAwayNeverPlays() throws {
+        let preview = AudioPreviewPlayer()
+        let missing = URL(fileURLWithPath: "/nonexistent/preview.m4a")
+        let token = preview.begin()
+        XCTAssertTrue(preview.making)
+        preview.cancel()
+        XCTAssertFalse(preview.making)
+        XCTAssertFalse(try preview.play(missing, for: token), "the request is no longer current, so nothing opens")
+        XCTAssertFalse(preview.isPlaying)
+
+        let current = preview.begin()
+        XCTAssertThrowsError(try preview.play(missing, for: current), "a current request opens the file")
+        preview.failed(current)
+        XCTAssertFalse(preview.making)
+        XCTAssertFalse(preview.isPlaying)
+    }
+
+    /// The defect: the music preview and the cleaned noise sample own separate players, and both could play at once.
+    /// Starting one cancels the other, including a cleaned sample still being made.
+    @MainActor
+    func testStartingOneSoundPreviewCancelsTheOther() {
+        let cleaned = AudioPreviewPlayer()
+        let music = AudioPreviewPlayer()
+        let token = cleaned.begin()
+        XCTAssertTrue(cleaned.making)
+        _ = music.begin()
+        XCTAssertFalse(cleaned.making, "the cleaned sample in flight stops showing its spinner")
+        XCTAssertFalse(cleaned.isCurrent(token), "its answer never starts playing over the music")
+        XCTAssertTrue(music.making)
+        music.cancel()
+    }
+
+    /// The defect: the menu bar's Recent rows and the library both move a recording to the Trash, but only the library
+    /// kept where it went, so a recording trashed from the menu had no Put Back. Both now read one kept entry.
+    @MainActor
+    func testATrashedRecordingIsPutBackFromTheOneKeptEntry() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("trash-\(UUID().uuidString)")
+        let from = root.appendingPathComponent("library/2026-11-04_10-00-demo")
+        let to = root.appendingPathComponent("Trash/2026-11-04_10-00-demo")
+        try FileManager.default.createDirectory(at: to, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: from.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let trash = RecordingTrash()
+        let library = LibraryModel()
+        library.trash = trash
+        trash.keep(.init(title: "Demo", from: from, to: to))
+        XCTAssertEqual(library.trashed?.title, "Demo", "the library shows a move the menu made")
+
+        XCTAssertEqual(try trash.putBack()?.from, from)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: from.path))
+        XCTAssertNil(library.trashed)
+
+        // A row that names A never puts back B, which went to the Trash after the row was drawn.
+        let shown = RecordingTrash.Entry(title: "Shown", from: from, to: to)
+        try FileManager.default.moveItem(at: from, to: to)
+        trash.keep(.init(title: "Newer", from: root.appendingPathComponent("library/newer"), to: root.appendingPathComponent("Trash/newer")))
+        XCTAssertNil(try trash.putBack(shown))
+        XCTAssertEqual(trash.last?.title, "Newer", "the newer entry stays for its own row")
+        // The library's strip passes the entry it names too: it never restores Newer for a strip that said Shown.
+        library.putBack(shown)
+        XCTAssertEqual(trash.last?.title, "Newer")
+        XCTAssertEqual(library.failure?.hasPrefix("“Shown” was not put back"), true)
+        trash.keep(shown)
+        XCTAssertEqual(try trash.putBack(shown)?.title, "Shown")
+
+        // The folder is back in its place, so the move fails while the Trash copy is still there: try again later.
+        try FileManager.default.createDirectory(at: to, withIntermediateDirectories: true)
+        let blocked = RecordingTrash.Entry(title: "Blocked", from: from, to: to)
+        trash.keep(blocked)
+        XCTAssertThrowsError(try trash.putBack()) { error in
+            XCTAssertTrue(RecordingTrash.failureMessage(blocked, error).hasSuffix("It is still in the Trash."))
+        }
+        XCTAssertEqual(trash.last?.title, "Blocked", "a failed Put Back keeps the entry while the recording is in the Trash")
+
+        try FileManager.default.removeItem(at: to)
+        let gone = RecordingTrash.Entry(title: "Gone", from: from, to: to)
+        trash.keep(gone)
+        XCTAssertThrowsError(try trash.putBack(), "the Trash copy is gone") { error in
+            XCTAssertTrue(RecordingTrash.failureMessage(gone, error).hasSuffix("Its copy in the Trash is gone."))
+        }
+        XCTAssertNil(trash.last, "nothing is left to put back, so the row goes")
     }
 
     private func project(_ clips: [EditProject.Clip], zooms: [EditProject.Zoom] = []) -> EditProject {
@@ -1253,7 +1400,7 @@ final class RecorderEditTests: XCTestCase {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: image).perform([request])
+        try recognizeText(in: image, with: request)
         let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         XCTAssertTrue(text.contains("00:03.0"), text)
         // OCR reads a small "s" as "S" at this size.
@@ -1386,6 +1533,18 @@ final class RecorderEditTests: XCTestCase {
                        ["Removed 2 spotlights", "Removed the marker “Intro”", "Hid the captions", "Hid the cursor"])
         XCTAssertEqual(edited.title, "agent")
         XCTAssertEqual(edited.hint, "⌘Z puts it back")
+        // A renderer warning (a missing file) is no edit: its footer never offers an undo.
+        let warning = EditChange(at: Date(), by: "Renderer", revision: 3, lines: [], itemIDs: [], startUs: nil,
+                                 touchesPicture: false, action: EditChange.warning)
+        XCTAssertTrue(warning.isWarning)
+        XCTAssertEqual(warning.hint, "No edit caused this, so ⌘Z does not change it")
+        XCTAssertEqual(warning.title, "Renderer")
+        // VoiceOver hears what the triangle and the footer show: a warning that no edit caused.
+        let missing = EditChange(at: Date(), by: "Renderer", revision: 3, lines: [.init(symbol: "photo", text: "slate.png is missing")],
+                                 itemIDs: [], startUs: nil, touchesPicture: false, action: EditChange.warning)
+        XCTAssertEqual(missing.spokenLabel, "Warning from Renderer: slate.png is missing. No edit caused this, so ⌘Z does not change it")
+        XCTAssertEqual(edited.spokenLabel, "Edit from agent: \(edited.lines.map(\.text).joined(separator: ". "))")
+        XCTAssertTrue(undone.spokenLabel.hasPrefix("\(undone.title): "), undone.spokenLabel)
     }
 
     // Regression test: deep test 2026-11-07 R2-RE3 — an undo of Replace All (three caption lines fixed) said "Turned

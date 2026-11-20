@@ -7,16 +7,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chosenPlan } from "@app/recorder/lib/proxy";
 import { withTimeout } from "@genesiscz/utils/async";
+import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { killWithEscalation } from "@genesiscz/utils/process/killWithEscalation";
 import { framesDurationUs } from "@genesiscz/utils/recording-editor/source";
-import { RPC_ERRORS } from "@genesiscz/utils/screen-recorder/control";
+import { type AudioSource, RPC_ERRORS } from "@genesiscz/utils/screen-recorder/control";
 import { LiveRecordingServer, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
+import { NativeLiveCapture } from "@genesiscz/utils/screen-recorder/native";
+import { readLines } from "@genesiscz/utils/screen-recorder/process";
 import * as mediaFacts from "@genesiscz/utils/video/media-facts";
 import * as videoProbe from "@genesiscz/utils/video/probe";
 import * as videoProcess from "@genesiscz/utils/video/process";
 import { sessionAudioOf } from "../commands/capture-session";
 import { captureDiagnostics, validateBenchmark } from "../scripts/recorder-benchmark-policy";
 import * as captureRunner from "./capture-runner";
+import { nativeCaptureArgv, validateCaptureOptions } from "./native-record";
 import {
     audioTitlesArgv,
     audioTrackTitles,
@@ -25,6 +30,7 @@ import {
     type NativeRecorderOptions,
     nativeSegmentRecorder,
     segmentCaptureSpec,
+    segmentControlOf,
     segmentJoiner,
     titleAudioTracks,
 } from "./recording-native";
@@ -42,6 +48,7 @@ import {
     parseRecordingCommand,
     RecordingSession,
     type RecordingSessionEvent,
+    type SegmentControl,
     type SegmentRecorder,
     type SegmentResult,
 } from "./recording-session";
@@ -107,7 +114,11 @@ interface FakeRun {
     /** Ends the run by itself, as the recorder's deadline or a failure would. */
     end: (result: SegmentResult, writeMovie?: boolean) => Promise<void>;
     /** The first frame arrives (runs arm at once unless the fake was made with `armLater`), when the recorder said. */
-    arm: (start?: { firstFrameAt: number }) => void;
+    arm: (start?: { firstFrameAt: number; display?: { id: number; name: string } }) => void;
+    /** A Follow display run moved to another display. */
+    displayChanged?: (display: { id: number; name: string }) => void;
+    /** Hands the session this run's live sound commands, as a recorder does at the first frame. */
+    control?: (control: SegmentControl) => void;
 }
 
 /**
@@ -127,7 +138,7 @@ function fakeRecorder(
 ) {
     const runs: FakeRun[] = [];
     const recorder: SegmentRecorder = {
-        record({ target, rates, output, maxSeconds, signal, onRecording, onPreparing }) {
+        record({ target, rates, output, maxSeconds, signal, onRecording, onPreparing, onDisplayChanged, onControl }) {
             if (options.prepares) {
                 onPreparing?.();
             }
@@ -142,11 +153,21 @@ function fakeRecorder(
 
                     resolve(result);
                 };
-                const arm = (start?: { firstFrameAt: number }) => {
+                const arm = (start?: { firstFrameAt: number; display?: { id: number; name: string } }) => {
                     armed = true;
                     onRecording(start);
                 };
-                runs.push({ target, rates, output, maxSeconds, signal, end, arm });
+                runs.push({
+                    target,
+                    rates,
+                    output,
+                    maxSeconds,
+                    signal,
+                    end,
+                    arm,
+                    displayChanged: onDisplayChanged,
+                    control: onControl,
+                });
                 if (options.failFirst && index === 0) {
                     void end({ ok: false, endedBy: "failure", error: "[screen-recording-denied] no grant" }, false);
                     return;
@@ -208,6 +229,7 @@ describe("RecordingSession", () => {
             measure?: ConstructorParameters<typeof RecordingSession>[0]["measure"];
             /** Sees every event after the test's own list does. */
             emit?: (event: RecordingSessionEvent) => void;
+            finishSingle?: ConstructorParameters<typeof RecordingSession>[0]["finishSingle"];
         } = {}
     ) {
         const { emit, ...rest } = extra;
@@ -506,6 +528,30 @@ describe("RecordingSession", () => {
         expect(await readFile(join(root, "out.mp4"), "utf8")).toBe("movie 0 app");
     });
 
+    it("keeps the movie time of each display a Follow display take records from, across a pause", async () => {
+        const side = { id: 9, name: "Side" };
+        const builtIn = { id: 7, name: "Built-in" };
+        const { recorder, runs } = fakeRecorder({ armLater: true });
+        const recording = session(recorder);
+        await recording.start();
+        runs[0].arm({ firstFrameAt: clock, display: side });
+        clock += 1500;
+        runs[0].displayChanged?.(builtIn);
+        runs[0].displayChanged?.(builtIn);
+        await recording.command({ cmd: "pause" });
+        await recording.command({ cmd: "resume" });
+        runs[1].arm({ firstFrameAt: clock, display: builtIn });
+        clock += 500;
+        runs[1].displayChanged?.(side);
+        await recording.command({ cmd: "stop" });
+        expect(await recording.finished).toBe("done");
+        expect(recording.displaySwitches()).toEqual([
+            { atMs: 0, display: side },
+            { atMs: 1500, display: builtIn },
+            { atMs: 1500, display: side },
+        ]);
+    });
+
     it("restart drops every earlier segment and the clock", async () => {
         const { recorder, runs } = fakeRecorder();
         const recording = session(recorder);
@@ -574,6 +620,38 @@ describe("RecordingSession", () => {
         expect(await recording.finished).toBe("done");
         expect(attempts).toBe(2);
         expect(existsSync(join(root, "out.mp4"))).toBe(true);
+    });
+
+    it("abandon ends a session whose save failed and keeps its segments for recovery", async () => {
+        const { recorder, runs } = fakeRecorder();
+        const recording = session(recorder, {
+            join: async () => {
+                throw new Error("ffmpeg is missing");
+            },
+        });
+        await recording.start();
+        clock += 2000;
+        await recording.command({ cmd: "pause" });
+        await recording.command({ cmd: "resume" });
+        clock += 1000;
+        await recording.command({ cmd: "stop" });
+        await recording.abandon();
+
+        expect(await recording.finished).toBe("failed");
+        expect(events.at(-1)).toMatchObject({ event: "error", fatal: true });
+        expect(runs.every((run) => existsSync(run.output))).toBe(true);
+        expect(existsSync(join(root, "out.mp4"))).toBe(false);
+    });
+
+    it("abandon does nothing while the session records", async () => {
+        const { recorder } = fakeRecorder();
+        const recording = session(recorder);
+        await recording.start();
+        await recording.abandon();
+
+        expect(states().at(-1)?.startsWith("recording")).toBe(true);
+        await recording.command({ cmd: "discard" });
+        expect(await recording.finished).toBe("discarded");
     });
 
     it("a join that fails after it began writing leaves no partial movie at the output", async () => {
@@ -951,6 +1029,60 @@ describe("RecordingSession", () => {
             expect(events.find((event) => event.event === "done")).toMatchObject({ durationMs: 2000, segments: 2 });
         });
 
+        // The defect: the recorder titled a one-segment movie's audio tracks after `done`, and a widget host had moved
+        // the movie by then, so a player listed its tracks as "Core Media Audio".
+        it("a one-segment movie is finished at the output before it is measured and before done goes out", async () => {
+            const order: string[] = [];
+            const { recorder } = fakeRecorder({ movieMs: 990 });
+            const recording = session(recorder, {
+                finishSingle: async (movie) => {
+                    order.push(`finish ${movie}`);
+                },
+                measure: async () => {
+                    order.push("measure");
+                    return 980;
+                },
+                emit: (event) => {
+                    if (event.event === "done") {
+                        order.push("done");
+                    }
+                },
+            });
+            await recording.start();
+            await recording.command({ cmd: "stop" });
+            expect(await recording.finished).toBe("done");
+            expect(order).toEqual([`finish ${join(root, "out.mp4")}`, "measure", "done"]);
+        });
+
+        it("a one-segment finish that fails keeps the movie as recorded and the session still ends done", async () => {
+            const { recorder } = fakeRecorder({ movieMs: 990 });
+            const recording = session(recorder, {
+                finishSingle: async () => {
+                    throw new Error("ffmpeg is missing");
+                },
+            });
+            await recording.start();
+            await recording.command({ cmd: "stop" });
+            expect(await recording.finished).toBe("done");
+            expect(events.find((event) => event.event === "done")).toMatchObject({ durationMs: 1000, segments: 1 });
+        });
+
+        it("a joined movie is not finished again", async () => {
+            const finished: string[] = [];
+            const { recorder } = fakeRecorder();
+            const recording = session(recorder, {
+                finishSingle: async (movie) => {
+                    finished.push(movie);
+                },
+            });
+            await recording.start();
+            await recording.command({ cmd: "pause" });
+            await recording.command({ cmd: "resume" });
+            await recording.command({ cmd: "stop" });
+            expect(await recording.finished).toBe("done");
+            expect(finished).toEqual([]);
+        });
+
         it("a one-segment movie the probe cannot read still saves, with the recorder's movie length", async () => {
             const { recorder } = fakeRecorder({ movieMs: 990 });
             const recording = session(recorder, {
@@ -1052,6 +1184,10 @@ describe("RecordingSession", () => {
 });
 
 describe("nativeSegmentRecorder", () => {
+    // The watch falls back to a one-second poll, and a loaded Mac (Swift builds beside the suite) delays its timers:
+    // 2 s failed once there. A wait ends at the switch, so a generous ceiling costs a passing run nothing.
+    const SWITCH_WAIT_MS = 10_000;
+
     let root: string;
 
     beforeEach(async () => {
@@ -1190,7 +1326,7 @@ describe("nativeSegmentRecorder", () => {
             onRecording?.({ sessionDir });
             await writeFile(`${status}.new`, metadata(second));
             await fs.rename(`${status}.new`, status);
-            await withTimeout(changed.promise, 2_000, new Error("no display switch"));
+            await withTimeout(changed.promise, SWITCH_WAIT_MS, new Error("no display switch"));
             return { sessionDir, warnings: [] } as unknown as Awaited<
                 ReturnType<typeof captureRunner.runCapturePlanWithSignal>
             >;
@@ -1219,7 +1355,11 @@ describe("nativeSegmentRecorder", () => {
                 join(sessionDir, "movie-start.json"),
                 SafeJSON.stringify({ firstFrameEpochMs: 1234, display })
             );
-            await withTimeout(changed.promise, 3_000, new Error("no display switch without a directory watch"));
+            await withTimeout(
+                changed.promise,
+                SWITCH_WAIT_MS,
+                new Error("no display switch without a directory watch")
+            );
             return { sessionDir, warnings: [] } as unknown as Awaited<
                 ReturnType<typeof captureRunner.runCapturePlanWithSignal>
             >;
@@ -1876,6 +2016,28 @@ describe("segmentCaptureSpec", () => {
         );
     });
 
+    it("passes a movie preset other than standard to ax-tool, and refuses one for a ProRes movie", () => {
+        const options = { fps: 30, movieQuality: "small" as const };
+        const spec = segmentCaptureSpec({
+            target: { kind: "display", screenIndex: 0 },
+            output: "/tmp/segment.mp4",
+            maxSeconds: 60,
+            options,
+        });
+        expect(spec.movieQuality).toBe("small");
+        expect(nativeCaptureArgv(spec, "/tmp/s").join(" ")).toContain("--movie-quality small");
+        const standard = segmentCaptureSpec({
+            target: { kind: "window", windowIds: [7] },
+            output: "/tmp/segment.mp4",
+            maxSeconds: 60,
+            options: { movieQuality: "standard" },
+        });
+        expect(nativeCaptureArgv(standard, "/tmp/s")).not.toContain("--movie-quality");
+        expect(() => validateCaptureOptions({ ...spec, codec: "prores4444", videoOut: "/tmp/a.mov" })).toThrow(
+            "applies to an H.264 movie"
+        );
+    });
+
     it("passes the idle rate, the change threshold and the windows to leave out", () => {
         const spec = segmentCaptureSpec({
             target: { kind: "display", screenIndex: 0 },
@@ -1886,6 +2048,21 @@ describe("segmentCaptureSpec", () => {
         expect(spec.idleFps).toBe(2);
         expect(spec.threshold).toBe(3);
         expect(spec.excludeWindowIds).toEqual([41, 42]);
+        expect(spec.keepOverlays).toBeUndefined();
+    });
+
+    it("keeps screen dimmers only in a display or area movie that asks for it", () => {
+        const keep = (target: RecordingTarget) =>
+            segmentCaptureSpec({ target, output: "/tmp/segment.mp4", maxSeconds: 60, options: { keepOverlays: true } })
+                .keepOverlays;
+        expect(keep({ kind: "display", screenIndex: 0 })).toBe(true);
+        expect(keep({ kind: "region", x: 0, y: 0, width: 320, height: 200 })).toBe(true);
+        // A window or app movie never shows another app's dimmer, so the flag would only be noise.
+        expect(keep({ kind: "window", windowIds: [7] })).toBeUndefined();
+        expect(nativeCaptureArgv({ mode: "screen", duration: 1, keepOverlays: true }, "/o")).toContain(
+            "--keep-overlays"
+        );
+        expect(nativeCaptureArgv({ mode: "screen", duration: 1 }, "/o")).not.toContain("--keep-overlays");
     });
 
     it("keeps the motion threshold the recorder used before when none is given", () => {
@@ -2257,6 +2434,21 @@ describe("a movie recording's live settings", () => {
         }
     });
 
+    it('rate "same" puts an adaptive movie back on one steady rate, also above 5 fps', async () => {
+        const { client, runs, close } = await movie();
+
+        try {
+            const answer = await client.setSettings({ activeFps: 30, rate: "same" });
+            expect(answer.settings).toMatchObject({ activeFps: 30, idleFps: 30 });
+            expect(runs.at(-1)?.rates).toEqual({ activeFps: 30, idleFps: 30, threshold: 0.5 });
+            await expect(client.setSettings({ rate: "same", idleFps: 2 })).rejects.toMatchObject({
+                code: RPC_ERRORS.invalidParams,
+            });
+        } finally {
+            await close();
+        }
+    });
+
     it("refuses the keys a movie keeps, naming each, and changes nothing", async () => {
         const { client, runs, close } = await movie();
 
@@ -2373,4 +2565,161 @@ describe("displays.list on a movie recording", () => {
 
         expect(recorded).toEqual([9]);
     });
+});
+
+describe("live sound on a movie take", () => {
+    const fakeAxTool = join(moduleDir(import.meta), "../../utils/screen-recorder/__fixtures__/fake-ax-tool.ts");
+    let root: string;
+
+    beforeEach(async () => {
+        root = join(tmpdir(), `recording-sound-${randomUUID()}`);
+        await mkdir(root, { recursive: true });
+    });
+
+    afterEach(async () => {
+        await rm(root, { recursive: true, force: true });
+    });
+
+    function soundSession(
+        recorder: SegmentRecorder,
+        audio: { sources: AudioSource[]; micDevice?: string } = {
+            sources: ["mic", "system"],
+            micDevice: "built-in-mic",
+        }
+    ) {
+        let control: SessionRecorderControl | undefined;
+        const recording = new RecordingSession({
+            target: display,
+            directory: join(root, "segments"),
+            output: join(root, "out.mp4"),
+            recorder,
+            rates: { activeFps: 30, idleFps: 30, threshold: 1 },
+            join: async ({ output }) => {
+                await writeFile(output, "joined");
+                return { durationMs: 1000 };
+            },
+            measure: async () => 1000,
+            emit: (event) => control?.observe(event),
+            tickMs: 0,
+            slowStartMs: 0,
+            audio,
+        });
+        control = new SessionRecorderControl(recording, { target: display, audio });
+        return { recording, control };
+    }
+
+    it("mutes the running segment at once and gives each new segment the mutes and the microphone again", async () => {
+        const { recorder, runs } = fakeRecorder();
+        const { recording, control } = soundSession(recorder);
+        await recording.start();
+        const sent: string[] = [];
+        const controlOf = (run: number): SegmentControl => ({
+            mute: async (source, muted) => {
+                sent.push(`${run} ${muted ? "mute" : "unmute"} ${source}`);
+            },
+            setMic: async (deviceId) => {
+                sent.push(`${run} set-mic ${deviceId}`);
+            },
+        });
+        expect(control.methods).toContain("audio.mute");
+        expect(control.methods).toContain("audio.setInput");
+        runs[0]?.control?.(controlOf(0));
+        expect(sent).toEqual([]);
+        expect(await control.muteAudio("mic", true)).toMatchObject({ muted: { mic: true, system: false } });
+        expect(await control.setAudioInput("desk-mic")).toMatchObject({ micDevice: "desk-mic" });
+        await control.pause();
+        // Paused, nothing records: the next segment takes the change.
+        expect(await control.muteAudio("system", true)).toMatchObject({ muted: { mic: true, system: true } });
+        await control.resume();
+        runs[1]?.control?.(controlOf(1));
+        expect(sent).toEqual(["0 mute mic", "0 set-mic desk-mic", "1 mute mic", "1 mute system", "1 set-mic desk-mic"]);
+        expect((await control.getSettings()).audio).toEqual({
+            sources: ["mic", "system"],
+            muted: { mic: true, system: true },
+            micDevice: "desk-mic",
+        });
+        await recording.command({ cmd: "discard" });
+    });
+
+    it("refuses a source the movie does not record and keeps the state when the recorder refuses a change", async () => {
+        const { recorder, runs } = fakeRecorder();
+        const { recording, control } = soundSession(recorder, { sources: ["mic"] });
+        await recording.start();
+        await expect(control.muteAudio("system", true)).rejects.toMatchObject({ code: RPC_ERRORS.unsupported });
+        runs[0]?.control?.({
+            mute: async () => {
+                throw new Error("the stream refused the mute");
+            },
+            setMic: async () => {
+                throw new Error("no input device desk-mic");
+            },
+        });
+        await expect(control.muteAudio("mic", true)).rejects.toMatchObject({ code: RPC_ERRORS.internal });
+        await expect(control.setAudioInput("desk-mic")).rejects.toMatchObject({ code: RPC_ERRORS.unknownDevice });
+        expect(recording.audioState()).toEqual({ sources: ["mic"], muted: { mic: false, system: false } });
+        await recording.command({ cmd: "discard" });
+
+        const silent = soundSession(fakeRecorder().recorder, { sources: [] });
+        expect(silent.control.methods).not.toContain("audio.mute");
+    });
+
+    it("sends the commands over a recorder's control channel and reads its answers (the fake ax-tool)", async () => {
+        const proc = Bun.spawn(
+            [
+                process.execPath,
+                fakeAxTool,
+                "capture",
+                "--mode",
+                "screen",
+                "--out",
+                join(root, "capture"),
+                "--control-stdin",
+                "--audio",
+                "mic",
+            ],
+            { stdin: "pipe", stdout: "pipe", stderr: "pipe", env: process.env }
+        );
+        const written: unknown[] = [];
+        const channel = new NativeLiveCapture(
+            (text) => {
+                written.push(SafeJSON.parse(text, { strict: true }));
+                proc.stdin.write(text);
+                void proc.stdin.flush();
+            },
+            undefined,
+            {},
+            new Set(["mute", "set-mic"])
+        );
+        const stderr = readLines(proc.stderr, (line) => channel.receive(line));
+        const { recorder, runs } = fakeRecorder();
+        const { recording, control } = soundSession(recorder, { sources: ["mic"], micDevice: "desk-mic" });
+        await recording.start();
+        try {
+            runs[0]?.control?.(segmentControlOf(channel));
+            expect(await control.muteAudio("mic", true)).toMatchObject({ muted: { mic: true } });
+            expect(await control.setAudioInput("built-in-mic")).toMatchObject({ micDevice: "built-in-mic" });
+            await expect(control.setAudioInput("missing-mic")).rejects.toMatchObject({
+                code: RPC_ERRORS.unknownDevice,
+            });
+            expect(recording.audioState().micDevice).toBe("built-in-mic");
+            expect(written).toEqual([
+                { cmd: "mute", source: "mic" },
+                { cmd: "set-mic", deviceId: "built-in-mic" },
+                { cmd: "set-mic", deviceId: "missing-mic" },
+            ]);
+        } finally {
+            proc.stdin.end();
+            // The fake exits when its stdin ends; one that ignores the end is killed, so the cleanup below still runs.
+            const exited = await withTimeout(proc.exited, 5_000).then(
+                () => true,
+                () => false
+            );
+            if (!exited) {
+                await killWithEscalation(proc, { graceMs: 1_000, reapMs: 2_000 });
+            }
+
+            await stderr;
+            await recording.command({ cmd: "discard" });
+        }
+    }, 30_000);
 });

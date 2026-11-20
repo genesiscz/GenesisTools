@@ -254,7 +254,14 @@ function notifyForConfig({
     };
 
     for (const entry of loaded.notifyLayers) {
-        if (entry.layer !== "config.global" && entry.layer !== "config.repo" && entry.layer !== "config.project") {
+        // The surface overrides come last, as resolveNotify applies them, so the grid shows what a surface delivers.
+        if (
+            entry.layer !== "config.global" &&
+            entry.layer !== "config.repo" &&
+            entry.layer !== "config.project" &&
+            entry.layer !== "surface.hub" &&
+            entry.layer !== "surface.widget"
+        ) {
             continue;
         }
 

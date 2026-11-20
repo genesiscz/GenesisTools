@@ -123,17 +123,24 @@ export function ensureHandoffModel(db: Database): void {
 export function openHandoffModel(dbPath?: string): Database {
     const path = dbPath ?? handoffDbPath();
     const db = openWorkDb(path);
-    db.exec("PRAGMA busy_timeout = 5000;");
-    const { eventsTableCreated } = createTables(db);
 
-    // One-time migration: table born under a non-empty handoffs → backfill via rebuild (G1).
-    if (eventsTableCreated && tableExists(db, "handoffs")) {
-        const count = (db.query("SELECT COUNT(*) AS n FROM handoffs").get() as { n: number }).n;
+    // A failed setup hands no connection back, so it closes here rather than staying open with nobody to close it.
+    try {
+        db.exec("PRAGMA busy_timeout = 5000;");
+        const { eventsTableCreated } = createTables(db);
 
-        if (count > 0) {
-            log.info({ count }, "handoff_events table created under existing handoffs — rebuilding to backfill");
-            rebuildHandoffModel(db);
+        // One-time migration: table born under a non-empty handoffs → backfill via rebuild (G1).
+        if (eventsTableCreated && tableExists(db, "handoffs")) {
+            const count = (db.query("SELECT COUNT(*) AS n FROM handoffs").get() as { n: number }).n;
+
+            if (count > 0) {
+                log.info({ count }, "handoff_events table created under existing handoffs — rebuilding to backfill");
+                rebuildHandoffModel(db);
+            }
         }
+    } catch (err) {
+        db.close();
+        throw err;
     }
 
     log.debug({ path }, "handoff read-model opened");
@@ -384,6 +391,29 @@ function rowToPublicEvent(row: EventRow): HandoffPublicEvent {
     }
 
     return { ...event, outcome: toOutcome({ ok: row.ok, error: row.error, extra: row.extra }) };
+}
+
+/**
+ * The stored payloads of these events, keyed by uid, without the fold's verdict. The poster's edit credential is
+ * stripped at insert, so a payload never carries it.
+ */
+export function handoffPayloadsByUid(db: Database, uids: readonly string[]): Map<string, unknown> {
+    const payloads = new Map<string, unknown>();
+
+    for (let start = 0; start < uids.length; start += 500) {
+        const chunk = uids.slice(start, start + 500);
+        const rows = db
+            .query<{ uid: string; payload: string }, string[]>(
+                `SELECT uid, payload FROM handoff_events WHERE uid IN (${chunk.map(() => "?").join(", ")})`
+            )
+            .all(...chunk);
+
+        for (const row of rows) {
+            payloads.set(row.uid, SafeJSON.parse(row.payload, { strict: true }));
+        }
+    }
+
+    return payloads;
 }
 
 /** The insertion order is the order in which the model applied the events. */

@@ -705,6 +705,10 @@ struct PhraseTest: Decodable, Equatable {
     let fired: [DictionaryEntry]
     let suggestions: [Suggestion]
     var lines: [Line]? = nil
+    /// With `lines`: every line the draft changes. A service older than the limit sends neither field.
+    var totalChanged: Int? = nil
+    /// True when `lines` stops at the service's limit before `totalChanged`.
+    var truncated: Bool? = nil
 }
 
 // MARK: - A decision (`tools meetings confirm|reject <id> <items> --json`)

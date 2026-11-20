@@ -86,9 +86,7 @@ export async function runToEnd(direct: DirectCoordinator, signal?: AbortSignal):
 
 // ─────────────────────────────── errors ───────────────────────────────
 
-export function errorMessage(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
-}
+export { errorMessage } from "@genesiscz/utils/error-message";
 
 /** `errors.Is(err, want)`: `want` is `err` or somewhere on its `cause` chain. */
 export function errorChainIncludes(error: unknown, want: unknown): boolean {

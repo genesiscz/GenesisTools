@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import type { NativeLiveCapture } from "@genesiscz/utils/screen-recorder/native";
 import {
     audioStreamCount,
     type MediaFacts,
@@ -26,6 +27,7 @@ import {
     joinCursorTracks,
     joinSegmentsArgv,
     type MovieRates,
+    type SegmentControl,
     type SegmentJoiner,
     type SegmentPlacement,
     type SegmentRecorder,
@@ -52,6 +54,8 @@ export const SESSION_MOTION_THRESHOLD = 0.5;
 export interface NativeRecorderOptions {
     /** CG window ids no movie may show: the host's own recording controls. */
     excludeWindowIds?: number[];
+    /** Keep the windows of screen dimmers (HazeOver and the like) in a display or area movie; they are left out by default. */
+    keepOverlays?: boolean;
     /** The recorder's frame rate while something moves (0.5–120). */
     fps?: number;
     /** False hides the red border around what is recorded (it never shows in the movie either way). */
@@ -77,6 +81,8 @@ export interface NativeRecorderOptions {
     idleFps?: number;
     /** The share of the picture that must change, in percent, before the stream leaves the idle rate (0–100). */
     threshold?: number;
+    /** The movie's size and bit rate against standard (the native size): high, small (`CaptureSpec.movieQuality`). */
+    movieQuality?: CaptureSpec["movieQuality"];
 }
 
 export { cursorTrackPath };
@@ -135,12 +141,20 @@ export function segmentCaptureSpec({
     }
 
     spec.maxFrames = 1;
+    if (options.movieQuality && options.movieQuality !== "standard") {
+        spec.movieQuality = options.movieQuality;
+    }
+
     if (options.indicator === false) {
         spec.indicator = false;
     }
 
     if (options.excludeWindowIds?.length) {
         spec.excludeWindowIds = options.excludeWindowIds;
+    }
+
+    if (options.keepOverlays && (target.kind === "display" || target.kind === "region")) {
+        spec.keepOverlays = true;
     }
 
     if (options.audio?.length) {
@@ -224,7 +238,21 @@ function movieStartOf(sessionDir: string): SegmentStart | undefined {
     }
 }
 
-/** One `tools control capture record` run per segment, on the ScreenCaptureKit recorder. */
+/** The segment's live sound commands over the recorder's `--control-stdin` channel. */
+export function segmentControlOf(channel: NativeLiveCapture): SegmentControl {
+    return {
+        mute: (source, muted) =>
+            channel.mute?.(source, muted) ?? Promise.reject(new Error("the recorder cannot mute while it records")),
+        setMic: (deviceId) =>
+            channel.setMic?.(deviceId) ??
+            Promise.reject(new Error("the recorder cannot switch the microphone while it records")),
+    };
+}
+
+/**
+ * One `tools control capture record` run per segment, on the ScreenCaptureKit recorder. A movie with sound starts each
+ * run with a control channel, so its mutes and microphone change while it records.
+ */
 export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): SegmentRecorder {
     return {
         async record({
@@ -236,6 +264,7 @@ export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): Segm
             onRecording,
             onDisplayChanged,
             onPreparing,
+            onControl,
         }): Promise<SegmentResult> {
             const capture = segmentCaptureSpec({ target, output, maxSeconds, options: withRates(options, rates) });
             let sessionDir: string | undefined;
@@ -264,6 +293,9 @@ export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): Segm
                         onRecording(started ? movieStartOf(started.sessionDir) : undefined);
                     },
                     onPreparing,
+                    ...(onControl && options.audio?.length
+                        ? { onControl: (channel: NativeLiveCapture) => onControl(segmentControlOf(channel)) }
+                        : {}),
                 });
                 sessionDir = result.sessionDir;
                 const envelope = result.capture as {

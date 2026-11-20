@@ -168,6 +168,9 @@ const MAC_DIALOG: PersonDialog = {
  * zenity (GNOME and most desktops), else kdialog (KDE). Both exit 0 only for Approve and 1 for Cancel or a closed
  * window; zenity exits 5 when its `--timeout` passes.
  */
+/** What GTK and Qt print when a dialog program cannot reach the display. */
+const LINUX_DISPLAY_FAILURE = /cannot open display|could not connect to display|unable to init server/i;
+
 const LINUX_DIALOG: PersonDialog = {
     command: ({ title, body }, system) => {
         if (!system.hasDisplay()) {
@@ -197,13 +200,15 @@ const LINUX_DIALOG: PersonDialog = {
             ? [kdialog, "--title", title, "--warningyesno", body, "--yes-label", "Approve", "--no-label", "Cancel"]
             : null;
     },
-    answer: ({ exitCode }) => {
+    answer: ({ exitCode, stderr = "" }) => {
         if (exitCode === 0) {
             return "approved";
         }
 
+        // Zenity also exits 1 when GTK cannot open the display (the screen went after the command was chosen): no
+        // dialog was shown, so nobody cancelled.
         if (exitCode === 1) {
-            return "cancelled";
+            return LINUX_DISPLAY_FAILURE.test(stderr) ? "failed" : "cancelled";
         }
 
         return exitCode === null || exitCode === 5 ? "gave-up" : "failed";

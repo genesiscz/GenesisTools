@@ -55,6 +55,7 @@ import { laneItems, resolveLanes } from "@genesiscz/utils/recording-editor/lanes
 import {
     audibleTracks,
     integratedLoudness,
+    mutedRangesFilter,
     recordingLaneInputs,
     transcribedTracks,
 } from "@genesiscz/utils/recording-editor/loudness";
@@ -104,7 +105,15 @@ import logoPictureTypes from "./__fixtures__/logo-picture-types.json";
 import partAudio from "./__fixtures__/part-audio.json";
 import transcriptCuts from "./__fixtures__/transcript-cuts.json";
 import type { AudioFacts, AudioLane } from "./audio-lanes";
-import { denoisedSourceArgv, denoisedSourcePath, denoiseSchema, syncDenoisedTranscript } from "./denoise";
+import {
+    denoisedSourceArgv,
+    denoisedSourcePath,
+    denoisePreviewArgv,
+    denoisePreviewPath,
+    denoiseSchema,
+    removeOldDenoisePreviews,
+    syncDenoisedTranscript,
+} from "./denoise";
 import { MAX_SAMPLE_TIMES, RecordingEditor, sampleTimes } from "./editor";
 import { atempoChain, concatList, exportVideoArgv, sampleFpsFilter, speedArgv, trimArgv } from "./ffmpeg";
 import { transitionJoins } from "./fx";
@@ -4153,6 +4162,89 @@ describe("noise reduction on export", () => {
         expect(argv.at(-1)).toBe("/rec/.denoise/screen-x.mp4");
     });
 
+    test("the noise reduction preview cuts 5 s of each input, cleans with the export's filters and mixes one file", () => {
+        const settings = denoiseSchema.parse({ reductionDb: 20, tracks: [0] });
+        const argv = denoisePreviewArgv({
+            inputs: [
+                {
+                    file: "/r/screen.mp4",
+                    fromSec: 12,
+                    tracks: [{ track: 0, filter: "afftdn=nr=20:nf=-50:tn=1" }, { track: 1 }],
+                },
+                { file: "/r/audio-mic.m4a", fromSec: -1, tracks: [{ track: 0, volume: 0.5 }] },
+            ],
+            seconds: 5,
+            output: "/r/.denoise/preview.m4a",
+        });
+
+        expect(argv.slice(5, 11)).toEqual(["-ss", "12", "-t", "5", "-i", "/r/screen.mp4"]);
+        expect(argv.slice(11, 17)).toEqual(["-ss", "0", "-t", "5", "-i", "/r/audio-mic.m4a"]);
+        // The microphone starts 1 s after the playhead: it plays after 1 s of silence, and the file stays 5 s long.
+        expect(argv[argv.indexOf("-filter_complex") + 1]).toBe(
+            "[0:a:0]afftdn=nr=20:nf=-50:tn=1,volume=1[a0];[0:a:1]anull,volume=1[a1];[1:a:0]anull,adelay=1000:all=1,volume=0.5[a2];[a0][a1][a2]amix=inputs=3:normalize=0:duration=longest[out]"
+        );
+        expect(argv.slice(-3)).toEqual(["-t", "5", "/r/.denoise/preview.m4a"]);
+        expect(() => denoisePreviewArgv({ inputs: [], seconds: 5, output: "/x.m4a" })).toThrow("no sound");
+        // A new strength is a new file; the same start, strength and mix are the same file.
+        const inputs = [{ file: "/r/screen.mp4", fromSec: 12, tracks: [{ track: 0, volume: 1 }] }];
+        const at = { source: "/r/screen.mp4", fromSec: 12, seconds: 5, inputs };
+        expect(denoisePreviewPath({ ...at, settings })).toBe(denoisePreviewPath({ ...at, settings }));
+        expect(denoisePreviewPath({ ...at, settings })).not.toBe(
+            denoisePreviewPath({ ...at, settings: { ...settings, reductionDb: 12 } })
+        );
+        // A muted lane or a new volume changes the mix, so the old preview is never replayed for it.
+        expect(denoisePreviewPath({ ...at, settings })).not.toBe(
+            denoisePreviewPath({ ...at, settings, inputs: [{ ...inputs[0], tracks: [{ track: 0, volume: 0.5 }] }] })
+        );
+        expect(denoisePreviewPath({ ...at, settings })).not.toBe(denoisePreviewPath({ ...at, settings, inputs: [] }));
+        expect(denoisePreviewPath({ ...at, settings })).toMatch(
+            /\/r\/\.denoise\/preview-screen\.mp4-[0-9a-f]{12}\.m4a$/
+        );
+        expect(denoisePreviewPath({ ...at, settings })).not.toBe(
+            denoisePreviewPath({ ...at, source: "/r/screen.mov", settings })
+        );
+    });
+
+    test("a new noise reduction preview removes the earlier ones of the movie only", () => {
+        const folder = mkdtempSync(join(tmpdir(), "gt-denoise-preview-"));
+        const cache = join(folder, ".denoise");
+        mkdirSync(cache);
+        const hash = (digit: string) => digit.repeat(12);
+        for (const name of [
+            `preview-screen.mp4-${hash("a")}.m4a`,
+            `preview-screen.mp4-${hash("b")}.m4a`,
+            `preview-screen-${hash("e")}.m4a`,
+            `preview-screen.mp4-${hash("f")}.4242.partial.m4a`,
+            `preview-screen-extra.mp4-${hash("1")}.m4a`,
+            `preview-screen.mov-${hash("2")}.m4a`,
+            `preview-camera.mov-${hash("c")}.m4a`,
+            "screen-ddd.mp4",
+        ]) {
+            writeFileSync(join(cache, name), "x");
+        }
+
+        const removed = removeOldDenoisePreviews({
+            source: join(folder, "screen.mp4"),
+            keep: join(cache, `preview-screen.mp4-${hash("b")}.m4a`),
+        });
+
+        // The older preview and one named the way earlier builds named it leave; a preview still being written, the
+        // previews of screen-extra.mp4, screen.mov and camera.mov, and the cleaned movie stay.
+        expect(removed.sort()).toEqual(
+            [join(cache, `preview-screen.mp4-${hash("a")}.m4a`), join(cache, `preview-screen-${hash("e")}.m4a`)].sort()
+        );
+        expect(readdirSync(cache).sort()).toEqual(
+            [
+                `preview-camera.mov-${hash("c")}.m4a`,
+                `preview-screen-extra.mp4-${hash("1")}.m4a`,
+                `preview-screen.mov-${hash("2")}.m4a`,
+                `preview-screen.mp4-${hash("b")}.m4a`,
+                `preview-screen.mp4-${hash("f")}.4242.partial.m4a`,
+                "screen-ddd.mp4",
+            ].sort()
+        );
+    });
+
     test("a track can have its own strength: the op merges it and the copy filters that track at it", () => {
         let project = applyOp(wholeProject(source), { op: "denoise", reductionDb: 10, trackReductionDb: { "1": 20 } });
         project = applyOp(project, { op: "denoise", trackReductionDb: { "0": 6 } });
@@ -4473,6 +4565,90 @@ describe("recording layer contract", () => {
         );
     });
 
+    test("audioMute silences a part of one lane as an item of its own, and audioUnmute gives it back", () => {
+        const project = wholeProject(source);
+        const op = (raw: unknown) => editOpSchema.parse(raw);
+        expect(() => applyOp(project, op({ op: "audioMute", id: "mic", from: 1, to: 2 }))).toThrow(
+            "audioMute needs the recording's sound sources"
+        );
+        let edited = applyOp(project, op({ op: "audioMute", id: "mic", from: 4, to: 6 }), { audioFacts: frames });
+        edited = applyOp(edited, op({ op: "audioMute", id: "mic", from: 1, to: 2.5 }));
+        const mic = () => edited.audio.lanes?.find((lane) => lane.id === "mic");
+        // In start order, each with its own id; the other lanes and the lane's own mute stay as they were.
+        expect(mic()?.mutedRanges?.map(({ startUs, endUs }) => [startUs, endUs])).toEqual([
+            [1_000_000, 2_500_000],
+            [4_000_000, 6_000_000],
+        ]);
+        expect(mic()?.muted).toBe(false);
+        expect(edited.audio.lanes?.find((lane) => lane.id === "system")).not.toHaveProperty("mutedRanges");
+        const [first, second] = mic()?.mutedRanges ?? [];
+        expect(first.id).not.toBe(second.id);
+
+        // A stretch in the middle splits the part; the part before keeps the id.
+        edited = applyOp(edited, op({ op: "audioUnmute", id: "mic", from: 5, to: 5.5 }));
+        expect(mic()?.mutedRanges?.map(({ id, startUs, endUs }) => [id === second.id, startUs, endUs])).toEqual([
+            [false, 1_000_000, 2_500_000],
+            [true, 4_000_000, 5_000_000],
+            [false, 5_500_000, 6_000_000],
+        ]);
+        edited = applyOp(edited, op({ op: "audioUnmute", id: "mic", part: first.id }));
+        edited = applyOp(edited, op({ op: "audioUnmute", id: "mic", from: 0, to: 12 }));
+        expect(mic()).not.toHaveProperty("mutedRanges");
+
+        expect(() => applyOp(edited, op({ op: "audioMute", id: "mic", from: 3, to: 3 }))).toThrow();
+        expect(() => applyOp(edited, op({ op: "audioUnmute", id: "mic", part: "u-gone" }))).toThrow("no muted part");
+        expect(() => applyOp(edited, op({ op: "audioUnmute", id: "mic" }))).toThrow("part id");
+        expect(() => applyOp(edited, op({ op: "audioMute", id: "missing", from: 1, to: 2 }))).toThrow("missing");
+    });
+
+    test("audioUnmute keeps overlapping muted parts in start order when it splits one", () => {
+        const op = (raw: unknown) => editOpSchema.parse(raw);
+        let edited = applyOp(wholeProject(source), op({ op: "audioMute", id: "mic", from: 1, to: 10 }), {
+            audioFacts: frames,
+        });
+        edited = applyOp(edited, op({ op: "audioMute", id: "mic", from: 2, to: 3 }));
+        edited = applyOp(edited, op({ op: "audioUnmute", id: "mic", from: 5, to: 6 }));
+        const lane = edited.audio.lanes?.find((one) => one.id === "mic");
+        expect(lane?.mutedRanges?.map(({ startUs, endUs }) => [startUs, endUs])).toEqual([
+            [1_000_000, 5_000_000],
+            [2_000_000, 3_000_000],
+            [6_000_000, 10_000_000],
+        ]);
+    });
+
+    test("audioUnmute takes a part id or a from and to range, which its schema says", () => {
+        const parse = (raw: unknown) => editOpSchema.safeParse(raw).success;
+        expect(parse({ op: "audioUnmute", id: "mic", part: "u1" })).toBe(true);
+        expect(parse({ op: "audioUnmute", id: "mic", from: 1, to: 2 })).toBe(true);
+        expect(parse({ op: "audioUnmute", id: "mic" })).toBe(false);
+        expect(parse({ op: "audioUnmute", id: "mic", from: 1 })).toBe(false);
+        expect(parse({ op: "audioUnmute", id: "mic", part: "u1", from: 1, to: 2 })).toBe(false);
+    });
+
+    test("a lane's muted parts reach the mix as silent stretches on the source clock", () => {
+        const lanes: AudioLane[] = [
+            {
+                id: "movie-0",
+                source: "movie",
+                track: 0,
+                offsetMs: 0,
+                muted: false,
+                volume: 1,
+                mutedRanges: [{ id: "u1", startUs: 1_000_000, endUs: 2_500_000 }],
+            },
+        ];
+        const inputs = recordingLaneInputs({
+            video: "/movies/screen.mp4",
+            lanes,
+            facts: { movieTracks: 1, mixedFrom: [] },
+        });
+        expect(inputs.map((input) => input.mutedRanges?.map(({ startUs, endUs }) => [startUs, endUs]))).toEqual([
+            [[1_000_000, 2_500_000]],
+        ]);
+        expect(mutedRangesFilter(inputs[0].mutedRanges)).toBe("volume=enable='between(t,1,2.5)':volume=0,");
+        expect(mutedRangesFilter(undefined)).toBe("");
+    });
+
     test("layerAdd returns a replayable id and layerMove sends it to the top and bottom", () => {
         const original = withCamera();
         const facts: projectOps.OpFacts = { playheadUs: 2_000_000 };
@@ -4524,6 +4700,45 @@ describe("recording layer contract", () => {
         expect(placed.camera?.size).toBeCloseTo(0.32);
         const y = bubbleRect(original.camera!, canvasShape(original)).y / canvasShape(original).height;
         expect(placed.camera?.y).toBeCloseTo(y);
+    });
+
+    test("the camera row keeps a custom name, and an empty name gives Camera back", () => {
+        const named = applyOp(withCamera(), editOpSchema.parse({ op: "layer", id: "camera", name: "Me" }));
+        const path = join(workspace(), "camera-name.edit.json");
+        writeProject(path, named);
+        expect(readProject(path).camera?.name).toBe("Me");
+        const moved = applyOp(named, editOpSchema.parse({ op: "layer", id: "camera", x: 0.3 }));
+        expect(moved.camera?.name).toBe("Me");
+        const cleared = applyOp(moved, editOpSchema.parse({ op: "layer", id: "camera", name: "" }));
+        expect(cleared.camera?.name).toBeUndefined();
+        expect(() => applyOp(withCamera(), editOpSchema.parse({ op: "layer", id: "camera", file: "b.mov" }))).toThrow(
+            "unsupported: file"
+        );
+    });
+
+    test("Replace File changes a layer's source in one op and keeps its id, place and times", () => {
+        const facts = { playheadUs: 1_000_000, videoDurationUs: 2_000_000 };
+        const first = applyOp(
+            withCamera(),
+            editOpSchema.parse({ op: "layerAdd", kind: "video", file: "a.mov" }),
+            facts
+        );
+        const second = applyOp(first, editOpSchema.parse({ op: "layerAdd", kind: "image", file: "logo.png" }), facts);
+        const id = first.layers!.media[0].id;
+        const looped = applyOp(second, editOpSchema.parse({ op: "layer", id, videoSound: true, loop: true }));
+        const replaced = applyOp(looped, editOpSchema.parse({ op: "layer", id, file: "b.mov" }));
+        expect(replaced.layers?.order).toEqual(looped.layers?.order);
+        expect(replaced.layers?.media[0]).toMatchObject({ id, kind: "video", file: "b.mov", loop: true });
+        expect(replaced.layers?.media[0].startUs).toBe(looped.layers?.media[0].startUs);
+        const picture = applyOp(replaced, editOpSchema.parse({ op: "layer", id, file: "still.png", kind: "image" }));
+        expect(picture.layers?.media[0]).toMatchObject({
+            id,
+            kind: "image",
+            file: "still.png",
+            videoSound: false,
+            loop: false,
+        });
+        expect(() => applyOp(picture, editOpSchema.parse({ op: "layer", id, loop: true }))).toThrow("require a video");
     });
 
     test("video duration and edits use source time, clamp to the movie and clear a shape", () => {

@@ -194,7 +194,7 @@ struct ItemsBar: View {
     @Bindable var detail: MeetingDetailModel
     let projection: ItemsProjection
     @Binding var group: String
-    /// The config's apply line (`assign.applyAbove`).
+    /// The config's apply line (`global.suggest.applyAbove`).
     let applyAbove: Double
     @Environment(\.kitLook) private var look
     /// The bar's width and the filter slot's width, in whole points; nil until their first layout.

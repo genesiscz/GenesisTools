@@ -1,10 +1,15 @@
+import { jsonValueSchema } from "@genesiscz/utils/json-value-schema";
 import { logger } from "@genesiscz/utils/logger";
 import { createGateway, type Experimental_EvaluationModel, experimental_evaluate as evaluate } from "ai";
 import { z } from "zod";
 
 export const JEV_MODEL = "typesafe-ai/jev";
 
-const inputSchema = z.union([z.string().trim().min(1), z.record(z.string(), z.json()), z.array(z.json())]);
+const inputSchema = z.union([
+    z.string().trim().min(1),
+    z.record(z.string(), jsonValueSchema),
+    z.array(jsonValueSchema),
+]);
 const criteriaSchema = inputSchema.nullable();
 const questionSchema = z.discriminatedUnion("type", [
     z

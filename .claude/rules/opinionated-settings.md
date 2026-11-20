@@ -34,7 +34,7 @@ Those are fixed, not made optional.
 ## How
 
 - One preference per choice, stored where its surface already stores preferences (the widget: the zod schema in
-  `src/hub/lib/widget/types.ts` plus `WidgetPreferences` in GenesisKit `WidgetWireModels.swift`; a native window:
+  `src/utils/widget/types.ts` plus `WidgetPreferences` in GenesisKit `WidgetWireModels.swift`; a native window:
   its settings store). An enum over a boolean when a third way is plausible ("auto" | "always" | "never").
 - The control goes on the settings page of that surface, in the card the behavior belongs to, with a one-line detail
   that says what it does. A sound picker has a play button. A list that has a filter in place gets a settings

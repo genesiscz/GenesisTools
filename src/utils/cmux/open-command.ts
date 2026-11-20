@@ -115,12 +115,16 @@ export async function openCommandAt(options: OpenCommandOptions): Promise<Opened
                 return { workspaceId: created.workspace_id, surfaceId };
             }
             case "workspace": {
-                const split = await openSplitInWorkspace(target.workspaceId, { background: options.silent });
+                const split = await openSplitInWorkspace(target.workspaceId, {
+                    background: options.silent,
+                    signal: options.signal,
+                });
                 return { workspaceId: split.workspaceId, surfaceId: split.surfaceId };
             }
             case "pane": {
                 const created = await openSurfaceInPane(target.workspaceId, target.paneId, {
                     background: options.silent,
+                    signal: options.signal,
                 });
                 return { workspaceId: target.workspaceId, surfaceId: created.surfaceId };
             }

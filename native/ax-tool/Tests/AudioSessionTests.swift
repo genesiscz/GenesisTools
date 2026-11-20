@@ -35,14 +35,35 @@ final class AudioSessionTests: XCTestCase {
         return try XCTUnwrap(buffer)
     }
 
-    private func stereo(samples: Int, at: CMTime) throws -> CMSampleBuffer {
+    /// Exact in Float32 and different for every frame and channel, so a copy from the wrong offset fails.
+    private func ramp(_ channel: Int, _ frame: Int) -> Float {
+        channel == 0 ? Float(frame) / 16384 : -0.25 - Float(frame) / 32768
+    }
+
+    private func planes(_ buffer: CMSampleBuffer) throws -> [[Float]] {
+        var block: CMBlockBuffer?
+        let list = AudioBufferList.allocate(maximumBuffers: 2)
+        defer { free(list.unsafeMutablePointer) }
+        XCTAssertEqual(CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(buffer,
+            bufferListSizeNeededOut: nil, bufferListOut: list.unsafeMutablePointer,
+            bufferListSize: MemoryLayout<AudioBufferList>.size + MemoryLayout<AudioBuffer>.size,
+            blockBufferAllocator: kCFAllocatorDefault, blockBufferMemoryAllocator: kCFAllocatorDefault,
+            flags: 0, blockBufferOut: &block), noErr)
+        return try list.map { plane in
+            let data = try XCTUnwrap(plane.mData).assumingMemoryBound(to: Float.self)
+            return Array(UnsafeBufferPointer(start: data, count: Int(plane.mDataByteSize) / 4))
+        }
+    }
+
+    private func stereo(samples: Int, at: CMTime,
+                        value: (Int, Int) -> Float = { channel, _ in channel == 0 ? 0.25 : -0.5 }) throws -> CMSampleBuffer {
         let format = try XCTUnwrap(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000,
             channels: 2, interleaved: false))
         let pcm = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples)))
         pcm.frameLength = AVAudioFrameCount(samples)
         let channels = try XCTUnwrap(pcm.floatChannelData)
         for channel in 0..<2 {
-            for sample in 0..<samples { channels[channel][sample] = channel == 0 ? 0.25 : -0.5 }
+            for sample in 0..<samples { channels[channel][sample] = value(channel, sample) }
         }
         var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: 48_000),
             presentationTimeStamp: at, decodeTimeStamp: .invalid)
@@ -183,44 +204,22 @@ final class AudioSessionTests: XCTestCase {
     func testStereoPlanarSplitMuteAndSilenceKeepBothChannelsAndSampleTime() async throws {
         let directory = try directory()
         let host = CMTime(value: 123, timescale: 1)
-        let input = try stereo(samples: 9600, at: host)
+        let input = try stereo(samples: 9600, at: host, value: ramp)
+        let expected = (0..<2).map { channel in (2400..<7200).map { ramp(channel, $0) } }
         let cut = try XCTUnwrap(copyAudioRange(input, CFRange(location: 2400, length: 4800)).buffer)
-        var cutBlock: CMBlockBuffer?
-        let cutList = AudioBufferList.allocate(maximumBuffers: 2)
-        defer { free(cutList.unsafeMutablePointer) }
-        XCTAssertEqual(CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(cut,
-            bufferListSizeNeededOut: nil, bufferListOut: cutList.unsafeMutablePointer,
-            bufferListSize: MemoryLayout<AudioBufferList>.size + MemoryLayout<AudioBuffer>.size,
-            blockBufferAllocator: kCFAllocatorDefault, blockBufferMemoryAllocator: kCFAllocatorDefault,
-            flags: 0, blockBufferOut: &cutBlock), noErr)
-        XCTAssertEqual(cutList.count, 2)
-        for channel in 0..<2 {
-            let data = try XCTUnwrap(cutList[channel].mData).assumingMemoryBound(to: Float.self)
-            XCTAssertEqual(cutList[channel].mDataByteSize, 4800 * 4)
-            XCTAssertTrue((0..<4800).allSatisfy { data[$0] == (channel == 0 ? 0.25 : -0.5) })
-        }
-        let planes = copyPCMFrames(input, CFRange(location: 2400, length: 4800), refused: -12700)
-        XCTAssertEqual(planes.status, noErr)
-        let planeCopy = try XCTUnwrap(planes.buffer)
+        XCTAssertEqual(try planes(cut), expected, "the range copy starts at frame 2400 of each channel")
+        let fallback = copyPCMFrames(input, CFRange(location: 2400, length: 4800), refused: -12700)
+        XCTAssertEqual(fallback.status, noErr)
+        let planeCopy = try XCTUnwrap(fallback.buffer)
         XCTAssertTrue(CMSampleBufferDataIsReady(planeCopy), "the per-plane copy is ready before it is returned")
+        XCTAssertEqual(try planes(planeCopy), expected, "the per-plane copy starts at frame 2400 of each channel")
         XCTAssertEqual(CMSampleBufferGetNumSamples(planeCopy), 4800)
         XCTAssertEqual(CMTimeCompare(CMSampleBufferGetPresentationTimeStamp(planeCopy),
             CMTimeAdd(host, CMTime(value: 2400, timescale: 48_000))), 0)
         XCTAssertEqual(copyPCMFrames(input, CFRange(location: 9000, length: 4800), refused: -12700).status, -12700)
-        let silent = try XCTUnwrap(silentCopy(input))
-        var block: CMBlockBuffer?
-        let list = AudioBufferList.allocate(maximumBuffers: 2)
-        defer { free(list.unsafeMutablePointer) }
-        XCTAssertEqual(CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(silent,
-            bufferListSizeNeededOut: nil, bufferListOut: list.unsafeMutablePointer,
-            bufferListSize: MemoryLayout<AudioBufferList>.size + MemoryLayout<AudioBuffer>.size,
-            blockBufferAllocator: kCFAllocatorDefault, blockBufferMemoryAllocator: kCFAllocatorDefault,
-            flags: 0, blockBufferOut: &block), noErr)
-        XCTAssertEqual(list.count, 2)
-        for buffer in list {
-            let samples = try XCTUnwrap(buffer.mData).assumingMemoryBound(to: Float.self)
-            XCTAssertTrue((0..<Int(buffer.mDataByteSize) / 4).allSatisfy { samples[$0] == 0 })
-        }
+        let silent = try planes(try XCTUnwrap(silentCopy(input)))
+        XCTAssertEqual(silent.map(\.count), [9600, 9600])
+        XCTAssertTrue(silent.allSatisfy { $0.allSatisfy { $0 == 0 } })
         var lines: [Data] = []
         let audio = SegmentedAudio(directory: directory, seconds: 0.1, emit: { lines.append($0) })
         audio.setMuted(.system, true)
@@ -492,6 +491,7 @@ final class AudioSessionTests: XCTestCase {
         audio.queue.sync { audio.append(buffer, source: .mic) }
         let next = try pcm(samples: 4800, at: CMTimeAdd(first, CMTime(value: 100, timescale: 1000)))
         audio.queue.sync { audio.append(next, source: .mic) }
+        XCTAssertTrue(audio.output.drain(timeout: 3))
         XCTAssertEqual(lines.count, 1, "the open segment is announced once before finish")
         let started = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(lines.first)) as? [String: Any])
         XCTAssertEqual(started["event"] as? String, "segment-started")
@@ -502,6 +502,108 @@ final class AudioSessionTests: XCTestCase {
         try await audio.finish()
         let closed = try XCTUnwrap(closedRows(lines).first)
         XCTAssertEqual(closed["zeroAt"] as? String, started["zeroAt"] as? String)
+    }
+
+    func testRowOutputDropsTheOldestLevelRowsKeepsEveryOtherRowAndCountsTheDrops() {
+        let lock = NSLock()
+        var written: [String] = []
+        func record(_ name: String) {
+            lock.lock()
+            written.append(name)
+            lock.unlock()
+        }
+        let output = AudioRowOutput(droppableLimit: 2) { record("dropped \($0)") }
+        let writing = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        output.send(droppable: false) {
+            writing.signal()
+            _ = release.wait(timeout: .now() + 5)
+            record("segment-1")
+        }
+        XCTAssertEqual(writing.wait(timeout: .now() + 3), .success, "the first row is being written")
+        for name in ["level-1", "level-2"] { output.send(droppable: true) { record(name) } }
+        output.send(droppable: false) { record("segment-2") }
+        for name in ["level-3", "level-4"] { output.send(droppable: true) { record(name) } }
+        output.send(droppable: false) { record("final") }
+        XCTAssertFalse(output.drain(timeout: 0.1), "the reader is still blocked")
+        release.signal()
+        XCTAssertTrue(output.drain(timeout: 3))
+        lock.lock()
+        XCTAssertEqual(written, ["segment-1", "dropped 2", "segment-2", "level-3", "level-4", "final"])
+        lock.unlock()
+    }
+
+    func testRowOutputRefusesReliableRowsBeyondItsLimitReportsOnceAndDrainFails() {
+        let lock = NSLock()
+        var written: [String] = []
+        var overflows: [Int] = []
+        let output = AudioRowOutput(droppableLimit: 2, reliableLimit: 2) { _ in }
+        output.overflowed = { limit in
+            lock.lock()
+            overflows.append(limit)
+            lock.unlock()
+        }
+        let writing = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        output.send(droppable: false) {
+            writing.signal()
+            _ = release.wait(timeout: .now() + 5)
+        }
+        XCTAssertEqual(writing.wait(timeout: .now() + 3), .success, "the first row is being written")
+        for name in ["segment-2", "segment-3", "segment-4", "segment-5"] {
+            output.send(droppable: false) {
+                lock.lock()
+                written.append(name)
+                lock.unlock()
+            }
+        }
+        release.signal()
+        XCTAssertFalse(output.drain(timeout: 3), "a refused row means not every row was written")
+        lock.lock()
+        XCTAssertEqual(written, ["segment-2", "segment-3"])
+        XCTAssertEqual(overflows, [2], "the overflow is reported once, with the limit")
+        lock.unlock()
+    }
+
+    func testABlockedReaderHoldsNeitherTheSampleQueueNorPauseAndMuteAndFinishWritesItsRows() async throws {
+        let directory = try directory()
+        let lock = NSLock()
+        var lines: [Data] = []
+        let release = DispatchSemaphore(value: 0)
+        let audio = SegmentedAudio(directory: directory, seconds: 60, emit: { data in
+            _ = release.wait(timeout: .now() + 10)
+            lock.lock()
+            lines.append(data)
+            lock.unlock()
+        })
+        let host = CMTime(value: 123, timescale: 1)
+        let started = Date()
+        let first = try pcm(samples: 4800, at: host)
+        audio.queue.sync { audio.append(first, source: .mic) }
+        let next = try pcm(samples: 4800, at: CMTimeAdd(host, CMTime(value: 100, timescale: 1000)))
+        audio.queue.sync { audio.append(next, source: .mic) }
+        audio.setMuted(.mic, true)
+        audio.setPaused(true)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2, "no call waited for the blocked reader")
+        // Finish retires the segment while the reader is still blocked, and must wait for its rows.
+        let finished = DispatchSemaphore(value: 0)
+        let finishing = Task {
+            defer { finished.signal() }
+            try await audio.finish()
+        }
+        XCTAssertFalse(audio.output.drain(timeout: 0.2))
+        XCTAssertEqual(finished.wait(timeout: .now()), .timedOut, "finish waits for the blocked reader")
+        lock.lock()
+        XCTAssertEqual(lines.count, 0, "no row was written while the reader was blocked")
+        lock.unlock()
+        release.signal()
+        release.signal()
+        try await finishing.value
+        lock.lock()
+        let rows = lines
+        lock.unlock()
+        XCTAssertEqual(rows.count, 2, "the segment start and the closed segment are both written")
+        XCTAssertEqual(try closedRows(rows).first?["durationMs"] as? Int, 200)
     }
 
     func testEncoderReportsPrimingInFramesAtEachSampleRate() throws {

@@ -12,39 +12,55 @@ export interface DecidedLine {
     text: string;
 }
 
-/** The source lines an item changes. Ranges keep the correction engine's inclusive end and label filter. */
+/**
+ * The source lines an item changes. Ranges keep the correction engine's inclusive end and label filter. Only the item's
+ * candidate lines are visited: a range's lines by a start-time lookup and a term's resolved anchors directly, so a
+ * question with many targets does not scan the whole transcript once per target.
+ */
 export function itemLines(item: MeetingItem, transcript: TranscriptLines): DecidedLine[] {
-    const matches = lineMatcher(item, transcript);
+    const { candidates, matches } = lineMatcher(item, transcript);
+    const indexes = candidates ?? transcript.entries.keys();
+    const lines: DecidedLine[] = [];
 
-    return transcript.entries.flatMap((entry, index) =>
-        matches(entry, index) && entry.text.trim()
-            ? [
-                  {
-                      index,
-                      startSec: entry.startSec,
-                      endSec: transcript.end(index),
-                      speaker: entry.speaker,
-                      text: entry.text,
-                  },
-              ]
-            : []
-    );
+    for (const index of indexes) {
+        const entry = transcript.entries[index];
+        if (entry && matches(entry, index) && entry.text.trim()) {
+            lines.push({
+                index,
+                startSec: entry.startSec,
+                endSec: transcript.end(index),
+                speaker: entry.speaker,
+                text: entry.text,
+            });
+        }
+    }
+
+    return lines;
+}
+
+type LineTest = (entry: TranscriptLines["entries"][number], index: number) => boolean;
+
+/** The lines that start in a time range, in transcript order. */
+function startingIn(transcript: TranscriptLines, fromSec: number, toSec: number): number[] {
+    return transcript.startingBetween(fromSec, toSec).map(({ index }) => index);
 }
 
 /**
- * Whether a source line belongs to `item`. A term's pattern and anchors depend on the item only, so they are resolved
- * once here and not again for every line; every anchor must still resolve, and the line must be one of them.
+ * Whether a source line belongs to `item`, with the lines worth testing (`candidates`, in transcript order) when the
+ * item names them; without them every line is tested. A term's pattern and anchors depend on the item only, so they
+ * are resolved once here and not again for every line; every anchor must still resolve, and the line must be one of
+ * them.
  */
-function lineMatcher(
-    item: MeetingItem,
-    transcript: TranscriptLines
-): (entry: TranscriptLines["entries"][number], index: number) => boolean {
+function lineMatcher(item: MeetingItem, transcript: TranscriptLines): { candidates?: number[]; matches: LineTest } {
     if (item.kind === "speaker-range" || item.kind === "label") {
-        return (entry) =>
-            entry.startSec !== undefined &&
-            entry.startSec >= item.fromSec &&
-            entry.startSec <= item.toSec &&
-            entry.speaker === item.label;
+        return {
+            candidates: startingIn(transcript, item.fromSec, item.toSec),
+            matches: (entry) =>
+                entry.startSec !== undefined &&
+                entry.startSec >= item.fromSec &&
+                entry.startSec <= item.toSec &&
+                entry.speaker === item.label,
+        };
     }
 
     if (item.kind === "term") {
@@ -63,19 +79,27 @@ function lineMatcher(
             targets === undefined
                 ? undefined
                 : targets.every((target) => target.kind === "found")
-                  ? new Set(targets.flatMap((target) => (target.kind === "found" ? [target.index] : [])))
-                  : new Set<number>();
-        return (entry, index) => (lines === undefined || lines.has(index)) && pattern.test(entry.text);
+                  ? [...new Set(targets.flatMap((target) => (target.kind === "found" ? [target.index] : [])))].sort(
+                        (a, b) => a - b
+                    )
+                  : [];
+        return { ...(lines ? { candidates: lines } : {}), matches: (entry) => pattern.test(entry.text) };
     }
 
     if (item.kind === "join") {
-        return (entry) => entry.startSec === item.atSec;
+        return {
+            candidates: startingIn(transcript, item.atSec, item.atSec),
+            matches: (entry) => entry.startSec === item.atSec,
+        };
     }
 
-    return (entry) =>
-        entry.startSec !== undefined &&
-        entry.startSec >= item.fromSec &&
-        (entry.startSec < item.toSec || entry.startSec === item.fromSec);
+    return {
+        candidates: startingIn(transcript, item.fromSec, item.toSec),
+        matches: (entry) =>
+            entry.startSec !== undefined &&
+            entry.startSec >= item.fromSec &&
+            (entry.startSec < item.toSec || entry.startSec === item.fromSec),
+    };
 }
 
 /** A question decides its targets wherever they are, or its own half-open span when it has no targets. */

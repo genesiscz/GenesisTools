@@ -1,5 +1,5 @@
 import { expect, mock, test } from "bun:test";
-import { appendFileSync, existsSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
@@ -22,6 +22,8 @@ import {
     renderSwiftSchema,
     SWIFT_PATH,
     WIRE_PATH,
+    type WireSchema,
+    wireSamples,
 } from "../../../../../scripts/gen-genesis-tools-rpc-swift";
 import { genesisToolsApi, requestPresentApi } from "../../service/api";
 import { connectGenesisToolsService } from "../../service/clients";
@@ -33,6 +35,7 @@ import {
     requestEventSchema,
     requestFileName,
     requestViewSchema,
+    SETTLED_VIEWS_KEPT,
     stateOf,
 } from "./journal";
 import {
@@ -219,6 +222,9 @@ test("windowNotice posts once per caller id and returns after the configured del
 test("a visible-run script deletes itself first, and a .command file no terminal started goes after an hour", () => {
     const lines = visibleCommandScript(["/bin/echo", "token=x"]).split("\n");
     expect(lines.slice(0, 2)).toEqual(["#!/bin/sh", 'rm -f -- "$0"']);
+    // Only the command line itself carries the arguments; the echo shows the program's name.
+    expect(lines.filter((line) => line.includes("token=x"))).toEqual(["'/bin/echo' 'token=x'"]);
+    expect(lines[2]).toContain("Running echo (arguments not shown)");
 
     const dir = mkdtempSync(join(tmpdir(), "gt-visible-run-"));
     const now = Date.now();
@@ -231,6 +237,10 @@ test("a visible-run script deletes itself first, and a .command file no terminal
     const past = (now - STALE_COMMAND_FILE_MS - 60_000) / 1000;
     utimesSync(old, past, past);
     utimesSync(other, past, past);
+    // A file that went between the listing and its stat (its terminal started it) is skipped, not an error.
+    symlinkSync(join(dir, "missing-target"), join(dir, "gone.command"));
+    // A file that cannot be inspected (a symlink loop fails its stat) costs only its own entry.
+    symlinkSync(join(dir, "loop.command"), join(dir, "loop.command"));
     expect(removeStaleCommandFiles(dir, now)).toEqual([old]);
     expect([existsSync(old), existsSync(fresh), existsSync(other)]).toEqual([false, true, true]);
 });
@@ -282,6 +292,16 @@ test("a system dialog tells an Approve and a Cancel from a deadline and a failed
         ["darwin", { exitCode: 1, stdout: "", stderr: "" }, "failed"],
         ["linux", { exitCode: 0, stdout: "" }, "approved"],
         ["linux", { exitCode: 1, stdout: "" }, "cancelled"],
+        [
+            "linux",
+            { exitCode: 1, stdout: "", stderr: "Gtk-Message: GtkDialog mapped without a transient parent" },
+            "cancelled",
+        ],
+        [
+            "linux",
+            { exitCode: 1, stdout: "", stderr: "(zenity:42): Gtk-WARNING **: cannot open display: :0" },
+            "failed",
+        ],
         ["linux", { exitCode: 5, stdout: "" }, "gave-up"],
         ["linux", { exitCode: null, stdout: "" }, "gave-up"],
         ["linux", { exitCode: 255, stdout: "" }, "failed"],
@@ -502,6 +522,50 @@ test("a subscribed face receives each worker and service settlement transition e
         start.host.stop("test complete");
         await start.host.stopped;
     }
+});
+
+test("the wire samples reach both alternatives of a nullable field inside one arm of an outer union", () => {
+    const schema: WireSchema = {
+        anyOf: [
+            {
+                type: "object",
+                properties: { kind: { const: "a" }, note: { anyOf: [{ type: "string" }, { type: "null" }] } },
+            },
+            { type: "object", properties: { kind: { const: "b" } } },
+        ],
+    };
+    expect(wireSamples(schema)).toEqual([{ kind: "a", note: "fixture" }, { kind: "a", note: null }, { kind: "b" }]);
+});
+
+test("a defaulted nullable field inside one arm of a union still reaches the decoders as null", () => {
+    const schema: WireSchema = {
+        anyOf: [
+            {
+                type: "object",
+                properties: {
+                    kind: { const: "a" },
+                    note: { anyOf: [{ type: "string" }, { type: "null" }], default: "x" },
+                },
+            },
+            { type: "object", properties: { kind: { const: "b" } } },
+        ],
+    };
+    expect(wireSamples(schema)).toEqual([
+        { kind: "a", note: "x" },
+        { kind: "a", note: "fixture" },
+        { kind: "a", note: null },
+        { kind: "b" },
+    ]);
+});
+
+test("the wire samples of an array stay within its item bounds", () => {
+    const nullable: WireSchema = { anyOf: [{ type: "string" }, { type: "null" }] };
+    expect(wireSamples({ type: "array", items: nullable, maxItems: 0 })).toEqual([[]]);
+    expect(wireSamples({ type: "array", items: nullable, minItems: 2, maxItems: 2 })).toEqual([
+        ["fixture", "fixture"],
+        ["fixture", "fixture"],
+        [null, null],
+    ]);
 });
 
 test("every generated fixture parses in TypeScript and generated files are current", () => {
@@ -739,9 +803,95 @@ test("the list returns the newest requests by post time and reads a settled jour
     expect(journal.pending().map((view) => view.id)).toEqual(["notice:a", "notice:b"]);
     const settledView = journal.list().find((view) => view.id === "notice:c");
     expect(settledView?.state).toBe("done");
-    // A settled journal is not read again: a damaged copy on disk does not change the listed view.
+    // A settled journal in the view cache is not read again: a damaged copy on disk does not change the listed view.
     appendFileSync(join(dir, requestFileName("notice:c")), '{"type":"unknown"}\n');
     expect(journal.list().find((view) => view.id === "notice:c")).toEqual(settledView);
+    expect(journal.list({ limit: 0 })).toEqual([]);
+    expect(() => journal.list({ limit: -1 })).toThrow("zero or more");
+});
+
+test("a list reads a settled journal again once the view cache dropped it, and keeps the post-time order", () => {
+    const dir = scratch();
+    const ids = Array.from({ length: SETTLED_VIEWS_KEPT + 2 }, (_, index) => `notice:old-${index}`);
+    // The journal names are digests, so the folder order is not the post order.
+    for (const [index, id] of ids.entries()) {
+        const at = new Date(Date.UTC(2026, 10, 17, 12, 0, index)).toISOString();
+        const events = [
+            { type: "posted", at, request: { ...input, id, createdAt: at }, asker: null },
+            { type: "finished", at, exitCode: 0, outputTail: "", verified: null },
+        ];
+        writeFileSync(
+            join(dir, requestFileName(id)),
+            `${events.map((event) => SafeJSON.stringify(event)).join("\n")}\n`
+        );
+    }
+
+    const journal = createRequestJournal({ dir, now });
+    // A page reads every journal once and keeps at most SETTLED_VIEWS_KEPT full views.
+    expect(journal.list({ limit: 1 }).map((view) => view.id)).toEqual(ids.slice(-1));
+    const fresh = createRequestJournal({ dir, now });
+    expect(journal.list()).toEqual(ids.flatMap((id) => fresh.get(id) ?? []));
+    // That list used the views in post order, so the two oldest are the ones the cache dropped: damaged copies leave
+    // out exactly those two, which a list has to read again.
+    for (const id of ids) {
+        appendFileSync(join(dir, requestFileName(id)), '{"type":"unknown"}\n');
+    }
+
+    expect(journal.list().map((view) => view.id)).toEqual(ids.slice(2));
+});
+
+test("a change watcher reports a settlement that another reader of the journal saw first", async () => {
+    const dir = scratch();
+    const watcher = createRequestJournal({ dir, now });
+    const worker = createRequestJournal({ dir, now });
+    await worker.post({ input });
+    const armed = Promise.withResolvers<void>();
+    const done = Promise.withResolvers<RequestView>();
+    const off = watcher.followChanges((view) => {
+        if (view.id === "notice:armed") {
+            armed.resolve();
+        }
+
+        if (view.id === input.id && view.state === "done") {
+            done.resolve(view);
+        }
+    }, 100);
+    try {
+        await worker.post({ input: { ...input, id: "notice:armed" } });
+        await withTimeout(armed.promise, 2_000, new Error("the watcher never reported the arming post"));
+        // Both appends and the list run in one tick, so the list reads the settled journal before the folder event
+        // reaches the watcher.
+        const at = now().toISOString();
+        worker.append(input.id, { type: "accepted", at, via: "fixture", elevation: null, method: "click" });
+        worker.append(input.id, { type: "finished", at, exitCode: 0, outputTail: "", verified: null });
+        expect(watcher.list().find((view) => view.id === input.id)?.state).toBe("done");
+        const reported = await withTimeout(done.promise, 2_000, new Error("the watcher never reported the settlement"));
+        expect(worker.get(input.id)).toEqual(reported);
+    } finally {
+        off();
+    }
+});
+
+test("a surface's reason for a failure or a decline is the outcome's reason, also after a reopen", async () => {
+    const dir = scratch();
+    const journal = createRequestJournal({ dir, now });
+    await journal.post({ input });
+    await journal.post({ input: { ...input, id: "notice:declined" } });
+
+    const failed = await journal.settle(input.id, "failed", "the dialog could not open");
+    expect(failed).toMatchObject({ status: "failed", reason: "the dialog could not open", outputTail: "" });
+    const declined = await journal.settle("notice:declined", "declined", "the person said no");
+    // The surface's reason is no note the person wrote.
+    expect(declined).toMatchObject({ status: "declined", reason: "the person said no", note: null });
+
+    const reopened = createRequestJournal({ dir, now });
+    expect(reopened.get(input.id)?.outcome).toEqual(failed);
+    expect(reopened.get("notice:declined")?.outcome).toEqual(declined);
+
+    // A journal written before `reason` existed kept the surface's reason in the note.
+    await journal.post({ input: { ...input, id: "notice:legacy" } });
+    journal.append("notice:legacy", { type: "declined", at: now().toISOString(), via: "notice", note: "older reason" });
+    expect(journal.get("notice:legacy")?.outcome).toMatchObject({ reason: "older reason", note: "older reason" });
 });
 
 test("one worker at a time presents a waiting request, and a settled request is not presented", async () => {
@@ -751,13 +901,16 @@ test("one worker at a time presents a waiting request, and a settled request is 
     const entered = Promise.withResolvers<void>();
     const first = journal.claim(input.id, async () => {
         entered.resolve();
-        await release.promise;
+        await withTimeout(release.promise, 2_000, new Error("the first worker was never released"));
         return "first";
     });
-    await entered.promise;
-    const second = await journal.claim(input.id, async () => "second");
-    expect(second).toMatchObject({ claimed: false, view: { state: "waiting" } });
-    release.resolve();
+    try {
+        await withTimeout(entered.promise, 2_000, new Error("the first worker never entered its claim"));
+        const second = await journal.claim(input.id, async () => "second");
+        expect(second).toMatchObject({ claimed: false, view: { state: "waiting" } });
+    } finally {
+        release.resolve();
+    }
     expect(await first).toEqual({ claimed: true, value: "first" });
 
     await journal.withdraw(input.id);
@@ -875,7 +1028,7 @@ test("two click workers for one request open its target once", async () => {
     const release = Promise.withResolvers<void>();
     const openWindow = mock(async () => {
         entered.resolve();
-        await release.promise;
+        await withTimeout(release.promise, 2_000, new Error("the first click worker was never released"));
         return { status: "ran" as const, via: "native" as const, value: {}, skipped: [] };
     });
     const showRequest = mock(async (request: PersonRequest) => ({
@@ -884,12 +1037,15 @@ test("two click workers for one request open its target once", async () => {
         reason: null,
     }));
     const first = presentPostedRequest({ view, journal, openWindow, showRequest });
-    await entered.promise;
-    expect(await presentPostedRequest({ view, journal, openWindow, showRequest })).toMatchObject({
-        status: "pending",
-        reason: "Another worker is presenting this request.",
-    });
-    release.resolve();
+    try {
+        await withTimeout(entered.promise, 2_000, new Error("the first click worker never opened the target"));
+        expect(await presentPostedRequest({ view, journal, openWindow, showRequest })).toMatchObject({
+            status: "pending",
+            reason: "Another worker is presenting this request.",
+        });
+    } finally {
+        release.resolve();
+    }
     expect(await first).toMatchObject({ status: "done" });
     expect(openWindow).toHaveBeenCalledTimes(1);
     expect(showRequest).not.toHaveBeenCalled();

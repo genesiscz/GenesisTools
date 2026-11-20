@@ -1,6 +1,7 @@
 import { logger } from "@genesiscz/utils/logger";
 import { answerPreview, applyAnswers, checkAnswers, type DecisionAnswer } from "../decisions/answers";
 import type { DeliverDeps, DeliveryResult } from "../decisions/deliver";
+import { DeliveredUnrecordedError } from "../decisions/delivery-errors";
 import { sendAnsweredDecisions } from "../decisions/send";
 import { type HarvestedDecision, readDecisions } from "../decisions/store";
 import { type AskDeps, answerAskForm, checkAskAnswer } from "../pending/ask";
@@ -55,10 +56,13 @@ export interface InboxAnswerResult {
  */
 export class AnswersStoredError extends Error {
     readonly stored = true;
+    /** The transport confirmed the delivery and only its record failed: a Send again would type the answers twice. */
+    readonly delivered: boolean;
 
     constructor(cause: unknown) {
         super(cause instanceof Error ? cause.message : String(cause), { cause });
         this.name = "AnswersStoredError";
+        this.delivered = cause instanceof DeliveredUnrecordedError;
     }
 }
 

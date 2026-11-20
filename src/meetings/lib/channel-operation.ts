@@ -37,13 +37,22 @@ export async function lineEligibilityFor(opened: OpenedMeeting, index: number) {
     );
 }
 
-/** The channel evidence of a meeting; with a window, only the lines that start in it are measured. */
+/**
+ * The channel evidence of a meeting; with a window, only the lines that start in it are measured. Each line's
+ * microphone share is the calibrated one from the recording's audio when it was measured, as `evidence --raw` reads it.
+ */
 export async function channelEvidence(opened: OpenedMeeting, window?: { fromSec: number; toSec: number }) {
-    const config = await opened.config();
+    const [config, meeting, evidence, energy] = await Promise.all([
+        opened.config(),
+        opened.meeting(),
+        opened.evidence(),
+        opened.energy(),
+    ]);
     return rawMeeting({
         record: opened.record,
-        meeting: await opened.meeting(),
-        evidence: await opened.evidence(),
+        meeting,
+        evidence,
+        energyMicShare: energy.share,
         points: [],
         people: config.projects[opened.record.project ?? ""]?.match?.people,
         ...(window ? { window } : {}),
@@ -51,19 +60,22 @@ export async function channelEvidence(opened: OpenedMeeting, window?: { fromSec:
 }
 
 /**
- * The lines a channel plan reads, with the microphone share at full precision: `rawMeeting` rounds it for display,
- * and a rounded 0.2004 would pass a 0.2 threshold the measured share fails.
+ * The lines a channel plan reads, with the microphone share the evidence table shows (the calibrated energy share,
+ * else the tagged segments') at full precision: `rawMeeting` rounds it for display, and a rounded 0.2004 would pass a
+ * 0.2 threshold the measured share fails.
  */
 export async function channelLines(opened: OpenedMeeting): Promise<ChannelLine[]> {
-    const [meeting, evidence] = await Promise.all([opened.meeting(), opened.evidence()]);
-    return lineEvidence(meeting.transcript, evidence ?? { segments: [], speaking: [] }).map((line) => ({
-        index: line.index,
-        fromSec: line.startSec,
-        toSec: line.endSec,
-        label: line.label,
-        text: line.text,
-        channel: { micShare: line.micShare ?? null },
-    }));
+    const [meeting, evidence, energy] = await Promise.all([opened.meeting(), opened.evidence(), opened.energy()]);
+    return lineEvidence(meeting.transcript, evidence ?? { segments: [], speaking: [] }, undefined, energy.share).map(
+        (line) => ({
+            index: line.index,
+            fromSec: line.startSec,
+            toSec: line.endSec,
+            label: line.label,
+            text: line.text,
+            channel: { micShare: line.energyMic ?? line.energyMicRaw ?? line.micShare ?? null },
+        })
+    );
 }
 
 export async function attributeByChannel(options: {

@@ -1,4 +1,5 @@
 import AppKit
+import GenesisKitTestSupport
 import SwiftUI
 import Vision
 import Foundation
@@ -632,7 +633,7 @@ extension WorkFindTests {
             let request = VNRecognizeTextRequest()
             request.recognitionLevel = .accurate
             request.usesLanguageCorrection = false
-            try readWorkScreenshot(image, with: request)
+            try recognizeText(in: image, with: request)
             let lines = (request.results ?? []).compactMap { result in
                 result.topCandidates(1).first.map { (text: $0.string, y: result.boundingBox.midY, x: result.boundingBox.minX) }
             }.sorted { left, right in
@@ -734,29 +735,13 @@ extension WorkFindTests {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
-        try readWorkScreenshot(image, with: request)
+        try recognizeText(in: image, with: request)
         let drawn = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
         let expected = iteration.isMultiple(of: 2) ? "Keep basket item" : "Read receipt item"
         let hidden = iteration.isMultiple(of: 2) ? "Read receipt item" : "Keep basket item"
         XCTAssertTrue(drawn.contains(expected), drawn)
         XCTAssertFalse(drawn.contains(hidden), drawn)
         XCTAssertEqual(input.projection.containers.first?.matchingCount, 50)
-    }
-}
-
-/// Vision's accurate recognizer can fail to initialize its E5RT model on a busy Mac. Read the same
-/// rendered pixels with its CPU recognizer in that case. Every visible-word assertion still runs.
-func readWorkScreenshot(_ image: CGImage, with request: VNRecognizeTextRequest) throws {
-    do {
-        try VNImageRequestHandler(cgImage: image).perform([request])
-    } catch {
-        request.recognitionLevel = .fast
-        for (stage, devices) in try request.supportedComputeStageDevices {
-            if let cpu = devices.first(where: { if case .cpu = $0 { return true }; return false }) {
-                request.setComputeDevice(cpu, for: stage)
-            }
-        }
-        try VNImageRequestHandler(cgImage: image).perform([request])
     }
 }
 

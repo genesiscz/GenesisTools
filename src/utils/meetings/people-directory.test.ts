@@ -138,7 +138,8 @@ describe("PeopleDirectory.known", () => {
         expect((await directory.known("example")).total).toBe(3);
         expect((await directory.known("example sk")).people.map((one) => one.name)).toEqual(["Sky Example"]);
         expect(readProjects).toHaveBeenCalledTimes(1);
-        expect(search.mock.calls.map(([query]) => query.text)).toEqual(["i", "ivo", "example"]);
+        // "example sk" asks the full phrase once more; its longest word reuses the earlier "example" read.
+        expect(search.mock.calls.map(([query]) => query.text)).toEqual(["i", "ivo", "example", "example sk"]);
     });
 
     test("a limited Contacts search with discarded cards cannot cover a longer token or a different limit", async () => {
@@ -289,6 +290,54 @@ describe("PeopleDirectory.known", () => {
         });
         expect((await directory.known("Example Dana")).people.map((person) => person.name)).toEqual(["Dana Example"]);
         expect((await directory.known("Example Nobody")).people).toEqual([]);
+    });
+
+    test("a capped word search does not hide the person the full phrase finds", async () => {
+        const { book } = scratch([]);
+        const crowd = Array.from({ length: 30 }, (_, n) => ({ name: `Person${n} Example` }));
+        const capped: PeopleSource = {
+            kind: "contacts",
+            people: async ({ text, limit }) => ({
+                state: "ok",
+                people: [...crowd, { name: "Dana Example" }]
+                    .filter((person) => foldText(person.name).includes(foldText(text)))
+                    .slice(0, limit),
+            }),
+        };
+        const directory = new PeopleDirectory({ book, sources: [capped] });
+        expect((await directory.known("Dana Example")).people.map((person) => person.name)).toEqual(["Dana Example"]);
+    });
+
+    test("both searches of a source: a refusal on either one wins, and a record both return counts once", async () => {
+        const { book } = scratch([]);
+        const dana = {
+            name: "Dana Example",
+            meetings: [
+                {
+                    meeting: "m1",
+                    title: "Weekly",
+                    start: "2026-11-01T09:00:00Z",
+                    as: ["attendance" as const],
+                    present: [{ fromSec: 0, toSec: 60 }],
+                    labels: [],
+                },
+            ],
+        };
+        // A source that lists everyone for any text, as the meetings source does.
+        const everyone: PeopleSource = { kind: "meetings", people: async () => ({ state: "ok", people: [dana] }) };
+        const history = await new PeopleDirectory({ book, sources: [everyone] }).meetings("Dana Example");
+        expect(history.meetings.map((one) => one.present)).toEqual([[{ fromSec: 0, toSec: 60 }]]);
+
+        const halfRefused: PeopleSource = {
+            kind: "contacts",
+            people: async ({ text }) =>
+                text === "Dana Example"
+                    ? { state: "ok", people: [dana] }
+                    : { state: "refused", reason: "access denied" },
+        };
+        const known = await new PeopleDirectory({ book, sources: [halfRefused] }).known("Dana Example");
+        expect(known.sources).toEqual([{ kind: "contacts", state: "refused", reason: "access denied" }]);
+        expect(known.people).toEqual([]);
     });
 
     test("a refused Contacts grant is a reason, never an empty list, and the other sources still answer", async () => {

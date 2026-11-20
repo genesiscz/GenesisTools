@@ -109,7 +109,7 @@ private struct RecorderRecordingSettings: View {
     }
 
     private var movieCard: some View {
-        NativeSettingsCard("What the movie keeps", subtitle: "Record Screen with Audio in the menu bar turns both sound tracks on for that recording.") {
+        NativeSettingsCard("What the movie keeps", subtitle: "In the menu bar, Record Screen with Microphone and System Audio turns both sound tracks on for that recording, and Record Screen with System Audio Only records the Mac\u{2019}s sound alone.") {
             NativeSettingsToggle("System audio", detail: "What the Mac plays, as its own track.",
                                  identifier: "recorder.settings.systemAudio", isOn: model.capture(\.systemAudio))
             Divider()
@@ -138,6 +138,9 @@ private struct RecorderRecordingSettings: View {
             NativeSettingsToggle("Record ⌘ and ⌃ shortcuts",
                                  detail: "Keeps the shortcuts pressed with ⌘ or ⌃ for the editor's shortcut overlay. Plain typing is never kept.",
                                  identifier: "recorder.settings.shortcutsOverlay", isOn: model.capture(\.shortcutsOverlay))
+            Divider()
+            NativeSettingsToggle("Keep screen dimmers", detail: "Off leaves HazeOver and other dimming overlays out of the movie.",
+                                 identifier: "recorder.settings.keepOverlays", isOn: model.capture(\.keepOverlays))
         }
     }
 

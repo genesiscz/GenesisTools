@@ -161,6 +161,9 @@ const EXAMPLE_OPS: readonly unknown[] = [
     { op: "cameraShow", id: "k1" },
     { op: "cameraShow", from: 1.5, to: 2 },
     { op: "audioLane", id: "mic", muted: true, volume: 0.75, name: "Narration" },
+    { op: "audioMute", id: "mic", from: 1, to: 1.5 },
+    { op: "audioUnmute", id: "mic", from: 1.2, to: 1.3 },
+    { op: "audioUnmute", id: "mic", part: "u1" },
     { op: "layerAdd", kind: "image", file: "logo.png", startUs: 500_000, endUs: 2_000_000, width: 0.25 },
     { op: "layer", id: "l1", x: 0.2, y: 0.8, shape: "rounded", opacity: 0.6 },
     { op: "layerMove", id: "l1", to: "bottom" },
@@ -450,6 +453,31 @@ function goldenProjects(): Array<{ name: string; project: EditProject }> {
         { name: "the looks, the export and the sound", project: looks },
         { name: "the looks a recorded track turns on, and music", project: stableIds(tracked) },
         { name: "a camera with two hidden parts and lanes", project: camera },
+        // Muted parts of one sound lane: the window must keep them when it saves the edit itself.
+        {
+            name: "a microphone lane with two muted parts",
+            project: editProjectSchema.parse({
+                ...wholeProject(source),
+                audio: {
+                    include: true,
+                    volume: 1,
+                    mutedTracks: [],
+                    lanes: [
+                        {
+                            id: "mic",
+                            source: "mic",
+                            file: "mic.m4a",
+                            offsetMs: 40,
+                            mutedRanges: [
+                                { id: "u1", startUs: 1_000_000, endUs: 1_500_000 },
+                                { id: "u2", startUs: 4_000_000, endUs: 4_250_000 },
+                            ],
+                        },
+                        { id: "movie-1", source: "movie", track: 1, volume: 0.5 },
+                    ],
+                },
+            }),
+        },
         // R4 voiceover clips, 8 music ducking
         {
             name: "voiceover clips and music ducking",

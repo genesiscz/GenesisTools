@@ -1,7 +1,7 @@
 import { canonicalAgent } from "@genesiscz/utils/agent/recipient";
 import { letterPastOptions } from "@genesiscz/utils/agents/dialogs/keys";
 import type { DeliveryResult } from "./deliver";
-import { DeliveryUnknownError, NotDeliveredError } from "./delivery-errors";
+import { DeliveredUnrecordedError, DeliveryUnknownError, NotDeliveredError } from "./delivery-errors";
 import { decisionLine, decisionLines, deliverDecisions, optionLetters } from "./read";
 import {
     awaitsAnswer,
@@ -473,8 +473,8 @@ export type DueAnswersOutcome =
  * nothing resends it; any other failure puts the batch back and rethrows.
  *
  * The CLI `send`, the hub, the inbox, the dashboard and the next-prompt hook all send through this. A record that
- * fails after the answers reached the agent throws, unless `onRecordError` takes it (the hook logs it: the bytes are
- * already in the harness).
+ * fails after the answers reached the agent throws `DeliveredUnrecordedError`, unless `onRecordError` takes it (the
+ * hook logs it: the bytes are already in the harness), so a caller can tell it from an unconfirmed delivery.
  */
 export async function deliverDueAnswers({
     file,
@@ -529,7 +529,7 @@ export async function deliverDueAnswers({
         });
     } catch (error) {
         if (!onRecordError) {
-            throw error;
+            throw new DeliveredUnrecordedError(route, error);
         }
 
         onRecordError(error);

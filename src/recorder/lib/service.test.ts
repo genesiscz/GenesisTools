@@ -21,6 +21,7 @@ import * as denoise from "@genesiscz/utils/recording-editor/denoise";
 import {
     applyOp,
     type EditOp,
+    editOpFields,
     editOpSchema,
     readProject,
     wholeProject,
@@ -1760,6 +1761,20 @@ describe("the REPL's and the CLI's way to the service", () => {
         // A bare ~ is the home folder, as a shell reads it.
         expect(callerParams("duplicate", { to: "~" })).toEqual({ to: homedir() });
         expect(callerParams("duplicate", { to: "~/copy" })).toEqual({ to: join(homedir(), "copy") });
+        // A layer's file is beside the movie, as the in-process layerAdd reads it, so it goes as written.
+        expect(
+            callerParams("apply", {
+                ops: [
+                    { op: "layerAdd", kind: "image", file: "logo.png" },
+                    { op: "layer", id: "m1", file: "intro.mp4" },
+                ],
+            })
+        ).toEqual({
+            ops: [
+                { op: "layerAdd", kind: "image", file: "logo.png" },
+                { op: "layer", id: "m1", file: "intro.mp4" },
+            ],
+        });
     });
 
     // Regression test: every `file` was resolved against the caller's cwd, so a bare camera name sent
@@ -2376,7 +2391,7 @@ describe("the movie method of every edit op", () => {
             const taken = jsonOf(method.params);
             const properties = Object.entries(taken.properties ?? {}).filter(([field]) => !extra.includes(field));
             const withoutExtra = extra.length ? { ...taken, properties: Object.fromEntries(properties) } : taken;
-            const expected = expectedParams(tag, variant.omit({ op: true }));
+            const expected = expectedParams(tag, editOpFields(variant));
             const same = SafeJSON.stringify(withoutExtra) === SafeJSON.stringify(jsonOf(expected));
 
             if (tag in OTHER_ACTION ? same : !same) {
@@ -2426,6 +2441,18 @@ describe("the protocol fixture the Swift host tests read", () => {
 
     test("the JSON Schema file is what the zod schemas make (bun scripts/recorder/write-protocol-fixtures.ts)", () => {
         expect(SafeJSON.parse(SafeJSON.stringify(protocolJsonSchemas()), { strict: true })).toEqual(schemasFixture);
+    });
+
+    test("session.open declares the recording's audio facts, so a reader of the schema keeps them", () => {
+        const open = serviceApi.methods.find((method) => method.name === "session.open");
+        const audioFacts = { movieTracks: 1, mixedFrom: [{ source: "mic", file: "mic.m4a", offsetMs: 120 }] };
+        const reply = {
+            path: "/rec/edit.json",
+            project: wholeProject({ video: "/rec/screen.mp4", durationUs: 1_000_000, width: 100, height: 100 }),
+            revision: 0,
+            audioFacts,
+        };
+        expect(open?.result.parse(reply)).toMatchObject({ audioFacts });
     });
 
     test("the editor golden file is what the TypeScript side makes (bun scripts/recorder/write-protocol-fixtures.ts)", () => {

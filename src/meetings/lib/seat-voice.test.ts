@@ -205,7 +205,21 @@ test("seat preview at share 0 finds both unopposed voices in one read-only batch
     expect(f.evidenceFiles()).toEqual(before.evidence);
 });
 
-test("seat preview reuses the suggestion cache and sends only uncached clips to a worker", async () => {
+test("a person with no voice samples reads that they have none, not zero matches on each side", async () => {
+    const f = await fixture([mic, mic, call, call]);
+    sample(finch, { seat: "mic" });
+    const { suggestion } = await f.preview();
+    const [sampled, unsampled] = suggestion.people;
+    expect(sampled).toMatchObject({
+        name: finch,
+        reason: expect.stringContaining("Independent voice matches (2 microphone)"),
+    });
+    expect(unsampled).toMatchObject({ name: lark, seat: "unsure" });
+    expect(unsampled!.reason).toContain("No voice samples yet, so the voice cannot suggest a seat.");
+    expect(unsampled!.reason).not.toContain("Independent voice matches");
+});
+
+test("seat preview reuses the suggestion cache, keeps its own clips, and sends only uncached clips to a worker", async () => {
     const embed = voice.embedVoiceLines;
     const f = await fixture([mic, mic, call]);
     sample(finch, { seat: "mic" });
@@ -245,7 +259,13 @@ test("seat preview reuses the suggestion cache and sends only uncached clips to 
     const preview = await f.preview();
     expect(preview.suggestion.seats.room).toEqual([finch]);
     expect(readFileSync(log, "utf8")).toBe("0\n8\n4\n");
-    expect(f.evidenceFiles()).toEqual(partialCache);
+    // The preview keeps the clip it embedded in its own file; the suggestion pass's cache is unchanged.
+    const afterPreview = f.evidenceFiles();
+    expect(afterPreview.filter(([file]) => file !== "seat-voice-lines.json")).toEqual(partialCache);
+    expect(afterPreview.map(([file]) => file)).toContain("seat-voice-lines.json");
+    // A second open of the seats editor embeds nothing.
+    expect(await f.preview()).toEqual(preview);
+    expect(readFileSync(log, "utf8")).toBe("0\n8\n4\n");
 
     await labeler.propose({ ...context, lines: [second] });
     const fullCache = f.evidenceFiles();

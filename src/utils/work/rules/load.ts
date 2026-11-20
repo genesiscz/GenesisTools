@@ -18,6 +18,7 @@ import {
     type NotifyAction,
     type NotifyLevel,
     type NotifyRule,
+    type NotifySurface,
     REPO_WORK_VERSION,
     type RepoWorkSection,
     repoWorkSectionSchema,
@@ -331,6 +332,8 @@ export type NotifyConfigSetResult =
 interface NotifyConfigWrite {
     scope: "project" | "global";
     project?: string;
+    /** With scope project: the surface whose override is written (`projects.<p>.surfaces.<surface>.notify`). */
+    surface?: NotifySurface;
     projectExists?: boolean;
     configPath?: string;
     notify?: NotifyEdit;
@@ -359,10 +362,15 @@ function selectedCells(edit: NotifyEdit) {
 
 /** Read, compare and edit every selected cell under the same lock. An Undo is conditional on the saved values. */
 export async function setWorkNotifyConfig(options: NotifyConfigWrite): Promise<NotifyConfigSetResult> {
-    const { scope, project, notify, restore, lockedCells, configPath = workConfigPath() } = options;
+    const { scope, project, surface, notify, restore, configPath = workConfigPath() } = options;
+    // A surface override is applied after the repository's file, so that file locks no surface cell.
+    const lockedCells = surface === undefined ? options.lockedCells : undefined;
     const refuse = (code: string, problem: string): NotifyConfigSetResult => ({ ok: false, code, problem });
     if (scope === "project" && !project?.trim()) {
         return refuse("PROJECT_REQUIRED", "Choose a project for this rule.");
+    }
+    if (surface !== undefined && scope !== "project") {
+        return refuse("INVALID_EDIT", "A hub or widget rule belongs to one project.");
     }
     if (notify?.type === "*" && notify.action === "*") {
         return refuse("TOO_WIDE", "Choose one type or one action.");
@@ -396,8 +404,18 @@ export async function setWorkNotifyConfig(options: NotifyConfigWrite): Promise<N
         if (scope === "project" && !options.projectExists && !Object.hasOwn(config.projects ?? {}, project!)) {
             return { keep: refuse("UNKNOWN_PROJECT", "This project has no saved rules or work items.") };
         }
-        const base = scope === "global" ? ["global", "rules", "notify"] : ["projects", project!, "rules", "notify"];
-        const rules = scope === "global" ? config.global?.rules : config.projects?.[project!]?.rules;
+        const base =
+            scope === "global"
+                ? ["global", "rules", "notify"]
+                : surface !== undefined
+                  ? ["projects", project!, "surfaces", surface, "notify"]
+                  : ["projects", project!, "rules", "notify"];
+        const rules =
+            scope === "global"
+                ? config.global?.rules
+                : surface !== undefined
+                  ? config.projects?.[project!]?.surfaces?.[surface]
+                  : config.projects?.[project!]?.rules;
         const projectNotify = project ? config.projects?.[project]?.rules?.notify : undefined;
         const updates = notify
             ? selectedCells(notify).map((cell) => ({ ...cell, edit: notify, previous: null }))

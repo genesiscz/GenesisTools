@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { toRpcTable } from "@genesiscz/utils/api-descriptor";
+import { withTimeout } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
 import type { WatcherOptions } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -118,6 +119,19 @@ test("a draft dictionary entry previews only the changed meeting lines without s
             after: "Another Glimmer.",
         },
     ]);
+    expect(result).toMatchObject({ totalChanged: 2 });
+    expect(result.truncated).toBeUndefined();
+    const bounded = await testDictionaryPhrase(
+        {
+            phrase: "glimmer",
+            meeting: REVIEW.id,
+            entry: { type: "term", value: "Glimmer", spoken: ["glimmer"] },
+            limit: 1,
+        },
+        { store: () => store, configStore: () => config, linkedSource }
+    );
+    expect(bounded).toMatchObject({ totalChanged: 2, truncated: true });
+    expect(bounded.lines?.map((line) => line.index)).toEqual([0]);
     expect(readFileSync(store.path(REVIEW.id), "utf8")).toBe(before);
     expect((await config.read()).global.dictionary.entries).toEqual([]);
 });
@@ -1508,27 +1522,34 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
     test("meeting.suggest stops when its caller cancels: the run's signal aborts and the call rejects", async () => {
         const { client } = await ADAPTERS[kind]();
         const suggest = await import("../suggest-run");
-        let seen: AbortSignal | undefined;
+        // Each step wakes on its own event, and each wait has a deadline that fails the test by name.
+        const started = Promise.withResolvers<AbortSignal | undefined>();
+        const heard = Promise.withResolvers<void>();
+        const within = <T>(promise: Promise<T>, what: string) =>
+            withTimeout(promise, 3000, new Error(`${what} did not happen within 3 s`));
         const run = spyOn(suggest, "runSuggest").mockImplementation(async ({ signal }) => {
-            seen = signal;
+            started.resolve(signal);
             await new Promise((_resolve, reject) => {
-                signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+                signal?.addEventListener(
+                    "abort",
+                    () => {
+                        heard.resolve();
+                        reject(signal.reason);
+                    },
+                    { once: true }
+                );
             });
             return { fresh: [], retired: [], warnings: [] };
         });
         closing.push(() => run.mockRestore());
         const controller = new AbortController();
         const call = client.call("meeting.suggest", { meeting: REVIEW.id }, { signal: controller.signal });
-        for (let waited = 0; waited < 3000 && !seen; waited += 10) {
-            await Bun.sleep(10);
-        }
+        const seen = await within(started.promise, "the suggest run start");
         expect(seen?.aborted).toBe(false);
         controller.abort();
         await expect(call).rejects.toThrow();
         // Over a socket the service hears `$/cancel` a moment after the caller gave up.
-        for (let waited = 0; waited < 3000 && !seen?.aborted; waited += 10) {
-            await Bun.sleep(10);
-        }
+        await within(heard.promise, "the run's abort");
         expect(seen?.aborted).toBe(true);
     });
 

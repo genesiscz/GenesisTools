@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import GenesisKitTestSupport
 import SwiftUI
 import Vision
 import XCTest
@@ -109,7 +110,7 @@ final class MeetingsContactsTests: XCTestCase {
         renderer.scale = 2
         let request = VNRecognizeTextRequest()
         request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: XCTUnwrap(renderer.cgImage)).perform([request])
+        try recognizeText(in: XCTUnwrap(renderer.cgImage), with: request)
         let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         for words in ["Boardroom PC", "North", "Desk PC", "the room", "Is Studio PC shared?", "2 meetings"] {
             XCTAssertTrue(text.contains(words), text)
@@ -317,9 +318,9 @@ final class MeetingsContactsTests: XCTestCase {
         XCTAssertEqual(PeopleSourceSwitches.Switch.calendar.configPath, "global.people.sources.calendar")
     }
 
-    func testMergeWithOffersEveryoneElseMatchingTheText() {
+    func testMergeWithOffersEveryoneElseMatchingTheText() throws {
         let people = Fixture.people
-        let alex = people[1]
+        let alex = try people.required(1)
         let all = MeetingsContactsView.mergeCandidates(people, except: alex, query: "")
         XCTAssertFalse(all.contains(alex))
         XCTAssertEqual(all.count, people.count - 1)
@@ -357,11 +358,11 @@ final class MeetingsContactsTests: XCTestCase {
         let action = DecisionAction.assign("Dana Example", stretches: [.init(label: "Speaker 2", fromSec: 9, toSec: 21.5)])
         let args = try XCTUnwrap(MeetingDetailModel.commandArgs(meeting: "m1", action: action, reason: nil))
         XCTAssertEqual(Array(args.prefix(3)), ["decide", "m1", "--action"])
-        XCTAssertEqual(try JSONDecoder().decode(DecisionAction.self, from: Data(args[3].utf8)), action)
+        XCTAssertEqual(try JSONDecoder().decode(DecisionAction.self, from: Data(try args.required(3).utf8)), action)
         var undo = DecisionAction(kind: "revert")
         undo.token = "t1"
         let revert = try XCTUnwrap(MeetingDetailModel.journalCommand(meeting: "m1", action: undo, reason: nil))
-        XCTAssertEqual(try JSONDecoder().decode(DecisionAction.self, from: Data(revert[3].utf8)), undo)
+        XCTAssertEqual(try JSONDecoder().decode(DecisionAction.self, from: Data(try revert.required(3).utf8)), undo)
     }
 
     /// F10, R22: the speaker plan's mirror reads an assign's other stretches and a rename's warning.
@@ -393,7 +394,7 @@ final class MeetingsContactsTests: XCTestCase {
                 PersonPicker(people: [], query: .constant("Jamie"), pick: { _ in }, addNew: { _ in }),
                 width: 300, dark: dark, to: "\(folder)/picker-add-new-\(look).png")
             try PeopleSnapshot.render(
-                PersonPicker(people: [people[0]], query: .constant("Dana"),
+                PersonPicker(people: [try people.required(0)], query: .constant("Dana"),
                              warning: "Speaker 3 is already Dana Exámple: both labels become one person.",
                              pick: { _ in }, addNew: { _ in }),
                 width: 300, dark: dark, to: "\(folder)/picker-warning-\(look).png")

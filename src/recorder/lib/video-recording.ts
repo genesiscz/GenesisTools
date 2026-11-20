@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, rename } from "node:fs/promises";
 import { join } from "node:path";
-import type { CaptureSystemAudioScope } from "@app/control/lib/native-record";
+import type { CaptureSystemAudioScope, MovieQuality } from "@app/control/lib/native-record";
 import { type CountdownHold, runCountdown } from "@app/control/lib/peekaboo";
 import {
     audioTrackTitles,
@@ -56,8 +56,12 @@ export interface VideoRecordingOptions {
     idleFps?: number;
     /** The share of the picture, in percent, that must change before the stream leaves the idle rate. */
     threshold?: number;
+    /** The movie's size and bit rate: standard (the native size, the default), high (twice the bit rate), small (half). */
+    movieQuality?: MovieQuality;
     /** CG window ids no movie may show (the camera bubble's preview, a host's own panel). */
     excludeWindowIds?: number[];
+    /** Keep screen dimmers (HazeOver and the like) in a display or area movie; they are left out by default. */
+    keepOverlays?: boolean;
     /**
      * The menu bar recorder records the camera beside the screen into `camera.mov` (`settings.camera` asks for it):
      * refused while it does not run, and a warning at the end when no camera movie came. It is asked before the first
@@ -118,7 +122,9 @@ export function segmentRecorderOptions(
         fps: options.fps,
         idleFps: options.idleFps,
         threshold: options.threshold,
+        movieQuality: options.movieQuality,
         excludeWindowIds: options.excludeWindowIds,
+        keepOverlays: options.keepOverlays,
         indicator: options.indicator,
         audio: options.audio,
         micDevice: options.micDevice,
@@ -423,7 +429,6 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
 
     const warnings: string[] = [];
     let durationMs: number | undefined;
-    let segments = 0;
     let frameStats: { frames?: number; averageFps?: number } = {};
     let live: LiveRecordingServer | undefined;
     let control: SessionRecorderControl | undefined;
@@ -468,7 +473,6 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
 
         if (event.event === "done") {
             durationMs = event.durationMs;
-            segments = event.segments;
             frameStats = {
                 ...(event.frames === undefined ? {} : { frames: event.frames }),
                 ...(event.averageFps === undefined ? {} : { averageFps: event.averageFps }),
@@ -486,12 +490,15 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
     };
     // Read at each segment's start, so the camera preview's window joins the exclusions before the first one.
     const segmentOptions = segmentRecorderOptions(options, folder);
+    const sound = { sources: options.audio ?? [], ...(options.micDevice ? { micDevice: options.micDevice } : {}) };
     const session = new RecordingSession({
         target: options.target,
         directory: join(folder, `segments-${randomUUID().slice(0, 8)}`),
         output: movie,
         recorder: nativeSegmentRecorder(segmentOptions),
         join: segmentJoiner(audioTrackTitles(options.audio)),
+        // One segment is moved, not joined, so its tracks still read "Core Media Audio": one stream copy titles them.
+        finishSingle: (movie) => titleAudioTracks(movie, audioTrackTitles(options.audio)),
         measure: movieLengthMs,
         emit,
         maxSeconds: options.maxSeconds ?? VIDEO_RECORDING_MAX_SECONDS,
@@ -503,12 +510,14 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
             idleFps: Math.min(options.idleFps ?? fps, fps),
             threshold: options.threshold ?? SESSION_MOTION_THRESHOLD,
         },
+        // The live mutes and microphone (`audio.mute`, `audio.setInput`); each new segment gets them again.
+        audio: sound,
     });
     control = new SessionRecorderControl(session, {
         target: options.target,
         title,
         onProgress: (event) => live?.emit("progress", { ...event }),
-        audio: { sources: options.audio ?? [], ...(options.micDevice ? { micDevice: options.micDevice } : {}) },
+        audio: sound,
     });
     live = new LiveRecordingServer({
         id: liveRecordingId("recorder", `${process.pid}-${randomUUID().slice(0, 8)}`),
@@ -569,24 +578,7 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
     }
 
     const spans = session.movieSpans();
-    // One segment is moved, not joined, so its tracks still read "Core Media Audio": title them by one stream copy.
-    if (outcome === "done" && segments === 1 && options.audio?.length && existsSync(movie)) {
-        await titleAudioTracks(movie, audioTrackTitles(options.audio)).catch((error: unknown) => {
-            log.warn({ error, movie }, "the audio tracks keep their untitled names");
-        });
-        // Stream-copying track metadata can change the final container's rounded end by one audio packet.
-        try {
-            durationMs = await movieLengthMs(movie);
-            if (spans.length === 1) {
-                spans[0].lengthMs = durationMs;
-            }
-            if (frameStats.frames !== undefined) {
-                frameStats.averageFps = durationMs > 0 ? Math.round((frameStats.frames * 10_000) / durationMs) / 10 : 0;
-            }
-        } catch (error) {
-            log.warn({ error, movie }, "the titled movie keeps its previously measured duration");
-        }
-    }
+    const displays = options.target.kind === "display" && options.target.follow ? session.displaySwitches() : [];
     const cameraProblem = cameraStarted
         ? await endRecordingCamera({ folder, outcome, spans, host: options.cameraHost })
         : undefined;
@@ -617,7 +609,13 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
             ...manifest.settings,
             // Each kept segment on the wall clock, for any clock that has to line up with this movie (the camera's).
             video: existsSync(movie)
-                ? { file: "screen.mp4", durationMs, ...frameStats, ...(spans.length ? { spans } : {}) }
+                ? {
+                      file: "screen.mp4",
+                      durationMs,
+                      ...frameStats,
+                      ...(spans.length ? { spans } : {}),
+                      ...(displays.length ? { displays } : {}),
+                  }
                 : undefined,
             outcome,
             markers: activeControl.markers,

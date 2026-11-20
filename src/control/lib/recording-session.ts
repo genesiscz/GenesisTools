@@ -5,8 +5,13 @@ import { dirname, join } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { recorderSettingsSchema } from "@genesiscz/utils/screen-recorder/control";
-import type { RecordingSpan } from "@genesiscz/utils/screen-recorder/library";
+import {
+    AUDIO_SOURCES,
+    type AudioSource,
+    type AudioState,
+    recorderSettingsSchema,
+} from "@genesiscz/utils/screen-recorder/control";
+import type { RecordingDisplaySwitch, RecordingSpan } from "@genesiscz/utils/screen-recorder/library";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
 import { NATIVE_FRAMES_MAX_SECONDS, NATIVE_MOVIE_MAX_SECONDS } from "./capture-plan";
@@ -150,6 +155,12 @@ export interface SegmentStart {
     display?: { id: number; name: string };
 }
 
+/** The live commands of one running segment's recorder: its sound while it records (ax-tool `--control-stdin`). */
+export interface SegmentControl {
+    mute(source: AudioSource, muted: boolean): Promise<void>;
+    setMic(deviceId: string): Promise<void>;
+}
+
 /**
  * One recorder run: records `target` into `output` until `maxSeconds` or until `signal` aborts, then finalizes the
  * movie. `onRecording` runs once, when the first frame is in, with that frame's time when the recorder said it (the
@@ -168,6 +179,8 @@ export interface SegmentRecorder {
         onDisplayChanged?: (display: NonNullable<SegmentStart["display"]>) => void;
         /** The recorder needs a slow step before it can start (a compile after an update). */
         onPreparing?: () => void;
+        /** The running segment's live commands, once its first frame is in; a recorder without them never calls it. */
+        onControl?: (control: SegmentControl) => void;
     }): Promise<SegmentResult>;
 }
 
@@ -232,8 +245,13 @@ interface ActiveSegment {
     preparing?: boolean;
     /** Fires the first-frame hint; cleared by the first frame or the run's end. */
     slowStart?: ReturnType<typeof setTimeout>;
+    /** The recorder's live commands, once it gave them. */
+    control?: SegmentControl;
     result: Promise<SegmentResult>;
 }
+
+/** A sound change the session refuses: a source it does not record, or a session that is ending. */
+export class SoundChangeError extends Error {}
 
 export function recordingsDir(...segments: string[]): string {
     return toolDataDir("control", "recordings", ...segments);
@@ -247,6 +265,8 @@ export function recordingsDir(...segments: string[]): string {
  */
 export class RecordingSession {
     private capturedDisplay?: SegmentStart["display"];
+    /** Each display the kept segments recorded from, at its movie time; a restart drops them with the segments. */
+    private switches: RecordingDisplaySwitch[] = [];
     private state: RecordingState | "ended" = "paused";
     private target: RecordingTarget;
     private readonly segments: FinishedSegment[] = [];
@@ -265,6 +285,8 @@ export class RecordingSession {
     private readonly segmentSeconds: number;
     private readonly now: () => number;
     private rates: MovieRates | undefined;
+    /** What the movie records as sound now: every new segment's recorder gets the mutes and the microphone again. */
+    private sound: AudioState;
 
     constructor(
         private readonly options: {
@@ -287,10 +309,23 @@ export class RecordingSession {
             slowStartMs?: number;
             /** The movie's rates; a session with them can change them while it records (`retune`). */
             rates?: MovieRates;
+            /**
+             * Finishes a one-segment movie at `output`, which is moved instead of joined, before it is measured and
+             * before `done` goes out (a host moves the movie at once): the recorder titles its audio tracks here. A
+             * failure keeps the movie as it is.
+             */
+            finishSingle?: (movie: string) => Promise<void>;
+            /** The sound the movie records, and the microphone each segment starts with. */
+            audio?: { sources: AudioSource[]; micDevice?: string };
         }
     ) {
         this.target = options.target;
         this.rates = options.rates;
+        this.sound = {
+            sources: options.audio?.sources ?? [],
+            muted: { mic: false, system: false },
+            ...(options.audio?.micDevice ? { micDevice: options.audio.micDevice } : {}),
+        };
         this.limitMs = Math.round((options.maxSeconds ?? RECORDING_SESSION_MAX_SECONDS) * 1000);
         this.segmentSeconds = Math.min(
             options.segmentSeconds ?? RECORDING_SEGMENT_MAX_SECONDS,
@@ -332,9 +367,111 @@ export class RecordingSession {
         return this.enqueue(() => this.apply(command));
     }
 
+    /**
+     * Ends a paused session that nobody can command any more (its host is gone, or no host reads commands) without
+     * saving or deleting it: a save that failed leaves the segments in the session folder for recovery, and
+     * `finished` settles "failed". Does nothing while the session records or after it ended.
+     */
+    abandon(): Promise<void> {
+        return this.enqueue(() => {
+            if (this.state !== "paused") {
+                return;
+            }
+
+            log.warn({ directory: this.options.directory, segments: this.segments.length }, "recording abandoned");
+            this.options.emit({
+                event: "error",
+                message: `Nobody can stop the recording again, so it ends unsaved. Its segments stay in ${this.options.directory}.`,
+                fatal: true,
+            });
+            this.end("failed");
+        });
+    }
+
     /** The rates the running segment, or the next one, records with; undefined for a session started without them. */
     currentRates(): MovieRates | undefined {
         return this.rates;
+    }
+
+    /** The movie's sound: its sources, which are muted now, and the microphone it records. */
+    audioState(): AudioState {
+        return { ...this.sound, muted: { ...this.sound.muted } };
+    }
+
+    /**
+     * Mutes or unmutes a recorded source. The running segment takes it at once; one that arms or a paused session's
+     * next segment takes it as its first frame comes in. A refused live change leaves the state as it was.
+     */
+    muteAudio(source: AudioSource, muted: boolean): Promise<AudioState> {
+        return this.changeSound({
+            check: () =>
+                this.sound.sources.includes(source) ? undefined : `this recording records no ${source} sound`,
+            change: (sound) => ({ ...sound, muted: { ...sound.muted, [source]: muted } }),
+            live: (control) => control.mute(source, muted),
+        });
+    }
+
+    /** Records the microphone from another input device, now and in every later segment. */
+    setMicDevice(deviceId: string): Promise<AudioState> {
+        return this.changeSound({
+            check: () => (this.sound.sources.includes("mic") ? undefined : "this recording records no microphone"),
+            change: (sound) => ({ ...sound, micDevice: deviceId }),
+            live: (control) => control.setMic(deviceId),
+        });
+    }
+
+    private async changeSound(input: {
+        check: () => string | undefined;
+        change: (sound: AudioState) => AudioState;
+        live: (control: SegmentControl) => Promise<void>;
+    }): Promise<AudioState> {
+        const refused = input.check();
+        if (refused) {
+            throw new SoundChangeError(refused);
+        }
+
+        if (this.state === "finishing" || this.state === "ended") {
+            throw new SoundChangeError(`the recording is ${this.state === "ended" ? "over" : "stopping"}`);
+        }
+
+        const before = this.sound;
+        this.sound = input.change(before);
+        const control = this.current?.stopping ? undefined : this.current?.control;
+        if (control) {
+            try {
+                await input.live(control);
+            } catch (error) {
+                this.sound = before;
+                throw error;
+            }
+        }
+
+        return this.audioState();
+    }
+
+    /** A new segment's recorder starts with the session's first microphone and nothing muted: it gets the rest now. */
+    private takeControl(run: ActiveSegment, control: SegmentControl): void {
+        if (this.current !== run || run.stopping) {
+            return;
+        }
+
+        run.control = control;
+        const sound = this.sound;
+        const commands = AUDIO_SOURCES.filter((source) => sound.muted[source]).map((source) =>
+            control.mute(source, true)
+        );
+        if (sound.micDevice && sound.micDevice !== this.options.audio?.micDevice) {
+            commands.push(control.setMic(sound.micDevice));
+        }
+
+        void Promise.all(commands).catch((error: unknown) => {
+            log.warn({ error, index: run.index }, "the new segment did not take the recording's sound settings");
+            this.options.emit({
+                event: "error",
+                message: `The sound settings did not carry over: ${messageOf(error)}`,
+                fatal: false,
+            });
+        });
     }
 
     /**
@@ -575,8 +712,10 @@ export class RecordingSession {
                         return;
                     }
                     this.capturedDisplay = display;
+                    this.noteDisplay(run.movieOffsetMs + this.liveMs(run), display);
                     this.setState("recording", run.reason);
                 },
+                onControl: (control) => this.takeControl(run, control),
                 onPreparing: () => {
                     run.preparing = true;
                     this.options.emit({ event: "preparing", message: PREPARING_MESSAGE });
@@ -613,6 +752,10 @@ export class RecordingSession {
         const now = this.now();
         run.startedAt = Math.min(now, Math.max(run.requestedAt, start?.firstFrameAt ?? now));
         this.capturedDisplay = start?.display;
+        if (start?.display) {
+            this.noteDisplay(run.movieOffsetMs, start.display);
+        }
+
         run.settleFramed();
         clearTimeout(run.slowStart);
         log.debug({ index: run.index }, "recording segment started");
@@ -717,6 +860,7 @@ export class RecordingSession {
         try {
             if (ordered.length === 1) {
                 await this.moveMovie(ordered[0].path);
+                await this.finishSingle();
                 durationMs = await this.savedLengthMs(ordered[0]);
                 // Camera spans and marks after stopping use the length of the saved file, like cursor joins do.
                 ordered[0].movieMs = durationMs;
@@ -748,6 +892,14 @@ export class RecordingSession {
         this.end("done");
     }
 
+    private async finishSingle(): Promise<void> {
+        try {
+            await this.options.finishSingle?.(this.options.output);
+        } catch (error) {
+            log.warn({ error, output: this.options.output }, "the one-segment movie keeps its tracks as recorded");
+        }
+    }
+
     /**
      * The saved one-segment movie's length. A movie the probe cannot read is still saved, so it keeps the recorder's
      * movie length, which is the nearer of the two figures it reported.
@@ -762,7 +914,21 @@ export class RecordingSession {
         }
     }
 
+    /** The display each stretch of the movie came from, in movie order (`settings.video.displays`). */
+    displaySwitches(): RecordingDisplaySwitch[] {
+        return this.switches.map((row) => ({ atMs: Math.round(row.atMs), display: { ...row.display } }));
+    }
+
+    private noteDisplay(atMs: number, display: RecordingDisplaySwitch["display"]): void {
+        if (this.switches.at(-1)?.display.id === display.id) {
+            return;
+        }
+
+        this.switches.push({ atMs, display });
+    }
+
     private async deleteSegments(): Promise<void> {
+        this.switches = [];
         for (const segment of this.segments.splice(0)) {
             try {
                 await unlink(segment.path);

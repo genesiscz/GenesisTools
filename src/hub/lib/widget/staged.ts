@@ -1,5 +1,6 @@
 import { queueReserved } from "@app/question/lib/decisions/answers";
 import type { DeliverDeps } from "@app/question/lib/decisions/deliver";
+import { DeliveredUnrecordedError } from "@app/question/lib/decisions/delivery-errors";
 import { loadDecisionsHookConfig } from "@app/question/lib/decisions/hook-config";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { sendAnsweredDecisions } from "@app/question/lib/decisions/send";
@@ -28,6 +29,8 @@ export interface StagedSendResult {
      * session-queue entry was saved); false means only a later send delivers them. `stored` beside `error`: the
      * answers were saved as answered before the error (their delivery or its receipt failed), so they are no longer
      * staged and a staged retry has nothing to send; without it the error refused the answers and they stay staged.
+     * `delivered` beside `stored`: the transport confirmed the delivery and only its record failed, so the answers
+     * arrived and a Send again would type them twice.
      */
     sessions: Array<{
         session: string;
@@ -35,6 +38,7 @@ export interface StagedSendResult {
         result?: InboxAnswerResult;
         error?: string;
         stored?: boolean;
+        delivered?: boolean;
         deliversLater?: boolean;
     }>;
     /** Answers a receiver took. */
@@ -150,6 +154,13 @@ export async function sendStagedDecisions({
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
 
+            if (error instanceof AnswersStoredError && error.delivered) {
+                logger.warn({ session, numbers, error }, "widget send-staged: delivered, its record failed");
+                result.sessions.push({ session, numbers, error: message, stored: true, delivered: true });
+                result.sent += rows.length;
+                continue;
+            }
+
             if (error instanceof AnswersStoredError) {
                 logger.warn({ session, numbers, error }, "widget send-staged: stored, delivery not confirmed");
                 result.sessions.push({
@@ -254,7 +265,17 @@ export async function resendAnsweredDecisions({
                 result.queued += free.length;
             }
         } catch (error) {
-            result.sessions.push({ session, numbers, error: error instanceof Error ? error.message : String(error) });
+            const message = error instanceof Error ? error.message : String(error);
+
+            // The answers reached the agent and only their record failed: a Send again would type them twice.
+            if (error instanceof DeliveredUnrecordedError) {
+                logger.warn({ session, numbers, error }, "widget resend: delivered, its record failed");
+                result.sessions.push({ session, numbers, error: message, stored: true, delivered: true });
+                result.sent += free.length;
+                continue;
+            }
+
+            result.sessions.push({ session, numbers, error: message });
             result.failed += free.length;
         }
     }

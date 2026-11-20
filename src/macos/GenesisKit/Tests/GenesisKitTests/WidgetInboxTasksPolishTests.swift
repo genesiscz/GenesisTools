@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import GenesisKitFixtures
+import GenesisKitTestSupport
 import SwiftUI
 import Vision
 import XCTest
@@ -112,7 +113,7 @@ final class WidgetTasksPolishTests: XCTestCase {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: image).perform([request])
+        try recognizeText(in: image, with: request)
         return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
     }
 
@@ -208,7 +209,7 @@ final class WidgetTasksPolishTests: XCTestCase {
         let ocr = VNRecognizeTextRequest()
         ocr.recognitionLevel = .accurate
         ocr.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: XCTUnwrap(bitmap.cgImage)).perform([ocr])
+        try recognizeText(in: XCTUnwrap(bitmap.cgImage), with: ocr)
         func click(_ label: String) throws {
             let line = try XCTUnwrap(ocr.results?.first { $0.topCandidates(1).first?.string.contains(label) == true })
             let location = NSPoint(x: line.boundingBox.midX * host.bounds.width, y: line.boundingBox.midY * host.bounds.height)
@@ -705,6 +706,10 @@ final class WidgetTasksPolishTests: XCTestCase {
         store.toggle(original)
         await settled(store)
         XCTAssertEqual(store.failures.first?.id, .change(original.id))
+        // The hub's Inbox shows the same report: the widget's headline, the tool's words behind Details.
+        XCTAssertEqual(store.latestFailureReport, store.failures.first?.report)
+        XCTAssertTrue(store.latestFailureReport?.headline.contains("Could not mark") ?? false)
+        XCTAssertNil(store.createFailureReport)
         let text = try renderTasks(WidgetTasksModuleView(store: store, presentation: .preview).frame(width: 324), name: "widget-task-refused")
         XCTAssertTrue(text.contains("Water the plants"), text)
         XCTAssertTrue(text.contains("Could not mark"), text)
@@ -2607,6 +2612,17 @@ final class WidgetStagingTests: XCTestCase {
         XCTAssertTrue(outcome.failedSessions.isEmpty)
         XCTAssertEqual(outcome.details, "Fixture two: receipt write failed")
         XCTAssertFalse(outcome.delivered)
+    }
+
+    /// The agent got the answers and only the hub's record of it failed: the session reads delivered, so the widget
+    /// offers no Send again that would type the answers twice.
+    func testAStoredAnswerTheTransportConfirmedReadsDelivered() {
+        let outcome = WidgetDecisionSendOutcome(["sent": 1, "queued": 0, "failed": 0, "sessions": [
+            ["session": "s3", "numbers": [4], "error": "the record failed", "stored": true, "delivered": true],
+        ]], titles: ["s3": "Fixture three"])
+        XCTAssertEqual(outcome.result(forSession: "s3", number: 4), .delivered)
+        XCTAssertTrue(outcome.waiting.isEmpty)
+        XCTAssertTrue(outcome.delivered)
     }
 
     /// A refused send's reason belongs to the stage it refused: the same stage keeps it, a stage made in another

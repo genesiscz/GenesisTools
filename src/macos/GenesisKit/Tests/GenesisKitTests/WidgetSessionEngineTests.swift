@@ -73,6 +73,25 @@ final class WidgetSessionEngineTests: XCTestCase {
         XCTAssertEqual(Array(second.arguments.suffix(2)), ["--audio", "system"], "a muted source and a display scope stay out")
     }
 
+    /// The dimmer setting (`recording.keepsOverlays`, default off) is the only way the widget keeps HazeOver in the movie.
+    func testKeepsOverlaysAddsTheFlagOnlyWhenOn() async throws {
+        let pipe = WidgetSessionPipe()
+        try await makeEngine(pipe).start(RecordingSetup(target: window, frameRate: 24), excludeWindowIDs: [])
+        XCTAssertFalse(pipe.arguments.contains("--keep-overlays"))
+        let kept = WidgetSessionPipe()
+        let engine = WidgetSessionEngine(makeController: kept.makeController, showsBorder: { true }, keepsOverlays: { true })
+        try await engine.start(RecordingSetup(target: window, frameRate: 24), excludeWindowIDs: [])
+        XCTAssertEqual(kept.arguments.last, "--keep-overlays")
+
+        let suite = "recording.settings.\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = RecordingSettings(defaults: defaults)
+        XCTAssertFalse(settings.keepsOverlays)
+        defaults.set(true, forKey: RecordingSettings.Key.keepsOverlays)
+        XCTAssertTrue(settings.keepsOverlays, "a change on the recorder's own page reaches the next start")
+    }
+
     func testCapabilitiesAndUnsupportedChangesNeverWriteToTheSession() async throws {
         let pipe = WidgetSessionPipe()
         let engine = makeEngine(pipe)

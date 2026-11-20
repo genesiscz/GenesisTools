@@ -7,6 +7,11 @@ import { type CaptureSpec, NATIVE_FRAMES_MAX_SECONDS, NATIVE_MOVIE_MAX_SECONDS }
 
 export const CAPTURE_CANVAS_VALUES = ["crop", "display"] as const;
 export const CAPTURE_CODEC_VALUES = ["h264", "prores4444"] as const;
+/** `movieQuality`: a movie's size and bit rate against standard, the native size (ax-tool `--movie-quality`). */
+export const MOVIE_QUALITY_VALUES = ["standard", "high", "small"] as const satisfies ReadonlyArray<
+    NonNullable<CaptureSpec["movieQuality"]>
+>;
+export type MovieQuality = (typeof MOVIE_QUALITY_VALUES)[number];
 
 /** Options only the native recorder (`ax-tool capture`) has; they are fields of `CaptureSpec`. */
 export type NativeCaptureOptions = Pick<
@@ -14,6 +19,7 @@ export type NativeCaptureOptions = Pick<
     | "displayId"
     | "followFocus"
     | "maxLongSide"
+    | "movieQuality"
     | "quietMs"
     | "heartbeatSec"
     | "maxMb"
@@ -110,6 +116,10 @@ export function nativeCaptureArgv(cap: CaptureSpec, outDir: string): string[] {
         argv.push("--codec", cap.codec);
     }
 
+    if (cap.movieQuality && cap.movieQuality !== "standard") {
+        argv.push("--movie-quality", cap.movieQuality);
+    }
+
     if (cap.indicator === false) {
         argv.push("--no-indicator");
     }
@@ -136,6 +146,10 @@ export function nativeCaptureArgv(cap: CaptureSpec, outDir: string): string[] {
 
     if (cap.excludeWindowIds?.length) {
         argv.push("--exclude-window-ids", cap.excludeWindowIds.join(","));
+    }
+
+    if (cap.keepOverlays) {
+        argv.push("--keep-overlays");
     }
 
     const tuning: [string, number | undefined][] = [
@@ -201,6 +215,16 @@ export function validateCaptureOptions(cap: CaptureSpec): void {
     for (const [name, value, min, max] of numbers) {
         if (value !== undefined && (!Number.isFinite(value) || value < min || value > max)) {
             throw new Error(`${name} must be between ${min} and ${max}`);
+        }
+    }
+
+    if (cap.movieQuality !== undefined) {
+        if (!MOVIE_QUALITY_VALUES.includes(cap.movieQuality)) {
+            throw new Error(`movieQuality must be ${MOVIE_QUALITY_VALUES.join(", ")}`);
+        }
+
+        if (cap.movieQuality !== "standard" && (!cap.videoOut || cap.codec === "prores4444")) {
+            throw new Error("movieQuality applies to an H.264 movie (videoOut, not codec prores4444)");
         }
     }
 
@@ -313,12 +337,14 @@ export function validateCaptureOptions(cap: CaptureSpec): void {
         cap.indicator,
         cap.maxFrames,
         cap.excludeWindowIds,
+        cap.keepOverlays,
         cap.displayId,
         cap.followFocus,
         cap.maxLongSide,
         cap.quietMs,
         cap.heartbeatSec,
         cap.maxMb,
+        cap.movieQuality,
         cap.audio,
         cap.micDevice,
         cap.audioSidecar,
@@ -329,7 +355,7 @@ export function validateCaptureOptions(cap: CaptureSpec): void {
     ];
     if (cap.backend === "peekaboo" && (cap.mode === "isolated" || extended.some((value) => value !== undefined))) {
         throw new Error(
-            "Isolated selection, output geometry, codec, transparency, indicator, displayId, followFocus, frame tuning and audio options require backend native"
+            "Isolated selection, output geometry, codec, movie quality, transparency, indicator, displayId, followFocus, frame tuning and audio options require backend native"
         );
     }
 

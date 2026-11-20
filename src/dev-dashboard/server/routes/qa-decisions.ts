@@ -2,7 +2,6 @@ import { ENDPOINTS } from "@app/dev-dashboard/contract/endpoint-table";
 import { bindEndpoint } from "@app/dev-dashboard/server/bind";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
-import { readWidgetState } from "@app/hub/lib/widget/storage";
 import type { DeliverDeps } from "@app/question/lib/decisions/deliver";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { sendAnsweredDecisions } from "@app/question/lib/decisions/send";
@@ -17,6 +16,7 @@ import {
     waitingBlock,
 } from "@app/question/lib/inbox/load";
 import { logger } from "@genesiscz/utils/logger";
+import { readWidgetState } from "@genesiscz/utils/widget/storage";
 import { z } from "zod";
 
 export interface QaDecisionDeps {

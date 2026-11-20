@@ -187,7 +187,7 @@ export function registerGateCommands(program: Command, needEnv?: NeedEnv): void 
 
             out.println(vaultTable.toString());
 
-            renderCliHeader("Vault key, whole sessions", `${sessions.length} live`);
+            renderCliHeader("Vault key, whole sessions", `${sessions.length} unexpired records`);
             const sessionTable = createBoxTable(["AGENT", "SESSION", "UNTIL", "BY"]);
 
             for (const grant of sessions) {

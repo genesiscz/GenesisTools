@@ -66,6 +66,11 @@ describe("api descriptors", () => {
         expect(typeText(jsonSchemaOf(z.array(z.enum(["x", "y"]))))).toBe('Array<"x" | "y">');
         expect(typeText(jsonSchemaOf(z.record(z.string(), z.boolean())))).toBe("Record<string, boolean>");
         expect(typeText(jsonSchemaOf(z.custom<() => void>()))).toBe("unknown");
+        // A oneOf that only says which fields go together keeps the object's own spelling.
+        const either = z
+            .object({ part: z.string().optional(), from: z.number().optional() })
+            .meta({ oneOf: [{ required: ["part"] }, { required: ["from"] }] });
+        expect(typeText(jsonSchemaOf(either))).toBe("{ part?: string; from?: number }");
     });
 
     test("a schema with a title is written as that name, so a docs note can define it once", () => {

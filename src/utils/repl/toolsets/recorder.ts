@@ -37,6 +37,8 @@ export const recorderStartSchema = z
         title: z.string().optional(),
         displays: z.union([z.enum(["all", "main"]), z.array(z.number().int())]).default("main"),
         excludeWindowIds: z.array(z.number().int().positive().max(0xffffffff)).optional(),
+        /** Keep screen dimmers (HazeOver and the like) in the frames; every display leaves them out by default. */
+        keepOverlays: z.boolean().optional(),
         audio: z
             .object({ mic: z.boolean().optional(), system: z.boolean().optional(), micDeviceId: z.string().optional() })
             .optional(),
@@ -91,7 +93,7 @@ export const recorderSetSchema = recorderSettingsPatchSchema
 /** What every toolset that controls a live recording says about reading and changing its settings. */
 export const RECORDER_SETTINGS_DOC = "The live settings and the audio state.";
 export const RECORDER_SET_SETTINGS_DOC =
-    "Changes fps, idleFps, threshold, maxLongSide, heartbeatSec or ocr while it records.";
+    'Changes fps, idleFps, threshold, maxLongSide, heartbeatSec or ocr while it records; rate: "same" puts a movie back on one steady rate (its fps).';
 
 /** The patch the live socket takes (`settings.set`) from what a REPL caller gave (`fps` is the active rate). */
 export function settingsPatchOf(input: z.input<typeof recorderSetSchema>): RecorderSettingsPatch {

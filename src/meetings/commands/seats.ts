@@ -125,8 +125,14 @@ export function registerSeatsCommand(program: Command): void {
         .description("Suggest room and remote seats and explain each choice")
         .option("--apply", "save when seats have not been set")
         .option("--replace", "save even when seats are already set")
-        .option("--room <names...>", "seat these people in the room and apply")
-        .option("--remote <names...>", "seat these people on the call and apply")
+        .option(
+            "--room <names...>",
+            "seat these people in the room; saved when no seats are set yet, else add --replace"
+        )
+        .option(
+            "--remote <names...>",
+            "seat these people on the call; saved when no seats are set yet, else add --replace"
+        )
         .option("--json", "print the preview and save result as JSON")
         .action(seats);
 }

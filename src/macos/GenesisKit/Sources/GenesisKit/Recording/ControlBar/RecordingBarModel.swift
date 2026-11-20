@@ -167,6 +167,16 @@ public final class RecordingBarModel: ObservableObject {
         }
     }
 
+    /// Change needed during a take: the recorder's rates command carries the threshold with the current rates, so
+    /// the take records with it from its next segment. `applied` hears whether the recorder took it.
+    public func changeThreshold(_ threshold: Double, applied: @escaping @MainActor (Bool) -> Void = { _ in }) {
+        guard phase.acceptsLiveChanges && !isRestartPending else { return applied(false) }
+        forTake { take in
+            applied(await self.applyLive(.frameRate(self.setup.frameRate, still: self.setup.stillFrameRate,
+                                                    threshold: threshold), take: take))
+        }
+    }
+
     public func changeFrameRate(active: Int? = nil, still: Double? = nil) {
         if phase == .setup {
             apply(.frameRate(active ?? setup.frameRate, still: still ?? setup.stillFrameRate))
@@ -183,7 +193,7 @@ public final class RecordingBarModel: ObservableObject {
         guard phase.acceptsLiveChanges else { return false }
         var requested = setup
         change.edit(&requested)
-        if requested == setup { return true }
+        if requested == setup && change.threshold == nil { return true }
         if let reason = capabilities.unavailableReason(for: change, in: setup) {
             report(reason, control: change.controlID)
             return false

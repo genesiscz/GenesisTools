@@ -5,7 +5,6 @@ import { attributeByChannel, channelEvidence, lineEligibilityFor } from "@app/me
 import { configValueAt, parseConfigPath, setConfigValue } from "@app/meetings/lib/config-edit";
 import { decideItems, reopenItems } from "@app/meetings/lib/decide";
 import { callerActor, DecisionJournal } from "@app/meetings/lib/decision-journal";
-import { testPhrase } from "@app/meetings/lib/dictionary-test";
 import { liveMeetingLevels, savedMeetingLevels } from "@app/meetings/lib/levels";
 import { lookMeeting } from "@app/meetings/lib/look";
 import { matchPreview } from "@app/meetings/lib/match-preview";
@@ -20,6 +19,7 @@ import { applySuggestedSeats } from "@app/meetings/lib/seat-suggest";
 import type { MeetingsMethod, MeetingsParams } from "@app/meetings/lib/service/api";
 import { withMeetingsClient } from "@app/meetings/lib/service/client";
 import { recordOf } from "@app/meetings/lib/service/handlers";
+import { testDictionaryPhrase } from "@app/meetings/lib/service/library-handlers";
 import {
     acousticClip,
     acousticInspect,
@@ -261,10 +261,17 @@ export class MeetingsToolset extends ReplToolset {
                     });
                 },
                 dictionary: {
-                    test: async (phrase: string, input: { project?: string } = {}) => {
-                        const parsed = dictionaryTest.params.parse({ phrase, ...input });
-                        return testPhrase(await new MeetingsConfigStore().read(), parsed);
-                    },
+                    test: async (
+                        phrase: string,
+                        project?: string,
+                        entry?: z.input<typeof dictionaryTest.params>["entry"],
+                        meeting?: string,
+                        limit?: number
+                    ) =>
+                        testDictionaryPhrase(
+                            dictionaryTest.params.parse({ phrase, project, entry, meeting, limit }),
+                            {}
+                        ),
                 },
                 config: {
                     get: async (path?: string) => {

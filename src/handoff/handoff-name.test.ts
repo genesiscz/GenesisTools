@@ -1,10 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { describe, expect, spyOn, test } from "bun:test";
 import { executeHandoffActions, getHandoff, listHandoffs, postHandoff } from "./executor";
 import { generateEditId, generateEventUid, generateHandoffId } from "./ids";
 import { appendHandoffEvents } from "./log-store";
+import { openHandoffModel } from "./read-model";
 import { byFor, freshEnv } from "./test-utils";
 import type { HandoffEvent } from "./types";
-import { parseSince, watchHandoffs } from "./watch";
+import { handoffEventsFromFeed, parseSince, watchHandoffs } from "./watch";
 
 const POSTER = byFor("sess-poster", "poster");
 const WORKER = byFor("sess-worker", "worker");
@@ -289,6 +291,7 @@ describe("handoff watch", () => {
                 seen.push(event.id);
             },
             base: env.base,
+            dbPath: env.dbPath,
         });
 
         expect(seen.length).toBeGreaterThan(0);
@@ -304,6 +307,7 @@ describe("handoff watch", () => {
                 stale.push(event.id);
             },
             base: env.base,
+            dbPath: env.dbPath,
         });
         expect(stale).toEqual([]);
     });
@@ -322,6 +326,7 @@ describe("handoff watch", () => {
                 delivered.resolve();
             },
             base: env.base,
+            dbPath: env.dbPath,
         });
 
         try {
@@ -334,6 +339,108 @@ describe("handoff watch", () => {
             expect(new Set(seen)).toEqual(new Set([posted.id]));
         } finally {
             watch.close();
+        }
+    });
+
+    test("the replay reads the work store's change feed, and no event carries the poster's edit credential", () => {
+        const env = freshEnv();
+        const posted = postHandoff({ title: "Feed work", tasks: [{ text: "one" }] }, env.depsFor(POSTER)).handoff;
+        const seen: Array<{ ev: string; editId?: unknown }> = [];
+        watchHandoffs({
+            filters: [posted.id],
+            sinceMs: parseSince("1h"),
+            follow: false,
+            onEvent: (event) => {
+                seen.push({ ev: event.ev, editId: (event as { editId?: unknown }).editId });
+            },
+            base: env.base,
+            dbPath: env.dbPath,
+        });
+
+        expect(seen.map((event) => event.ev)).toContain("post");
+        expect(seen.every((event) => event.editId === undefined)).toBe(true);
+
+        const none: string[] = [];
+        watchHandoffs({
+            filters: [posted.id],
+            sinceMs: 0,
+            follow: false,
+            onEvent: (event) => {
+                none.push(event.ev);
+            },
+            base: env.base,
+            dbPath: env.dbPath,
+        });
+        expect(none).toEqual([]);
+    });
+
+    test("a watch whose replay throws closes its database before the error reaches the caller", () => {
+        const env = freshEnv();
+        const posted = postHandoff({ title: "Throwing replay", tasks: [{ text: "one" }] }, env.depsFor(POSTER)).handoff;
+        const close = spyOn(Database.prototype, "close");
+
+        try {
+            expect(() =>
+                watchHandoffs({
+                    filters: [posted.id],
+                    sinceMs: parseSince("1h"),
+                    follow: true,
+                    onEvent: () => {
+                        throw new Error("fixture onEvent failure");
+                    },
+                    base: env.base,
+                    dbPath: env.dbPath,
+                })
+            ).toThrow("fixture onEvent failure");
+            expect(close).toHaveBeenCalledTimes(1);
+        } finally {
+            close.mockRestore();
+        }
+    });
+
+    test("the change feed reads one bounded page at a time, and the pages together equal the whole feed", () => {
+        const env = freshEnv();
+        const posted = postHandoff({ title: "Paged work", tasks: [{ text: "one" }] }, env.depsFor(POSTER)).handoff;
+        executeHandoffActions(
+            { id: posted.id, actions: [{ action: "modify_handoff", name: "paged-name" }] },
+            env.depsFor(POSTER)
+        );
+        executeHandoffActions(
+            { id: posted.id, actions: [{ action: "comment", text: "a later note" }] },
+            env.depsFor(POSTER)
+        );
+        const db = openHandoffModel(env.dbPath);
+
+        try {
+            const whole = handoffEventsFromFeed(db, 0, { limit: 10_000 });
+            expect(whole.more).toBe(false);
+
+            const paged: string[] = [];
+            let page = { cursor: 0, more: true };
+            let pages = 0;
+
+            while (page.more) {
+                const read = handoffEventsFromFeed(db, page.cursor, { limit: 1 });
+
+                // A page that promises more must move the cursor, or a stuck reader would loop here for ever.
+                if (read.more) {
+                    expect(read.cursor).toBeGreaterThan(page.cursor);
+                } else {
+                    expect(read.cursor).toBeGreaterThanOrEqual(page.cursor);
+                }
+
+                page = read;
+                pages++;
+                paged.push(...read.events.map((event) => event.uid));
+            }
+
+            expect(pages).toBeGreaterThan(1);
+            // One event can stand behind several changes, so its uid repeats on consecutive pages (the watch drops
+            // the repeat by uid). Any other repeat, or another order, fails here.
+            const collapsed = paged.filter((uid, index) => uid !== paged[index - 1]);
+            expect(collapsed).toEqual(whole.events.map((event) => event.uid));
+        } finally {
+            db.close();
         }
     });
 

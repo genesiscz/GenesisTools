@@ -201,8 +201,8 @@ final class MeetingsVoiceLibraryTests: XCTestCase {
           {"project":"Orchard","person":"Aster","owner":{"name":"Aster","email":"two@example.test"},"meetings":["two"],"samples":[]}]}
         """#
         let result = try JSONDecoder().decode(MeetingsAPI.VoicesList.Result.self, from: Data(json.utf8))
-        XCTAssertNotEqual(result.people[0].id, result.people[1].id)
-        let clip = try XCTUnwrap(result.people[0].samples.first)
+        XCTAssertNotEqual(try result.people.required(0).id, try result.people.required(1).id)
+        let clip = try XCTUnwrap(try result.people.required(0).samples.first)
         XCTAssertEqual(String(describing: clip.id), "vs_unchanged")
         XCTAssertFalse(clip.available)
     }

@@ -1,13 +1,16 @@
 import { gain, RATE, type Stereo, Svf, stereo } from "./dsp";
 import { filterPass } from "./effects";
+import { musicCheckpoint } from "./process";
 import type { Room } from "./types";
 
 const COMBS = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617];
 const ALLPASSES = [556, 441, 341, 225];
 const SPREAD = 23;
+/** Samples between two cancellation checkpoints in the room loop: about a second of audio, a few ms of work. */
+const CHECKPOINT_SAMPLES = 1 << 16;
 
 /** Freeverb (Jezar, public domain): eight damped combs into four allpasses for each side. */
-export function room(input: Stereo, options: Room): Stereo {
+export async function room(input: Stereo, options: Room): Promise<Stereo> {
     const total = input.left.length;
     const out = stereo(total);
     const feedback = options.size * 0.28 + 0.7;
@@ -15,7 +18,7 @@ export function room(input: Stereo, options: Room): Stereo {
     const predelay = Math.round(((options.predelay ?? 0) / 1000) * RATE);
     const ratio = RATE / 44100;
 
-    [out.left, out.right].forEach((channel, side) => {
+    for (const [side, channel] of [out.left, out.right].entries()) {
         const combs = COMBS.map((length) => ({
             line: new Float32Array(Math.round((length + side * SPREAD) * ratio)),
             at: 0,
@@ -27,6 +30,10 @@ export function room(input: Stereo, options: Room): Stereo {
         }));
 
         for (let n = 0; n < total; n++) {
+            if (n % CHECKPOINT_SAMPLES === 0) {
+                await musicCheckpoint();
+            }
+
             const from = n - predelay;
             const dry = from >= 0 ? (input.left[from] + input.right[from]) * 0.015 : 0;
             let sample = 0;
@@ -48,7 +55,7 @@ export function room(input: Stereo, options: Room): Stereo {
 
             channel[n] = sample * 3 * gain(options.level ?? 0);
         }
-    });
+    }
 
     if (options.highpass) {
         filterPass(out, "highpass", options.highpass);

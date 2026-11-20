@@ -8520,6 +8520,11 @@ public enum WorkConfigSetParamsScope: String, Codable, Sendable {
     case value1 = "global"
 }
 
+public enum WorkConfigSetParamsSurface: String, Codable, Sendable {
+    case value0 = "hub"
+    case value1 = "widget"
+}
+
 public enum WorkConfigSetParamsNotifyType: String, Codable, Sendable {
     case value0 = "epic"
     case value1 = "handoff"
@@ -8784,21 +8789,24 @@ public struct WorkConfigSetParamsCall: Codable, Sendable {
 public struct WorkConfigSetParams: Codable, Sendable {
     public var `scope`: WorkConfigSetParamsScope
     public var `project`: String?
+    public var `surface`: WorkConfigSetParamsSurface?
     public var `notify`: WorkConfigSetParamsNotify?
     public var `restore`: [WorkConfigSetParamsRestoreItem]?
     public var `call`: WorkConfigSetParamsCall?
-    public init(`scope`: WorkConfigSetParamsScope, `project`: String? = nil, `notify`: WorkConfigSetParamsNotify? = nil, `restore`: [WorkConfigSetParamsRestoreItem]? = nil, `call`: WorkConfigSetParamsCall? = nil) {
+    public init(`scope`: WorkConfigSetParamsScope, `project`: String? = nil, `surface`: WorkConfigSetParamsSurface? = nil, `notify`: WorkConfigSetParamsNotify? = nil, `restore`: [WorkConfigSetParamsRestoreItem]? = nil, `call`: WorkConfigSetParamsCall? = nil) {
         self.`scope` = `scope`
         self.`project` = `project`
+        self.`surface` = `surface`
         self.`notify` = `notify`
         self.`restore` = `restore`
         self.`call` = `call`
     }
-    private enum CodingKeys: String, CodingKey { case `scope`; case `project`; case `notify`; case `restore`; case `call` }
+    private enum CodingKeys: String, CodingKey { case `scope`; case `project`; case `surface`; case `notify`; case `restore`; case `call` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`scope` = try box.decode(WorkConfigSetParamsScope.self, forKey: .`scope`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
+        self.`surface` = try box.decodeIfPresent(WorkConfigSetParamsSurface.self, forKey: .`surface`)
         self.`notify` = try box.decodeIfPresent(WorkConfigSetParamsNotify.self, forKey: .`notify`)
         self.`restore` = try box.decodeIfPresent([WorkConfigSetParamsRestoreItem].self, forKey: .`restore`)
         self.`call` = try box.decodeIfPresent(WorkConfigSetParamsCall.self, forKey: .`call`)
@@ -8807,6 +8815,7 @@ public struct WorkConfigSetParams: Codable, Sendable {
         var box = encoder.container(keyedBy: CodingKeys.self)
         try box.encode(`scope`, forKey: .`scope`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
+        try box.encodeIfPresent(`surface`, forKey: .`surface`)
         try box.encodeIfPresent(`notify`, forKey: .`notify`)
         try box.encodeIfPresent(`restore`, forKey: .`restore`)
         try box.encodeIfPresent(`call`, forKey: .`call`)
@@ -18221,19 +18230,22 @@ public struct RequestsPostResultEventsItemOption3: Codable, Sendable {
     public var `at`: String
     public var `via`: String
     public var `note`: String?
-    public init(`type`: RequestsPostResultEventsItemOption3Type, `at`: String, `via`: String, `note`: String? = nil) {
+    public var `reason`: String?
+    public init(`type`: RequestsPostResultEventsItemOption3Type, `at`: String, `via`: String, `note`: String? = nil, `reason`: String? = nil) {
         self.`type` = `type`
         self.`at` = `at`
         self.`via` = `via`
         self.`note` = `note`
+        self.`reason` = `reason`
     }
-    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `via`; case `note` }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `via`; case `note`; case `reason` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`type` = try box.decode(RequestsPostResultEventsItemOption3Type.self, forKey: .`type`)
         self.`at` = try box.decode(String.self, forKey: .`at`)
         self.`via` = try box.decode(String.self, forKey: .`via`)
         self.`note` = try box.decode(String?.self, forKey: .`note`)
+        self.`reason` = try box.decodeIfPresent(String.self, forKey: .`reason`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -18241,6 +18253,7 @@ public struct RequestsPostResultEventsItemOption3: Codable, Sendable {
         try box.encode(`at`, forKey: .`at`)
         try box.encode(`via`, forKey: .`via`)
         try box.encode(`note`, forKey: .`note`)
+        try box.encodeIfPresent(`reason`, forKey: .`reason`)
     }
 }
 
@@ -18291,14 +18304,16 @@ public struct RequestsPostResultEventsItemOption5: Codable, Sendable {
     public var `exitCode`: Int
     public var `outputTail`: String
     public var `verified`: Bool?
-    public init(`type`: RequestsPostResultEventsItemOption5Type, `at`: String, `exitCode`: Int, `outputTail`: String, `verified`: Bool? = nil) {
+    public var `reason`: String?
+    public init(`type`: RequestsPostResultEventsItemOption5Type, `at`: String, `exitCode`: Int, `outputTail`: String, `verified`: Bool? = nil, `reason`: String? = nil) {
         self.`type` = `type`
         self.`at` = `at`
         self.`exitCode` = `exitCode`
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
+        self.`reason` = `reason`
     }
-    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `exitCode`; case `outputTail`; case `verified` }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `exitCode`; case `outputTail`; case `verified`; case `reason` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`type` = try box.decode(RequestsPostResultEventsItemOption5Type.self, forKey: .`type`)
@@ -18306,6 +18321,7 @@ public struct RequestsPostResultEventsItemOption5: Codable, Sendable {
         self.`exitCode` = try box.decode(Int.self, forKey: .`exitCode`)
         self.`outputTail` = try box.decode(String.self, forKey: .`outputTail`)
         self.`verified` = try box.decode(Bool?.self, forKey: .`verified`)
+        self.`reason` = try box.decodeIfPresent(String.self, forKey: .`reason`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -18314,6 +18330,7 @@ public struct RequestsPostResultEventsItemOption5: Codable, Sendable {
         try box.encode(`exitCode`, forKey: .`exitCode`)
         try box.encode(`outputTail`, forKey: .`outputTail`)
         try box.encode(`verified`, forKey: .`verified`)
+        try box.encodeIfPresent(`reason`, forKey: .`reason`)
     }
 }
 
@@ -18851,19 +18868,22 @@ public struct RequestsGetResultEventsItemOption3: Codable, Sendable {
     public var `at`: String
     public var `via`: String
     public var `note`: String?
-    public init(`type`: RequestsGetResultEventsItemOption3Type, `at`: String, `via`: String, `note`: String? = nil) {
+    public var `reason`: String?
+    public init(`type`: RequestsGetResultEventsItemOption3Type, `at`: String, `via`: String, `note`: String? = nil, `reason`: String? = nil) {
         self.`type` = `type`
         self.`at` = `at`
         self.`via` = `via`
         self.`note` = `note`
+        self.`reason` = `reason`
     }
-    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `via`; case `note` }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `via`; case `note`; case `reason` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`type` = try box.decode(RequestsGetResultEventsItemOption3Type.self, forKey: .`type`)
         self.`at` = try box.decode(String.self, forKey: .`at`)
         self.`via` = try box.decode(String.self, forKey: .`via`)
         self.`note` = try box.decode(String?.self, forKey: .`note`)
+        self.`reason` = try box.decodeIfPresent(String.self, forKey: .`reason`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -18871,6 +18891,7 @@ public struct RequestsGetResultEventsItemOption3: Codable, Sendable {
         try box.encode(`at`, forKey: .`at`)
         try box.encode(`via`, forKey: .`via`)
         try box.encode(`note`, forKey: .`note`)
+        try box.encodeIfPresent(`reason`, forKey: .`reason`)
     }
 }
 
@@ -18921,14 +18942,16 @@ public struct RequestsGetResultEventsItemOption5: Codable, Sendable {
     public var `exitCode`: Int
     public var `outputTail`: String
     public var `verified`: Bool?
-    public init(`type`: RequestsGetResultEventsItemOption5Type, `at`: String, `exitCode`: Int, `outputTail`: String, `verified`: Bool? = nil) {
+    public var `reason`: String?
+    public init(`type`: RequestsGetResultEventsItemOption5Type, `at`: String, `exitCode`: Int, `outputTail`: String, `verified`: Bool? = nil, `reason`: String? = nil) {
         self.`type` = `type`
         self.`at` = `at`
         self.`exitCode` = `exitCode`
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
+        self.`reason` = `reason`
     }
-    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `exitCode`; case `outputTail`; case `verified` }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `exitCode`; case `outputTail`; case `verified`; case `reason` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`type` = try box.decode(RequestsGetResultEventsItemOption5Type.self, forKey: .`type`)
@@ -18936,6 +18959,7 @@ public struct RequestsGetResultEventsItemOption5: Codable, Sendable {
         self.`exitCode` = try box.decode(Int.self, forKey: .`exitCode`)
         self.`outputTail` = try box.decode(String.self, forKey: .`outputTail`)
         self.`verified` = try box.decode(Bool?.self, forKey: .`verified`)
+        self.`reason` = try box.decodeIfPresent(String.self, forKey: .`reason`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -18944,6 +18968,7 @@ public struct RequestsGetResultEventsItemOption5: Codable, Sendable {
         try box.encode(`exitCode`, forKey: .`exitCode`)
         try box.encode(`outputTail`, forKey: .`outputTail`)
         try box.encode(`verified`, forKey: .`verified`)
+        try box.encodeIfPresent(`reason`, forKey: .`reason`)
     }
 }
 
@@ -19481,19 +19506,22 @@ public struct RequestsListResultItemEventsItemOption3: Codable, Sendable {
     public var `at`: String
     public var `via`: String
     public var `note`: String?
-    public init(`type`: RequestsListResultItemEventsItemOption3Type, `at`: String, `via`: String, `note`: String? = nil) {
+    public var `reason`: String?
+    public init(`type`: RequestsListResultItemEventsItemOption3Type, `at`: String, `via`: String, `note`: String? = nil, `reason`: String? = nil) {
         self.`type` = `type`
         self.`at` = `at`
         self.`via` = `via`
         self.`note` = `note`
+        self.`reason` = `reason`
     }
-    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `via`; case `note` }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `via`; case `note`; case `reason` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`type` = try box.decode(RequestsListResultItemEventsItemOption3Type.self, forKey: .`type`)
         self.`at` = try box.decode(String.self, forKey: .`at`)
         self.`via` = try box.decode(String.self, forKey: .`via`)
         self.`note` = try box.decode(String?.self, forKey: .`note`)
+        self.`reason` = try box.decodeIfPresent(String.self, forKey: .`reason`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -19501,6 +19529,7 @@ public struct RequestsListResultItemEventsItemOption3: Codable, Sendable {
         try box.encode(`at`, forKey: .`at`)
         try box.encode(`via`, forKey: .`via`)
         try box.encode(`note`, forKey: .`note`)
+        try box.encodeIfPresent(`reason`, forKey: .`reason`)
     }
 }
 
@@ -19551,14 +19580,16 @@ public struct RequestsListResultItemEventsItemOption5: Codable, Sendable {
     public var `exitCode`: Int
     public var `outputTail`: String
     public var `verified`: Bool?
-    public init(`type`: RequestsListResultItemEventsItemOption5Type, `at`: String, `exitCode`: Int, `outputTail`: String, `verified`: Bool? = nil) {
+    public var `reason`: String?
+    public init(`type`: RequestsListResultItemEventsItemOption5Type, `at`: String, `exitCode`: Int, `outputTail`: String, `verified`: Bool? = nil, `reason`: String? = nil) {
         self.`type` = `type`
         self.`at` = `at`
         self.`exitCode` = `exitCode`
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
+        self.`reason` = `reason`
     }
-    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `exitCode`; case `outputTail`; case `verified` }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `exitCode`; case `outputTail`; case `verified`; case `reason` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`type` = try box.decode(RequestsListResultItemEventsItemOption5Type.self, forKey: .`type`)
@@ -19566,6 +19597,7 @@ public struct RequestsListResultItemEventsItemOption5: Codable, Sendable {
         self.`exitCode` = try box.decode(Int.self, forKey: .`exitCode`)
         self.`outputTail` = try box.decode(String.self, forKey: .`outputTail`)
         self.`verified` = try box.decode(Bool?.self, forKey: .`verified`)
+        self.`reason` = try box.decodeIfPresent(String.self, forKey: .`reason`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -19574,6 +19606,7 @@ public struct RequestsListResultItemEventsItemOption5: Codable, Sendable {
         try box.encode(`exitCode`, forKey: .`exitCode`)
         try box.encode(`outputTail`, forKey: .`outputTail`)
         try box.encode(`verified`, forKey: .`verified`)
+        try box.encodeIfPresent(`reason`, forKey: .`reason`)
     }
 }
 
@@ -20503,19 +20536,22 @@ public struct RequestChangedEventEventsItemOption3: Codable, Sendable {
     public var `at`: String
     public var `via`: String
     public var `note`: String?
-    public init(`type`: RequestChangedEventEventsItemOption3Type, `at`: String, `via`: String, `note`: String? = nil) {
+    public var `reason`: String?
+    public init(`type`: RequestChangedEventEventsItemOption3Type, `at`: String, `via`: String, `note`: String? = nil, `reason`: String? = nil) {
         self.`type` = `type`
         self.`at` = `at`
         self.`via` = `via`
         self.`note` = `note`
+        self.`reason` = `reason`
     }
-    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `via`; case `note` }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `via`; case `note`; case `reason` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`type` = try box.decode(RequestChangedEventEventsItemOption3Type.self, forKey: .`type`)
         self.`at` = try box.decode(String.self, forKey: .`at`)
         self.`via` = try box.decode(String.self, forKey: .`via`)
         self.`note` = try box.decode(String?.self, forKey: .`note`)
+        self.`reason` = try box.decodeIfPresent(String.self, forKey: .`reason`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -20523,6 +20559,7 @@ public struct RequestChangedEventEventsItemOption3: Codable, Sendable {
         try box.encode(`at`, forKey: .`at`)
         try box.encode(`via`, forKey: .`via`)
         try box.encode(`note`, forKey: .`note`)
+        try box.encodeIfPresent(`reason`, forKey: .`reason`)
     }
 }
 
@@ -20573,14 +20610,16 @@ public struct RequestChangedEventEventsItemOption5: Codable, Sendable {
     public var `exitCode`: Int
     public var `outputTail`: String
     public var `verified`: Bool?
-    public init(`type`: RequestChangedEventEventsItemOption5Type, `at`: String, `exitCode`: Int, `outputTail`: String, `verified`: Bool? = nil) {
+    public var `reason`: String?
+    public init(`type`: RequestChangedEventEventsItemOption5Type, `at`: String, `exitCode`: Int, `outputTail`: String, `verified`: Bool? = nil, `reason`: String? = nil) {
         self.`type` = `type`
         self.`at` = `at`
         self.`exitCode` = `exitCode`
         self.`outputTail` = `outputTail`
         self.`verified` = `verified`
+        self.`reason` = `reason`
     }
-    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `exitCode`; case `outputTail`; case `verified` }
+    private enum CodingKeys: String, CodingKey { case `type`; case `at`; case `exitCode`; case `outputTail`; case `verified`; case `reason` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`type` = try box.decode(RequestChangedEventEventsItemOption5Type.self, forKey: .`type`)
@@ -20588,6 +20627,7 @@ public struct RequestChangedEventEventsItemOption5: Codable, Sendable {
         self.`exitCode` = try box.decode(Int.self, forKey: .`exitCode`)
         self.`outputTail` = try box.decode(String.self, forKey: .`outputTail`)
         self.`verified` = try box.decode(Bool?.self, forKey: .`verified`)
+        self.`reason` = try box.decodeIfPresent(String.self, forKey: .`reason`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -20596,6 +20636,7 @@ public struct RequestChangedEventEventsItemOption5: Codable, Sendable {
         try box.encode(`exitCode`, forKey: .`exitCode`)
         try box.encode(`outputTail`, forKey: .`outputTail`)
         try box.encode(`verified`, forKey: .`verified`)
+        try box.encodeIfPresent(`reason`, forKey: .`reason`)
     }
 }
 
@@ -21073,7 +21114,8 @@ public final class GenesisToolsRPC {
     /// How long a client waits for an action call: the budget the service runs it with, plus the service's grace to answer
     /// and the same again, so the service's own expiry answer always arrives first (serviceActionClientTimeoutMs).
     static func actionClientTimeout(_ id: String, override: Int? = nil) -> TimeInterval {
-        TimeInterval(max(1, override ?? actionBudgetsMs[id] ?? 120000) + 20000) / 1000
+        // In seconds as a Double: an override near Int.max cannot overflow before the service judges it.
+        (TimeInterval(max(1, override ?? actionBudgetsMs[id] ?? 120000)) + 20000) / 1000
     }
     /// Once per published connection that the service ends (a restart, a crash); not after `close()`.
     public var onDisconnect: (() -> Void)?
@@ -21178,8 +21220,9 @@ public final class GenesisToolsRPC {
         return try JSONDecoder().decode(R.self, from: bytes)
     }
     /// Events named `name`. The stream ends with the error when the connection cannot be made or the service ends it.
+    /// Every event reports a state, so a consumer that falls behind keeps the newest 256 and memory stays bounded.
     fileprivate func stream<E: Decodable>(_ name: String) -> AsyncThrowingStream<E, Error> {
-        AsyncThrowingStream { continuation in
+        AsyncThrowingStream(bufferingPolicy: .bufferingNewest(256)) { continuation in
             let id = UUID()
             listeners[name, default: [:]][id] = Listener(
                 deliver: { data in if let value = try? JSONDecoder().decode(E.self, from: data) { continuation.yield(value) } },

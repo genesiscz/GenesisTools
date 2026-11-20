@@ -1,3 +1,4 @@
+import GenesisKitTestSupport
 import SwiftUI
 import Darwin
 import Vision
@@ -100,7 +101,7 @@ enum MeetingQuestionPicture {
             host.cacheDisplay(in: host.bounds, to: bitmap); image = try XCTUnwrap(bitmap.cgImage)
         } else { image = try XCTUnwrap(renderer.cgImage) }
         let request = VNRecognizeTextRequest(); request.recognitionLevel = .accurate; request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: image).perform([request])
+        try recognizeText(in: image, with: request)
         if let folder = ProcessInfo.processInfo.environment["MEETINGS_P10_SHOTS"] {
             let bitmap = NSBitmapImageRep(cgImage: image)
             try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: folder).appendingPathComponent("\(name).png"))
@@ -125,6 +126,10 @@ extension MeetingsQuestionRowsTests {
         let text = try rendered(DictionaryChangedLines(lines: try XCTUnwrap(result.lines)), name: "C17-preview")
         XCTAssertTrue(text.contains("Changes 1 source line"), text); XCTAssertTrue(text.contains("00:10"), text)
         XCTAssertNil(try JSONDecoder().decode(PhraseTest.self, from: Data(#"{"phrase":"old","text":"old","fired":[],"suggestions":[]}"#.utf8)).lines)
+        let bounded = try JSONDecoder().decode(PhraseTest.self, from: Data(#"{"phrase":"","text":"","fired":[],"suggestions":[],"totalChanged":5,"truncated":true,"lines":[{"index":42,"startSec":10,"endSec":14,"speaker":"Alice Example","before":"zorb","after":"Zorb"}]}"#.utf8))
+        XCTAssertEqual(bounded.totalChanged, 5); XCTAssertEqual(bounded.truncated, true)
+        let shown = try rendered(DictionaryChangedLines(lines: try XCTUnwrap(bounded.lines), totalChanged: bounded.totalChanged), name: "C17-bounded")
+        XCTAssertTrue(shown.contains("Changes 5 source lines"), shown); XCTAssertTrue(shown.contains("4 more lines"), shown)
     }
     func testProjectQuestionHistoryHasItsLabelAndNoEmptyJournalMessage() throws {
         let detail = MeetingDetailModel(id: "copy", window: nil)
@@ -172,7 +177,7 @@ extension MeetingsQuestionRowsTests {
         XCTAssertEqual(PeopleText.questionPeople([present, absent], choices: [], query: "", hideAbsent: false).count, 2)
     }
     func testL17EveryDecidedLineKeepsItsFullText() throws {
-        XCTAssertGreaterThan(evidence().decidedLines[0].text.count, 240)
+        XCTAssertGreaterThan(try evidence().decidedLines.required(0).text.count, 240)
         let row = try JSONDecoder().decode(ReviewRow.self, from: Data(#"{"id":"q","label":"Q1","kind":"question","status":"suggested","what":"Who?","parts":[{"kind":"said","text":"Old truncated quote"}],"choices":[],"edit":"answer","sources":[],"target":{"kind":"item","id":"q"}}"#.utf8))
         let detail = MeetingDetailModel(id: "copy", window: nil)
         detail.rows = .loaded(.init(meeting: "copy", rows: [row], hidden: .init(lowPriority: 0, minPriority: 0), questionDetails: [evidence()]))
@@ -497,6 +502,68 @@ extension MeetingsQuestionRowsTests {
         XCTAssertEqual(firstValue, fresh, "A load the answer overtook reads again instead of returning pre-answer rows")
         XCTAssertEqual(loads, 3)
         XCTAssertEqual(refresh.cached(key), fresh, "Rows loaded before a write are never cached")
+    }
+
+    func testALoadAWriteOvertookSharesThePendingReadThatStartedAfterTheWrite() async throws {
+        let refresh = MeetingsRowsRefresh(quietWindow: .zero)
+        let key = MeetingsAPI.MeetingRows.Params(meeting: "copy", lowPriority: nil)
+        let old = ReviewRows(meeting: "copy", rows: [try question()], hidden: .init(lowPriority: 0, minPriority: 0))
+        let fresh = ReviewRows(meeting: "copy", rows: [try question(status: "confirmed", token: "next")], hidden: old.hidden)
+        var loads = 0
+        var firstCalls = 0
+        var secondCalls = 0
+        var releaseFirst: CheckedContinuation<Void, Never>?
+        var releaseSecond: CheckedContinuation<Void, Never>?
+        let firstHeld = expectation(description: "the first load is in flight")
+        let secondHeld = expectation(description: "the read after the write is in flight")
+        let handoff = expectation(description: "the overtaken load returned its rows")
+        // A regression that loads again reports a second read; the load count below fails it, not an over-fulfil.
+        handoff.assertForOverFulfill = false
+        // Each closure parks only on its first call: a repeat load fails the test and returns at once, so a
+        // regression that reloads ends in a failed assertion instead of a load nobody resumes.
+        let first = Task { try await refresh.read(key) {
+            loads += 1
+            firstCalls += 1
+            guard firstCalls == 1 else {
+                XCTFail("The overtaken load loaded again")
+                return fresh
+            }
+            await withCheckedContinuation { releaseFirst = $0; firstHeld.fulfill() }
+            return old
+        } }
+        await fulfillment(of: [firstHeld], timeout: 5)
+        refresh.beginWrite()
+        refresh.endWrite()
+        let second = Task { try await refresh.read(key) {
+            loads += 1
+            secondCalls += 1
+            guard secondCalls == 1 else {
+                XCTFail("The read after the write loaded again")
+                return fresh
+            }
+            await withCheckedContinuation { releaseSecond = $0; secondHeld.fulfill() }
+            return fresh
+        } }
+        await fulfillment(of: [secondHeld], timeout: 5)
+        guard let releaseFirst, let releaseSecond else {
+            first.cancel(); second.cancel()
+            return XCTFail("A rows load never started")
+        }
+        // The overtaken load returns stale rows while the newer read still loads: it must join that read, not reload.
+        // The handoff signal: the overtaken load reports its finished read and decides, with no suspension between,
+        // whether to join the newer read or load again. The timeout fails a load that never returns.
+        refresh.onReadCompleted = { handoff.fulfill() }
+        releaseFirst.resume()
+        await fulfillment(of: [handoff], timeout: 5)
+        refresh.onReadCompleted = nil
+        XCTAssertEqual(refresh.completedReadCount, 1, "The overtaken load never returned its rows")
+        XCTAssertEqual(loads, 2, "The overtaken load must not start a load of its own")
+        releaseSecond.resume()
+        let firstValue = try await first.value
+        let secondValue = try await second.value
+        XCTAssertEqual(firstValue, fresh)
+        XCTAssertEqual(secondValue, fresh)
+        XCTAssertEqual(loads, 2, "One key and generation loads once")
     }
 
     /// Opt-in scratch driver: exercises the window's apply/patch/evidence-read path on an isolated duplicate only.

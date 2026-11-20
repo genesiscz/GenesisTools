@@ -325,7 +325,7 @@ extension MeetingDetailModel {
                 let refused = failure.decodeData(AlreadyDecided.self)
                 if let entry = refused?.entry { decidedMeanwhile[row.id] = entry }
                 notices.push(StackedNotice(
-                    text: "\(Self.sentenceStart(rowName(row.id))) was decided meanwhile by \(refused?.entry.map { MeetingsWords.actor($0.actor) } ?? "someone else")",
+                    text: "\(Self.sentenceStart(rowName(row.id))) was decided meanwhile by \(refused?.entry.map { MeetingsWords.actor($0.actor, ruleNames: window?.ruleNames ?? [:]) } ?? "someone else")",
                     detail: refused?.entry.map { MeetingsWords.entryAction($0, label: rowName) }, tone: .warning,
                     actions: [.init("Use mine instead", symbol: "arrow.uturn.forward") { [weak self] _ in self?.useMine(action, on: row) }]))
                 refreshAfterDecision()
@@ -828,10 +828,10 @@ extension MeetingsWords {
     }
 
     /// Who made a decision, in the engine's words (`actorText` in decision-journal.ts, G44): "you", "you in the
-    /// terminal", "you at the command line", "an agent (Claude Code, session 3f98b772)", "a rule", "someone, before the
-    /// history existed". A rule is never named by its id ("E2"): the window has no rule table here, so it says "a rule",
-    /// and a row's `decision.by` from the engine adds what the rule looked at.
-    static func actor(_ actor: DecisionActor) -> String {
+    /// terminal", "you at the command line", "an agent (Claude Code, session 3f98b772)", "a rule (the attendance record
+    /// shows who was there)", "someone, before the history existed". A rule is never named by its id ("E2"): its
+    /// sentence comes from `ruleNames` (the window's `rules.names` read), and a rule the table lacks is "a rule".
+    static func actor(_ actor: DecisionActor, ruleNames: [String: String] = [:]) -> String {
         switch actor.kind {
         case "window": return "you"
         case "listen": return "you in the terminal"
@@ -839,9 +839,16 @@ extension MeetingsWords {
         case "agent":
             let harness = actor.harness.map { Harness(runtimeAgent: $0)?.label ?? $0 } ?? "an agent"
             return "an agent (\([harness, actor.session.map { "session \($0.prefix(8))" }].compactMap { $0 }.joined(separator: ", ")))"
-        case "rule": return "a rule"
+        case "rule": return ruleText(actor.rule.flatMap { ruleNames[$0] })
         default: return "someone, before the history existed"
         }
+    }
+
+    /// `ruleText` in decision-journal.ts: the sentence starts lower case and loses its full stop inside the brackets.
+    private static func ruleText(_ sentence: String?) -> String {
+        guard let sentence, let first = sentence.first else { return "a rule" }
+        let rest = sentence.dropFirst()
+        return "a rule (\(first.lowercased())\(rest.hasSuffix(".") ? rest.dropLast() : rest))"
     }
 
     /// What one journal entry did, as a sentence after its actor: "confirmed i3", "answered Q2: JSON". `label` names an

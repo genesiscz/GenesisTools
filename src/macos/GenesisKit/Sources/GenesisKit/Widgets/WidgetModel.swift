@@ -268,6 +268,17 @@ public final class WidgetModel: ObservableObject {
         previewOpenItemID = nil
     }
 
+    /// The Open Widget shortcut: an entry the reader opened in the hover list opens in its session, so the expanded
+    /// widget keeps it; with none open, the agents pane opens as it last was.
+    func openFromShortcut(on surface: WidgetSurfaceID) {
+        if let id = previewOpenItemID, let item = inboxOverviewItems.first(where: { $0.id == id }) {
+            closePreviewEntry()
+            openInboxItem(item, on: surface)
+            return
+        }
+        openModule("agents", on: surface)
+    }
+
     private func resumeHoverExit() {
         guard !stopping, !dialogOpen, let surface = hoveredSurface,
               !pointerInside.contains(surface.key) else { return }
@@ -807,7 +818,7 @@ public final class WidgetModel: ObservableObject {
     }
 
     /// `state.json` of this model's widget root, the file `hub widget` reads preferences from
-    /// (`src/hub/lib/widget/storage.ts`: the state root, else `$GENESIS_TOOLS_HOME/.genesis-tools/hub/widget`).
+    /// (`src/utils/widget/storage.ts`: the state root, else `$GENESIS_TOOLS_HOME/.genesis-tools/hub/widget`).
     nonisolated static func widgetStateFile(stateRoot: String?,
                                             environment: [String: String] = ProcessInfo.processInfo.environment) -> String {
         if let stateRoot {
@@ -1645,6 +1656,8 @@ public final class WidgetModel: ObservableObject {
     /// per-session list gives each session's pending and unread item. Stored when the inbox changes: up to 512
     /// sessions × 8 entries, sorted, is too much to derive in a body that reads it several times per pass.
     public private(set) var inboxOverviewItems: [WidgetInboxItem] = []
+    /// The entries the sessions' lists leave out for the per-session limit: the overview says they exist.
+    var inboxHiddenItems: Int { inbox.sessions.reduce(0) { $0 + ($1.hiddenItems ?? 0) } }
     /// Every staged decision of every session (the decision log's unsent picks and notes), stored with the inbox.
     @Published var stagedRows: [WidgetInboxItem] = []
     /// The staged decisions that may be sent: `stagedRows` without a decision dismissed or completed while its Undo
@@ -2554,10 +2567,10 @@ public final class WidgetModel: ObservableObject {
             submittedAssets.formUnion(submitted.assetIds)
             if let card, answering || choice != nil { submittedCards.insert(card.id) }
             let sentKey = selectedKey
-            action(["action": "draft-text", "key": .string(sentKey), "text": ""]) { [weak self] in
+            action(["action": "draft-text", "key": .string(sentKey), "text": ""], completed: { [weak self] in
                 guard let self, self.drafts[sentKey]?.text.isEmpty ?? true else { return }
                 self.draftLanded(sentKey)
-            }
+            })
             drainJournal()
         } catch { report(error) }
     }
@@ -2689,10 +2702,10 @@ public final class WidgetModel: ObservableObject {
                     self.draftRevisions[key, default: 0] += 1
                     self.draftOwnership.pending(key)
                     let saved = restored.text
-                    self.action(["action": "draft-text", "key": .string(key), "text": .string(saved)]) { [weak self] in
+                    self.action(["action": "draft-text", "key": .string(key), "text": .string(saved)], completed: { [weak self] in
                         guard let self, self.drafts[key]?.text == saved else { return }
                         self.draftLanded(key)
-                    }
+                    })
                 } else {
                     self.draftLanded(key)
                 }
@@ -2979,10 +2992,10 @@ public final class WidgetModel: ObservableObject {
             draftTasks[key] = nil
             if !stopping {
                 let merged = drafts[key]?.text ?? ""
-                action(["action": "draft-text", "key": .string(key), "text": .string(merged)]) { [weak self] in
+                action(["action": "draft-text", "key": .string(key), "text": .string(merged)], completed: { [weak self] in
                     guard let self, self.drafts[key]?.text == merged else { return }
                     self.draftLanded(key)
-                }
+                })
             }
         }
         voiceKey = nil

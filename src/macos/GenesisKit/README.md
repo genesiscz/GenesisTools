@@ -6900,6 +6900,7 @@ It also offers Save as Defaults in setup or marker, restart and discard controls
 The full recorder keeps sound choices in the draft for a window or app movie and shows **No audio**.
 The widget has no sound or camera capture. The bar disables Change needed when both rates are equal.
 `RecordingCapabilities.reasonUnavailable` supplies the reason for a disabled live control.
+`RecordingCapabilities.fixedMovieQuality` names a preset the recorder always records. The widget sets Standard, so its Quality row never shows the full recorder's saved preset.
 The view makes the reason available on hover and through VoiceOver.
 
 In the REPL, attach to the take with `const r = await recorder.attach("LIVE_ID")`.

@@ -1,3 +1,4 @@
+import { errorMessage } from "@genesiscz/utils/error-message";
 import {
     checkNeed,
     describeNeed,
@@ -6,6 +7,7 @@ import {
     type NeedSpec,
 } from "@genesiscz/utils/genesis-tools/capability/needs";
 import { logger } from "@genesiscz/utils/logger";
+import { untilAborted } from "@genesiscz/utils/until-aborted";
 import type { z } from "zod";
 import {
     type ActionContext,
@@ -56,9 +58,11 @@ export function findAction(
     id: string
 ): { area: Area; name: string; action: AnyActionDef } {
     const dot = id.indexOf(".");
-    const area = registry[id.slice(0, dot)];
+    const areaName = id.slice(0, dot);
     const name = id.slice(dot + 1);
-    const action = dot > 0 ? area?.actions[name] : undefined;
+    // Own keys only: an inherited member such as "constructor" is no area and no action.
+    const area = dot > 0 && Object.hasOwn(registry, areaName) ? registry[areaName] : undefined;
+    const action = area && Object.hasOwn(area.actions, name) ? area.actions[name] : undefined;
 
     if (!area || !action) {
         throw new UnknownActionError(id, registry);
@@ -85,11 +89,24 @@ function fixOf(result: NeedResult): Fix | null {
 
 const SKIP: FixDecision = { kind: "skip" };
 
-/** Runs the fix decision of a failed need; true when the need holds afterwards. */
-async function applyFix(decision: FixDecision, need: NeedSpec, deps: EngineDeps, env: NeedEnv): Promise<boolean> {
+/**
+ * Runs the fix decision of a failed need; true when the need holds afterwards. Nothing starts once `signal` aborted: a
+ * run that already answered its caller never builds or offers a build late.
+ */
+async function applyFix(params: {
+    decision: FixDecision;
+    need: NeedSpec;
+    deps: EngineDeps;
+    env: NeedEnv;
+    signal: AbortSignal;
+}): Promise<boolean> {
+    const { decision, need, deps, env, signal } = params;
+
     if (decision.kind === "skip" || !deps.builder || deps.facts.isTest()) {
         return false;
     }
+
+    signal.throwIfAborted();
 
     if (decision.kind === "offer-build") {
         if (!deps.facts.hasTerminal() || !(await deps.builder.offerBuild(decision.part))) {
@@ -99,12 +116,10 @@ async function applyFix(decision: FixDecision, need: NeedSpec, deps: EngineDeps,
         await deps.builder.build(decision.part);
     }
 
+    signal.throwIfAborted();
+
     logger.debug({ need: describeNeed(need), decision }, "genesis-tools actions: built the app for a need");
     return (await checkNeed(need, { ...env, fresh: true })).ok;
-}
-
-function messageOf(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
 }
 
 /** A need's answer; a check that throws is a failed need of this way, never a failed action. */
@@ -113,11 +128,20 @@ async function checkedNeed(need: NeedSpec, env: NeedEnv): Promise<NeedResult> {
         return await checkNeed(need, env);
     } catch (error) {
         logger.warn({ need: describeNeed(need), error }, "genesis-tools actions: a need check threw");
-        return { ok: false, code: "threw", reason: `the check threw: ${messageOf(error)}`, fix: null, from: "probe" };
+        return {
+            ok: false,
+            code: "threw",
+            reason: `the check threw: ${errorMessage(error)}`,
+            fix: null,
+            from: "probe",
+        };
     }
 }
 
-/** The first need of a way that fails (after its fix ran), or null when every need holds. */
+/**
+ * The first need of a way that fails (after its fix ran), or null when every need holds. It stops with the abort reason
+ * once `signal` aborts, before the next need check and before a fix, so a run past its deadline starts no new effect.
+ */
 async function firstFailedNeed(params: {
     way: WayName;
     needs: readonly NeedSpec[];
@@ -126,8 +150,10 @@ async function firstFailedNeed(params: {
     config: Record<string, unknown>;
     deps: EngineDeps;
     env: NeedEnv;
+    signal: AbortSignal;
 }): Promise<{ need: NeedSpec; result: Extract<NeedResult, { ok: false }> } | null> {
     for (const need of params.needs) {
+        params.signal.throwIfAborted();
         const result = await checkedNeed(need, params.env);
 
         if (result.ok) {
@@ -145,17 +171,28 @@ async function firstFailedNeed(params: {
                 skip: () => SKIP,
             };
 
+            params.signal.throwIfAborted();
+
             try {
-                if (await applyFix(params.action.fix(fixContext), need, params.deps, params.env)) {
+                const decision = params.action.fix(fixContext);
+
+                if (await applyFix({ decision, need, deps: params.deps, env: params.env, signal: params.signal })) {
                     continue;
                 }
             } catch (error) {
+                if (params.signal.aborted) {
+                    throw error;
+                }
+
                 // A failed repair leaves the need unmet: this way is skipped and the next one is tried.
                 logger.warn(
                     { way: params.way, need: describeNeed(need), error },
                     "genesis-tools actions: a fix failed"
                 );
-                return { need, result: { ...result, reason: `${result.reason}; the fix failed: ${messageOf(error)}` } };
+                return {
+                    need,
+                    result: { ...result, reason: `${result.reason}; the fix failed: ${errorMessage(error)}` },
+                };
             }
         }
 
@@ -205,26 +242,13 @@ function runDeadline(budgetMs: number, outer: AbortSignal | undefined): RunDeadl
     };
 }
 
-/** `work`, or the abort reason once `signal` aborts first. The work is not stopped here: a way reads `ctx.signal`. */
-async function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
-    signal.throwIfAborted();
-    const aborted = Promise.withResolvers<never>();
-    const onAbort = (): void => aborted.reject(signal.reason);
-    signal.addEventListener("abort", onAbort, { once: true });
-
-    try {
-        return await Promise.race([work, aborted.promise]);
-    } finally {
-        signal.removeEventListener("abort", onAbort);
-    }
-}
-
 function contextFor(params: {
     registry: Record<string, Area>;
     areaName: string;
     area: Area;
     args: unknown;
     config: Record<string, unknown>;
+    areaConfig: Record<string, unknown>;
     deps: EngineDeps;
     timeoutMs: number;
     signal: AbortSignal;
@@ -238,7 +262,7 @@ function contextFor(params: {
         app: deps.app,
         args: params.args,
         config: params.config,
-        areaConfig: deps.config.resolve(areaName),
+        areaConfig: params.areaConfig,
         state: {
             get: (key) => deps.state.get(areaName, key),
             report: (key, value) => deps.state.report(areaName, key, value, { signal: params.signal }),
@@ -280,7 +304,8 @@ export async function runAreaAction(
         throw new ActionArgsError(id, issuesText(parsedArgs.error));
     }
 
-    const config = deps.config.resolve(areaName, name);
+    // One read of config.json per run: every way sees the same choices, and a fallback rereads nothing.
+    const { area: areaConfig, action: config } = deps.config.snapshot(areaName, name);
     const env = needEnv(deps, { fresh: false, write: true });
     const skipped: SkippedWay[] = [];
     const skip = (way: WayName, code: UnavailableCode, reason: string, fix: Fix | null = null) => {
@@ -291,7 +316,7 @@ export async function runAreaAction(
     const ended = (way: WayName, started: boolean): ActionOutcome<unknown> => {
         const reason: unknown = deadline.signal.reason;
         const why =
-            reason instanceof ActionDeadlineError ? reason.message : `the caller cancelled: ${messageOf(reason)}`;
+            reason instanceof ActionDeadlineError ? reason.message : `the caller cancelled: ${errorMessage(reason)}`;
         skip(
             way,
             "timed-out",
@@ -319,7 +344,16 @@ export async function runAreaAction(
 
             try {
                 failed = await untilAborted(
-                    firstFailedNeed({ way, needs: wayNeeds, action, args: parsedArgs.data, config, deps, env }),
+                    firstFailedNeed({
+                        way,
+                        needs: wayNeeds,
+                        action,
+                        args: parsedArgs.data,
+                        config,
+                        deps,
+                        env,
+                        signal: deadline.signal,
+                    }),
                     deadline.signal
                 );
             } catch (error) {
@@ -340,12 +374,18 @@ export async function runAreaAction(
                 continue;
             }
 
+            // A cancel seen while the needs were checked stops here: the way is never invoked.
+            if (deadline.signal.aborted) {
+                return ended(way, false);
+            }
+
             const ctx = contextFor({
                 registry,
                 areaName,
                 area,
                 args: parsedArgs.data,
                 config,
+                areaConfig,
                 deps,
                 timeoutMs: Math.max(1, deadline.remainingMs()),
                 signal: deadline.signal,
@@ -374,7 +414,7 @@ export async function runAreaAction(
                 }
 
                 logger.debug({ id, way, error }, "genesis-tools actions: a way threw");
-                skip(way, "threw", messageOf(error));
+                skip(way, "threw", errorMessage(error));
             }
         }
 

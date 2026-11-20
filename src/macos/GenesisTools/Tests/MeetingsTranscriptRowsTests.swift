@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import GenesisKitTestSupport
 import SwiftUI
 import Vision
 import XCTest
@@ -75,42 +76,46 @@ final class MeetingsTranscriptRowsTests: XCTestCase {
         var held: CheckedContinuation<Void, Never>?
         var holdNextWrite = false
         var heldWrite: CheckedContinuation<Void, Never>?
+        // Each barrier is an event the parked operation signals, never a poll.
+        let readParked = expectation(description: "the first read started")
+        let writeParked = expectation(description: "the write started")
         func config(_ value: Double) -> MeetingsAPI.ConfigRead.Result {
             .init(path: "fixture", value: .object(["global": .object(["suggest": .object(["applyAbove": .number(value)])])]))
         }
         let model = MeetingsApplyThreshold(defaults: defaults, migrates: false, read: {
             reads += 1
             let value = saved
-            if holdNextRead { holdNextRead = false; await withCheckedContinuation { held = $0 } }
+            if holdNextRead { holdNextRead = false; await withCheckedContinuation { held = $0; readParked.fulfill() } }
             return config(value)
         }, write: { next, _ in
-            if holdNextWrite { holdNextWrite = false; await withCheckedContinuation { heldWrite = $0 } }
+            if holdNextWrite { holdNextWrite = false; await withCheckedContinuation { heldWrite = $0; writeParked.fulfill() } }
             saved = next; return next
         })
-        func waitFor(_ what: String, _ ready: () -> Bool) async throws {
-            let deadline = ContinuousClock.now + .seconds(5)
-            while !ready() {
-                guard ContinuousClock.now < deadline else { return XCTFail("\(what) never happened") }
-                try await Task.sleep(for: .milliseconds(2))
-            }
-        }
-
         holdNextRead = true
         let first = Task { await model.load() }
-        try await waitFor("the first read started") { held != nil }
+        await fulfillment(of: [readParked], timeout: 5)
+        guard let held else {
+            // The scenario cannot go on: the read never parked, so there is nothing to release and nothing to await.
+            first.cancel()
+            return XCTFail("the first read never started")
+        }
         saved = 0.8 // another Settings window saves after this read took its value
         await model.load(clearFailure: false) // the file watcher's event, while the read is busy
-        held?.resume()
+        held.resume()
         await first.value
         XCTAssertEqual(model.percent, 80, "the event that arrived while busy was read after the read ended")
         XCTAssertEqual(reads, 2)
 
         holdNextWrite = true
         let write = Task { await model.set(60) }
-        try await waitFor("the write started") { heldWrite != nil }
+        await fulfillment(of: [writeParked], timeout: 5)
+        guard let heldWrite else {
+            write.cancel()
+            return XCTFail("the write never started")
+        }
         await model.load(clearFailure: false)
         XCTAssertEqual(reads, 2, "no read runs while the write is in flight")
-        heldWrite?.resume()
+        heldWrite.resume()
         await write.value
         XCTAssertEqual(reads, 3, "the event during the write is read once the write ends")
         XCTAssertEqual(model.percent, 60)
@@ -270,16 +275,16 @@ final class MeetingsTranscriptRowsTests: XCTestCase {
         XCTAssertEqual(facts.speakerEvidence, TranscriptBlocksPane.lineEvidence(Array(shown.prefix(2)), items: all, ruleNames: input.ruleNames),
                        "the speaker ranges taken out once give the sentences the popover gave from every item")
         XCTAssertEqual(facts.speakerEvidence, ["Named by the speaker range 00:05 to 00:30. Only one person was in the call."])
-        XCTAssertEqual(facts.notes.map(\.id), [ids[1]], "only the line with evidence has notes")
+        XCTAssertEqual(facts.notes.map(\.id), [try ids.required(1)], "only the line with evidence has notes")
         XCTAssertEqual(facts.notes.first?.acoustic, ["Call level (RMS): 0.0000"])
         input.evidence = []
         update(input)
         XCTAssertEqual(builds, 2)
         XCTAssertEqual(cache.facts?.notes, [])
-        input.selection = [ids[2]]
+        input.selection = [try ids.required(2)]
         update(input)
         XCTAssertEqual(builds, 3)
-        XCTAssertEqual(cache.facts?.lines.map(\.id), [ids[2]])
+        XCTAssertEqual(cache.facts?.lines.map(\.id), [try ids.required(2)])
         update(nil)
         XCTAssertNil(cache.facts)
         XCTAssertEqual(builds, 3, "closing the popover releases the input without rebuilding")
@@ -336,7 +341,7 @@ final class MeetingsTranscriptRowsTests: XCTestCase {
         renderer.scale = 2
         let image = try XCTUnwrap(renderer.cgImage)
         let request = VNRecognizeTextRequest(); request.recognitionLevel = .accurate; request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: image).perform([request])
+        try recognizeText(in: image, with: request)
         let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         XCTAssertTrue(text.contains("Who is this?"), text)
         XCTAssertTrue(text.contains("63 %"), text)

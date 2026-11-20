@@ -55,6 +55,8 @@ struct MeetingsSpeakersPage: View {
                 .nativeSettingsAnchor("roomDevices")
             MeetingsVoiceLibraryCard(config: MeetingsVoiceCompute(raw: model.settingsRaw)) { path, value in model.set(path, value) }
                 .nativeSettingsAnchor("voiceLibrary")
+            MeetingsVoiceNamingCard(naming: MeetingsVoiceNaming(raw: model.settingsRaw)) { path, value in model.set(path, value) }
+                .nativeSettingsAnchor("voiceNaming")
             MeetingsVoicePassCard(compute: MeetingsVoiceCompute(raw: model.settingsRaw), autoNow: autoNow) { path, value in
                 model.set(path, value)
             }
@@ -124,6 +126,126 @@ struct MeetingsVoiceLibraryCard: View {
 
     func chooseScope(_ choice: String) { set(MeetingsVoiceCompute.libraryPath + ["sampleScope"], choice) }
     func chooseThreshold(_ value: Double) { set(MeetingsVoiceCompute.libraryPath + ["outlierBelow"], value) }
+}
+
+/// How the voice names lines (`global.speakerLabels.voice` of the meetings config) as this side reads them. A missing
+/// key reads as the engine's default in src/utils/meetings/config.ts.
+struct MeetingsVoiceNaming: Equatable {
+    /// `voice.exclusion`: offer the only unsampled seat-mate for review when the sampled voices clearly differ.
+    struct Exclusion: Equatable {
+        static let path = MeetingsVoiceCompute.libraryPath + ["exclusion"]
+        static let marginRange = 0.0...2.0
+        static let maxLines = 1000
+        var enabled = true
+        var margin = 0.15
+        var maxConfidence = 0.69
+        var minLines = 3
+        var coherence = 0.82
+    }
+
+    var supportOnSeatLines = true
+    var exclusion = Exclusion()
+
+    init() {}
+
+    init(raw: JSONValue?) {
+        let voice = raw?.at(MeetingsVoiceCompute.libraryPath) ?? .null
+        if case .bool(let on) = voice.at(["supportOnSeatLines"]) { supportOnSeatLines = on }
+        let block = voice.at(["exclusion"])
+        if case .bool(let on) = block.at(["enabled"]) { exclusion.enabled = on }
+        if case .number(let value) = block.at(["margin"]), Exclusion.marginRange.contains(value) { exclusion.margin = value }
+        if case .number(let value) = block.at(["maxConfidence"]), (0...1).contains(value) { exclusion.maxConfidence = value }
+        // Clamped as a Double first: `Int(_:)` traps on a hand-written 1e300 in the config.
+        if case .number(let value) = block.at(["minLines"]), value >= 1, value == value.rounded() {
+            exclusion.minLines = Int(min(Double(Exclusion.maxLines), value))
+        }
+        if case .number(let value) = block.at(["coherence"]), (0...1).contains(value) { exclusion.coherence = value }
+    }
+}
+
+/// The voice naming card: what the voice checks on a line the seat already names.
+struct MeetingsVoiceNamingCard: View {
+    let naming: MeetingsVoiceNaming
+    let set: ([String], Any) -> Void
+    /// A slider's value while it is dragged; written once at the end of the gesture.
+    @State private var drafts: [String: Double] = [:]
+
+    var body: some View {
+        NativeSettingsCard("Naming by voice", subtitle: "How saved voice samples help name who spoke. A change applies from the next pass.") {
+            NativeSettingsToggle("Support seat names with the voice",
+                                 detail: "Also compare a line the seat gives to its only person with that person's samples, and show a match beside the seat's name. "
+                                    + "When off, the voice checks such a line only for a stranger.",
+                                 identifier: "meetings.voice.supportOnSeatLines",
+                                 isOn: Binding(get: { naming.supportOnSeatLines }, set: chooseSupport))
+            Divider()
+            NativeSettingsToggle("Offer the only unsampled person",
+                                 detail: "When the sampled voices on a seat clearly differ from a line, offer the one person on that seat with no sample for review.",
+                                 identifier: "meetings.voice.exclusion.enabled", isOn: exclusionEnabled)
+            if naming.exclusion.enabled {
+                ForEach(Self.exclusionSliders, id: \.key) { exclusionSlider($0) }
+                NativeSettingsRow("Lines in one stay", detail: "The fewest lines in the same stay before an offer, so one stray sound names nobody.") {
+                    NativeSettingsNumberPicker("Lines in one stay", range: 1..<(MeetingsVoiceNaming.Exclusion.maxLines + 1),
+                                               identifier: "meetings.voice.exclusion.minLines", suffix: .counted("line"),
+                                               value: exclusionMinLines)
+                }
+            }
+        }
+    }
+
+    /// One slider of `voice.exclusion`: the config key it writes and the read value it shows.
+    struct ExclusionSlider {
+        let key: String
+        let title: String
+        let detail: String
+        let value: KeyPath<MeetingsVoiceNaming.Exclusion, Double>
+        let range: ClosedRange<Double>
+    }
+
+    /// The sliders the card draws, in order. The tests read each one's key and value from this list.
+    static var exclusionSliders: [ExclusionSlider] {
+        [
+            .init(key: "margin", title: "Distance below a match",
+                  detail: "How far under the score that names a person the sampled voices must stay. A larger margin keeps borderline lines undecided.",
+                  value: \.margin, range: MeetingsVoiceNaming.Exclusion.marginRange),
+            .init(key: "maxConfidence", title: "Highest confidence of an offer",
+                  detail: "An offer never reaches the confidence that applies a name by itself, so a person reviews it first.",
+                  value: \.maxConfidence, range: 0...1),
+            .init(key: "coherence", title: "Voices must agree",
+                  detail: "How alike the lines of the group must sound (mean score to their centre), so two different strangers are not offered as one.",
+                  value: \.coherence, range: 0...1),
+        ]
+    }
+
+    /// The "Offer the only unsampled person" switch.
+    var exclusionEnabled: Binding<Bool> {
+        Binding(get: { naming.exclusion.enabled }, set: { chooseExclusion("enabled", $0) })
+    }
+
+    /// The "Lines in one stay" count.
+    var exclusionMinLines: Binding<Int> {
+        Binding(get: { naming.exclusion.minLines }, set: { chooseExclusion("minLines", $0) })
+    }
+
+    /// The end of a slider's gesture: its one write.
+    func commit(_ slider: ExclusionSlider, _ value: Double) { chooseExclusion(slider.key, value) }
+
+    private func exclusionSlider(_ slider: ExclusionSlider) -> some View {
+        Group {
+            Divider()
+            NativeSettingsSlider(slider.title, detail: slider.detail, identifier: "meetings.voice.exclusion.\(slider.key)",
+                                 value: Binding(get: { drafts[slider.key] ?? naming.exclusion[keyPath: slider.value] },
+                                                set: { drafts[slider.key] = $0 }),
+                                 in: slider.range, step: 0.01, format: VoiceScore.text, onCommit: { committed in
+                drafts[slider.key] = nil
+                commit(slider, committed)
+            })
+        }
+    }
+
+    func chooseSupport(_ on: Bool) { set(MeetingsVoiceCompute.libraryPath + ["supportOnSeatLines"], on) }
+
+    /// One key of `voice.exclusion`, written as the config spells it.
+    func chooseExclusion(_ key: String, _ value: Any) { set(MeetingsVoiceNaming.Exclusion.path + [key], value) }
 }
 
 /// The voice pass card: its priority and its worker count, each choice explained with what it costs on a real meeting.

@@ -256,7 +256,7 @@ export async function mixScore(options: { score: Score; folder: string; soundfon
             }
         }
 
-        applyEffects({ buffer, effects: part.effects ?? {}, lanes, triggers: (name) => starts.get(name) ?? [] });
+        await applyEffects({ buffer, effects: part.effects ?? {}, lanes, triggers: (name) => starts.get(name) ?? [] });
         const reverb = part.effects?.reverb ?? 0;
         let peak = 0;
 
@@ -281,7 +281,7 @@ export async function mixScore(options: { score: Score; folder: string; soundfon
 
     if (score.room) {
         await musicCheckpoint();
-        const wet = room(send, score.room);
+        const wet = await room(send, score.room);
 
         for (let n = 0; n < samples; n++) {
             mix.left[n] += wet.left[n];

@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { GENESIS_APP_BUNDLE_ID } from "@genesiscz/utils/macos/genesis-app";
 import { type RunningApplication, runningApplications } from "@genesiscz/utils/macos/launch-services";
@@ -54,9 +55,46 @@ export function linkHolderKind(command: string | null): LinkHolderKind {
     return first.includes("://") ? "router" : "launcher";
 }
 
+/** A face's own flag (`--hub`, `--rpc`), which only the first word can be. `-pVALUE` and `--flag=value` do not match. */
+const FACE_FLAG = /^--[a-z][a-z0-9-]{0,23}$/;
+
+/** A program name with no path (`bun`), which only the first word can be. */
+const PROGRAM_WORD = /^[a-z][a-z0-9-]{0,23}$/;
+
 /**
- * The arguments after `MacOS/GenesisTools`, short enough to name the run: a program's own path becomes its name, and
- * Bun's `--preload <file>` pairs and the script path go, so a launcher reads `gt-cc run work --resume 86eb…`.
+ * A link's scheme and host only. Its user-info, path, query and fragment can each carry a credential or a token, so
+ * any of them shows as one `/…`; a word that does not parse as a URL shows as `…`.
+ */
+function linkLabel(word: string): string {
+    try {
+        const url = new URL(word);
+        const origin = `${url.protocol}//${url.host}`;
+        const rest = url.username !== "" || url.password !== "" || url.pathname.replace(/^\/+/, "") !== "";
+        return rest || url.search !== "" || url.hash !== "" ? `${origin}/…` : origin;
+    } catch {
+        return "…";
+    }
+}
+
+/** The first word of a run as a safe label: a program's file name, a link's origin, a face flag or a bare program. */
+function identityLabel(word: string): string {
+    if (word.startsWith("/")) {
+        return word.slice(word.lastIndexOf("/") + 1);
+    }
+
+    if (word.includes("://")) {
+        return linkLabel(word);
+    }
+
+    return FACE_FLAG.test(word) || PROGRAM_WORD.test(word) ? word : "…";
+}
+
+/**
+ * A safe label for the run after `MacOS/GenesisTools`, for status output and logs: only the word that names the
+ * holder (the launcher's program, the face's flag, the link router's origin), then one `…` when anything follows.
+ * No later word is kept, flags included: the command line is split on spaces with no schema of the arguments, so a
+ * word spelled like a flag can be a flag's value or a word of a prompt. A launcher reads `gt-cc …`, a face
+ * `--hub …`. Bun's `--preload <file>` pairs and the script path after the program go without a mark.
  */
 export function holderArgs(command: string | null): string | null {
     if (command === null) {
@@ -64,9 +102,16 @@ export function holderArgs(command: string | null): string | null {
     }
 
     const words = (command.match(/MacOS\/GenesisTools(?:\s+(.*))?$/)?.[1]?.trim() ?? "").split(/\s+/).filter(Boolean);
-    const kept: string[] = [];
+    const first = words[0];
 
-    for (let index = 0; index < words.length; index++) {
+    if (first === undefined) {
+        return "";
+    }
+
+    const label = identityLabel(first);
+    let dropped = false;
+
+    for (let index = 1; index < words.length; index++) {
         const word = words[index];
 
         if (word === "--preload") {
@@ -74,20 +119,14 @@ export function holderArgs(command: string | null): string | null {
             continue;
         }
 
-        if (kept.length === 0 && word.startsWith("/")) {
-            kept.push(word.slice(word.lastIndexOf("/") + 1));
+        if (first.startsWith("/") && /\.(ts|tsx|js|mjs)$/.test(word) && !word.startsWith("-")) {
             continue;
         }
 
-        if (kept.length === 1 && /\.(ts|tsx|js|mjs)$/.test(word) && !word.startsWith("-")) {
-            continue;
-        }
-
-        // A link's query and fragment can carry a token; the scheme, host and path name the run well enough.
-        kept.push(word.includes("://") ? word.replace(/[?#].*$/, "?…") : word);
+        dropped = true;
     }
 
-    const args = kept.join(" ");
+    const args = dropped && label !== "…" ? `${label} …` : label;
     return args.length > 100 ? `${args.slice(0, 99)}…` : args;
 }
 
@@ -166,18 +205,30 @@ export function describeLinkRoute(route: LinkRoute): string {
     return `pid ${target.pid} takes them (${target.kind}: ${target.args ?? "?"}, ${when(target.startMs)})`;
 }
 
+/** A router hands its link on and exits within seconds; one older than this is stuck (`.claude/rules/macos.md`). */
+const STUCK_ROUTER_MS = 60_000;
+
 /**
  * Why links misbehave, or null. A launcher (or a process that could not be read) as the oldest instance drops every
- * link with "GenesisTools.app is not open anymore"; a window face raises its window on each one.
+ * link with "GenesisTools.app is not open anymore"; a window face raises its window on each one; a router that lived
+ * past a minute has no handler for the links it takes, so each one vanishes.
  */
-export function linkRouteProblem(route: LinkRoute): string | null {
+export function linkRouteProblem(route: LinkRoute, now = Date.now()): string | null {
     const target = route.target;
 
     if (!route.known) {
         return "Launch Services could not be read (lsappinfo failed), so who takes a link is unknown.";
     }
 
-    if (target === null || target.kind === "relay" || target.kind === "router") {
+    if (target?.kind === "router") {
+        if (target.startMs === null || now - target.startMs < STUCK_ROUTER_MS) {
+            return null;
+        }
+
+        return `macOS hands every link to pid ${target.pid}, a STUCK LINK ROUTER (${target.args ?? "?"}, ${when(target.startMs)}). A router quits within seconds; this one has no handler for the links it takes, so each click vanishes. Stop it with: kill ${target.pid}`;
+    }
+
+    if (target === null || target.kind === "relay") {
         return null;
     }
 
@@ -242,4 +293,26 @@ export async function launcherChecksIn(
             child.kill("SIGKILL");
         }
     }
+}
+
+/** What every app build reports about links (`buildApp`), for the caller to show. */
+export interface BuildLinkCheck {
+    /** Whether a launcher run of the new bundle checked in with Launch Services (`launcherChecksIn`). */
+    launcherChecksIn: boolean | null;
+    /** `describeLinkRoute` after the build. */
+    route: string;
+    /** `linkRouteProblem` after the build, or null. */
+    problem: string | null;
+}
+
+/** The launcher check and the link route after a build. A launcher run that checks in is logged as an error. */
+export async function checkBuildLinks(bundlePath: string): Promise<BuildLinkCheck> {
+    const checksIn = await launcherChecksIn(join(bundlePath, "Contents/MacOS/GenesisTools"));
+
+    if (checksIn === true) {
+        logger.error({ bundlePath }, "links: a launcher run of the new build checks in with Launch Services");
+    }
+
+    const route = currentLinkRoute();
+    return { launcherChecksIn: checksIn, route: describeLinkRoute(route), problem: linkRouteProblem(route) };
 }

@@ -15,17 +15,26 @@ import { basename, dirname, join } from "node:path";
 import * as cli from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { tryWithPathArbitration } from "@genesiscz/utils/process/path-arbitration";
+import exportLedgerCase from "@genesiscz/utils/recording-editor/__fixtures__/export-ledger.json";
 import recordingMovies from "@genesiscz/utils/recording-editor/__fixtures__/recording-movies.json";
 import screenSearch from "@genesiscz/utils/recording-editor/__fixtures__/screen-search.json";
 import { analysisCachePath } from "@genesiscz/utils/recording-editor/analysis-cache";
 import type { MovieEvent } from "@genesiscz/utils/recording-editor/events";
+import {
+    EXPORT_LEDGER_FILE,
+    isMovieExportFormat,
+    readExportLedger,
+    recordExport,
+} from "@genesiscz/utils/recording-editor/exports";
 import { applyOp, editOpSchema, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
 import { RecorderControl, type RecorderMethod, type StopAnswer } from "@genesiscz/utils/screen-recorder/control";
 import { recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
 import { LiveRecordingServer } from "@genesiscz/utils/screen-recorder/live";
 import { recordingStoreOf } from "@genesiscz/utils/screen-recorder/recording-stores";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { applyDisplayOps, displayOpOverrides, displayOpSchema, displayTimeline, isDisplayOp } from "./display-ops";
+import * as edits from "./edit";
 import {
     computeEdit,
     exportAs,
@@ -62,7 +71,7 @@ import {
     proxyCanvas,
     proxyVideoFilter,
 } from "./proxy";
-import { currentGif, shareableMovie, trashRecording, trashRecordings } from "./quick-actions";
+import { copyRecording, currentGif, shareableMovie, trashRecording, trashRecordings } from "./quick-actions";
 import { screenHitsWithOps } from "./screen-ops";
 import { findOnScreen } from "./screen-search";
 import * as serviceClient from "./service-client";
@@ -431,15 +440,57 @@ function folderWith(files: Array<[string, number]>): string {
     return folder;
 }
 
+/** edit.json at `revision`: the fields that make it an edit (`editRevisionOf` reads no edit as unreadable). */
+function editAt(revision: number): string {
+    return SafeJSON.stringify({ source: { video: "screen.mp4" }, clips: [{}], revision });
+}
+
+/** A shared case's folder: its files, edit.json at its revision, and exports.json from its exports. */
+function movieCaseFolder(item: {
+    files: Array<Array<string | number>>;
+    edit?: number;
+    editUnreadable?: boolean;
+    editNotAnEdit?: boolean;
+    exports?: Array<Array<string | number | null>>;
+}): string {
+    const folder = folderWith(item.files.map(([name, offset]) => [String(name), Number(offset)]));
+
+    if (item.edit !== undefined) {
+        writeFileSync(join(folder, "edit.json"), editAt(item.edit));
+    }
+
+    if (item.editUnreadable) {
+        writeFileSync(join(folder, "edit.json"), "{ cut off by a crash");
+    }
+
+    if (item.editNotAnEdit) {
+        writeFileSync(join(folder, "edit.json"), "{}");
+    }
+
+    if (item.exports) {
+        const files = Object.fromEntries(
+            item.exports.map(([file, revision]) => [
+                String(file),
+                { revision: revision === null ? null : Number(revision), writtenAt: "2026-11-04T10:00:00.000Z" },
+            ])
+        );
+        writeFileSync(join(folder, EXPORT_LEDGER_FILE), SafeJSON.stringify({ version: 1, files }));
+    }
+
+    return folder;
+}
+
 // The Swift menu, library and editor answer the same cases (RecorderEditTests.swift, RecordingMovie.swift).
 describe("the movie of a recording folder", () => {
     for (const item of recordingMovies.cases) {
         it(`shared movie case: ${item.name}`, () => {
-            const folder = folderWith(item.files.map(([name, offset]) => [String(name), Number(offset)]));
-            const name = (path: string | undefined) => (path ? basename(path) : null);
+            const folder = movieCaseFolder(item);
+            const shareable = shareableMovie(folder);
 
-            expect(name(movieOf(folder))).toBe(item.movie);
-            expect(name(shareableMovie(folder))).toBe(item.shareable);
+            expect(movieOf(folder) ? basename(movieOf(folder) ?? "") : null).toBe(item.movie);
+            expect(shareable.kind === "file" ? basename(shareable.path) : null).toBe(item.shareable);
+            expect(shareable.kind === "stale").toBe("stale" in item && item.stale === true);
+            expect(shareable.kind === "unreadable").toBe("unreadable" in item && item.unreadable === true);
         });
     }
 });
@@ -946,15 +997,90 @@ describe("a hit, wait or event whose first moment is cut plays from its first ke
 });
 
 describe("a recording's quick actions", () => {
-    it("copies the newest export, else the recording's own movie", () => {
-        expect(shareableMovie(folderWith([["screen.mp4", 0]]))).toEndWith("/screen.mp4");
-        const exported = folderWith([
+    it("copies an export only while the edit is at the revision it rendered", async () => {
+        const folder = folderWith([
             ["screen.mp4", 0],
             ["screen-edited.mp4", 10],
-            ["screen-edited.gif", 20],
-            ["screen-edited.partial.mp4", 30],
         ]);
-        expect(shareableMovie(exported)).toEndWith("/screen-edited.gif");
+        writeFileSync(join(folder, "edit.json"), editAt(4));
+        expect(shareableMovie(folder).kind).toBe("stale");
+
+        await recordExport({ folder, file: join(folder, "screen-edited.mp4"), revision: 4 });
+        expect(shareableMovie(folder)).toEqual({ kind: "file", path: join(folder, "screen-edited.mp4") });
+
+        // One more change in the editor: the export no longer shows the edit, so nothing is handed out.
+        writeFileSync(join(folder, "edit.json"), editAt(5));
+        expect(shareableMovie(folder)).toMatchObject({ kind: "stale", revision: 5 });
+    });
+
+    it("keeps one ledger entry per export file and drops the ones whose file is gone", async () => {
+        const folder = folderWith([
+            ["screen.mp4", 0],
+            ["screen-edited.mp4", 10],
+        ]);
+        const outside = folderWith([["chosen.mp4", 10]]);
+        await recordExport({ folder, file: join(folder, "gone.mp4"), revision: 1 });
+        await recordExport({ folder, file: join(folder, "screen-edited.mp4"), revision: 1 });
+        await recordExport({ folder, file: join(folder, "screen-edited.mp4"), revision: 2 });
+        await recordExport({ folder, file: join(outside, "chosen.mp4"), revision: 2 });
+
+        expect(Object.keys(readExportLedger(folder).files).sort()).toEqual(
+            [join(outside, "chosen.mp4"), "screen-edited.mp4"].sort()
+        );
+        expect(readExportLedger(folder).files["screen-edited.mp4"]?.revision).toBe(2);
+    });
+
+    // The Swift window reads the same case (RecorderEditTests.swift).
+    it("reads an unedited export's revision as null whether the writer wrote null or left the key out", () => {
+        const folder = folderWith([]);
+        writeFileSync(join(folder, EXPORT_LEDGER_FILE), SafeJSON.stringify(exportLedgerCase.ledger));
+        const revisions = Object.fromEntries(
+            Object.entries(readExportLedger(folder).files).map(([file, entry]) => [file, entry.revision])
+        );
+        expect(revisions).toEqual(exportLedgerCase.revisions);
+    });
+
+    it("records only movie exports, so a GIF is never handed out as the movie", () => {
+        expect(["mp4", "webm", "gif"].filter(isMovieExportFormat)).toEqual(["mp4", "webm"]);
+    });
+
+    it("refuses to copy an export when the edit changed while it ran", async () => {
+        const folder = folderWith([["screen.mp4", 0]]);
+        writeFileSync(join(folder, "edit.json"), editAt(2));
+        const exported = join(folder, "screen-edited.mp4");
+        const spy = spyOn(edits, "exportAs").mockImplementation(async () => {
+            writeFileSync(exported, "movie");
+            await recordExport({ folder, file: exported, revision: 2 });
+            // A cut saved in the editor while the export rendered revision 2.
+            writeFileSync(join(folder, "edit.json"), editAt(3));
+            return { ok: true, path: exported, bytes: 5, seconds: 0 };
+        });
+
+        try {
+            await expect(copyRecording(folder)).rejects.toThrow("the edit changed while its export ran");
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
+    it("waits for another writer's ledger lock, so an export that writer recorded meanwhile is kept", async () => {
+        const folder = folderWith([
+            ["screen.mp4", 0],
+            ["first.mp4", 10],
+            ["second.mp4", 20],
+        ]);
+        const ledger = join(folder, EXPORT_LEDGER_FILE);
+        let waiting: Promise<void> | undefined;
+        // The other writer (the window, another CLI export) holds the lock between its read and its write.
+        await withFileLock(`${ledger}.lock`, async () => {
+            waiting = recordExport({ folder, file: join(folder, "second.mp4"), revision: 2 });
+            await Bun.sleep(60);
+            const files = { "first.mp4": { revision: 1, writtenAt: "2026-11-04T10:00:00.000Z" } };
+            writeFileSync(ledger, SafeJSON.stringify({ version: 1, files }));
+        });
+        await waiting;
+
+        expect(Object.keys(readExportLedger(folder).files).sort()).toEqual(["first.mp4", "second.mp4"]);
     });
 
     it("reuses a GIF only while the edit and the movie are older than it", () => {

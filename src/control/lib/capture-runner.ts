@@ -17,6 +17,7 @@ import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { renderAnnotationPlan } from "@genesiscz/utils/image";
 import { loadCanvas } from "@genesiscz/utils/image/canvas";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { NativeLiveCapture } from "@genesiscz/utils/screen-recorder/native";
 import { NativeCaptureControls, nativeScreens, nativeTargetRegion, validateNativeCapturePlan } from "./capture-native";
 import {
     type Action,
@@ -287,11 +288,17 @@ export async function runCapturePlanWithSignal({
     onRecording,
     onPreparing,
     guardFocus,
+    onControl,
 }: {
     plan: Plan;
     signal: AbortSignal;
     guardFocus?: CaptureFocusGuard;
     stopGraceMs?: number;
+    /**
+     * The native recorder starts with `--control-stdin` (not in isolated mode, which takes no commands), and this gets
+     * its channel once the first frame is in: a live mute or microphone switch while it records.
+     */
+    onControl?: (control: NativeLiveCapture) => void;
     /** `sessionDir` is the recorder's own folder: ax-tool writes its first frame's time there (`movie-start.json`). */
     onRecording?: (started: { sessionDir: string }) => void;
     /** The native recorder has to compile first (after a source change), which takes up to a minute. */
@@ -389,6 +396,8 @@ export async function runCapturePlanWithSignal({
     // first frame: arming takes about a second, which used to come after zero. The overlay stays out of the movie,
     // because the native recorder leaves its window out. Peekaboo cannot leave a window out, so it starts after zero.
     let arming: Promise<CaptureAttempt> | undefined;
+    const controlled = onControl !== undefined && backend === "native" && cap.mode !== "isolated";
+    let channel: NativeLiveCapture | undefined;
     const startRecorder = (excludeWindowIds: number[] = []): Promise<CaptureAttempt> => {
         if (arming) {
             return arming;
@@ -399,7 +408,12 @@ export async function runCapturePlanWithSignal({
                 ? { ...cap, excludeWindowIds: [...(cap.excludeWindowIds ?? []), ...excludeWindowIds] }
                 : cap;
             const outDir = join(captureSessionsRoot(), `native-${randomUUID()}`);
-            arming = startCapture([axTool, ...nativeCaptureArgv(spec, outDir)], signal);
+            const argv = [axTool, ...nativeCaptureArgv(spec, outDir)];
+            arming = controlled
+                ? startCapture([...argv, "--control-stdin"], signal, {
+                      onStderrLine: (line) => channel?.receive(line),
+                  })
+                : startCapture(argv, signal);
         } else {
             arming = startPeekabooCapture({ cap, warnings, signal });
         }
@@ -483,6 +497,11 @@ export async function runCapturePlanWithSignal({
     }
     if (attempt.sessionDir && !signal.aborted) {
         onRecording?.({ sessionDir: attempt.sessionDir });
+
+        if (controlled && attempt.write) {
+            channel = new NativeLiveCapture(attempt.write, undefined, {}, new Set(["mute", "set-mic"]));
+            onControl?.(channel);
+        }
     }
 
     const t0 = Date.now();

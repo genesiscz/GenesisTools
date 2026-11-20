@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, rmdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmdirSync } from "node:fs";
 import { delimiter, join, resolve } from "node:path";
 import { launcherConfigForSavedCommand } from "@genesiscz/utils/bun/launcher-config";
 import { formatLocalFileTimestamp } from "@genesiscz/utils/date";
@@ -97,24 +97,45 @@ export function taskArgv(command: string, priority: TaskPriority, onDisk?: Prior
     return priorityShellArgv(command, priority, onDisk);
 }
 
+/** Characters of the task name a run's working folder keeps: the name plus the run id stays far below 255 bytes. */
+const WORKING_DIR_NAME_CHARS = 64;
+
+/** Milliseconds to three decimals (microseconds): a short run's cores are cpuMs / wallMs, so whole ms would skew it. */
+function preciseMs(ms: number): number {
+    return Math.round(ms * 1000) / 1000;
+}
+
 /**
  * Bun's rusage of a reaped child (microseconds, bytes) as the run log's usage record, with `wallMs`, the child's own
- * lifetime on a monotonic clock.
+ * lifetime on a monotonic clock. `maxRssMb` is the largest peak of one process (the task process or a child it waited
+ * for), not the sum of children that ran at the same time.
  */
 export function runUsage(raw: ReturnType<Bun.Subprocess["resourceUsage"]>, wallMs: number): RunUsage | undefined {
     if (!raw) {
         return undefined;
     }
 
-    const userMs = Math.round(Number(raw.cpuTime.user) / 1000);
-    const systemMs = Math.round(Number(raw.cpuTime.system) / 1000);
+    const userMs = preciseMs(Number(raw.cpuTime.user) / 1000);
+    const systemMs = preciseMs(Number(raw.cpuTime.system) / 1000);
     return {
         userMs,
         systemMs,
-        cpuMs: userMs + systemMs,
+        cpuMs: preciseMs(userMs + systemMs),
         maxRssMb: Math.round(Number(raw.maxRSS) / 1_048_576),
-        wallMs: Math.round(wallMs),
+        wallMs: preciseMs(wallMs),
     };
+}
+
+/**
+ * Creates a run's working folder exclusively (`mkdtemp`), so it is new and empty even if a run id repeats. The name
+ * keeps at most `WORKING_DIR_NAME_CHARS` characters of the task name, so a long valid task name never exceeds the
+ * file system's limit for one path component.
+ */
+function createRunWorkingDir(taskName: string, runId: string): string {
+    const parent = taskWorkingDir();
+    mkdirSync(parent, { recursive: true });
+    const prefix = Array.from(taskLogDirName(taskName)).slice(0, WORKING_DIR_NAME_CHARS).join("");
+    return mkdtempSync(join(parent, `${prefix}-${runId}-`));
 }
 
 /**
@@ -176,8 +197,39 @@ export async function runTask(
     // survives, holds the stdout pipe open, and hangs the result forever.
     const inherited = env.getProcessEnv();
     // A folder of this run's own, new and empty: what one run writes there never reaches another task or a later run.
-    const cwd = join(taskWorkingDir(), `${taskLogDirName(task.name)}-${runId}`);
-    mkdirSync(cwd, { recursive: true });
+    const cwd = createRunWorkingDir(task.name, runId);
+
+    try {
+        return await runInWorkingDir({ task, attempt, argv, cwd, inherited, logFile, runId, startMs, timeoutMs });
+    } finally {
+        releaseRunWorkingDir(cwd, task.name);
+    }
+}
+
+interface RunInWorkingDirOptions {
+    task: DaemonTask;
+    attempt: number;
+    argv: string[];
+    cwd: string;
+    inherited: ReturnType<typeof env.getProcessEnv>;
+    logFile: string;
+    runId: string;
+    startMs: number;
+    timeoutMs: number;
+}
+
+/** Spawns the task in its working folder and waits for it; `runTask` removes the folder however this ends. */
+async function runInWorkingDir({
+    task,
+    attempt,
+    argv,
+    cwd,
+    inherited,
+    logFile,
+    runId,
+    startMs,
+    timeoutMs,
+}: RunInWorkingDirOptions): Promise<RunResult> {
     const proc = Bun.spawn(argv, {
         cwd,
         env: { ...inherited, PATH: taskPath(inherited.PATH) },
@@ -250,7 +302,6 @@ export async function runTask(
     const duration_ms = Date.now() - startMs;
     const exitCode = timedOut ? null : rawExitCode;
     const usage = runUsage(proc.resourceUsage(), wallMs);
-    releaseRunWorkingDir(cwd, task.name);
 
     appendJsonl(logFile, {
         type: "exit",

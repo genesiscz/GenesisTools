@@ -48,6 +48,23 @@ final class RecordingBarModelTests: XCTestCase {
         XCTAssertNil(saved.target)
     }
 
+    /// The movie preset is a saved recorder setting: Standard by default, kept by Save as Defaults for a movie target,
+    /// and a frames target (several displays) keeps its own quality instead.
+    func testTheMoviePresetDefaultsToStandardAndSavesForAMovie() throws {
+        let suite = "recording.bar.fixture.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = RecordingBarModel(engine: Engine(), setup: RecordingSetup.load(defaults), defaults: defaults,
+                                      countdownTick: {})
+        XCTAssertEqual(model.setup.movieQuality, .standard)
+        model.apply(.target(display))
+        model.apply(.movieQuality(.small))
+        XCTAssertEqual(RecordingSetupChange.movieQuality(.small).controlID, "quality")
+        XCTAssertNil(defaults.string(forKey: "recorder.capture.movieQuality"), "only Save as Defaults writes it")
+        model.saveAsDefaults()
+        XCTAssertEqual(RecordingSetup.load(defaults).movieQuality, .small)
+    }
+
     func testCountdownStartsOnceWithTheDraftAndLatestExcludedWindows() async {
         let engine = Engine()
         let draft = RecordingSetup(target: display, frameRate: 24, countdownSeconds: 2)
@@ -112,6 +129,21 @@ final class RecordingBarModelTests: XCTestCase {
         XCTAssertEqual(model.notice?.message, "This source requires 24 fps.")
         XCTAssertEqual(model.notice?.controlID, "frameRate")
         XCTAssertEqual(engine.calls.count, 3)
+    }
+
+    /// The defect: Change needed during a take changed only the next recording's draft, because the frame-rate change
+    /// had no threshold and a change that left the setup equal was never sent. It now goes with the current rates.
+    func testALiveThresholdGoesToTheEngineWithTheCurrentRates() async {
+        let (model, engine) = await recording()
+        model.apply(.frameRate(24, still: 1))
+        await model.pendingCommand?.value
+        var applied: Bool?
+        model.changeThreshold(2.5) { applied = $0 }
+        await model.pendingCommand?.value
+        XCTAssertEqual(applied, true)
+        XCTAssertEqual(engine.calls.suffix(1), [.apply(.frameRate(24, still: 1, threshold: 2.5))])
+        XCTAssertEqual(LiveRecordingCommand.setFrameRate(active: 24, still: 1, threshold: 2.5).parameters["threshold"] as? Double, 2.5)
+        XCTAssertNil(LiveRecordingCommand.setFrameRate(active: 24, still: 1).parameters["threshold"])
     }
 
     /// A window take records sound as a display take does (2026-11-19: "all should have audio available"), so the
@@ -253,6 +285,35 @@ final class RecordingBarModelTests: XCTestCase {
         XCTAssertEqual(model.phase, .done(engine.movie))
         XCTAssertNil(model.notice)
         XCTAssertEqual(engine.calls.suffix(2), [.stop, .stop])
+    }
+
+    /// The defect: the widget's setup bar drew the camera as on and clickable, and the movie had no camera. Its engine
+    /// names the sources it records: sound for every target (2026-11-19), no camera.
+    func testTheWidgetsMovieDisablesItsCameraBeforeATakeAndKeepsItsSound() {
+        let widget = WidgetSessionEngine.movieCapabilities
+        for control in ["camera", "cameraSize", "cameraShape"] {
+            XCTAssertNotNil(widget.missingSourceReason(control), control)
+        }
+        for control in ["microphone", "microphoneDevice", "systemAudio", "frameRate"] {
+            XCTAssertNil(widget.missingSourceReason(control), control)
+        }
+        XCTAssertNotNil(widget.unavailableReason(for: .camera(CameraSetup(enabled: true)), in: RecordingSetup()))
+
+        let full = RecordingCapabilities(targets: [.display])
+        XCTAssertNil(full.missingSourceReason("microphone"), "a recorder records every source unless it says otherwise")
+        XCTAssertNil(full.missingSourceReason("camera"))
+    }
+
+    /// The defect: a Small preset saved by the full recorder showed as the widget's Quality, and the widget records at
+    /// the target's native size. The widget's bar shows Standard; the setup keeps Small for the full recorder.
+    func testTheWidgetsQualityRowShowsItsFixedPresetNotTheSavedOne() {
+        var setup = RecordingSetup()
+        setup.movieQuality = .small
+        XCTAssertEqual(RecordingBarView.shownMovieQuality(setup: setup, capabilities: WidgetSessionEngine.movieCapabilities),
+                       .standard)
+        XCTAssertEqual(setup.movieQuality, .small)
+        XCTAssertEqual(RecordingBarView.shownMovieQuality(setup: setup, capabilities: RecordingCapabilities(targets: [.display])),
+                       .small)
     }
 
     func testLegacyTargetJSONAndNewTargetWireFormats() throws {

@@ -15,6 +15,7 @@ import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
 import { measureRoomCall } from "@app/meetings/lib/room-call-metrics";
 import type { MeetingsResult } from "@app/meetings/lib/service/api";
 import { InProcessMeetingsClient } from "@app/meetings/lib/service/client";
+import * as libraryHandlers from "@app/meetings/lib/service/library-handlers";
 import type { voiceLibraryMethods } from "@app/meetings/lib/service/toolset-api";
 import { settingsPatchFromFlags } from "@app/meetings/lib/settings-flags";
 import { deliverStartFailures } from "@app/meetings/lib/start-failures";
@@ -128,6 +129,7 @@ import {
     type LiveCapture,
 } from "@genesiscz/utils/screen-recorder/types";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
+import type { DictionaryEntry } from "@genesiscz/utils/transcribe/dictionary";
 import { createCanvas } from "@napi-rs/canvas";
 import { Command } from "commander";
 import type { z } from "zod";
@@ -277,6 +279,7 @@ type VoiceDoors = {
 
 /** The meetings toolset's global, as the meetings tests call it. */
 interface MeetingsHandle {
+    dictionary: { test(input: unknown): Promise<unknown> };
     roomDevices(input?: unknown): Promise<unknown>;
     decideRoomDevice(input: unknown): Promise<unknown>;
     applySeats(input: unknown): Promise<unknown>;
@@ -485,6 +488,38 @@ describe("toolset method names", () => {
                 "meetings people devices"
             );
         }
+    });
+
+    test("the REPL dictionary preview calls the service's library function with the draft, the meeting and the limit", async () => {
+        const meetings = await loadMeetings();
+        const preview = spyOn(libraryHandlers, "testDictionaryPhrase").mockResolvedValue({
+            phrase: "glimmer",
+            text: "Glimmer",
+            fired: [],
+            suggestions: [],
+            counts: { fixes: 0, spoken: 1, fuzzy: 0, expansions: 0, meanings: 0 },
+            lines: [],
+            totalChanged: 3,
+            truncated: true,
+        });
+        try {
+            const entry: DictionaryEntry = { type: "term", value: "Glimmer" };
+            const input = { meeting: "m-preview", entry, limit: 1 };
+            expect(await meetings.dictionary.test({ phrase: "glimmer", ...input })).toMatchObject({
+                totalChanged: 3,
+                truncated: true,
+            });
+            expect(await meetings.dictionary.test("glimmer")).toMatchObject({ totalChanged: 3 });
+            expect(preview.mock.calls).toEqual([
+                [{ phrase: "glimmer", ...input }, {}],
+                [{ phrase: "glimmer" }, {}],
+            ]);
+        } finally {
+            preview.mockRestore();
+        }
+        expect(describeMethod([new MeetingsToolset().api], "meetings.dictionary.test")).toContain(
+            "meetings dictionary test"
+        );
     });
 
     test("P6 REPL lists voice jobs and cancels by positional id", async () => {

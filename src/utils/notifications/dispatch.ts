@@ -25,6 +25,15 @@ function postTo<K extends ChannelName>(
     return CHANNELS[name].post(event, channels[name]);
 }
 
+/** Writes one delivery to the ledger; a ledger that fails is logged and never changes what the dispatch reports. */
+async function auditDelivery(entry: Parameters<typeof recordNotification>[0]): Promise<void> {
+    try {
+        await recordNotification(entry);
+    } catch (err) {
+        logger.warn({ err, channel: entry.channel }, "Notification ledger write failed");
+    }
+}
+
 /** What one dispatch did with an event. */
 export interface DispatchReport {
     /** Every channel that was asked to send accepted the event (the answer of {@link dispatchNotification}). */
@@ -56,7 +65,7 @@ export async function dispatchNotificationReport(event: NotificationEvent): Prom
         const allows = (name: ChannelName): boolean => only === undefined || only.includes(name);
 
         if (allows("system") && !channels.system.enabled) {
-            await recordNotification({
+            await auditDelivery({
                 source: event.app,
                 channel: "macos",
                 outcome: "suppressed",
@@ -72,19 +81,31 @@ export async function dispatchNotificationReport(event: NotificationEvent): Prom
             )
         );
         let delivered = true;
+        const unusableOf = (name: ChannelName, r: PromiseSettledResult<ChannelReceipt>): string | undefined =>
+            unusableReason(name, channels) ?? (r.status === "fulfilled" ? r.value.suppressed : undefined);
+
+        // Every send has settled: the channels that took the event are known before any audit write can fail.
+        for (const [i, r] of results.entries()) {
+            const name = CHANNEL_NAMES[i];
+
+            if (
+                allows(name) &&
+                channels[name].enabled &&
+                !unusableOf(name, r) &&
+                r.status === "fulfilled" &&
+                r.value.ok
+            ) {
+                sent.push(name);
+            }
+        }
 
         for (const [i, r] of results.entries()) {
             const name = CHANNEL_NAMES[i];
-            const unusable =
-                unusableReason(name, channels) ?? (r.status === "fulfilled" ? r.value.suppressed : undefined);
-
-            if (allows(name) && channels[name].enabled && !unusable && r.status === "fulfilled" && r.value.ok) {
-                sent.push(name);
-            }
+            const unusable = unusableOf(name, r);
 
             // The system channel records itself in postNotification, with the backend it used.
             if (name !== "system" && allows(name) && channels[name].enabled) {
-                await recordNotification({
+                await auditDelivery({
                     source: event.app,
                     channel: name,
                     outcome: unusable ? "suppressed" : r.status === "fulfilled" && r.value.ok ? "posted" : "failed",

@@ -189,6 +189,23 @@ final class RecorderLayersViewTests: XCTestCase {
         XCTAssertFalse(try XCTUnwrap(model.project.audio.lanes?.last).muted)
     }
 
+    /// Mute Selection sends the I to O part as source seconds on that lane; Unmute sends the part's id. Both are edit
+    /// ops, so the service's undo stack holds them.
+    func testMuteSelectionSendsTheSelectedPartAndUnmuteSendsThePartID() throws {
+        let row = try XCTUnwrap(model.soundRows.first { $0.id == "mic" })
+        model.muteSelection(row)
+        XCTAssertTrue(service.sentOps.isEmpty, "no selection mutes nothing")
+        model.partInUs = 1_000_000
+        model.partOutUs = 1_500_000
+        model.muteSelection(row)
+        model.unmutePart(row, .init(id: "u1", startUs: 1_000_000, endUs: 1_500_000))
+        XCTAssertEqual(service.sentOps as NSArray, [
+            ["op": "audioMute", "id": "mic", "from": 1, "to": 1.5],
+            ["op": "audioUnmute", "id": "mic", "part": "u1"],
+        ] as NSArray)
+        XCTAssertEqual(model.mutedPartTitle(.init(id: "u1", startUs: 1_000_000, endUs: 1_500_000)), "00:01.0 to 00:01.5")
+    }
+
     func testLayersAppearFrontToBack() async throws {
         hostTimeline()
         let logo = try await visibleFrame("recorder.timeline.layer.logo")

@@ -69,6 +69,15 @@ export function jsonSchemaOf(schema: z.ZodType, io: "input" | "output" = "input"
     }
 }
 
+/**
+ * A union whose members only add rules to the schema they sit on (`oneOf: [{ required: ["part"] }, …]`, which fields
+ * go together) and name no type of their own: the schema's own type is the type.
+ */
+function constrainsOnly(union: JsonSchema[]): boolean {
+    const typed: Array<keyof JsonSchema> = ["type", "properties", "items", "const", "enum", "anyOf", "oneOf", "allOf"];
+    return union.every((one) => !("$ref" in one) && typed.every((key) => one[key] === undefined));
+}
+
 function literal(value: unknown): string {
     return typeof value === "string" ? `"${value}"` : String(value);
 }
@@ -92,7 +101,7 @@ export function typeText(schema: JsonSchema, depth = 3): string {
 
     const union = schema.anyOf ?? schema.oneOf;
 
-    if (union) {
+    if (union && !constrainsOnly(union)) {
         return [...new Set(union.map((one) => typeText(one, depth)))].join(" | ");
     }
 

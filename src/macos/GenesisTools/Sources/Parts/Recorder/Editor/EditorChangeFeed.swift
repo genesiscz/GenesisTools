@@ -14,8 +14,13 @@ struct EditChange: Identifiable, Equatable {
     let startUs: Int64?
     /// The edit changed the whole picture (the frame, the cursor, captions, clicks), so the preview flashes.
     let touchesPicture: Bool
-    /// "undo" or "redo" when the change took one back or made it again (the service's `project.changed`); nil for an edit.
+    /// "undo" or "redo" when the change took one back or made it again (the service's `project.changed`), `warning`
+    /// for a renderer warning (a file it could not read); nil for an edit.
     var action: String?
+
+    /// The `action` of a renderer warning: no edit caused it, so no key takes it back.
+    static let warning = "warning"
+    var isWarning: Bool { action == Self.warning }
 
     struct Line: Equatable {
         let symbol: String
@@ -36,8 +41,17 @@ struct EditChange: Identifiable, Equatable {
         switch action {
         case "undo": "⇧⌘Z in this window does it again"
         case "redo": "⌘Z in this window undoes it again"
+        case Self.warning: "No edit caused this, so ⌘Z does not change it"
         default: "⌘Z puts it back"
         }
+    }
+
+    /// What VoiceOver reads for the banner. A renderer warning says it is a warning and that no edit caused it, which
+    /// the triangle and the footer show; an edit or an undo names who made it.
+    var spokenLabel: String {
+        let text = lines.map(\.text).joined(separator: ". ")
+        if isWarning { return "Warning from \(by): \(text). \(hint)" }
+        return "\(action == nil ? "Edit from \(by)" : title): \(text)"
     }
 }
 
@@ -167,10 +181,10 @@ enum EditDiff {
             }
         }
 
-        setting(old.frame, new.frame, symbol: "rectangle.inset.filled", name: "the frame") { frame in
+        setting(old.frame, new.frame, symbol: "rectangle.inset.filled", name: "the frame", detail: { frame in
             let aspect = frame.aspect.map { " (\($0.rawValue), \(frame.background.kind.rawValue))" } ?? " (\(frame.background.kind.rawValue))"
             return aspect
-        }
+        })
         setting(old.captions, new.captions, symbol: "captions.bubble", name: "the captions", shown: { $0.show })
         // The rings are on only while `highlight` is; the click sound is a switch of its own on the same object.
         func rings(_ clicks: EditProject.Clicks?) -> EditProject.Clicks? {
@@ -325,7 +339,8 @@ struct ChangeBanners: View {
     private func banner(_ change: EditChange) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                Image(systemName: "sparkles").foregroundStyle(RecorderPalette.zoom)
+                Image(systemName: change.isWarning ? "exclamationmark.triangle" : "sparkles")
+                    .foregroundStyle(change.isWarning ? Color.orange : RecorderPalette.zoom)
                 Text(verbatim: "\(Self.time.string(from: change.at)) · \(change.title) · revision \(change.revision)")
                     .font(.system(size: 11, weight: .medium).monospacedDigit())
                     .foregroundStyle(.secondary)
@@ -353,6 +368,6 @@ struct ChangeBanners: View {
         // The pointer on it keeps it up to be read; it goes its whole time after the pointer leaves.
         .onHover { model.holdBanner(change.id, hovering: $0) }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(change.action == nil ? "Edit from \(change.by)" : change.title): \(change.lines.map(\.text).joined(separator: ". "))")
+        .accessibilityLabel(change.spokenLabel)
     }
 }

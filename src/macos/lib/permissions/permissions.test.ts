@@ -89,13 +89,17 @@ const FIND_IDENTITY = `Policy: Code Signing
   2) 00B19497EBBEEB0723ECDE42FD6312677BEF2A29 "Developer ID Application: Example Person (TEAM2)"
      2 valid identities found`;
 
-function runPermissions(args: string[]): Promise<void> {
+async function runPermissions(args: string[]): Promise<void> {
     const appHome = mkdtempSync(join(tmpdir(), "permission-window-"));
-    return env.testing.withOverrides({ GENESIS_TOOLS_APP_HOME: appHome }, async () => {
-        const program = new Command();
-        registerPermissionsCommand(program);
-        await program.parseAsync(["permissions", ...args], { from: "user" });
-    });
+    try {
+        await env.testing.withOverrides({ GENESIS_TOOLS_APP_HOME: appHome }, async () => {
+            const program = new Command();
+            registerPermissionsCommand(program);
+            await program.parseAsync(["permissions", ...args], { from: "user" });
+        });
+    } finally {
+        rmSync(appHome, { recursive: true, force: true });
+    }
 }
 
 describe("permission window commands", () => {

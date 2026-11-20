@@ -143,7 +143,7 @@ export function editMediaLayer(
     }
 
     if (
-        layer.kind !== "video" &&
+        (op.kind ?? layer.kind) !== "video" &&
         (op.videoStartMs !== undefined || op.videoSound !== undefined || op.loop !== undefined)
     ) {
         throw new Error("videoStartMs, videoSound and loop require a video layer");
@@ -153,7 +153,16 @@ export function editMediaLayer(
     const { shape: oldShape, ...old } = layer;
     const nextShape = shape === undefined ? oldShape : shape;
     const endUs = layerEndUs(change.startUs ?? layer.startUs, change.endUs ?? layer.endUs, project.source.durationUs);
-    const updated = mediaLayerSchema.parse({ ...old, ...change, endUs, ...(nextShape ? { shape: nextShape } : {}) });
+    // Replace File with a picture: the old video's start, sound and loop no longer mean anything.
+    const videoOnly =
+        change.kind === "image" && layer.kind === "video" ? { videoStartMs: 0, videoSound: false, loop: false } : {};
+    const updated = mediaLayerSchema.parse({
+        ...old,
+        ...videoOnly,
+        ...change,
+        endUs,
+        ...(nextShape ? { shape: nextShape } : {}),
+    });
     return { ...project, layers: { ...stack, media: stack.media.map((item) => (item.id === op.id ? updated : item)) } };
 }
 

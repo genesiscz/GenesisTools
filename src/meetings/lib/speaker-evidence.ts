@@ -9,9 +9,14 @@ import type { MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/s
 import type { VoiceMatch } from "@genesiscz/utils/meetings/voice";
 import { type LineEvidence, presentAt, SELF } from "@genesiscz/utils/transcribe/evidence";
 import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
-import { callMutes } from "./call-mutes";
 import type { NewItem } from "./new-item";
-import { type Eligibility, isStrongCallForNaming, type SpeakerFacts, speakersFor } from "./speaker-eligibility";
+import {
+    type Eligibility,
+    isStrongCallForNaming,
+    mutedAccountsFor,
+    type SpeakerFacts,
+    speakersFor,
+} from "./speaker-eligibility";
 import { assessIndicator } from "./speaker-indicator";
 import { ATTENDANCE_CONFIDENCE, ENERGY_CALL_LEANS, ENERGY_MIC_LEANS, seatConfidence } from "./speaker-labels/seat";
 import { addPolish, lineTallies, type SamePerson, type SpeakerScore, scoreCandidates } from "./speaker-scores";
@@ -321,9 +326,10 @@ function findingFor(options: {
             : undefined;
     }
 
-    // RM: a person muted through the whole line did not speak it.
+    // RM: a person muted through the whole line did not speak it. The line's eligibility says whether it is a call line.
+    const callMuted = mutedAccountsFor(options.eligible.channel, line.muted);
     const muted = (name: string) =>
-        callMutes(line).some((person) => sameName(person, name)) &&
+        callMuted.some((person) => sameName(person, name)) &&
         !options.eligible.choices.some((person) => sameName(person, name));
     const selfMuted = muted(selfName);
 
@@ -859,7 +865,9 @@ function localVoiceFinding(options: {
     }
     if (
         choices.length === 1 &&
-        callMutes(line).some((name) => !choices.some((other) => sameName(name, other))) &&
+        mutedAccountsFor(options.eligible.channel, line.muted).some(
+            (name) => !choices.some((other) => sameName(name, other))
+        ) &&
         options.eligible.channel.side === "call"
     ) {
         return {
@@ -1146,6 +1154,7 @@ export function speakerEvidence(options: EvidenceInput): EvaluatedEvidence {
                     .get(label)
                     ?.some((item) => line.startSec >= item.fromSec && line.startSec <= item.toSec)
             ) {
+                const cosine = voice.candidates.find((candidate) => sameName(candidate.person, voice.person!))?.score;
                 const item: NewItem = {
                     kind: "speaker-range",
                     status: "suggested",
@@ -1158,6 +1167,8 @@ export function speakerEvidence(options: EvidenceInput): EvaluatedEvidence {
                     evidence: {
                         endSec: line.endSec,
                         voice,
+                        // The voice score a row shows; the confidence above is the rule's gate.
+                        ...(cosine === undefined ? {} : { score: cosine }),
                         decisionGate: "cosine and margin",
                         confidenceMeaning: "rule gate passed; cosine is not probability",
                     },

@@ -5,13 +5,13 @@ import { loadavg } from "node:os";
 import { join } from "node:path";
 import { compareToBaseline, formatComparison, recordBaseline } from "@app/benchmark/lib";
 import { parseProfileLine } from "@app/genesis-tools/lib/profile-log";
-import { widgetRoot } from "@app/hub/lib/widget/storage";
 import { runTool } from "@genesiscz/utils/cli";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { splitLines } from "@genesiscz/utils/fs/read-lines";
 import { out } from "@genesiscz/utils/logger";
 import { parsePidRecord } from "@genesiscz/utils/process/pidfile";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
+import { widgetRoot } from "@genesiscz/utils/widget/storage";
 import { Command, Option } from "commander";
 
 const steps = [

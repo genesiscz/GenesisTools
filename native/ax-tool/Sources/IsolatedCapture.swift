@@ -16,13 +16,17 @@ struct CaptureSelectionOptions {
     let outputScale: CGFloat?
     let transparent: Bool
     let codec: String
+    /// `--movie-quality`: the H.264 movie's size and bit rate against Standard (`MovieQuality`).
+    let movieQuality: MovieQuality
     let indicator: Bool
     /// Windows the movie must never show, such as the host's own recording controls: a display capture leaves them
     /// out of its content filter and an isolated capture never selects them. `NSWindow.sharingType = .none` does not
     /// do it, because ScreenCaptureKit ignores it on macOS 15 and later.
     let excludedWindowIDs: Set<CGWindowID>
 
-    func dimensions(points: CGSize, nativeScale: CGFloat, video: Bool) -> CGSize {
+    /// The output size; an H.264 movie is sized by `quality` (default: the `--movie-quality` preset). `.standard` gives
+    /// the size its bit rate is computed from.
+    func dimensions(points: CGSize, nativeScale: CGFloat, video: Bool, quality: MovieQuality? = nil) -> CGSize {
         let requested = outputSize ?? CGSize(width: (points.width * (outputScale ?? nativeScale)).rounded(),
                                               height: (points.height * (outputScale ?? nativeScale)).rounded())
         guard requested.width >= 2, requested.height >= 2, requested.width <= 16384, requested.height <= 16384 else {
@@ -32,9 +36,19 @@ struct CaptureSelectionOptions {
             if outputSize != nil && (Int(requested.width) % 2 != 0 || Int(requested.height) % 2 != 0) {
                 errorExit("H.264 output dimensions must be even; choose ProRes 4444 MOV for odd sizes", code: "invalid-argument")
             }
-            return CGSize(width: Int(requested.width) & ~1, height: Int(requested.height) & ~1)
+            return (quality ?? movieQuality).movieSize(CGSize(width: Int(requested.width) & ~1, height: Int(requested.height) & ~1))
         }
         return requested
+    }
+}
+
+/// The value of a flag that takes one; nil when the flag is absent. A flag given last with no value stops with
+/// invalid-argument instead of falling back to the default as `argValue` would.
+func optionValue(_ flag: String) -> String? {
+    switch flagValue(flag, in: args) {
+    case .absent: return nil
+    case .missing: errorExit("\(flag) needs a value", code: "invalid-argument")
+    case let .value(value): return value
     }
 }
 
@@ -65,13 +79,13 @@ func captureSelectionOptions(mode: String) -> CaptureSelectionOptions {
         guard singular.allSatisfy({ !CommandLine.arguments.contains($0) }) else {
             errorExit("isolated mode uses --window-ids/--include-app, not singular window selectors or --region", code: "invalid-argument")
         }
-    } else if !ids.isEmpty || !apps.isEmpty || argValue("--canvas") != nil {
+    } else if !ids.isEmpty || !apps.isEmpty || optionValue("--canvas") != nil {
         errorExit("--window-ids, --include-app and --canvas require isolated mode", code: "invalid-argument")
     }
-    let canvas = argValue("--canvas") ?? "crop"
+    let canvas = optionValue("--canvas") ?? "crop"
     guard ["crop", "display"].contains(canvas) else { errorExit("--canvas must be crop or display", code: "invalid-argument") }
     var size: CGSize?
-    if let raw = argValue("--output-size") {
+    if let raw = optionValue("--output-size") {
         let raws = raw.split(separator: "x", omittingEmptySubsequences: false)
         let parts = raws.compactMap { Int($0) }
         guard raws.count == 2, parts.count == 2, parts.allSatisfy({ $0 >= 2 && $0 <= 16384 }) else {
@@ -80,19 +94,29 @@ func captureSelectionOptions(mode: String) -> CaptureSelectionOptions {
         size = CGSize(width: parts[0], height: parts[1])
     }
     var scale: CGFloat?
-    if let raw = argValue("--output-scale") {
+    if let raw = optionValue("--output-scale") {
         guard size == nil, let number = Double(raw), number.isFinite, number > 0, number <= 8 else {
             errorExit("--output-scale must be greater than 0 and at most 8, and cannot accompany --output-size", code: "invalid-argument")
         }
         scale = CGFloat(number)
     }
     let transparent = args.contains("--transparent")
-    let codec = argValue("--codec") ?? "h264"
+    let codec = optionValue("--codec") ?? "h264"
     guard ["h264", "prores4444"].contains(codec) else { errorExit("--codec must be h264 or prores4444", code: "invalid-argument") }
     if transparent && !["window", "isolated"].contains(mode) {
         errorExit("--transparent requires window or isolated mode", code: "invalid-argument")
     }
-    if let video = argValue("--video-out") {
+    var movieQuality = MovieQuality.standard
+    if let raw = optionValue("--movie-quality") {
+        guard let preset = MovieQuality(rawValue: raw) else {
+            errorExit("--movie-quality must be standard, high or small", code: "invalid-argument")
+        }
+        movieQuality = preset
+    }
+    if movieQuality != .standard && (optionValue("--video-out") == nil || codec != "h264") {
+        errorExit("--movie-quality applies to an H.264 movie (--video-out without --codec prores4444)", code: "invalid-argument")
+    }
+    if let video = optionValue("--video-out") {
         if transparent && codec != "prores4444" {
             errorExit("Transparent video needs --codec prores4444 and a .mov output; H.264/MP4 has no alpha", code: "invalid-argument")
         }
@@ -102,7 +126,7 @@ func captureSelectionOptions(mode: String) -> CaptureSelectionOptions {
     }
     return CaptureSelectionOptions(windowIDs: Array(Set(ids)).sorted(), apps: apps, canvas: canvas,
                                    outputSize: size, outputScale: scale, transparent: transparent,
-                                   codec: codec, indicator: !args.contains("--no-indicator"),
+                                   codec: codec, movieQuality: movieQuality, indicator: !args.contains("--no-indicator"),
                                    excludedWindowIDs: Set(windowIDList("--exclude-window-ids") ?? []))
 }
 
@@ -576,6 +600,8 @@ func captureIsolatedWindows(_ options: RecordOptions) {
     let canvas = displayCanvas ?? selected.reduce(CGRect.null) { $0.union($1.bounds) }
     let nativeScale = selected.map(\.scale).max() ?? 1
     let output = options.selection.dimensions(points: canvas.size, nativeScale: nativeScale, video: options.videoOut != nil)
+    let standard = options.selection.dimensions(points: canvas.size, nativeScale: nativeScale, video: options.videoOut != nil,
+                                                quality: .standard)
     let recorder = NativeRecorder(options: options, configuration: SCStreamConfiguration())
     let compositor = IsolatedCompositor(recorder: recorder, options: options, selected: selected, windows: isolatedWindowRows(rows),
                                         canvas: canvas, displayCanvas: displayCanvas, output: output)
@@ -593,7 +619,7 @@ func captureIsolatedWindows(_ options: RecordOptions) {
     var audio: NativeAudio?
     var audioSource: IsolatedAudioSource?
     do {
-        try recorder.prepareVideo(width: Int(output.width), height: Int(output.height))
+        try recorder.prepareVideo(width: Int(output.width), height: Int(output.height), standard: standard)
         if !options.audioSources.isEmpty {
             // prepareVideo added the movie's tracks. The sound starts before the pictures, so the movie opens with it.
             let tracks = NativeAudio(sources: options.audioSources, movieInputs: recorder.audioInputs,

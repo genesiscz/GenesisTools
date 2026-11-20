@@ -1,4 +1,5 @@
 import AppKit
+import GenesisKitTestSupport
 import SwiftUI
 import Vision
 import GenesisKitTestHooks
@@ -89,7 +90,7 @@ final class WorkScreenTestsRemoval: XCTestCase {
         XCTAssertTrue(try recognizedText(after).contains("Expanded member retained"),
                       "the same container stays expanded after the model replaces the project snapshot")
         let request = GenesisKitFixtureTextRequest()
-        try VNImageRequestHandler(cgImage: before).perform([request])
+        try recognizeText(in: before, with: request)
         let text = try XCTUnwrap(request.results?.first {
             $0.topCandidates(1).first?.string.contains("Fading evidence row") == true
         }, "The removed row must really be drawn before the mutation")
@@ -111,7 +112,7 @@ final class WorkScreenTestsRemoval: XCTestCase {
 
     private func recognizedText(_ image: CGImage) throws -> String {
         let request = GenesisKitFixtureTextRequest()
-        try VNImageRequestHandler(cgImage: image).perform([request])
+        try recognizeText(in: image, with: request)
         return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
     }
 }

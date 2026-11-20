@@ -18,6 +18,21 @@ public func preparationFocusesElement(action: String) -> Bool {
     !["click", "drag"].contains(action)
 }
 
+/// A flag's value in an argument list: absent, given with no value (last, or followed by another `--` flag), or its
+/// value. `argValue` in ax-tool returns nil for both of the first two, so a bare `--movie-quality` at the end silently
+/// meant the default. A value that must begin with `--` takes a path prefix (`./--name`).
+public enum FlagValue: Equatable {
+    case absent
+    case missing
+    case value(String)
+}
+
+public func flagValue(_ flag: String, in args: [String]) -> FlagValue {
+    guard let index = args.firstIndex(of: flag) else { return .absent }
+    guard index + 1 < args.count, !args[index + 1].hasPrefix("--") else { return .missing }
+    return .value(args[index + 1])
+}
+
 public struct WorkflowArguments {
     public let values: [String: String]
     public let flags: Set<String>

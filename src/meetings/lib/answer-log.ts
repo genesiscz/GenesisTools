@@ -224,6 +224,13 @@ export async function subscribeAnswers(options: {
             }
         }, options.livenessMs ?? 5000);
         const deadline = setTimeout(() => {
+            // A line already on disk is read before the deadline is called: a slow file watch must not drop it.
+            tailer.flush();
+
+            if (done) {
+                return;
+            }
+
             (options.diagnostic ?? ((line) => process.stderr.write(`${line}\n`)))(
                 "Answer subscription timeout: deadline reached while waiting for another round or answer."
             );

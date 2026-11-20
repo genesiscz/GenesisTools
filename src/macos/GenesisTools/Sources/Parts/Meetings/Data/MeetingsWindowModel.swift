@@ -150,6 +150,9 @@ final class MeetingsWindowModel {
     /// and without a service (the inspector then leaves the rules out rather than show their ids).
     private(set) var ruleNames: [String: String]?
     @ObservationIgnored private var ruleNamesTask: Task<Void, Never>?
+    /// Rule decisions that came in before the rule sentences were read: their notices wait for that read (success or
+    /// failure), so the first notice and its VoiceOver announcement already say what the rule looked at.
+    @ObservationIgnored private var heldRuleDecisions: [(entry: JournalEntry, meeting: String, now: Date)] = []
     private(set) var detail: MeetingDetailModel?
     var days: Int
     /// The settings side panel is open in the meeting's trailing pane slot (it replaces the transcript pane there). The
@@ -397,7 +400,15 @@ final class MeetingsWindowModel {
             } catch {
                 HubPerf.log("meetings.ruleNames: not read (\(error)); the inspector leaves the rules out")
             }
+            self?.pushHeldRuleDecisions()
         }
+    }
+
+    /// The rule notices that waited for the sentences, in the order their decisions came.
+    private func pushHeldRuleDecisions() {
+        let held = heldRuleDecisions
+        heldRuleDecisions = []
+        for decision in held { pushDecisionNotice(decision.entry, meeting: decision.meeting, now: decision.now) }
     }
 
     // MARK: Config writes from the window (the side panel's engine rows, the Contacts view's sources)
@@ -697,6 +708,15 @@ final class MeetingsWindowModel {
     /// Undo for all of it; a meeting that is not open is named.
     func noteDecision(_ entry: JournalEntry, meeting: String, now: Date = Date()) {
         guard entry.action.kind != "comment", entry.action.kind != "revert" || !entry.changes.isEmpty else { return }
+        if entry.actor.kind == "rule", ruleNames == nil, service != nil {
+            heldRuleDecisions.append((entry, meeting, now))
+            ensureRuleNames()
+            return
+        }
+        pushDecisionNotice(entry, meeting: meeting, now: now)
+    }
+
+    private func pushDecisionNotice(_ entry: JournalEntry, meeting: String, now: Date) {
         let key = "\(meeting)|\(MeetingsWords.actor(entry.actor))"
         var burst = bursts[key]
         if let current = burst, now.timeIntervalSince(current.at) > Self.burstSeconds || !notices.contains(current.notice) {
@@ -711,7 +731,7 @@ final class MeetingsWindowModel {
         let open = detail.flatMap { $0.id == meeting ? $0 : nil }
         let text = Self.decisionNotice(entry, items: next.items.count, decisions: next.tokens.count,
                                        meetingTitle: meeting == selectedMeetingID ? nil : self.meeting(meeting)?.displayTitle ?? meeting,
-                                       label: { open?.rowName($0) ?? $0 })
+                                       label: { open?.rowName($0) ?? $0 }, ruleNames: ruleNames ?? [:])
         let tokens = next.tokens
         let notice = StackedNotice(id: next.notice, text: text, detail: entry.reason.map { "Why: \($0)" },
                                    actions: [.undo { [weak self] id in self?.revert(tokens, in: meeting, replacing: id) }])
@@ -721,8 +741,8 @@ final class MeetingsWindowModel {
     /// "An agent (Claude Code, session 3f98b772) confirmed i3", or for a burst "… decided 7 items", with the meeting
     /// named when it is not the open one.
     static func decisionNotice(_ entry: JournalEntry, items: Int, decisions: Int, meetingTitle: String?,
-                               label: (String) -> String = { $0 }) -> String {
-        let who = MeetingsWords.actor(entry.actor)
+                               label: (String) -> String = { $0 }, ruleNames: [String: String] = [:]) -> String {
+        let who = MeetingsWords.actor(entry.actor, ruleNames: ruleNames)
         let what: String
         if decisions > 1 {
             what = "decided \(Plural.count(items, "item"))"

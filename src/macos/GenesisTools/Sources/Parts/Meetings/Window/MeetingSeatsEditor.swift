@@ -349,19 +349,31 @@ struct MeetingSeatChoices {
     let suggestion: MeetingsAPI.SeatsSuggest.Suggestion
     private(set) var choices: [String: Seat]
     private(set) var count: Int
+    /// People whose saved seats move between the room and the call. The engine has no single side for them, so it
+    /// answers unsure with confidence 1 and keeps their rows; while their pick stays unsure, the save keeps them all.
+    let keptAsSaved: Set<String>
 
     init(_ suggestion: MeetingsAPI.SeatsSuggest.Suggestion) {
         self.suggestion = suggestion
         choices = Dictionary(suggestion.people.map { ($0.name, $0.seat) }, uniquingKeysWith: { first, _ in first })
-        count = choices.values.filter { $0 != .unsure }.count
+        let seated = Set(suggestion.seats.roomRows.map { PeopleText.personKey($0.name) })
+            .union(suggestion.seats.remote.map { PeopleText.personKey($0.name) })
+        keptAsSaved = Set(suggestion.people.filter {
+            $0.seat == .unsure && $0.confidence == 1 && seated.contains(PeopleText.personKey($0.name))
+        }.map(\.name))
+        count = 0
+        count = choices.filter { counts($0.value, for: $0.key) }.count
     }
 
     mutating func set(_ seat: Seat, for name: String) {
         guard let old = choices[name], old != seat else { return }
-        if old == .unsure { count += 1 }
-        if seat == .unsure { count -= 1 }
+        if !counts(old, for: name) { count += 1 }
+        if !counts(seat, for: name) { count -= 1 }
         choices[name] = seat
     }
+
+    /// Whether this pick puts the person into the save.
+    private func counts(_ seat: Seat, for name: String) -> Bool { seat != .unsure || keptAsSaved.contains(name) }
 
     /// A device decision can remove a proposed speaker. Keep manual picks only for people still suggested.
     func refreshed(with fresh: MeetingsAPI.SeatsSuggest.Suggestion) -> Self {
@@ -386,10 +398,29 @@ struct MeetingSeatChoices {
                 else {
                     seats.remote += Self.remoteStays(for: person.name, record: record)
                 }
-            case .unsure: break
+            case .unsure:
+                guard keptAsSaved.contains(person.name) else { break }
+                seats.roomRows += room[PeopleText.personKey(person.name)] ?? []
+                seats.remote += remote[PeopleText.personKey(person.name)] ?? []
             }
         }
+        seats.microphones = suggestion.seats.microphones.map { self.microphones($0, keptIn: seats) }
         return seats
+    }
+
+    /// The suggestion's microphone groups (the engine keeps the saved ones), each with only the members this save still
+    /// seats on the group's side, as the engine filters them (`microphoneSide` in seat-suggest.ts). This Mac's group
+    /// carries room people; another group carries remote people when every member had a remote seat. An empty group goes.
+    private func microphones(_ groups: [MeetingSeats.Microphone], keptIn seats: MeetingSeats) -> [MeetingSeats.Microphone] {
+        let suggestedRemote = Set(suggestion.seats.remote.map { PeopleText.personKey($0.name) })
+        let room = Set(seats.roomRows.map { PeopleText.personKey($0.name) })
+        let remote = Set(seats.remote.map { PeopleText.personKey($0.name) })
+        return groups.compactMap { group in
+            let carriesRemote = group.id != "self" && group.people.allSatisfy { suggestedRemote.contains(PeopleText.personKey($0)) }
+            var kept = group
+            kept.people = group.people.filter { (carriesRemote ? remote : room).contains(PeopleText.personKey($0)) }
+            return kept.people.isEmpty ? nil : kept
+        }
     }
 
     private static func remoteStays(for name: String, record: MeetingRecordView?) -> [MeetingSeats.Remote] {
@@ -645,7 +676,8 @@ struct MeetingSeatsEditor: View {
             Picker("Seat for \(person.name)", selection: Binding(
                 get: { choices.choices[person.name] ?? .unsure },
                 set: { self.choices?.set($0, for: person.name) })) {
-                Text("Unsure").tag(MeetingSeatChoices.Seat.unsure)
+                Text(choices.keptAsSaved.contains(person.name) ? "As saved" : "Unsure")
+                    .tag(MeetingSeatChoices.Seat.unsure)
                 Text("In the room").tag(MeetingSeatChoices.Seat.room)
                 Text("Remote").tag(MeetingSeatChoices.Seat.remote)
             }

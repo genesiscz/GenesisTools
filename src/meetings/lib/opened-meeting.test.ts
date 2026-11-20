@@ -16,7 +16,7 @@ import { loadPresence } from "./attendance";
 import { CallTimeline } from "./call-timeline";
 import type { MicEnergy } from "./energy";
 import * as energyModule from "./energy";
-import { attendanceWarning, OpenedMeeting } from "./opened-meeting";
+import { attendanceWarning, OpenedMeeting, openedMeetingLog } from "./opened-meeting";
 import { faceTimePlatform } from "./platforms/facetime";
 import { showText } from "./show-text";
 import { preserveSourceAudio } from "./source-audio";
@@ -564,6 +564,31 @@ describe("suggest attendance resilience", () => {
                 "attendance not collected: Fixture attendance missing"
             );
         } finally {
+            reader.mockRestore();
+        }
+    });
+    test("a failed history write keeps the attendance warning and the roster fallback", async () => {
+        const { store, record } = await newRecord();
+        const { MEETING_PLATFORMS } = await import("./platforms");
+        const reader = spyOn(MEETING_PLATFORMS.teams, "attendance").mockRejectedValue(
+            new AttendanceUnavailableError("Fixture chat missing")
+        );
+        const write = spyOn(store, "updateIf").mockRejectedValue(new Error("fixture disk full"));
+        const warn = spyOn(openedMeetingLog, "warn").mockImplementation(() => undefined);
+        try {
+            const opened = OpenedMeeting.of(store, record, { source: fakeSource(), sourceMeetingId: "abc" });
+            const warnings: string[] = [];
+            expect(await opened.suggestionPresence({ attendance: "teams", warnings })).toBeUndefined();
+            expect(warnings).toHaveLength(1);
+            expect(write).toHaveBeenCalled();
+            // The failed write is logged with its error and meeting, never swallowed.
+            expect(warn).toHaveBeenCalledWith(
+                { err: expect.objectContaining({ message: "fixture disk full" }), meeting: record.id },
+                "the attendance attempt could not be written to the history"
+            );
+        } finally {
+            warn.mockRestore();
+            write.mockRestore();
             reader.mockRestore();
         }
     });

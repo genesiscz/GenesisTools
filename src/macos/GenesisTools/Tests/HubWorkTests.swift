@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import GenesisKit
 import GenesisKitTestHooks
+import GenesisKitTestSupport
 import Vision
 import SwiftUI
 import XCTest
@@ -527,7 +528,7 @@ private final class WorkHeaderWindow {
 /// Compare canonical RGBA pixels, rather than encoded PNG data or an assumed view width.
 private func workFixtureText(_ image: CGImage) throws -> String {
     let request = GenesisKitFixtureTextRequest()
-    try VNImageRequestHandler(cgImage: image).perform([request])
+    try recognizeText(in: image, with: request)
     return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
 }
 

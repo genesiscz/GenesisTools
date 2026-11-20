@@ -11,7 +11,8 @@ enum RequestWindowContent {
             facts: [ApprovalFact("Request", params.id, monospaced: true)], details: [],
             warning: nil, footnote: "This notice asks for an acknowledgement. It runs no command.",
             rememberChoices: [], rememberNote: nil, allowTitle: "Acknowledge",
-            deadline: deadline ?? Date().addingTimeInterval(params.deadlineSeconds ?? 120), identifier: "request-present", deadlineLabel: "Stops waiting in ")
+            deadline: deadline ?? Date().addingTimeInterval(params.deadlineSeconds ?? 120), identifier: "request-present", deadlineLabel: "Stops waiting in ",
+            denyTitle: "Not now")
     }
 }
 

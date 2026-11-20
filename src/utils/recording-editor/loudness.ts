@@ -98,6 +98,15 @@ export interface RecordingLaneInput {
     track: number;
     volume: number;
     offsetMs: number;
+    /** The lane's muted parts on the source clock; the mix plays them silent. */
+    mutedRanges?: ReadonlyArray<{ startUs: number; endUs: number }>;
+}
+
+/** The lane's muted parts as one `volume` filter step each, timed on the source clock (empty when none). */
+export function mutedRangesFilter(ranges: RecordingLaneInput["mutedRanges"]): string {
+    return (ranges ?? [])
+        .map(({ startUs, endUs }) => `volume=enable='between(t,${startUs / 1_000_000},${endUs / 1_000_000})':volume=0,`)
+        .join("");
 }
 
 export function recordingLaneInputs(options: {
@@ -115,10 +124,22 @@ export function recordingLaneInputs(options: {
         if (lane.file) {
             const path = resolve(dirname(video), lane.file);
             if (!lane.muted && lane.volume > 0 && existsSync(path)) {
-                result.push({ path, track: 0, volume: lane.volume, offsetMs: lane.offsetMs });
+                result.push({
+                    path,
+                    track: 0,
+                    volume: lane.volume,
+                    offsetMs: lane.offsetMs,
+                    ...(lane.mutedRanges?.length ? { mutedRanges: lane.mutedRanges } : {}),
+                });
             }
         } else if (lane.track !== undefined && movie.delete(lane.track) && !lane.muted && lane.volume > 0) {
-            result.push({ path: video, track: lane.track, volume: lane.volume, offsetMs: 0 });
+            result.push({
+                path: video,
+                track: lane.track,
+                volume: lane.volume,
+                offsetMs: 0,
+                ...(lane.mutedRanges?.length ? { mutedRanges: lane.mutedRanges } : {}),
+            });
         }
     }
     return result;
@@ -128,10 +149,12 @@ export function recordingLaneInputs(options: {
 function laneMix(lanes: readonly RecordingLaneInput[], durationUs: number) {
     const files = [...new Set(lanes.map(({ path }) => path))];
     const duration = durationUs / 1_000_000;
-    const streams = lanes.map(({ path, track, volume, offsetMs }, index) => {
+    const streams = lanes.map(({ path, track, volume, offsetMs, mutedRanges }, index) => {
         const start = offsetMs < 0 ? `atrim=start=${-offsetMs / 1000},asetpts=PTS-STARTPTS,` : "";
         const delay = offsetMs > 0 ? `adelay=${offsetMs}:all=1,` : "";
-        return `[${files.indexOf(path)}:a:${track}]aresample=48000:async=1:first_pts=0,${start}${delay}volume=${volume},apad,atrim=duration=${duration}[lane${index}]`;
+        // After the offset the lane is on the source clock, where its muted parts are timed.
+        const muted = mutedRangesFilter(mutedRanges);
+        return `[${files.indexOf(path)}:a:${track}]aresample=48000:async=1:first_pts=0,${start}${delay}${muted}volume=${volume},apad,atrim=duration=${duration}[lane${index}]`;
     });
     const labels = lanes.map((_, index) => `[lane${index}]`).join("");
     const mix = lanes.length > 1 ? `amix=inputs=${lanes.length}:normalize=0` : "anull";

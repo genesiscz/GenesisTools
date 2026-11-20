@@ -154,7 +154,14 @@ export type RecorderSettings = z.infer<typeof recorderSettingsSchema>;
 export const recorderSettingsPatchSchema = recorderSettingsSchema
     .omit({ ocr: true })
     .partial()
-    .extend({ ocr: recorderSettingsSchema.shape.ocr.partial().optional() })
+    .extend({
+        ocr: recorderSettingsSchema.shape.ocr.partial().optional(),
+        /**
+         * "same": a movie that records an idle rate goes back to one steady rate, its active rate (`activeFps` when
+         * the patch names one). Not with `idleFps`, which stays 0.1–5; a frames recording refuses it.
+         */
+        rate: z.literal("same").optional(),
+    })
     .strict();
 export type RecorderSettingsPatch = z.infer<typeof recorderSettingsPatchSchema>;
 
@@ -350,7 +357,7 @@ export const RECORDER_DISPATCH: Record<
             parse(
                 recorderSettingsPatchSchema,
                 params,
-                "any of { activeFps, idleFps, threshold, maxLongSide, heartbeatSec, ocr: { enabled, languages, minChars, threshold, skipTextless, region, read } }"
+                'any of { activeFps, idleFps, rate: "same", threshold, maxLongSide, heartbeatSec, ocr: { enabled, languages, minChars, threshold, skipTextless, region, read } }'
             )
         ),
 };

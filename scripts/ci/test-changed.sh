@@ -48,8 +48,43 @@ while IFS= read -r script; do
     suite="${script%.sh}.test.ts"
     [[ " ${extra[*]-} " == *" $suite "* ]] || extra+=("$suite")
 done <<< "$changed"
-if grep -Eq '(^|/)(__fixtures__|fixtures|__snapshots__)/|(^|/)\.env\.test' <<< "$changed"; then
-    full "test fixtures changed"
+if grep -Eq '(^|/)\.env\.test' <<< "$changed"; then
+    full "test environment changed"
+fi
+# A fixture is data its tests read, so Bun's import graph misses them. They live beside it: a snapshot belongs to the
+# test file it is named after, and a __fixtures__ or fixtures folder to the tests under its parent folder that name
+# such a folder. Running the whole suite instead made every fixture edit pay for unrelated failures (on windows-latest,
+# 192 failures in other areas and a stall).
+fixture_suites() {
+    local file parent suites
+    while IFS= read -r file; do
+        # Readers that are not beside their fixture, listed by hand.
+        case "$file" in
+            src/utils/genesis-tools/service/__fixtures__/wire.json)
+                # scripts/gen-genesis-tools-rpc-swift.ts reads wire.json (WIRE_PATH); this suite checks it.
+                echo src/utils/genesis-tools/areas/person/request.test.ts
+                continue
+                ;;
+        esac
+        if [[ "$file" =~ (^|/)__snapshots__/([^/]+)\.snap$ ]]; then
+            parent=${file%__snapshots__/*}
+            suites="${parent}${BASH_REMATCH[2]}"
+            [[ -f "$suites" ]] || return 1
+            echo "$suites"
+            continue
+        fi
+        [[ "$file" =~ (^|/)(__fixtures__|fixtures|__snapshots__)/ ]] || continue
+        parent=$(sed -E 's#(^|/)(__fixtures__|fixtures|__snapshots__)/.*##' <<< "$file")
+        [[ -n "$parent" ]] || return 1
+        suites=$(git grep -lE '__fixtures__|fixtures' -- "$parent/*.test.ts" "$parent/*.test.tsx") || return 1
+        echo "$suites"
+    done <<< "$changed"
+}
+if grep -Eq '(^|/)(__fixtures__|fixtures|__snapshots__)/' <<< "$changed"; then
+    suites=$(fixture_suites) || full "test fixtures changed and no test beside them reads a fixture folder"
+    while IFS= read -r suite; do
+        [[ -n "$suite" && " ${extra[*]-} " != *" $suite "* ]] && extra+=("$suite")
+    done <<< "$suites"
 fi
 
 status=0

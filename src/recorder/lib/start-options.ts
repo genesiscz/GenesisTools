@@ -2,6 +2,8 @@ import { NATIVE_MOVIE_MAX_SECONDS } from "@app/control/lib/capture-plan";
 import {
     CAPTURE_SYSTEM_AUDIO_SCOPES,
     type CaptureSystemAudioScope,
+    MOVIE_QUALITY_VALUES,
+    type MovieQuality,
     parseScreenList,
     type ScreenInfo,
 } from "@app/control/lib/native-record";
@@ -66,8 +68,11 @@ export interface StartFlags {
     fps?: string;
     idleFps?: string;
     threshold?: string;
+    /** `--movie-quality [preset]`: standard, high or small; bare names the values. */
+    movieQuality?: string | boolean;
     region?: string;
     excludeWindowIds?: string;
+    keepOverlays?: boolean;
     camera?: boolean;
     countdown?: string | boolean;
     display?: string;
@@ -123,6 +128,10 @@ export function withStartOptions(command: Command): Command {
             `how much of the picture must change to leave the idle rate, ${threshold.min}–${threshold.max} (default 0.5)`
         )
         .option(
+            "--movie-quality [preset]",
+            "the movie's size and bit rate: standard (the native size, the default), high (twice the bit rate) or small (half the width, height and bit rate)"
+        )
+        .option(
             "--display <index|follow>",
             "record only this display (NSScreen order), or `follow`: the display in use, following the pointer and the focus to another screen (the default when no target is named)"
         )
@@ -130,6 +139,10 @@ export function withStartOptions(command: Command): Command {
         .option("--app <name>", "record this app's windows (name, bundle id or pid)")
         .option("--region <x,y,w,h>", "record this area of a display, in screen points from the top-left corner")
         .option("--exclude-window-ids <ids>", "leave these windows out of each take (CG window ids, comma separated)")
+        .option(
+            "--keep-overlays",
+            "keep screen dimmers (HazeOver and the like) in a display or area take; they are left out by default"
+        )
         .option(
             "--camera",
             "record the camera beside the screen into camera.mov (the menu bar recorder records it and must run; the editor draws the bubble)"
@@ -321,6 +334,23 @@ export function systemAudioScopeOf(
     return scope;
 }
 
+/** `--movie-quality`: one of the presets; bare or another word is refused with the values. */
+function parseMovieQuality(raw: string | boolean | undefined): MovieQuality | undefined {
+    if (raw === undefined || raw === false) {
+        return undefined;
+    }
+
+    const value = MOVIE_QUALITY_VALUES.find((preset) => preset === raw);
+
+    if (!value) {
+        throw new Error(
+            `--movie-quality takes ${MOVIE_QUALITY_VALUES.join(", ")}${raw === true ? "" : ` (not "${raw}")`}: ${toolCommand("recorder start", "--movie-quality high")}`
+        );
+    }
+
+    return value;
+}
+
 export function parseStartFlags(flags: StartFlags): StartRequest {
     const audio = startAudioOf(flags);
     const target = namedTarget(flags);
@@ -332,7 +362,9 @@ export function parseStartFlags(flags: StartFlags): StartRequest {
         fps: bounded(flags.fps ?? String(DEFAULT_MOVIE_FPS), "--fps", START_LIMITS.fps),
         idleFps: bounded(flags.idleFps, "--idle-fps", START_LIMITS.idleFps),
         threshold: bounded(flags.threshold, "--threshold", START_LIMITS.threshold),
+        movieQuality: parseMovieQuality(flags.movieQuality),
         excludeWindowIds: parseWindowIdList(flags.excludeWindowIds, "--exclude-window-ids"),
+        keepOverlays: flags.keepOverlays === true,
         camera: flags.camera === true,
         countdownSeconds: countdownSecondsOf(flags.countdown),
         audio,
@@ -580,9 +612,13 @@ export const recordOptionsSchema = z
             .optional(),
         /** CG window ids the movie leaves out. */
         excludeWindowIds: z.array(z.number().int().positive()).optional(),
+        /** Keep screen dimmers (HazeOver and the like) in a display or area movie; they are left out by default. */
+        keepOverlays: z.boolean().optional(),
         fps: limited(START_LIMITS.fps).optional(),
         idleFps: limited(START_LIMITS.idleFps).optional(),
         threshold: limited(START_LIMITS.threshold).optional(),
+        /** The movie's size and bit rate: standard (the native size, the default), high (twice the bit rate), small (half). */
+        movieQuality: z.enum(MOVIE_QUALITY_VALUES).optional(),
         /** Seconds counted down on screen before it records; true is the picker's 3 s. */
         countdown: z.union([z.boolean(), limited(START_LIMITS.countdown)]).optional(),
         /** Keep the system cursor in the movie instead of the drawn one. */
@@ -612,9 +648,11 @@ const START_ARGS: { [K in keyof Required<RecordOptions>]: (options: RecordOption
     region: ({ region }) => (region ? ["--region", region] : []),
     excludeWindowIds: ({ excludeWindowIds }) =>
         excludeWindowIds?.length ? ["--exclude-window-ids", excludeWindowIds.join(",")] : [],
+    keepOverlays: ({ keepOverlays }) => (keepOverlays ? ["--keep-overlays"] : []),
     fps: ({ fps }) => (fps === undefined ? [] : ["--fps", String(fps)]),
     idleFps: ({ idleFps }) => (idleFps === undefined ? [] : ["--idle-fps", String(idleFps)]),
     threshold: ({ threshold }) => (threshold === undefined ? [] : ["--threshold", String(threshold)]),
+    movieQuality: ({ movieQuality }) => (movieQuality ? ["--movie-quality", movieQuality] : []),
     countdown: ({ countdown }) =>
         countdown === undefined || countdown === false
             ? []

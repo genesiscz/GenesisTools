@@ -100,7 +100,7 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         XCTAssertEqual(FrameReviewModel.nearest(in: [first, second], at: 0)?.file, "a.png")
     }
 
-    func testScrubbingPreviewsFramesButSettlesTranscriptDetailsOnlyOnRelease() async {
+    func testScrubbingPreviewsFramesButSettlesTranscriptDetailsOnlyOnRelease() async throws {
         let frames = [0.0, 30.0].enumerated().map { index, time in
             TimelineFrame(file: "frame-\(index)", path: "/fixture/frame-\(index)", at: "", meetingSec: time,
                           displayId: 1, width: 800, height: 600, lineCount: 0, changed: [], lines: [])
@@ -108,18 +108,18 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         let transcript = MeetingTranscript(meeting: "m", entries: (0..<5).map { index in
             TranscriptLine(id: "line-\(index)", startSec: Double(index * 10), speaker: "Alex", text: "Passage \(index)")
         })
-        let model = FrameReviewModel(meeting: "m", file: frames[0].file, at: 0, player: nil, defaults: .standard,
+        let model = FrameReviewModel(meeting: "m", file: try frames.required(0).file, at: 0, player: nil, defaults: .standard,
             timeline: ScreenTimeline(meeting: "m", folder: "/fixture", displays: [], frames: frames), transcript: transcript)
         await model.waitForIndex()
         let heldContext = model.context.map(\.text)
         model.beginScrub()
         model.scrub(to: 30, seek: false)
         XCTAssertEqual(model.time, 30)
-        XCTAssertEqual(model.frame?.file, frames[1].file)
-        XCTAssertEqual(model.detailsFrame?.file, frames[0].file)
+        XCTAssertEqual(model.frame?.file, try frames.required(1).file)
+        XCTAssertEqual(model.detailsFrame?.file, try frames.required(0).file)
         XCTAssertEqual(model.context.map(\.text), heldContext)
         model.endScrub(seek: false)
-        XCTAssertEqual(model.detailsFrame?.file, frames[1].file)
+        XCTAssertEqual(model.detailsFrame?.file, try frames.required(1).file)
         XCTAssertEqual(model.context.map(\.text), ["Passage 2", "Passage 3", "Passage 4"])
         model.cancelWork()
     }
@@ -304,10 +304,10 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
     func testBlocksGroupConsecutiveLinesOfOneSpeakerAndEndEachLineAtTheNextStart() {
         let blocks = TranscriptBlock.build(from: Self.entries, durationSec: 3300)
         XCTAssertEqual(blocks.map(\.speaker), ["Mira Holt", "Jonas Petr", "Alex Rowan", "Jonas Petr", "Mira Holt", "Alex Rowan"])
-        XCTAssertEqual(blocks[0].lines.map(\.id), ["l0", "l1"])
-        XCTAssertEqual(blocks[0].lines[0].endSec, 3266)
+        XCTAssertEqual(try blocks.required(0).lines.map(\.id), ["l0", "l1"])
+        XCTAssertEqual(try blocks.required(0).lines.required(0).endSec, 3266)
         XCTAssertEqual(blocks.last?.lines.last?.endSec, 3300, "the last line ends at the recording's end")
-        XCTAssertEqual(blocks[3].startSec, 3276)
+        XCTAssertEqual(try blocks.required(3).startSec, 3276)
     }
 
     func testAGapLongerThanTheBreakStartsANewBlockForTheSameSpeaker() {
@@ -330,23 +330,23 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
     func testTheFilterKeepsTheWholeBlockOfAHitAndMarksTheHitLine() {
         let blocks = TranscriptBlock.filter(TranscriptBlock.build(from: Self.entries), query: "mapper")
         XCTAssertEqual(blocks.count, 1)
-        XCTAssertEqual(blocks[0].lines.count, 2, "the hit's block shows whole")
-        XCTAssertEqual(blocks[0].lines.map { $0.marks.contains(.filterHit) }, [false, true])
+        XCTAssertEqual(try blocks.required(0).lines.count, 2, "the hit's block shows whole")
+        XCTAssertEqual(try blocks.required(0).lines.map { $0.marks.contains(.filterHit) }, [false, true])
     }
 
-    func testOnlyTheHeardBlockViewChangesWhenThePositionMovesInsideALine() {
+    func testOnlyTheHeardBlockViewChangesWhenThePositionMovesInsideALine() throws {
         let blocks = TranscriptBlock.build(from: Self.entries, durationSec: 3300)
         let before = TranscriptBlock.heard(in: blocks, at: 3276.1)
         let after = TranscriptBlock.heard(in: blocks, at: 3278.9)
         XCTAssertEqual(before, after, "the same heard line: no block input changes at 10 Hz")
-        let other = TranscriptBlockView(block: blocks[0], heardLineID: nil, selected: [], past: true, play: { _ in })
-        let otherLater = TranscriptBlockView(block: blocks[0], heardLineID: nil, selected: [], past: true, play: { _ in })
+        let other = TranscriptBlockView(block: try blocks.required(0), heardLineID: nil, selected: [], past: true, play: { _ in })
+        let otherLater = TranscriptBlockView(block: try blocks.required(0), heardLineID: nil, selected: [], past: true, play: { _ in })
         XCTAssertTrue(other == otherLater, "a block that is not heard compares equal across ticks")
     }
 
     /// The list takes the end of the last block passed, not the position: the same blocks are past at it as at the
     /// position, and it holds still between block ends, so a 10 Hz tick inside a block hands the list nothing new.
-    func testThePassedEndDimsWhatThePositionDimsAndHoldsBetweenBlockEnds() {
+    func testThePassedEndDimsWhatThePositionDimsAndHoldsBetweenBlockEnds() throws {
         let blocks = TranscriptBlock.build(from: Self.entries, durationSec: 3300)
         let ends = blocks.compactMap(\.endSec)
         XCTAssertGreaterThan(ends.count, 1)
@@ -357,7 +357,7 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
                 XCTAssertEqual(end <= position, passed.map { end <= $0 } ?? false, "block \(block.id) at \(position)")
             }
         }
-        let inside = ends[0] + 0.05
+        let inside = try ends.required(0) + 0.05
         XCTAssertEqual(TranscriptBlock.passedEnd(in: blocks, at: inside), TranscriptBlock.passedEnd(in: blocks, at: inside + 0.4),
                        "no block ends between the two ticks: the same value")
         XCTAssertNil(TranscriptBlock.passedEnd(in: blocks, at: nil))
@@ -458,7 +458,7 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
 
     func testASelectionOfLinesRunsFromTheFirstStartToTheLastLine() throws {
         let blocks = TranscriptBlock.build(from: Self.entries)
-        let lines = [blocks[5].lines[0], blocks[4].lines[0]]
+        let lines = [try blocks.required(5).lines.required(0), try blocks.required(4).lines.required(0)]
         let selection = try XCTUnwrap(TranscriptSelection.lines(lines))
         XCTAssertEqual(selection.from, LinePoint(atSec: 3281, line: 6, fraction: 0))
         XCTAssertEqual(selection.to, LinePoint(atSec: 3288, line: 7, fraction: 1))
@@ -467,7 +467,7 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
     }
 
     func testClipReportsTheSelectionTargetAndFiveSeconds() throws {
-        let selection = try XCTUnwrap(TranscriptSelection.lines(TranscriptBlock.build(from: Self.entries)[1].lines))
+        let selection = try XCTUnwrap(TranscriptSelection.lines(try TranscriptBlock.build(from: Self.entries).required(1).lines))
         var clipped: (MomentTarget, Double)?
         let popover = SelectionPopover(selection: selection, stage: { _, _ in }, clip: { clipped = ($0, $1) })
         popover.clip(selection.target, popover.clipLengthSec)
@@ -490,7 +490,7 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
     }
 
     func testSnapshotSelectionPopoverAndStagedComments() throws {
-        let selection = try XCTUnwrap(TranscriptSelection.lines(TranscriptBlock.build(from: Self.entries)[4].lines))
+        let selection = try XCTUnwrap(TranscriptSelection.lines(try TranscriptBlock.build(from: Self.entries).required(4).lines))
         try snapshot(SelectionPopover(selection: selection, stage: { _, _ in }, clip: { _, _ in }, saveClip: { _, _ in }).fixedSize(),
                      name: "selection-popover", width: nil)
         try snapshot(SelectionPopover(selection: selection, startsInComment: true, stage: { _, _ in }, clip: { _, _ in }).fixedSize(),
@@ -528,7 +528,7 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
 
     func testSpeakerDragRoundTripsAndRejectsForeignOrStaleStretches() throws {
         let speakers = Self.speakers()
-        let source = speakers[0], target = speakers[1]
+        let source = try speakers.required(0), target = try speakers.required(1)
         let first = try XCTUnwrap(source.talkSpans.first), last = try XCTUnwrap(source.talkSpans.last)
         let owner = UUID()
         let drag = SpeakerLaneDrag(owner: owner, label: source.label, fromSec: first.fromSec, toSec: last.toSec)
@@ -551,24 +551,24 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
                                                         .init(fromSec: 500, toSec: 700, turns: 2)]
         let blocks = TalkTimeLayout.blocks(spans, durationSec: 1000, width: 100)
         XCTAssertEqual(blocks.count, 2)
-        XCTAssertEqual(blocks[0].spans, 2)
-        XCTAssertTrue(blocks[0].isJoined)
-        XCTAssertEqual(blocks[0].ticks, [0.2])
-        XCTAssertGreaterThanOrEqual(blocks[0].width, 2, "a joined thin block still shows")
-        XCTAssertFalse(blocks[1].isJoined)
-        XCTAssertEqual(blocks[1].x, 50)
-        XCTAssertEqual(TalkTimeLayout.block(at: 51, in: blocks), blocks[1])
-        XCTAssertEqual(TalkTimeLayout.block(at: 1.5, in: blocks), blocks[0], "a 2 pt block is hit with slack")
+        XCTAssertEqual(try blocks.required(0).spans, 2)
+        XCTAssertTrue(try blocks.required(0).isJoined)
+        XCTAssertEqual(try blocks.required(0).ticks, [0.2])
+        XCTAssertGreaterThanOrEqual(try blocks.required(0).width, 2, "a joined thin block still shows")
+        XCTAssertFalse(try blocks.required(1).isJoined)
+        XCTAssertEqual(try blocks.required(1).x, 50)
+        XCTAssertEqual(TalkTimeLayout.block(at: 51, in: blocks), try blocks.required(1))
+        XCTAssertEqual(TalkTimeLayout.block(at: 1.5, in: blocks), try blocks.required(0), "a 2 pt block is hit with slack")
         XCTAssertNil(TalkTimeLayout.block(at: 30, in: blocks))
     }
 
-    func testCloseQuestionsMergeIntoOneBanner() {
+    func testCloseQuestionsMergeIntoOneBanner() throws {
         let questions = [TalkTimeQuestion(id: "q1", atSec: 100, label: "Q12"), TalkTimeQuestion(id: "q2", atSec: 110),
                          TalkTimeQuestion(id: "q3", atSec: 600)]
         let banners = TalkTimeLayout.banners(questions, durationSec: 1000, width: 500)
         XCTAssertEqual(banners.map(\.text), ["? ×2", "?"])
-        XCTAssertEqual(banners[0].ids, ["q1", "q2"])
-        XCTAssertEqual(TalkTimeLayout.banners([questions[0]], durationSec: 1000, width: 500).map(\.text), ["? Q12"])
+        XCTAssertEqual(try banners.required(0).ids, ["q1", "q2"])
+        XCTAssertEqual(TalkTimeLayout.banners([try questions.required(0)], durationSec: 1000, width: 500).map(\.text), ["? Q12"])
 
         // D7: two labelled banners 30 pt apart are one banner; they drew over each other ("? Q ? Q9").
         let near = [TalkTimeQuestion(id: "q7", atSec: 400, label: "Q7"), TalkTimeQuestion(id: "q9", atSec: 460, label: "Q9"),
@@ -579,14 +579,14 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
             XCTAssertGreaterThanOrEqual(after.x - before.x, TalkTimeLayout.bannerWidth)
         }
         // A merged banner lists each of its questions: a click opened only the first, and Q9 had no way to its row.
-        let choices = SpeakerTalkTimeLanes.bannerChoices(merged[0], questions: near)
+        let choices = SpeakerTalkTimeLanes.bannerChoices(try merged.required(0), questions: near)
         XCTAssertEqual(choices.map(\.id), ["q7", "q9"])
         XCTAssertEqual(choices.map(\.title), ["Q7 at 06:40", "Q9 at 07:40"])
     }
 
     /// U2: a "?" banner answers its question where it stands ("the ? should be clickable so i can pick no?"). Its menu is
     /// the question's choices without Skip, a divider and "Show in Items"; a merged banner has one submenu per question.
-    func testABannerMenuOffersItsQuestionsChoicesAndTheWayToItsRow() {
+    func testABannerMenuOffersItsQuestionsChoicesAndTheWayToItsRow() throws {
         let detail = MeetingDetailModel(id: "m", window: nil)
         XCTAssertEqual(Self.titles(reviewChoiceItems(for: TimelineFixture.questionRow, detail: detail)),
                        ["Mira Holt", "Jonas Petr", "—", "Show in Items"], "every choice but Skip, then the way to the row")
@@ -595,10 +595,10 @@ final class MeetingsTranscriptViewsTests: XCTestCase {
         let menu: (String) -> [MenuButtonItem] = { id in [.action("Answer \(id)") {}] }
         let merged = TalkTimeLayout.banners(near, durationSec: 1000, width: 500)
         XCTAssertEqual(merged.count, 1, "the two questions share one banner")
-        XCTAssertEqual(Self.titles(SpeakerTalkTimeLanes.bannerItems(merged[0], questions: near, menu: menu)),
+        XCTAssertEqual(Self.titles(SpeakerTalkTimeLanes.bannerItems(try merged.required(0), questions: near, menu: menu)),
                        ["Q7 at 06:40 ▸ Answer q7", "Q9 at 07:40 ▸ Answer q9"])
-        let single = TalkTimeLayout.banners([near[0]], durationSec: 1000, width: 500)
-        XCTAssertEqual(Self.titles(SpeakerTalkTimeLanes.bannerItems(single[0], questions: near, menu: menu)), ["Answer q7"],
+        let single = TalkTimeLayout.banners([try near.required(0)], durationSec: 1000, width: 500)
+        XCTAssertEqual(Self.titles(SpeakerTalkTimeLanes.bannerItems(try single.required(0), questions: near, menu: menu)), ["Answer q7"],
                        "one question opens its own menu at once")
     }
 

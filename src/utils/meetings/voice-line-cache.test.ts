@@ -1,11 +1,12 @@
 import { afterEach, expect, mock, spyOn, test } from "bun:test";
-import { mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type SpeakerExtractor, speakerEmbeddingOf } from "@genesiscz/utils/ai/local/runtimes/sherpa/speaker-embedding";
 import * as converter from "@genesiscz/utils/audio/converter";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { z } from "zod";
 import { MeetingStore } from "./record";
 import * as voice from "./voice";
@@ -99,6 +100,34 @@ test("a reopened line cache reuses every ready, quiet, short and speechless span
     const reindexed = await voice.embedVoiceLines({ ...options, spans: [{ index: 42, fromSec: 0, toSec: 2 }] });
     expect(reindexed).toEqual([{ ...first[1]!, index: 42 }]);
     expect(f.compute).not.toHaveBeenCalled();
+});
+
+test("a preview reads another pass's cache for hits and saves only its own lines to its own file", async () => {
+    const f = await fixture();
+    await voice.embedVoiceLines({ ...f.options, cachePath: f.cachePath });
+    const suggestion = readFileSync(f.cachePath, "utf8");
+    const previewPath = join(f.cachePath, "..", "seat-voice-lines.json");
+    const options = {
+        ...f.options,
+        spans: [
+            { index: 0, fromSec: 0, toSec: 2 },
+            { index: 1, fromSec: 5, toSec: 7 },
+        ],
+        cachePath: previewPath,
+        fallbackCachePath: f.cachePath,
+    };
+    f.decode.mockClear();
+    const first = await voice.embedVoiceLines(options);
+    // Only the span the suggestion pass never embedded is decoded; its cache file is left as it was.
+    expect(f.decode).toHaveBeenCalledTimes(1);
+    expect(readFileSync(f.cachePath, "utf8")).toBe(suggestion);
+    const preview = z
+        .object({ entries: z.record(z.string(), z.unknown()) })
+        .parse(SafeJSON.parse(readFileSync(previewPath, "utf8")));
+    expect(Object.keys(preview.entries)).toHaveLength(1);
+    f.decode.mockClear();
+    expect(await voice.embedVoiceLines(options)).toEqual(first);
+    expect(f.decode).not.toHaveBeenCalled();
 });
 
 test("a failed window decode is tried once per chunk, and a later pass decodes it again", async () => {
@@ -238,6 +267,33 @@ test("an aborted pass kills its worker at once and names nothing; an aborted sig
         })
     ).rejects.toThrow("already");
     expect(spawn.mock.calls.length).toBe(spawned);
+});
+
+test("a cancel that lands while the finished lines are saved rejects the call and keeps the saved lines", async () => {
+    const { VoiceLineCache } = await import("./voice-line-cache");
+    const f = await fixture();
+    const controller = new AbortController();
+    const save = VoiceLineCache.prototype.save;
+    const entered = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    // The save is already pending when the cancel lands: the call must still see it after the save resolves.
+    const saving = spyOn(VoiceLineCache.prototype, "save").mockImplementation(async function (
+        this: InstanceType<typeof VoiceLineCache>
+    ) {
+        entered.resolve();
+        await gate.promise;
+        await save.call(this);
+    });
+    spies.push(saving);
+    const call = voice.embedVoiceLines({ ...f.options, signal: controller.signal });
+    await entered.promise;
+    controller.abort(new Error("cancelled during the save"));
+    gate.resolve();
+    await expect(call).rejects.toThrow("cancelled during the save");
+    saving.mockRestore();
+    f.compute.mockClear();
+    await voice.embedVoiceLines(f.options);
+    expect(f.compute).not.toHaveBeenCalled();
 });
 
 test("cached anchors count once and only missing channels go to workers, even across a chunk failure", async () => {
@@ -559,3 +615,28 @@ test.each(["{broken", '{"version":1,"entries":{"bad":{"quality":"ready","embeddi
         expect(f.compute).not.toHaveBeenCalled();
     }
 );
+
+test("two overlapping passes that save the same cache both keep their results", async () => {
+    const { VoiceLineCache } = await import("./voice-line-cache");
+    const { record, store } = await fixture();
+    const cachePath = join(store.folder(record.id), "voice-lines.json");
+    const source = { audioPath: "/fixture/source.pcm", size: 10, mtimeMs: 1 };
+    const open = () => new VoiceLineCache({ source, model: "fixture-model", cachePath });
+    const first = open();
+    const second = open();
+    const span = (fromSec: number) => ({ channel: 0 as const, track: "raw-mic" as const, fromSec, toSec: fromSec + 2 });
+    first.set(span(0), { model: "fixture-model", embedding: [1, 0], quality: "ready" });
+    second.set(span(10), { model: "fixture-model", embedding: [0, 1], quality: "ready" });
+    // Another writer holds the cache lock while both saves start: neither may read or replace the file before it is
+    // released, and each then merges what the other wrote.
+    const saves = await withFileLock(`${cachePath}.lock`, async () => {
+        const started = [first.save(), second.save()];
+        await Bun.sleep(150);
+        expect(existsSync(cachePath)).toBe(false);
+        return started;
+    });
+    await Promise.all(saves);
+    const reopened = open();
+    expect(reopened.get(span(0))).toMatchObject({ embedding: [1, 0] });
+    expect(reopened.get(span(10))).toMatchObject({ embedding: [0, 1] });
+});

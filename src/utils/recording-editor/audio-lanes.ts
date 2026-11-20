@@ -1,9 +1,25 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { recordingItemId } from "./item-ids";
 import type { EditOp, EditProject, OpFacts } from "./project";
 
 export const AUDIO_LANE_SOURCES = ["mic", "system", "movie", "voiceover", "music"] as const;
 export type AudioLaneSource = (typeof AUDIO_LANE_SOURCES)[number];
+
+/** A part of one lane that the mix plays silent (a cough, a doorbell), on the source clock like every edit range. */
+export const audioMutedRangeSchema = z
+    .object({
+        id: z.string().min(1),
+        startUs: z.number().int().nonnegative(),
+        endUs: z.number().int().positive(),
+    })
+    .refine((range) => range.endUs > range.startUs, "A muted part ends after it starts");
+export type AudioMutedRange = z.infer<typeof audioMutedRangeSchema>;
+
+/** A new muted part's id ("u" for unheard, like "k" for a camera part). */
+export function audioMutedRangeId(): string {
+    return recordingItemId("u");
+}
 
 /** A recording file beside the movie, a track inside it, or the mix settings of a voiceover or music bed. */
 export const audioLaneSchema = z.object({
@@ -15,17 +31,21 @@ export const audioLaneSchema = z.object({
     muted: z.boolean().default(false),
     volume: z.number().min(0).max(2).default(1),
     name: z.string().max(40).optional(),
+    /** Parts the mix plays silent, in start order; absent when the whole lane plays (`muted` silences all of it). */
+    mutedRanges: z.array(audioMutedRangeSchema).optional(),
 });
 export type AudioLane = z.infer<typeof audioLaneSchema>;
 export const audioLanesSchema = z
     .array(audioLaneSchema)
     .refine((lanes) => new Set(lanes.map((lane) => lane.id)).size === lanes.length, "Audio lane IDs must be unique");
 
-export interface AudioFacts {
-    movieTracks: number;
+/** What a recording's sound is made of, measured once per open; the lanes of an edit that never saved them come from it. */
+export const audioFactsSchema = z.object({
+    movieTracks: z.number().int().nonnegative(),
     /** The source files mixed into track 0 of a frames proxy. Their offsets are relative to the movie. */
-    mixedFrom: Array<{ source: "mic" | "system"; file: string; offsetMs: number }>;
-}
+    mixedFrom: z.array(z.object({ source: z.enum(["mic", "system"]), file: z.string(), offsetMs: z.number() })),
+});
+export type AudioFacts = z.infer<typeof audioFactsSchema>;
 
 function voiceoverLaneId(id: string): string {
     // Ordinary clip IDs keep their saved lane identity. Disambiguate reserved recording and music IDs.
@@ -126,27 +146,120 @@ export function syncExtraAudioLanes(before: EditProject, after: EditProject): Ed
     return { ...after, audio: { ...after.audio, lanes: audioLanesSchema.parse([...recording, ...extras]) } };
 }
 
-export function setAudioLane(
-    project: EditProject,
-    op: Extract<EditOp, { op: "audioLane" }>,
-    facts: OpFacts
-): EditProject {
+/**
+ * The edit with lane `id` changed by `change`. The first lane edit writes every derived lane once (`audioLanesOf`),
+ * so it needs the recording's sound sources.
+ */
+function withLane(options: {
+    project: EditProject;
+    id: string;
+    facts: OpFacts;
+    opName: string;
+    change: (lane: AudioLane) => AudioLane;
+}): EditProject {
+    const { project, id, facts, opName, change } = options;
     let lanes = project.audio.lanes;
     if (lanes === undefined) {
         if (!facts.audioFacts) {
-            throw new Error("audioLane needs the recording's sound sources before it can save the first lane mix");
+            throw new Error(`${opName} needs the recording's sound sources before it can save the first lane mix`);
         }
 
         lanes = audioLanesOf(project, facts.audioFacts);
     }
 
-    const index = lanes.findIndex((lane) => lane.id === op.id);
+    const index = lanes.findIndex((lane) => lane.id === id);
     if (index < 0) {
-        throw new Error(`no audio lane ${op.id}; lanes: ${lanes.map((lane) => lane.id).join(", ") || "none"}`);
+        throw new Error(`no audio lane ${id}; lanes: ${lanes.map((lane) => lane.id).join(", ") || "none"}`);
     }
 
-    const { op: _op, id: _id, ...change } = op;
     const updated = [...lanes];
-    updated[index] = audioLaneSchema.parse({ ...lanes[index], ...change });
+    updated[index] = audioLaneSchema.parse(change(lanes[index]));
     return { ...project, audio: { ...project.audio, lanes: updated } };
+}
+
+export function setAudioLane(
+    project: EditProject,
+    op: Extract<EditOp, { op: "audioLane" }>,
+    facts: OpFacts
+): EditProject {
+    const { op: _op, id, ...change } = op;
+    return withLane({ project, id, facts, opName: "audioLane", change: (lane) => ({ ...lane, ...change }) });
+}
+
+/** Mutes `fromUs` to `toUs` of lane `id` as a part of its own, in start order; an overlapping part keeps its id. */
+export function muteAudioLaneRange(options: {
+    project: EditProject;
+    id: string;
+    fromUs: number;
+    toUs: number;
+    facts: OpFacts;
+}): EditProject {
+    const { project, id, fromUs, toUs, facts } = options;
+    if (toUs <= fromUs) {
+        throw new RangeError(`a muted part needs its end after its start (got ${fromUs / 1e6}–${toUs / 1e6} s)`);
+    }
+
+    const part = { id: audioMutedRangeId(), startUs: fromUs, endUs: toUs };
+    return withLane({
+        project,
+        id,
+        facts,
+        opName: "audioMute",
+        change: (lane) => ({
+            ...lane,
+            mutedRanges: [...(lane.mutedRanges ?? []), part].sort((a, b) => a.startUs - b.startUs),
+        }),
+    });
+}
+
+/**
+ * Lane `id` plays again over `fromUs` to `toUs` (a part may split in two; the part after a split gets a new id), or
+ * loses the one muted part `part`. A lane with no muted part left drops the field.
+ */
+export function unmuteAudioLaneRange(options: {
+    project: EditProject;
+    id: string;
+    facts: OpFacts;
+    range?: { fromUs: number; toUs: number };
+    part?: string;
+}): EditProject {
+    const { project, id, facts, range, part } = options;
+    return withLane({
+        project,
+        id,
+        facts,
+        opName: "audioUnmute",
+        change: (lane) => {
+            const before = lane.mutedRanges ?? [];
+            let after: AudioMutedRange[];
+            if (part !== undefined) {
+                after = before.filter((one) => one.id !== part);
+                if (after.length === before.length) {
+                    throw new Error(
+                        `lane ${id} has no muted part ${part}; parts: ${before.map((one) => one.id).join(", ") || "none"}`
+                    );
+                }
+            } else if (range) {
+                // Parts may overlap, so a split part's tail can start after the next part: keep the start order.
+                after = before.flatMap((one) => {
+                    if (one.endUs <= range.fromUs || one.startUs >= range.toUs) {
+                        return [one];
+                    }
+
+                    const head = one.startUs < range.fromUs ? [{ ...one, endUs: range.fromUs }] : [];
+                    const tail =
+                        one.endUs > range.toUs
+                            ? [{ ...one, id: head.length ? audioMutedRangeId() : one.id, startUs: range.toUs }]
+                            : [];
+                    return [...head, ...tail];
+                });
+                after.sort((a, b) => a.startUs - b.startUs);
+            } else {
+                throw new RangeError("audioUnmute takes a part id or a from and to range");
+            }
+
+            const { mutedRanges: _old, ...rest } = lane;
+            return after.length ? { ...rest, mutedRanges: after } : rest;
+        },
+    });
 }

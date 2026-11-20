@@ -3,7 +3,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import * as files from "node:fs/promises";
-import { mkdir, mkdtemp, readdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rename, rmdir, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { DeliveryUnknownError } from "@app/question/lib/decisions/deliver";
@@ -799,6 +799,131 @@ describe("widget source and delivery contracts", () => {
         expect(result.sessions[0]).toMatchObject({ session: "stored-a", stored: true, numbers: [stored.number] });
         expect(result.sessions[0]?.error).toContain("stopped after it typed");
         expect(readDecisions(files.file).find((entry) => entry.id === stored.id)?.state).not.toBe("drafted");
+    });
+
+    /**
+     * Refuses every later write of the decision log: each of its files becomes a folder, which no write can open as a
+     * file, whatever the runner's privileges (a read-only mode does not stop root). Returns the undo.
+     */
+    async function refuseRecord(files: { file: string; events: string }): Promise<() => Promise<void>> {
+        const kept: string[] = [];
+
+        for (const path of [files.file, files.events]) {
+            if (await moveAside(path)) {
+                kept.push(path);
+            }
+
+            await mkdir(path);
+        }
+
+        // Only a file that was moved aside comes back, and a failed restore fails the test.
+        return async () => {
+            for (const path of [files.file, files.events]) {
+                await rmdir(path);
+
+                if (kept.includes(path)) {
+                    await rename(`${path}.kept`, path);
+                }
+            }
+        };
+    }
+
+    /** Moves a log file to `<path>.kept`. A log the run never wrote is the one failure tolerated: it has nothing to keep. */
+    async function moveAside(path: string): Promise<boolean> {
+        try {
+            await rename(path, `${path}.kept`);
+            return true;
+        } catch (err) {
+            if (err instanceof Error && "code" in err && err.code === "ENOENT") {
+                return false;
+            }
+
+            throw err;
+        }
+    }
+
+    test("a delivered answer whose record failed says delivered, so the widget does not offer Send again", async () => {
+        const directory = await root();
+        const files = { file: join(directory, "decisions.jsonl"), events: join(directory, "events.jsonl") };
+        const [stored] = await postDecisions(
+            files.file,
+            files.events,
+            { sessionId: "stored-b", provider: "codex", decisions: [{ prompt: "Ship?", options: ["yes", "no"] }] },
+            { env: {} }
+        );
+        await updateDecisions(files.file, files.events, {
+            updates: [{ id: stored.id, state: "drafted", draftOption: "a" }],
+        });
+        let undo: (() => Promise<void>) | undefined;
+        let result: Awaited<ReturnType<typeof sendStagedDecisions>>;
+
+        try {
+            result = await sendStagedDecisions({
+                ids: [stored.id],
+                files,
+                deliver: {
+                    codexWorkerFor: () => "fixture-worker",
+                    runTool: async () => {
+                        // The agent got the answers; the log then refuses the record of the delivery.
+                        undo = await refuseRecord(files);
+                        return { success: true, stdout: '{"queued":false,"turnId":"fixture-turn"}', stderr: "" };
+                    },
+                },
+            });
+        } finally {
+            await undo?.();
+        }
+
+        expect(result).toMatchObject({ sent: 1, queued: 0, failed: 0 });
+        expect(result.sessions[0]).toMatchObject({ session: "stored-b", stored: true, delivered: true });
+        expect(result.sessions[0]?.error).toContain("reached the agent");
+    });
+
+    test("a Send again whose delivery reached the agent and whose record failed counts as delivered, not failed", async () => {
+        const directory = await root();
+        const files = { file: join(directory, "decisions.jsonl"), events: join(directory, "events.jsonl") };
+        const [row] = await postDecisions(
+            files.file,
+            files.events,
+            { sessionId: "resend-b", provider: "codex", decisions: [{ prompt: "Ship?", options: ["yes", "no"] }] },
+            { env: {} }
+        );
+        await updateDecisions(files.file, files.events, {
+            updates: [{ id: row.id, state: "drafted", draftOption: "a" }],
+        });
+        const nowhere = await sendStagedDecisions({
+            ids: [row.id],
+            files,
+            deliver: {
+                codexWorkerFor: () => null,
+                runTool: async () => {
+                    throw new Error("No transport may run");
+                },
+            },
+        });
+        expect(nowhere).toMatchObject({ sent: 0, queued: 1, failed: 0 });
+        let undo: (() => Promise<void>) | undefined;
+        let again: Awaited<ReturnType<typeof resendAnsweredDecisions>>;
+
+        try {
+            again = await resendAnsweredDecisions({
+                ids: [row.id],
+                files,
+                deliver: {
+                    codexWorkerFor: () => "fixture-worker",
+                    runTool: async () => {
+                        undo = await refuseRecord(files);
+                        return { success: true, stdout: '{"queued":false,"turnId":"fixture-turn"}', stderr: "" };
+                    },
+                },
+            });
+        } finally {
+            await undo?.();
+        }
+
+        expect(again).toMatchObject({ sent: 1, queued: 0, failed: 0 });
+        expect(again.sessions[0]).toMatchObject({ session: "resend-b", stored: true, delivered: true });
+        expect(again.sessions[0]?.error).toContain("reached the agent");
     });
 
     test("a Cancel after the agent got the message lets the send record it, so Send again types nothing twice", async () => {
@@ -2406,6 +2531,37 @@ test("a decision card's cited lines are read only for the cards the snapshot pub
     expect(read).toHaveLength(100);
     expect(new Set(read)).toEqual(new Set(published.map((card) => card.refs[0]?.value)));
     expect(published.every((card) => card.decision?.refs?.[0]?.excerpt === "const cited = 1;")).toBe(true);
+});
+
+test("a session shortened by the per-session limit names the entries it left out", async () => {
+    const directory = await root();
+    const file = join(directory, "decisions.jsonl");
+    await postDecisions(
+        file,
+        join(directory, "events.jsonl"),
+        {
+            sessionId: "many-entries-session",
+            provider: "claude",
+            cwd: "/fixture",
+            decisions: Array.from({ length: INBOX_ITEMS_PER_SESSION + 2 }, (_, index) => ({
+                prompt: `Ship ${index}?`,
+                options: ["yes", "no"],
+            })),
+        },
+        { env: {} }
+    );
+    const sources: WidgetSources = {
+        sessions: async () => [],
+        decisions: () => readDecisions(file),
+        forms: () => [],
+        answers: () => [],
+        agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+    };
+    const snapshot = await widgetSnapshot({ root: directory, sources });
+    const session = snapshot.notifications?.sessions.find((entry) => (entry.items?.length ?? 0) > 0);
+
+    expect(session?.items).toHaveLength(INBOX_ITEMS_PER_SESSION);
+    expect(session?.hiddenItems).toBe(2);
 });
 
 test("a session lists its waiting entries first, then the newest, at most eight", () => {

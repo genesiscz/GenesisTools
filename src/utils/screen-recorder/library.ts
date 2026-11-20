@@ -50,6 +50,16 @@ export interface RecordingSpan {
 }
 
 /**
+ * The display a Follow display take records from movie time `atMs` on (`settings.video.displays` in recording.json),
+ * in movie order; the first row is the display it started on. The editor reads which stretch came from which display.
+ * A manifest written before 2026-11-20, or of a take that never followed, has none.
+ */
+export interface RecordingDisplaySwitch {
+    atMs: number;
+    display: { id: number; name: string };
+}
+
+/**
  * A new movie recording's library id, `video-<local date>_<time>-<uuid>`: the library sorts its folders by the time in
  * the name, and `shortRecordingId` shortens it to the part before the uuid's second group.
  */

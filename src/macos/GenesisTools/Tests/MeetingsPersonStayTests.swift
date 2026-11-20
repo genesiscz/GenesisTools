@@ -1,3 +1,4 @@
+import GenesisKitTestSupport
 import SwiftUI
 import Vision
 import XCTest
@@ -71,7 +72,7 @@ final class MeetingsPersonStayTests: XCTestCase {
         var draft = MeetingSeatsDraft(seats)
         XCTAssertEqual(draft.joins, ["01:15"])
         draft.joins[0] = "1:"
-        XCTAssertEqual(draft.joins[0], "1:", "a half-typed time stays while it is typed")
+        XCTAssertEqual(try draft.joins.required(0), "1:", "a half-typed time stays while it is typed")
         XCTAssertEqual(draft.problem, "Dana Example: Write a time as 12:04 or 1:05:30, or leave it empty.")
         draft.joins[0] = "1:05"
         draft.leaves[0] = "1:00:00"
@@ -121,6 +122,35 @@ final class MeetingsPersonStayTests: XCTestCase {
         XCTAssertEqual(twice.count, 0)
     }
 
+    /// w_b2dqtbgc: a person whose saved seats move from the call into the room has no single side. The engine answers
+    /// unsure with confidence 1 and keeps both rows, and Use suggestion keeps both until the person is picked by hand.
+    func testUseSuggestionKeepsASavedMoveBetweenTheCallAndTheRoom() throws {
+        let moving = try JSONDecoder().decode(MeetingsAPI.SeatsSuggest.Suggestion.self, from: Data(#"""
+        {"seats":{"room":[{"name":"Fern","fromSec":600},"Reed"],"remote":[{"name":"Fern","fromSec":0,"toSec":600}],
+                  "microphones":[{"id":"self","people":["Reed","Fern"]}]},
+         "people":[{"name":"Fern","seat":"unsure","reason":"Saved room and remote intervals.","confidence":1},
+                   {"name":"Reed","seat":"room","reason":"Recording participant (self).","confidence":1},
+                   {"name":"Lake","seat":"unsure","reason":"Muted on both reads.","confidence":0}]}
+        """#.utf8))
+        var draft = MeetingSeatChoices(moving)
+        XCTAssertEqual(draft.keptAsSaved, ["Fern"], "an engine guess with no rows is not a saved move")
+        XCTAssertEqual(draft.count, 2, "the saved move enables Use suggestion")
+        XCTAssertEqual(draft.seats(record: nil), moving.seats, "the saved microphone group survives an unchanged save")
+
+        draft.set(.remote, for: "Fern")
+        XCTAssertEqual(draft.count, 2)
+        XCTAssertEqual(draft.seats(record: nil).remote, moving.seats.remote)
+        XCTAssertEqual(draft.seats(record: nil).roomRows, [.init("Reed")], "a hand pick of one side drops the other")
+        XCTAssertEqual(draft.seats(record: nil).microphones, [.init(id: "self", people: ["Reed"])],
+                       "a person picked remote leaves this Mac's microphone")
+        draft.set(.unsure, for: "Reed")
+        XCTAssertEqual(draft.seats(record: nil).microphones, [], "a group with no seated member goes")
+        draft.set(.room, for: "Reed")
+        draft.set(.unsure, for: "Fern")
+        XCTAssertEqual(draft.count, 2)
+        XCTAssertEqual(draft.seats(record: nil), moving.seats)
+    }
+
     /// w_sbxfmxen: the seats sheet seats picked people and picks a device; nothing is typed as an id or a comma list,
     /// and Save writes the engine's shape (`self`, `device:<owner>` with the owner, room or remote members only).
     func testTheSeatsSheetSeatsPickedPeopleOnDevicesItOffers() {
@@ -133,10 +163,10 @@ final class MeetingsPersonStayTests: XCTestCase {
         XCTAssertEqual(draft.newDevices, [.thisMac, .owner("Dana Example")])
 
         draft.addMicrophone(.thisMac)
-        XCTAssertEqual(draft.seats.microphones?[0], .init(id: "self", label: nil, people: ["Alice Example", "Bob Example"], deviceId: nil),
+        XCTAssertEqual(try draft.seats.microphones?.required(0), .init(id: "self", label: nil, people: ["Alice Example", "Bob Example"], deviceId: nil),
                        "this Mac's microphone starts with the room")
         draft.addMicrophone(.owner("Dana Example"))
-        XCTAssertEqual(draft.seats.microphones?[1],
+        XCTAssertEqual(try draft.seats.microphones?.required(1),
                        .init(id: "device:Dana Example", label: nil, people: ["Dana Example"], deviceId: "Dana Example"),
                        "a person's own device as the engine writes it")
         XCTAssertEqual(draft.newDevices, [], "every seat has its microphone")
@@ -144,10 +174,10 @@ final class MeetingsPersonStayTests: XCTestCase {
 
         draft.seatRemote("Bob Example")
         XCTAssertEqual(draft.seats.room, ["Alice Example"], "a person has one seat: Bob moves")
-        XCTAssertEqual(draft.seats.microphones?[0].people, ["Alice Example"], "and leaves the room's microphone")
+        XCTAssertEqual(try draft.seats.microphones?.required(0).people, ["Alice Example"], "and leaves the room's microphone")
         XCTAssertEqual(draft.eligible(1), ["Dana Example", "Bob Example"], "a device offers the remote people")
         draft.toggle("Bob Example", inMicrophone: 1)
-        XCTAssertEqual(draft.seats.microphones?[1].people, ["Dana Example", "Bob Example"])
+        XCTAssertEqual(try draft.seats.microphones?.required(1).people, ["Dana Example", "Bob Example"])
         XCTAssertEqual(draft.devices(for: 0).map(\.free), [true, false, true], "Dana's device is the other group")
 
         draft.toggle("Alice Example", inMicrophone: 0)
@@ -155,7 +185,7 @@ final class MeetingsPersonStayTests: XCTestCase {
         draft.removeMicrophone(at: 0)
         XCTAssertNil(draft.problem)
         draft.unseat("Dana Example")
-        XCTAssertEqual(draft.seats.microphones?[0].people, ["Bob Example"], "an unseated person leaves every microphone")
+        XCTAssertEqual(try draft.seats.microphones?.required(0).people, ["Bob Example"], "an unseated person leaves every microphone")
         let saved = draft.parsed
         XCTAssertEqual(saved.room, ["Alice Example"])
         XCTAssertEqual(saved.remote.map(\.name), ["Bob Example"])
@@ -314,7 +344,7 @@ final class MeetingsPersonStayTests: XCTestCase {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: image).perform([request])
+        try recognizeText(in: image, with: request)
         let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
         for word in ["Who was there: Alice Example", "Joined", "Left", "12:04 or 1:05:30", "replaces their 2 stays", "Remove from the meeting", "Save"] {
             XCTAssertTrue(text.contains(word), "drawn: \(word) in\n\(text)")

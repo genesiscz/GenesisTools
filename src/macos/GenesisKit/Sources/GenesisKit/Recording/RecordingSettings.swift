@@ -38,6 +38,8 @@ public final class RecordingSettings: ObservableObject {
         public static let frameRate = "recording.frameRate"
         public static let showsBorder = "recording.showsBorder"
         public static let confirmsDiscard = "recording.confirmsDiscard"
+        /// Shared with the menu bar recorder's own settings page (`CaptureOptions`), so both start the same way.
+        public static let keepsOverlays = "recording.keepsOverlays"
     }
 
     /// Default: near what is recorded, so the controls sit where the person is looking.
@@ -58,6 +60,16 @@ public final class RecordingSettings: ObservableObject {
     /// "Discard" and "Restart" ask once inside the controls before they lose what was recorded. Default on.
     @Published public var confirmsDiscard: Bool {
         didSet { defaults.set(confirmsDiscard, forKey: Key.confirmsDiscard) }
+    }
+
+    /// Dimming overlays (HazeOver and other dimmers) stay in the movie (`--keep-overlays`). Read from the defaults at
+    /// each start, because the recorder's settings page writes the same key. Default off: the recorder leaves them out.
+    public var keepsOverlays: Bool {
+        get { defaults.bool(forKey: Key.keepsOverlays) }
+        set {
+            objectWillChange.send()
+            defaults.set(newValue, forKey: Key.keepsOverlays)
+        }
     }
 
     private let defaults: UserDefaults
@@ -109,6 +121,11 @@ public struct RecordingSettingsView: View {
                 NativeSettingsToggle(
                     "Red border around the recording", detail: "Marks what is recorded. It never appears in the movie.",
                     identifier: "recording.showsBorder", isOn: $settings.showsBorder)
+                Divider()
+                NativeSettingsToggle(
+                    "Keep screen dimmers", detail: "Off leaves HazeOver and other dimming overlays out of the movie.",
+                    identifier: "recording.keepsOverlays",
+                    isOn: Binding(get: { settings.keepsOverlays }, set: { settings.keepsOverlays = $0 }))
             }
         }
     }

@@ -39,6 +39,34 @@ describe("findClaudeCommand timeout cleanup", () => {
         const after = Bun.spawnSync(["pgrep", "-f", marker], { env: process.env }).stdout.toString().trim();
         expect(after).toBe("");
     });
+
+    test("a candidate that closes stdout and keeps running still runs out of time, and its child is ended", async () => {
+        const marker = `quiet-wrapper-child-${Date.now()}`;
+        _setFindClaudeCommandTestHooks({
+            candidates: ["quiet-wrapper", "binary"],
+            timeoutMs: 100,
+            spawnProbe: (candidate) =>
+                Bun.spawn({
+                    env: process.env,
+                    // The wrapper starts its real program and waits for it, as a shell wrapper does.
+                    cmd: [
+                        "bash",
+                        "-c",
+                        candidate === "binary"
+                            ? "echo '9.9.9 (Claude Code)'"
+                            : `exec >&-; (exec -a ${marker} sleep 30) & wait`,
+                    ],
+                    stdio: ["ignore", "pipe", "pipe"],
+                    detached: true,
+                }),
+        });
+
+        const started = performance.now();
+        expect(await findClaudeCommand()).toBe("binary");
+        expect(performance.now() - started).toBeLessThan(5000);
+        await Bun.sleep(200);
+        expect(Bun.spawnSync(["pgrep", "-f", marker], { env: process.env }).stdout.toString().trim()).toBe("");
+    });
 });
 
 describe("pickClaudeCommand", () => {
@@ -221,6 +249,23 @@ describe("findClaudeExecutable", () => {
         try {
             expect(await interactiveShellLookup({ spawn: () => proc, timeoutMs: 100 })).toBeNull();
             expect(await proc.exited).not.toBe(0);
+        } finally {
+            proc.kill();
+        }
+    });
+
+    test("the shell deadline ends a process the rc file started, not only the shell", async () => {
+        const marker = `rc-file-child-${Date.now()}`;
+        const proc = Bun.spawn({
+            env: process.env,
+            cmd: ["/bin/bash", "-c", `(exec -a ${marker} sleep 30) & wait`],
+            stdio: ["ignore", "pipe", "ignore"],
+            detached: true,
+        });
+        try {
+            expect(await interactiveShellLookup({ spawn: () => proc, timeoutMs: 100 })).toBeNull();
+            await Bun.sleep(200);
+            expect(Bun.spawnSync(["pgrep", "-f", marker], { env: process.env }).stdout.toString().trim()).toBe("");
         } finally {
             proc.kill();
         }

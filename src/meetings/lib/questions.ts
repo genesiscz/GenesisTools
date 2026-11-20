@@ -94,16 +94,24 @@ export function itemsNamed(record: MeetingRecord, ids: readonly string[]): Meeti
         itemIndexes.set(items, index);
         return index;
     };
-    let index = itemIndexes.get(items) ?? build();
+    const kept = itemIndexes.get(items);
+    let index = kept ?? build();
+    // A miss rebuilds the index at most once per call: after that a missing id is really gone.
+    let fresh = !kept;
 
     const found = new Set<number>();
 
     for (const id of ids) {
         let at = index.get(id);
 
-        if (at === undefined || items[at]?.id !== id) {
+        if ((at === undefined || items[at]?.id !== id) && !fresh) {
             index = build();
+            fresh = true;
             at = index.get(id);
+        }
+
+        if (at !== undefined && items[at]?.id !== id) {
+            at = undefined;
         }
 
         if (at !== undefined) {
@@ -239,6 +247,7 @@ export function groupSpeakerQuestions(
             toSec = Math.max(toSec, typeof end === "number" ? end : range.toSec);
         }
         const indices = ranges.flatMap((r) => context.speakers?.linesFor(r).map((line) => line.index) ?? []);
+        const allowed = context.speakers?.choices(indices);
         const choices = speakerChoices(
             [
                 ...(typeof person === "string" ? [person] : []),
@@ -246,8 +255,9 @@ export function groupSpeakerQuestions(
                 ...ranges.flatMap((r) => r.candidates ?? []),
                 ...(context.candidates ?? []),
             ],
-            context.speakers?.choices(indices),
-            presenceAt(context.presence, fromSec).absent,
+            allowed,
+            // Line eligibility already covers attendance; the presence window is the fallback without it.
+            allowed ? [] : presenceAt(context.presence, fromSec).absent,
             context.speakers
         );
         return {
@@ -357,10 +367,13 @@ export function questionFor(item: MeetingItem, context: QuestionContext): NewQue
             return undefined;
         }
 
+        // The present names still order the choices and sign the question, so a propagated answer keeps its signature.
         const { present, absent } = presenceAt(context.presence, item.fromSec);
-        const excluded = [...absent, ...(context.callMutes?.forRange(item) ?? [])];
         // The people the range's typed scores weigh come last, so the first two choices (the signature) stay as before.
         const indices = context.speakers?.linesFor(item).map((line) => line.index) ?? [];
+        const allowed = context.speakers?.choices(indices);
+        // Line eligibility already covers attendance and full-line call mutes; these exclusions are the fallback.
+        const excluded = allowed ? [] : [...absent, ...(context.callMutes?.forRange(item) ?? [])];
         const choices = speakerChoices(
             [
                 ...(item.speaker ? [item.speaker] : []),
@@ -369,7 +382,7 @@ export function questionFor(item: MeetingItem, context: QuestionContext): NewQue
                 ...(context.candidates ?? []),
                 ...speakerScoresOf(item).map((score) => score.speaker),
             ],
-            context.speakers?.choices(indices),
+            allowed,
             excluded,
             context.speakers
         );
@@ -514,7 +527,13 @@ export function wordQuestions(items: MeetingItem[], context: QuestionContext, mi
         }
 
         const form = item.heard.toLowerCase();
-        forms.set(form, [...(forms.get(form) ?? []), { item, atSec: item.atSec, occurrences: heardTimes(item) }]);
+        const term = { item, atSec: item.atSec, occurrences: heardTimes(item) };
+        const bucket = forms.get(form);
+        if (bucket) {
+            bucket.push(term);
+        } else {
+            forms.set(form, [term]);
+        }
     }
 
     return [...forms.values()]

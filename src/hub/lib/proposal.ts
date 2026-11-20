@@ -479,7 +479,7 @@ export function proposalsDir(base?: string): string {
  */
 /**
  * Read, merge and write under `<file>.lock`, the lock the review window's `ProposalDocument.update`
- * also takes (Review/FileLock.swift): otherwise a push and a click in the window can both read the old
+ * also takes (Host/FileLock.swift): otherwise a push and a click in the window can both read the old
  * file, and the later write drops the other's drafts or decision.
  */
 export async function saveProposal(
@@ -654,7 +654,8 @@ export function hubStatus(bundlePath = genesisAppBundlePath()): HubStatus {
 
 /** The installation gate for review clients. A status query never opens a window or offers a build. */
 export async function reviewWindowStatus(deps = liveEngineDeps(AREAS)): Promise<HubStatus> {
-    const bundlePath = genesisAppBundlePath();
+    // The bundle the needs judged: the resource check and the answer name the same one.
+    const bundlePath = deps.facts.appBundle().path;
     const env = { ...deps, fresh: false, write: false };
     for (const need of [Need.app.bundle, Need.app.part("hub")]) {
         const result = await checkNeed(need, env);

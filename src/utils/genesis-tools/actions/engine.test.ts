@@ -145,6 +145,7 @@ test("parseAppManifest answers null for malformed JSON and for JSON that is not 
         parts: null,
         rpcMethods: ["rpc.hello"],
     });
+    expect(parseAppManifest('{"sourceHash":"abc","builtAt":"t1","parts":"hub"}')?.parts).toEqual([]);
 });
 
 describe("the app.bundle need asks for the bundle on disk, not for routing", () => {
@@ -397,6 +398,56 @@ describe("runAreaAction", () => {
         expect(outcome.skipped[0]?.reason).toContain("within 50 ms while its needs were checked");
     });
 
+    test("a need check that ends after the deadline starts no further check and no build", async () => {
+        const display = Promise.withResolvers<boolean>();
+        const builds: Array<string | null> = [];
+        const late = defineArea({
+            area: "late",
+            summary: "",
+            actions: {
+                act: defineAction({
+                    summary: "",
+                    args: z.object({}),
+                    result: z.object({}),
+                    native: { needs: [Need.person.display, Need.app.part("hub")], run: () => ({}) },
+                    fix: (ctx) => ctx.build("hub"),
+                }),
+            },
+        });
+        const builder: AppBuilder = {
+            build: async (part) => {
+                builds.push(part);
+            },
+            offerBuild: async () => false,
+            buildCommand: () => "build-it",
+        };
+        const facts = fakeFacts({
+            hasDisplay: () => display.promise,
+            appManifest: () => ({ buildId: "b1", parts: [], rpcMethods: null }),
+        });
+        const config = createConfigStore({
+            registry: { late },
+            file: join(mkdtempSync(join(tmpdir(), "gt-actions-")), "config.json"),
+        });
+        const outcome = await runAreaAction({ late }, "late.act", {}, deps({ facts, builder, config }), {
+            timeoutMs: 20,
+        });
+
+        expect(outcome.skipped.map((skip) => skip.code)).toEqual(["timed-out"]);
+        display.resolve(true);
+        await Bun.sleep(5);
+        expect(builds).toEqual([]);
+    });
+
+    test("an id naming an inherited member is an unknown action", async () => {
+        await expect(runAreaAction(REGISTRY, "demo.constructor", {}, deps())).rejects.toThrow(
+            'no action "demo.constructor"'
+        );
+        await expect(runAreaAction(REGISTRY, "constructor.name", {}, deps())).rejects.toThrow(
+            'no action "constructor.name"'
+        );
+    });
+
     test("a way past the deadline sees ctx.signal abort, and its effect is reported as unknown", async () => {
         const signals: AbortSignal[] = [];
         const slow = defineArea({
@@ -467,6 +518,66 @@ describe("config resolution", () => {
         expect(store.get("demo.greet.tone")).toBe("area-set");
         await expect(store.set("demo.greet.loud", "yes")).rejects.toThrow("demo.greet.loud");
         await expect(store.set("demo.nope", 1)).rejects.toThrow('no config key "nope"');
+    });
+
+    test("a set reads back as the value set, under a transforming schema too", async () => {
+        const prefixed = defineArea({
+            area: "prefixed",
+            summary: "",
+            config: z.object({
+                label: z
+                    .string()
+                    .transform((value) => `prefix:${value}`)
+                    .optional(),
+            }),
+            actions: {},
+        });
+        const store = createConfigStore({
+            registry: { prefixed },
+            file: join(mkdtempSync(join(tmpdir(), "gt-actions-config-")), "config.json"),
+        });
+
+        await store.set("prefixed.label", "work");
+        expect(store.read().areas.prefixed).toEqual({ label: "work" });
+        expect(store.get("prefixed.label")).toBe("prefix:work");
+        expect(store.get("prefixed.label")).toBe("prefix:work");
+    });
+
+    test("an action key follows the action's schema: a stored area value of another type keeps the action default", async () => {
+        const mixed = defineArea({
+            area: "mixed",
+            summary: "",
+            config: z.object({ size: z.string().default("large") }),
+            actions: {
+                act: defineAction({
+                    summary: "",
+                    args: z.object({}),
+                    result: z.object({}),
+                    config: z.object({ size: z.number().default(3) }),
+                    native: () => ({}),
+                }),
+            },
+        });
+        const store = createConfigStore({
+            registry: { mixed },
+            file: join(mkdtempSync(join(tmpdir(), "gt-actions-config-")), "config.json"),
+        });
+
+        await store.set("mixed.size", "small");
+        expect(store.resolve("mixed")).toEqual({ size: "small" });
+        expect(store.resolve("mixed", "act")).toEqual({ size: 3 });
+        expect(store.snapshot("mixed", "act")).toEqual({ area: { size: "small" }, action: { size: 3 } });
+    });
+
+    test("an inherited member is no config key, area or action", async () => {
+        const file = join(mkdtempSync(join(tmpdir(), "gt-actions-config-")), "config.json");
+        writeFileSync(file, SafeJSON.stringify({ version: 1, areas: { demo: { constructor: 1, toString: "x" } } }));
+        const store = createConfigStore({ registry: REGISTRY, file });
+
+        expect(store.resolve("demo", "greet")).toEqual({ tone: "area-default", loud: false });
+        expect(() => store.get("demo.constructor")).toThrow('no config key "constructor"');
+        expect(() => store.get("demo.toString.loud")).toThrow('has no action "toString"');
+        expect(() => store.resolve("constructor")).toThrow('no area "constructor"');
     });
 
     test("a broken file refuses a set and resolves to the defaults", async () => {
@@ -561,6 +672,36 @@ describe("state store", () => {
 
         await theirs.markStale("app", "installed");
         expect(mine.get("app", "installed")).toEqual({ ...value, stale: true });
+    });
+
+    test("a read snapshot is frozen, in the disk store and in memory, so only a report changes state", async () => {
+        const file = join(mkdtempSync(join(tmpdir(), "gt-actions-state-")), "state.json");
+        const value = { value: ["rpc.hello"], at: "2026-11-17T12:00:00.000Z", source: "app" as const };
+        const disk = createStateStore({ file });
+        await disk.report("app", "rpcMethods", value);
+        const memory = memoryStateStore();
+        await memory.report("app", "rpcMethods", value);
+
+        for (const store of [disk, memory]) {
+            const read = store.get<string[]>("app", "rpcMethods");
+            expect(() => read?.value.push("injected")).toThrow();
+            expect(() => {
+                store.read().areas.app = {};
+            }).toThrow();
+            expect(store.get("app", "rpcMethods")).toEqual(value);
+        }
+
+        expect(value.value).toEqual(["rpc.hello"]);
+    });
+
+    test("a memory report with an aborted signal changes nothing, as on disk", async () => {
+        const memory = memoryStateStore();
+        const caller = new AbortController();
+        caller.abort(new Error("cancelled"));
+        const value = { value: true, at: "2026-11-17T12:00:00.000Z", source: "probe" as const };
+
+        await expect(memory.report("app", "installed", value, { signal: caller.signal })).rejects.toThrow("cancelled");
+        expect(memory.get("app", "installed")).toBeUndefined();
     });
 
     test("a state file that does not parse reads empty, and the next report replaces it", async () => {
@@ -857,7 +998,8 @@ describe("the service client", () => {
             dir,
             sourceRoot: genesisToolsSourceRoot(),
             deps: {
-                facts: fakeFacts(),
+                // The service's own terminal: a remote caller must not be told it can use it.
+                facts: fakeFacts({ hasTerminal: () => true }),
                 app: {
                     rpc: async <T>() => {
                         await Bun.sleep(300);
@@ -895,6 +1037,12 @@ describe("the service client", () => {
             await expect(client.call("actions.run", { id: "config.set", args: {} })).rejects.toThrow(
                 'no action "config.set"'
             );
+            const explained = await client.call<{
+                first: string | null;
+                ways: Array<{ needs: Array<{ ok: boolean }> }>;
+            }>("actions.explain", { id: "terminal.prompt" });
+            expect(explained.first).toBeNull();
+            expect(explained.ways[0]?.needs.map((need) => need.ok)).toEqual([false]);
         } finally {
             client?.close();
             start.host.stop("test");

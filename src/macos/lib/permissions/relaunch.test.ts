@@ -689,16 +689,50 @@ describe("link route", () => {
         expect(describeLinkRoute(route)).toBe("the link relay takes them (pid 4103)");
     });
 
-    it("names a launcher run by its program and arguments, without Bun's preloads and script", () => {
+    it("names a router as stuck only once it outlived a minute", () => {
+        const startMs = Date.UTC(2026, 10, 20, 8, 0, 0);
+        const route = linkRoute(
+            [{ pid: 4200, order: 1 }],
+            new Map([[4200, { command: `${APP} https://example.test/a`, startMs }]])
+        );
+        expect(route.target?.kind).toBe("router");
+        expect(linkRouteProblem(route, startMs + 5_000)).toBeNull();
+        const problem = linkRouteProblem(route, startMs + 120_000) ?? "";
+        expect(problem).toContain("STUCK LINK ROUTER");
+        expect(problem).toContain("kill 4200");
+    });
+
+    it("names a run by the word that names its holder only, without Bun's preloads, its script, any flag or any value", () => {
         expect(
             holderArgs(
                 `${APP} /Users/example/.genesis-tools/bin/gt-cc --preload /repo/a.ts --preload /repo/b.ts /repo/src/cc/index.ts run work --resume abc`
             )
-        ).toBe("gt-cc run work --resume abc");
-        expect(holderArgs(`${APP} --hub --resume`)).toBe("--hub --resume");
-        expect(holderArgs(`${APP} https://example.test/reset?token=fixture-secret#x`)).toBe(
-            "https://example.test/reset?…"
+        ).toBe("gt-cc …");
+        expect(
+            holderArgs(`${APP} /Users/example/.genesis-tools/bin/gt-cc --preload /repo/a.ts /repo/src/cc/index.ts`)
+        ).toBe("gt-cc");
+        expect(holderArgs(`${APP} --hub`)).toBe("--hub");
+        expect(holderArgs(`${APP} --hub --resume`)).toBe("--hub …");
+        expect(holderArgs(APP)).toBe("");
+        // A value, a prompt or a credential never reaches the status line or the log.
+        expect(holderArgs(`${APP} /usr/local/bin/gt-ask ask what is my fixture-secret --api-key=fixture-key`)).toBe(
+            "gt-ask …"
         );
+        expect(holderArgs(`${APP} /usr/local/bin/gt-ask ask fixture-secret`)).toBe("gt-ask …");
+        expect(holderArgs(`${APP} /opt/bun run poll.ts --token fixture-secret`)).toBe("bun …");
+        expect(holderArgs(`${APP} --rpc {"q":"fixture-secret"}`)).toBe("--rpc …");
+        // A word spelled like a flag can be a flag's value or a word of a prompt, so no later flag is kept.
+        expect(holderArgs(`${APP} /usr/local/bin/gt-ask --password --fixture-secret`)).toBe("gt-ask …");
+        expect(holderArgs(`${APP} /usr/local/bin/gt-ask ask about --fixture-codename please`)).toBe("gt-ask …");
+        expect(holderArgs(`${APP} /usr/local/bin/gt-ask -pfixture-secret -v`)).toBe("gt-ask …");
+        // A first word that is neither a path, a link, a face flag nor a bare program shows as the mark alone.
+        expect(holderArgs(`${APP} -pfixture-secret`)).toBe("…");
+        expect(holderArgs(`${APP} --token=fixture-secret --hub`)).toBe("…");
+        // A link keeps its scheme and host; user-info, path, query and fragment can each carry a token.
+        expect(holderArgs(`${APP} https://example.test/reset?token=fixture-secret#x`)).toBe("https://example.test/…");
+        expect(holderArgs(`${APP} https://user:fixture-secret@example.test`)).toBe("https://example.test/…");
+        expect(holderArgs(`${APP} genesis-tools://hub/fixture-secret-token`)).toBe("genesis-tools://hub/…");
+        expect(holderArgs(`${APP} genesis-tools://hub`)).toBe("genesis-tools://hub");
         expect(holderArgs(null)).toBeNull();
     });
 

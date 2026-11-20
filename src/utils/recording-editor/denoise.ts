@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { kickDrainer, loadRmConfig, moveToTrash, resolveTarget, rmCallerFromRuntime } from "@genesiscz/utils/rm";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
@@ -157,10 +158,178 @@ export function syncDenoisedTranscript(options: { transcript: string; copy: stri
             log.debug({ copy: options.copy }, "the source has no transcript, so the cleaned copy's goes too");
         }
 
-        rmSync(options.copy, { force: true });
+        trashCacheFiles([options.copy], "recorder-denoise-transcript");
         return;
     }
 
     atomicWriteFileSync(options.copy, readFileSync(options.transcript));
     log.debug({ transcript: options.transcript, copy: options.copy }, "the cleaned copy has the current transcript");
+}
+
+/** How long the editor's noise reduction preview plays, in seconds. */
+export const DENOISE_PREVIEW_SECONDS = 5;
+
+/** One file of a noise reduction preview, from `fromSec` of it, with the audio tracks it mixes in. */
+export interface DenoisePreviewInput {
+    file: string;
+    fromSec: number;
+    /** Each track with its filter (`denoiseFilter`, absent: as recorded) and its volume (absent: 1). */
+    tracks: Array<{ track: number; filter?: string; volume?: number }>;
+}
+
+/**
+ * The ffmpeg command for the editor's noise reduction preview: `seconds` of each input from its start time, every track
+ * through its filter, mixed into one AAC file of `seconds`. The same filters the export uses (`denoiseFilter`), so the
+ * preview sounds as the export will. An input that starts later than the preview (`fromSec` below 0, a sidecar with an
+ * offset) plays from its own start after that much silence, as it does in the export.
+ */
+export function denoisePreviewArgv(options: {
+    inputs: DenoisePreviewInput[];
+    seconds: number;
+    output: string;
+}): string[] {
+    const { inputs, seconds, output } = options;
+    const chains: string[] = [];
+    const labels: string[] = [];
+
+    inputs.forEach((input, index) => {
+        const delayMs = Math.round(Math.max(0, -input.fromSec) * 1000);
+        const delay = delayMs > 0 ? `,adelay=${delayMs}:all=1` : "";
+
+        for (const { track, filter, volume } of input.tracks) {
+            const label = `a${labels.length}`;
+            chains.push(`[${index}:a:${track}]${filter ?? "anull"}${delay},volume=${volume ?? 1}[${label}]`);
+            labels.push(`[${label}]`);
+        }
+    });
+
+    if (labels.length === 0) {
+        throw new Error("the preview has no sound to play");
+    }
+
+    const mix =
+        labels.length === 1
+            ? `${labels[0]}anull[out]`
+            : `${labels.join("")}amix=inputs=${labels.length}:normalize=0:duration=longest[out]`;
+    return [
+        "ffmpeg",
+        "-nostdin",
+        "-v",
+        "error",
+        "-y",
+        ...inputs.flatMap((input) => [
+            "-ss",
+            String(Math.max(0, input.fromSec)),
+            "-t",
+            String(seconds),
+            "-i",
+            input.file,
+        ]),
+        "-filter_complex",
+        [...chains, mix].join(";"),
+        "-map",
+        "[out]",
+        "-vn",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-t",
+        String(seconds),
+        output,
+    ];
+}
+
+/** Which version of a preview input file the preview mixed: a new recording of the same name is a new file. */
+function inputIdentity(file: string): { size: number; mtimeMs: number; ino: number } | null {
+    try {
+        const stat = statSync(file);
+        return { size: stat.size, mtimeMs: stat.mtimeMs, ino: stat.ino };
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Where a preview of `source` goes: `.denoise/preview-<file name>-<hash>.m4a` beside it, the denoise cache the export
+ * uses. The full file name (`demo.mp4`) keeps `demo.mov` and `demo-extra.mp4` apart. The hash covers the start, the
+ * length, the settings and the mix (`inputs`: each file, its version, tracks, volumes and start), so a new strength, a
+ * muted lane or a moved offset is a new file.
+ */
+export function denoisePreviewPath(options: {
+    source: string;
+    settings: DenoiseSettings;
+    fromSec: number;
+    seconds: number;
+    inputs: DenoisePreviewInput[];
+}): string {
+    const mix = options.inputs.map((input) => ({ ...input, identity: inputIdentity(input.file) }));
+    const key = createHash("sha256")
+        .update(
+            SafeJSON.stringify({ settings: options.settings, fromSec: options.fromSec, seconds: options.seconds, mix })
+        )
+        .digest("hex")
+        .slice(0, 12);
+    return join(dirname(options.source), ".denoise", `preview-${basename(options.source)}-${key}.m4a`);
+}
+
+/** Whether `name` is a finished preview whose name starts with `prefix`: the prefix, a 12-digit hash, `.m4a`. */
+function isFinishedPreview(name: string, prefix: string): boolean {
+    return (
+        name.startsWith(prefix) &&
+        name.endsWith(".m4a") &&
+        /^[0-9a-f]{12}$/.test(name.slice(prefix.length, -".m4a".length))
+    );
+}
+
+/**
+ * Moves the earlier finished previews of `source` (`preview-<file name>-<hash>.m4a`, and the older
+ * `preview-<stem>-<hash>.m4a`, but never `keep`) to the trash, so only the newest stays. Another movie's previews and a
+ * preview still being written (`.<pid>.partial.m4a`) are never selected. Returns the ones that left the cache.
+ */
+export function removeOldDenoisePreviews(options: { source: string; keep: string }): string[] {
+    const folder = join(dirname(options.source), ".denoise");
+
+    if (!existsSync(folder)) {
+        return [];
+    }
+
+    const prefixes = [
+        `preview-${basename(options.source)}-`,
+        `preview-${basename(options.source, extname(options.source))}-`,
+    ];
+    const removed = readdirSync(folder)
+        .filter(
+            (name) => prefixes.some((prefix) => isFinishedPreview(name, prefix)) && join(folder, name) !== options.keep
+        )
+        .map((name) => join(folder, name));
+
+    trashCacheFiles(removed, "recorder-denoise-preview");
+    return removed.filter((path) => !existsSync(path));
+}
+
+/**
+ * Moves files of the denoise cache into the GenesisTools trash (src/utils/rm), as every removal of a user's cache
+ * does: `tools rm restore <batch>` puts one back until the drain. Absent files are skipped.
+ */
+function trashCacheFiles(paths: string[], rule: string): void {
+    const present = paths.filter((path) => existsSync(path));
+
+    if (present.length === 0) {
+        return;
+    }
+
+    const config = loadRmConfig();
+    const batch = moveToTrash(
+        present.map((path) => ({ target: resolveTarget(path, dirname(path)), rule })),
+        { config, caller: rmCallerFromRuntime(), graceMinutes: config.grace.otherMinutes }
+    );
+
+    if (!batch) {
+        log.warn({ paths: present, rule }, "the denoise cache files were not moved to the trash");
+        return;
+    }
+
+    kickDrainer(config);
+    log.debug({ batch: batch.id, paths: present, rule }, "moved denoise cache files to the trash");
 }

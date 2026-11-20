@@ -87,6 +87,19 @@ describe("review proposal", () => {
         });
     });
 
+    test("review status checks the resources of the bundle its needs judged", async () => {
+        const deps = liveEngineDeps(AREAS, {
+            facts: {
+                ...LIVE_FACTS,
+                isTest: () => false,
+                appBundle: () => ({ installed: true, launcher: true, routingOff: false, path: "/fixture/app" }),
+                appManifest: () => ({ buildId: "fixture", parts: ["hub"], rpcMethods: null }),
+            },
+            builder: null,
+        });
+        expect(await reviewWindowStatus(deps)).toMatchObject({ available: false, bundlePath: "/fixture/app" });
+    });
+
     test("parses input and never trusts a status from the agent", () => {
         const proposal = parseProposal(input());
 
