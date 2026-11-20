@@ -1,7 +1,7 @@
-import { isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { type ResolvedTranscript, resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
+import { pickSessionProvider, sessionProviderOption } from "./session-provider";
 
 /**
  * `tools ai sessions report <id>` (design 2026-11-01, step U12, proposal 2, first in its port order): one session's
@@ -13,13 +13,12 @@ export function registerSessionsReportCommand(sessions: Command): void {
         .description(
             "One session's cost by model, main loop and sub-agents, its costliest calls and why, and its cache losses"
         )
-        .option("--provider <name>", "claude | grok | codex (auto-detect if omitted)")
+        .addOption(sessionProviderOption())
         .option("--top <n>", "How many of the costliest calls to list (default 10)")
         .option("--json", `Print { schema: "sessions.report@1", session, report }`)
-        .action(async (sessionId: string, opts: { provider?: string; top?: string; json?: boolean }) => {
-            if (opts.provider !== undefined && !isAccountProviderAlias(opts.provider)) {
-                out.printlnErr(`--provider must be claude, codex or grok (got "${opts.provider}")`);
-                process.exitCode = 1;
+        .action(async (sessionId: string, opts: { provider?: string | boolean; top?: string; json?: boolean }) => {
+            const picked = await pickSessionProvider(opts.provider, ["sessions", "report"]);
+            if (!picked) {
                 return;
             }
 
@@ -34,7 +33,7 @@ export function registerSessionsReportCommand(sessions: Command): void {
             let session: ResolvedTranscript;
 
             try {
-                session = await resolveTranscript(sessionId, {}, opts.provider);
+                session = await resolveTranscript(sessionId, {}, picked.provider);
             } catch (error) {
                 out.printlnErr(error instanceof Error ? error.message : String(error));
                 process.exitCode = 1;

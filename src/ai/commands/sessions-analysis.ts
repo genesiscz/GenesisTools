@@ -1,46 +1,8 @@
-import { ACCOUNT_PROVIDER_ALIASES, type AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
-import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { parseDuration } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
-import * as p from "@genesiscz/utils/prompts/p";
-import { type Command, Option } from "commander";
-
-function providerOption(): Option {
-    return new Option("--provider [name]", `Limit the report to this harness: ${ACCOUNT_PROVIDER_ALIASES.join(", ")}`);
-}
-
-/** `--provider` with no value: a TTY picks the harness. An unknown value, or no TTY, lists the values and exits 1. */
-async function pickProvider(
-    given: string | boolean | undefined,
-    subcommand: string
-): Promise<{ provider: AccountProviderAlias | undefined } | undefined> {
-    if (given === undefined) {
-        return { provider: undefined };
-    }
-
-    const known = ACCOUNT_PROVIDER_ALIASES.find((alias) => alias === given);
-    if (known) {
-        return { provider: known };
-    }
-
-    if (given !== true || !isInteractive()) {
-        out.printlnErr(
-            suggestEnumFlag(`tools ai sessions ${subcommand}`, "--provider", ACCOUNT_PROVIDER_ALIASES, {
-                subcommand: ["sessions", subcommand],
-                given: typeof given === "string" ? given : undefined,
-            })
-        );
-        process.exitCode = 1;
-        return undefined;
-    }
-
-    const picked = await p.select({
-        message: "Harness",
-        options: ACCOUNT_PROVIDER_ALIASES.map((value) => ({ value, label: value })),
-        cancel: "back",
-    });
-    return p.isCancel(picked) ? undefined : { provider: picked };
-}
+import type { Command } from "commander";
+import { pickSessionProvider, sessionProviderOption } from "./session-provider";
 
 function sinceTime(value: string): number {
     const duration = parseDuration(value);
@@ -59,7 +21,7 @@ export function registerSessionAnalysis(sessions: Command): void {
     sessions
         .command("context <session-ids...>")
         .description("Attribute context tokens and carry across model calls to their transcript sources")
-        .addOption(providerOption())
+        .addOption(sessionProviderOption(`Limit the report to this harness: ${ACCOUNT_PROVIDER_ALIASES.join(", ")}`))
         .option("--no-agents", "Read the main loop only")
         .option("--top <n>", "Rows in each source table", "25")
         .option("--agents-top <n>", "Agents to show by cache read", "15")
@@ -92,7 +54,7 @@ export function registerSessionAnalysis(sessions: Command): void {
                         }
                         return n;
                     };
-                    const picked = await pickProvider(opts.provider, "context");
+                    const picked = await pickSessionProvider(opts.provider, ["sessions", "context"]);
                     if (!picked) {
                         return;
                     }
@@ -115,7 +77,7 @@ export function registerSessionAnalysis(sessions: Command): void {
     sessions
         .command("resumes [session-ids...]")
         .description("Show model-call pauses, cache hits and writes, and observed cache lifetimes")
-        .addOption(providerOption())
+        .addOption(sessionProviderOption(`Limit the report to this harness: ${ACCOUNT_PROVIDER_ALIASES.join(", ")}`))
         .option("--since <when>", "Include indexed main sessions modified since this duration or ISO date")
         .option("--project <name>", "Limit --since to this project")
         .option("--ttl-only", "Print only the cache lifetime table and reader coverage")
@@ -174,7 +136,7 @@ export function registerSessionAnalysis(sessions: Command): void {
                             "--top and --fresh-start need nonnegative integers; --idle-seconds needs a nonnegative duration."
                         );
                     }
-                    const picked = await pickProvider(opts.provider, "resumes");
+                    const picked = await pickSessionProvider(opts.provider, ["sessions", "resumes"]);
                     if (!picked) {
                         return;
                     }

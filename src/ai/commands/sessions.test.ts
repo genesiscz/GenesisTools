@@ -333,7 +333,7 @@ describe("sessions range flags", () => {
     // Negative control: whole numbers get past the range checks and stop at the next check instead.
     test("whole numbers pass the range checks", async () => {
         const tail = await run(["sessions", "tail", "session-1", "--limit", "5", "--offset", "0", "--provider", "x"]);
-        expect(tail.errors).toEqual([expect.stringContaining("--provider must be one of")]);
+        expect(tail.errors).toEqual([expect.stringContaining('--provider does not accept "x". Possible: claude')]);
 
         const grep = await run(["sessions", "grep", "session-1", "", "--limit", "5"]);
         expect(grep.errors).toEqual(["<query> must not be empty"]);
