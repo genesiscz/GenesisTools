@@ -145,6 +145,7 @@ test("parseAppManifest answers null for malformed JSON and for JSON that is not 
         parts: null,
         rpcMethods: ["rpc.hello"],
     });
+    expect(parseAppManifest('{"sourceHash":"abc","builtAt":"t1","parts":"hub"}')?.parts).toEqual([]);
 });
 
 describe("the app.bundle need asks for the bundle on disk, not for routing", () => {

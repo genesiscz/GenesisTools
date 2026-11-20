@@ -64,7 +64,9 @@ export function parseAppManifest(text: string): AppManifestFacts | null {
 
     return {
         buildId: `${String(raw.sourceHash)}@${String(raw.builtAt)}`,
-        parts: "parts" in raw ? stringList(raw.parts) : null,
+        // An omitted `parts` is an older build that links every part; a `parts` that is not a list of strings is
+        // unreadable, so no part counts as built and a part's need names its build instead of passing.
+        parts: "parts" in raw ? (stringList(raw.parts) ?? []) : null,
         rpcMethods: "rpcMethods" in raw ? stringList(raw.rpcMethods) : null,
     };
 }
