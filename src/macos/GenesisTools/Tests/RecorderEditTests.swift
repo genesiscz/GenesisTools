@@ -560,9 +560,31 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: from.path))
         XCTAssertNil(library.trashed)
 
-        trash.keep(.init(title: "Gone", from: from, to: to))
-        XCTAssertThrowsError(try trash.putBack(), "the Trash copy is gone")
-        XCTAssertEqual(trash.last?.title, "Gone", "a failed Put Back keeps the entry: the recording is still in the Trash")
+        // A row that names A never puts back B, which went to the Trash after the row was drawn.
+        let shown = RecordingTrash.Entry(title: "Shown", from: from, to: to)
+        try FileManager.default.moveItem(at: from, to: to)
+        trash.keep(.init(title: "Newer", from: root.appendingPathComponent("library/newer"), to: root.appendingPathComponent("Trash/newer")))
+        XCTAssertNil(try trash.putBack(shown))
+        XCTAssertEqual(trash.last?.title, "Newer", "the newer entry stays for its own row")
+        trash.keep(shown)
+        XCTAssertEqual(try trash.putBack(shown)?.title, "Shown")
+
+        // The folder is back in its place, so the move fails while the Trash copy is still there: try again later.
+        try FileManager.default.createDirectory(at: to, withIntermediateDirectories: true)
+        let blocked = RecordingTrash.Entry(title: "Blocked", from: from, to: to)
+        trash.keep(blocked)
+        XCTAssertThrowsError(try trash.putBack()) { error in
+            XCTAssertTrue(RecordingTrash.failureMessage(blocked, error).hasSuffix("It is still in the Trash."))
+        }
+        XCTAssertEqual(trash.last?.title, "Blocked", "a failed Put Back keeps the entry while the recording is in the Trash")
+
+        try FileManager.default.removeItem(at: to)
+        let gone = RecordingTrash.Entry(title: "Gone", from: from, to: to)
+        trash.keep(gone)
+        XCTAssertThrowsError(try trash.putBack(), "the Trash copy is gone") { error in
+            XCTAssertTrue(RecordingTrash.failureMessage(gone, error).hasSuffix("Its copy in the Trash is gone."))
+        }
+        XCTAssertNil(trash.last, "nothing is left to put back, so the row goes")
     }
 
     private func project(_ clips: [EditProject.Clip], zooms: [EditProject.Zoom] = []) -> EditProject {

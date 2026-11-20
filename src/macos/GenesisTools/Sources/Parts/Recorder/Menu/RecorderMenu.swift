@@ -54,6 +54,8 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
     private weak var displayedMenu: NSMenu?
     private let routesToRecorder: Bool
     private var recents: [Recent] = []
+    /// The trashed recording the open menu's Put Back row names; that row puts back only this one.
+    private var shownPutBack: RecordingTrash.Entry?
     private var thumbnails: [URL: NSImage] = [:]
     private var reading = false
 
@@ -236,7 +238,8 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         recentRow.submenu = recentMenu
         menu.addItem(recentRow)
         // A recording trashed from a Recent row (or the library) comes back from here, as the library's strip does.
-        if let trashed = RecordingActions.trash.last {
+        shownPutBack = RecordingActions.trash.last
+        if let trashed = shownPutBack {
             let back = row("Put Back “\(trashed.title)”", symbol: "arrow.uturn.backward", action: #selector(putBackTrashed), key: "")
             back.toolTip = "Moves it from the Trash back to \(trashed.from.deletingLastPathComponent().path)"
             recentMenu.addItem(back)
@@ -563,14 +566,18 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
 
     @objc private func openLibrary() { run(.library) }
 
-    /// Put Back from the Recent list: the same move the library's strip makes.
+    /// Put Back from the Recent list: the same move the library's strip makes, of the recording the row names. A
+    /// recording trashed while the menu stayed open does not take its place.
     @objc private func putBackTrashed() {
-        guard let trashed = RecordingActions.trash.last else { return }
+        guard let shown = shownPutBack else { return }
         do {
-            try RecordingActions.trash.putBack()
+            if try RecordingActions.trash.putBack(shown) == nil, let now = RecordingActions.trash.last {
+                HubPerf.log("recorder.menu: put back \(shown.from.path) skipped: \(now.from.path) was trashed after the menu opened")
+                RecorderNotice.failure("“\(shown.title)” was not put back: “\(now.title)” went to the Trash after the menu opened. Open the menu again to put it back.")
+            }
         } catch {
-            HubPerf.log("recorder.menu: put back \(trashed.from.path) failed: \(error.localizedDescription)")
-            RecorderNotice.failure("“\(trashed.title)” could not be put back: \(error.localizedDescription). It is still in the Trash.")
+            HubPerf.log("recorder.menu: put back \(shown.from.path) failed: \(error.localizedDescription)")
+            RecorderNotice.failure(RecordingTrash.failureMessage(shown, error))
         }
         refresh()
     }

@@ -296,11 +296,10 @@ final class LibraryModel {
     func putBack() {
         guard let trashed else { return }
         do {
-            try trash.putBack()
-            selected = trashed.from
+            if try trash.putBack(trashed) != nil { selected = trashed.from }
         } catch {
             HubPerf.log("recorder.library: put back \(trashed.from.path) failed: \(error.localizedDescription)")
-            failure = "“\(trashed.title)” could not be put back: \(error.localizedDescription). It is still in the Trash."
+            failure = RecordingTrash.failureMessage(trashed, error)
         }
         load()
     }

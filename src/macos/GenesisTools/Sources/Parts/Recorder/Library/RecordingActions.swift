@@ -201,14 +201,27 @@ final class RecordingTrash {
     func keep(_ entry: Entry) { last = entry }
     func dismiss() { last = nil }
 
-    /// Moves the last trashed recording back to its folder and returns it. When the move fails it throws and the
-    /// entry stays, because the recording is still in the Trash.
+    /// Moves the last trashed recording back to its folder and returns it. `expected` is the entry a row showed: when
+    /// another recording went to the Trash since, nothing moves and it returns nil, so a row never puts back a
+    /// recording it does not name. When the move fails it throws; the entry stays while its Trash copy is there to try
+    /// again, and goes when that copy is gone, since nothing can be put back then.
     @discardableResult
-    func putBack(_ files: FileManager = .default) throws -> Entry? {
-        guard let entry = last else { return nil }
-        try files.moveItem(at: entry.to, to: entry.from)
+    func putBack(_ expected: Entry? = nil, files: FileManager = .default) throws -> Entry? {
+        guard let entry = last, expected == nil || expected == entry else { return nil }
+        do {
+            try files.moveItem(at: entry.to, to: entry.from)
+        } catch {
+            if !files.fileExists(atPath: entry.to.path) { last = nil }
+            throw error
+        }
         last = nil
         return entry
+    }
+
+    /// The note for a Put Back that failed: it says the recording is still in the Trash only while its copy is there.
+    nonisolated static func failureMessage(_ entry: Entry, _ error: Error, files: FileManager = .default) -> String {
+        let base = "“\(entry.title)” could not be put back: \(error.localizedDescription)."
+        return files.fileExists(atPath: entry.to.path) ? "\(base) It is still in the Trash." : "\(base) Its copy in the Trash is gone."
     }
 }
 
