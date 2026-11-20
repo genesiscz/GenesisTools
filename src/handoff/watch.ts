@@ -138,15 +138,20 @@ export interface HandoffWatch {
  * every handoff. Events are de-duplicated by uid. Each read first folds what an older producer appended only to the
  * old day file, as every handoff reader does (`withHandoffReadDb`), until those producers write the store directly.
  */
-export function watchHandoffs({
-    filters,
-    sinceMs,
-    follow,
-    onEvent,
-    base,
-    dbPath,
-    now = Date.now(),
-}: {
+export function watchHandoffs(options: WatchOptions): HandoffWatch {
+    const db = openHandoffModel(options.dbPath);
+
+    // A throw before the watch is handed back (the catch-up, the name read, an onEvent of the replay) leaves no close
+    // handle with the caller, so the connection closes here.
+    try {
+        return startWatch(db, options);
+    } catch (err) {
+        db.close();
+        throw err;
+    }
+}
+
+interface WatchOptions {
     filters: string[];
     sinceMs: number;
     follow: boolean;
@@ -154,8 +159,12 @@ export function watchHandoffs({
     base?: string;
     dbPath?: string;
     now?: number;
-}): HandoffWatch {
-    const db = openHandoffModel(dbPath);
+}
+
+function startWatch(
+    db: Database,
+    { filters, sinceMs, follow, onEvent, base, now = Date.now() }: WatchOptions
+): HandoffWatch {
     catchUpHandoffs(db, base);
     const names = new Map<string, string>();
     const idsByName = new Map<string, string>();

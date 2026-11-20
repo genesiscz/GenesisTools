@@ -123,17 +123,24 @@ export function ensureHandoffModel(db: Database): void {
 export function openHandoffModel(dbPath?: string): Database {
     const path = dbPath ?? handoffDbPath();
     const db = openWorkDb(path);
-    db.exec("PRAGMA busy_timeout = 5000;");
-    const { eventsTableCreated } = createTables(db);
 
-    // One-time migration: table born under a non-empty handoffs → backfill via rebuild (G1).
-    if (eventsTableCreated && tableExists(db, "handoffs")) {
-        const count = (db.query("SELECT COUNT(*) AS n FROM handoffs").get() as { n: number }).n;
+    // A failed setup hands no connection back, so it closes here rather than staying open with nobody to close it.
+    try {
+        db.exec("PRAGMA busy_timeout = 5000;");
+        const { eventsTableCreated } = createTables(db);
 
-        if (count > 0) {
-            log.info({ count }, "handoff_events table created under existing handoffs — rebuilding to backfill");
-            rebuildHandoffModel(db);
+        // One-time migration: table born under a non-empty handoffs → backfill via rebuild (G1).
+        if (eventsTableCreated && tableExists(db, "handoffs")) {
+            const count = (db.query("SELECT COUNT(*) AS n FROM handoffs").get() as { n: number }).n;
+
+            if (count > 0) {
+                log.info({ count }, "handoff_events table created under existing handoffs — rebuilding to backfill");
+                rebuildHandoffModel(db);
+            }
         }
+    } catch (err) {
+        db.close();
+        throw err;
     }
 
     log.debug({ path }, "handoff read-model opened");

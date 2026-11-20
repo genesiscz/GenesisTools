@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { describe, expect, spyOn, test } from "bun:test";
 import { executeHandoffActions, getHandoff, listHandoffs, postHandoff } from "./executor";
 import { generateEditId, generateEventUid, generateHandoffId } from "./ids";
 import { appendHandoffEvents } from "./log-store";
@@ -371,6 +372,30 @@ describe("handoff watch", () => {
             dbPath: env.dbPath,
         });
         expect(none).toEqual([]);
+    });
+
+    test("a watch whose replay throws closes its database before the error reaches the caller", () => {
+        const env = freshEnv();
+        const posted = postHandoff({ title: "Throwing replay", tasks: [{ text: "one" }] }, env.depsFor(POSTER)).handoff;
+        const close = spyOn(Database.prototype, "close");
+
+        try {
+            expect(() =>
+                watchHandoffs({
+                    filters: [posted.id],
+                    sinceMs: parseSince("1h"),
+                    follow: true,
+                    onEvent: () => {
+                        throw new Error("fixture onEvent failure");
+                    },
+                    base: env.base,
+                    dbPath: env.dbPath,
+                })
+            ).toThrow("fixture onEvent failure");
+            expect(close).toHaveBeenCalledTimes(1);
+        } finally {
+            close.mockRestore();
+        }
     });
 
     test("the change feed reads one bounded page at a time, and the pages together equal the whole feed", () => {
