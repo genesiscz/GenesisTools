@@ -786,6 +786,15 @@ final class MeetingsReviewRowTests: XCTestCase {
         // A rule is never named by its id on screen (w_r1n8lvx5): the row's `decision.by` from the engine says what it
         // looked at, and the window's own words say "a rule".
         XCTAssertEqual(MeetingsWords.actor(DecisionActor(kind: "rule", rule: "E2")), "a rule")
+        // w_iit450te: with the window's rule table the words name what the rule looked at, as `decision.by` does.
+        let names = ["E2": "The attendance record shows who was there."]
+        XCTAssertEqual(MeetingsWords.actor(DecisionActor(kind: "rule", rule: "E2"), ruleNames: names),
+                       "a rule (the attendance record shows who was there)")
+        XCTAssertEqual(MeetingsWords.actor(DecisionActor(kind: "rule", rule: "E9"), ruleNames: names), "a rule")
+        let ruled = try entry(token: "t9", actor: #"{"kind":"rule","rule":"E2"}"#, action: #"{"kind":"confirm","items":["i2"]}"#,
+                              changes: [("i2", "suggested", "confirmed")])
+        let notice = MeetingsWindowModel.decisionNotice(ruled, items: 1, decisions: 1, meetingTitle: nil, ruleNames: names)
+        XCTAssertTrue(notice.hasPrefix("A rule (the attendance record shows who was there) "), notice)
         XCTAssertEqual(MeetingsWords.actor(DecisionActor(kind: "unknown")), "someone, before the history existed")
         let confirm = try entry(token: "t1", action: #"{"kind":"confirm","items":["i2","i4"]}"#,
                                 changes: [("i2", "suggested", "confirmed"), ("i4", "suggested", "confirmed")])

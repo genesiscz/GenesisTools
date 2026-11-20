@@ -411,10 +411,13 @@ private struct HistoryRow: View {
         }
         .padding(.vertical, 3)
         .accessibilityElement(children: .combine)
+        .task(id: entry.token) {
+            if entry.actor.kind == "rule" { detail.window?.ensureRuleNames() }
+        }
     }
 
     private var sentence: String {
-        let who = MeetingsWords.actor(entry.actor)
+        let who = MeetingsWords.actor(entry.actor, ruleNames: detail.window?.ruleNames ?? [:])
         return who.prefix(1).uppercased() + who.dropFirst() + " " + MeetingsWords.entryAction(entry, label: detail.rowName)
     }
 }

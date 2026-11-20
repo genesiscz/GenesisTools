@@ -697,6 +697,7 @@ final class MeetingsWindowModel {
     /// Undo for all of it; a meeting that is not open is named.
     func noteDecision(_ entry: JournalEntry, meeting: String, now: Date = Date()) {
         guard entry.action.kind != "comment", entry.action.kind != "revert" || !entry.changes.isEmpty else { return }
+        if entry.actor.kind == "rule" { ensureRuleNames() }
         let key = "\(meeting)|\(MeetingsWords.actor(entry.actor))"
         var burst = bursts[key]
         if let current = burst, now.timeIntervalSince(current.at) > Self.burstSeconds || !notices.contains(current.notice) {
@@ -711,7 +712,7 @@ final class MeetingsWindowModel {
         let open = detail.flatMap { $0.id == meeting ? $0 : nil }
         let text = Self.decisionNotice(entry, items: next.items.count, decisions: next.tokens.count,
                                        meetingTitle: meeting == selectedMeetingID ? nil : self.meeting(meeting)?.displayTitle ?? meeting,
-                                       label: { open?.rowName($0) ?? $0 })
+                                       label: { open?.rowName($0) ?? $0 }, ruleNames: ruleNames ?? [:])
         let tokens = next.tokens
         let notice = StackedNotice(id: next.notice, text: text, detail: entry.reason.map { "Why: \($0)" },
                                    actions: [.undo { [weak self] id in self?.revert(tokens, in: meeting, replacing: id) }])
@@ -721,8 +722,8 @@ final class MeetingsWindowModel {
     /// "An agent (Claude Code, session 3f98b772) confirmed i3", or for a burst "… decided 7 items", with the meeting
     /// named when it is not the open one.
     static func decisionNotice(_ entry: JournalEntry, items: Int, decisions: Int, meetingTitle: String?,
-                               label: (String) -> String = { $0 }) -> String {
-        let who = MeetingsWords.actor(entry.actor)
+                               label: (String) -> String = { $0 }, ruleNames: [String: String] = [:]) -> String {
+        let who = MeetingsWords.actor(entry.actor, ruleNames: ruleNames)
         let what: String
         if decisions > 1 {
             what = "decided \(Plural.count(items, "item"))"

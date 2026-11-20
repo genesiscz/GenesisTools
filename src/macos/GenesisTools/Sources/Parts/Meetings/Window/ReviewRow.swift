@@ -134,7 +134,7 @@ struct ReviewRowView: View, Equatable {
             .opacity(row.isOpen || editing ? 1 : 0.6)
             if let meanwhile {
                 HStack(spacing: 8) {
-                    Label("Decided meanwhile by \(MeetingsWords.actor(meanwhile.actor)): \(MeetingsWords.entryAction(meanwhile, label: detail.rowName))",
+                    Label("Decided meanwhile by \(MeetingsWords.actor(meanwhile.actor, ruleNames: detail.window?.ruleNames ?? [:])): \(MeetingsWords.entryAction(meanwhile, label: detail.rowName))",
                           systemImage: "person.2.badge.gearshape")
                         .font(.system(size: 12)).foregroundStyle(KitPalette.modified)
                     if let action = MeetingDetailModel.draftDecision(draft, on: row) {
