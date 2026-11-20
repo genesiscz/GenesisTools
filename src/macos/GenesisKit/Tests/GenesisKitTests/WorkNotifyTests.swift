@@ -184,6 +184,34 @@ final class WorkNotifyTests: XCTestCase {
         XCTAssertEqual(chosen, [.widget])
     }
 
+    func testTheLevelCheckmarkFollowsTheScopeTheNextClickWrites() {
+        let cell = WorkNotifyCell(action: "spotted", level: "off", from: "surface.widget", layers: [
+            .init(layer: "default", level: "list"),
+            .init(layer: "config.global", level: "inbox", rule: .level("inbox")),
+            .init(layer: "config.project", level: nil),
+            .init(layer: "surface.hub", level: "banner", rule: .level("banner")),
+            .init(layer: "surface.widget", level: "off", rule: .level("off")),
+        ])
+        XCTAssertEqual(cell.level(at: .global), "inbox")
+        XCTAssertEqual(cell.level(at: .project), "inbox", "the project rule inherits the global one, not a surface override")
+        XCTAssertEqual(cell.level(at: .hub), "banner")
+        XCTAssertEqual(cell.level(at: .widget), "off", "the widget never sees the hub's override")
+        let target = WorkNotifyMenu.Target(type: "bug", action: "spotted", cells: [cell])
+        func checked(_ scope: WorkNotifyScope) -> [String] {
+            MenuButtonPresenter.menu(WorkNotifyMenu.items(target: target, scope: scope, enabled: true,
+                chooseScope: { _ in }, apply: { _, _, _, _ in })).items.prefix(4).filter { $0.state == .on }.map(\.title)
+        }
+        XCTAssertEqual(checked(.project), ["Inbox line"])
+        XCTAssertEqual(checked(.global), ["Inbox line"])
+        XCTAssertEqual(checked(.hub), ["Inbox and banner"])
+        XCTAssertEqual(checked(.widget), ["Nobody"])
+        let bare = WorkNotifyCell(action: "spotted", level: "list", from: "default", layers: [
+            .init(layer: "default", level: "list"),
+            .init(layer: "surface.hub", level: nil),
+        ], builtInLevel: "list")
+        XCTAssertEqual(bare.level(at: .hub), "list")
+    }
+
     func testACellTheRepositoryDecidesStillOffersTheHubAndWidgetScopes() throws {
         let cell = WorkNotifyCell(action: "spotted", level: "off", from: "config.repo", layers: [
             .init(layer: "default", level: "list"),

@@ -125,7 +125,8 @@ enum WorkNotifyMenu {
             return items + scopes
         }
         let writable = target.cells.contains { $0.writable(at: scope) }
-        let current = Set(target.cells.map(\.level))
+        // The checkmark follows the scope the next click writes, not the level another layer delivers.
+        let current = Set(target.cells.map { $0.level(at: scope) })
         var items: [MenuButtonItem] = WorkNotifyWords.levels.map { level in
             .action(WorkNotifyWords.level(level), checked: current == [level], enabled: enabled && !busy && writable,
                     systemImage: WorkNotifyWords.symbol(level), tint: NSColor(WorkNotifyWords.color(level)), identifier: id + "-" + level) {

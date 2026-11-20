@@ -154,6 +154,18 @@ public struct WorkNotifyCell: Identifiable, Equatable, Sendable {
         let project = layers.first { $0.layer == "config.project" }?.level != nil
         return !repo || project
     }
+    /// The level of the rule a write at this scope edits: the scope's own layer, or what that layer inherits from the
+    /// layers under it when it sets none. The hub and the widget never see each other's override.
+    public func level(at scope: WorkNotifyScope) -> String {
+        let order = WorkNotifyScope.layerOrder
+        let rank = order.firstIndex(of: scope.layer) ?? 0
+        let visible = layers.compactMap { entry -> (index: Int, level: String)? in
+            guard let level = entry.level, let index = order.firstIndex(of: entry.layer), index <= rank,
+                  !entry.layer.hasPrefix("surface.") || entry.layer == scope.layer else { return nil }
+            return (index, level)
+        }
+        return visible.max { $0.index < $1.index }?.level ?? builtInLevel
+    }
     /// The strongest rule left when the concrete override at this scope is removed.
     public func inheriting(_ scope: WorkNotifyScope) -> (level: String, layer: String) {
         let removed = scope.layer
