@@ -11,8 +11,8 @@ export const STALE_COMMAND_FILE_MS = 60 * 60 * 1000;
 
 /**
  * The `.command` script: it deletes itself before it runs the command, so the argv (which may hold a secret) stays on
- * disk only until the terminal starts it. The shell keeps reading the open file after the unlink. It echoes only the
- * program's name, never its arguments, so a secret never reaches the terminal's scrollback or its log.
+ * disk only until the terminal starts it. The shell keeps reading the open file after the unlink. Its banner echoes
+ * only the program's name, never its arguments; the command's own output can still reach terminal scrollback or logs.
  */
 export function visibleCommandScript(argv: readonly string[]): string {
     const command = shellCommandLine(argv);
