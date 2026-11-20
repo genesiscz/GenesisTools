@@ -607,8 +607,9 @@ export function withAppBuildSlot<T>(run: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Compiler warnings that fail a package build (`scripts/native/swift-package.ts`; the app build follows once its
- * remaining call sites are labelled, work item w_5c1wno1s). Swift 5 mode binds an unlabeled trailing closure to the LAST
+ * Compiler warnings that fail every Swift build: package builds (`scripts/native/swift-package.ts`), the app build and
+ * the app tests (`appSwiftArgs`). A cold build of the app and its tests without the flag listed no such call on
+ * 2026-11-20 before it was turned on for the app. Swift 5 mode binds an unlabeled trailing closure to the LAST
  * closure parameter when forward and backward matching differ, and only warns: when `EmptyState` gained a second
  * closure, every `EmptyState(...) { }` silently moved to it and seven empty states lost their button.
  */
@@ -742,6 +743,7 @@ function appSwiftArgs(
         "debug",
         "-Xswiftc",
         "-O",
+        ...SWIFT_WARNINGS_AS_ERRORS,
         // No `-Xswiftc -module-cache-path`: the Swift Build engine (SwiftPM 6.4's default) sets its own module
         // cache, `<scratch>/out/ModuleCache.noindex`, so the flag had no effect. Measured 2026-11-05: cold builds
         // given `.build/mc-<name>` or `~/Library/Caches/GenesisTools/swift-module-cache` never created either.
