@@ -118,6 +118,19 @@ test("a draft dictionary entry previews only the changed meeting lines without s
             after: "Another Glimmer.",
         },
     ]);
+    expect(result).toMatchObject({ totalChanged: 2 });
+    expect(result.truncated).toBeUndefined();
+    const bounded = await testDictionaryPhrase(
+        {
+            phrase: "glimmer",
+            meeting: REVIEW.id,
+            entry: { type: "term", value: "Glimmer", spoken: ["glimmer"] },
+            limit: 1,
+        },
+        { store: () => store, configStore: () => config, linkedSource }
+    );
+    expect(bounded).toMatchObject({ totalChanged: 2, truncated: true });
+    expect(bounded.lines?.map((line) => line.index)).toEqual([0]);
     expect(readFileSync(store.path(REVIEW.id), "utf8")).toBe(before);
     expect((await config.read()).global.dictionary.entries).toEqual([]);
 });

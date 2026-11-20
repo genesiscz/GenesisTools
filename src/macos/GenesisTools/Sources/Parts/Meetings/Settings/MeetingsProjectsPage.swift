@@ -880,7 +880,7 @@ private struct MeetingDictionaryPreview: View {
             if busy { ProgressView("Checking the meeting's lines…").controlSize(.small) }
             if let failure { NoticePill(text: failure.sentence, more: failure.detail, tone: .error) }
             if let lines = result?.lines {
-                DictionaryChangedLines(lines: lines)
+                DictionaryChangedLines(lines: lines, totalChanged: result?.totalChanged)
             }
         }.font(.system(size: 12))
         .onChange(of: entry) { _, _ in clear() }
@@ -918,15 +918,21 @@ private struct MeetingDictionaryPreview: View {
 
 struct DictionaryChangedLines: View {
     let lines: [PhraseTest.Line]
+    /// The service lists a bounded number of lines; this counts all of them.
+    var totalChanged: Int? = nil
+    private var total: Int { max(totalChanged ?? lines.count, lines.count) }
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(lines.isEmpty ? "This draft changes no source line." : "Changes \(Plural.count(lines.count, "source line"))")
+            Text(total == 0 ? "This draft changes no source line." : "Changes \(Plural.count(total, "source line"))")
             ForEach(lines, id: \.index) { line in
                 VStack(alignment: .leading, spacing: 2) {
                     Text("\(line.startSec.map(MeetingsFormat.clock) ?? "Untimed") · \(line.speaker)").foregroundStyle(.secondary)
                     Text(verbatim: line.before)
                     Text(verbatim: "→ \(line.after)").foregroundStyle(KitPalette.added)
                 }.textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            }
+            if total > lines.count {
+                Text(Plural.count(total - lines.count, "more line")).foregroundStyle(.secondary)
             }
         }.font(.system(size: 12))
     }

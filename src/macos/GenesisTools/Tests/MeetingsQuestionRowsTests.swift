@@ -126,6 +126,10 @@ extension MeetingsQuestionRowsTests {
         let text = try rendered(DictionaryChangedLines(lines: try XCTUnwrap(result.lines)), name: "C17-preview")
         XCTAssertTrue(text.contains("Changes 1 source line"), text); XCTAssertTrue(text.contains("00:10"), text)
         XCTAssertNil(try JSONDecoder().decode(PhraseTest.self, from: Data(#"{"phrase":"old","text":"old","fired":[],"suggestions":[]}"#.utf8)).lines)
+        let bounded = try JSONDecoder().decode(PhraseTest.self, from: Data(#"{"phrase":"","text":"","fired":[],"suggestions":[],"totalChanged":5,"truncated":true,"lines":[{"index":42,"startSec":10,"endSec":14,"speaker":"Alice Example","before":"zorb","after":"Zorb"}]}"#.utf8))
+        XCTAssertEqual(bounded.totalChanged, 5); XCTAssertEqual(bounded.truncated, true)
+        let shown = try rendered(DictionaryChangedLines(lines: try XCTUnwrap(bounded.lines), totalChanged: bounded.totalChanged), name: "C17-bounded")
+        XCTAssertTrue(shown.contains("Changes 5 source lines"), shown); XCTAssertTrue(shown.contains("4 more lines"), shown)
     }
     func testProjectQuestionHistoryHasItsLabelAndNoEmptyJournalMessage() throws {
         let detail = MeetingDetailModel(id: "copy", window: nil)

@@ -12,6 +12,7 @@ import {
     RECORDER_SETTINGS_DOC,
     recorderSetSchema,
 } from "@genesiscz/utils/repl/toolsets/recorder";
+import { dictionaryEntrySchema } from "@genesiscz/utils/transcribe/dictionary";
 import { DEFAULT_SPAN_GAP_SEC } from "@genesiscz/utils/transcribe/speakers";
 import { z } from "zod";
 import { meetingTimeRangeSchema } from "../moment-schema";
@@ -493,12 +494,20 @@ export const projectsPreview = defineMethod({
 });
 export const dictionaryTest = defineMethod({
     name: "dictionary.test",
-    params: z.object({ phrase: z.string().min(1), project: z.string().min(1).optional() }).strict(),
-    positional: ["phrase"],
+    params: z
+        .object({
+            phrase: z.string().min(1),
+            project: z.string().min(1).optional(),
+            entry: dictionaryEntrySchema.optional(),
+            meeting: z.string().min(1).optional(),
+            limit: z.number().int().positive().optional(),
+        })
+        .strict(),
+    positional: ["phrase", "project", "entry", "meeting", "limit"],
     result: z.unknown(),
-    resultName: "{ text, fired: DictionaryEntry[], suggestions, counts }",
+    resultName: "{ text, fired: DictionaryEntry[], suggestions, counts, lines?, totalChanged?, truncated? }",
     effect: "read",
-    doc: "What the dictionary (global, then the project) does to one phrase, and which entries fired.",
+    doc: `What the dictionary (global, then the project) does to one phrase, and which entries fired, as ${toolCommand("meetings", "dictionary", "test")} --json prints it. With a draft entry and a meeting, also the first limit (default 200) lines of that meeting the entry would change, before and after, with totalChanged and truncated: true when more changed. Reads only.`,
 });
 export const audioPlan = defineMethod({
     name: "audio.plan",

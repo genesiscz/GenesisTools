@@ -128,7 +128,10 @@ use), or the macOS checker with `--word-check macos` when it has Slovak. A langu
   the user confirms. A confirmed fix goes into the project dictionary with `tools meetings dictionary add <heard>
   <correct> --type fix --project <name>` (`term` for a correct word the check should know, `keep` for a real word the
   tool wrongly flags, `abbr` for a substitution). Ask the user before adding the entry. Try the inflected form
-  with `tools meetings dictionary test "<phrase>" --project <name>`. The threshold preview shows which fuzzy
+  with `tools meetings dictionary test "<phrase>" --project <name>` (REPL: `meetings.dictionary.test("<phrase>",
+  "<name>")`). With `--entry <json> --meeting <id> --json` (REPL: `meetings.dictionary.test({ phrase, entry,
+  meeting, limit })`) it lists the meeting's lines the draft would change, at most 200 unless `--limit` says
+  otherwise, with `totalChanged` and `truncated: true` when more changed. The threshold preview shows which fuzzy
   matches a proposed setting would change in this meeting.
 
 ## Removals

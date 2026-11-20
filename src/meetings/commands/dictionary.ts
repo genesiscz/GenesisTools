@@ -265,14 +265,25 @@ function collect(value: string, previous: string[] = []): string[] {
     return [...previous, value];
 }
 
-async function test(phrase: string, opts: { project?: string; json?: boolean; entry?: string }): Promise<void> {
+async function test(
+    phrase: string,
+    opts: { project?: string; json?: boolean; entry?: string; meeting?: string; limit?: string }
+): Promise<void> {
     try {
         const project = opts.project;
+        const limit = opts.limit === undefined ? undefined : Number(opts.limit);
+        if (limit !== undefined && !(Number.isInteger(limit) && limit > 0)) {
+            fail(`--limit takes a whole number above 0 (got "${opts.limit}").`);
+            return;
+        }
+
         const result = await withMeetingsClient((client) =>
             client.call("dictionary.test", {
                 phrase,
                 ...(project ? { project } : {}),
                 ...(opts.entry ? { entry: dictionaryEntrySchema.parse(SafeJSON.parse(opts.entry)) } : {}),
+                ...(opts.meeting ? { meeting: opts.meeting } : {}),
+                ...(limit ? { limit } : {}),
             })
         );
 
@@ -363,6 +374,8 @@ export function registerDictionaryCommand(program: Command): void {
         .description("The phrase after the dictionary, with each entry that fired; reads only")
         .option("--entry <json>", "preview an unsaved dictionary entry against these lines without saving it")
         .option("--project <name>", "the global dictionary and this project's")
+        .option("--meeting <id>", "with --entry, also list the meeting's lines the entry would change (--json)")
+        .option("--limit <n>", "with --meeting, list at most this many changed lines (default 200)")
         .option("--json", "print JSON")
         .action(test);
 }

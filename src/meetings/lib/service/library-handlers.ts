@@ -245,6 +245,9 @@ export async function removeDictionaryEntry(
     return { value: params.value, level: levelOf(params.project), removed };
 }
 
+/** A common word's draft can change most of a long meeting: the answer lists this many changed lines unless asked. */
+export const DICTIONARY_PREVIEW_LINES = 200;
+
 interface DictionaryPreviewLine {
     index: number;
     startSec?: number;
@@ -257,7 +260,9 @@ interface DictionaryPreviewLine {
 export async function testDictionaryPhrase(
     params: MeetingsParsedParams<"dictionary.test"> & { meeting?: string },
     deps: MeetingsHandlerDeps
-): Promise<MeetingsResult<"dictionary.test"> & { lines?: DictionaryPreviewLine[] }> {
+): Promise<
+    MeetingsResult<"dictionary.test"> & { lines?: DictionaryPreviewLine[]; totalChanged?: number; truncated?: boolean }
+> {
     const config = await configOf(deps).read();
     const tested = testPhrase(config, {
         phrase: params.phrase,
@@ -278,29 +283,37 @@ export async function testDictionaryPhrase(
     };
     // A draft equal to the saved entry changes no line: no transcript load and no correction pass.
     if (isDeepStrictEqual(draft.entries, dictionary.entries)) {
-        return { ...tested, lines: [] };
+        return { ...tested, lines: [], totalChanged: 0 };
     }
 
     const opened = OpenedMeeting.of(store, record, deps.linkedSource?.(record));
     const transcript = (await opened.meeting()).transcript;
-    const spans = new TranscriptLines(transcript);
+    // Both passes stay whole: a term's meaning and an abbreviation's first expansion depend on the lines before.
     const before = applyDictionary(transcript, dictionary).entries;
     const after = applyDictionary(transcript, draft).entries;
-    const lines = transcript.flatMap((entry, index) => {
+    const limit = params.limit ?? DICTIONARY_PREVIEW_LINES;
+    const spans = new TranscriptLines(transcript);
+    const lines: DictionaryPreviewLine[] = [];
+    let totalChanged = 0;
+    for (const [index, entry] of transcript.entries()) {
         const oldText = before[index]!.text;
         const newText = after[index]!.text;
-        return oldText === newText
-            ? []
-            : [
-                  {
-                      index,
-                      startSec: entry.startSec,
-                      endSec: spans.end(index),
-                      speaker: entry.speaker,
-                      before: oldText,
-                      after: newText,
-                  },
-              ];
-    });
-    return { ...tested, lines };
+        if (oldText === newText) {
+            continue;
+        }
+
+        totalChanged += 1;
+        if (lines.length < limit) {
+            lines.push({
+                index,
+                startSec: entry.startSec,
+                endSec: spans.end(index),
+                speaker: entry.speaker,
+                before: oldText,
+                after: newText,
+            });
+        }
+    }
+
+    return { ...tested, lines, totalChanged, ...(totalChanged > lines.length ? { truncated: true } : {}) };
 }
