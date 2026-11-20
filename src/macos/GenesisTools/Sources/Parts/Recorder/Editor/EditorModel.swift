@@ -1611,7 +1611,6 @@ final class EditorModel {
                                                            isCancelled: { self?.exportCancelled ?? true }) { progress in
                     self?.exportProgress = progress
                 }
-                self?.exportProgress = nil
                 HubPerf.log("recorder.export: \(result.url.path) \(ByteFormat.file(result.bytes)) in \(String(format: "%.1f", result.seconds)) s")
                 // Copy Movie and a drag hand out only an export of the edit as it is now; a part is never the movie.
                 if part == nil {
@@ -1622,6 +1621,9 @@ final class EditorModel {
                         HubPerf.log("recorder.export: the export ledger was not written: \(error.localizedDescription)")
                     }
                 }
+                // Busy until the ledger is written: from here to the task's end nothing waits, so a second export
+                // cannot start while this task still owns `exportTask` and its deferred cleanup clears it.
+                self?.exportProgress = nil
                 self?.showExport("Exported \(result.url.lastPathComponent) (\(ByteFormat.file(result.bytes)), \(String(format: "%.1f", result.seconds)) s).",
                                  warnings: result.warnings)
                 self?.finishExport(result.url, part: part)
