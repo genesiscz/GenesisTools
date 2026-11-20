@@ -1,5 +1,6 @@
 import { data, isError, type Kit, text, withKit } from "@app/scripts/lib/kit";
 import { logger } from "@genesiscz/utils/logger";
+import { vaultPurpose, withVaultPurpose } from "@genesiscz/utils/security/vault-purpose";
 import type { Participant, TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import type { CalendarEvent, Folder, Meeting, MeetingSummary, ScratchpadNote } from "./types";
 
@@ -70,10 +71,18 @@ async function call<T>(kit: Kit, tool: string, args: Record<string, unknown>): P
     return parsed;
 }
 
-/** Opens one MCP session for `fn`. Every connection failure becomes one plain error. */
-export async function withMcp<T>(fn: (kit: Kit) => Promise<T>): Promise<T> {
+/** What the approval window says when the Wispr Flow MCP needs the vault key (the gateway token lives there). */
+const MCP_PURPOSE = "ask Wispr Flow's MCP server through the mcp-manager gateway";
+
+/**
+ * Opens one MCP session for `fn`. Every connection failure becomes one plain error. `purpose` names the request for the
+ * vault approval window; a caller that knows why it asks (source.ts: the meeting is not on this Mac) sets its own first.
+ */
+export async function withMcp<T>(fn: (kit: Kit) => Promise<T>, purpose: string = MCP_PURPOSE): Promise<T> {
     try {
-        return await withKit(fn, { servers: [SERVER], timeoutMs: 60_000 });
+        return await withVaultPurpose(vaultPurpose() ?? purpose, () =>
+            withKit(fn, { servers: [SERVER], timeoutMs: 60_000 })
+        );
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         // The error goes up to the caller, which says it in one line; the stack belongs in the day log only.
@@ -230,7 +239,7 @@ export async function getMcpMeeting(id: string, options: { transcript: boolean }
             participants,
             transcript: parseMcpTranscript(transcript),
         };
-    });
+    }, `read Wispr Flow meeting ${id} from its MCP server through the mcp-manager gateway`);
 }
 
 export async function listMcpNotes(query?: string, limit = 25): Promise<ScratchpadNote[]> {

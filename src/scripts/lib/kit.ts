@@ -22,6 +22,7 @@ import { readUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { logger } from "@genesiscz/utils/logger";
+import { vaultPurpose, withVaultPurpose } from "@genesiscz/utils/security/vault-purpose";
 import {
     type CallResult,
     createCallResult,
@@ -78,7 +79,23 @@ const quietLogger: RuntimeLogger = {
     error: (...a: unknown[]) => logger.error({ mcporter: a }, "mcporter error"),
 };
 
+/**
+ * Why the kit may need the vault key, for the approval window: the gateway's bearer token and the servers' saved logins
+ * are kept in the vault. A caller that knows more ("ask the Wispr Flow MCP for a meeting") sets its own purpose first,
+ * and that one wins.
+ */
+function kitVaultPurpose(servers: string[] | undefined): string {
+    const named = servers?.length
+        ? `the MCP server${servers.length > 1 ? "s" : ""} ${servers.join(", ")}`
+        : "MCP servers";
+    return `call ${named} through the mcp-manager gateway, whose token and server logins are kept in the vault`;
+}
+
 export async function createKit(options: KitOptions = {}): Promise<Kit> {
+    return withVaultPurpose(vaultPurpose() ?? kitVaultPurpose(options.servers), () => openKit(options));
+}
+
+async function openKit(options: KitOptions): Promise<Kit> {
     const registry = options.registry ?? (await loadRegistry({ refresh: options.refresh, persist: options.persist }));
     const { definitions, authProblems } = await toServerDefinitions(registry, options.servers, {
         refreshAuth: options.refresh,
@@ -154,13 +171,16 @@ export async function createKit(options: KitOptions = {}): Promise<Kit> {
 
 /** Creates a kit, runs fn, always closes. Use this, not createKit, in scripts. */
 export async function withKit<T>(fn: (kit: Kit) => Promise<T>, options: KitOptions = {}): Promise<T> {
-    const kit = await createKit({ persist: true, ...options });
+    // A call may refresh a server's login from the vault too, so the purpose covers the whole run, not only the start.
+    return withVaultPurpose(vaultPurpose() ?? kitVaultPurpose(options.servers), async () => {
+        const kit = await createKit({ persist: true, ...options });
 
-    try {
-        return await fn(kit);
-    } finally {
-        await kit.close();
-    }
+        try {
+            return await fn(kit);
+        } finally {
+            await kit.close();
+        }
+    });
 }
 
 /**
