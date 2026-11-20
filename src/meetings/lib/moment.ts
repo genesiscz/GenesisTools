@@ -1037,22 +1037,19 @@ export interface OpenMomentOptions {
 }
 
 /**
- * The meeting's corrected lines with their cached word times, read for a term only (U11) and only when the meeting has
- * a word timing cache. The read corrects the whole transcript as `meeting.wordTimings.generate` does, because the cache
- * keys its windows to those exact lines.
+ * The meeting's corrected lines with their cached word times, or undefined when the meeting has no ready word timing
+ * cache. The read corrects the whole transcript as `meeting.wordTimings.generate` does, because the cache keys its
+ * windows to those exact lines: a read with the source lines (no end times, uncorrected text) never matches it.
  */
-async function termWordTimes(opened: OpenedMeeting, options: OpenMomentOptions): Promise<WordTimedLine[] | undefined> {
-    const { store, record, target } = options;
-
-    if (target.kind !== "item") {
-        return undefined;
-    }
-
-    const id = questionIdOf(record, target.id);
-    const item = record.items.find((one) => one.id === id);
+export async function meetingWordTimedLines(options: {
+    store: MeetingStore;
+    record: MeetingRecord;
+    opened?: OpenedMeeting;
+}) {
+    const { store, record, opened } = options;
     const cache = meetingWordTimingCache(record.id);
 
-    if (item?.kind !== "term" || !existsSync(cache.folder)) {
+    if (!existsSync(cache.folder)) {
         return undefined;
     }
 
@@ -1064,8 +1061,26 @@ async function termWordTimes(opened: OpenedMeeting, options: OpenMomentOptions):
         opened,
     });
     const read = cache.read(timedTranscriptView(record, applied).entries);
-    log.debug({ meeting: record.id, item: item.id, state: read.wordTimings.state }, "word timings for a term's spot");
+    log.debug({ meeting: record.id, state: read.wordTimings.state }, "word timings of the corrected lines");
     return read.wordTimings.state === "ready" ? read.entries : undefined;
+}
+
+/** A term's spot reads the cached word times (U11), and only a term does. */
+async function termWordTimes(opened: OpenedMeeting, options: OpenMomentOptions): Promise<WordTimedLine[] | undefined> {
+    const { store, record, target } = options;
+
+    if (target.kind !== "item") {
+        return undefined;
+    }
+
+    const id = questionIdOf(record, target.id);
+    const item = record.items.find((one) => one.id === id);
+
+    if (item?.kind !== "term") {
+        return undefined;
+    }
+
+    return meetingWordTimedLines({ store, record, opened });
 }
 
 async function momentIn(opened: OpenedMeeting, options: OpenMomentOptions): Promise<Moment> {
@@ -1124,11 +1139,13 @@ export async function clipMoment(
     const item = record.items.find((one) => one.id === itemId);
     if (item?.kind === "question" && item.question.startsWith('Who says "')) {
         const { refineSplitClip, questionClip } = await import("./listen-clips");
+        const wordTimedLines = await meetingWordTimedLines({ store, record, opened });
         const refined = await refineSplitClip({
             plan: questionClip({
                 record,
                 question: item,
                 transcript: (await opened.meeting()).transcript,
+                ...(wordTimedLines ? { wordTimedLines } : {}),
                 listen: (await opened.config()).global.playback.listen,
                 pads: { beforeSec: moment.padSec, afterSec: moment.padAfterSec ?? moment.padSec },
                 ...(moment.tone ? { toneSound: moment.tone.sound } : {}),

@@ -41,6 +41,7 @@ import {
     type ListenSettings,
     questionClip,
     refineSplitClip,
+    wordTimedClips,
     writeQuestionClips,
 } from "../lib/listen-clips";
 import { listenQuestionFindings, roundQuestionIds, selectedQuestionIds } from "../lib/listen-input";
@@ -478,6 +479,7 @@ async function clipsOut(options: {
         questions: options.questions,
         transcript: new TranscriptLines((await opened.meeting()).transcript),
         ...(await clipSettings(listen, pads)),
+        ...(await wordTimedClips({ store, record: meeting, opened })),
         audioPath: await opened.audioPath(),
         dir: resolve(options.dir),
     });
@@ -795,7 +797,10 @@ const ADAPTERS: Record<"terminal" | "answer", (context: AdapterContext) => Promi
                         await meetingPeopleNames({ store, config: settings, meeting: meeting.id })
                     ),
                     transcript: new TranscriptLines((await opened.meeting()).transcript),
-                    clips: await clipSettings(listen, pads),
+                    clips: {
+                        ...(await clipSettings(listen, pads)),
+                        ...(await wordTimedClips({ store, record: meeting, opened })),
+                    },
                 };
             },
         });
