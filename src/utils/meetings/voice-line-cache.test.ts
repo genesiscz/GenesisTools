@@ -1,11 +1,12 @@
 import { afterEach, expect, mock, spyOn, test } from "bun:test";
-import { mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type SpeakerExtractor, speakerEmbeddingOf } from "@genesiscz/utils/ai/local/runtimes/sherpa/speaker-embedding";
 import * as converter from "@genesiscz/utils/audio/converter";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { z } from "zod";
 import { MeetingStore } from "./record";
 import * as voice from "./voice";
@@ -620,7 +621,15 @@ test("two overlapping passes that save the same cache both keep their results", 
     const span = (fromSec: number) => ({ channel: 0 as const, track: "raw-mic" as const, fromSec, toSec: fromSec + 2 });
     first.set(span(0), { model: "fixture-model", embedding: [1, 0], quality: "ready" });
     second.set(span(10), { model: "fixture-model", embedding: [0, 1], quality: "ready" });
-    await Promise.all([first.save(), second.save()]);
+    // Another writer holds the cache lock while both saves start: neither may read or replace the file before it is
+    // released, and each then merges what the other wrote.
+    const saves = await withFileLock(`${cachePath}.lock`, async () => {
+        const started = [first.save(), second.save()];
+        await Bun.sleep(150);
+        expect(existsSync(cachePath)).toBe(false);
+        return started;
+    });
+    await Promise.all(saves);
     const reopened = open();
     expect(reopened.get(span(0))).toMatchObject({ embedding: [1, 0] });
     expect(reopened.get(span(10))).toMatchObject({ embedding: [0, 1] });
