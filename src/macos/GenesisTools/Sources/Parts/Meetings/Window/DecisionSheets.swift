@@ -9,6 +9,7 @@ struct ReachSheet: View {
     let pending: MeetingDetailModel.PendingReach
     let detail: MeetingDetailModel
     @State private var askAgain = true
+    @AppStorage(MeetingsPreferences.Rows.spellingMarks.key) private var spellingMarks = MeetingsPreferences.Rows.spellingMarks.defaultValue
     @State private var spellingLines: Set<Int>
     @State private var teachDictionary: Bool
 
@@ -35,7 +36,7 @@ struct ReachSheet: View {
                 // U12: what changes and where, in place of "Besides i897, this decision also changes:".
                 let lead = Self.spellingLead(heard: spelling.heard, proposed: spelling.proposed,
                                              lines: spellingLines.count, dictionary: teachDictionary)
-                HighlightedText(lead.text, ranges: lead.ranges)
+                HighlightedText(lead.text, ranges: lead.ranges, style: spellingMarks.style)
                     .font(.system(size: 13.5)).fixedSize(horizontal: false, vertical: true)
             } else {
                 Text(verbatim: Self.lead(pending))
@@ -212,6 +213,7 @@ private struct SpellingReachChoices: View {
     @Binding var teachDictionary: Bool
     let detail: MeetingDetailModel
     var readOnly = false
+    @AppStorage(MeetingsPreferences.Rows.spellingMarks.key) private var spellingMarks = MeetingsPreferences.Rows.spellingMarks.defaultValue
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -239,7 +241,7 @@ private struct SpellingReachChoices: View {
                                 if line.primary { Text("This line").foregroundStyle(.secondary) }
                             }.font(.caption)
                             // The heard words marked where they sit in the line (U12): what the spelling changes.
-                            HighlightedText(line.text, ranges: line.ranges)
+                            HighlightedText(line.text, ranges: line.ranges, style: spellingMarks.style)
                                 .font(.callout).fixedSize(horizontal: false, vertical: true)
                         }
                     }.frame(maxWidth: .infinity, alignment: .leading)

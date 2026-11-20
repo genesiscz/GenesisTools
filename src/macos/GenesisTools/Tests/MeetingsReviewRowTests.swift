@@ -1151,6 +1151,21 @@ final class MeetingsReviewRowTests: XCTestCase {
         XCTAssertEqual(SidePanelWords.choiceTitles["atEnd"], "At the end", "the settings name the choice in words, not its key")
     }
 
+    /// w_mabbp07g: how the spelling dialog marks its words is a window setting with the sheen as its default, and the
+    /// still accent look stays reachable from the side panel and the Settings page.
+    func testTheSpellingMarksAreASettingWithTheSparkleAsItsDefault() throws {
+        typealias Rows = MeetingsPreferences.Rows
+        let suite = "meetings.spelling-marks.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertEqual(Rows.spellingMarks.value(defaults), .sparkle)
+        XCTAssertEqual(Rows.SpellingMarks.sparkle.style, .sparkle)
+        defaults.set("accent", forKey: Rows.spellingMarks.key)
+        XCTAssertEqual(Rows.spellingMarks.value(defaults).style, .accent)
+        let row = SidePanelCatalog.row(Rows.spellingMarks, value: Rows.spellingMarks.value(defaults))
+        XCTAssertEqual(row.choices.map(\.title), ["Sparkle", "Accent, still"])
+    }
+
     /// U14: the folded line of a rejected row showed "i132 …" and then the agent's whole reason, cut at the window's edge.
     func testAFoldedDecidedRowShowsItsItemTextAndAShortStatus() throws {
         let detail = MeetingDetailModel(id: "m", window: nil)

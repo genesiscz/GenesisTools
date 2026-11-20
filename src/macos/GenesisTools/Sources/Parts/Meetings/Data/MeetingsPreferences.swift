@@ -206,6 +206,13 @@ extension MeetingsPreferences {
         /// a sparkle and its confidence, a confirmed value green with a check, a rejected one red and struck through.
         /// `shade`: the older look, where a suggestion is only a tint.
         enum StateLook: String, CaseIterable { case hueAndGlyph, shade }
+        /// How the spelling dialog marks the words a spelling changes (`HighlightStyle` in GenesisKit): `sparkle` is a
+        /// gradient with one sheen across it when it appears (none under Reduce Motion), `accent` the accent hue, still.
+        enum SpellingMarks: String, CaseIterable {
+            case sparkle, accent
+
+            var style: HighlightStyle { self == .sparkle ? .sparkle : .accent }
+        }
 
         static let typedAnswer = MeetingsWindowSetting(
             key: MeetingsPreferences.typedAnswerKey, defaultValue: TypedAnswer.always, choices: TypedAnswer.allCases,
@@ -242,6 +249,10 @@ extension MeetingsPreferences {
             key: "meetings.rows.stateLook", defaultValue: StateLook.hueAndGlyph, choices: StateLook.allCases,
             title: "Suggested and confirmed",
             detail: "Hue and glyph: a suggestion is blue with a sparkle, a confirmed answer green with a check. Shade: a suggestion is only a tint.")
+        static let spellingMarks = MeetingsWindowSetting(
+            key: "meetings.rows.spellingMarks", defaultValue: SpellingMarks.sparkle, choices: SpellingMarks.allCases,
+            title: "Words a spelling changes",
+            detail: "How the spelling dialog marks them. Sparkle: a gradient that shines once when it opens. Accent: the accent colour, still.")
         static let keepPlace = MeetingsWindowSetting(
             key: "meetings.rows.keepPlace", defaultValue: true, choices: [true, false],
             title: "Keep the next row in place",
