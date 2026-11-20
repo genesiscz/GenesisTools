@@ -61,7 +61,7 @@ enum LinkRelay {
             LinkRelay.note("started before \(arguments.first ?? "the settings window")")
             return
         }
-        runAgainAsChild(arguments)
+        runAgainAsNewInstance(arguments)
     }
 
     private static func start() {
@@ -92,7 +92,7 @@ enum LinkRelay {
 
     /// Through Launch Services (FaceLaunch.swift), never as a plain child: a child outlived the WindowServer crash of
     /// 2026-11-18 as a hub with no screen that kept the hub lock.
-    private static func runAgainAsChild(_ arguments: [String]) -> Never {
+    private static func runAgainAsNewInstance(_ arguments: [String]) -> Never {
         switch FaceLaunch.startAndWait(arguments, timeout: startDeadline) {
         case .success(let pid):
             LinkRelay.note("\(arguments.first ?? "") runs again as pid \(pid), younger than the relay")
