@@ -7,7 +7,10 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
     public var capabilities: RecordingCapabilities { Self.movieCapabilities }
     public static let movieCapabilities = RecordingCapabilities(
         targets: [.window, .app, .display, .area], liveTargetSwitch: true, liveFrameRate: true,
-        maxDurationMs: RecordingSessionController.maximumDurationMs, reasonUnavailable: [
+        maxDurationMs: RecordingSessionController.maximumDurationMs, sources: [], reasonUnavailable: [
+            "no.microphone": "Widget recordings are silent video. Record sound with the full recorder (⌘7).",
+            "no.systemAudio": "Widget recordings are silent video. Record sound with the full recorder (⌘7).",
+            "no.camera": "Add a camera with the full recorder (⌘7).",
             "displays": "Record several displays with the full recorder (⌘7).",
             "microphone": "Widget recordings have no microphone track to mute.",
             "microphoneDevice": "Widget recordings have no microphone input. Choose one in the full recorder (⌘7).",

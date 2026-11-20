@@ -235,6 +235,25 @@ final class RecordingBarModelTests: XCTestCase {
         XCTAssertEqual(engine.calls.suffix(2), [.stop, .stop])
     }
 
+    /// The defect: the widget's setup bar drew the microphone, system audio and camera as on and clickable for a
+    /// display or area take, and the movie had no sound and no camera. Its engine names the sources it records.
+    func testTheWidgetsSilentVideoDisablesItsSoundAndCameraBeforeATake() {
+        let widget = WidgetSessionEngine.movieCapabilities
+        for control in ["microphone", "microphoneDevice", "systemAudio", "camera", "cameraSize"] {
+            XCTAssertNotNil(widget.missingSourceReason(control), control)
+        }
+        XCTAssertNil(widget.missingSourceReason("frameRate"))
+        XCTAssertNotNil(widget.unavailableReason(for: .microphone(MicrophoneSetup(enabled: true)), in: RecordingSetup()))
+        for target in [display, RecordingTarget.area(rect: CGRect(x: 0, y: 0, width: 200, height: 100), display: 0)] {
+            XCTAssertEqual(RecordingBarView.audioNote(for: target, capabilities: widget),
+                           "Widget recordings are silent video. Record sound with the full recorder (⌘7).")
+        }
+
+        let full = RecordingCapabilities(targets: [.display])
+        XCTAssertNil(full.missingSourceReason("microphone"), "a recorder records every source unless it says otherwise")
+        XCTAssertNil(RecordingBarView.audioNote(for: display, capabilities: full))
+    }
+
     func testLegacyTargetJSONAndNewTargetWireFormats() throws {
         let fixtures: [(String, RecordingTarget)] = [
             (#"{"kind":"window","windowIds":[7,8],"app":"Editor","title":"Draft","pid":42}"#,

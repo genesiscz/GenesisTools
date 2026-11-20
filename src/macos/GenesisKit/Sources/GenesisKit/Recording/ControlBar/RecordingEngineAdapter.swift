@@ -1,7 +1,23 @@
 import Foundation
 
+/// A sound or picture source beside the screen that a recorder's movie can hold.
+public enum RecordingSource: String, CaseIterable, Sendable {
+    case microphone, systemAudio, camera
+
+    var title: String {
+        switch self {
+        case .microphone: "microphone"
+        case .systemAudio: "system audio"
+        case .camera: "camera"
+        }
+    }
+}
+
 public struct RecordingCapabilities: Equatable, Sendable {
     public var targets: Set<RecordingTargetKind>
+    /// The sources the recorder's movie holds at all. A source outside it is drawn off and disabled with its reason
+    /// in setup too (the widget's movie is silent video with no camera).
+    public var sources: Set<RecordingSource>
     public var liveTargetSwitch: Bool
     public var liveMicrophoneMute: Bool
     public var liveMicrophoneDevice: Bool
@@ -17,8 +33,9 @@ public struct RecordingCapabilities: Equatable, Sendable {
                 liveMicrophoneMute: Bool = false, liveMicrophoneDevice: Bool = false,
                 liveSystemAudioMute: Bool = false, liveFrameRate: Bool = false,
                 liveCamera: Bool = false, liveDisplaysAddRemove: Bool = false, liveRestart: Bool = true, maxDurationMs: Double? = nil,
-                reasonUnavailable: [String: String] = [:]) {
+                sources: Set<RecordingSource> = Set(RecordingSource.allCases), reasonUnavailable: [String: String] = [:]) {
         self.targets = targets
+        self.sources = sources
         self.liveTargetSwitch = liveTargetSwitch
         self.liveMicrophoneMute = liveMicrophoneMute
         self.liveMicrophoneDevice = liveMicrophoneDevice
@@ -49,7 +66,22 @@ public struct RecordingCapabilities: Equatable, Sendable {
         return result
     }
 
+    /// Why a source's control does nothing for this recorder, before a take as well as during one; nil when its
+    /// movie holds the source. The reason is `reasonUnavailable["no.<source>"]`.
+    public func missingSourceReason(_ controlID: String) -> String? {
+        let source: RecordingSource
+        switch controlID {
+        case "microphone", "microphoneDevice", "micMenu": source = .microphone
+        case "systemAudio": source = .systemAudio
+        case "camera", "cameraSize", "cameraShape": source = .camera
+        default: return nil
+        }
+        guard !sources.contains(source) else { return nil }
+        return reasonUnavailable["no.\(source.rawValue)"] ?? "This recorder's movie has no \(source.title)."
+    }
+
     public func unavailableReason(for change: RecordingSetupChange, in setup: RecordingSetup) -> String? {
+        if let missing = missingSourceReason(change.controlID) { return missing }
         let supported: Bool
         switch change {
         case let .target(target):

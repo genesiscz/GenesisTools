@@ -111,6 +111,7 @@ public struct RecordingBarView: View {
     /// A disabled live control keeps its engine's reason. Phase changes never turn a disabled button into
     /// an edit of preferences behind the running take.
     private func reason(_ key: String, live supported: Bool, fallback: String = "Choose this before recording.") -> String? {
+        if let missing = caps.missingSourceReason(key) { return missing }
         if configuring { return nil }
         if live { return supported ? nil : caps.reasonUnavailable[key] ?? fallback }
         return "Available when setting up a recording."
@@ -242,6 +243,9 @@ public struct RecordingBarView: View {
 
     /// What the target's movie leaves out of sound, said in view under the source line; nil when it records sound.
     public static func audioNote(for target: RecordingTarget?, capabilities caps: RecordingCapabilities) -> String? {
+        if caps.sources.isDisjoint(with: [.microphone, .systemAudio]) {
+            return caps.reasonUnavailable["no.microphone"] ?? caps.missingSourceReason("microphone")
+        }
         guard let target else { return nil }
         let live = caps.reasonUnavailable["microphone"] ?? caps.reasonUnavailable["systemAudio"]
         switch target {
@@ -263,9 +267,18 @@ public struct RecordingBarView: View {
         return "\(scope) · Microphone \(mic) · System audio \(system)"
     }
 
+    /// The sources as the movie will hold them: one this recorder cannot record shows off, whatever the saved choice.
+    private var shownMicrophone: MicrophoneSetup { caps.sources.contains(.microphone) ? setup.microphone : MicrophoneSetup() }
+    private var shownSystemAudio: SystemAudioSetup { caps.sources.contains(.systemAudio) ? setup.systemAudio : SystemAudioSetup() }
+    private var shownCamera: CameraSetup {
+        var camera = setup.camera
+        if !caps.sources.contains(.camera) { camera.enabled = false }
+        return camera
+    }
+
     @ViewBuilder private var soundControls: some View {
-        let mic = setup.microphone
-        let system = setup.systemAudio
+        let mic = shownMicrophone
+        let system = shownSystemAudio
         let micReason = reason("microphone", live: caps.liveMicrophoneMute && mic.enabled,
                                fallback: "Enable the microphone before recording.")
         let systemReason = reason("systemAudio", live: caps.liveSystemAudioMute && system.enabled,
@@ -304,8 +317,8 @@ public struct RecordingBarView: View {
             model.apply(.systemAudio(next))
         }
         let cameraReason = reason("camera", live: caps.liveCamera)
-        icon(setup.camera.enabled ? "video.fill" : "video.slash", "Camera", "camera",
-             value: setup.camera.enabled ? "On" : "Off", reason: cameraReason, scope: scope(cameraReason)) {
+        icon(shownCamera.enabled ? "video.fill" : "video.slash", "Camera", "camera",
+             value: shownCamera.enabled ? "On" : "Off", reason: cameraReason, scope: scope(cameraReason)) {
             var next = setup.camera
             next.enabled.toggle()
             model.apply(.camera(next))
@@ -458,7 +471,8 @@ public struct RecordingBarView: View {
     private var deviceOptions: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                let cameraReason = !setup.camera.enabled ? "Turn on the camera first." : reason("camera", live: caps.liveCamera)
+                let cameraReason = caps.missingSourceReason("camera")
+                    ?? (!setup.camera.enabled ? "Turn on the camera first." : reason("camera", live: caps.liveCamera))
                 choice("Camera size", "cameraSize", value: setup.camera.size, values: [140, 200, 260],
                        title: { "\($0) pt" }, reason: cameraReason, scope: scope(cameraReason)) {
                     var next = setup.camera
