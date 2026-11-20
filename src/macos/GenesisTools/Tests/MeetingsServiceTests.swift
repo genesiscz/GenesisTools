@@ -1593,6 +1593,23 @@ final class MeetingsServiceTests: XCTestCase {
         XCTAssertEqual(fake.count("rules.names"), 1, "one read for the window")
     }
 
+    /// The first rule notice of a cold window waits for the rule sentences, so its text (and what VoiceOver reads) says
+    /// what the rule looked at, even when `rules.names` answers late.
+    func testTheFirstRuleNoticeWaitsForALateRuleSentenceRead() async throws {
+        try writeServiceEntry()
+        fake.silent = ["rules.names"]
+        let model = MeetingsWindowModel(noticeClock: ManualNoticeClock(), service: makeService(), loadDetail: { _ in })
+        let json = #"{"token":"t1","at":"2026-11-09T17:32:38.000Z","meeting":"m","actor":{"kind":"rule","rule":"E3"},"action":{"kind":"confirm","items":["i1"]},"decided":["i1"],"changes":[{"id":"i1","before":{"id":"i1","kind":"term","status":"suggested"},"after":{"id":"i1","kind":"term","status":"confirmed"}}]}"#
+        model.noteDecision(try JSONDecoder().decode(JournalEntry.self, from: Data(json.utf8)), meeting: "m")
+        let asked = try await Task.detached { [fake] in try fake!.line { $0["method"] as? String == "rules.names" } }.value
+        XCTAssertTrue(model.notices.notices.isEmpty, "no notice says only \"a rule\" before the sentences are read")
+        fake.send(["jsonrpc": "2.0", "id": try XCTUnwrap(asked["id"]),
+                   "result": ["names": ["E3": "The call shows who is speaking."]]])
+        let shown = await waitUntil(3) { !model.notices.notices.isEmpty }
+        XCTAssertTrue(shown, "the notice comes once the read lands")
+        XCTAssertEqual(model.notices.notices.map(\.text), ["A rule (the call shows who is speaking) confirmed i1"])
+    }
+
     func testALinkCandidateSaysItsSourceTimeAndWhoHoldsIt() {
         let free = MeetingsAPI.MeetingSourcesNear.Candidate(ref: "wisprflow:a", source: "Wispr Flow", title: "Planning",
                                                             start: "2026-11-12T13:15:00.000Z", end: "2026-11-12T14:15:00.000Z",
