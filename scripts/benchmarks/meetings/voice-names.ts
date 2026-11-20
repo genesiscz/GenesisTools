@@ -160,6 +160,11 @@ async function embeddings(meeting: InputMeeting, onlySamples: boolean): Promise<
 // Training is built from this run's --samples only, in memory: a persisted store would keep the samples of an
 // earlier run with other inputs. The scratch home still isolates the embedding caches.
 const store: VoiceStore = { version: 1, model: "", people: {} };
+// An own data property for every name: a plain assignment of "__proto__" runs the prototype setter and stores nothing.
+function setPerson(people: VoiceStore["people"], name: string, person: VoiceStore["people"][string]): void {
+    Object.defineProperty(people, name, { value: person, enumerable: true, writable: true, configurable: true });
+}
+
 await env.testing.withOverrides({ GENESIS_TOOLS_HOME: voiceHome }, async () => {
     for (const meeting of meetings) {
         const embedded = await embeddings(meeting, meeting.id !== target.id);
@@ -176,7 +181,7 @@ await env.testing.withOverrides({ GENESIS_TOOLS_HOME: voiceHome }, async () => {
             store.model = channel.model;
             // An own key only: a name such as "constructor" must not resolve to an inherited property.
             const person = Object.hasOwn(store.people, sample.person) ? store.people[sample.person]! : { samples: [] };
-            store.people[sample.person] = person;
+            setPerson(store.people, sample.person, person);
             if (person.samples.some((print) => print.meeting === meeting.id && print.fromSec === line.fromSec)) {
                 continue;
             }
@@ -311,7 +316,7 @@ if (target.scenario) {
         )
         .slice(0, 5);
     const training = structuredClone(store);
-    training.people[scenario.roomPerson] = {
+    setPerson(training.people, scenario.roomPerson, {
         samples: extra.flatMap((line) => {
             const embedded = targetLines.find((embedded) => embedded.index === line.index)!;
             const channel = embedded.channels[0];
@@ -330,7 +335,7 @@ if (target.scenario) {
                   ]
                 : [];
         }),
-    };
+    });
     const after = labelsFor(target.attended, training);
     summary.scenario = {
         lateJoinerNamed: labels.filter((label) => label.person === scenario.lateJoiner).length,
