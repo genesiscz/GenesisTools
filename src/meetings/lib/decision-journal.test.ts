@@ -26,6 +26,7 @@ import {
     meetingRecordSchema,
 } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
+import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import {
     correctVoiceSample,
     insertVoiceSample,
@@ -76,6 +77,7 @@ import { InProcessMeetingsClient, SocketMeetingsClient } from "./service/client"
 import { startMeetingsService } from "./service/service";
 import type { MeetingVoiceJobs } from "./service/voice-jobs";
 import { assignmentReach } from "./speaker-assign";
+import { LineSpeakers } from "./speaker-evidence";
 import * as voiceLabeler from "./speaker-labels/voice";
 import { correctTranscript } from "./transcript-corrections";
 import { looksLikeOnePerson } from "./voice-backfill";
@@ -4029,6 +4031,33 @@ test("shared-call unknown ranges retain remote candidates only inside their stay
         evidence: { sharedCallUnknown: true },
     });
     expect(ranges[0]!.speaker).toBeUndefined();
+});
+
+test("shared-call unknown ranges judge the call side from the line's eligibility when it is given", () => {
+    const record = meetingRecord("shared-eligibility", {
+        participants: [
+            { name: "Bob Example", from: ["user"] },
+            { name: "Carol Example", from: ["user"] },
+        ],
+        seats: { room: [], remote: [{ name: "Bob Example" }, { name: "Carol Example" }] },
+    });
+    const lines = lineEvidence([{ startSec: 700, speaker: "Bob Example", text: "An uncertain call turn." }], {
+        speaking: [],
+        segments: [{ startSec: 0, endSec: 3000, channel: "system", liveName: "Bob Example" }],
+    });
+    expect(uncertainSharedCallRanges({ record, lines })).toHaveLength(1);
+    // The eligibility read the same line as a microphone line, so the strong call check fails on its channel.
+    const meeting: SourceMeeting = {
+        sourceMeetingId: "shared-eligibility",
+        title: "Shared",
+        start: now,
+        participants: [],
+        speakers: [],
+        folders: [],
+        transcript: [],
+    };
+    const speakers = new LineSpeakers({ record, meeting, lines: lines.map((line) => ({ ...line, micShare: 0.9 })) });
+    expect(uncertainSharedCallRanges({ record, lines, speakers })).toEqual([]);
 });
 
 test("the terminal clip bar keeps the asked forty-to-sixty percent span as its play head moves", () => {

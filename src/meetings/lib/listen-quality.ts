@@ -362,7 +362,8 @@ export function uncertainSharedCallRanges(options: {
                 ? [sourcePerson.name]
                 : []),
         ];
-        const allowed = options.speakers?.eligibility.get(line.index)?.choices;
+        const eligibility = options.speakers?.eligibility.get(line.index);
+        const allowed = eligibility?.choices;
         const candidates = names.filter(
             (name, index) =>
                 (allowed
@@ -382,7 +383,7 @@ export function uncertainSharedCallRanges(options: {
         if (
             !line.speakingUnknown ||
             candidates.length < 2 ||
-            !isStrongCallForNaming(channelFor(line)) ||
+            !isStrongCallForNaming(eligibility?.channel ?? channelFor(line)) ||
             confirmed ||
             matched
         ) {
