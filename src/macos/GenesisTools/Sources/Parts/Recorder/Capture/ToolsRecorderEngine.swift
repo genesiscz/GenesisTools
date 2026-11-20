@@ -175,7 +175,8 @@ final class ToolsRecorderEngine: RecordingEngineAdapter {
         releasePreparation = preparation.release
         let ids = Array(Set(excludeWindowIDs + preparation.previewWindows)).filter { $0 > 0 }.sorted()
         let args = try CaptureOptions.barArguments(setup, threshold: threshold, shortcuts: shortcuts, excluding: ids,
-                                                   screens: NSScreen.screens.map(\.frame), displayIDs: CaptureChoice.screenIDs)
+                                                   screens: NSScreen.screens.map(\.frame), displayIDs: CaptureChoice.screenIDs,
+                                                   keepOverlays: CaptureOptions.load().keepOverlays)
         let id: String = try await withCheckedThrowingContinuation { continuation in
             started = continuation
             do {

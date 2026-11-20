@@ -112,6 +112,9 @@ private struct RecorderRecordingSettings: View {
             NativeSettingsToggle("Record ⌘ and ⌃ shortcuts",
                                  detail: "Keeps the shortcuts pressed with ⌘ or ⌃ for the editor's shortcut overlay. Plain typing is never kept.",
                                  identifier: "recorder.settings.shortcutsOverlay", isOn: model.capture(\.shortcutsOverlay))
+            Divider()
+            NativeSettingsToggle("Keep screen dimmers", detail: "Off leaves HazeOver and other dimming overlays out of the movie.",
+                                 identifier: "recorder.settings.keepOverlays", isOn: model.capture(\.keepOverlays))
         }
     }
 

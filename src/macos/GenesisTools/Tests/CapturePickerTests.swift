@@ -74,6 +74,21 @@ final class CapturePickerTests: XCTestCase {
         ])
     }
 
+    /// The dimmer setting is off by default, so a recording leaves HazeOver out; on, the start keeps it.
+    func testKeepOverlaysReachesTheCommandLineOnlyWhenOn() throws {
+        var options = CaptureOptions()
+        let choice = CaptureChoice.target(.display(index: 0, name: nil))
+        XCTAssertFalse(options.startArguments(choice).contains("--keep-overlays"))
+        options.keepOverlays = true
+        XCTAssertEqual(options.startArguments(choice).last, "--keep-overlays")
+        let suite = "recorder.capture.\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        options.save(defaults)
+        XCTAssertEqual(defaults.object(forKey: "recording.keepsOverlays") as? Bool, true)
+        XCTAssertTrue(CaptureOptions.load(defaults).keepOverlays)
+    }
+
     /// The defect: with an audio toggle on, a window or app choice passed --audio, which a window movie cannot record,
     /// so the start was refused. Its audio flags stay out; a display and an area keep them.
     func testAWindowOrAppChoiceLeavesTheAudioOutAndADisplayOrAreaKeepsIt() {

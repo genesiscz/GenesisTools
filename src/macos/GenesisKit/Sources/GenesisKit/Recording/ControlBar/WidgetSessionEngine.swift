@@ -21,6 +21,7 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
     private let output: AsyncStream<RecordingEngineEvent>.Continuation
     private let makeController: @MainActor () -> RecordingSessionController
     private let showsBorder: @MainActor () -> Bool
+    private let keepsOverlays: @MainActor () -> Bool
     private let finishTimeout: Duration
     private var controller: RecordingSessionController?
     private var take: String?
@@ -37,13 +38,15 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
 
     public convenience init(bridge: ToolsBridge, settings: RecordingSettings? = nil) {
         self.init(makeController: { RecordingSessionController(bridge: bridge) },
-                  showsBorder: { (settings ?? RecordingSettings.shared).showsBorder })
+                  showsBorder: { (settings ?? RecordingSettings.shared).showsBorder },
+                  keepsOverlays: { (settings ?? RecordingSettings.shared).keepsOverlays })
     }
 
     init(makeController: @escaping @MainActor () -> RecordingSessionController, showsBorder: @escaping @MainActor () -> Bool,
-         finishTimeout: Duration = .seconds(240)) {
+         keepsOverlays: @escaping @MainActor () -> Bool = { false }, finishTimeout: Duration = .seconds(240)) {
         self.makeController = makeController
         self.showsBorder = showsBorder
+        self.keepsOverlays = keepsOverlays
         self.finishTimeout = finishTimeout
         (events, output) = AsyncStream.makeStream(of: RecordingEngineEvent.self)
     }
@@ -83,7 +86,7 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
         }
         do {
             try session.start(target: target, excludeWindowIDs: excludeWindowIDs, frameRate: setup.frameRate,
-                              showsBorder: showsBorder(), stillFrameRate: setup.stillFrameRate)
+                              showsBorder: showsBorder(), stillFrameRate: setup.stillFrameRate, keepsOverlays: keepsOverlays())
         } catch {
             controller = nil
             take = nil

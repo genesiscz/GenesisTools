@@ -69,7 +69,7 @@ public final class RecordingSessionController: ObservableObject {
 
     /// The arguments after `tools control`.
     private func arguments(target: RecordingTarget, excludeWindowIDs: [Int], frameRate: Int,
-                           stillFrameRate: Double, showsBorder: Bool) throws -> [String] {
+                           stillFrameRate: Double, showsBorder: Bool, keepsOverlays: Bool) throws -> [String] {
         let data = try JSONSerialization.data(withJSONObject: sessionTarget(target), options: [.sortedKeys])
         let json = String(decoding: data, as: UTF8.self)
         var args = ["capture", "session", "--json", "--stop-on-stdin", "--target", json, "--fps", String(frameRate)]
@@ -80,15 +80,17 @@ public final class RecordingSessionController: ObservableObject {
             args += ["--exclude-window-ids", excludeWindowIDs.map(String.init).joined(separator: ",")]
         }
         if !showsBorder { args.append("--no-indicator") }
+        if keepsOverlays { args.append("--keep-overlays") }
         return args
     }
 
     /// Starts recording `target`. `excludeWindowIDs` are windows the movie never shows (the controls panel).
+    /// `keepsOverlays` keeps dimming overlays (HazeOver) in the movie, which the recorder leaves out by default.
     public func start(target: RecordingTarget, excludeWindowIDs: [Int], frameRate: Int, showsBorder: Bool,
-                      stillFrameRate: Double = 0) throws {
+                      stillFrameRate: Double = 0, keepsOverlays: Bool = false) throws {
         guard channel == nil, !ended else { return }
         let args = try arguments(target: target, excludeWindowIDs: excludeWindowIDs, frameRate: frameRate,
-                                 stillFrameRate: stillFrameRate, showsBorder: showsBorder)
+                                 stillFrameRate: stillFrameRate, showsBorder: showsBorder, keepsOverlays: keepsOverlays)
         self.target = target
         phase = .starting
         let lines: @MainActor ([String]) -> Void = { [weak self] in self?.receive($0) }
