@@ -226,7 +226,11 @@ public struct RecordingBarView: View {
                 Image(systemName: setup.target?.symbol ?? "display")
                 VStack(alignment: .leading, spacing: 0) {
                     Text(title).lineLimit(1).truncationMode(.middle)
-                    if audioReason != nil { Text("No audio").font(.caption).foregroundStyle(.secondary) }
+                    // Only when the target decides it: a recorder that is always silent says so in its strip, and
+                    // the word wrapped letter by letter in the narrow chip.
+                    if audioReason != nil, !caps.sources.isDisjoint(with: [.microphone, .systemAudio]) {
+                        Text("No audio").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
                 }
             }.frame(minWidth: 28, maxWidth: .infinity, minHeight: 26, alignment: .leading)
         }
