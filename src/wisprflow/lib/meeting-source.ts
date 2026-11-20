@@ -71,7 +71,13 @@ function rawFolder(id: string): { folder: string; selfName?: string } | undefine
         return { folder, selfName: importedSelfName(imported.meeting) };
     }
 
-    return localAvailable() ? local() : undefined;
+    if (!localAvailable()) {
+        return undefined;
+    }
+
+    // No folder means no evidence (null), not an empty one: a record's copy keeps what an earlier read saw.
+    const fallback = local();
+    return existsSync(fallback.folder) ? fallback : undefined;
 }
 
 function evidenceOf(id: string): MeetingEvidence | null {
