@@ -1614,7 +1614,10 @@ final class EditorModel {
                 HubPerf.log("recorder.export: \(result.url.path) \(ByteFormat.file(result.bytes)) in \(String(format: "%.1f", result.seconds)) s")
                 // Copy Movie and a drag hand out only an export of the edit as it is now; a part is never the movie.
                 if part == nil {
-                    do { try ExportLedger.record(result.url, revision: revision, in: editFile.deletingLastPathComponent()) } catch {
+                    let folder = editFile.deletingLastPathComponent()
+                    let exported = result.url
+                    // Off the main thread: the ledger's lock waits while a CLI export records its own entry.
+                    do { try await Task.detached { try ExportLedger.record(exported, revision: revision, in: folder) }.value } catch {
                         HubPerf.log("recorder.export: the export ledger was not written: \(error.localizedDescription)")
                     }
                 }

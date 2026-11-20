@@ -25,6 +25,7 @@ import { RecorderControl, type RecorderMethod, type StopAnswer } from "@genesisc
 import { recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
 import { LiveRecordingServer } from "@genesiscz/utils/screen-recorder/live";
 import { recordingStoreOf } from "@genesiscz/utils/screen-recorder/recording-stores";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import {
     computeEdit,
@@ -867,7 +868,7 @@ describe("a hit, wait or event whose first moment is cut plays from its first ke
 });
 
 describe("a recording's quick actions", () => {
-    it("copies an export only while the edit is at the revision it rendered", () => {
+    it("copies an export only while the edit is at the revision it rendered", async () => {
         const folder = folderWith([
             ["screen.mp4", 0],
             ["screen-edited.mp4", 10],
@@ -875,7 +876,7 @@ describe("a recording's quick actions", () => {
         writeFileSync(join(folder, "edit.json"), SafeJSON.stringify({ revision: 4 }));
         expect(shareableMovie(folder).kind).toBe("stale");
 
-        recordExport({ folder, file: join(folder, "screen-edited.mp4"), revision: 4 });
+        await recordExport({ folder, file: join(folder, "screen-edited.mp4"), revision: 4 });
         expect(shareableMovie(folder)).toEqual({ kind: "file", path: join(folder, "screen-edited.mp4") });
 
         // One more change in the editor: the export no longer shows the edit, so nothing is handed out.
@@ -883,21 +884,41 @@ describe("a recording's quick actions", () => {
         expect(shareableMovie(folder)).toMatchObject({ kind: "stale", revision: 5 });
     });
 
-    it("keeps one ledger entry per export file and drops the ones whose file is gone", () => {
+    it("keeps one ledger entry per export file and drops the ones whose file is gone", async () => {
         const folder = folderWith([
             ["screen.mp4", 0],
             ["screen-edited.mp4", 10],
         ]);
         const outside = folderWith([["chosen.mp4", 10]]);
-        recordExport({ folder, file: join(folder, "gone.mp4"), revision: 1 });
-        recordExport({ folder, file: join(folder, "screen-edited.mp4"), revision: 1 });
-        recordExport({ folder, file: join(folder, "screen-edited.mp4"), revision: 2 });
-        recordExport({ folder, file: join(outside, "chosen.mp4"), revision: 2 });
+        await recordExport({ folder, file: join(folder, "gone.mp4"), revision: 1 });
+        await recordExport({ folder, file: join(folder, "screen-edited.mp4"), revision: 1 });
+        await recordExport({ folder, file: join(folder, "screen-edited.mp4"), revision: 2 });
+        await recordExport({ folder, file: join(outside, "chosen.mp4"), revision: 2 });
 
         expect(Object.keys(readExportLedger(folder).files).sort()).toEqual(
             [join(outside, "chosen.mp4"), "screen-edited.mp4"].sort()
         );
         expect(readExportLedger(folder).files["screen-edited.mp4"]?.revision).toBe(2);
+    });
+
+    it("waits for another writer's ledger lock, so an export that writer recorded meanwhile is kept", async () => {
+        const folder = folderWith([
+            ["screen.mp4", 0],
+            ["first.mp4", 10],
+            ["second.mp4", 20],
+        ]);
+        const ledger = join(folder, EXPORT_LEDGER_FILE);
+        let waiting: Promise<void> | undefined;
+        // The other writer (the window, another CLI export) holds the lock between its read and its write.
+        await withFileLock(`${ledger}.lock`, async () => {
+            waiting = recordExport({ folder, file: join(folder, "second.mp4"), revision: 2 });
+            await Bun.sleep(60);
+            const files = { "first.mp4": { revision: 1, writtenAt: "2026-11-04T10:00:00.000Z" } };
+            writeFileSync(ledger, SafeJSON.stringify({ version: 1, files }));
+        });
+        await waiting;
+
+        expect(Object.keys(readExportLedger(folder).files).sort()).toEqual(["first.mp4", "second.mp4"]);
     });
 
     it("reuses a GIF only while the edit and the movie are older than it", () => {

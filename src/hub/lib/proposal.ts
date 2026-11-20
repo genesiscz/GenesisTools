@@ -479,7 +479,7 @@ export function proposalsDir(base?: string): string {
  */
 /**
  * Read, merge and write under `<file>.lock`, the lock the review window's `ProposalDocument.update`
- * also takes (Review/FileLock.swift): otherwise a push and a click in the window can both read the old
+ * also takes (Host/FileLock.swift): otherwise a push and a click in the window can both read the old
  * file, and the later write drops the other's drafts or decision.
  */
 export async function saveProposal(

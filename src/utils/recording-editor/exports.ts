@@ -3,6 +3,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { z } from "zod";
 
 const { log } = logger.scoped("recording-exports");
@@ -99,9 +100,10 @@ function ledgerKey(folder: string, file: string): string {
 
 /**
  * Records that `file` is a whole export of the edit at `revision`. Entries whose file is gone are dropped on the way,
- * so the ledger never grows past the exports that exist.
+ * so the ledger never grows past the exports that exist. The read and the write hold `exports.json.lock` (the lock
+ * the window's `ExportLedger.record` takes too), so two exports that finish at once both stay recorded.
  */
-export function recordExport({
+export async function recordExport({
     folder,
     file,
     revision,
@@ -111,18 +113,21 @@ export function recordExport({
     file: string;
     revision: number | null;
     now?: Date;
-}): void {
-    const ledger = readExportLedger(folder);
-    const files: ExportLedger["files"] = {};
+}): Promise<void> {
+    const path = join(folder, EXPORT_LEDGER_FILE);
+    await withFileLock(`${path}.lock`, async () => {
+        const ledger = readExportLedger(folder);
+        const files: ExportLedger["files"] = {};
 
-    for (const [key, entry] of Object.entries(ledger.files)) {
-        if (existsSync(isAbsolute(key) ? key : join(folder, key))) {
-            files[key] = entry;
+        for (const [key, entry] of Object.entries(ledger.files)) {
+            if (existsSync(isAbsolute(key) ? key : join(folder, key))) {
+                files[key] = entry;
+            }
         }
-    }
 
-    files[ledgerKey(folder, file)] = { revision, writtenAt: now.toISOString() };
-    atomicWriteFileSync(join(folder, EXPORT_LEDGER_FILE), `${SafeJSON.stringify({ version: 1, files }, null, 2)}\n`);
+        files[ledgerKey(folder, file)] = { revision, writtenAt: now.toISOString() };
+        atomicWriteFileSync(path, `${SafeJSON.stringify({ version: 1, files }, null, 2)}\n`);
+    });
     log.debug({ folder, file, revision }, "recorded an export");
 }
 

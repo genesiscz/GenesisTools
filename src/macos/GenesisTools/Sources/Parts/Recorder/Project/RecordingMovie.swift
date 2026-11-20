@@ -133,16 +133,20 @@ enum ExportLedger {
         return .known(number.intValue)
     }
 
-    /// Records that `export` is a whole export of the edit at `revision`; entries whose file is gone are dropped.
+    /// Records that `export` is a whole export of the edit at `revision`; entries whose file is gone are dropped. The
+    /// read and the write hold `exports.json.lock` (`FileLock`, the lock `recordExport` takes), so an export the CLI
+    /// records at the same moment stays in the ledger. It can wait for that lock: call it off the main thread.
     static func record(_ export: URL, revision: Int?, in folder: URL, now: Date = Date()) throws {
-        var files = read(folder).filter { FileManager.default.fileExists(atPath: url(of: $0.key, in: folder).path) }
-        let inside = export.deletingLastPathComponent().standardizedFileURL.path == folder.standardizedFileURL.path
-        let stamp = ISO8601DateFormatter()
-        stamp.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        files[inside ? export.lastPathComponent : export.standardizedFileURL.path] = Entry(revision: revision, writtenAt: stamp.string(from: now))
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        try encoder.encode(Ledger(files: files)).write(to: folder.appendingPathComponent(file), options: .atomic)
+        try FileLock.withLock(folder.appendingPathComponent(file)) {
+            var files = read(folder).filter { FileManager.default.fileExists(atPath: url(of: $0.key, in: folder).path) }
+            let inside = export.deletingLastPathComponent().standardizedFileURL.path == folder.standardizedFileURL.path
+            let stamp = ISO8601DateFormatter()
+            stamp.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            files[inside ? export.lastPathComponent : export.standardizedFileURL.path] = Entry(revision: revision, writtenAt: stamp.string(from: now))
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            try encoder.encode(Ledger(files: files)).write(to: folder.appendingPathComponent(file), options: .atomic)
+        }
     }
 }
 

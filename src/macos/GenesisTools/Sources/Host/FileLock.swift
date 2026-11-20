@@ -3,14 +3,14 @@ import Foundation
 /// The lock `withFileLock` in src/utils/storage/file-lock.ts takes: `<file>.lock`, created with O_EXCL
 /// and holding the owner's pid. The TypeScript side reads a bare pid as a valid owner, and either side
 /// takes over a lock whose owner has died. Hold it around a read-modify-write of a file the CLI also
-/// writes, so neither side overwrites the other's change.
-enum FileLock {
-    struct Timeout: Error, CustomStringConvertible {
-        let path: String
-        var description: String { "could not lock \(path): another writer held it for 5 s" }
+/// writes, so neither side overwrites the other's change. The review (hub) and the recorder's export ledger use it.
+package enum FileLock {
+    package struct Timeout: Error, CustomStringConvertible {
+        package let path: String
+        package var description: String { "could not lock \(path): another writer held it for 5 s" }
     }
 
-    static func withLock<T>(_ file: URL, timeout: TimeInterval = 5, _ body: () throws -> T) throws -> T {
+    package static func withLock<T>(_ file: URL, timeout: TimeInterval = 5, _ body: () throws -> T) throws -> T {
         let lock = file.path + ".lock"
         let deadline = Date().addingTimeInterval(timeout)
         while !acquire(lock) {

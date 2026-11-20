@@ -1635,7 +1635,7 @@ export async function exportAs(
 
     if (answer.ok && answer.path) {
         // Copy Movie and a drag hand out only an export of the edit as it is now (shareableMovieOf).
-        recordExport({ folder: dirname(editPathOf(value)), file: answer.path, revision: rendered.revision });
+        await recordExport({ folder: dirname(editPathOf(value)), file: answer.path, revision: rendered.revision });
     }
 
     // finishExport applies the edit's export.subtitles default, which a GIF leaves out.
