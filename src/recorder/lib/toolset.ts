@@ -868,7 +868,10 @@ const movieMethods = [
         params: z.object({ gif: z.boolean().optional() }).strict(),
         result: z.unknown(),
         resultName: '{ path, kind: "movie" | "gif", exported }',
-        doc: "Puts the recording's movie on the clipboard as a file (the newest export beside it, else its own movie), so a paste in Finder, Slack or Mail gets it; it replaces what the user's clipboard held. gif: true copies a GIF of the edit, exporting one when none is newer than the edit (exported says so). The menu bar's Recent list and the library window do the same.",
+        doc:
+            "Puts the recording's movie on the clipboard as a file (the newest export of the edit as it is now, exported first when the edit changed after the last one; the recording's own movie only when it has no edit), so a paste in Finder, Slack or Mail gets it; it replaces what the user's clipboard held. gif: true copies a GIF of the edit, exporting one when none is newer than the edit (exported says so for both). The menu bar's Recent list, the library window and " +
+            toolCommand("recorder copy") +
+            " do the same.",
         effect: "destructive",
         reaches: ["user"],
     }),

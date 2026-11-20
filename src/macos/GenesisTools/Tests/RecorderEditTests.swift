@@ -399,8 +399,9 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(run["to"] as? Double, 32.6, "where \"know\" ends")
     }
 
-    /// A recording folder with files, each `[name, seconds after a fixed time]`, as recording-movies.json lists them.
-    private func recordingFolder(_ files: [[Any]]) throws -> URL {
+    /// A recording folder with files, each `[name, seconds after a fixed time]`, as recording-movies.json lists them,
+    /// with edit.json at the case's `edit` revision and exports.json from its `exports`.
+    private func recordingFolder(_ files: [[Any]], edit: Int? = nil, exports: [[Any]] = []) throws -> URL {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("movie-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let base = Date(timeIntervalSince1970: 1_793_000_000)
@@ -410,6 +411,16 @@ final class RecorderEditTests: XCTestCase {
             let offset = try XCTUnwrap(file.last as? NSNumber).doubleValue
             try FileManager.default.setAttributes([.modificationDate: base.addingTimeInterval(offset)], ofItemAtPath: url.path)
         }
+        if let edit {
+            try JSONSerialization.data(withJSONObject: ["revision": edit]).write(to: folder.appendingPathComponent("edit.json"))
+        }
+        if !exports.isEmpty {
+            var files: [String: Any] = [:]
+            for export in exports {
+                files[try XCTUnwrap(export.first as? String)] = ["revision": export.last as? NSNumber ?? NSNull(), "writtenAt": "2026-11-04T10:00:00.000Z"]
+            }
+            try JSONSerialization.data(withJSONObject: ["version": 1, "files": files]).write(to: folder.appendingPathComponent(ExportLedger.file))
+        }
         return folder
     }
 
@@ -417,14 +428,31 @@ final class RecorderEditTests: XCTestCase {
     /// the same file as `tools recorder copy` and `movieOf`.
     func testTheMovieOfARecordingFolderMatchesTheSharedCases() throws {
         let cases = try SharedEditorFixture.cases("recording-movies.json")
-        XCTAssertGreaterThanOrEqual(cases.count, 7)
+        XCTAssertGreaterThanOrEqual(cases.count, 13)
         for item in cases {
             let name = try XCTUnwrap(item["name"] as? String)
-            let folder = try recordingFolder(try XCTUnwrap(item["files"] as? [[Any]]))
+            let folder = try recordingFolder(try XCTUnwrap(item["files"] as? [[Any]]), edit: (item["edit"] as? NSNumber)?.intValue,
+                                             exports: item["exports"] as? [[Any]] ?? [])
             defer { try? FileManager.default.removeItem(at: folder) }
+            let shareable = RecordingMovie.shareable(in: folder)
             XCTAssertEqual(RecordingMovie.own(in: folder)?.lastPathComponent, item["movie"] as? String, name)
-            XCTAssertEqual(RecordingMovie.shareable(in: folder)?.lastPathComponent, item["shareable"] as? String, name)
+            XCTAssertEqual(shareable.url?.lastPathComponent, item["shareable"] as? String, name)
+            if case .stale = shareable { XCTAssertEqual(item["stale"] as? Bool, true, name) } else { XCTAssertNil(item["stale"], name) }
         }
+    }
+
+    /// The defect: Copy Movie of an edited card handed out an older export or the unedited movie. The window's export
+    /// records the revision it rendered, and only that revision's export is handed out until the next change.
+    func testCopyMovieHandsOutOnlyTheExportOfTheCurrentEdit() throws {
+        let folder = try recordingFolder([["screen.mp4", 0], ["screen-edited.mp4", 10]], edit: 4)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        XCTAssertEqual(RecordingMovie.shareable(in: folder), .stale(revision: 4))
+        try ExportLedger.record(folder.appendingPathComponent("gone.mp4"), revision: 3, in: folder)
+        try ExportLedger.record(folder.appendingPathComponent("screen-edited.mp4"), revision: 4, in: folder)
+        XCTAssertEqual(RecordingMovie.shareable(in: folder).url?.lastPathComponent, "screen-edited.mp4")
+        XCTAssertEqual(Set(ExportLedger.read(folder).keys), ["screen-edited.mp4"], "a gone export leaves the ledger")
+        try JSONSerialization.data(withJSONObject: ["revision": 5]).write(to: folder.appendingPathComponent("edit.json"))
+        XCTAssertEqual(RecordingMovie.shareable(in: folder), .stale(revision: 5))
     }
 
     /// The defect: a search hit showed "00:17 marker one" under the card, but VoiceOver read only "title, 00:31, not

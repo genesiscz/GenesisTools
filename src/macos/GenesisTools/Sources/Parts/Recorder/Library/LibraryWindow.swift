@@ -597,10 +597,18 @@ struct LibraryCard: View {
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityAction(named: "Open in Editor", open)
         .simultaneousGesture(TapGesture(count: 2).onEnded { open() })
-        // Drag the movie into a chat, a mail or an issue: the newest export, else the recording itself.
+        // Drag the movie into a chat, a mail or an issue: the export of the edit as it is now, or the recording itself
+        // when it has no edit. A drag cannot wait for an export, so a changed edit gives nothing and says why.
         .onDrag {
-            guard let movie = RecordingMovie.shareable(in: item.folder) else { return NSItemProvider() }
-            return NSItemProvider(contentsOf: movie) ?? NSItemProvider()
+            switch RecordingMovie.shareable(in: item.folder) {
+            case let .file(movie):
+                return NSItemProvider(contentsOf: movie) ?? NSItemProvider()
+            case .stale:
+                report(.failed("“\(item.title)” changed after its last export, so there is no movie of the edit to drag. Copy Movie exports it first."))
+                return NSItemProvider()
+            case .none:
+                return NSItemProvider()
+            }
         }
         .contextMenu { RecordingActionsMenu(item: item, report: report) }
         .contentShape(Rectangle())

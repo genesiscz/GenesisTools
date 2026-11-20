@@ -17,6 +17,7 @@ import {
     ensureDenoisedSource,
     syncDenoisedTranscript,
 } from "@genesiscz/utils/recording-editor/denoise";
+import { recordExport } from "@genesiscz/utils/recording-editor/exports";
 import { exportVideoArgv } from "@genesiscz/utils/recording-editor/ffmpeg";
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
 import { integratedLoudness, recordingLaneInputs } from "@genesiscz/utils/recording-editor/loudness";
@@ -1530,6 +1531,7 @@ export async function exportAs(
                 part: options.part,
             });
             log.debug({ value, part: options.part, clips: trimmed.clips.length, out }, "exporting a part of the edit");
+            // A part is never recorded in the export ledger, so Copy Movie never hands it out as the movie.
             const answer = await renderExport(copy, {
                 out,
                 format: asked,
@@ -1545,16 +1547,29 @@ export async function exportAs(
         }
     }
 
+    const rendered: { revision: number | null } = { revision: null };
+    const answer = await renderExport(value, options, rendered);
+
+    if (answer.ok && answer.path) {
+        // Copy Movie and a drag hand out only an export of the edit as it is now (shareableMovieOf).
+        recordExport({ folder: dirname(editPathOf(value)), file: answer.path, revision: rendered.revision });
+    }
+
     // finishExport applies the edit's export.subtitles default, which a GIF leaves out.
-    return finishExport({ value, answer: await renderExport(value, options), subtitles: options.subtitles });
+    return finishExport({ value, answer, subtitles: options.subtitles });
 }
 
-/** Renders the whole edit into its export target in the asked format; finishExport adds the subtitles and chapters. */
+/**
+ * Renders the whole edit into its export target in the asked format; finishExport adds the subtitles and chapters.
+ * `rendered.revision` gets the edit's revision it rendered (null without an edit.json), for the export ledger.
+ */
 async function renderExport(
     value: string,
-    options: { out?: string; format?: ExportFormat } & ExportRun
+    options: { out?: string; format?: ExportFormat } & ExportRun,
+    rendered: { revision: number | null } = { revision: null }
 ): Promise<ExportAnswer & { replaced?: boolean }> {
     const opened = await openProject(value);
+    rendered.revision = opened.fresh ? null : opened.project.revision;
     const asked = askedExportFormat({ format: options.format, out: options.out, project: opened.project });
 
     if (!isExportFormat(asked)) {
@@ -1603,7 +1618,7 @@ async function renderExport(
     const format = asked;
 
     if (opened.fresh) {
-        writeProject(opened.path, opened.project);
+        rendered.revision = writeProject(opened.path, opened.project).revision;
     }
 
     if (existsSync(output) && !options.overwrite) {

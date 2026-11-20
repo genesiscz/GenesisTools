@@ -19,6 +19,7 @@ import recordingMovies from "@genesiscz/utils/recording-editor/__fixtures__/reco
 import screenSearch from "@genesiscz/utils/recording-editor/__fixtures__/screen-search.json";
 import { analysisCachePath } from "@genesiscz/utils/recording-editor/analysis-cache";
 import type { MovieEvent } from "@genesiscz/utils/recording-editor/events";
+import { EXPORT_LEDGER_FILE, readExportLedger, recordExport } from "@genesiscz/utils/recording-editor/exports";
 import { applyOp, editOpSchema, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
 import { RecorderControl, type RecorderMethod, type StopAnswer } from "@genesiscz/utils/screen-recorder/control";
 import { recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
@@ -319,15 +320,41 @@ function folderWith(files: Array<[string, number]>): string {
     return folder;
 }
 
+/** A shared case's folder: its files, edit.json at its revision, and exports.json from its exports. */
+function movieCaseFolder(item: {
+    files: Array<Array<string | number>>;
+    edit?: number;
+    exports?: Array<Array<string | number | null>>;
+}): string {
+    const folder = folderWith(item.files.map(([name, offset]) => [String(name), Number(offset)]));
+
+    if (item.edit !== undefined) {
+        writeFileSync(join(folder, "edit.json"), SafeJSON.stringify({ revision: item.edit }));
+    }
+
+    if (item.exports) {
+        const files = Object.fromEntries(
+            item.exports.map(([file, revision]) => [
+                String(file),
+                { revision: revision === null ? null : Number(revision), writtenAt: "2026-11-04T10:00:00.000Z" },
+            ])
+        );
+        writeFileSync(join(folder, EXPORT_LEDGER_FILE), SafeJSON.stringify({ version: 1, files }));
+    }
+
+    return folder;
+}
+
 // The Swift menu, library and editor answer the same cases (RecorderEditTests.swift, RecordingMovie.swift).
 describe("the movie of a recording folder", () => {
     for (const item of recordingMovies.cases) {
         it(`shared movie case: ${item.name}`, () => {
-            const folder = folderWith(item.files.map(([name, offset]) => [String(name), Number(offset)]));
-            const name = (path: string | undefined) => (path ? basename(path) : null);
+            const folder = movieCaseFolder(item);
+            const shareable = shareableMovie(folder);
 
-            expect(name(movieOf(folder))).toBe(item.movie);
-            expect(name(shareableMovie(folder))).toBe(item.shareable);
+            expect(movieOf(folder) ? basename(movieOf(folder) ?? "") : null).toBe(item.movie);
+            expect(shareable.kind === "file" ? basename(shareable.path) : null).toBe(item.shareable);
+            expect(shareable.kind === "stale").toBe("stale" in item && item.stale === true);
         });
     }
 });
@@ -834,15 +861,37 @@ describe("a hit, wait or event whose first moment is cut plays from its first ke
 });
 
 describe("a recording's quick actions", () => {
-    it("copies the newest export, else the recording's own movie", () => {
-        expect(shareableMovie(folderWith([["screen.mp4", 0]]))).toEndWith("/screen.mp4");
-        const exported = folderWith([
+    it("copies an export only while the edit is at the revision it rendered", () => {
+        const folder = folderWith([
             ["screen.mp4", 0],
             ["screen-edited.mp4", 10],
-            ["screen-edited.gif", 20],
-            ["screen-edited.partial.mp4", 30],
         ]);
-        expect(shareableMovie(exported)).toEndWith("/screen-edited.gif");
+        writeFileSync(join(folder, "edit.json"), SafeJSON.stringify({ revision: 4 }));
+        expect(shareableMovie(folder).kind).toBe("stale");
+
+        recordExport({ folder, file: join(folder, "screen-edited.mp4"), revision: 4 });
+        expect(shareableMovie(folder)).toEqual({ kind: "file", path: join(folder, "screen-edited.mp4") });
+
+        // One more change in the editor: the export no longer shows the edit, so nothing is handed out.
+        writeFileSync(join(folder, "edit.json"), SafeJSON.stringify({ revision: 5 }));
+        expect(shareableMovie(folder)).toMatchObject({ kind: "stale", revision: 5 });
+    });
+
+    it("keeps one ledger entry per export file and drops the ones whose file is gone", () => {
+        const folder = folderWith([
+            ["screen.mp4", 0],
+            ["screen-edited.mp4", 10],
+        ]);
+        const outside = folderWith([["chosen.mp4", 10]]);
+        recordExport({ folder, file: join(folder, "gone.mp4"), revision: 1 });
+        recordExport({ folder, file: join(folder, "screen-edited.mp4"), revision: 1 });
+        recordExport({ folder, file: join(folder, "screen-edited.mp4"), revision: 2 });
+        recordExport({ folder, file: join(outside, "chosen.mp4"), revision: 2 });
+
+        expect(Object.keys(readExportLedger(folder).files).sort()).toEqual(
+            [join(outside, "chosen.mp4"), "screen-edited.mp4"].sort()
+        );
+        expect(readExportLedger(folder).files["screen-edited.mp4"]?.revision).toBe(2);
     });
 
     it("reuses a GIF only while the edit and the movie are older than it", () => {

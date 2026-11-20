@@ -1,16 +1,17 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { assertReach } from "@genesiscz/utils/api-descriptor";
 import { execTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { type ShareableMovie, shareableMovieOf } from "@genesiscz/utils/recording-editor/exports";
 import { readProject } from "@genesiscz/utils/recording-editor/project";
 import { liveRecordingFolders } from "@genesiscz/utils/screen-recorder/live";
 import { type RecordingStoreId, recordingStoreOf } from "@genesiscz/utils/screen-recorder/recording-stores";
 import { z } from "zod";
 import { exportAs, exportTargetOf } from "./edit";
-import { movieOf, RECORDING_SOURCE_MOVIES } from "./library";
+import { movieOf } from "./library";
 
 const { log } = logger.scoped("recorder-quick-actions");
 
@@ -23,23 +24,12 @@ const { log } = logger.scoped("recorder-quick-actions");
  * Finder's Trash with Put Back.
  */
 
-const EXPORT_EXTENSIONS = new Set(["mp4", "gif", "webm", "mov"]);
-
-function exportsIn(folder: string): Array<{ path: string; modified: number }> {
-    return readdirSync(folder)
-        .filter((name) => {
-            const extension = name.split(".").pop()?.toLowerCase() ?? "";
-            return (
-                EXPORT_EXTENSIONS.has(extension) && !RECORDING_SOURCE_MOVIES.has(name) && !name.includes(".partial.")
-            );
-        })
-        .map((name) => ({ path: join(folder, name), modified: statSync(join(folder, name)).mtimeMs }));
-}
-
-/** The file Copy Movie hands out: the newest export beside the recording, else its own movie. */
-export function shareableMovie(folder: string): string | undefined {
-    const newest = exportsIn(folder).sort((a, b) => b.modified - a.modified)[0];
-    return newest?.path ?? movieOf(folder);
+/**
+ * The file Copy Movie hands out (`shareableMovieOf`): the newest export of the edit as it is now, the recording's own
+ * movie when it has no edit, or `stale` when the edit changed after its last export.
+ */
+export function shareableMovie(folder: string): ShareableMovie {
+    return shareableMovieOf({ folder, ownMovie: movieOf(folder) });
 }
 
 /**
@@ -89,13 +79,42 @@ export async function copyFileToClipboard(path: string): Promise<void> {
     await run(["osascript", "-e", `set the clipboard to (POSIX file "${escaped}")`]);
 }
 
+/** The movie Copy Movie copies: an export of the current edit, made first when the edit changed after the last one. */
+async function currentMovie(folder: string): Promise<{ path: string | undefined; exported: boolean }> {
+    const shareable = shareableMovie(folder);
+
+    if (shareable.kind === "file") {
+        return { path: shareable.path, exported: false };
+    }
+
+    if (shareable.kind === "none") {
+        return { path: undefined, exported: false };
+    }
+
+    log.debug({ folder, reason: shareable.reason }, "no export of the current edit; exporting one");
+    // The edit's own export settings; a stale export of the default name is replaced where it is.
+    const answer = await exportAs(folder, { overwrite: true });
+
+    if (!answer.ok || !answer.path) {
+        throw new Error(`${shareable.reason}, and the export failed: ${answer.error ?? "no file"}`);
+    }
+
+    return { path: answer.path, exported: true };
+}
+
 /**
- * Copies the recording's movie, or with `gif` a GIF of its edit (made by the export when none is current), to the
- * clipboard. Returns the file it copied.
+ * Copies the recording's movie (an export of its current edit, made first when there is none), or with `gif` a GIF of
+ * its edit (made by the export when none is current), to the clipboard. Returns the file it copied.
  */
 export async function copyRecording(folder: string, { gif = false }: { gif?: boolean } = {}) {
-    let path = gif ? currentGif(folder) : shareableMovie(folder);
+    let path: string | undefined;
     let exported = false;
+
+    if (!gif) {
+        ({ path, exported } = await currentMovie(folder));
+    } else {
+        path = currentGif(folder);
+    }
 
     if (gif && !path) {
         log.debug({ folder }, "no current GIF; exporting one");

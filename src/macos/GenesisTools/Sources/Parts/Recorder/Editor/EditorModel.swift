@@ -1598,6 +1598,9 @@ final class EditorModel {
         let rendered = Self.exportedProject(project, part: part)
         let facts = sourceAudioFacts
         let url = EditExporter.outputURL(for: project)
+        // The revision the export renders, for the export ledger; nil while the edit has no file yet.
+        let editFile = store.url
+        let revision: Int? = FileManager.default.fileExists(atPath: editFile.path) ? project.revision : nil
         exportProgress = 0
         exportCancelled = false
         exportTask = Task { [weak self] in
@@ -1609,6 +1612,12 @@ final class EditorModel {
                 }
                 self?.exportProgress = nil
                 HubPerf.log("recorder.export: \(result.url.path) \(ByteFormat.file(result.bytes)) in \(String(format: "%.1f", result.seconds)) s")
+                // Copy Movie and a drag hand out only an export of the edit as it is now; a part is never the movie.
+                if part == nil {
+                    do { try ExportLedger.record(result.url, revision: revision, in: editFile.deletingLastPathComponent()) } catch {
+                        HubPerf.log("recorder.export: the export ledger was not written: \(error.localizedDescription)")
+                    }
+                }
                 self?.showExport("Exported \(result.url.lastPathComponent) (\(ByteFormat.file(result.bytes)), \(String(format: "%.1f", result.seconds)) s).",
                                  warnings: result.warnings)
                 self?.finishExport(result.url, part: part)

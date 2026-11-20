@@ -83,13 +83,26 @@ enum RecordingActions {
         case .firstComment:
             RecorderMenu.open(item, atSourceSeconds: item.firstOpenCommentUs.map { Double($0) / 1_000_000 })
         case .copyMovie:
-            guard let movie = RecordingMovie.shareable(in: item.folder) else {
+            switch RecordingMovie.shareable(in: item.folder) {
+            case let .file(movie):
+                pasteboard.clearContents()
+                pasteboard.writeObjects([movie as NSURL])
+                report(.notice("Copied \(movie.lastPathComponent) to the clipboard."))
+            case .stale:
+                // The edit changed after its last export: `recorder copy` exports it first, as the CLI does, so an
+                // older export or the unedited movie never leaves the library.
+                report(.working("“\(item.title)” changed after its last export; exporting it before the copy…"))
+                commands.run("movie.copy", params: ["recording": item.folder.path],
+                             argv: ["recorder", "copy", item.folder.path], timeout: 60 * 60) { result in
+                    if case .success = result {
+                        report(.notice("Exported “\(item.title)” and copied the movie to the clipboard."))
+                    } else if case let .failure(error) = result {
+                        report(.failed("“\(item.title)” was not copied: its export failed: \(error.reason)"))
+                    }
+                }
+            case .none:
                 report(.failed("“\(item.title)” has no movie to copy."))
-                return
             }
-            pasteboard.clearContents()
-            pasteboard.writeObjects([movie as NSURL])
-            report(.notice("Copied \(movie.lastPathComponent) to the clipboard."))
         case .copyGIF:
             report(.working("Making a GIF of “\(item.title)”…"))
             commands.run("movie.copy", params: ["recording": item.folder.path, "gif": true],

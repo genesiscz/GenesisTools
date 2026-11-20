@@ -44,15 +44,84 @@ enum RecordingMovie {
 
     private static let lengthCache = MovieLengthCache()
 
-    /// The file a drag or Copy Movie hands out: the newest finished export beside the recording (an MP4, GIF, WebM
-    /// or MOV), else the recording's own movie.
-    static func shareable(in folder: URL) -> URL? {
-        let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
-        let source = Set(names + [camera])
-        let exports = files.filter { exportExtensions.contains($0.pathExtension.lowercased()) }
-            .filter { !source.contains($0.lastPathComponent) && !$0.lastPathComponent.contains(".partial.") }
+    /// What a drag or Copy Movie hands out for a recording folder.
+    enum Shareable: Equatable {
+        /// The newest export of the current edit, or the recording's own movie when it has no edit.
+        case file(URL)
+        /// The recording has an edit and no export shows it: export first, never hand out an older or unedited movie.
+        case stale(revision: Int)
+        /// No movie at all (a frames recording before its proxy).
+        case none
+
+        var url: URL? {
+            if case let .file(url) = self { return url }
+            return nil
+        }
+    }
+
+    /// The one rule for the file a recording shares, as `shareableMovieOf` (src/utils/recording-editor/exports.ts):
+    /// the newest export whose recorded edit revision (exports.json, `ExportLedger`) equals edit.json's revision now;
+    /// with no edit, the newest export of the unedited recording, else its own movie. Reads files: call it at a click.
+    static func shareable(in folder: URL) -> Shareable {
+        let revision = ExportLedger.editRevision(in: folder)
         let modified = { (url: URL) in (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast }
-        return exports.max { modified($0) < modified($1) } ?? own(in: folder)
+        let current = ExportLedger.read(folder)
+            .filter { $0.value.revision == revision && !$0.key.contains(".partial.") }
+            .map { ExportLedger.url(of: $0.key, in: folder) }
+            .filter { FileManager.default.fileExists(atPath: $0.path) }
+        if let newest = current.max(by: { modified($0) < modified($1) }) { return .file(newest) }
+        if let revision { return .stale(revision: revision) }
+        return own(in: folder).map(Shareable.file) ?? .none
+    }
+}
+
+/// exports.json beside a recording's edit: which edit revision each whole export rendered. The window's MP4 export
+/// records here; every other export records through `recordExport` (src/utils/recording-editor/exports.ts), the same
+/// shape. A part of the edit is never recorded, so it is never handed out as the movie.
+enum ExportLedger {
+    static let file = "exports.json"
+
+    struct Entry: Codable, Equatable {
+        /// edit.json's revision the export rendered; nil when the recording had no edit.json.
+        var revision: Int?
+        var writtenAt: String
+    }
+
+    private struct Ledger: Codable {
+        var version = 1
+        var files: [String: Entry]
+    }
+
+    /// The entries, keyed by the export's file name inside the folder, else its absolute path. Empty when unreadable.
+    static func read(_ folder: URL) -> [String: Entry] {
+        guard let data = try? Data(contentsOf: folder.appendingPathComponent(file)),
+              let ledger = try? JSONDecoder().decode(Ledger.self, from: data), ledger.version == 1 else { return [:] }
+        return ledger.files
+    }
+
+    static func url(of key: String, in folder: URL) -> URL {
+        key.hasPrefix("/") ? URL(fileURLWithPath: key) : folder.appendingPathComponent(key)
+    }
+
+    /// edit.json's revision; nil when the recording has no edit.
+    static func editRevision(in folder: URL) -> Int? {
+        let edit = folder.appendingPathComponent("edit.json")
+        guard FileManager.default.fileExists(atPath: edit.path) else { return nil }
+        guard let data = try? Data(contentsOf: edit),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return 0 }
+        return (object["revision"] as? NSNumber)?.intValue ?? 0
+    }
+
+    /// Records that `export` is a whole export of the edit at `revision`; entries whose file is gone are dropped.
+    static func record(_ export: URL, revision: Int?, in folder: URL, now: Date = Date()) throws {
+        var files = read(folder).filter { FileManager.default.fileExists(atPath: url(of: $0.key, in: folder).path) }
+        let inside = export.deletingLastPathComponent().standardizedFileURL.path == folder.standardizedFileURL.path
+        let stamp = ISO8601DateFormatter()
+        stamp.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        files[inside ? export.lastPathComponent : export.standardizedFileURL.path] = Entry(revision: revision, writtenAt: stamp.string(from: now))
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        try encoder.encode(Ledger(files: files)).write(to: folder.appendingPathComponent(file), options: .atomic)
     }
 }
 
