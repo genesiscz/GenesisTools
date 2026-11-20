@@ -61,6 +61,8 @@ enum RecordingActions {
     /// Where Copy Movie writes; a test swaps in a pasteboard of its own so it never touches the user's clipboard.
     static var pasteboard = NSPasteboard.general
     static var commands = RecorderCommands()
+    /// Where a move to the Trash is kept for Put Back; a test passes its own.
+    static var trash = RecordingTrash.shared
 
     /// What an action did, for the surface to show: a short notice, a failure, or a move to the Trash (the library
     /// offers Put Back).
@@ -122,6 +124,7 @@ enum RecordingActions {
                         HubPerf.log("recorder.actions: trash \(item.folder.path) failed: \(error.localizedDescription)")
                         report(.failed("“\(item.title)” was not moved to the Trash: \(error.localizedDescription)"))
                     } else if let to = moved[item.folder] {
+                        trash.keep(.init(title: item.title, from: item.folder, to: to))
                         report(.trashed(from: item.folder, to: to))
                     }
                 }
@@ -161,6 +164,36 @@ enum RecordingActions {
             items.append(.action(action.title, run: { perform(action) }))
         }
         return items
+    }
+}
+
+/// The last recording a click moved to the Trash, from a library card or a Recent row of the menu bar. Both offer the
+/// same Put Back from it: the library's strip (and ⌘Z), and the first row of the menu's Recent list. Before, only the
+/// library kept it, so a recording trashed from the menu had no Undo.
+@MainActor
+@Observable
+final class RecordingTrash {
+    static let shared = RecordingTrash()
+
+    struct Entry: Equatable {
+        let title: String
+        let from: URL
+        let to: URL
+    }
+
+    private(set) var last: Entry?
+
+    func keep(_ entry: Entry) { last = entry }
+    func dismiss() { last = nil }
+
+    /// Moves the last trashed recording back to its folder and returns it. When the move fails it throws and the
+    /// entry stays, because the recording is still in the Trash.
+    @discardableResult
+    func putBack(_ files: FileManager = .default) throws -> Entry? {
+        guard let entry = last else { return nil }
+        try files.moveItem(at: entry.to, to: entry.from)
+        last = nil
+        return entry
     }
 }
 

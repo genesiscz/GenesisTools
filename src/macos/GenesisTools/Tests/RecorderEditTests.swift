@@ -506,6 +506,32 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(text, "Copied proxy.mp4 to the clipboard.")
     }
 
+    /// The defect: the menu bar's Recent rows and the library both move a recording to the Trash, but only the library
+    /// kept where it went, so a recording trashed from the menu had no Put Back. Both now read one kept entry.
+    @MainActor
+    func testATrashedRecordingIsPutBackFromTheOneKeptEntry() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("trash-\(UUID().uuidString)")
+        let from = root.appendingPathComponent("library/2026-11-04_10-00-demo")
+        let to = root.appendingPathComponent("Trash/2026-11-04_10-00-demo")
+        try FileManager.default.createDirectory(at: to, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: from.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let trash = RecordingTrash()
+        let library = LibraryModel()
+        library.trash = trash
+        trash.keep(.init(title: "Demo", from: from, to: to))
+        XCTAssertEqual(library.trashed?.title, "Demo", "the library shows a move the menu made")
+
+        XCTAssertEqual(try trash.putBack()?.from, from)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: from.path))
+        XCTAssertNil(library.trashed)
+
+        trash.keep(.init(title: "Gone", from: from, to: to))
+        XCTAssertThrowsError(try trash.putBack(), "the Trash copy is gone")
+        XCTAssertEqual(trash.last?.title, "Gone", "a failed Put Back keeps the entry: the recording is still in the Trash")
+    }
+
     private func project(_ clips: [EditProject.Clip], zooms: [EditProject.Zoom] = []) -> EditProject {
         var project = EditProject.whole(video: "/tmp/x.mp4", durationUs: 10_000_000, width: 1920, height: 1080, cursor: nil, recording: nil)
         project.clips = clips

@@ -227,6 +227,13 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         let recentRow = NSMenuItem(title: "Recent", action: nil, keyEquivalent: "")
         recentRow.submenu = recentMenu
         menu.addItem(recentRow)
+        // A recording trashed from a Recent row (or the library) comes back from here, as the library's strip does.
+        if let trashed = RecordingActions.trash.last {
+            let back = row("Put Back “\(trashed.title)”", symbol: "arrow.uturn.backward", action: #selector(putBackTrashed), key: "")
+            back.toolTip = "Moves it from the Trash back to \(trashed.from.deletingLastPathComponent().path)"
+            recentMenu.addItem(back)
+            recentMenu.addItem(.separator())
+        }
         if recents.isEmpty {
             let empty = NSMenuItem(title: "No recent recordings", action: nil, keyEquivalent: "")
             empty.isEnabled = false
@@ -534,6 +541,18 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
     }
 
     @objc private func openLibrary() { run(.library) }
+
+    /// Put Back from the Recent list: the same move the library's strip makes.
+    @objc private func putBackTrashed() {
+        guard let trashed = RecordingActions.trash.last else { return }
+        do {
+            try RecordingActions.trash.putBack()
+        } catch {
+            HubPerf.log("recorder.menu: put back \(trashed.from.path) failed: \(error.localizedDescription)")
+            RecorderNotice.failure("“\(trashed.title)” could not be put back: \(error.localizedDescription). It is still in the Trash.")
+        }
+        refresh()
+    }
 
     @objc private func openSettings() {
         FeatureSettingsLaunch.open(pageID: RecorderSettingsPlugin.recordingPageID)

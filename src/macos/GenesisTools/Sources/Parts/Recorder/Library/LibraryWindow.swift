@@ -28,8 +28,11 @@ final class LibraryModel {
     /// The spoken search is running (the empty state waits for it); `searchFailed` is its last error.
     private(set) var searching = false
     private(set) var searchFailed: String?
-    /// The last recording moved to the Trash (where it was, where it went), for Put Back; and the last failure.
-    private(set) var trashed: (title: String, from: URL, to: URL)?
+    /// The last recording moved to the Trash (where it was, where it went), for Put Back. It is the menu bar's too: a
+    /// recording trashed from a Recent row shows here as well.
+    @ObservationIgnored var trash = RecordingActions.trash
+    var trashed: RecordingTrash.Entry? { trash.last }
+    /// The last failure.
     private(set) var failure: String?
     /// The last quick action's short notice ("Copied a GIF…"), shown in a pill that fades.
     private(set) var notice: String?
@@ -245,9 +248,7 @@ final class LibraryModel {
             notice = text
         case let .failed(text):
             failure = text
-        case let .trashed(from, to):
-            let title = items.first { $0.folder == from }?.title ?? from.lastPathComponent
-            trashed = (title, from, to)
+        case let .trashed(from, _):
             if selected == from { selected = nil }
             load()
         case .renamed:
@@ -257,7 +258,7 @@ final class LibraryModel {
 
     func dismissFailure() { failure = nil }
     func dismissNotice() { notice = nil }
-    func dismissTrashed() { trashed = nil }
+    func dismissTrashed() { trash.dismiss() }
 
     /// Moves the keyboard selection by `delta` cards through the visible list, in the order the sections show it.
     func moveSelection(_ delta: Int) {
@@ -295,8 +296,7 @@ final class LibraryModel {
     func putBack() {
         guard let trashed else { return }
         do {
-            try FileManager.default.moveItem(at: trashed.to, to: trashed.from)
-            self.trashed = nil
+            try trash.putBack()
             selected = trashed.from
         } catch {
             HubPerf.log("recorder.library: put back \(trashed.from.path) failed: \(error.localizedDescription)")
