@@ -654,7 +654,8 @@ export function hubStatus(bundlePath = genesisAppBundlePath()): HubStatus {
 
 /** The installation gate for review clients. A status query never opens a window or offers a build. */
 export async function reviewWindowStatus(deps = liveEngineDeps(AREAS)): Promise<HubStatus> {
-    const bundlePath = genesisAppBundlePath();
+    // The bundle the needs judged: the resource check and the answer name the same one.
+    const bundlePath = deps.facts.appBundle().path;
     const env = { ...deps, fresh: false, write: false };
     for (const need of [Need.app.bundle, Need.app.part("hub")]) {
         const result = await checkNeed(need, env);
