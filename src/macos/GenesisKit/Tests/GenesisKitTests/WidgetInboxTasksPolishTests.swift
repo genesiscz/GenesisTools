@@ -705,6 +705,10 @@ final class WidgetTasksPolishTests: XCTestCase {
         store.toggle(original)
         await settled(store)
         XCTAssertEqual(store.failures.first?.id, .change(original.id))
+        // The hub's Inbox shows the same report: the widget's headline, the tool's words behind Details.
+        XCTAssertEqual(store.latestFailureReport, store.failures.first?.report)
+        XCTAssertTrue(store.latestFailureReport?.headline.contains("Could not mark") ?? false)
+        XCTAssertNil(store.createFailureReport)
         let text = try renderTasks(WidgetTasksModuleView(store: store, presentation: .preview).frame(width: 324), name: "widget-task-refused")
         XCTAssertTrue(text.contains("Water the plants"), text)
         XCTAssertTrue(text.contains("Could not mark"), text)

@@ -1640,7 +1640,9 @@ struct InboxAddTaskButton: View {
                     if tasks.draft.owner == "agent" && !tasks.draft.session.isEmpty {
                         Toggle("Send to the session now", isOn: $sendImmediately)
                     }
-                    if triedToAdd, let error = tasks.error { InboxTaskFailure(message: error) }
+                    if triedToAdd, let error = tasks.error {
+                        InboxTaskFailure(report: tasks.createFailureReport, message: error)
+                    }
                     HStack {
                         Spacer()
                         Button("Close") { addingTask = false }
@@ -1664,12 +1666,15 @@ struct InboxAddTaskButton: View {
     }
 }
 
+/// A task mutation's failure in the widget's words: its headline and next step, with the tool's own output behind
+/// Details. The generic report stands in only when the store kept no report for the message.
 private struct InboxTaskFailure: View {
+    let report: FailureReport?
     let message: String
     var body: some View {
-        FailureInline(FailureReport(title: "Task update", headline: "The task update could not be confirmed.",
-                                    summary: "Check the saved task before trying again.", action: "Update task",
-                                    log: message, area: "hub"), form: .compact, identifier: "hub.inbox.taskFailure")
+        FailureInline(report ?? FailureReport(title: "Task update", headline: "The task update could not be confirmed.",
+                                              summary: "Check the saved task before trying again.", action: "Update task",
+                                              log: message, area: "hub"), form: .compact, identifier: "hub.inbox.taskFailure")
     }
 }
 
@@ -1681,7 +1686,7 @@ struct InboxTaskFeedback: View {
         Group {
             if let error = store.error {
                 HStack {
-                    InboxTaskFailure(message: error)
+                    InboxTaskFailure(report: store.latestFailureReport, message: error)
                     IconButton(systemName: "xmark", tooltip: "Dismiss task feedback", action: store.clearFeedback)
                 }.padding(.horizontal)
             } else if let receipt = store.receipt {
