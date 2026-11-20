@@ -868,6 +868,18 @@ describe("an export imported from another Mac", () => {
         expect(evidence.audioPath).toBe(join(folder!, "upload.ogg"));
     });
 
+    test("a meeting with no folder on this Mac has no evidence, not an empty one", async () => {
+        const available = spyOn(local, "localAvailable").mockReturnValue(true);
+        const known = spyOn(local, "hasLocalMeeting").mockReturnValue(false);
+
+        try {
+            expect(await wisprflowSource.evidence("no-folder-fixture-1")).toBeNull();
+        } finally {
+            available.mockRestore();
+            known.mockRestore();
+        }
+    });
+
     test("the same export again changes nothing, and a different one is refused until --force", () => {
         importExport({ folder: exportFolder() });
 
