@@ -3,7 +3,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import * as files from "node:fs/promises";
-import { mkdir, mkdtemp, readdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { DeliveryUnknownError } from "@app/question/lib/decisions/deliver";
@@ -799,6 +799,42 @@ describe("widget source and delivery contracts", () => {
         expect(result.sessions[0]).toMatchObject({ session: "stored-a", stored: true, numbers: [stored.number] });
         expect(result.sessions[0]?.error).toContain("stopped after it typed");
         expect(readDecisions(files.file).find((entry) => entry.id === stored.id)?.state).not.toBe("drafted");
+    });
+
+    test("a delivered answer whose record failed says delivered, so the widget does not offer Send again", async () => {
+        const directory = await root();
+        const files = { file: join(directory, "decisions.jsonl"), events: join(directory, "events.jsonl") };
+        const [stored] = await postDecisions(
+            files.file,
+            files.events,
+            { sessionId: "stored-b", provider: "codex", decisions: [{ prompt: "Ship?", options: ["yes", "no"] }] },
+            { env: {} }
+        );
+        await updateDecisions(files.file, files.events, {
+            updates: [{ id: stored.id, state: "drafted", draftOption: "a" }],
+        });
+        let result: Awaited<ReturnType<typeof sendStagedDecisions>>;
+
+        try {
+            result = await sendStagedDecisions({
+                ids: [stored.id],
+                files,
+                deliver: {
+                    codexWorkerFor: () => "fixture-worker",
+                    runTool: async () => {
+                        // The agent got the answers; the folder then refuses the record of the delivery.
+                        await chmod(directory, 0o555);
+                        return { success: true, stdout: '{"queued":false,"turnId":"fixture-turn"}', stderr: "" };
+                    },
+                },
+            });
+        } finally {
+            await chmod(directory, 0o755);
+        }
+
+        expect(result).toMatchObject({ sent: 1, queued: 0, failed: 0 });
+        expect(result.sessions[0]).toMatchObject({ session: "stored-b", stored: true, delivered: true });
+        expect(result.sessions[0]?.error).toContain("reached the agent");
     });
 
     test("a Cancel after the agent got the message lets the send record it, so Send again types nothing twice", async () => {

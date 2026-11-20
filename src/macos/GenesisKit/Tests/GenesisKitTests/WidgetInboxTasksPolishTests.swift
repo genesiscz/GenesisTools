@@ -2609,6 +2609,17 @@ final class WidgetStagingTests: XCTestCase {
         XCTAssertFalse(outcome.delivered)
     }
 
+    /// The agent got the answers and only the hub's record of it failed: the session reads delivered, so the widget
+    /// offers no Send again that would type the answers twice.
+    func testAStoredAnswerTheTransportConfirmedReadsDelivered() {
+        let outcome = WidgetDecisionSendOutcome(["sent": 1, "queued": 0, "failed": 0, "sessions": [
+            ["session": "s3", "numbers": [4], "error": "the record failed", "stored": true, "delivered": true],
+        ]], titles: ["s3": "Fixture three"])
+        XCTAssertEqual(outcome.result(forSession: "s3", number: 4), .delivered)
+        XCTAssertTrue(outcome.waiting.isEmpty)
+        XCTAssertTrue(outcome.delivered)
+    }
+
     /// A refused send's reason belongs to the stage it refused: the same stage keeps it, a stage made in another
     /// inbox drops it, and a snapshot whose decision read failed retires no send receipt.
     func testASendReasonStaysWithItsStageAndAnIncompleteSnapshotKeepsReceipts() async throws {
