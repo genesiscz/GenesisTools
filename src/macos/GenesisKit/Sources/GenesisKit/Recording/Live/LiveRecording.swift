@@ -156,8 +156,9 @@ public enum LiveRecordingCommand: Equatable, Sendable {
         case let .unmute(source): return ["source": source.rawValue, "muted": false]
         case let .setInput(deviceID): return ["deviceId": deviceID]
         case let .setFrameRate(active, still, threshold):
+            // A still rate of 0 is Same: one steady rate, also for a movie that records an idle rate now.
             var patch: [String: Any] = ["activeFps": active]
-            if still > 0 { patch["idleFps"] = still }
+            if still > 0 { patch["idleFps"] = still } else { patch["rate"] = "same" }
             if let threshold { patch["threshold"] = threshold }
             return patch
         case .marker: return ["label": "Mark"]

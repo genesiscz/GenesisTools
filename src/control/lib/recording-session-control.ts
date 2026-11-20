@@ -174,10 +174,18 @@ export class SessionRecorderControl extends RecorderControl {
             );
         }
 
+        if (patch.rate === "same" && patch.idleFps !== undefined) {
+            throw new RpcError(
+                RPC_ERRORS.invalidParams,
+                'rate: "same" records one steady rate, so it takes no idleFps; send one or the other'
+            );
+        }
+
         const { rates, applied } = await this.session.retune((current) => {
             const activeFps = patch.activeFps ?? current.activeFps;
-            // A single-rate movie stays single-rate when only its active rate changes.
-            const singleRate = patch.idleFps === undefined && current.idleFps === current.activeFps;
+            // rate "same" ends the idle rate; a single-rate movie stays single-rate when only its active rate changes.
+            const singleRate =
+                patch.rate === "same" || (patch.idleFps === undefined && current.idleFps === current.activeFps);
             const idleFps = singleRate ? activeFps : Math.min(patch.idleFps ?? current.idleFps, activeFps);
             return { activeFps, idleFps, threshold: patch.threshold ?? current.threshold };
         });

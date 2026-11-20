@@ -713,8 +713,16 @@ export class FrameRecording<S = unknown> extends RecorderControl {
         return { settings: this.current, audio: this.audio };
     }
 
-    override async setSettings(patch: RecorderSettingsPatch): Promise<SettingsAnswer> {
+    override async setSettings({ rate, ...patch }: RecorderSettingsPatch): Promise<SettingsAnswer> {
         this.refuseWhileStopping();
+
+        if (rate !== undefined) {
+            throw new RpcError(
+                RPC_ERRORS.unsupported,
+                'a frames recording keeps an idle rate of 0.1–5 fps; rate: "same" is for a movie, so set idleFps instead'
+            );
+        }
+
         const before = this.current;
         this.current = { ...before, ...patch, ocr: { ...before.ocr, ...patch.ocr } };
         // Each capture takes the change live or restarts (the scope says which); ax-tool has no live heartbeat
