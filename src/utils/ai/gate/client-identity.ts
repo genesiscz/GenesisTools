@@ -42,8 +42,8 @@ const VALUE_FLAGS = new Set([
 const VALUE_FLAG_RUNNERS = /^(node|nodejs|bun)$/i;
 
 /**
- * The runner an executable is: a `gt-<tool>` file in `~/.genesis-tools/bin` is a hard link of bun under the tool's
- * name (its own keychain identity), so it parses and runs exactly like `bun`. Read by its own name, `--preload <file>`
+ * The runner an executable is: a `gt-<tool>` file in `~/.genesis-tools/bin` is a copy of bun under the tool's
+ * name (an APFS clone on macOS, a hard link elsewhere; its own keychain identity), so it parses and runs exactly like `bun`. Read by its own name, `--preload <file>`
  * was a bare flag and the gateway's own preloads read as foreign code (2026-10-16).
  */
 function runnerName(executable: string): string {

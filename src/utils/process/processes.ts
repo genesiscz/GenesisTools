@@ -695,8 +695,8 @@ export function readExecutablePath(pid: number): string | null {
  * name cut at 15 bytes, so a name
  * the kernel cut becomes the executable's file name that starts with it; an uncut one stays as it is, since
  * `python3` started through a symlink to `python3.13` is `python3` to `ps` and in its command line. Windows: the
- * image name. Not the resolved executable path: a hard-linked launcher such as `gt-hub` resolves to `bun`, and a
- * listed name the command line does not contain fails the dev dashboard's kill check.
+ * image name. Not the resolved executable path: a launcher such as `gt-hub` that is still a hard link of bun resolves to
+ * whichever name of bun the kernel looked up last, and a listed name the command line does not contain fails the dev dashboard's kill check.
  */
 export function readListedName(entry: Pick<ProcessEntry, "pid" | "name">): string {
     switch (processPlatform()) {
