@@ -535,6 +535,27 @@ test("the wire samples reach both alternatives of a nullable field inside one ar
     expect(wireSamples(schema)).toEqual([{ kind: "a", note: "fixture" }, { kind: "a", note: null }, { kind: "b" }]);
 });
 
+test("a defaulted nullable field inside one arm of a union still reaches the decoders as null", () => {
+    const schema: WireSchema = {
+        anyOf: [
+            {
+                type: "object",
+                properties: {
+                    kind: { const: "a" },
+                    note: { anyOf: [{ type: "string" }, { type: "null" }], default: "x" },
+                },
+            },
+            { type: "object", properties: { kind: { const: "b" } } },
+        ],
+    };
+    expect(wireSamples(schema)).toEqual([
+        { kind: "a", note: "x" },
+        { kind: "a", note: "fixture" },
+        { kind: "a", note: null },
+        { kind: "b" },
+    ]);
+});
+
 test("every generated fixture parses in TypeScript and generated files are current", () => {
     const rows: unknown = SafeJSON.parse(readFileSync(WIRE_PATH, "utf8"));
     if (!Array.isArray(rows)) {

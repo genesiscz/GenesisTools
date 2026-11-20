@@ -138,11 +138,13 @@ export function renderSwiftSchema(schema: WireSchema, name: string, declarations
 /**
  * Values of `schema` that together take every alternative of every union (and of every type list) at least once,
  * nested ones included. An object's row `i` takes row `i` of each property's samples (its first when it has fewer), so
- * a nullable field inside one arm of an outer union reaches the decoders both as a value and as null.
+ * a nullable field inside one arm of an outer union reaches the decoders both as a value and as null. A default is
+ * one more sample, never the only one: a defaulted nullable field still reaches them as null.
  */
 export function wireSamples(schema: WireSchema): unknown[] {
     if (schema.default !== undefined) {
-        return [schema.default];
+        const { default: value, ...rest } = schema;
+        return [value, ...wireSamples(rest)];
     }
     if (schema.const !== undefined) {
         return [schema.const];

@@ -383,7 +383,9 @@
     "method": "windows.open",
     "params": {
       "window": "--features",
-      "args": [],
+      "args": [
+        "fixture"
+      ],
       "activate": true,
       "wait": true,
       "fix": "skip"
@@ -9306,6 +9308,19 @@
     }
   },
   {
+    "method": "hello",
+    "params": {
+      "methods": [
+        "request.present"
+      ],
+      "caller": "person"
+    },
+    "result": {
+      "protocol": 1,
+      "methods": []
+    }
+  },
+  {
     "method": "actions.run",
     "params": {
       "id": "fixture",
@@ -9439,7 +9454,7 @@
     "method": "actions.explain",
     "params": {
       "id": "fixture",
-      "fresh": false,
+      "fresh": true,
       "args": null
     },
     "result": {
@@ -9624,7 +9639,7 @@
           ]
         }
       },
-      "timeoutMs": 120000
+      "timeoutMs": 1
     },
     "result": {
       "id": "fixture",
@@ -11017,7 +11032,7 @@
   {
     "method": "requests.list",
     "params": {
-      "limit": 100
+      "limit": 1
     },
     "result": [
       {
