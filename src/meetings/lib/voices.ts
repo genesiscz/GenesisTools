@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
 import { sha256Json } from "@genesiscz/utils/hash";
 import { logger } from "@genesiscz/utils/logger";
+import { IntervalIndex } from "@genesiscz/utils/math";
 import { type MeetingsConfig, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { voiceRootMeeting } from "@genesiscz/utils/meetings/record";
@@ -132,42 +133,19 @@ interface SpokenIndex {
 
 function spokenIndex(transcript: ConstructorParameters<typeof TranscriptLines>[0]): SpokenIndex {
     const lines = new TranscriptLines(transcript);
-    const spans = lines.entries
-        .flatMap((entry, at) => {
+    const index = new IntervalIndex(
+        lines.entries.flatMap((entry, at) => {
             const span = lines.span(at);
-            return span ? [{ at, text: entry.text, ...span }] : [];
-        })
-        .sort((a, b) => a.fromSec - b.fromSec || a.at - b.at);
-    // The furthest end of any line up to each position: a backward walk stops once nothing earlier can still overlap.
-    const reach: number[] = [];
-    for (const [i, span] of spans.entries()) {
-        reach.push(Math.max(span.toSec, reach[i - 1] ?? Number.NEGATIVE_INFINITY));
-    }
+            return span ? [{ text: entry.text, ...span }] : [];
+        }),
+        (line) => ({ from: line.fromSec, to: line.toSec })
+    );
     return {
-        wordsBetween(fromSec, toSec) {
-            let low = 0;
-            let high = spans.length;
-            while (low < high) {
-                const mid = (low + high) >> 1;
-                if (spans[mid]!.fromSec < toSec) {
-                    low = mid + 1;
-                } else {
-                    high = mid;
-                }
-            }
-
-            const hits: Array<{ at: number; text: string }> = [];
-            for (let i = low - 1; i >= 0 && reach[i]! > fromSec; i--) {
-                if (spans[i]!.toSec > fromSec) {
-                    hits.push(spans[i]!);
-                }
-            }
-
-            return hits
-                .sort((a, b) => a.at - b.at)
-                .map((hit) => hit.text)
-                .join(" ");
-        },
+        wordsBetween: (fromSec, toSec) =>
+            index
+                .overlapping(fromSec, toSec)
+                .map((line) => line.text)
+                .join(" "),
     };
 }
 

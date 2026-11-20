@@ -1,3 +1,4 @@
+import { IntervalIndex } from "@genesiscz/utils/math";
 import type { MeetingItem } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
@@ -92,26 +93,48 @@ export function meetingVoiceSeeds(options: {
     const standaloneAnswers = questions.filter((q) => q.decides.length === 0 && q.answer && direct(q));
     const certain = new Map<number, string>();
     const seatOnlySeeds = new Set<number>();
+    // Each line asks which decisions hold its start: index them by label and time once, keeping the newest-first
+    // order of the assignments and the record order of the ranges.
+    const byLabel = <T extends { label: string; fromSec: number; toSec: number }>(rows: readonly T[]) => {
+        const groups = new Map<string, T[]>();
+        for (const row of rows) {
+            const group = groups.get(row.label);
+            if (group) {
+                group.push(row);
+            } else {
+                groups.set(row.label, [row]);
+            }
+        }
+
+        return new Map(
+            [...groups].map(([label, group]) => [
+                label,
+                new IntervalIndex(group, (row) => ({ from: row.fromSec, to: row.toSec })),
+            ])
+        );
+    };
+    const assignmentsByLabel = byLabel(assignments);
+    const rangesByLabel = byLabel(ranges);
+    const answersByTime = new IntervalIndex(standaloneAnswers, (q) => ({
+        from: q.fromSec,
+        to: typeof q.evidence?.endSec === "number" ? Math.max(q.toSec, q.evidence.endSec) : q.toSec,
+    }));
     for (const line of context.lines) {
         const label = meeting.transcript[line.index]?.speaker;
-        const covers = (range: { fromSec: number; toSec: number; label: string }) =>
-            range.label === label && range.fromSec <= line.fromSec && range.toSec >= line.fromSec;
         // A human decision seeds training audio only when it spans the whole line, as a standalone answer must.
         const wholly = (range: { toSec: number; evidence?: Record<string, unknown> }) =>
             range.toSec >= line.toSec ||
             (typeof range.evidence?.endSec === "number" && range.evidence.endSec >= line.toSec) ||
             range.evidence?.transcriptLine === line.index;
-        const assignment = assignments.find(covers);
+        const assignment = label === undefined ? undefined : assignmentsByLabel.get(label)?.containing(line.fromSec)[0];
         if (assignment) {
             if (wholly(assignment) && assignedByPerson.has(`${assignment.id}|${assignment.at}`)) {
                 certain.set(line.index, assignment.person);
             }
             continue;
         }
-        const covering = ranges.filter(
-            (range) =>
-                covers(range) &&
-                (range.evidence?.transcriptLine === undefined || range.evidence.transcriptLine === line.index)
+        const covering = (label === undefined ? [] : (rangesByLabel.get(label)?.containing(line.fromSec) ?? [])).filter(
+            (range) => range.evidence?.transcriptLine === undefined || range.evidence.transcriptLine === line.index
         );
         const confirmed = covering.filter((range) => range.status === "confirmed");
         if (
@@ -121,14 +144,16 @@ export function meetingVoiceSeeds(options: {
         ) {
             continue;
         }
-        const answers = standaloneAnswers.flatMap((q) =>
-            q.fromSec <= line.fromSec &&
-            (typeof q.evidence?.endSec === "number" ? Math.max(q.toSec, q.evidence.endSec) : q.toSec) >= line.toSec &&
-            q.answer &&
-            q.answer.toLowerCase() !== NONE_OF_THESE
-                ? [q.answer]
-                : []
-        );
+        const answers = answersByTime
+            .containing(line.fromSec)
+            .flatMap((q) =>
+                (typeof q.evidence?.endSec === "number" ? Math.max(q.toSec, q.evidence.endSec) : q.toSec) >=
+                    line.toSec &&
+                q.answer &&
+                q.answer.toLowerCase() !== NONE_OF_THESE
+                    ? [q.answer]
+                    : []
+            );
         const decided = [...answers, ...confirmed.flatMap((range) => (range.speaker ? [range.speaker] : []))];
         const independent = [
             seats.get(line.index),
