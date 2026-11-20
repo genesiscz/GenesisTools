@@ -2,6 +2,8 @@ import { expect, it } from "bun:test";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { CHUNK_BYTES } from "@genesiscz/utils/agent-sessions/readers/changes-window-cache";
+import { codexSessionChanges } from "@genesiscz/utils/agent-sessions/readers/codex-changes";
+import { codexChangesWindow } from "@genesiscz/utils/agent-sessions/readers/codex-changes-window";
 import {
     claudeFixture,
     claudeFixtureNames,
@@ -106,6 +108,30 @@ for (const { name, build } of fixtures) {
         });
     });
 }
+
+it("keeps the prompts of a bounded Codex window's turns", async () => {
+    const f = codexFixture();
+    if (!f.transcript) {
+        throw new Error("missing Codex fixture");
+    }
+    appendFileSync(f.transcript, `${SafeJSON.stringify({ padding: "x".repeat(CHUNK_BYTES) })}\n`);
+    await inFixture(f, async () => {
+        const read = codexChangesWindow(f.session, { turns: 2 });
+        if (!read?.supported || read.window.complete) {
+            throw new Error("expected a bounded Codex window");
+        }
+        const { earlierTurns, transcript } = read.window;
+        const full = codexSessionChanges(f.session)?.transcript.turns ?? [];
+        const expected = full
+            .filter((turn) => !earlierTurns.has(turn.turnId))
+            .map((turn) => [turn.turnId, turn.prompt]);
+        expect(expected).toEqual([
+            ["p6", "ask 6"],
+            ["p7", "ask 7"],
+        ]);
+        expect(transcript.turns.map((turn) => [turn.turnId, turn.prompt])).toEqual(expected);
+    });
+});
 
 for (const name of ["basic", "subagents"] as const) {
     it(`advances a warm ${name} window after the transcript grows`, async () => {

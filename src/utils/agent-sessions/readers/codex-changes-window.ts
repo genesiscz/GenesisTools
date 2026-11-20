@@ -30,6 +30,8 @@ interface Cache {
 }
 const windows = changesCache<Cache>("session-changes codex windows");
 const markers = ["\\u", '"task_started"', '"turn_context"', '"FileChange"'].map((s) => Buffer.from(s));
+// The window also keeps user message items, so its turns carry the prompts the full parse gives them.
+const windowMarkers = [...markers, Buffer.from('"user"')];
 
 export function codexChangesWindow(sessionId: string, request: ChangesWindowRequest): ChangesWindowRead | null {
     const path = findCodexRollout(sessionId);
@@ -116,7 +118,7 @@ export function codexChangesWindow(sessionId: string, request: ChangesWindowRequ
                 kept: cache.lines,
                 initial: (): string[] => [],
                 line(lines, bytes) {
-                    if (markers.some((marker) => bytes.includes(marker))) {
+                    if (windowMarkers.some((marker) => bytes.includes(marker))) {
                         lines.push(bytes.toString());
                     }
                 },
