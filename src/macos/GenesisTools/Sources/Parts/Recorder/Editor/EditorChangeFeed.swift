@@ -167,10 +167,10 @@ enum EditDiff {
             }
         }
 
-        setting(old.frame, new.frame, symbol: "rectangle.inset.filled", name: "the frame") { frame in
+        setting(old.frame, new.frame, symbol: "rectangle.inset.filled", name: "the frame", detail: { frame in
             let aspect = frame.aspect.map { " (\($0.rawValue), \(frame.background.kind.rawValue))" } ?? " (\(frame.background.kind.rawValue))"
             return aspect
-        }
+        })
         setting(old.captions, new.captions, symbol: "captions.bubble", name: "the captions", shown: { $0.show })
         // The rings are on only while `highlight` is; the click sound is a switch of its own on the same object.
         func rings(_ clicks: EditProject.Clicks?) -> EditProject.Clicks? {
