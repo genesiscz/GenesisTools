@@ -1,4 +1,5 @@
 import Combine
+import GenesisKitTestSupport
 import SwiftUI
 import Vision
 import GenesisKitTestHooks

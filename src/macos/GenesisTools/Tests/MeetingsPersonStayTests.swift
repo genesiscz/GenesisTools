@@ -1,3 +1,4 @@
+import GenesisKitTestSupport
 import SwiftUI
 import Vision
 import XCTest
@@ -314,7 +315,7 @@ final class MeetingsPersonStayTests: XCTestCase {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: image).perform([request])
+        try recognizeText(in: image, with: request)
         let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
         for word in ["Who was there: Alice Example", "Joined", "Left", "12:04 or 1:05:30", "replaces their 2 stays", "Remove from the meeting", "Save"] {
             XCTAssertTrue(text.contains(word), "drawn: \(word) in\n\(text)")

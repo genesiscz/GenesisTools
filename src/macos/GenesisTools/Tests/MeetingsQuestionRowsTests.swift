@@ -1,3 +1,4 @@
+import GenesisKitTestSupport
 import SwiftUI
 import Darwin
 import Vision
@@ -100,7 +101,7 @@ enum MeetingQuestionPicture {
             host.cacheDisplay(in: host.bounds, to: bitmap); image = try XCTUnwrap(bitmap.cgImage)
         } else { image = try XCTUnwrap(renderer.cgImage) }
         let request = VNRecognizeTextRequest(); request.recognitionLevel = .accurate; request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: image).perform([request])
+        try recognizeText(in: image, with: request)
         if let folder = ProcessInfo.processInfo.environment["MEETINGS_P10_SHOTS"] {
             let bitmap = NSBitmapImageRep(cgImage: image)
             try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: folder).appendingPathComponent("\(name).png"))

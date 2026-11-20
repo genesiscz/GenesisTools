@@ -1,4 +1,5 @@
 import AppKit
+import GenesisKitTestSupport
 import ImageIO
 import SwiftUI
 import Vision

@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import GenesisKitFixtures
+import GenesisKitTestSupport
 import SwiftUI
 import Vision
 import XCTest

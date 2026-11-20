@@ -1,5 +1,6 @@
 import AppKit
 import GenesisKit
+import GenesisKitTestSupport
 import LocalAuthentication
 import SwiftUI
 import Vision
@@ -42,7 +43,7 @@ final class RmApproveTests: XCTestCase {
         recognize.recognitionLevel = .accurate
         recognize.recognitionLanguages = ["en-US"]
         recognize.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: image).perform([recognize])
+        try recognizeText(in: image, with: recognize)
         let words = (recognize.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         XCTAssertTrue(words.contains("Approval layout check"), words)
         XCTAssertTrue(words.contains("Preview only"), words)

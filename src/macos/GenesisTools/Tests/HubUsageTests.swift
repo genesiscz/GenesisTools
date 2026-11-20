@@ -1,3 +1,4 @@
+import GenesisKitTestSupport
 import SwiftUI
 import Vision
 import XCTest
@@ -102,7 +103,7 @@ final class HubUsageTests: XCTestCase {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: image).perform([request])
+        try recognizeText(in: image, with: request)
         let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
         XCTAssertTrue(text.contains("$42.50"), text)
         XCTAssertTrue(text.contains("Shop"), text)

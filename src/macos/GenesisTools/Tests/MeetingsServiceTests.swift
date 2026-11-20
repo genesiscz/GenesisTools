@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import Foundation
+import GenesisKitTestSupport
 import SwiftUI
 import Vision
 import XCTest
@@ -302,7 +303,7 @@ private enum WindowWriteControls {
         let ocr = VNRecognizeTextRequest()
         ocr.recognitionLevel = .accurate
         ocr.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: XCTUnwrap(bitmap.cgImage)).perform([ocr])
+        try recognizeText(in: XCTUnwrap(bitmap.cgImage), with: ocr)
         for line in ocr.results ?? [] {
             guard let text = line.topCandidates(1).first,
                   !whole || text.string.trimmingCharacters(in: .whitespaces) == words,

@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import GenesisKit
+import GenesisKitTestSupport
 import SwiftUI
 import Vision
 import XCTest
@@ -57,7 +58,7 @@ enum EditorShots {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: image).perform([request])
+        try recognizeText(in: image, with: request)
         // Vision reads curly quotes as straight ones, so both compare as straight.
         return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " | ")
             .replacingOccurrences(of: "“", with: "\"").replacingOccurrences(of: "”", with: "\"")
@@ -1253,7 +1254,7 @@ final class RecorderEditTests: XCTestCase {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: image).perform([request])
+        try recognizeText(in: image, with: request)
         let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         XCTAssertTrue(text.contains("00:03.0"), text)
         // OCR reads a small "s" as "S" at this size.

@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import GenesisKitTestSupport
 import SwiftUI
 import Vision
 import XCTest
@@ -336,7 +337,7 @@ final class MeetingsTranscriptRowsTests: XCTestCase {
         renderer.scale = 2
         let image = try XCTUnwrap(renderer.cgImage)
         let request = VNRecognizeTextRequest(); request.recognitionLevel = .accurate; request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: image).perform([request])
+        try recognizeText(in: image, with: request)
         let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         XCTAssertTrue(text.contains("Who is this?"), text)
         XCTAssertTrue(text.contains("63 %"), text)

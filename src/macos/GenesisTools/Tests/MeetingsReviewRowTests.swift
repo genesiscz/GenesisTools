@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import GenesisKitTestSupport
 import SwiftUI
 import Vision
 import XCTest
@@ -33,7 +34,7 @@ final class MeetingsReviewRowTests: XCTestCase {
             if let captured = await WindowSnapshot.capture(panel), let image = captured.image.cgImage {
                 let request = VNRecognizeTextRequest()
                 request.recognitionLevel = .fast
-                try VNImageRequestHandler(cgImage: image).perform([request])
+                try recognizeText(in: image, with: request)
                 shot = captured.image
                 text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
                 if expected.allSatisfy(text.contains) { break }
@@ -454,7 +455,7 @@ final class MeetingsReviewRowTests: XCTestCase {
                 }, "OCR needs a CPU device for \(stage)")
                 request.setComputeDevice(cpu, for: stage)
             }
-            try VNImageRequestHandler(cgImage: held).perform([request])
+            try recognizeText(in: held, with: request)
             let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
             XCTAssertTrue(text.contains("Dana Example"), text)
             XCTAssertTrue(text.contains("Alex Example"), "the other answer stays available: \(text)")
@@ -1085,7 +1086,7 @@ final class MeetingsReviewRowTests: XCTestCase {
             }, "OCR needs a CPU device for \(stage)")
             request.setComputeDevice(cpu, for: stage)
         }
-        try VNImageRequestHandler(cgImage: XCTUnwrap(renderer.cgImage)).perform([request])
+        try recognizeText(in: XCTUnwrap(renderer.cgImage), with: request)
         return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
     }
 

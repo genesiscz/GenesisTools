@@ -1,6 +1,7 @@
 import AVFoundation
 import Combine
 import Foundation
+import GenesisKitTestSupport
 import SwiftUI
 import UserNotifications
 import Vision

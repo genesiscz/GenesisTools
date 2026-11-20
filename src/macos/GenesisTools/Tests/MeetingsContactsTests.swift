@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import GenesisKitTestSupport
 import SwiftUI
 import Vision
 import XCTest
@@ -109,7 +110,7 @@ final class MeetingsContactsTests: XCTestCase {
         renderer.scale = 2
         let request = VNRecognizeTextRequest()
         request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: XCTUnwrap(renderer.cgImage)).perform([request])
+        try recognizeText(in: XCTUnwrap(renderer.cgImage), with: request)
         let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         for words in ["Boardroom PC", "North", "Desk PC", "the room", "Is Studio PC shared?", "2 meetings"] {
             XCTAssertTrue(text.contains(words), text)
