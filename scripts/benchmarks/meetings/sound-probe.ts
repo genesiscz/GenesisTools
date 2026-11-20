@@ -171,10 +171,16 @@ async function micRows(inputs: SoundInputs, loudDb: number): Promise<MicRow[]> {
         // Each source's track starts on its own first sample, so the system piece of the same seconds is the one
         // that overlaps the microphone's time the most, not one with the same stamp.
         let system: { row: AudioRow; zero: number; overlapMs: number } | undefined;
-        for (const one of systems.overlapping(micZero, micEnd).sort((a, b) => a.at - b.at)) {
+        // A tie on overlap goes to the piece listed first in the input, without sorting every overlap.
+        let systemAt = Number.POSITIVE_INFINITY;
+        for (const one of systems.overlapping(micZero, micEnd)) {
             const overlapMs = Math.min(micEnd, one.zero + one.row.durationMs) - Math.max(micZero, one.zero);
-            if (overlapMs > 0 && (!system || overlapMs > system.overlapMs)) {
+            if (
+                overlapMs > 0 &&
+                (!system || overlapMs > system.overlapMs || (overlapMs === system.overlapMs && one.at < systemAt))
+            ) {
                 system = { row: one.row, zero: one.zero, overlapMs };
+                systemAt = one.at;
             }
         }
         // Both curves cover the same wall-clock seconds: `from`/`to` are ms on the wall clock.
@@ -351,7 +357,7 @@ async function main(): Promise<void> {
     out.println(
         micDb === undefined
             ? "mic level: no microphone piece measured both its level during a loud call and its match to the call"
-            : `mic level (${paired.length} pieces with both measures, ${rawPieces} raw): median ${micDb} dB while the call is loud, follows the call r=${callMatch ?? "?"}; ${summary.micRaw ? "the call is on the microphone track (raw)" : micDb > RAW_MIC_DB ? `loud, but its level does not follow the call (r below ${RAW_MIC_MATCH}): local speech or noise, not proven raw` : `below ${RAW_MIC_DB} dB (processed, or the call was quiet)`}`
+            : `mic level (${paired.length} pieces with both measures, ${rawPieces} raw): median ${micDb} dB while the call is loud, follows the call r=${callMatch ?? "?"}; ${summary.micRaw ? "the call is on the microphone track (raw)" : `at most half of the measured pieces are raw (above ${RAW_MIC_DB} dB and r of at least ${RAW_MIC_MATCH}): not proven raw`}`
     );
     out.println(
         clock.length === 0
