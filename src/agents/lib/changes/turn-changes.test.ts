@@ -133,6 +133,27 @@ it("keeps the prompts of a bounded Codex window's turns", async () => {
     });
 });
 
+it("rereads a warm Codex answer after a file its update states came from changes", async () => {
+    const f = codexFixture();
+    if (!f.transcript) {
+        throw new Error("missing Codex fixture");
+    }
+    appendFileSync(f.transcript, `${SafeJSON.stringify({ padding: "x".repeat(CHUNK_BYTES) })}\n`);
+    await inFixture(f, async () => {
+        const rounds: ChangesRound[] = [];
+        const input = { sessionId: f.session, log: f.rows, count: 1, onRound: (r: ChangesRound) => rounds.push(r) };
+        const first = fullAnswer(f, 1, loadRecentSessionChanges(input));
+        const asked = rounds.length;
+        expect(fullAnswer(f, 1, loadRecentSessionChanges(input))).toBe(first);
+        expect(rounds.length).toBe(asked);
+        writeFileSync(join(f.home, "live"), "edited after the session\n");
+        const after = fullAnswer(f, 1, loadRecentSessionChanges(input));
+        expect(rounds.length).toBeGreaterThan(asked);
+        expect(after).not.toBe(first);
+        expect(after).toBe(fullAnswer(f, 1, loadSessionChanges({ sessionId: f.session, log: f.rows })));
+    });
+});
+
 for (const name of ["basic", "subagents"] as const) {
     it(`advances a warm ${name} window after the transcript grows`, async () => {
         const f = claudeFixture(name);
