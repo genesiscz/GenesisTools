@@ -479,6 +479,8 @@ export const env = {
 
     agents: {
         verifyChangesWindow: () => isFlag("GENESIS_TOOLS_CHANGES_VERIFY"),
+        /** GENESIS_TOOLS_CHANGES_READ_ONLY=1: a changes audit or benchmark reads the saved facts and writes none. */
+        isChangesReadOnly: () => isFlag("GENESIS_TOOLS_CHANGES_READ_ONLY"),
         /** AGENTS_HOOKS_DISABLE=1 is the emergency stop: every `tools agents` hook exits 0 at once. */
         areHooksDisabled: () => getRaw("AGENTS_HOOKS_DISABLE") === "1",
         /** GENESIS_TOOLS_AGENT names the agent of this session (for example `Fable`, `Codex`), for tools that sign its work. */

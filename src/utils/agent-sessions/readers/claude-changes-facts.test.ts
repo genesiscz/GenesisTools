@@ -1,7 +1,10 @@
-import { expect, it } from "bun:test";
+import { expect, it, spyOn } from "bun:test";
 import { appendFileSync, writeFileSync } from "node:fs";
+import { env } from "@genesiscz/utils/env";
+import { atomicWriteIo } from "@genesiscz/utils/storage/atomic-file";
 import { auditClaudeFacts } from "./claude-changes-audit";
 import { advanceClaudeFacts, sessionFacts } from "./claude-changes-facts";
+import { loadClaudeFacts, saveClaudeFacts } from "./claude-changes-facts-store";
 import {
     claudeFixture,
     claudeFixtureNames,
@@ -99,4 +102,32 @@ it("indexes invoked scripts and their indirect writes without treating mentions 
     );
     const facts = sessionFacts(new Map([[transcript, advanceClaudeFacts(transcript, true)]]));
     expect(facts.writersOf("/work/acme/a").map((writer) => writer.callId)).toEqual(["invoke", "child"]);
+});
+
+it("saves no Claude facts under GENESIS_TOOLS_CHANGES_READ_ONLY, and saves them without it", async () => {
+    const f = claudeFixture("basic");
+    const transcript = f.transcript;
+    if (!transcript) {
+        throw new Error("missing Claude fixture");
+    }
+    const folds = new Map([[transcript, advanceClaudeFacts(transcript, true)]]);
+    // Records only: saveClaudeFacts swallows a failed write, so a throwing spy would also hide the normal save.
+    const write = spyOn(atomicWriteIo, "writeSync");
+    try {
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: f.home, GENESIS_TOOLS_CHANGES_READ_ONLY: "1" }, () => {
+            saveClaudeFacts(f.session, folds);
+            expect(write).not.toHaveBeenCalled();
+            expect(loadClaudeFacts(f.session).size).toBe(0);
+        });
+        await env.testing.withOverrides(
+            { GENESIS_TOOLS_HOME: f.home, GENESIS_TOOLS_CHANGES_READ_ONLY: undefined },
+            () => {
+                saveClaudeFacts(f.session, folds);
+                expect(write).toHaveBeenCalled();
+                expect(loadClaudeFacts(f.session).get(transcript)?.consumed).toBe(folds.get(transcript)?.consumed);
+            }
+        );
+    } finally {
+        write.mockRestore();
+    }
 });
