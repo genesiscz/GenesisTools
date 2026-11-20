@@ -319,6 +319,7 @@ export function validateCaptureOptions(cap: CaptureSpec): void {
         cap.quietMs,
         cap.heartbeatSec,
         cap.maxMb,
+        cap.movieQuality,
         cap.audio,
         cap.micDevice,
         cap.audioSidecar,
@@ -328,7 +329,7 @@ export function validateCaptureOptions(cap: CaptureSpec): void {
     ];
     if (cap.backend === "peekaboo" && (cap.mode === "isolated" || extended.some((value) => value !== undefined))) {
         throw new Error(
-            "Isolated selection, output geometry, codec, transparency, indicator, displayId, followFocus, frame tuning and audio options require backend native"
+            "Isolated selection, output geometry, codec, movie quality, transparency, indicator, displayId, followFocus, frame tuning and audio options require backend native"
         );
     }
 

@@ -268,6 +268,10 @@ describe("nativeCaptureArgv", () => {
             /backend native/
         );
         expect(() =>
+            validateCaptureOptions({ ...screen, backend: "peekaboo", videoOut: "/v.mp4", movieQuality: "small" })
+        ).toThrow(/backend native/);
+        expect(() => validateCaptureOptions({ ...screen, backend: "peekaboo", videoOut: "/v.mp4" })).not.toThrow();
+        expect(() =>
             validateCaptureOptions({ ...screen, displayId: 4, maxLongSide: 1280, heartbeatSec: 0, maxMb: 0.5 })
         ).not.toThrow();
     });
