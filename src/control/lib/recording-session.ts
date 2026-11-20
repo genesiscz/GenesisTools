@@ -155,18 +155,18 @@ export interface SegmentStart {
     display?: { id: number; name: string };
 }
 
-/**
- * One recorder run: records `target` into `output` until `maxSeconds` or until `signal` aborts, then finalizes the
- * movie. `onRecording` runs once, when the first frame is in, with that frame's time when the recorder said it (the
- * session hears of the frame later: ax-tool writes its PNG first). Resolves after the recorder exited; never rejects
- * for a recording problem (that is `endedBy: "failure"`).
- */
 /** The live commands of one running segment's recorder: its sound while it records (ax-tool `--control-stdin`). */
 export interface SegmentControl {
     mute(source: AudioSource, muted: boolean): Promise<void>;
     setMic(deviceId: string): Promise<void>;
 }
 
+/**
+ * One recorder run: records `target` into `output` until `maxSeconds` or until `signal` aborts, then finalizes the
+ * movie. `onRecording` runs once, when the first frame is in, with that frame's time when the recorder said it (the
+ * session hears of the frame later: ax-tool writes its PNG first). Resolves after the recorder exited; never rejects
+ * for a recording problem (that is `endedBy: "failure"`).
+ */
 export interface SegmentRecorder {
     record(input: {
         target: RecordingTarget;
