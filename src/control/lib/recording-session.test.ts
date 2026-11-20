@@ -16,6 +16,7 @@ import * as videoProbe from "@genesiscz/utils/video/probe";
 import * as videoProcess from "@genesiscz/utils/video/process";
 import { captureDiagnostics, validateBenchmark } from "../scripts/recorder-benchmark-policy";
 import * as captureRunner from "./capture-runner";
+import { nativeCaptureArgv } from "./native-record";
 import {
     audioTitlesArgv,
     audioTrackTitles,
@@ -1928,6 +1929,21 @@ describe("segmentCaptureSpec", () => {
         expect(spec.idleFps).toBe(2);
         expect(spec.threshold).toBe(3);
         expect(spec.excludeWindowIds).toEqual([41, 42]);
+        expect(spec.keepOverlays).toBeUndefined();
+    });
+
+    it("keeps screen dimmers only in a display or area movie that asks for it", () => {
+        const keep = (target: RecordingTarget) =>
+            segmentCaptureSpec({ target, output: "/tmp/segment.mp4", maxSeconds: 60, options: { keepOverlays: true } })
+                .keepOverlays;
+        expect(keep({ kind: "display", screenIndex: 0 })).toBe(true);
+        expect(keep({ kind: "region", x: 0, y: 0, width: 320, height: 200 })).toBe(true);
+        // A window or app movie never shows another app's dimmer, so the flag would only be noise.
+        expect(keep({ kind: "window", windowIds: [7] })).toBeUndefined();
+        expect(nativeCaptureArgv({ mode: "screen", duration: 1, keepOverlays: true }, "/o")).toContain(
+            "--keep-overlays"
+        );
+        expect(nativeCaptureArgv({ mode: "screen", duration: 1 }, "/o")).not.toContain("--keep-overlays");
     });
 
     it("keeps the motion threshold the recorder used before when none is given", () => {

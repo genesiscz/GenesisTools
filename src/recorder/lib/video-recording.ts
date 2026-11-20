@@ -57,6 +57,8 @@ export interface VideoRecordingOptions {
     threshold?: number;
     /** CG window ids no movie may show (the camera bubble's preview, a host's own panel). */
     excludeWindowIds?: number[];
+    /** Keep screen dimmers (HazeOver and the like) in a display or area movie; they are left out by default. */
+    keepOverlays?: boolean;
     /**
      * The menu bar recorder records the camera beside the screen into `camera.mov` (`settings.camera` asks for it):
      * refused while it does not run, and a warning at the end when no camera movie came. It is asked before the first
@@ -116,6 +118,7 @@ export function segmentRecorderOptions(
         idleFps: options.idleFps,
         threshold: options.threshold,
         excludeWindowIds: options.excludeWindowIds,
+        keepOverlays: options.keepOverlays,
         indicator: options.indicator,
         audio: options.audio,
         micDevice: options.micDevice,

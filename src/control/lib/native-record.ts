@@ -129,6 +129,10 @@ export function nativeCaptureArgv(cap: CaptureSpec, outDir: string): string[] {
         argv.push("--exclude-window-ids", cap.excludeWindowIds.join(","));
     }
 
+    if (cap.keepOverlays) {
+        argv.push("--keep-overlays");
+    }
+
     const tuning: [string, number | undefined][] = [
         ["--max-long-side", cap.maxLongSide],
         ["--quiet-ms", cap.quietMs],
@@ -288,6 +292,7 @@ export function validateCaptureOptions(cap: CaptureSpec): void {
         cap.indicator,
         cap.maxFrames,
         cap.excludeWindowIds,
+        cap.keepOverlays,
         cap.displayId,
         cap.followFocus,
         cap.maxLongSide,

@@ -59,6 +59,9 @@ struct RecordOptions {
     let maxMb: Double?
     /// `--control-stdin`: JSON-line commands on stdin, JSON-line events on stderr.
     let controlStdin: Bool
+    /// `--keep-overlays`: a display or area recording keeps the windows of screen dimmers (HazeOver and the like),
+    /// which it leaves out by default (`DimmingOverlayRule`).
+    let keepOverlays: Bool
     /// `--audio system,mic`: the audio sources, each its own track.
     let audioSources: [CaptureAudioSource]
     /// `--mic-device <uid>` from `ax-tool audio-devices`; nil is the default input.
@@ -189,6 +192,7 @@ private func recordOptions(startWarnings: [String]) -> RecordOptions {
         heartbeatSec: number("--heartbeat-sec", default: 0, min: 0, max: 3600),
         maxMb: optionalNumber("--max-mb", min: 0.01, max: 1_000_000),
         controlStdin: controlStdin,
+        keepOverlays: CommandLine.arguments.contains("--keep-overlays"),
         audioSources: audioSources,
         micDevice: micDevice,
         audioSidecar: audioSidecar,
@@ -1141,6 +1145,7 @@ func cmdCaptureScreen() {
             errorExit("\(error.localizedDescription), so nothing was recorded; try again", code: "failed")
         }
         let excluded = indicator.windowIDs.union(options.selection.excludedWindowIDs)
+            .union(overlayExclusions(in: content, keep: options.keepOverlays))
         filter = SCContentFilter(display: scDisplay, excludingWindows: content.windows.filter { excluded.contains($0.windowID) })
         pointSize = sourceRect?.size ?? display.bounds.size
     }
@@ -1723,7 +1728,8 @@ private final class ScreenStreamHost {
                 guard let scDisplay = content.displays.first(where: { $0.displayID == target }) else {
                     throw NSError(domain: "ax-tool", code: 2, userInfo: [NSLocalizedDescriptionKey: "display \(target) is not shareable"])
                 }
-                let windows = content.windows.filter { excluded.contains($0.windowID) }
+                let overlays = overlayExclusions(in: content, keep: options.keepOverlays)
+                let windows = content.windows.filter { excluded.contains($0.windowID) || overlays.contains($0.windowID) }
                 let filter = SCContentFilter(display: scDisplay, excludingWindows: windows)
                 restoreFilter = content.displays.first(where: { $0.displayID == previousDisplay.id })
                     .map { SCContentFilter(display: $0, excludingWindows: windows) }
@@ -1791,7 +1797,7 @@ private final class ScreenStreamHost {
             let content = try awaitResult(timeoutSeconds: 10) { try await listedContent(requested) }
             guard let scDisplay = content.displays.first(where: { $0.displayID == target }) else { return }
             indicator.update([geometry.bounds])
-            let excluded = excludedWindowIDs
+            let excluded = excludedWindowIDs.union(overlayExclusions(in: content, keep: options.keepOverlays))
             let filter = SCContentFilter(display: scDisplay, excludingWindows: content.windows.filter { excluded.contains($0.windowID) })
             if let size = outputSize(for: geometry) {
                 _ = recorder.setOutputSize(width: Int(size.width), height: Int(size.height), for: target)
@@ -1861,6 +1867,27 @@ func shareableContent(listing windowIDs: Set<CGWindowID>, timeout: TimeInterval 
         FileHandle.standardError.write(Data("ax-tool: listing the windows again failed (\(reason)); the movie may show the recording border or a window it leaves out\n".utf8))
     }
     return polled.value
+}
+
+/// The windows of screen dimmers in `content` (`DimmingOverlayRule`), which a display filter leaves out unless the
+/// recording keeps them (`--keep-overlays`). Each found window is logged once per filter, so a movie that lost a
+/// window someone wanted can be traced.
+func overlayExclusions(in content: SCShareableContent, keep: Bool) -> Set<CGWindowID> {
+    guard !keep else { return [] }
+    let facts = content.windows.map { window in
+        let pid = window.owningApplication?.processID
+        let policy = pid.flatMap { NSRunningApplication(processIdentifier: $0)?.activationPolicy }
+        return OverlayWindowFacts(windowID: window.windowID, ownerBundleID: window.owningApplication?.bundleIdentifier,
+                                  layer: window.windowLayer, frame: window.frame,
+                                  ownerIsAgent: policy != nil && policy != .regular)
+    }
+    let found = DimmingOverlayRule.overlayIDs(facts, displays: content.displays.map(\.frame))
+    if !found.isEmpty {
+        let owners = Set(content.windows.filter { found.contains($0.windowID) }
+            .map { $0.owningApplication?.bundleIdentifier ?? "unknown" }).sorted().joined(separator: ",")
+        FileHandle.standardError.write(Data("ax-tool: leaving out \(found.count) dimming overlay window(s) of \(owners); --keep-overlays keeps them\n".utf8))
+    }
+    return found
 }
 
 /// Throws when a window the caller asked the movie to leave out still exists but `content` does not list it: a display

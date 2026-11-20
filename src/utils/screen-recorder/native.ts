@@ -33,6 +33,7 @@ const { log } = logger.scoped("screen-recorder-native");
 export const NATIVE_OPTIONAL_FLAGS = [
     "--display-id",
     "--exclude-window-ids",
+    "--keep-overlays",
     "--follow-focus",
     "--max-long-side",
     "--quiet-ms",
@@ -222,6 +223,13 @@ export function nativeArgv(options: {
             throw new CaptureError("unavailable", "this ax-tool has no --exclude-window-ids; rebuild it");
         }
         argv.push("--exclude-window-ids", request.excludeWindowIds.join(","));
+    }
+
+    if (request.keepOverlays) {
+        if (!flags.has("--keep-overlays")) {
+            throw new CaptureError("unavailable", "this ax-tool has no --keep-overlays; rebuild it");
+        }
+        argv.push("--keep-overlays");
     }
 
     if (request.maxLongSidePx !== undefined) {

@@ -77,6 +77,8 @@ export interface StartRecordingOptions {
     displays?: "all" | "main" | number[];
     /** CG window IDs left out of every display and piece. */
     excludeWindowIds?: number[];
+    /** Keep the windows of screen dimmers (HazeOver and the like); every display leaves them out by default. */
+    keepOverlays?: boolean;
     fps?: number;
     idleFps?: number;
     /** Percent of the frame that must change for a new frame. */
@@ -199,6 +201,7 @@ export class LibraryRecording extends FrameRecording<number> {
                 request: (now) => ({
                     heartbeatSec: now.heartbeatSec || undefined,
                     ...(excludedWindows.length ? { excludeWindowIds: [...excludedWindows] } : {}),
+                    ...(options.keepOverlays ? { keepOverlays: true } : {}),
                 }),
                 failures: {
                     max: 3,

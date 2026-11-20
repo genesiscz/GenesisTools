@@ -36,6 +36,7 @@ interface SessionFlags {
     stopOnStdin?: boolean;
     target?: string;
     excludeWindowIds?: string;
+    keepOverlays?: boolean;
     fps?: string;
     idleFps?: string;
     /** Commander's `--no-indicator`: true unless the flag is given. */
@@ -153,6 +154,10 @@ export function registerCaptureSessionCommands(capture: Command): void {
             'What to record: {"kind":"window","windowIds":[n]}, {"kind":"app","app":"Finder"} or {"kind":"display","screenIndex":0}; default the front window'
         )
         .option("--exclude-window-ids <ids>", "CG window ids the movie never shows (the host's own controls)")
+        .option(
+            "--keep-overlays",
+            "Keep screen dimmers (HazeOver and the like) in a display or area movie; they are left out by default"
+        )
         .option("--fps <n>", "Frame rate while something moves, 0.5–120", "60")
         .option("--idle-fps <n>", "Frame rate while still, 0.1–5 (default: keep the active frame rate)")
         .option("--no-indicator", "Hide the red border around what is recorded (never in the movie either way)")
@@ -230,6 +235,7 @@ export function registerCaptureSessionCommands(capture: Command): void {
                     output: flags.output ?? recordingsDir(`recording-${stamp()}-${randomUUID().slice(0, 8)}.mp4`),
                     recorder: nativeSegmentRecorder({
                         excludeWindowIds: parseIds(flags.excludeWindowIds),
+                        keepOverlays: flags.keepOverlays === true,
                         indicator: flags.indicator,
                     }),
                     join: ffmpegSegmentJoiner,

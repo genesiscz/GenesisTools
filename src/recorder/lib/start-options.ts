@@ -61,6 +61,7 @@ export interface StartFlags {
     threshold?: string;
     region?: string;
     excludeWindowIds?: string;
+    keepOverlays?: boolean;
     camera?: boolean;
     countdown?: string | boolean;
     display?: string;
@@ -119,6 +120,10 @@ export function withStartOptions(command: Command): Command {
         .option("--app <name>", "record this app's windows (name, bundle id or pid)")
         .option("--region <x,y,w,h>", "record this area of a display, in screen points from the top-left corner")
         .option("--exclude-window-ids <ids>", "leave these windows out of each take (CG window ids, comma separated)")
+        .option(
+            "--keep-overlays",
+            "keep screen dimmers (HazeOver and the like) in a display or area take; they are left out by default"
+        )
         .option(
             "--camera",
             "record the camera beside the screen into camera.mov (the menu bar recorder records it and must run; the editor draws the bubble)"
@@ -292,6 +297,7 @@ export function parseStartFlags(flags: StartFlags): StartRequest {
         idleFps: bounded(flags.idleFps, "--idle-fps", START_LIMITS.idleFps),
         threshold: bounded(flags.threshold, "--threshold", START_LIMITS.threshold),
         excludeWindowIds: parseWindowIdList(flags.excludeWindowIds, "--exclude-window-ids"),
+        keepOverlays: flags.keepOverlays === true,
         camera: flags.camera === true,
         countdownSeconds: countdownSecondsOf(flags.countdown),
         audio,
@@ -535,6 +541,8 @@ export const recordOptionsSchema = z
             .optional(),
         /** CG window ids the movie leaves out. */
         excludeWindowIds: z.array(z.number().int().positive()).optional(),
+        /** Keep screen dimmers (HazeOver and the like) in a display or area movie; they are left out by default. */
+        keepOverlays: z.boolean().optional(),
         fps: limited(START_LIMITS.fps).optional(),
         idleFps: limited(START_LIMITS.idleFps).optional(),
         threshold: limited(START_LIMITS.threshold).optional(),
@@ -566,6 +574,7 @@ const START_ARGS: { [K in keyof Required<RecordOptions>]: (options: RecordOption
     region: ({ region }) => (region ? ["--region", region] : []),
     excludeWindowIds: ({ excludeWindowIds }) =>
         excludeWindowIds?.length ? ["--exclude-window-ids", excludeWindowIds.join(",")] : [],
+    keepOverlays: ({ keepOverlays }) => (keepOverlays ? ["--keep-overlays"] : []),
     fps: ({ fps }) => (fps === undefined ? [] : ["--fps", String(fps)]),
     idleFps: ({ idleFps }) => (idleFps === undefined ? [] : ["--idle-fps", String(idleFps)]),
     threshold: ({ threshold }) => (threshold === undefined ? [] : ["--threshold", String(threshold)]),

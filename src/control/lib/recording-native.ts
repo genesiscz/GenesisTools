@@ -52,6 +52,8 @@ export const SESSION_MOTION_THRESHOLD = 0.5;
 export interface NativeRecorderOptions {
     /** CG window ids no movie may show: the host's own recording controls. */
     excludeWindowIds?: number[];
+    /** Keep the windows of screen dimmers (HazeOver and the like) in a display or area movie; they are left out by default. */
+    keepOverlays?: boolean;
     /** The recorder's frame rate while something moves (0.5–120). */
     fps?: number;
     /** False hides the red border around what is recorded (it never shows in the movie either way). */
@@ -142,6 +144,10 @@ export function segmentCaptureSpec({
 
     if (options.excludeWindowIds?.length) {
         spec.excludeWindowIds = options.excludeWindowIds;
+    }
+
+    if (options.keepOverlays && (target.kind === "display" || target.kind === "region")) {
+        spec.keepOverlays = true;
     }
 
     if (options.audio?.length) {

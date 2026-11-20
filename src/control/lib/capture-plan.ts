@@ -478,6 +478,8 @@ export interface CaptureSpec {
     maxFrames?: number;
     /** CG window ids the movie never shows, such as a host's own recording controls (native backend). */
     excludeWindowIds?: number[];
+    /** Screen and region mode, native: keep the windows of screen dimmers (HazeOver and the like), which the movie leaves out by default. */
+    keepOverlays?: boolean;
     /** Screen mode, native: the CGDirectDisplayID to record; wins over screenIndex. */
     displayId?: number;
     /** Screen mode, native: record the display holding the frontmost app's focused window, switching live. */
