@@ -898,9 +898,12 @@ const RULES: Rule[] = [
             ) {
                 return true;
             }
+            // A real call of genesisAppBundlePath inside the arguments, not that text in a string or a comment.
             return (
                 /(?:^|\.)(?:existsSync|exists)$/.test(fn) &&
-                /genesisAppBundlePath\s*\(/.test(node.field("arguments")?.text() ?? "")
+                (node.field("arguments")?.findAll({ rule: { kind: "call_expression" } }) ?? []).some((call) =>
+                    /(?:^|\.)genesisAppBundlePath$/.test(call.field("function")?.text() ?? "")
+                )
             );
         },
     },
