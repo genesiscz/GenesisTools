@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import { fileIdentity } from "@genesiscz/utils/fs/identity-cache";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -58,23 +58,39 @@ function yieldToLoop(): Promise<void> {
     return new Promise<void>((resolve) => setImmediate(resolve));
 }
 
-/** An eight-hour cache holds about 46 MB: it is read, hashed and decoded in slices, never in one blocking pass. */
+/**
+ * An eight-hour cache holds about 46 MB: it is read, hashed and decoded in slices, never in one blocking pass. The
+ * file is opened once and its size bound is checked on that handle, so a file replaced after the check is never read.
+ */
 async function readFrames(cachePath: string, key: string): Promise<VoiceFrame[] | undefined> {
+    const handle = await open(cachePath, "r").catch(() => undefined);
+    if (!handle) {
+        return undefined;
+    }
+
     try {
-        const info = await stat(cachePath).catch(() => undefined);
-        if (!info || info.size > DIGEST_BYTES + MAX_VOICE_FRAMES * FRAME_BYTES) {
+        const { size } = await handle.stat();
+        if (
+            size < DIGEST_BYTES ||
+            size > DIGEST_BYTES + MAX_VOICE_FRAMES * FRAME_BYTES ||
+            (size - DIGEST_BYTES) % FRAME_BYTES !== 0
+        ) {
             return undefined;
         }
 
-        const bytes = await readFile(cachePath);
-        if ((bytes.length - DIGEST_BYTES) % FRAME_BYTES !== 0) {
-            return undefined;
-        }
-
+        const bytes = Buffer.allocUnsafe(size);
         const hash = createHash("sha256").update(key);
-        for (let offset = DIGEST_BYTES; offset < bytes.length; offset += HASH_CHUNK_BYTES) {
-            hash.update(bytes.subarray(offset, Math.min(bytes.length, offset + HASH_CHUNK_BYTES)));
-            await yieldToLoop();
+        for (let filled = 0; filled < size; ) {
+            const { bytesRead } = await handle.read(bytes, filled, Math.min(HASH_CHUNK_BYTES, size - filled), filled);
+            if (bytesRead === 0) {
+                return undefined;
+            }
+
+            if (filled + bytesRead > DIGEST_BYTES) {
+                hash.update(bytes.subarray(Math.max(filled, DIGEST_BYTES), filled + bytesRead));
+            }
+
+            filled += bytesRead;
         }
 
         if (!bytes.subarray(0, DIGEST_BYTES).equals(hash.digest())) {
@@ -94,6 +110,8 @@ async function readFrames(cachePath: string, key: string): Promise<VoiceFrame[] 
     } catch (error) {
         logger.debug({ error, cachePath }, "Voice frame cache could not be read");
         return undefined;
+    } finally {
+        await handle.close();
     }
 }
 
