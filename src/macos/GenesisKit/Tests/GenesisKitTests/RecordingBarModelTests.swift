@@ -286,6 +286,18 @@ final class RecordingBarModelTests: XCTestCase {
         XCTAssertNil(RecordingBarView.audioNote(for: display, capabilities: full))
     }
 
+    /// The defect: a Small preset saved by the full recorder showed as the widget's Quality, and the widget records at
+    /// the target's native size. The widget's bar shows Standard; the setup keeps Small for the full recorder.
+    func testTheWidgetsQualityRowShowsItsFixedPresetNotTheSavedOne() {
+        var setup = RecordingSetup()
+        setup.movieQuality = .small
+        XCTAssertEqual(RecordingBarView.shownMovieQuality(setup: setup, capabilities: WidgetSessionEngine.movieCapabilities),
+                       .standard)
+        XCTAssertEqual(setup.movieQuality, .small)
+        XCTAssertEqual(RecordingBarView.shownMovieQuality(setup: setup, capabilities: RecordingCapabilities(targets: [.display])),
+                       .small)
+    }
+
     func testLegacyTargetJSONAndNewTargetWireFormats() throws {
         let fixtures: [(String, RecordingTarget)] = [
             (#"{"kind":"window","windowIds":[7,8],"app":"Editor","title":"Draft","pid":42}"#,

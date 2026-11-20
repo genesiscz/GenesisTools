@@ -27,14 +27,19 @@ public struct RecordingCapabilities: Equatable, Sendable {
     public var liveCamera: Bool
     public var liveDisplaysAddRemove: Bool
     public var maxDurationMs: Double?
+    /// The movie preset this recorder always records, whatever the setup saved; nil when it records the setup's
+    /// preset. The widget records at the target's native size, so its bar shows Standard, not the full recorder's pick.
+    public var fixedMovieQuality: MovieQuality?
     public var reasonUnavailable: [String: String]
 
     public init(targets: Set<RecordingTargetKind> = [], liveTargetSwitch: Bool = false,
                 liveMicrophoneMute: Bool = false, liveMicrophoneDevice: Bool = false,
                 liveSystemAudioMute: Bool = false, liveFrameRate: Bool = false,
                 liveCamera: Bool = false, liveDisplaysAddRemove: Bool = false, liveRestart: Bool = true, maxDurationMs: Double? = nil,
-                sources: Set<RecordingSource> = Set(RecordingSource.allCases), reasonUnavailable: [String: String] = [:]) {
+                sources: Set<RecordingSource> = Set(RecordingSource.allCases), fixedMovieQuality: MovieQuality? = nil,
+                reasonUnavailable: [String: String] = [:]) {
         self.targets = targets
+        self.fixedMovieQuality = fixedMovieQuality
         self.sources = sources
         self.liveTargetSwitch = liveTargetSwitch
         self.liveMicrophoneMute = liveMicrophoneMute

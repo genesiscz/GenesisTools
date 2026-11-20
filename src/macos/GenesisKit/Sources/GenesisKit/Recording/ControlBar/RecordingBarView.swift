@@ -245,6 +245,12 @@ public struct RecordingBarView: View {
 
     private var audioReason: String? { Self.audioNote(for: setup.target, capabilities: caps) }
 
+    /// The movie preset the Quality row shows: the recorder's fixed one (the widget's native size), else the setup's.
+    /// The saved preset stays in the setup for the full recorder.
+    public static func shownMovieQuality(setup: RecordingSetup, capabilities caps: RecordingCapabilities) -> MovieQuality {
+        caps.fixedMovieQuality ?? setup.movieQuality
+    }
+
     /// What the target's movie leaves out of sound, said in view under the source line; nil when it records sound.
     public static func audioNote(for target: RecordingTarget?, capabilities caps: RecordingCapabilities) -> String? {
         if caps.sources.isDisjoint(with: [.microphone, .systemAudio]) {
@@ -421,7 +427,7 @@ public struct RecordingBarView: View {
                 choice("Quality", "quality", value: setup.quality, values: RecordingQuality.allCases,
                        title: { $0.rawValue.capitalized }, reason: qualityReason, scope: scope(qualityReason)) { model.apply(.quality($0)) }
             } else {
-                choice("Quality", "quality", value: setup.movieQuality, values: MovieQuality.allCases,
+                choice("Quality", "quality", value: Self.shownMovieQuality(setup: setup, capabilities: caps), values: MovieQuality.allCases,
                        title: \.title, reason: qualityReason, scope: scope(qualityReason)) { model.apply(.movieQuality($0)) }
             }
             let rateReason = reason("frameRate", live: caps.liveFrameRate)
