@@ -26,7 +26,7 @@ Prints one line per handoff event. With no argument it follows every handoff. An
 |---|---|---|
 | `--since <duration>` | `0` | Replay events from this long ago first: `90s`, `30m`, `6h`, `2d` |
 | `--once` | off | Print the replay and exit instead of following |
-| `--json` | off | One raw JSON event per line |
+| `--json` | off | One JSON event per line, without the poster's edit credential |
 
 Each line holds the local time (24-hour), the handoff id, its readable name in parentheses, the event, a short
 detail, and `by <agent>:<first 8 characters of the session id>`. The events and their detail:
@@ -43,16 +43,15 @@ Notes:
 
 - `--since 0` (the default) replays nothing. So `--once` without `--since` prints nothing and exits.
 - A duration is a whole number with `s`, `m`, `h` or `d`. Anything else exits 1 with the accepted forms.
-- A name argument resolves from the names posted or renamed in the last 30 days. For an older handoff, pass its id.
+- A name argument resolves from the current name of every handoff in the store, whatever its age.
 - A live event also matches by the handoff's current name, so a handoff renamed after the watch started is still
   followed. The replay matches by id only.
-- `watch` reads the raw log, so it also prints actions the store refused (for example a `modify_handoff` from a
-  session that is not the poster). The outcome of each event is in the handoff's events: `handoff_get` with
-  `include: ["events"]`.
-- `--json` prints the raw event. A `post` event, and every event sent with an `editId` (for example `modify
-  --edit-id`), carries the handoff's `editId` (the poster's edit credential), so keep that output private.
-- The follow moves to the new day file at midnight. The replay and the live tail can overlap; events are
-  de-duplicated by their uid. Ctrl-C stops it.
+- `watch` follows the work store's change feed (the `changes` journal), so it prints only the events the store
+  accepted. An action the store refused (for example a `modify_handoff` from a session that is not the poster)
+  changes nothing, so it has no change and `watch` does not print it. Every attempt and its outcome is in the
+  handoff's events: `handoff_get` with `include: ["events"]`.
+- `--json` prints the event as the store keeps it, which never carries the poster's edit credential (`editId`).
+- The replay and the live follow can overlap; events are de-duplicated by their uid. Ctrl-C stops it.
 
 ### `modify <handoff> --project <name|path>`
 
@@ -235,7 +234,10 @@ tools scripts call genesis-tools.handoff_list '{"limit":5}'  # one call, the res
   `{ action: "claim" }`. Checking a denied task or denying a checked one also needs `force: true`.
 - **"This session has no sessionId"**: a claim came from a process with no agent session. Claim from the agent's
   own session.
-- **`watch` by name shows nothing**: the name is older than 30 days, or you used `--once` without `--since`.
+- **`watch` by name shows nothing**: the handoff no longer carries that name, or you used `--once` without
+  `--since`.
+- **`watch` does not show an action an agent sent**: the store refused it, and a refused action has no change in
+  the feed. `handoff_get` with `include: ["events"]` shows it with its outcome.
 
 ## Related
 
