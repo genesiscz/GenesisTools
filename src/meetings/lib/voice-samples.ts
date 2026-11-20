@@ -450,11 +450,57 @@ export function journalVoices(entry: JournalEntry | undefined, item?: string, pr
     });
 }
 
+function samePrint(a: VoicePrint, b: VoicePrint): boolean {
+    return (
+        a.meeting === b.meeting &&
+        a.sourceSha === b.sourceSha &&
+        a.seat === b.seat &&
+        a.track === b.track &&
+        a.fromSec === b.fromSec &&
+        a.toSec === b.toSec &&
+        a.confirmedAt === b.confirmedAt &&
+        a.question === b.question
+    );
+}
+
+/**
+ * A legacy print that a later confirmation replaced has no token of its own. It is live when the journal, read newest
+ * first, still has the confirmation that saved it as the latest decision on its item: no newer entry changed that item,
+ * or the newest one that did confirmed it with that same token.
+ */
+function liveBeforePrint(before: VoicePrint, newestFirst: readonly JournalEntry[]): boolean {
+    for (const [index, entry] of newestFirst.entries()) {
+        const own = journalVoices(entry).find((change) => samePrint(change.after, before));
+        if (!own?.item) {
+            continue;
+        }
+
+        for (const newer of newestFirst.slice(0, index)) {
+            const change = newer.changes.find((one) => one.id === own.item);
+            if (change) {
+                return change.after?.status === "confirmed" && change.after.decision?.token === entry.token;
+            }
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
+export interface VoiceTransition {
+    rollback: () => void;
+    /** Withdrawn legacy confirmations whose replaced print stayed out, since its own confirmation is not live. */
+    notRestored: VoicePrintChange[];
+}
+
+/** `journal` lists the meeting's saved entries newest first; it is read only for a legacy replaced print. */
 export function transitionAnsweredVoiceSamples(options: {
     entry: JournalEntry;
     entryOf: (token: string) => JournalEntry | undefined;
+    journal: () => readonly JournalEntry[];
     project?: string;
-}): () => void {
+}): VoiceTransition {
     const removed: VoicePrintChange[] = [];
     const added: VoicePrintChange[] = [];
     for (const change of options.entry.changes) {
@@ -470,6 +516,20 @@ export function transitionAnsweredVoiceSamples(options: {
             added.push(...journalVoices(options.entryOf(after), change.id, options.project));
         }
     }
+    const notRestored: VoicePrintChange[] = [];
+    let newestFirst: JournalEntry[] | undefined;
+    for (const [index, change] of removed.entries()) {
+        if (!change.before) {
+            continue;
+        }
+
+        newestFirst ??= [options.entry, ...options.journal().filter((entry) => entry.token !== options.entry.token)];
+        if (!liveBeforePrint(change.before, newestFirst)) {
+            const { before: _withdrawn, ...withoutBefore } = change;
+            removed[index] = withoutBefore;
+            notRestored.push(change);
+        }
+    }
     const own = journalVoices(options.entry, undefined, options.project);
     const batch = publishVoiceChanges([...added, ...own], false, removed);
     if (own.length && options.entry.voices) {
@@ -478,13 +538,17 @@ export function transitionAnsweredVoiceSamples(options: {
             return result?.status === "added" ? [{ ...change, id: result.id }] : [];
         });
     }
-    return batch.rollback;
+    return { rollback: batch.rollback, notRestored };
 }
 
 export function replayAnsweredVoiceSamples(entries: readonly JournalEntry[]): void {
     const known = new Map<string, JournalEntry>();
     for (const entry of entries) {
-        transitionAnsweredVoiceSamples({ entry: structuredClone(entry), entryOf: (token) => known.get(token) });
+        transitionAnsweredVoiceSamples({
+            entry: structuredClone(entry),
+            entryOf: (token) => known.get(token),
+            journal: () => [...known.values()].toReversed(),
+        });
         known.set(entry.token, entry);
     }
 }

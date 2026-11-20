@@ -2480,11 +2480,20 @@ export class DecisionJournal {
                 {
                     write: (current) => {
                         if (result.entry) {
-                            const undoVoices = transitionAnsweredVoiceSamples({
+                            const voices = transitionAnsweredVoiceSamples({
                                 entry: result.entry,
                                 entryOf: context.entryOf,
+                                journal: () => this.entries(meeting).toReversed(),
                                 project: current.project ?? "",
                             });
+                            const undoVoices = voices.rollback;
+                            const people = [...new Set(voices.notRestored.map((change) => change.person))];
+                            if (people.length) {
+                                result.warnings = [
+                                    ...(result.warnings ?? []),
+                                    `A voice sample this withdrawal would put back stays out for ${people.join(", ")}: the confirmation that saved it is no longer live in the journal.`,
+                                ];
+                            }
                             try {
                                 const undoLines = this.writeLines(result.entry, {
                                     reverted: action.kind === "revert" ? context.entryOf(action.token) : undefined,
