@@ -21070,7 +21070,8 @@ public final class GenesisToolsRPC {
     /// How long a client waits for an action call: the budget the service runs it with, plus the service's grace to answer
     /// and the same again, so the service's own expiry answer always arrives first (serviceActionClientTimeoutMs).
     static func actionClientTimeout(_ id: String, override: Int? = nil) -> TimeInterval {
-        TimeInterval(max(1, override ?? actionBudgetsMs[id] ?? 120000) + 20000) / 1000
+        // In seconds as a Double: an override near Int.max cannot overflow before the service judges it.
+        (TimeInterval(max(1, override ?? actionBudgetsMs[id] ?? 120000)) + 20000) / 1000
     }
     /// Once per published connection that the service ends (a restart, a crash); not after `close()`.
     public var onDisconnect: (() -> Void)?
@@ -21175,8 +21176,9 @@ public final class GenesisToolsRPC {
         return try JSONDecoder().decode(R.self, from: bytes)
     }
     /// Events named `name`. The stream ends with the error when the connection cannot be made or the service ends it.
+    /// Every event reports a state, so a consumer that falls behind keeps the newest 256 and memory stays bounded.
     fileprivate func stream<E: Decodable>(_ name: String) -> AsyncThrowingStream<E, Error> {
-        AsyncThrowingStream { continuation in
+        AsyncThrowingStream(bufferingPolicy: .bufferingNewest(256)) { continuation in
             let id = UUID()
             listeners[name, default: [:]][id] = Listener(
                 deliver: { data in if let value = try? JSONDecoder().decode(E.self, from: data) { continuation.yield(value) } },

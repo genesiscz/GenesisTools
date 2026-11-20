@@ -8,7 +8,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { z } from "zod";
 
-interface WireSchema {
+export interface WireSchema {
     type?: string | string[];
     properties?: Record<string, WireSchema>;
     required?: string[];
@@ -135,60 +135,57 @@ export function renderSwiftSchema(schema: WireSchema, name: string, declarations
             return fail();
     }
 }
-/** A value of `schema`. Every union (and every type list) takes its alternative `variant % count`, so variant 1 is
- * the second branch of an action reply and the null of a nullable field, and every variant below `unionWidth` is a
- * different wire shape. */
-function sample(schema: WireSchema, variant = 0): unknown {
+/**
+ * Values of `schema` that together take every alternative of every union (and of every type list) at least once,
+ * nested ones included. An object's row `i` takes row `i` of each property's samples (its first when it has fewer), so
+ * a nullable field inside one arm of an outer union reaches the decoders both as a value and as null.
+ */
+export function wireSamples(schema: WireSchema): unknown[] {
     if (schema.default !== undefined) {
-        return schema.default;
+        return [schema.default];
     }
     if (schema.const !== undefined) {
-        return schema.const;
+        return [schema.const];
     }
     if (schema.enum) {
-        return schema.enum[0];
+        return [schema.enum[0]];
     }
     const options = schema.anyOf ?? schema.oneOf;
     if (options) {
-        return sample(options[variant % options.length], variant);
+        return options.flatMap(wireSamples);
     }
     if (Array.isArray(schema.type)) {
-        return sample({ ...schema, type: schema.type[variant % schema.type.length] }, variant);
+        return schema.type.flatMap((type) => wireSamples({ ...schema, type }));
     }
     switch (schema.type) {
-        case "object":
-            return Object.fromEntries(
-                Object.entries(schema.properties ?? {}).map(([key, value]) => [key, sample(value, variant)])
+        case "object": {
+            const fields = Object.entries(schema.properties ?? {}).map(([key, value]): [string, unknown[]] => [
+                key,
+                wireSamples(value),
+            ]);
+            const rows = Math.max(1, ...fields.map(([, values]) => values.length));
+            return Array.from({ length: rows }, (_, row) =>
+                Object.fromEntries(fields.map(([key, values]) => [key, row < values.length ? values[row] : values[0]]))
             );
-        case "array":
-            return Array.from({ length: Math.max(schema.minItems ?? 0, variant > 0 ? 1 : 0) }, () =>
-                sample(schema.items ?? {}, variant)
-            );
+        }
+        case "array": {
+            const items = wireSamples(schema.items ?? {});
+            const min = schema.minItems ?? 0;
+            return [
+                Array.from({ length: min }, () => items[0]),
+                ...items.map((item) => Array.from({ length: Math.max(min, 1) }, () => item)),
+            ];
+        }
         case "string":
-            return schema.format === "date-time" ? "2026-11-17T12:00:00.000Z" : "fixture";
+            return [schema.format === "date-time" ? "2026-11-17T12:00:00.000Z" : "fixture"];
         case "integer":
         case "number":
-            return schema.minimum ?? 1;
+            return [schema.minimum ?? 1];
         case "boolean":
-            return true;
+            return [true];
         default:
-            return null;
+            return [null];
     }
-}
-
-/** The most alternatives any one union in `schema` has: the number of `sample` variants worth writing. */
-function unionWidth(schema: WireSchema): number {
-    const nested = [
-        ...(schema.anyOf ?? schema.oneOf ?? []),
-        ...Object.values(schema.properties ?? {}),
-        ...(schema.items ? [schema.items] : []),
-        ...(typeof schema.additionalProperties === "object" ? [schema.additionalProperties] : []),
-    ];
-    const own = Math.max(
-        (schema.anyOf ?? schema.oneOf ?? []).length,
-        Array.isArray(schema.type) ? schema.type.length : 1
-    );
-    return Math.max(own, ...nested.map(unionWidth));
 }
 
 const JSON_TYPE = `public indirect enum GenesisToolsJSON: Codable, Sendable {
@@ -226,6 +223,9 @@ public struct GenesisToolsNull: Codable, Sendable, Equatable {
     public func encode(to encoder: Encoder) throws { var box = encoder.singleValueContainer(); try box.encodeNil() }
 }`;
 
+/** Events a generated stream holds for a consumer that has not read them yet; older ones are dropped. */
+const EVENT_BUFFER = 256;
+
 export function renderGenesisToolsRPC(): { swift: string; fixtures: string } {
     const declarations: string[] = [];
     const methods = [...genesisToolsApi.methods, ...requestPresentApi.methods];
@@ -243,14 +243,15 @@ export function renderGenesisToolsRPC(): { swift: string; fixtures: string } {
             params: renderSwiftSchema(paramsSchema, `${title(method.name)}Params`, declarations, method.name),
             result: renderSwiftSchema(resultSchema, `${title(method.name)}Result`, declarations, method.name),
         });
-        // One row per variant, so every union arm and every null of a nullable field reaches both decoders.
+        // Every union arm and every null of a nullable field, nested ones too, reaches both decoders in some row.
         const rows = new Map<string, { method: string; params: unknown; result: unknown }>();
-        const width = Math.max(unionWidth(paramsSchema), unionWidth(resultSchema));
-        for (let variant = 0; variant < width; variant++) {
+        const params = wireSamples(paramsSchema);
+        const results = wireSamples(resultSchema);
+        for (let index = 0; index < Math.max(params.length, results.length); index++) {
             const row = {
                 method: method.name,
-                params: method.params.parse(sample(paramsSchema, variant)),
-                result: method.result.parse(sample(resultSchema, variant)),
+                params: method.params.parse(index < params.length ? params[index] : params[0]),
+                result: method.result.parse(index < results.length ? results[index] : results[0]),
             };
             rows.set(SafeJSON.stringify(row), row);
         }
@@ -340,7 +341,8 @@ export function renderGenesisToolsRPC(): { swift: string; fixtures: string } {
     /// How long a client waits for an action call: the budget the service runs it with, plus the service's grace to answer
     /// and the same again, so the service's own expiry answer always arrives first (serviceActionClientTimeoutMs).
     static func actionClientTimeout(_ id: String, override: Int? = nil) -> TimeInterval {
-        TimeInterval(max(1, override ?? actionBudgetsMs[id] ?? 120000) + ${2 * SERVICE_CALL_GRACE_MS}) / 1000
+        // In seconds as a Double: an override near Int.max cannot overflow before the service judges it.
+        (TimeInterval(max(1, override ?? actionBudgetsMs[id] ?? 120000)) + ${2 * SERVICE_CALL_GRACE_MS}) / 1000
     }
     /// Once per published connection that the service ends (a restart, a crash); not after \`close()\`.
     public var onDisconnect: (() -> Void)?
@@ -445,8 +447,9 @@ export function renderGenesisToolsRPC(): { swift: string; fixtures: string } {
         return try JSONDecoder().decode(R.self, from: bytes)
     }
     /// Events named \`name\`. The stream ends with the error when the connection cannot be made or the service ends it.
+    /// Every event reports a state, so a consumer that falls behind keeps the newest ${EVENT_BUFFER} and memory stays bounded.
     fileprivate func stream<E: Decodable>(_ name: String) -> AsyncThrowingStream<E, Error> {
-        AsyncThrowingStream { continuation in
+        AsyncThrowingStream(bufferingPolicy: .bufferingNewest(${EVENT_BUFFER})) { continuation in
             let id = UUID()
             listeners[name, default: [:]][id] = Listener(
                 deliver: { data in if let value = try? JSONDecoder().decode(E.self, from: data) { continuation.yield(value) } },

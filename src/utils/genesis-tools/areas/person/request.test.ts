@@ -22,6 +22,8 @@ import {
     renderSwiftSchema,
     SWIFT_PATH,
     WIRE_PATH,
+    type WireSchema,
+    wireSamples,
 } from "../../../../../scripts/gen-genesis-tools-rpc-swift";
 import { genesisToolsApi, requestPresentApi } from "../../service/api";
 import { connectGenesisToolsService } from "../../service/clients";
@@ -517,6 +519,19 @@ test("a subscribed face receives each worker and service settlement transition e
         start.host.stop("test complete");
         await start.host.stopped;
     }
+});
+
+test("the wire samples reach both alternatives of a nullable field inside one arm of an outer union", () => {
+    const schema: WireSchema = {
+        anyOf: [
+            {
+                type: "object",
+                properties: { kind: { const: "a" }, note: { anyOf: [{ type: "string" }, { type: "null" }] } },
+            },
+            { type: "object", properties: { kind: { const: "b" } } },
+        ],
+    };
+    expect(wireSamples(schema)).toEqual([{ kind: "a", note: "fixture" }, { kind: "a", note: null }, { kind: "b" }]);
 });
 
 test("every generated fixture parses in TypeScript and generated files are current", () => {
