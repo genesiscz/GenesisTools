@@ -94,9 +94,13 @@ func captureSelectionOptions(mode: String) -> CaptureSelectionOptions {
     if transparent && !["window", "isolated"].contains(mode) {
         errorExit("--transparent requires window or isolated mode", code: "invalid-argument")
     }
-    let movieQuality = argValue("--movie-quality").map { raw in
-        MovieQuality(rawValue: raw) ?? errorExit("--movie-quality must be standard, high or small", code: "invalid-argument")
-    } ?? .standard
+    var movieQuality = MovieQuality.standard
+    if let raw = argValue("--movie-quality") {
+        guard let preset = MovieQuality(rawValue: raw) else {
+            errorExit("--movie-quality must be standard, high or small", code: "invalid-argument")
+        }
+        movieQuality = preset
+    }
     if movieQuality != .standard && (argValue("--video-out") == nil || codec != "h264") {
         errorExit("--movie-quality applies to an H.264 movie (--video-out without --codec prores4444)", code: "invalid-argument")
     }
