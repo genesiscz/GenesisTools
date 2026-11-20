@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, s
 import { basename, dirname, extname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { kickDrainer, loadRmConfig, moveToTrash, resolveTarget, rmCallerFromRuntime } from "@genesiscz/utils/rm";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
@@ -157,7 +158,7 @@ export function syncDenoisedTranscript(options: { transcript: string; copy: stri
             log.debug({ copy: options.copy }, "the source has no transcript, so the cleaned copy's goes too");
         }
 
-        rmSync(options.copy, { force: true });
+        trashCacheFiles([options.copy], "recorder-denoise-transcript");
         return;
     }
 
@@ -251,7 +252,10 @@ export function denoisePreviewPath(options: {
     return join(dirname(options.source), ".denoise", `preview-${stem}-${key}.m4a`);
 }
 
-/** Removes the earlier previews of `source` (every `preview-<stem>-*.m4a` but `keep`), so only the newest stays. */
+/**
+ * Moves the earlier previews of `source` (every `preview-<stem>-*.m4a` but `keep`) to the trash, so only the newest
+ * stays. Returns the ones that left the cache.
+ */
 export function removeOldDenoisePreviews(options: { source: string; keep: string }): string[] {
     const folder = join(dirname(options.source), ".denoise");
 
@@ -264,9 +268,32 @@ export function removeOldDenoisePreviews(options: { source: string; keep: string
         .filter((name) => name.startsWith(prefix) && name.endsWith(".m4a") && join(folder, name) !== options.keep)
         .map((name) => join(folder, name));
 
-    for (const path of removed) {
-        rmSync(path, { force: true });
+    trashCacheFiles(removed, "recorder-denoise-preview");
+    return removed.filter((path) => !existsSync(path));
+}
+
+/**
+ * Moves files of the denoise cache into the GenesisTools trash (src/utils/rm), as every removal of a user's cache
+ * does: `tools rm restore <batch>` puts one back until the drain. Absent files are skipped.
+ */
+function trashCacheFiles(paths: string[], rule: string): void {
+    const present = paths.filter((path) => existsSync(path));
+
+    if (present.length === 0) {
+        return;
     }
 
-    return removed;
+    const config = loadRmConfig();
+    const batch = moveToTrash(
+        present.map((path) => ({ target: resolveTarget(path, dirname(path)), rule })),
+        { config, caller: rmCallerFromRuntime(), graceMinutes: config.grace.otherMinutes }
+    );
+
+    if (!batch) {
+        log.warn({ paths: present, rule }, "the denoise cache files were not moved to the trash");
+        return;
+    }
+
+    kickDrainer(config);
+    log.debug({ batch: batch.id, paths: present, rule }, "moved denoise cache files to the trash");
 }
