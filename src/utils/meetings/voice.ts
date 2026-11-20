@@ -577,7 +577,7 @@ export async function embedVoiceLines(options: {
         }
     }
     if (!options.readOnlyCache) {
-        cache?.save();
+        await cache?.save();
     }
     if (aborted) {
         throw options.signal?.reason;

@@ -587,3 +587,20 @@ test.each(["{broken", '{"version":1,"entries":{"bad":{"quality":"ready","embeddi
         expect(f.compute).not.toHaveBeenCalled();
     }
 );
+
+test("two overlapping passes that save the same cache both keep their results", async () => {
+    const { VoiceLineCache } = await import("./voice-line-cache");
+    const { record, store } = await fixture();
+    const cachePath = join(store.folder(record.id), "voice-lines.json");
+    const source = { audioPath: "/fixture/source.pcm", size: 10, mtimeMs: 1 };
+    const open = () => new VoiceLineCache({ source, model: "fixture-model", cachePath });
+    const first = open();
+    const second = open();
+    const span = (fromSec: number) => ({ channel: 0 as const, track: "raw-mic" as const, fromSec, toSec: fromSec + 2 });
+    first.set(span(0), { model: "fixture-model", embedding: [1, 0], quality: "ready" });
+    second.set(span(10), { model: "fixture-model", embedding: [0, 1], quality: "ready" });
+    await Promise.all([first.save(), second.save()]);
+    const reopened = open();
+    expect(reopened.get(span(0))).toMatchObject({ embedding: [1, 0] });
+    expect(reopened.get(span(10))).toMatchObject({ embedding: [0, 1] });
+});
