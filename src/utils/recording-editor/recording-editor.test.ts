@@ -4197,17 +4197,27 @@ describe("noise reduction on export", () => {
             denoisePreviewPath({ ...at, settings, inputs: [{ ...inputs[0], tracks: [{ track: 0, volume: 0.5 }] }] })
         );
         expect(denoisePreviewPath({ ...at, settings })).not.toBe(denoisePreviewPath({ ...at, settings, inputs: [] }));
-        expect(denoisePreviewPath({ ...at, settings })).toMatch(/\/r\/\.denoise\/preview-screen-[0-9a-f]{12}\.m4a$/);
+        expect(denoisePreviewPath({ ...at, settings })).toMatch(
+            /\/r\/\.denoise\/preview-screen\.mp4-[0-9a-f]{12}\.m4a$/
+        );
+        expect(denoisePreviewPath({ ...at, settings })).not.toBe(
+            denoisePreviewPath({ ...at, source: "/r/screen.mov", settings })
+        );
     });
 
     test("a new noise reduction preview removes the earlier ones of the movie only", () => {
         const folder = mkdtempSync(join(tmpdir(), "gt-denoise-preview-"));
         const cache = join(folder, ".denoise");
         mkdirSync(cache);
+        const hash = (digit: string) => digit.repeat(12);
         for (const name of [
-            "preview-screen-aaa.m4a",
-            "preview-screen-bbb.m4a",
-            "preview-camera-ccc.m4a",
+            `preview-screen.mp4-${hash("a")}.m4a`,
+            `preview-screen.mp4-${hash("b")}.m4a`,
+            `preview-screen-${hash("e")}.m4a`,
+            `preview-screen.mp4-${hash("f")}.4242.partial.m4a`,
+            `preview-screen-extra.mp4-${hash("1")}.m4a`,
+            `preview-screen.mov-${hash("2")}.m4a`,
+            `preview-camera.mov-${hash("c")}.m4a`,
             "screen-ddd.mp4",
         ]) {
             writeFileSync(join(cache, name), "x");
@@ -4215,15 +4225,24 @@ describe("noise reduction on export", () => {
 
         const removed = removeOldDenoisePreviews({
             source: join(folder, "screen.mp4"),
-            keep: join(cache, "preview-screen-bbb.m4a"),
+            keep: join(cache, `preview-screen.mp4-${hash("b")}.m4a`),
         });
 
-        expect(removed).toEqual([join(cache, "preview-screen-aaa.m4a")]);
-        expect(readdirSync(cache).sort()).toEqual([
-            "preview-camera-ccc.m4a",
-            "preview-screen-bbb.m4a",
-            "screen-ddd.mp4",
-        ]);
+        // The older preview and one named the way earlier builds named it leave; a preview still being written, the
+        // previews of screen-extra.mp4, screen.mov and camera.mov, and the cleaned movie stay.
+        expect(removed.sort()).toEqual(
+            [join(cache, `preview-screen.mp4-${hash("a")}.m4a`), join(cache, `preview-screen-${hash("e")}.m4a`)].sort()
+        );
+        expect(readdirSync(cache).sort()).toEqual(
+            [
+                `preview-camera.mov-${hash("c")}.m4a`,
+                `preview-screen-extra.mp4-${hash("1")}.m4a`,
+                `preview-screen.mov-${hash("2")}.m4a`,
+                `preview-screen.mp4-${hash("b")}.m4a`,
+                `preview-screen.mp4-${hash("f")}.4242.partial.m4a`,
+                "screen-ddd.mp4",
+            ].sort()
+        );
     });
 
     test("a track can have its own strength: the op merges it and the copy filters that track at it", () => {

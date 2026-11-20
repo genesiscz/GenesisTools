@@ -251,8 +251,9 @@ function inputIdentity(file: string): { size: number; mtimeMs: number; ino: numb
 }
 
 /**
- * Where a preview of `source` goes: `.denoise/preview-<stem>-<hash>.m4a` beside it, the denoise cache the export
- * uses. The hash covers the start, the length, the settings and the mix (`inputs`: each file, its version, tracks, volumes and start), so a new strength, a
+ * Where a preview of `source` goes: `.denoise/preview-<file name>-<hash>.m4a` beside it, the denoise cache the export
+ * uses. The full file name (`demo.mp4`) keeps `demo.mov` and `demo-extra.mp4` apart. The hash covers the start, the
+ * length, the settings and the mix (`inputs`: each file, its version, tracks, volumes and start), so a new strength, a
  * muted lane or a moved offset is a new file.
  */
 export function denoisePreviewPath(options: {
@@ -269,13 +270,22 @@ export function denoisePreviewPath(options: {
         )
         .digest("hex")
         .slice(0, 12);
-    const stem = basename(options.source, extname(options.source));
-    return join(dirname(options.source), ".denoise", `preview-${stem}-${key}.m4a`);
+    return join(dirname(options.source), ".denoise", `preview-${basename(options.source)}-${key}.m4a`);
+}
+
+/** Whether `name` is a finished preview whose name starts with `prefix`: the prefix, a 12-digit hash, `.m4a`. */
+function isFinishedPreview(name: string, prefix: string): boolean {
+    return (
+        name.startsWith(prefix) &&
+        name.endsWith(".m4a") &&
+        /^[0-9a-f]{12}$/.test(name.slice(prefix.length, -".m4a".length))
+    );
 }
 
 /**
- * Moves the earlier previews of `source` (every `preview-<stem>-*.m4a` but `keep`) to the trash, so only the newest
- * stays. Returns the ones that left the cache.
+ * Moves the earlier finished previews of `source` (`preview-<file name>-<hash>.m4a`, and the older
+ * `preview-<stem>-<hash>.m4a`, but never `keep`) to the trash, so only the newest stays. Another movie's previews and a
+ * preview still being written (`.<pid>.partial.m4a`) are never selected. Returns the ones that left the cache.
  */
 export function removeOldDenoisePreviews(options: { source: string; keep: string }): string[] {
     const folder = join(dirname(options.source), ".denoise");
@@ -284,9 +294,14 @@ export function removeOldDenoisePreviews(options: { source: string; keep: string
         return [];
     }
 
-    const prefix = `preview-${basename(options.source, extname(options.source))}-`;
+    const prefixes = [
+        `preview-${basename(options.source)}-`,
+        `preview-${basename(options.source, extname(options.source))}-`,
+    ];
     const removed = readdirSync(folder)
-        .filter((name) => name.startsWith(prefix) && name.endsWith(".m4a") && join(folder, name) !== options.keep)
+        .filter(
+            (name) => prefixes.some((prefix) => isFinishedPreview(name, prefix)) && join(folder, name) !== options.keep
+        )
         .map((name) => join(folder, name));
 
     trashCacheFiles(removed, "recorder-denoise-preview");
