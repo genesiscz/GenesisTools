@@ -5,6 +5,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 import { executeHandoffActions } from "./executor";
+import { toPublicEvent } from "./read-model";
 import { formatHandoffEvent, parseSince, watchHandoffs } from "./watch";
 
 const program = new Command()
@@ -49,7 +50,7 @@ program
     .argument("[handoffs...]", "handoff ids or readable names; none follows every handoff")
     .option("--since <duration>", "replay events from this long ago first, e.g. 30m, 6h, 2d", "0")
     .option("--once", "print the replay and exit instead of following")
-    .option("--json", "one JSON event per line")
+    .option("--json", "one JSON event per line, without the poster's edit credential")
     .action((handoffs: string[], opts: { since: string; once?: boolean; json?: boolean }) => {
         let sinceMs: number;
 
@@ -66,7 +67,8 @@ program
             sinceMs,
             follow: !opts.once,
             onEvent: (event, names) => {
-                out.println(opts.json ? SafeJSON.stringify(event) : formatHandoffEvent(event, names));
+                // The poster credential stays in the log for the fold; a --json reader gets the event without it.
+                out.println(opts.json ? SafeJSON.stringify(toPublicEvent(event)) : formatHandoffEvent(event, names));
             },
         });
 
