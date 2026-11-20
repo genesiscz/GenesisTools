@@ -1,5 +1,5 @@
 import { mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { shellCommandLine } from "@genesiscz/utils/shell/quote";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
@@ -11,11 +11,13 @@ export const STALE_COMMAND_FILE_MS = 60 * 60 * 1000;
 
 /**
  * The `.command` script: it deletes itself before it runs the command, so the argv (which may hold a secret) stays on
- * disk only until the terminal starts it. The shell keeps reading the open file after the unlink.
+ * disk only until the terminal starts it. The shell keeps reading the open file after the unlink. It echoes only the
+ * program's name, never its arguments, so a secret never reaches the terminal's scrollback or its log.
  */
 export function visibleCommandScript(argv: readonly string[]): string {
     const command = shellCommandLine(argv);
-    return `#!/bin/sh\nrm -f -- "$0"\nprintf '%s\\n' ${shellCommandLine([command])}\n${command}\nresult=$?\nif [ "$result" -ne 0 ]; then\n  printf 'Command failed (%s). Press Return to close.\\n' "$result"\n  read -r answer\nelse\n  sleep 5\nfi\nexit "$result"\n`;
+    const label = `Running ${basename(argv[0] ?? "the command")} (arguments not shown)`;
+    return `#!/bin/sh\nrm -f -- "$0"\nprintf '%s\\n' ${shellCommandLine([label])}\n${command}\nresult=$?\nif [ "$result" -ne 0 ]; then\n  printf 'Command failed (%s). Press Return to close.\\n' "$result"\n  read -r answer\nelse\n  sleep 5\nfi\nexit "$result"\n`;
 }
 
 function removeCommandFile(file: string): void {
@@ -26,14 +28,18 @@ function removeCommandFile(file: string): void {
     }
 }
 
-/** Deletes the `.command` files in `dir` that no terminal started within {@link STALE_COMMAND_FILE_MS}. */
+/**
+ * Deletes the `.command` files in `dir` that no terminal started within {@link STALE_COMMAND_FILE_MS}. A file that
+ * goes between the listing and its stat (its terminal started it, and it deleted itself) is skipped.
+ */
 export function removeStaleCommandFiles(dir: string, now: number = Date.now()): string[] {
     const removed: string[] = [];
 
     for (const name of readdirSync(dir)) {
         const file = join(dir, name);
+        const stat = name.endsWith(".command") ? statSync(file, { throwIfNoEntry: false }) : undefined;
 
-        if (name.endsWith(".command") && now - statSync(file).mtimeMs > STALE_COMMAND_FILE_MS) {
+        if (stat && now - stat.mtimeMs > STALE_COMMAND_FILE_MS) {
             removeCommandFile(file);
             removed.push(file);
         }
@@ -78,7 +84,13 @@ export async function runVisibly(options: {
     options.signal?.throwIfAborted();
     const dir = toolDataDir("genesis-tools", "terminal");
     mkdirSync(dir, { recursive: true, mode: 0o700 });
-    removeStaleCommandFiles(dir);
+    // Clean-up is best effort: an old file that cannot be inspected must not stop this run.
+    try {
+        removeStaleCommandFiles(dir);
+    } catch (error) {
+        logger.warn({ error, dir }, "visible run: could not clean up old command files");
+    }
+
     const file = join(dir, `${crypto.randomUUID()}.command`);
     writeFileSync(file, visibleCommandScript(options.argv), { mode: 0o700 });
     const proc = Bun.spawn(["/usr/bin/open", file], {

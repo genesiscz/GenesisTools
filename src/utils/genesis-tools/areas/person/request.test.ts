@@ -1,5 +1,5 @@
 import { expect, mock, test } from "bun:test";
-import { appendFileSync, existsSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
@@ -219,6 +219,9 @@ test("windowNotice posts once per caller id and returns after the configured del
 test("a visible-run script deletes itself first, and a .command file no terminal started goes after an hour", () => {
     const lines = visibleCommandScript(["/bin/echo", "token=x"]).split("\n");
     expect(lines.slice(0, 2)).toEqual(["#!/bin/sh", 'rm -f -- "$0"']);
+    // Only the command line itself carries the arguments; the echo shows the program's name.
+    expect(lines.filter((line) => line.includes("token=x"))).toEqual(["'/bin/echo' 'token=x'"]);
+    expect(lines[2]).toContain("Running echo (arguments not shown)");
 
     const dir = mkdtempSync(join(tmpdir(), "gt-visible-run-"));
     const now = Date.now();
@@ -231,6 +234,8 @@ test("a visible-run script deletes itself first, and a .command file no terminal
     const past = (now - STALE_COMMAND_FILE_MS - 60_000) / 1000;
     utimesSync(old, past, past);
     utimesSync(other, past, past);
+    // A file that went between the listing and its stat (its terminal started it) is skipped, not an error.
+    symlinkSync(join(dir, "missing-target"), join(dir, "gone.command"));
     expect(removeStaleCommandFiles(dir, now)).toEqual([old]);
     expect([existsSync(old), existsSync(fresh), existsSync(other)]).toEqual([false, true, true]);
 });
