@@ -421,10 +421,18 @@ public struct RecordingBarView: View {
             }
             let thresholdReason = setup.stillFrameRate == 0 || setup.stillFrameRate == Double(setup.frameRate)
                 ? "The active and still frame rates are the same."
-                : (actions.changeThreshold == nil ? "This recorder has no change threshold." : reason("threshold", live: false))
+                : (actions.changeThreshold == nil ? "This recorder has no change threshold."
+                    : reason("threshold", live: caps.liveFrameRate))
             choice("Change needed", "threshold", value: draftThreshold,
                    values: [0.5, 1, 2.5, 5], title: { "\($0.formatted())%" },
-                   reason: thresholdReason, scope: scope(thresholdReason)) { draftThreshold = $0 }
+                   reason: thresholdReason, scope: scope(thresholdReason)) { value in
+                // During a take the recorder applies it from its next segment; the bar shows it once it took it.
+                if live {
+                    model.changeThreshold(value) { applied in if applied { draftThreshold = value } }
+                } else {
+                    draftThreshold = value
+                }
+            }
             let countdownReason = reason("countdown", live: false)
             choice("Countdown", "countdownSeconds", value: setup.countdownSeconds ?? 0, values: Array(0...10),
                    title: { $0 == 0 ? "Off" : "\($0) s" }, reason: countdownReason, scope: scope(countdownReason)) {

@@ -426,12 +426,14 @@ final class ToolsRecorderEngine: RecordingEngineAdapter {
         case let .systemAudio(audio):
             try await send(audio.muted ? .mute(.system) : .unmute(.system))
             setup.systemAudio = audio
-        case let .frameRate(active, still):
+        case let .frameRate(active, still, threshold):
             let same = still == 0 || still == Double(active)
             if same, setup.stillFrameRate != 0 && setup.stillFrameRate != Double(setup.frameRate), active > 5 {
                 throw RecordingEngineError.unsupported("The running recorder accepts an explicit still rate up to 5 fps. Choose Same before recording.")
             }
-            try await send(.setFrameRate(active: active, still: same ? (active <= 5 ? Double(active) : 0) : still))
+            try await send(.setFrameRate(active: active, still: same ? (active <= 5 ? Double(active) : 0) : still,
+                                         threshold: threshold))
+            if let threshold { self.threshold = threshold }
             setup.frameRate = active
             setup.stillFrameRate = still
         case let .target(target):

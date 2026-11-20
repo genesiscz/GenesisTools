@@ -127,7 +127,8 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
             } else {
                 _ = try await command(.switchTo(target))
             }
-        case let .frameRate(active, still):
+        // The widget has no Change needed control, so a frame-rate change never carries a threshold here.
+        case let .frameRate(active, still, _):
             guard (1...120).contains(active), still == 0 || still == Double(active)
                     || ((0.1...5).contains(still) && still <= Double(active)) else {
                 throw Failure("Choose a supported active and still frame rate.")

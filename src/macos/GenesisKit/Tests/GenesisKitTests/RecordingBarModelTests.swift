@@ -96,6 +96,21 @@ final class RecordingBarModelTests: XCTestCase {
         XCTAssertEqual(engine.calls.count, 3)
     }
 
+    /// The defect: Change needed during a take changed only the next recording's draft, because the frame-rate change
+    /// had no threshold and a change that left the setup equal was never sent. It now goes with the current rates.
+    func testALiveThresholdGoesToTheEngineWithTheCurrentRates() async {
+        let (model, engine) = await recording()
+        model.apply(.frameRate(24, still: 1))
+        await model.pendingCommand?.value
+        var applied: Bool?
+        model.changeThreshold(2.5) { applied = $0 }
+        await model.pendingCommand?.value
+        XCTAssertEqual(applied, true)
+        XCTAssertEqual(engine.calls.suffix(1), [.apply(.frameRate(24, still: 1, threshold: 2.5))])
+        XCTAssertEqual(LiveRecordingCommand.setFrameRate(active: 24, still: 1, threshold: 2.5).parameters["threshold"] as? Double, 2.5)
+        XCTAssertNil(LiveRecordingCommand.setFrameRate(active: 24, still: 1).parameters["threshold"])
+    }
+
     func testWindowAudioReasonPreservesTheChoiceAndBlocksALiveCall() async {
         let source = MicrophoneSetup(enabled: true, muted: false, deviceID: "desk")
         let (model, engine) = await recording(target: .window(ids: [7], app: nil, title: nil, pid: nil), mic: source)

@@ -133,7 +133,15 @@ public struct RecordingSetup: Equatable, Codable, Sendable {
 
 public enum RecordingSetupChange: Equatable, Sendable {
     case target(RecordingTarget), microphone(MicrophoneSetup), systemAudio(SystemAudioSetup), camera(CameraSetup)
-    case frameRate(Int, still: Double), quality(RecordingQuality), drawsCursor(Bool)
+    /// The active and still frame rates; `threshold` (percent of the picture that must change before a still frame
+    /// counts as active) goes with them when the bar's Change needed changes during a take, nil otherwise.
+    case frameRate(Int, still: Double, threshold: Double? = nil), quality(RecordingQuality), drawsCursor(Bool)
+
+    /// The change threshold this change carries, nil for every change but a frame-rate change that names one.
+    public var threshold: Double? {
+        if case let .frameRate(_, _, threshold) = self { return threshold }
+        return nil
+    }
 
     public var controlID: String {
         switch self {
@@ -153,7 +161,7 @@ public enum RecordingSetupChange: Equatable, Sendable {
         case let .microphone(value): setup.microphone = value
         case let .systemAudio(value): setup.systemAudio = value
         case let .camera(value): setup.camera = value
-        case let .frameRate(active, still):
+        case let .frameRate(active, still, _):
             setup.frameRate = active
             setup.stillFrameRate = still
         case let .quality(value): setup.quality = value

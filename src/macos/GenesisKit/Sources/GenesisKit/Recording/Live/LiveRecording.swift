@@ -117,7 +117,8 @@ public struct LiveRecording: Equatable, Identifiable, Sendable {
 public enum LiveRecordingCommand: Equatable, Sendable {
     public enum Source: String, Hashable, Sendable { case mic, system }
     case pause, resume, stop
-    case mute(Source), unmute(Source), setInput(deviceID: String), setFrameRate(active: Int, still: Double)
+    case mute(Source), unmute(Source), setInput(deviceID: String),
+         setFrameRate(active: Int, still: Double, threshold: Double? = nil)
     case marker
 
     public static let legacyMethods = ["pause", "resume", "stop"]
@@ -154,9 +155,10 @@ public enum LiveRecordingCommand: Equatable, Sendable {
         case let .mute(source): return ["source": source.rawValue, "muted": true]
         case let .unmute(source): return ["source": source.rawValue, "muted": false]
         case let .setInput(deviceID): return ["deviceId": deviceID]
-        case let .setFrameRate(active, still):
+        case let .setFrameRate(active, still, threshold):
             var patch: [String: Any] = ["activeFps": active]
             if still > 0 { patch["idleFps"] = still }
+            if let threshold { patch["threshold"] = threshold }
             return patch
         case .marker: return ["label": "Mark"]
         }
