@@ -170,6 +170,9 @@ export function registerCaptureSessionCommands(capture: Command): void {
             // A host that dies closes the pipe: the next write fails with EPIPE, which would end this process with
             // the segments on disk and no movie. Stop instead, and keep what was recorded.
             let hostGone = false;
+            // Set when this process sends the stop itself (the limit without stdin, a host that is gone, a signal):
+            // nobody is left to send it again, so a save that fails must end the process instead of waiting.
+            let stoppedByProcess = false;
             let session: RecordingSession | undefined;
             let live: LiveRecordingServer | undefined;
             let control: SessionRecorderControl | undefined;
@@ -179,6 +182,7 @@ export function registerCaptureSessionCommands(capture: Command): void {
                 }
 
                 hostGone = true;
+                stoppedByProcess = true;
                 log.warn({ error }, "stdout closed; the host is gone, so the recording stops and is kept");
                 void session?.command({ cmd: "stop" });
             });
@@ -190,7 +194,19 @@ export function registerCaptureSessionCommands(capture: Command): void {
                 // At the limit the session pauses and waits for its host. Without commands on stdin nobody would ever
                 // send the stop, so the process waited until it was killed: the limit stops and keeps the movie.
                 if (event.event === "state" && event.reason === "limit" && !flags.stopOnStdin) {
+                    stoppedByProcess = true;
                     void session?.command({ cmd: "stop" });
+                }
+
+                // A save that fails pauses the session so its host can stop again. After this process's own stop no
+                // host will: end with the error and keep the segments on disk for recovery.
+                if (
+                    event.event === "state" &&
+                    event.state === "paused" &&
+                    event.reason === "recorder" &&
+                    stoppedByProcess
+                ) {
+                    void session?.abandon();
                 }
 
                 // Each state event re-anchors the floating controls' clock on the movie time; an error changes only
@@ -268,10 +284,12 @@ export function registerCaptureSessionCommands(capture: Command): void {
             const outcome = await withInterrupt(
                 async (signal) => {
                     // Ctrl-C or SIGTERM keeps what was recorded: a host that quits never loses the movie.
-                    const stopNow = () =>
+                    const stopNow = () => {
+                        stoppedByProcess = true;
                         void activeControl?.stop({ wait: false }).catch((error: unknown) => {
                             log.debug({ error }, "the session was stopping already");
                         });
+                    };
                     signal.addEventListener("abort", stopNow, { once: true });
                     await active.start();
                     const stopReading = flags.stopOnStdin

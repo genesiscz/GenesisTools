@@ -367,6 +367,27 @@ export class RecordingSession {
         return this.enqueue(() => this.apply(command));
     }
 
+    /**
+     * Ends a paused session that nobody can command any more (its host is gone, or no host reads commands) without
+     * saving or deleting it: a save that failed leaves the segments in the session folder for recovery, and
+     * `finished` settles "failed". Does nothing while the session records or after it ended.
+     */
+    abandon(): Promise<void> {
+        return this.enqueue(() => {
+            if (this.state !== "paused") {
+                return;
+            }
+
+            log.warn({ directory: this.options.directory, segments: this.segments.length }, "recording abandoned");
+            this.options.emit({
+                event: "error",
+                message: `Nobody can stop the recording again, so it ends unsaved. Its segments stay in ${this.options.directory}.`,
+                fatal: true,
+            });
+            this.end("failed");
+        });
+    }
+
     /** The rates the running segment, or the next one, records with; undefined for a session started without them. */
     currentRates(): MovieRates | undefined {
         return this.rates;

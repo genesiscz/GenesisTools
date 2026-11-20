@@ -620,6 +620,38 @@ describe("RecordingSession", () => {
         expect(existsSync(join(root, "out.mp4"))).toBe(true);
     });
 
+    it("abandon ends a session whose save failed and keeps its segments for recovery", async () => {
+        const { recorder, runs } = fakeRecorder();
+        const recording = session(recorder, {
+            join: async () => {
+                throw new Error("ffmpeg is missing");
+            },
+        });
+        await recording.start();
+        clock += 2000;
+        await recording.command({ cmd: "pause" });
+        await recording.command({ cmd: "resume" });
+        clock += 1000;
+        await recording.command({ cmd: "stop" });
+        await recording.abandon();
+
+        expect(await recording.finished).toBe("failed");
+        expect(events.at(-1)).toMatchObject({ event: "error", fatal: true });
+        expect(runs.every((run) => existsSync(run.output))).toBe(true);
+        expect(existsSync(join(root, "out.mp4"))).toBe(false);
+    });
+
+    it("abandon does nothing while the session records", async () => {
+        const { recorder } = fakeRecorder();
+        const recording = session(recorder);
+        await recording.start();
+        await recording.abandon();
+
+        expect(states().at(-1)?.startsWith("recording")).toBe(true);
+        await recording.command({ cmd: "discard" });
+        expect(await recording.finished).toBe("discarded");
+    });
+
     it("a join that fails after it began writing leaves no partial movie at the output", async () => {
         const { recorder } = fakeRecorder();
         const recording = session(recorder, {
