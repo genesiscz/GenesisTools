@@ -807,8 +807,10 @@ observations produce unresolved candidate ranges, never an inferred shared voice
 ### Indicator facts, compact evidence and local speech
 
 `evidence <meeting> --raw --json` always includes `channel: { micShare: number | null }` on each timed transcript line.
-`null` means no overlapping channel segment, and is distinct from a measured zero. `energyMicShare` remains the
-separate calibrated energy measurement. People found only in speaking or muted observations have `origin: "indicator"`.
+It is the calibrated energy share when the recording's audio was measured, else the share of the overlapping tagged
+channel segments. `null` means neither exists, and is distinct from a measured zero. `energyMicShare` repeats the
+calibrated energy measurement on its own. `evidence --table`, the REPL's channel evidence and `items by-channel` read
+the same share. People found only in speaking or muted observations have `origin: "indicator"`.
 
 A roster mute holds until the next mute list omits that person, the indicator shows them speaking, or
 `global.suggest.mutedCarrySec` elapses after the last mute read (600 seconds by default). A mute must cover the

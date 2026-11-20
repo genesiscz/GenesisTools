@@ -25,7 +25,7 @@ import { decimate } from "./lib/acoustic";
 import { planByChannel } from "./lib/by-channel";
 import { callMutes, MutedCallLines } from "./lib/call-mutes";
 import { CallTimeline } from "./lib/call-timeline";
-import { attributeByChannel } from "./lib/channel-operation";
+import { attributeByChannel, channelEvidence } from "./lib/channel-operation";
 import { DecisionJournal } from "./lib/decision-journal";
 import { identifiedDepartures } from "./lib/departure";
 import { OpenedMeeting } from "./lib/opened-meeting";
@@ -1362,6 +1362,8 @@ test("the actual byChannel dry-run door writes nothing, apply persists the same 
     ]);
     const load = spyOn(OpenedMeeting.prototype, "meeting").mockResolvedValue(fixture.meeting);
     const evidence = spyOn(OpenedMeeting.prototype, "evidence").mockResolvedValue(fixture.evidence);
+    // No measured audio: the plan reads the tagged segments' share.
+    const energy = spyOn(OpenedMeeting.prototype, "energy").mockResolvedValue({});
     const file = join(store.folder(record.id), "meeting.json");
     const before = {
         bytes: readFileSync(file, "utf8"),
@@ -1385,6 +1387,7 @@ test("the actual byChannel dry-run door writes nothing, apply persists the same 
     } finally {
         load.mockRestore();
         evidence.mockRestore();
+        energy.mockRestore();
     }
 });
 
@@ -1537,6 +1540,8 @@ test("byChannel decides on the measured microphone share, not the rounded one sh
     ];
     const load = spyOn(OpenedMeeting.prototype, "meeting").mockResolvedValue(fixture.meeting);
     const evidence = spyOn(OpenedMeeting.prototype, "evidence").mockResolvedValue(fixture.evidence);
+    // No measured audio: the plan reads the tagged segments' share.
+    const energy = spyOn(OpenedMeeting.prototype, "energy").mockResolvedValue({});
     try {
         const plan = await attributeByChannel({ store, record, input: { label: "Room", minChars: 0, dryRun: true } });
         expect(plan.ranges).toEqual([]);
@@ -1544,6 +1549,37 @@ test("byChannel decides on the measured microphone share, not the rounded one sh
     } finally {
         load.mockRestore();
         evidence.mockRestore();
+        energy.mockRestore();
+    }
+});
+
+test("byChannel and the channel table read the calibrated microphone share, not the tagged segments'", async () => {
+    const store = new MeetingStore(new Storage(`by-channel-calibrated-${process.pid}`));
+    const record = await store.create(
+        {
+            title: "Calibrated",
+            start: START,
+            createdBy: "new",
+            seats: { room: ["Alice"], remote: [{ name: "Carol" }] },
+        },
+        { command: "test", change: "fixture" }
+    );
+    // The segments put the line on the microphone; the measured audio says the call carried it.
+    const fixture = scene([{ label: "Room", mic: 1 }]);
+    const spies = [
+        spyOn(OpenedMeeting.prototype, "meeting").mockResolvedValue(fixture.meeting),
+        spyOn(OpenedMeeting.prototype, "evidence").mockResolvedValue(fixture.evidence),
+        spyOn(OpenedMeeting.prototype, "energy").mockResolvedValue({ share: () => 0.1 }),
+    ];
+    try {
+        const plan = await attributeByChannel({ store, record, input: { label: "Room", minChars: 0, dryRun: true } });
+        expect(plan.ranges.map((range) => range.speaker)).toEqual(["Carol"]);
+        const table = await channelEvidence(OpenedMeeting.of(store, record));
+        expect(table.lines.map((line) => line.channel.micShare)).toEqual([0.1]);
+    } finally {
+        for (const spy of spies) {
+            spy.mockRestore();
+        }
     }
 });
 
