@@ -139,6 +139,10 @@ function toSourceMeeting(loaded: Sourced<Meeting>): SourceMeeting {
         calendar,
         folders: meeting.folders.map((folder) => folder.name),
         ...(meeting.summary?.trim() ? { summary: meeting.summary } : {}),
+        // An imported export was recorded on another Mac: its `self` is the person at that microphone.
+        ...(loaded.source === "imported"
+            ? { recordedBy: { owner: false as const, ...(evidence?.selfName ? { person: evidence.selfName } : {}) } }
+            : {}),
     };
 }
 
@@ -168,6 +172,15 @@ export const wisprflowSource: TranscriptSource = {
             meetingId: meeting.sourceMeetingId,
             folders: meeting.folders,
             ...(meeting.calendar?.eventId ? { calendarEventId: meeting.calendar.eventId } : {}),
+            // Read from the import store (`tools wisprflow meetings import`), not this Mac's Wispr Flow.
+            ...(meeting.recordedBy
+                ? {
+                      imported: {
+                          from: "export",
+                          ...(meeting.recordedBy.person ? { recordedBy: meeting.recordedBy.person } : {}),
+                      },
+                  }
+                : {}),
         };
     },
 

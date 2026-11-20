@@ -25,6 +25,11 @@ export interface SourceMeeting {
     folders: string[];
     /** The source's own Markdown summary, with its action items and decisions (`summaryPoints`). */
     summary?: string;
+    /**
+     * Set when someone else recorded the meeting (an export imported from another Mac): `self` in `participants` is the
+     * person at that microphone. Absent when the user recorded it.
+     */
+    recordedBy?: { owner: false; person?: string };
 }
 
 /** A word the source was taught to spell, for `dictionary suggest`. */

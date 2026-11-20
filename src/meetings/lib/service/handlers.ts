@@ -567,7 +567,7 @@ export function meetingsHandlers(deps: MeetingsHandlerDeps = {}): RpcHandlers<ty
                     ...deps.wordTimings,
                     read: async () => {
                         const current = recordOf(store, record.id);
-                        const linked = deps.linkedSource?.(current) ?? (await linkedSource(current));
+                        const linked = deps.linkedSource?.(current) ?? (await linkedSource(current, store));
                         const { applied } = await correctedTranscriptRead({
                             store,
                             record: current,
