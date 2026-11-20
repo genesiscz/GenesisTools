@@ -4526,6 +4526,20 @@ describe("recording layer contract", () => {
         expect(placed.camera?.y).toBeCloseTo(y);
     });
 
+    test("the camera row keeps a custom name, and an empty name gives Camera back", () => {
+        const named = applyOp(withCamera(), editOpSchema.parse({ op: "layer", id: "camera", name: "Me" }));
+        const path = join(workspace(), "camera-name.edit.json");
+        writeProject(path, named);
+        expect(readProject(path).camera?.name).toBe("Me");
+        const moved = applyOp(named, editOpSchema.parse({ op: "layer", id: "camera", x: 0.3 }));
+        expect(moved.camera?.name).toBe("Me");
+        const cleared = applyOp(moved, editOpSchema.parse({ op: "layer", id: "camera", name: "" }));
+        expect(cleared.camera?.name).toBeUndefined();
+        expect(() => applyOp(withCamera(), editOpSchema.parse({ op: "layer", id: "camera", file: "b.mov" }))).toThrow(
+            "unsupported: file"
+        );
+    });
+
     test("Replace File changes a layer's source in one op and keeps its id, place and times", () => {
         const facts = { playheadUs: 1_000_000, videoDurationUs: 2_000_000 };
         const first = applyOp(

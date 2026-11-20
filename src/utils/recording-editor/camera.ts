@@ -80,6 +80,8 @@ export const cameraBubbleSchema = z.object({
     /** The gap to the canvas edges for a corner, as a fraction of the short side. */
     margin: z.number().min(0).max(0.2).default(0.035),
     hidden: z.preprocess(withHiddenIds, z.array(cameraHiddenSchema)).default([]),
+    /** The layer row's own name; absent, the row is named Camera. */
+    name: z.string().max(40).optional(),
 });
 export type CameraBubble = z.infer<typeof cameraBubbleSchema>;
 

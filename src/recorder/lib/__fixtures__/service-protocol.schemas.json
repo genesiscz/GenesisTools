@@ -5836,6 +5836,10 @@
                   ],
                   "additionalProperties": false
                 }
+              },
+              "name": {
+                "type": "string",
+                "maxLength": 40
               }
             },
             "required": [

@@ -3516,11 +3516,11 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 throw new Error("no layer camera");
             }
 
-            const { op: _op, id: _id, x, y, width, shape, hidden, ...mediaOnly } = op;
+            const { op: _op, id: _id, x, y, width, shape, hidden, name, ...mediaOnly } = op;
             const unsupported = Object.keys(mediaOnly);
             if (unsupported.length) {
                 throw new Error(
-                    `the camera layer takes x, y, width, shape and hidden; unsupported: ${unsupported.join(", ")}`
+                    `the camera layer takes x, y, width, shape, hidden and name; unsupported: ${unsupported.join(", ")}`
                 );
             }
 
@@ -3540,6 +3540,8 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                     size,
                     shape: shape === null ? undefined : (shape ?? camera.shape),
                     show: hidden === undefined ? camera.show : !hidden,
+                    // "" gives the row its default name back.
+                    name: name === undefined ? camera.name : name || undefined,
                 }),
             };
         }
