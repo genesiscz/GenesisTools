@@ -407,7 +407,8 @@ public struct RecordingBarView: View {
     private var newRecording: some View { word("New recording", "newRecording", action: model.newRecording) }
 
     private var videoOptions: some View {
-        HStack(spacing: 7) {
+        // Top-aligned: every choice's caption sits on one line, whether or not it carries a scope line under it.
+        HStack(alignment: .top, spacing: 7) {
             let frames = setup.target?.kind == .displays
             let qualityReason = frames ? reason("quality", live: false)
                 : (caps.reasonUnavailable["quality"] ?? "Movies record at the target’s native size.")
@@ -478,7 +479,7 @@ public struct RecordingBarView: View {
 
     private var deviceOptions: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
                 let cameraReason = caps.missingSourceReason("camera")
                     ?? (!setup.camera.enabled ? "Turn on the camera first." : reason("camera", live: caps.liveCamera))
                 choice("Camera size", "cameraSize", value: setup.camera.size, values: [140, 200, 260],
@@ -493,10 +494,12 @@ public struct RecordingBarView: View {
                     next.shape = $0
                     model.apply(.camera(next))
                 }
-                VStack(alignment: .leading) {
+                VStack(alignment: .leading, spacing: 1) {
                     Text("System output").font(.caption).foregroundStyle(.secondary)
                     Text(outputName ?? "System default").lineLimit(1).truncationMode(.middle)
-                }.accessibilityElement(children: .combine)
+                }
+                .frame(minHeight: 26, alignment: .topLeading)
+                .accessibilityElement(children: .combine)
                 Spacer(minLength: 0)
                 let displaysReason = reason("displays", live: caps.liveDisplaysAddRemove)
                     ?? (caps.targets.contains(.displays) ? nil : "This recorder captures one display at a time.")
@@ -510,9 +513,10 @@ public struct RecordingBarView: View {
                         ForEach(model.audioInputs) { input in inputButton(input.id, title: input.name) }
                     }
                 }.frame(height: 26)
-                if configuring { saveDefaults }
                 if live { takeOptions }
             }
+            // Its own row: beside the microphone list it was squeezed, and the button and its detail wrapped.
+            if configuring { saveDefaults }
         }
     }
 
@@ -527,7 +531,7 @@ public struct RecordingBarView: View {
     }
 
     private var saveDefaults: some View {
-        VStack(alignment: .leading, spacing: 1) {
+        HStack(spacing: 8) {
             word("Save as Defaults", "saveDefaults") {
                 model.saveAsDefaults()
                 saved = setup
@@ -537,7 +541,11 @@ public struct RecordingBarView: View {
                 }
                 detail = "Saved recording defaults."
             }
-            if let changes = changedSources { Text(changes).font(.caption).foregroundStyle(.secondary) }
+            if let changes = changedSources {
+                Text(changes).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
         }
     }
 
@@ -666,7 +674,11 @@ public struct RecordingBarView: View {
             if !compact, let scope { Text(scope).font(.caption).foregroundStyle(.secondary) }
         }.frame(minWidth: 24, minHeight: 26)
         Group {
-            if useInlineMenus {
+            if reason != nil {
+                // A disabled menu dims its label once more, on top of the caption's grey: the choice was almost
+                // invisible. Drawn as a plain value in the secondary colour it stays readable; the tooltip says why.
+                face.foregroundStyle(.secondary)
+            } else if useInlineMenus {
                 Button {
                     showMenu(label, options: values.map(title), selected: values.firstIndex(of: value)) { select(values[$0]) }
                 } label: { face }
