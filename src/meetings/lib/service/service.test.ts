@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { toRpcTable } from "@genesiscz/utils/api-descriptor";
+import { withTimeout } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
 import type { WatcherOptions } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -1524,13 +1525,8 @@ describe.each(Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>)("the Meetin
         // Each step wakes on its own event, and each wait has a deadline that fails the test by name.
         const started = Promise.withResolvers<AbortSignal | undefined>();
         const heard = Promise.withResolvers<void>();
-        const within = <T>(promise: Promise<T>, what: string) => {
-            let timer: ReturnType<typeof setTimeout> | undefined;
-            const expired = new Promise<never>((_resolve, reject) => {
-                timer = setTimeout(() => reject(new Error(`${what} did not happen within 3 s`)), 3000);
-            });
-            return Promise.race([promise, expired]).finally(() => clearTimeout(timer));
-        };
+        const within = <T>(promise: Promise<T>, what: string) =>
+            withTimeout(promise, 3000, new Error(`${what} did not happen within 3 s`));
         const run = spyOn(suggest, "runSuggest").mockImplementation(async ({ signal }) => {
             started.resolve(signal);
             await new Promise((_resolve, reject) => {
