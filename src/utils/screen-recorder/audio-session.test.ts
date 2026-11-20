@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +17,9 @@ import type { AudioSource } from "./control";
 import { NativeFrameRecorder } from "./native";
 
 const fake = join(moduleDir(import.meta), "__fixtures__", "fake-ax-tool.ts");
+// Every test starts a bun process for the fake tool and reads its files with ffprobe; under a loaded suite run the crash
+// test outlived bun's default 5 s once while it passed alone. A passing test ends as soon as its work does.
+setDefaultTimeout(30_000);
 // Offline Apple AAC silence, with a finalized edit list declaring the encoder's 2,112 priming frames.
 const aacFixtures = [
     {
