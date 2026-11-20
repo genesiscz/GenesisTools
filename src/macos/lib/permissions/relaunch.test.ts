@@ -702,24 +702,32 @@ describe("link route", () => {
         expect(problem).toContain("kill 4200");
     });
 
-    it("names a launcher run by its program and bare flags, without Bun's preloads, its script or any value", () => {
+    it("names a run by the word that names its holder only, without Bun's preloads, its script, any flag or any value", () => {
         expect(
             holderArgs(
                 `${APP} /Users/example/.genesis-tools/bin/gt-cc --preload /repo/a.ts --preload /repo/b.ts /repo/src/cc/index.ts run work --resume abc`
             )
-        ).toBe("gt-cc --resume …");
-        expect(holderArgs(`${APP} --hub --resume`)).toBe("--hub --resume");
+        ).toBe("gt-cc …");
+        expect(
+            holderArgs(`${APP} /Users/example/.genesis-tools/bin/gt-cc --preload /repo/a.ts /repo/src/cc/index.ts`)
+        ).toBe("gt-cc");
+        expect(holderArgs(`${APP} --hub`)).toBe("--hub");
+        expect(holderArgs(`${APP} --hub --resume`)).toBe("--hub …");
+        expect(holderArgs(APP)).toBe("");
         // A value, a prompt or a credential never reaches the status line or the log.
         expect(holderArgs(`${APP} /usr/local/bin/gt-ask ask what is my fixture-secret --api-key=fixture-key`)).toBe(
             "gt-ask …"
         );
-        // A positional word spelled like a subcommand is still a value.
         expect(holderArgs(`${APP} /usr/local/bin/gt-ask ask fixture-secret`)).toBe("gt-ask …");
-        expect(holderArgs(`${APP} /opt/bun run poll.ts --token fixture-secret`)).toBe("bun --token …");
+        expect(holderArgs(`${APP} /opt/bun run poll.ts --token fixture-secret`)).toBe("bun …");
         expect(holderArgs(`${APP} --rpc {"q":"fixture-secret"}`)).toBe("--rpc …");
-        // A short flag with its value attached, or several short flags in one word, shows as the mark.
-        expect(holderArgs(`${APP} /usr/local/bin/gt-ask -pfixture-secret -v`)).toBe("gt-ask -v …");
-        expect(holderArgs(`${APP} /usr/local/bin/gt-ask -vd`)).toBe("gt-ask …");
+        // A word spelled like a flag can be a flag's value or a word of a prompt, so no later flag is kept.
+        expect(holderArgs(`${APP} /usr/local/bin/gt-ask --password --fixture-secret`)).toBe("gt-ask …");
+        expect(holderArgs(`${APP} /usr/local/bin/gt-ask ask about --fixture-codename please`)).toBe("gt-ask …");
+        expect(holderArgs(`${APP} /usr/local/bin/gt-ask -pfixture-secret -v`)).toBe("gt-ask …");
+        // A first word that is neither a path, a link, a face flag nor a bare program shows as the mark alone.
+        expect(holderArgs(`${APP} -pfixture-secret`)).toBe("…");
+        expect(holderArgs(`${APP} --token=fixture-secret --hub`)).toBe("…");
         // A link keeps its scheme and host; user-info, path, query and fragment can each carry a token.
         expect(holderArgs(`${APP} https://example.test/reset?token=fixture-secret#x`)).toBe("https://example.test/…");
         expect(holderArgs(`${APP} https://user:fixture-secret@example.test`)).toBe("https://example.test/…");

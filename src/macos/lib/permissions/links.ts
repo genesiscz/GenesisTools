@@ -55,8 +55,9 @@ export function linkHolderKind(command: string | null): LinkHolderKind {
     return first.includes("://") ? "router" : "launcher";
 }
 
-/** A bare flag name: a long one, or a single-letter short one. `-pVALUE` and `--flag=value` can carry a token. */
-const BARE_FLAG = /^(?:--[A-Za-z][A-Za-z0-9-]*|-[A-Za-z])$/;
+/** A face's own flag (`--hub`, `--rpc`), which only the first word can be. `-pVALUE` and `--flag=value` do not match. */
+const FACE_FLAG = /^--[a-z][a-z0-9-]{0,23}$/;
+
 /** A program name with no path (`bun`), which only the first word can be. */
 const PROGRAM_WORD = /^[a-z][a-z0-9-]{0,23}$/;
 
@@ -75,12 +76,25 @@ function linkLabel(word: string): string {
     }
 }
 
+/** The first word of a run as a safe label: a program's file name, a link's origin, a face flag or a bare program. */
+function identityLabel(word: string): string {
+    if (word.startsWith("/")) {
+        return word.slice(word.lastIndexOf("/") + 1);
+    }
+
+    if (word.includes("://")) {
+        return linkLabel(word);
+    }
+
+    return FACE_FLAG.test(word) || PROGRAM_WORD.test(word) ? word : "…";
+}
+
 /**
- * A safe label for the run after `MacOS/GenesisTools`, for status output and logs: the program's name and bare flag
- * names. Every positional word goes (a subcommand cannot be told from a value by its spelling, and no schema of every
- * launcher's subcommands is at hand here), as does every value, prompt and path, shown once as `…`, so a launcher
- * reads `gt-cc --resume …`; a link keeps only its scheme and host. Bun's `--preload <file>` pairs and the script path
- * go without a mark.
+ * A safe label for the run after `MacOS/GenesisTools`, for status output and logs: only the word that names the
+ * holder (the launcher's program, the face's flag, the link router's origin), then one `…` when anything follows.
+ * No later word is kept, flags included: the command line is split on spaces with no schema of the arguments, so a
+ * word spelled like a flag can be a flag's value or a word of a prompt. A launcher reads `gt-cc …`, a face
+ * `--hub …`. Bun's `--preload <file>` pairs and the script path after the program go without a mark.
  */
 export function holderArgs(command: string | null): string | null {
     if (command === null) {
@@ -88,10 +102,16 @@ export function holderArgs(command: string | null): string | null {
     }
 
     const words = (command.match(/MacOS\/GenesisTools(?:\s+(.*))?$/)?.[1]?.trim() ?? "").split(/\s+/).filter(Boolean);
-    const kept: string[] = [];
+    const first = words[0];
+
+    if (first === undefined) {
+        return "";
+    }
+
+    const label = identityLabel(first);
     let dropped = false;
 
-    for (let index = 0; index < words.length; index++) {
+    for (let index = 1; index < words.length; index++) {
         const word = words[index];
 
         if (word === "--preload") {
@@ -99,34 +119,14 @@ export function holderArgs(command: string | null): string | null {
             continue;
         }
 
-        if (kept.length === 0 && word.startsWith("/")) {
-            kept.push(word.slice(word.lastIndexOf("/") + 1));
-            continue;
-        }
-
-        if (kept.length === 1 && /\.(ts|tsx|js|mjs)$/.test(word) && !word.startsWith("-")) {
-            continue;
-        }
-
-        if (kept.length === 0 && word.includes("://")) {
-            kept.push(linkLabel(word));
-            continue;
-        }
-
-        if (BARE_FLAG.test(word)) {
-            kept.push(word);
-            continue;
-        }
-
-        if (kept.length === 0 && PROGRAM_WORD.test(word)) {
-            kept.push(word);
+        if (first.startsWith("/") && /\.(ts|tsx|js|mjs)$/.test(word) && !word.startsWith("-")) {
             continue;
         }
 
         dropped = true;
     }
 
-    const args = [...kept, ...(dropped ? ["…"] : [])].join(" ");
+    const args = dropped && label !== "…" ? `${label} …` : label;
     return args.length > 100 ? `${args.slice(0, 99)}…` : args;
 }
 
