@@ -7,6 +7,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { protectsMeetingSourceAudio } from "@genesiscz/utils/meetings/source-audio-paths";
 import * as removal from "@genesiscz/utils/rm";
+import { matchPreset } from "@genesiscz/utils/rm/presets";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { capturesToPrune, pruneCapturesDaily, trashWithRm } from "./retention";
@@ -111,8 +112,17 @@ describe("capture retention", () => {
             expect(protectsMeetingSourceAudio(join(meeting, "audio", "piece-mic.m4a"))).toBe(true);
             expect(protectsMeetingSourceAudio(join(meeting, "audio.jsonl"))).toBe(true);
             expect(protectsMeetingSourceAudio(join(meeting, "frames"))).toBe(false);
+            // The preset itself, not only the predicate: the sound folder is never nominated, the frames still are.
+            const preset = { id: "meeting-folders", description: "fixture", names: ["audio", "frames"] };
+            expect(matchPreset(join(meeting, "audio"), [preset])).toBeNull();
+            expect(matchPreset(join(meeting, "frames"), [preset])).toBe(preset);
+            // A value the config schema refuses (it takes a positive integer) keeps the protection.
+            writeFileSync(configPath, SafeJSON.stringify({ global: { capture: { audioRetentionDays: 0.5 } } }));
+            expect(protectsMeetingSourceAudio(join(meeting, "audio"))).toBe(true);
+            expect(matchPreset(join(meeting, "audio"), [preset])).toBeNull();
             writeFileSync(configPath, SafeJSON.stringify({ global: { capture: { audioRetentionDays: 60 } } }));
             expect(protectsMeetingSourceAudio(join(meeting, "audio"))).toBe(false);
+            expect(matchPreset(join(meeting, "audio"), [preset])).toBe(preset);
             expect(protectsMeetingSourceAudio(join(meeting, "source-audio"))).toBe(true);
         });
     });
