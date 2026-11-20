@@ -29,6 +29,8 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
     private var sequence: [CaptureAudioSource: Int] = [:]
     private var retiredEnd: [CaptureAudioSource: CMTime] = [:]
     private var muted: [CaptureAudioSource: Bool] = [:]
+    /// The sources whose first buffer arrived; each reports its `timing` once.
+    private var heard: Set<CaptureAudioSource> = []
     private var paused = false
     private var closed = false
     private let monitorOnly: Bool
@@ -83,6 +85,9 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
               let description = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee,
               description.mSampleRate > 0 else { return }
         let rate = description.mSampleRate
+        if heard.insert(source).inserted {
+            emitStartTiming("first-buffer-\(source.rawValue)")
+        }
         levels?.append(buffer, source: source, muted: muted[source] ?? false)
         if monitorOnly { return }
         let count = CMSampleBufferGetNumSamples(buffer)
@@ -408,6 +413,25 @@ private final class AudioSessionHost: NSObject, SCStreamDelegate {
     }
 }
 
+/// Milliseconds since this process was spawned. The exec into the private recorder copy keeps the pid and its start
+/// time, so the first step's number includes the copy. Nil when the kernel does not answer.
+func millisecondsSinceSpawn() -> Int? {
+    var info = kinfo_proc()
+    var size = MemoryLayout<kinfo_proc>.stride
+    var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
+    guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return nil }
+    let start = info.kp_proc.p_un.__p_starttime
+    let started = Double(start.tv_sec) + Double(start.tv_usec) / 1_000_000
+    return Int(((Date().timeIntervalSince1970 - started) * 1000).rounded())
+}
+
+/// One `timing` event on stderr: how long after its spawn the sound session reached `step`. The supervisor logs them,
+/// so a slow microphone restart says which step took the time (spawn and copy, the content listing, the stream start
+/// with the device open, or the first buffer).
+func emitStartTiming(_ step: String) {
+    CaptureEvents.emit(["event": "timing", "step": step, "sinceSpawnMs": millisecondsSinceSpawn() ?? NSNull()])
+}
+
 func cmdAudioRecord() {
     defaultErrorCode = "failed"
     guard #available(macOS 13.0, *) else { errorExit("audio-record needs macOS 13 or newer") }
@@ -418,6 +442,7 @@ func cmdAudioRecord() {
         for warning in warnings { CaptureEvents.emit(["event": "warning", "message": warning]) }
         requireScreenRecording()
     }
+    emitStartTiming("launched")
     let monitorOnly = CommandLine.arguments.contains("--monitor")
     guard monitorOnly || argValue("--out") != nil else { errorExit("audio-record needs --out", code: "invalid-argument") }
     let seconds = Double(argValue("--segment-sec") ?? "60") ?? .nan
@@ -473,6 +498,7 @@ func cmdAudioRecord() {
                 }
             }
             guard !started.isEmpty else { errorExit(failures.joined(separator: " "), code: "no-permission") }
+            emitStartTiming("capture-started")
             let host = AudioSessionHost(audio: audio, sources: started, configuration: configuration, muted: muted, paused: paused)
             host.independent = inputs
             host.controls()
@@ -491,6 +517,7 @@ func cmdAudioRecord() {
             configuration.microphoneCaptureDeviceID = micID
         }
         let content = try awaitResult { try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) }
+        emitStartTiming("content-listed")
         guard let display = content.displays.first else { errorExit("audio-record found no shareable display") }
         let filter = SCContentFilter(display: display, excludingWindows: [])
         let host = AudioSessionHost(audio: audio, sources: sources, configuration: configuration, muted: muted, paused: paused)
@@ -501,6 +528,7 @@ func cmdAudioRecord() {
             try stream.addStreamOutput(audio, type: .microphone, sampleHandlerQueue: audio.queue)
         }
         try awaitResult { try await stream.startCapture() }
+        emitStartTiming("capture-started")
         host.controls()
         host.state()
         dispatchMain()

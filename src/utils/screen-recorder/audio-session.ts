@@ -261,6 +261,8 @@ const eventSchema = z.discriminatedUnion("event", [
     z.object({ event: z.literal("settings"), micDevice: z.string() }),
     z.object({ event: z.literal("warning"), message: z.string() }),
     z.object({ event: z.literal("error"), message: z.string(), code: z.string().optional() }),
+    /** How long after its spawn the native session reached a start step (launched, capture-started, first-buffer-mic). */
+    z.object({ event: z.literal("timing"), step: z.string(), sinceSpawnMs: z.number().nullable() }),
 ]);
 type AudioEvent = z.infer<typeof eventSchema>;
 
@@ -300,6 +302,9 @@ export class AudioSession {
     sources: AudioSource[] = [];
     private readonly proc;
     private readonly ready = Promise.withResolvers<void>();
+    /** When the native process was spawned (`Date.now()`), for the start steps it reports. */
+    private spawnedAt = 0;
+    private readyLogged = false;
     private readonly done: Promise<void>;
     private pending?: { accepts: (event: AudioEvent) => boolean; resolve: () => void; reject: (error: Error) => void };
     private commands = Promise.resolve();
@@ -331,6 +336,7 @@ export class AudioSession {
             String(options.segmentSec ?? 60),
         ];
         log.debug({ argv }, "starting continuous sound");
+        this.spawnedAt = Date.now();
         this.proc = Bun.spawn((options.launch ?? wrapWithGenesisApp)(argv), {
             stdin: "pipe",
             stdout: "pipe",
@@ -449,6 +455,11 @@ export class AudioSession {
         }
         if (event.event === "levels") {
             this.options.onLevels?.(event);
+        } else if (event.event === "timing") {
+            log.info(
+                { step: event.step, sinceSpawnMs: event.sinceSpawnMs, sinceSpawnCallMs: Date.now() - this.spawnedAt },
+                "sound session start step"
+            );
         } else if (event.event === "warning") {
             this.warnings.push(event.message);
             this.options.onWarning?.(event.message);
@@ -462,6 +473,13 @@ export class AudioSession {
         } else {
             if (event.event === "state" && event.sources) {
                 this.sources = event.sources;
+                if (!this.readyLogged) {
+                    this.readyLogged = true;
+                    log.info(
+                        { readyAfterMs: Date.now() - this.spawnedAt, sources: event.sources },
+                        "sound session ready"
+                    );
+                }
                 this.ready.resolve();
             }
             if (this.pending?.accepts(event)) {
