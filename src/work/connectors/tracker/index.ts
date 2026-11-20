@@ -1,13 +1,14 @@
 /**
- * The tracker connector: an outside task per item, reached through the tracker's MCP server (the generic task doors
- * `create`, `get`, `update` and `label_task`). The server name, the project and the workspace come from the
- * connector's settings, so no tracker is named in code.
+ * The tracker connector: an outside task per item, reached through the tracker's MCP server (the generic doors
+ * `create`, `get`, `update` and `label_task`, for tasks and task links). The server name, the project and the
+ * workspace come from the connector's settings, so no tracker is named in code. A parent becomes the outside task's
+ * parent; a link becomes a task link.
  */
 // lint-rules-ignore: the MCP kit lives in the scripts tool; a connector is tool code that calls an MCP server
 import { data, isError, text, withKit } from "@app/scripts/lib/kit";
 import type { Connector, PushIntent, PushResult, RemoteItem } from "@genesiscz/utils/work/connectors/types";
 import type { Item } from "@genesiscz/utils/work/model/item";
-import type { ItemState, ItemType } from "@genesiscz/utils/work/model/vocab";
+import type { ItemState, ItemType, LinkKind } from "@genesiscz/utils/work/model/vocab";
 import { z } from "zod";
 
 export const trackerSettings = z.object({
@@ -17,7 +18,12 @@ export const trackerSettings = z.object({
     project: z.string().min(1),
     /** The workspace slug, when the server does not bind one by itself. */
     workspace: z.string().optional(),
+    /** The longest title the tracker takes; a longer one is cut there, and the full title opens the body. */
+    titleLimit: z.number().int().positive().optional(),
 });
+
+/** The title limit of the tracker this connector was first written for. */
+const DEFAULT_TITLE_LIMIT = 500;
 
 export type TrackerSettings = z.infer<typeof trackerSettings>;
 
@@ -74,26 +80,104 @@ function scoped(settings: TrackerSettings, args: Record<string, unknown>): Recor
     return settings.workspace !== undefined ? { ...args, workspace: settings.workspace } : args;
 }
 
-/** What a push sends: the facts the local side owns. A task born outside keeps its own title and text. */
-function patchOf(item: Item, bornHere: boolean): Record<string, unknown> {
+/** A numeric key is sent as a number, as the task doors expect; any other key as it is. */
+function taskId(key: string): number | string {
+    return /^\d+$/.test(key) ? Number(key) : key;
+}
+
+/** The title as the tracker takes it, and the body that carries the full title when it had to be cut. */
+function titleAndBody(item: Item, limit: number): { title: string; body?: string } {
+    const chars = Array.from(item.title);
+    const body = item.body !== null && item.body !== undefined ? item.body : undefined;
+
+    if (chars.length <= limit) {
+        return body !== undefined ? { title: item.title, body } : { title: item.title };
+    }
+
+    return {
+        title: `${chars.slice(0, limit - 1).join("")}…`,
+        body: body !== undefined && body !== "" ? `${item.title}\n\n${body}` : item.title,
+    };
+}
+
+/** What a push sends: the facts the local side owns. A task born outside keeps its own title, text and parent. */
+export function patchOf(intent: PushIntent, bornHere: boolean, settings: TrackerSettings): Record<string, unknown> {
+    const { item } = intent;
     const patch: Record<string, unknown> = { status: STATUS_OF[item.state] };
 
     if (bornHere) {
-        patch.title = item.title;
+        Object.assign(patch, titleAndBody(item, settings.titleLimit ?? DEFAULT_TITLE_LIMIT));
         patch.type = outsideType(item.type);
 
-        if (item.body !== null && item.body !== undefined) {
-            patch.body = item.body;
+        if (intent.parentKey !== undefined) {
+            patch.parentId = taskId(intent.parentKey);
         }
     }
 
     return patch;
 }
 
+/** The task link relation of each local link kind; the kinds the tracker has no name for go as a custom label. */
+const RELATION_OF: Record<LinkKind, { rel: string; label?: string }> = {
+    related: { rel: "relates" },
+    blocks: { rel: "blocks" },
+    "duplicate-of": { rel: "duplicates" },
+    "recheck-of": { rel: "custom", label: "recheck of" },
+    "follow-up-of": { rel: "custom", label: "follow-up of" },
+};
+
+interface OutsideLink {
+    rel: string;
+    label?: string;
+    direction?: string;
+    target: string;
+}
+
+export function linksOf(reply: Record<string, unknown>): OutsideLink[] {
+    const task =
+        reply.task !== null && typeof reply.task === "object" ? (reply.task as Record<string, unknown>) : reply;
+    const raw = Array.isArray(task.links) ? task.links : Array.isArray(reply.links) ? reply.links : [];
+    return raw.flatMap((link: unknown) => {
+        if (link === null || typeof link !== "object") {
+            return [];
+        }
+
+        const row = link as Record<string, unknown>;
+        const to = row.task !== null && typeof row.task === "object" ? (row.task as { id?: unknown }).id : row.toTaskId;
+
+        if (typeof row.rel !== "string" || (typeof to !== "number" && typeof to !== "string")) {
+            return [];
+        }
+
+        return [
+            {
+                rel: row.rel,
+                target: String(to),
+                ...(typeof row.label === "string" ? { label: row.label } : {}),
+                ...(typeof row.direction === "string" ? { direction: row.direction } : {}),
+            },
+        ];
+    });
+}
+
+/** "relates" holds both ways; every other relation is read from the side that made it. */
+export function hasLink(
+    existing: readonly OutsideLink[],
+    wanted: { rel: string; label?: string; target: string }
+): boolean {
+    return existing.some(
+        (link) =>
+            link.rel === wanted.rel &&
+            link.target === wanted.target &&
+            (wanted.rel === "relates" || link.direction === undefined || link.direction === "out") &&
+            (wanted.label === undefined || link.label === wanted.label)
+    );
+}
+
 export const trackerConnector: Connector<unknown> = {
     id: "tracker",
     settings: trackerSettings,
-    can: { create: true, pull: true, labels: true, comments: false, parents: false },
+    can: { create: true, pull: true, labels: true, comments: false, parents: true, links: true },
 
     stateMatches: (remote, local) => remote.status === STATUS_OF[local],
 
@@ -127,7 +211,7 @@ export const trackerConnector: Connector<unknown> = {
                                     scoped(settings, {
                                         kind: "task",
                                         project: settings.project,
-                                        ...patchOf(intent.item, true),
+                                        ...patchOf(intent, true, settings),
                                         labels: intent.labels,
                                     })
                                 ),
@@ -145,7 +229,7 @@ export const trackerConnector: Connector<unknown> = {
                                 await kit.call(
                                     settings.server,
                                     "update",
-                                    scoped(settings, { kind: "task", id: key, ...patchOf(intent.item, bornHere) })
+                                    scoped(settings, { kind: "task", id: key, ...patchOf(intent, bornHere, settings) })
                                 ),
                                 "update"
                             );
@@ -160,6 +244,43 @@ export const trackerConnector: Connector<unknown> = {
                                 ),
                                 "label_task"
                             );
+                        }
+
+                        if (bornHere && intent.links !== undefined && intent.links.length > 0) {
+                            const existing = linksOf(
+                                answer(
+                                    await kit.call(
+                                        settings.server,
+                                        "get",
+                                        scoped(settings, { kind: "task", id: taskId(key), include: ["links"] })
+                                    ),
+                                    "get links"
+                                )
+                            );
+
+                            for (const link of intent.links) {
+                                const wanted = { ...RELATION_OF[link.kind], target: link.remoteKey };
+
+                                if (link.remoteKey === key || hasLink(existing, wanted)) {
+                                    continue;
+                                }
+
+                                answer(
+                                    await kit.call(
+                                        settings.server,
+                                        "create",
+                                        scoped(settings, {
+                                            kind: "task_link",
+                                            id: taskId(key),
+                                            toTaskId: taskId(link.remoteKey),
+                                            rel: wanted.rel,
+                                            ...(wanted.label !== undefined ? { label: wanted.label } : {}),
+                                        })
+                                    ),
+                                    "create task_link"
+                                );
+                                existing.push({ ...wanted, direction: "out" });
+                            }
                         }
 
                         results.push({ ok: true, remoteKey: key });

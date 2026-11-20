@@ -310,12 +310,13 @@ export const workMethods = {
         name: "sync",
         params: z.object({
             release: z.string().optional().describe("push this item's held change now"),
+            all: z.boolean().optional().describe("push every paired item again, not only the changed ones"),
         }),
         result: z.unknown(),
-        resultName: `${reply}, data: { pushed, held, failed, skipped?, cursor }`,
+        resultName: `${reply}, data: { pushed, held, failed, drift, skipped?, cursor, problems?, notes?, preview? }`,
         effect: "reversible",
         reaches: ["user"],
-        doc: "One pass of the sync consumer under its lease, or --release <ref> for a held change.",
+        doc: "One pass of the sync consumer under its lease, or --release <ref> for a held change; --dry-run lists what a pass would push.",
     }),
     addMember: defineMethod({
         name: "addMember",

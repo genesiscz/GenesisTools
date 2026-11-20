@@ -11,12 +11,23 @@ import { DEFAULT_LABEL_TEMPLATE } from "./types";
 
 const roleRule = z.union([z.literal("anyone"), z.array(z.enum(ROLES))]);
 
+/** Which new items a connector makes outside, besides its createTypes. An existing pairing always syncs. */
+const scopeSchema = z.object({
+    /** Make the tasks of handoffs outside too. Off: a handoff's tasks are the working list of a session. */
+    handoffTasks: z.boolean().optional(),
+    /** Make only these items and the items under them (by parent); with `tags`, an item that matches either. */
+    under: z.array(z.string().min(1)).optional(),
+    /** Make only items that carry one of these tags; with `under`, an item that matches either. */
+    tags: z.array(z.string().min(1)).optional(),
+});
+
 export const connectorSectionSchema = z.object({
     enabled: z.boolean().optional(),
     settings: z.record(z.string(), z.unknown()).optional(),
     labelTemplate: z.string().optional(),
     createTypes: z.array(z.enum(ITEM_TYPES)).optional(),
     push: z.partialRecord(z.enum(ITEM_TYPES), roleRule).optional(),
+    scope: scopeSchema.optional(),
 });
 
 export type ConnectorSection = z.infer<typeof connectorSectionSchema>;
@@ -47,7 +58,7 @@ export function connectorConfigOf(layers: readonly RuleLayerInput[], connector: 
         }
 
         named = true;
-        const { settings, push, ...rest } = parsed.data;
+        const { settings, push, scope, ...rest } = parsed.data;
         Object.assign(merged, rest);
 
         if (settings !== undefined) {
@@ -56,6 +67,10 @@ export function connectorConfigOf(layers: readonly RuleLayerInput[], connector: 
 
         if (push !== undefined) {
             merged.push = { ...merged.push, ...push };
+        }
+
+        if (scope !== undefined) {
+            merged.scope = { ...merged.scope, ...scope };
         }
     }
 
@@ -70,6 +85,11 @@ export function connectorConfigOf(layers: readonly RuleLayerInput[], connector: 
             settings: merged.settings ?? {},
             labelTemplate: merged.labelTemplate ?? DEFAULT_LABEL_TEMPLATE,
             createTypes: merged.createTypes ?? [],
+            scope: {
+                handoffTasks: merged.scope?.handoffTasks ?? false,
+                under: merged.scope?.under ?? [],
+                tags: merged.scope?.tags ?? [],
+            },
             push: (type: ItemType): readonly Role[] | "anyone" | undefined => push[type],
         },
         problems,
