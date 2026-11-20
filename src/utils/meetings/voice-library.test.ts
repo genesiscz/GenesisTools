@@ -499,7 +499,7 @@ test("a correction receipt written before receipts recorded a model reverts only
         acquiredBy: "live",
     });
     // Rewrites the receipt on disk the way an older writer left it: with no model.
-    const removeLegacy = (id: string) => {
+    const removeLegacy = (id: `vs_${string}`) => {
         const { token } = correctVoiceSample({ kind: "remove", ids: [id] });
         const stored = persisted();
         for (const receipt of stored.receipts) {
