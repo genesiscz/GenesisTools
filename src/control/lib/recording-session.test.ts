@@ -20,7 +20,7 @@ import * as videoProbe from "@genesiscz/utils/video/probe";
 import * as videoProcess from "@genesiscz/utils/video/process";
 import { captureDiagnostics, validateBenchmark } from "../scripts/recorder-benchmark-policy";
 import * as captureRunner from "./capture-runner";
-import { nativeCaptureArgv } from "./native-record";
+import { nativeCaptureArgv, validateCaptureOptions } from "./native-record";
 import {
     audioTitlesArgv,
     audioTrackTitles,
@@ -1969,6 +1969,28 @@ describe("segmentCaptureSpec", () => {
         );
     });
 
+    it("passes a movie preset other than standard to ax-tool, and refuses one for a ProRes movie", () => {
+        const options = { fps: 30, movieQuality: "small" as const };
+        const spec = segmentCaptureSpec({
+            target: { kind: "display", screenIndex: 0 },
+            output: "/tmp/segment.mp4",
+            maxSeconds: 60,
+            options,
+        });
+        expect(spec.movieQuality).toBe("small");
+        expect(nativeCaptureArgv(spec, "/tmp/s").join(" ")).toContain("--movie-quality small");
+        const standard = segmentCaptureSpec({
+            target: { kind: "window", windowIds: [7] },
+            output: "/tmp/segment.mp4",
+            maxSeconds: 60,
+            options: { movieQuality: "standard" },
+        });
+        expect(nativeCaptureArgv(standard, "/tmp/s")).not.toContain("--movie-quality");
+        expect(() => validateCaptureOptions({ ...spec, codec: "prores4444", videoOut: "/tmp/a.mov" })).toThrow(
+            "applies to an H.264 movie"
+        );
+    });
+
     it("passes the idle rate, the change threshold and the windows to leave out", () => {
         const spec = segmentCaptureSpec({
             target: { kind: "display", screenIndex: 0 },
@@ -2329,6 +2351,21 @@ describe("a movie recording's live settings", () => {
             const answer = await client.setSettings({ activeFps: 120 });
             expect(answer.applied).toBe("restart");
             expect(runs[1].rates).toEqual({ activeFps: 120, idleFps: 120, threshold: 0.5 });
+        } finally {
+            await close();
+        }
+    });
+
+    it('rate "same" puts an adaptive movie back on one steady rate, also above 5 fps', async () => {
+        const { client, runs, close } = await movie();
+
+        try {
+            const answer = await client.setSettings({ activeFps: 30, rate: "same" });
+            expect(answer.settings).toMatchObject({ activeFps: 30, idleFps: 30 });
+            expect(runs.at(-1)?.rates).toEqual({ activeFps: 30, idleFps: 30, threshold: 0.5 });
+            await expect(client.setSettings({ rate: "same", idleFps: 2 })).rejects.toMatchObject({
+                code: RPC_ERRORS.invalidParams,
+            });
         } finally {
             await close();
         }

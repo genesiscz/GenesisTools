@@ -16,6 +16,8 @@ struct CaptureSelectionOptions {
     let outputScale: CGFloat?
     let transparent: Bool
     let codec: String
+    /// `--movie-quality`: the H.264 movie's size and bit rate against Standard (`MovieQuality`).
+    let movieQuality: MovieQuality
     let indicator: Bool
     /// Windows the movie must never show, such as the host's own recording controls: a display capture leaves them
     /// out of its content filter and an isolated capture never selects them. `NSWindow.sharingType = .none` does not
@@ -32,7 +34,7 @@ struct CaptureSelectionOptions {
             if outputSize != nil && (Int(requested.width) % 2 != 0 || Int(requested.height) % 2 != 0) {
                 errorExit("H.264 output dimensions must be even; choose ProRes 4444 MOV for odd sizes", code: "invalid-argument")
             }
-            return CGSize(width: Int(requested.width) & ~1, height: Int(requested.height) & ~1)
+            return movieQuality.movieSize(CGSize(width: Int(requested.width) & ~1, height: Int(requested.height) & ~1))
         }
         return requested
     }
@@ -92,6 +94,12 @@ func captureSelectionOptions(mode: String) -> CaptureSelectionOptions {
     if transparent && !["window", "isolated"].contains(mode) {
         errorExit("--transparent requires window or isolated mode", code: "invalid-argument")
     }
+    let movieQuality = argValue("--movie-quality").map { raw in
+        MovieQuality(rawValue: raw) ?? errorExit("--movie-quality must be standard, high or small", code: "invalid-argument")
+    } ?? .standard
+    if movieQuality != .standard && (argValue("--video-out") == nil || codec != "h264") {
+        errorExit("--movie-quality applies to an H.264 movie (--video-out without --codec prores4444)", code: "invalid-argument")
+    }
     if let video = argValue("--video-out") {
         if transparent && codec != "prores4444" {
             errorExit("Transparent video needs --codec prores4444 and a .mov output; H.264/MP4 has no alpha", code: "invalid-argument")
@@ -102,7 +110,7 @@ func captureSelectionOptions(mode: String) -> CaptureSelectionOptions {
     }
     return CaptureSelectionOptions(windowIDs: Array(Set(ids)).sorted(), apps: apps, canvas: canvas,
                                    outputSize: size, outputScale: scale, transparent: transparent,
-                                   codec: codec, indicator: !args.contains("--no-indicator"),
+                                   codec: codec, movieQuality: movieQuality, indicator: !args.contains("--no-indicator"),
                                    excludedWindowIDs: Set(windowIDList("--exclude-window-ids") ?? []))
 }
 

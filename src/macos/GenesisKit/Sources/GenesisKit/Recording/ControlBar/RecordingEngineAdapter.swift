@@ -101,7 +101,7 @@ public struct RecordingCapabilities: Equatable, Sendable {
             supported = liveSystemAudioMute
         case .camera: supported = liveCamera
         case .frameRate: supported = liveFrameRate
-        case .quality, .drawsCursor: supported = false
+        case .quality, .movieQuality, .drawsCursor: supported = false
         }
         return supported ? nil : (reasonUnavailable[change.controlID] ?? "Choose this setting before recording.")
     }

@@ -83,6 +83,8 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
                       [--keep-overlays] screen and region mode keep screen dimmers (HazeOver and the like), left out by default
                       [--screen-index N] [--region x,y,w,h] --duration <seconds> [--active-fps 8] [--idle-fps 2]
                       [--threshold 2.5] [--video-out f.mp4] [--out DIR]   ScreenCaptureKit recording: change-sampled
+                      [--movie-quality standard|high|small] an H.264 movie: high doubles the bit rate, small halves
+                      width, height and bit rate; standard (the default) is the native size
                       keep-NNNN.png frames, contact.png, metadata.json; JSON result in the capture-runner shape
                       screen mode: [--display-id ID] (wins over --screen-index) | [--follow-focus] (switches live to the
                       display the pointer or the focused window moved to, whichever moved last; checked every 250 ms)

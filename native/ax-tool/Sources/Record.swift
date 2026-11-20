@@ -707,7 +707,7 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 
     private func h264Compression(width: Int, height: Int, fps: Double) -> [String: Any] {
         [
-            AVVideoAverageBitRateKey: screenMovieBitRate(width: width, height: height, fps: fps),
+            AVVideoAverageBitRateKey: options.selection.movieQuality.bitRate(width: width, height: height, fps: fps),
             AVVideoExpectedSourceFrameRateKey: Int(fps.rounded()),
             AVVideoMaxKeyFrameIntervalKey: max(1, Int((fps * 2).rounded())),
             AVVideoAllowFrameReorderingKey: false,

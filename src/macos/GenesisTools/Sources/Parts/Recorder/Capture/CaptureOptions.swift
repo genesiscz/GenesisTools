@@ -124,6 +124,8 @@ struct CaptureOptions: Equatable {
         static let camera = "recorder.capture.camera"
         /// Shared with the widget's recording settings (GenesisKit `RecordingSettings.Key.keepsOverlays`).
         static let keepOverlays = RecordingSettings.Key.keepsOverlays
+        /// The movie preset; RecordingSetup reads and saves the same key.
+        static let movieQuality = "recorder.capture.movieQuality"
         /// Shared with the menu's "Draw the Cursor in the Editor" and "Record ⌘/⌃ Shortcuts".
         static let drawCursor = "recorder.record.drawCursor"
         static let shortcuts = "recorder.record.shortcuts"
@@ -142,6 +144,7 @@ struct CaptureOptions: Equatable {
     var camera = false
     /// Dimming overlays (HazeOver) stay in the movie; off, the recorder leaves them out (`--keep-overlays`).
     var keepOverlays = false
+    var movieQuality = MovieQuality.standard
 
     static func load(_ defaults: UserDefaults = .standard) -> CaptureOptions {
         var options = CaptureOptions()
@@ -160,6 +163,7 @@ struct CaptureOptions: Equatable {
         options.shortcutsOverlay = bool(Key.shortcuts, options.shortcutsOverlay)
         options.camera = bool(Key.camera, options.camera)
         options.keepOverlays = bool(Key.keepOverlays, options.keepOverlays)
+        options.movieQuality = defaults.string(forKey: Key.movieQuality).flatMap(MovieQuality.init(rawValue:)) ?? .standard
         return options
     }
 
@@ -175,6 +179,7 @@ struct CaptureOptions: Equatable {
         defaults.set(shortcutsOverlay, forKey: Key.shortcuts)
         defaults.set(camera, forKey: Key.camera)
         defaults.set(keepOverlays, forKey: Key.keepOverlays)
+        defaults.set(movieQuality.rawValue, forKey: Key.movieQuality)
     }
 
     var audioSources: [String] {
@@ -196,6 +201,8 @@ struct CaptureOptions: Equatable {
         if !shortcutsOverlay { args.append("--no-shortcuts") }
         if camera { args.append("--camera") }
         if keepOverlays { args.append("--keep-overlays") }
+        // A frames recording has its own quality (--max-long-side); the preset sizes a movie.
+        if movieQuality != .standard, !args.contains("--frames") { args += ["--movie-quality", movieQuality.rawValue] }
         if !excludeWindowIds.isEmpty { args += ["--exclude-window-ids", excludeWindowIds.map(String.init).joined(separator: ",")] }
         return args
     }
@@ -216,6 +223,7 @@ struct CaptureOptions: Equatable {
         options.microphone = setup.microphone.enabled && !setup.microphone.muted
         options.camera = setup.camera.enabled
         options.drawCursor = setup.drawsCursor
+        options.movieQuality = setup.movieQuality
         options.shortcutsOverlay = shortcuts
         let choice = setup.target.map(CaptureChoice.target) ?? .followPointer
         var targetArguments = try choice.resolvedArguments(screens: screens, displayIDs: displayIDs)

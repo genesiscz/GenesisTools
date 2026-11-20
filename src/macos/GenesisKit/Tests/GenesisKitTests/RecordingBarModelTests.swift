@@ -48,6 +48,23 @@ final class RecordingBarModelTests: XCTestCase {
         XCTAssertNil(saved.target)
     }
 
+    /// The movie preset is a saved recorder setting: Standard by default, kept by Save as Defaults for a movie target,
+    /// and a frames target (several displays) keeps its own quality instead.
+    func testTheMoviePresetDefaultsToStandardAndSavesForAMovie() throws {
+        let suite = "recording.bar.fixture.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = RecordingBarModel(engine: Engine(), setup: RecordingSetup.load(defaults), defaults: defaults,
+                                      countdownTick: {})
+        XCTAssertEqual(model.setup.movieQuality, .standard)
+        model.apply(.target(display))
+        model.apply(.movieQuality(.small))
+        XCTAssertEqual(RecordingSetupChange.movieQuality(.small).controlID, "quality")
+        XCTAssertNil(defaults.string(forKey: "recorder.capture.movieQuality"), "only Save as Defaults writes it")
+        model.saveAsDefaults()
+        XCTAssertEqual(RecordingSetup.load(defaults).movieQuality, .small)
+    }
+
     func testCountdownStartsOnceWithTheDraftAndLatestExcludedWindows() async {
         let engine = Engine()
         let draft = RecordingSetup(target: display, frameRate: 24, countdownSeconds: 2)

@@ -229,6 +229,18 @@ final class CaptureCanvasGeometryTests: XCTestCase {
         XCTAssertEqual(screenMovieBitRate(width: 6016, height: 3384, fps: 120), 160_000_000)
     }
 
+    func testAMovieQualityPresetSizesAndRatesTheMovieAgainstStandard() {
+        let native = CGSize(width: 2056, height: 1228)
+        XCTAssertEqual(MovieQuality.standard.movieSize(native), native)
+        XCTAssertEqual(MovieQuality.high.movieSize(native), native)
+        XCTAssertEqual(MovieQuality.small.movieSize(native), CGSize(width: 1028, height: 614))
+        XCTAssertEqual(MovieQuality.small.movieSize(CGSize(width: 1510, height: 982)), CGSize(width: 754, height: 490), "even sides")
+        let standard = screenMovieBitRate(width: 2056, height: 1228, fps: 60)
+        XCTAssertEqual(MovieQuality.standard.bitRate(width: 2056, height: 1228, fps: 60), standard)
+        XCTAssertEqual(MovieQuality.high.bitRate(width: 2056, height: 1228, fps: 60), 2 * standard)
+        XCTAssertEqual(MovieQuality.small.bitRate(width: 1028, height: 614, fps: 60), standard / 2)
+    }
+
     // Many separate changing patches (a 4K frame holds tens of thousands of blocks) must not run the all-pairs merge:
     // past 64 regions they become one box, so the frame queue keeps its pace.
     func testAFragmentedFrameMergesIntoOneBoxWithoutThePairwiseSearch() {

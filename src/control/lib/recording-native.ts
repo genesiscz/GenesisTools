@@ -76,6 +76,8 @@ export interface NativeRecorderOptions {
     idleFps?: number;
     /** The share of the picture that must change, in percent, before the stream leaves the idle rate (0–100). */
     threshold?: number;
+    /** The movie's size and bit rate against standard (the native size): high, small (`CaptureSpec.movieQuality`). */
+    movieQuality?: CaptureSpec["movieQuality"];
 }
 
 export { cursorTrackPath };
@@ -140,6 +142,10 @@ export function segmentCaptureSpec({
     }
 
     spec.maxFrames = 1;
+    if (options.movieQuality && options.movieQuality !== "standard") {
+        spec.movieQuality = options.movieQuality;
+    }
+
     if (options.indicator === false) {
         spec.indicator = false;
     }

@@ -134,7 +134,7 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
                 throw Failure("Choose a supported active and still frame rate.")
             }
             _ = try await command(.rates(active, still == Double(active) ? 0 : still))
-        case .microphone, .systemAudio, .camera, .quality, .drawsCursor:
+        case .microphone, .systemAudio, .camera, .quality, .movieQuality, .drawsCursor:
             throw RecordingEngineError.unsupported(capabilities.reasonUnavailable[change.controlID]
                 ?? "The widget cannot apply this change.")
         }

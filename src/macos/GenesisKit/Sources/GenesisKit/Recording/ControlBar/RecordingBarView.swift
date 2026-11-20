@@ -414,10 +414,16 @@ public struct RecordingBarView: View {
         // Top-aligned: every choice's caption sits on one line, whether or not it carries a scope line under it.
         HStack(alignment: .top, spacing: 7) {
             let frames = setup.target?.kind == .displays
+            // The widget's movie has one size, and says so; the full recorder takes a movie preset before the take.
             let qualityReason = frames ? reason("quality", live: false)
-                : (caps.reasonUnavailable["quality"] ?? "Movies record at the target’s native size.")
-            choice("Quality", "quality", value: setup.quality, values: frames ? RecordingQuality.allCases : [.standard],
-                   title: { $0.rawValue.capitalized }, reason: qualityReason, scope: scope(qualityReason)) { model.apply(.quality($0)) }
+                : (caps.reasonUnavailable["quality"] ?? reason("quality", live: false))
+            if frames {
+                choice("Quality", "quality", value: setup.quality, values: RecordingQuality.allCases,
+                       title: { $0.rawValue.capitalized }, reason: qualityReason, scope: scope(qualityReason)) { model.apply(.quality($0)) }
+            } else {
+                choice("Quality", "quality", value: setup.movieQuality, values: MovieQuality.allCases,
+                       title: \.title, reason: qualityReason, scope: scope(qualityReason)) { model.apply(.movieQuality($0)) }
+            }
             let rateReason = reason("frameRate", live: caps.liveFrameRate)
             let stillRates = RecordingSetup.stillFrameRates.filter { !frames || $0 > 0 }
             choice("While still", "stillFrameRate", value: setup.stillFrameRate, values: stillRates,

@@ -50,6 +50,7 @@ const MOVIE_ONLY: ReadonlyArray<readonly [string, (flags: StartFlags) => boolean
     ["--app", (flags) => flags.app !== undefined],
     ["--region", (flags) => flags.region !== undefined],
     ["--camera", (flags) => flags.camera === true],
+    ["--movie-quality", (flags) => flags.movieQuality !== undefined && flags.movieQuality !== false],
     ["--system-cursor", (flags) => flags.systemCursor === true],
     ["--no-shortcuts", (flags) => flags.shortcuts === false],
     ["--no-indicator", (flags) => flags.indicator === false],

@@ -461,6 +461,11 @@ export interface CaptureSpec {
     outputScale?: number;
     transparent?: boolean;
     codec?: "h264" | "prores4444";
+    /**
+     * Native, an H.264 movie: its size and bit rate against standard (the native size, the default). high doubles the
+     * bit rate; small halves width, height and bit rate.
+     */
+    movieQuality?: "standard" | "high" | "small";
     indicator?: boolean;
     screenIndex?: number;
     app?: string;

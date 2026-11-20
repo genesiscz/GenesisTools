@@ -1,5 +1,10 @@
 import { NATIVE_MOVIE_MAX_SECONDS } from "@app/control/lib/capture-plan";
-import { parseScreenList, type ScreenInfo } from "@app/control/lib/native-record";
+import {
+    MOVIE_QUALITY_VALUES,
+    type MovieQuality,
+    parseScreenList,
+    type ScreenInfo,
+} from "@app/control/lib/native-record";
 import {
     defaultRecordingTarget,
     listRecordingTargets,
@@ -59,6 +64,8 @@ export interface StartFlags {
     fps?: string;
     idleFps?: string;
     threshold?: string;
+    /** `--movie-quality [preset]`: standard, high or small; bare names the values. */
+    movieQuality?: string | boolean;
     region?: string;
     excludeWindowIds?: string;
     keepOverlays?: boolean;
@@ -111,6 +118,10 @@ export function withStartOptions(command: Command): Command {
         .option(
             "--threshold <percent>",
             `how much of the picture must change to leave the idle rate, ${threshold.min}–${threshold.max} (default 0.5)`
+        )
+        .option(
+            "--movie-quality [preset]",
+            "the movie's size and bit rate: standard (the native size, the default), high (twice the bit rate) or small (half the width, height and bit rate)"
         )
         .option(
             "--display <index>",
@@ -280,6 +291,23 @@ export function startAudioOf(flags: StartFlags): StartAudioSource[] | undefined 
     return audio;
 }
 
+/** `--movie-quality`: one of the presets; bare or another word is refused with the values. */
+function parseMovieQuality(raw: string | boolean | undefined): MovieQuality | undefined {
+    if (raw === undefined || raw === false) {
+        return undefined;
+    }
+
+    const value = MOVIE_QUALITY_VALUES.find((preset) => preset === raw);
+
+    if (!value) {
+        throw new Error(
+            `--movie-quality takes ${MOVIE_QUALITY_VALUES.join(", ")}${raw === true ? "" : ` (not "${raw}")`}: ${toolCommand("recorder start", "--movie-quality high")}`
+        );
+    }
+
+    return value;
+}
+
 export function parseStartFlags(flags: StartFlags): StartRequest {
     const audio = startAudioOf(flags);
     const target = namedTarget(flags);
@@ -296,6 +324,7 @@ export function parseStartFlags(flags: StartFlags): StartRequest {
         fps: bounded(flags.fps ?? String(DEFAULT_MOVIE_FPS), "--fps", START_LIMITS.fps),
         idleFps: bounded(flags.idleFps, "--idle-fps", START_LIMITS.idleFps),
         threshold: bounded(flags.threshold, "--threshold", START_LIMITS.threshold),
+        movieQuality: parseMovieQuality(flags.movieQuality),
         excludeWindowIds: parseWindowIdList(flags.excludeWindowIds, "--exclude-window-ids"),
         keepOverlays: flags.keepOverlays === true,
         camera: flags.camera === true,
@@ -546,6 +575,8 @@ export const recordOptionsSchema = z
         fps: limited(START_LIMITS.fps).optional(),
         idleFps: limited(START_LIMITS.idleFps).optional(),
         threshold: limited(START_LIMITS.threshold).optional(),
+        /** The movie's size and bit rate: standard (the native size, the default), high (twice the bit rate), small (half). */
+        movieQuality: z.enum(MOVIE_QUALITY_VALUES).optional(),
         /** Seconds counted down on screen before it records; true is the picker's 3 s. */
         countdown: z.union([z.boolean(), limited(START_LIMITS.countdown)]).optional(),
         /** Keep the system cursor in the movie instead of the drawn one. */
@@ -578,6 +609,7 @@ const START_ARGS: { [K in keyof Required<RecordOptions>]: (options: RecordOption
     fps: ({ fps }) => (fps === undefined ? [] : ["--fps", String(fps)]),
     idleFps: ({ idleFps }) => (idleFps === undefined ? [] : ["--idle-fps", String(idleFps)]),
     threshold: ({ threshold }) => (threshold === undefined ? [] : ["--threshold", String(threshold)]),
+    movieQuality: ({ movieQuality }) => (movieQuality ? ["--movie-quality", movieQuality] : []),
     countdown: ({ countdown }) =>
         countdown === undefined || countdown === false
             ? []

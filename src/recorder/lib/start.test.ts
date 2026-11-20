@@ -22,8 +22,10 @@ import { alreadyInState, liveRecordingRef, markerLabelProblem } from "./library"
 import {
     otherRecordingsWarning,
     parseStartFlags,
+    readStartArgs,
     refuseMissingWindowOrApp,
     refuseTargetOffScreen,
+    startArgsOf,
     startAudioOf,
 } from "./start-options";
 import {
@@ -691,6 +693,17 @@ describe("a window or app movie", () => {
         }
 
         expect(() => refuseMissingWindowOrApp({ kind: "display", screenIndex: 0 }, seen)).not.toThrow();
+    });
+
+    it("--movie-quality names a preset; the REPL's movieQuality turns into the same flag", () => {
+        expect(parseStartFlags({ display: "0" }).movieQuality).toBeUndefined();
+        expect(parseStartFlags(readStartArgs(["--display", "0", "--movie-quality", "small"])).movieQuality).toBe(
+            "small"
+        );
+        expect(() => parseStartFlags({ movieQuality: true })).toThrow(/takes standard, high, small/);
+        expect(() => parseStartFlags({ movieQuality: "huge" })).toThrow(/not "huge"/);
+        expect(startArgsOf({ movieQuality: "high" })).toEqual(["--movie-quality", "high"]);
+        expect(segmentRecorderOptions({ target: window, movieQuality: "high" }, folder).movieQuality).toBe("high");
     });
 
     it("--audio with --window or --app is refused before anything starts", () => {

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, rename } from "node:fs/promises";
 import { join } from "node:path";
+import type { MovieQuality } from "@app/control/lib/native-record";
 import { type CountdownHold, runCountdown } from "@app/control/lib/peekaboo";
 import {
     audioTrackTitles,
@@ -55,6 +56,8 @@ export interface VideoRecordingOptions {
     idleFps?: number;
     /** The share of the picture, in percent, that must change before the stream leaves the idle rate. */
     threshold?: number;
+    /** The movie's size and bit rate: standard (the native size, the default), high (twice the bit rate), small (half). */
+    movieQuality?: MovieQuality;
     /** CG window ids no movie may show (the camera bubble's preview, a host's own panel). */
     excludeWindowIds?: number[];
     /** Keep screen dimmers (HazeOver and the like) in a display or area movie; they are left out by default. */
@@ -117,6 +120,7 @@ export function segmentRecorderOptions(
         fps: options.fps,
         idleFps: options.idleFps,
         threshold: options.threshold,
+        movieQuality: options.movieQuality,
         excludeWindowIds: options.excludeWindowIds,
         keepOverlays: options.keepOverlays,
         indicator: options.indicator,
