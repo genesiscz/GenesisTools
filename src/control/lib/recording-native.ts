@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import type { NativeLiveCapture } from "@genesiscz/utils/screen-recorder/native";
 import {
     audioStreamCount,
     type MediaFacts,
@@ -26,6 +27,7 @@ import {
     joinCursorTracks,
     joinSegmentsArgv,
     type MovieRates,
+    type SegmentControl,
     type SegmentJoiner,
     type SegmentPlacement,
     type SegmentRecorder,
@@ -226,7 +228,21 @@ function movieStartOf(sessionDir: string): SegmentStart | undefined {
     }
 }
 
-/** One `tools control capture record` run per segment, on the ScreenCaptureKit recorder. */
+/** The segment's live sound commands over the recorder's `--control-stdin` channel. */
+export function segmentControlOf(channel: NativeLiveCapture): SegmentControl {
+    return {
+        mute: (source, muted) =>
+            channel.mute?.(source, muted) ?? Promise.reject(new Error("the recorder cannot mute while it records")),
+        setMic: (deviceId) =>
+            channel.setMic?.(deviceId) ??
+            Promise.reject(new Error("the recorder cannot switch the microphone while it records")),
+    };
+}
+
+/**
+ * One `tools control capture record` run per segment, on the ScreenCaptureKit recorder. A movie with sound starts each
+ * run with a control channel, so its mutes and microphone change while it records.
+ */
 export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): SegmentRecorder {
     return {
         async record({
@@ -238,6 +254,7 @@ export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): Segm
             onRecording,
             onDisplayChanged,
             onPreparing,
+            onControl,
         }): Promise<SegmentResult> {
             const capture = segmentCaptureSpec({ target, output, maxSeconds, options: withRates(options, rates) });
             let sessionDir: string | undefined;
@@ -266,6 +283,9 @@ export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): Segm
                         onRecording(started ? movieStartOf(started.sessionDir) : undefined);
                     },
                     onPreparing,
+                    ...(onControl && options.audio?.length
+                        ? { onControl: (channel: NativeLiveCapture) => onControl(segmentControlOf(channel)) }
+                        : {}),
                 });
                 sessionDir = result.sessionDir;
                 const envelope = result.capture as {

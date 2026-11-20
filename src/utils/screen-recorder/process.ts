@@ -18,7 +18,7 @@ export interface CaptureProcessResult {
 }
 
 /** Reads a pipe to its end, handing each complete line to `onLine` as it arrives. */
-async function readLines(stream: ReadableStream<Uint8Array>, onLine?: (line: string) => void): Promise<string> {
+export async function readLines(stream: ReadableStream<Uint8Array>, onLine?: (line: string) => void): Promise<string> {
     const decoder = new TextDecoder();
     let text = "";
     let pending = "";

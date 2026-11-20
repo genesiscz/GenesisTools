@@ -2,6 +2,7 @@ import { type JobInfo, JobRegistry, type ProgressEvent } from "@genesiscz/utils/
 import { logger } from "@genesiscz/utils/logger";
 import {
     type AudioSource,
+    type AudioState,
     type RecorderState as ControlState,
     type DisplayEntry,
     type DisplaySelection,
@@ -19,12 +20,13 @@ import {
     type StopAnswer,
 } from "@genesiscz/utils/screen-recorder/control";
 import { parseDisplayList } from "@genesiscz/utils/screen-recorder/displays";
-import type {
-    MovieRates,
-    RecordingCommand,
-    RecordingSession,
-    RecordingSessionEvent,
-    RecordingState,
+import {
+    type MovieRates,
+    type RecordingCommand,
+    type RecordingSession,
+    type RecordingSessionEvent,
+    type RecordingState,
+    SoundChangeError,
 } from "./recording-session";
 import { describeRecordingTarget, type RecordingTarget, recordingTargetSchema } from "./recording-targets";
 import { type AxResult, runAxAsync } from "./runner";
@@ -107,7 +109,9 @@ export class SessionRecorderControl extends RecorderControl {
         }
     ) {
         super();
-        this.methods = session.currentRates() ? [...SESSION_METHODS, "settings.get", "settings.set"] : SESSION_METHODS;
+        const rated: RecorderMethod[] = session.currentRates() ? ["settings.get", "settings.set"] : [];
+        const sound: RecorderMethod[] = session.audioState().sources.length > 0 ? ["audio.mute", "audio.setInput"] : [];
+        this.methods = [...SESSION_METHODS, ...rated, ...sound];
         this.audio = options.audio ?? { sources: [] };
         this.target = options.target;
         this.title = options.title ?? describeRecordingTarget(options.target);
@@ -127,15 +131,32 @@ export class SessionRecorderControl extends RecorderControl {
             return super.getSettings();
         }
 
+        return { settings: { ...rates, ...MOVIE_FIXED_SETTINGS }, audio: this.soundState(), fixed: MOVIE_FIXED };
+    }
+
+    /** The session's sound when it records some; else what the host said it records, with nothing muted. */
+    private soundState(): AudioState {
+        const live = this.session.audioState();
+
+        if (live.sources.length > 0) {
+            return live;
+        }
+
         return {
-            settings: { ...rates, ...MOVIE_FIXED_SETTINGS },
-            audio: {
-                sources: this.audio.sources,
-                muted: { mic: false, system: false },
-                ...(this.audio.micDevice ? { micDevice: this.audio.micDevice } : {}),
-            },
-            fixed: MOVIE_FIXED,
+            sources: this.audio.sources,
+            muted: { mic: false, system: false },
+            ...(this.audio.micDevice ? { micDevice: this.audio.micDevice } : {}),
         };
+    }
+
+    /** Mutes or unmutes a recorded source in the running segment and every later one. */
+    override async muteAudio(source: AudioSource, muted: boolean): Promise<AudioState> {
+        return soundAnswer(() => this.session.muteAudio(source, muted));
+    }
+
+    /** Records the microphone from another input device, in the running segment and every later one. */
+    override async setAudioInput(deviceId: string): Promise<AudioState> {
+        return soundAnswer(() => this.session.setMicDevice(deviceId));
     }
 
     /** Changes the movie's rates and threshold (`activeFps`, `idleFps`, `threshold`); the next segment records with them. */
@@ -323,6 +344,25 @@ export class SessionRecorderControl extends RecorderControl {
         }
 
         return parseDisplayList(result);
+    }
+}
+
+/** A sound change as the session answers it, its refusals as the RPC errors the other recorders use. */
+async function soundAnswer(change: () => Promise<AudioState>): Promise<AudioState> {
+    try {
+        return await change();
+    } catch (error) {
+        if (error instanceof RpcError) {
+            throw error;
+        }
+
+        const message = error instanceof Error ? error.message : String(error);
+
+        if (error instanceof SoundChangeError) {
+            throw new RpcError(RPC_ERRORS.unsupported, message);
+        }
+
+        throw new RpcError(/no input device/i.test(message) ? RPC_ERRORS.unknownDevice : RPC_ERRORS.internal, message);
     }
 }
 

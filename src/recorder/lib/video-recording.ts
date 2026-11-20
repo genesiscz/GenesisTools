@@ -479,6 +479,7 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
     };
     // Read at each segment's start, so the camera preview's window joins the exclusions before the first one.
     const segmentOptions = segmentRecorderOptions(options, folder);
+    const sound = { sources: options.audio ?? [], ...(options.micDevice ? { micDevice: options.micDevice } : {}) };
     const session = new RecordingSession({
         target: options.target,
         directory: join(folder, `segments-${randomUUID().slice(0, 8)}`),
@@ -498,12 +499,14 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
             idleFps: Math.min(options.idleFps ?? fps, fps),
             threshold: options.threshold ?? SESSION_MOTION_THRESHOLD,
         },
+        // The live mutes and microphone (`audio.mute`, `audio.setInput`); each new segment gets them again.
+        audio: sound,
     });
     control = new SessionRecorderControl(session, {
         target: options.target,
         title,
         onProgress: (event) => live?.emit("progress", { ...event }),
-        audio: { sources: options.audio ?? [], ...(options.micDevice ? { micDevice: options.micDevice } : {}) },
+        audio: sound,
     });
     live = new LiveRecordingServer({
         id: liveRecordingId("recorder", `${process.pid}-${randomUUID().slice(0, 8)}`),

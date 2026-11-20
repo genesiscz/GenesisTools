@@ -7,10 +7,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chosenPlan } from "@app/recorder/lib/proxy";
 import { withTimeout } from "@genesiscz/utils/async";
+import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { framesDurationUs } from "@genesiscz/utils/recording-editor/source";
-import { RPC_ERRORS } from "@genesiscz/utils/screen-recorder/control";
+import { type AudioSource, RPC_ERRORS } from "@genesiscz/utils/screen-recorder/control";
 import { LiveRecordingServer, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
+import { NativeLiveCapture } from "@genesiscz/utils/screen-recorder/native";
+import { readLines } from "@genesiscz/utils/screen-recorder/process";
 import * as mediaFacts from "@genesiscz/utils/video/media-facts";
 import * as videoProbe from "@genesiscz/utils/video/probe";
 import * as videoProcess from "@genesiscz/utils/video/process";
@@ -25,6 +28,7 @@ import {
     type NativeRecorderOptions,
     nativeSegmentRecorder,
     segmentCaptureSpec,
+    segmentControlOf,
     segmentJoiner,
     titleAudioTracks,
 } from "./recording-native";
@@ -42,6 +46,7 @@ import {
     parseRecordingCommand,
     RecordingSession,
     type RecordingSessionEvent,
+    type SegmentControl,
     type SegmentRecorder,
     type SegmentResult,
 } from "./recording-session";
@@ -110,6 +115,8 @@ interface FakeRun {
     arm: (start?: { firstFrameAt: number; display?: { id: number; name: string } }) => void;
     /** A Follow display run moved to another display. */
     displayChanged?: (display: { id: number; name: string }) => void;
+    /** Hands the session this run's live sound commands, as a recorder does at the first frame. */
+    control?: (control: SegmentControl) => void;
 }
 
 /**
@@ -129,7 +136,7 @@ function fakeRecorder(
 ) {
     const runs: FakeRun[] = [];
     const recorder: SegmentRecorder = {
-        record({ target, rates, output, maxSeconds, signal, onRecording, onPreparing, onDisplayChanged }) {
+        record({ target, rates, output, maxSeconds, signal, onRecording, onPreparing, onDisplayChanged, onControl }) {
             if (options.prepares) {
                 onPreparing?.();
             }
@@ -148,7 +155,17 @@ function fakeRecorder(
                     armed = true;
                     onRecording(start);
                 };
-                runs.push({ target, rates, output, maxSeconds, signal, end, arm, displayChanged: onDisplayChanged });
+                runs.push({
+                    target,
+                    rates,
+                    output,
+                    maxSeconds,
+                    signal,
+                    end,
+                    arm,
+                    displayChanged: onDisplayChanged,
+                    control: onControl,
+                });
                 if (options.failFirst && index === 0) {
                     void end({ ok: false, endedBy: "failure", error: "[screen-recording-denied] no grant" }, false);
                     return;
@@ -2400,4 +2417,153 @@ describe("displays.list on a movie recording", () => {
 
         expect(recorded).toEqual([9]);
     });
+});
+
+describe("live sound on a movie take", () => {
+    const fakeAxTool = join(moduleDir(import.meta), "../../utils/screen-recorder/__fixtures__/fake-ax-tool.ts");
+    let root: string;
+
+    beforeEach(async () => {
+        root = join(tmpdir(), `recording-sound-${randomUUID()}`);
+        await mkdir(root, { recursive: true });
+    });
+
+    afterEach(async () => {
+        await rm(root, { recursive: true, force: true });
+    });
+
+    function soundSession(
+        recorder: SegmentRecorder,
+        audio: { sources: AudioSource[]; micDevice?: string } = {
+            sources: ["mic", "system"],
+            micDevice: "built-in-mic",
+        }
+    ) {
+        let control: SessionRecorderControl | undefined;
+        const recording = new RecordingSession({
+            target: display,
+            directory: join(root, "segments"),
+            output: join(root, "out.mp4"),
+            recorder,
+            rates: { activeFps: 30, idleFps: 30, threshold: 1 },
+            join: async ({ output }) => {
+                await writeFile(output, "joined");
+                return { durationMs: 1000 };
+            },
+            measure: async () => 1000,
+            emit: (event) => control?.observe(event),
+            tickMs: 0,
+            slowStartMs: 0,
+            audio,
+        });
+        control = new SessionRecorderControl(recording, { target: display, audio });
+        return { recording, control };
+    }
+
+    it("mutes the running segment at once and gives each new segment the mutes and the microphone again", async () => {
+        const { recorder, runs } = fakeRecorder();
+        const { recording, control } = soundSession(recorder);
+        await recording.start();
+        const sent: string[] = [];
+        const controlOf = (run: number): SegmentControl => ({
+            mute: async (source, muted) => {
+                sent.push(`${run} ${muted ? "mute" : "unmute"} ${source}`);
+            },
+            setMic: async (deviceId) => {
+                sent.push(`${run} set-mic ${deviceId}`);
+            },
+        });
+        expect(control.methods).toContain("audio.mute");
+        expect(control.methods).toContain("audio.setInput");
+        runs[0]?.control?.(controlOf(0));
+        expect(sent).toEqual([]);
+        expect(await control.muteAudio("mic", true)).toMatchObject({ muted: { mic: true, system: false } });
+        expect(await control.setAudioInput("desk-mic")).toMatchObject({ micDevice: "desk-mic" });
+        await control.pause();
+        // Paused, nothing records: the next segment takes the change.
+        expect(await control.muteAudio("system", true)).toMatchObject({ muted: { mic: true, system: true } });
+        await control.resume();
+        runs[1]?.control?.(controlOf(1));
+        expect(sent).toEqual(["0 mute mic", "0 set-mic desk-mic", "1 mute mic", "1 mute system", "1 set-mic desk-mic"]);
+        expect((await control.getSettings()).audio).toEqual({
+            sources: ["mic", "system"],
+            muted: { mic: true, system: true },
+            micDevice: "desk-mic",
+        });
+        await recording.command({ cmd: "discard" });
+    });
+
+    it("refuses a source the movie does not record and keeps the state when the recorder refuses a change", async () => {
+        const { recorder, runs } = fakeRecorder();
+        const { recording, control } = soundSession(recorder, { sources: ["mic"] });
+        await recording.start();
+        await expect(control.muteAudio("system", true)).rejects.toMatchObject({ code: RPC_ERRORS.unsupported });
+        runs[0]?.control?.({
+            mute: async () => {
+                throw new Error("the stream refused the mute");
+            },
+            setMic: async () => {
+                throw new Error("no input device desk-mic");
+            },
+        });
+        await expect(control.muteAudio("mic", true)).rejects.toMatchObject({ code: RPC_ERRORS.internal });
+        await expect(control.setAudioInput("desk-mic")).rejects.toMatchObject({ code: RPC_ERRORS.unknownDevice });
+        expect(recording.audioState()).toEqual({ sources: ["mic"], muted: { mic: false, system: false } });
+        await recording.command({ cmd: "discard" });
+
+        const silent = soundSession(fakeRecorder().recorder, { sources: [] });
+        expect(silent.control.methods).not.toContain("audio.mute");
+    });
+
+    it("sends the commands over a recorder's control channel and reads its answers (the fake ax-tool)", async () => {
+        const proc = Bun.spawn(
+            [
+                process.execPath,
+                fakeAxTool,
+                "capture",
+                "--mode",
+                "screen",
+                "--out",
+                join(root, "capture"),
+                "--control-stdin",
+                "--audio",
+                "mic",
+            ],
+            { stdin: "pipe", stdout: "pipe", stderr: "pipe", env: process.env }
+        );
+        const written: unknown[] = [];
+        const channel = new NativeLiveCapture(
+            (text) => {
+                written.push(SafeJSON.parse(text, { strict: true }));
+                proc.stdin.write(text);
+                void proc.stdin.flush();
+            },
+            undefined,
+            {},
+            new Set(["mute", "set-mic"])
+        );
+        const stderr = readLines(proc.stderr, (line) => channel.receive(line));
+        const { recorder, runs } = fakeRecorder();
+        const { recording, control } = soundSession(recorder, { sources: ["mic"], micDevice: "desk-mic" });
+        await recording.start();
+        try {
+            runs[0]?.control?.(segmentControlOf(channel));
+            expect(await control.muteAudio("mic", true)).toMatchObject({ muted: { mic: true } });
+            expect(await control.setAudioInput("built-in-mic")).toMatchObject({ micDevice: "built-in-mic" });
+            await expect(control.setAudioInput("missing-mic")).rejects.toMatchObject({
+                code: RPC_ERRORS.unknownDevice,
+            });
+            expect(recording.audioState().micDevice).toBe("built-in-mic");
+            expect(written).toEqual([
+                { cmd: "mute", source: "mic" },
+                { cmd: "set-mic", deviceId: "built-in-mic" },
+                { cmd: "set-mic", deviceId: "missing-mic" },
+            ]);
+        } finally {
+            proc.stdin.end();
+            await proc.exited;
+            await stderr;
+            await recording.command({ cmd: "discard" });
+        }
+    }, 30_000);
 });
