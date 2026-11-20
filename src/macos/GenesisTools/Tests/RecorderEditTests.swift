@@ -558,6 +558,21 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertFalse(preview.isPlaying)
     }
 
+    /// The defect: the music preview and the cleaned noise sample own separate players, and both could play at once.
+    /// Starting one cancels the other, including a cleaned sample still being made.
+    @MainActor
+    func testStartingOneSoundPreviewCancelsTheOther() {
+        let cleaned = AudioPreviewPlayer()
+        let music = AudioPreviewPlayer()
+        let token = cleaned.begin()
+        XCTAssertTrue(cleaned.making)
+        _ = music.begin()
+        XCTAssertFalse(cleaned.making, "the cleaned sample in flight stops showing its spinner")
+        XCTAssertFalse(cleaned.isCurrent(token), "its answer never starts playing over the music")
+        XCTAssertTrue(music.making)
+        music.cancel()
+    }
+
     /// The defect: the menu bar's Recent rows and the library both move a recording to the Trash, but only the library
     /// kept where it went, so a recording trashed from the menu had no Put Back. Both now read one kept entry.
     @MainActor

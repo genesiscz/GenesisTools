@@ -2662,9 +2662,13 @@ final class AudioPreviewPlayer {
     @ObservationIgnored private var request = 0
     /// The player's delegate, kept here because AVAudioPlayer holds its delegate weakly.
     @ObservationIgnored private var finish: Finish?
+    /// The one preview that may sound: the music and the cleaned sample own separate players, and starting either
+    /// cancels the other, so the cleaned sample is never heard over the music.
+    private static weak var sounding: AudioPreviewPlayer?
 
     /// Starts a request and stops what plays; the token stays current until the next `begin` or `cancel`.
     func begin() -> Int {
+        claim()
         stop()
         request += 1
         making = true
@@ -2679,6 +2683,7 @@ final class AudioPreviewPlayer {
     @discardableResult
     func play(_ url: URL, for token: Int? = nil, volume: Float = 1, from seconds: TimeInterval = 0) throws -> Bool {
         if let token, !isCurrent(token) { return false }
+        claim()
         stop()
         making = false
         let next = try AVAudioPlayer(contentsOf: url)
@@ -2710,6 +2715,12 @@ final class AudioPreviewPlayer {
         request += 1
         making = false
         stop()
+    }
+
+    /// Stops another preview and cancels its request in flight before this one makes or plays a sound.
+    private func claim() {
+        if let other = Self.sounding, other !== self { other.cancel() }
+        Self.sounding = self
     }
 
     private func finished(_ id: ObjectIdentifier) {
