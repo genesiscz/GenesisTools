@@ -8,6 +8,7 @@ import { out } from "@genesiscz/utils/logger";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { localVoiceBackend } from "@genesiscz/utils/meetings/voice";
 import { type VoiceStore, voicePrintSchema } from "@genesiscz/utils/meetings/voice-store";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 import { formatTable } from "@genesiscz/utils/table";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
@@ -146,12 +147,13 @@ async function embeddings(meeting: InputMeeting, onlySamples: boolean): Promise<
             throw new Error("Embedding checkpoint saved; repeat the same command to continue");
         }
         const batch = await embedSeatLines({ lines: lines.slice(start, start + 25), sound });
-        writeFileSync(batchFile, SafeJSON.stringify(batch));
+        // Published atomically: a checkpoint resumes because its file exists, so an interrupted write must leave none.
+        atomicWriteFileSync(batchFile, SafeJSON.stringify(batch));
         result.push(...batch);
         batches++;
         out.print(`cached ${meeting.key} lines ${start + 1}-${Math.min(start + 25, lines.length)}\n`);
     }
-    writeFileSync(file, SafeJSON.stringify(result));
+    atomicWriteFileSync(file, SafeJSON.stringify(result));
     return result;
 }
 
@@ -172,7 +174,8 @@ await env.testing.withOverrides({ GENESIS_TOOLS_HOME: voiceHome }, async () => {
                 throw new Error("The samples were embedded by two voice models; clear the cache and run again");
             }
             store.model = channel.model;
-            const person = store.people[sample.person] ?? { samples: [] };
+            // An own key only: a name such as "constructor" must not resolve to an inherited property.
+            const person = Object.hasOwn(store.people, sample.person) ? store.people[sample.person]! : { samples: [] };
             store.people[sample.person] = person;
             if (person.samples.some((print) => print.meeting === meeting.id && print.fromSec === line.fromSec)) {
                 continue;
@@ -342,5 +345,9 @@ if (target.scenario) {
         ).length,
     };
 }
-writeFileSync(join(cache, `summary-${target.key}.json`), SafeJSON.stringify(summary));
+// The key is free text from the input file: the file name is its digest, so it always stays inside --cache.
+writeFileSync(
+    join(cache, `summary-${createHash("sha256").update(target.key).digest("hex").slice(0, 16)}.json`),
+    SafeJSON.stringify({ key: target.key, ...summary })
+);
 out.print(`SUMMARY ${SafeJSON.stringify(summary)}\n`);
