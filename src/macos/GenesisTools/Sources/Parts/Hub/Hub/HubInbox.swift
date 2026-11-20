@@ -231,6 +231,9 @@ struct InboxSession: Decodable, Identifiable, Hashable {
     let items: [InboxItem]
     /// The account home the session runs under, so a send reaches the receiver of that home (the widget sends it too).
     var sourceHome: String? = nil
+    /// The group's own id from `tools question inbox` (`InboxSession.groupId`): unique in one inbox, also for two
+    /// external senders whose shown origin reads the same. nil from an older tools.
+    var groupId: String? = nil
 
     /// Listed only for its queued answers: nothing here waits for the user.
     var isQueuedOnly: Bool { waiting == 0 && (queued ?? 0) > 0 }
@@ -238,9 +241,10 @@ struct InboxSession: Decodable, Identifiable, Hashable {
     /// What this session adds to the "waiting" badges: nothing once it is quiet for three days.
     var countedWaiting: Int { isStale ? 0 : waiting }
 
-    /// Messages no session sent share the session id "unknown"; the hub lists one group per sender (its title), so
-    /// the title keeps their ids apart.
+    /// The group id when tools sends one. An older tools sends none: messages no session sent share the session id
+    /// "unknown", and the hub lists one group per sender (its title), so the title keeps their ids apart.
     var id: String {
+        if let groupId { return groupId }
         guard let sessionId else { return "form:\(cwd ?? "")" }
         return sessionId == "unknown" ? "unknown:\(title ?? "")" : sessionId
     }

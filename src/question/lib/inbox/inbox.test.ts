@@ -389,6 +389,35 @@ describe("buildInbox", () => {
         ]);
     });
 
+    test("two senders whose origins read the same keep two groups with two ids", () => {
+        const message = (id: string, project: string, sender: string) => ({
+            id,
+            sessionId: "unknown",
+            provider: "unknown",
+            title: `${sender} session`,
+            project,
+            cwd: "",
+            at: Date.parse("2026-03-01T08:00:00.000Z"),
+            count: 1,
+            itemTitle: `from ${sender}`,
+            itemTag: "message",
+            sender,
+            afterClear: 1,
+            recentAfterClear: 1,
+            recentAfterClearTotal: 2,
+        });
+        const inbox = buildInbox({
+            sessions: [],
+            scans: new Map(),
+            rows: [],
+            forms: [],
+            unread: [message("q1", "Alpha · Ops", "bot"), message("q2", "Alpha", "Ops · bot")],
+        });
+        expect(inbox.map((session) => session.title)).toEqual(["Alpha · Ops · bot", "Alpha · Ops · bot"]);
+        expect(new Set(inbox.map((session) => session.groupId)).size).toBe(2);
+        expect(inbox.map((session) => session.items.map((item) => item.id))).toEqual([["message:q1"], ["message:q2"]]);
+    });
+
     test("transcript decisions, open store rows and pending forms, grouped by session", () => {
         const stored: DecisionRecord = {
             id: "d_9_s-beta",

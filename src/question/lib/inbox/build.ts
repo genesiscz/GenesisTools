@@ -1,6 +1,7 @@
 import { type OpenQuestion, openQuestionKey } from "@genesiscz/utils/agents/dialogs/types";
 import { isTaskReport } from "@genesiscz/utils/ai/transcripts/prompt-parts";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { looksLikeDump, whySentence } from "../decisions/delivery-text";
 import { recommendedLetters, shownDecisionText, takesSeveral } from "../decisions/option-labels";
 import { parseDecisionBlocks } from "../decisions/read";
@@ -228,6 +229,12 @@ export interface InboxReply {
 }
 
 export interface InboxSession {
+    /**
+     * The group's own id, unique in one inbox: a session's id, `form:<project path>` for forms no session posted, and
+     * one id per external sender. Messages no session sent share the session id `EXTERNAL_SESSION_ID`, and their shown
+     * origin (`project · sender`) can be the same text for two senders, so a list keys its rows by this, never by those.
+     */
+    groupId: string;
     /** Null for forms that no session posted. */
     sessionId: string | null;
     provider: string | null;
@@ -617,6 +624,7 @@ export interface BuildInboxInput {
 }
 
 interface Group {
+    key: string;
     sessionId: string | null;
     info: Partial<Omit<InboxSession, "items" | "waiting" | "drafted" | "queued" | "lastAt" | "reply" | "stale">>;
     /** When the session last wrote its transcript (epoch ms); 0 for a form no session posted. */
@@ -651,6 +659,7 @@ export function buildInbox({
         if (!found) {
             const info = sessionId ? known.get(sessionId) : undefined;
             found = {
+                key,
                 sessionId,
                 info: info
                     ? {
@@ -738,7 +747,11 @@ export function buildInbox({
         // one sender's metadata never heads another's messages (the widget splits them the same way).
         const external = kind === "message" && entry.sessionId === EXTERNAL_SESSION_ID;
         const origin = external ? externalMessageOrigin(entry.project, entry.sender) : null;
-        const target = group(origin ? `${EXTERNAL_SESSION_ID}:${origin}` : entry.sessionId, entry.sessionId);
+        // The key holds the project and the sender apart (a JSON pair), since their joined origin text can collide.
+        const key = external
+            ? `${EXTERNAL_SESSION_ID}:${SafeJSON.stringify([entry.project, entry.sender ?? null])}`
+            : null;
+        const target = group(key ?? entry.sessionId, entry.sessionId);
         target.info.provider ??= entry.provider;
         target.info.title ??= origin ?? entry.title;
         target.info.cwd ??= entry.cwd;
@@ -794,6 +807,7 @@ export function buildInbox({
         entry.items.sort((a, b) => a.at.localeCompare(b.at));
         const lastAt = entry.items.reduce((latest, item) => (item.at > latest ? item.at : latest), "");
         result.push({
+            groupId: entry.key,
             sessionId: entry.sessionId,
             provider: entry.info.provider ?? null,
             title: entry.info.title ?? null,
