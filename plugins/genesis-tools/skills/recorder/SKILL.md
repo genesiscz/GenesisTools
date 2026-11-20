@@ -88,6 +88,7 @@ live() {
 | Mute or restore a sound source | `r.audio.mute("mic")`, `r.audio.unmute("mic")`. Use `"system"` for system sound. | `live 'audio.mute("mic")'`, `live 'audio.unmute("mic")'` |
 | Read inputs and outputs or select a microphone | `r.audio.list()`, `r.audio.setInput(deviceId)` | `live 'audio.list()'`, `live 'audio.setInput("INPUT_UID")'` |
 | Read or change the active and still rates | `r.settings()`, `r.set({ fps: 30, idleFps: 2 })` | `live 'settings()'`, `live 'set({ fps: 30, idleFps: 2 })'` |
+| Put a movie back on one steady rate (Same) | `r.set({ fps: 30, rate: "same" })` | `live 'set({ fps: 30, rate: "same" })'` |
 | Add a marker | `r.mark("Step 1")` | `tools recorder mark "Step 1" LIVE_ID` |
 
 Use the display IDs from `r.displays.list()` in place of 37. Use an input ID from `r.audio.list()` in place of `INPUT_UID`.
@@ -98,6 +99,12 @@ For setup, use `movies.record({ display: 0, audio: ["mic"], camera: true })` or
 `tools recorder start --frames --displays all` for several displays.
 Countdown and threshold use `countdown` and `threshold` in `movies.record()` or `--countdown` and `--threshold` at start.
 To keep the system cursor, use `systemCursor: true` or `--system-cursor`.
+The movie preset is `movieQuality: "high"` or `--movie-quality high`: `standard` (the default) is the native size,
+`high` doubles the bit rate, and `small` halves the width, the height and the bit rate. The bar's Quality row saves it.
+To hear noise reduction before an export, use `movie.denoisePreview(12)` or
+`tools recorder denoise-preview <recording> --at 12`. It cleans 5 s from source second 12 into the denoise cache.
+Copy Movie (`movie.copy()`, `tools recorder copy`) hands out only an export of the edit as it is now.
+When the edit changed after its last export, it exports first.
 Use Standard quality for movies. For frames, High and Max use `maxLongSide` or `--max-long-side` with 3840 or 16384.
 Picker feedback, camera appearance, saved defaults and panel layout use the native controls.
 For a saved movie, `m.show()` opens the editor and `m.reveal()` opens Finder.
