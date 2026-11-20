@@ -25,9 +25,10 @@ import {
     readSoundInputs,
     type SoundInputs,
 } from "@app/meetings/lib/sound";
+import { IntervalIndex } from "@genesiscz/utils/array";
 import { toFloat32AudioWindow } from "@genesiscz/utils/audio/converter";
 import { out } from "@genesiscz/utils/logger";
-import { IntervalIndex, median } from "@genesiscz/utils/math";
+import { median } from "@genesiscz/utils/math";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { formatTable } from "@genesiscz/utils/table";
 import { Command } from "commander";
@@ -156,12 +157,13 @@ async function micRows(inputs: SoundInputs, loudDb: number): Promise<MicRow[]> {
     const result: MicRow[] = [];
     const mics = inputs.rows.filter((row) => row.source === "mic" && row.durationMs > 0);
     // The system pieces, indexed by their wall-clock span once: each mic piece visits only the ones it overlaps.
-    const systems = new IntervalIndex(
-        inputs.rows
-            .filter((row) => row.source === "system" && row.durationMs > 0)
-            .map((row) => ({ row, zero: audioRowZeroMs(row) })),
-        (one) => ({ from: one.zero, to: one.zero + one.row.durationMs })
-    );
+    const systems = new IntervalIndex<{ row: AudioRow; zero: number; at: number }>();
+    for (const [at, row] of inputs.rows.entries()) {
+        if (row.source === "system" && row.durationMs > 0) {
+            const zero = audioRowZeroMs(row);
+            systems.add(zero, zero + row.durationMs, { row, zero, at });
+        }
+    }
 
     for (const mic of mics) {
         const micZero = audioRowZeroMs(mic);
@@ -169,10 +171,10 @@ async function micRows(inputs: SoundInputs, loudDb: number): Promise<MicRow[]> {
         // Each source's track starts on its own first sample, so the system piece of the same seconds is the one
         // that overlaps the microphone's time the most, not one with the same stamp.
         let system: { row: AudioRow; zero: number; overlapMs: number } | undefined;
-        for (const one of systems.overlapping(micZero, micEnd)) {
+        for (const one of systems.overlapping(micZero, micEnd).sort((a, b) => a.at - b.at)) {
             const overlapMs = Math.min(micEnd, one.zero + one.row.durationMs) - Math.max(micZero, one.zero);
             if (overlapMs > 0 && (!system || overlapMs > system.overlapMs)) {
-                system = { ...one, overlapMs };
+                system = { row: one.row, zero: one.zero, overlapMs };
             }
         }
         // Both curves cover the same wall-clock seconds: `from`/`to` are ms on the wall clock.

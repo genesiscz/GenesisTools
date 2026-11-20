@@ -105,4 +105,34 @@ export class IntervalIndex<T> {
 
         return found;
     }
+
+    /** The intervals that hold `point`, both ends included (`from <= point <= to`), in start order. */
+    containing(point: number): T[] {
+        const items = this.items;
+        if (!this.sorted) {
+            items.sort((a, b) => a.from - b.from);
+            this.sorted = true;
+        }
+
+        const floor = point - this.longest;
+        let low = 0;
+        let high = items.length;
+        while (low < high) {
+            const mid = (low + high) >> 1;
+            if (items[mid]!.from < floor) {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+
+        const found: T[] = [];
+        for (let at = low; at < items.length && items[at]!.from <= point; at++) {
+            if (items[at]!.to >= point) {
+                found.push(items[at]!.value);
+            }
+        }
+
+        return found;
+    }
 }

@@ -1,4 +1,4 @@
-import { IntervalIndex } from "@genesiscz/utils/math";
+import { IntervalIndex } from "@genesiscz/utils/array";
 import { isPersonActor, type MeetingItem } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
@@ -95,30 +95,30 @@ export function meetingVoiceSeeds(options: {
     const seatOnlySeeds = new Set<number>();
     // Each line asks which decisions hold its start: index them by label and time once, keeping the newest-first
     // order of the assignments and the record order of the ranges.
+    // A hit keeps its list position, so the newest assignment and the record order win as in a scan.
+    const inOrder = <T>(hits: Array<{ row: T; at: number }>) => hits.sort((a, b) => a.at - b.at).map((hit) => hit.row);
     const byLabel = <T extends { label: string; fromSec: number; toSec: number }>(rows: readonly T[]) => {
-        const groups = new Map<string, T[]>();
-        for (const row of rows) {
-            const group = groups.get(row.label);
-            if (group) {
-                group.push(row);
-            } else {
-                groups.set(row.label, [row]);
+        const groups = new Map<string, IntervalIndex<{ row: T; at: number }>>();
+        for (const [at, row] of rows.entries()) {
+            let group = groups.get(row.label);
+            if (!group) {
+                group = new IntervalIndex<{ row: T; at: number }>();
+                groups.set(row.label, group);
             }
+
+            group.add(row.fromSec, row.toSec, { row, at });
         }
 
-        return new Map(
-            [...groups].map(([label, group]) => [
-                label,
-                new IntervalIndex(group, (row) => ({ from: row.fromSec, to: row.toSec })),
-            ])
-        );
+        return (label: string | undefined, sec: number): T[] =>
+            label === undefined ? [] : inOrder(groups.get(label)?.containing(sec) ?? []);
     };
-    const assignmentsByLabel = byLabel(assignments);
-    const rangesByLabel = byLabel(ranges);
-    const answersByTime = new IntervalIndex(standaloneAnswers, (q) => ({
-        from: q.fromSec,
-        to: typeof q.evidence?.endSec === "number" ? Math.max(q.toSec, q.evidence.endSec) : q.toSec,
-    }));
+    const assignmentsAt = byLabel(assignments);
+    const rangesAt = byLabel(ranges);
+    const answersByTime = new IntervalIndex<{ row: (typeof standaloneAnswers)[number]; at: number }>();
+    for (const [at, q] of standaloneAnswers.entries()) {
+        const end = typeof q.evidence?.endSec === "number" ? Math.max(q.toSec, q.evidence.endSec) : q.toSec;
+        answersByTime.add(q.fromSec, end, { row: q, at });
+    }
     for (const line of context.lines) {
         const label = meeting.transcript[line.index]?.speaker;
         // A human decision seeds training audio only when it spans the whole line, as a standalone answer must.
@@ -126,14 +126,14 @@ export function meetingVoiceSeeds(options: {
             range.toSec >= line.toSec ||
             (typeof range.evidence?.endSec === "number" && range.evidence.endSec >= line.toSec) ||
             range.evidence?.transcriptLine === line.index;
-        const assignment = label === undefined ? undefined : assignmentsByLabel.get(label)?.containing(line.fromSec)[0];
+        const assignment = assignmentsAt(label, line.fromSec)[0];
         if (assignment) {
             if (wholly(assignment) && assignedByPerson.has(`${assignment.id}|${assignment.at}`)) {
                 certain.set(line.index, assignment.person);
             }
             continue;
         }
-        const covering = (label === undefined ? [] : (rangesByLabel.get(label)?.containing(line.fromSec) ?? [])).filter(
+        const covering = rangesAt(label, line.fromSec).filter(
             (range) => range.evidence?.transcriptLine === undefined || range.evidence.transcriptLine === line.index
         );
         const confirmed = covering.filter((range) => range.status === "confirmed");
@@ -144,16 +144,13 @@ export function meetingVoiceSeeds(options: {
         ) {
             continue;
         }
-        const answers = answersByTime
-            .containing(line.fromSec)
-            .flatMap((q) =>
-                (typeof q.evidence?.endSec === "number" ? Math.max(q.toSec, q.evidence.endSec) : q.toSec) >=
-                    line.toSec &&
-                q.answer &&
-                q.answer.toLowerCase() !== NONE_OF_THESE
-                    ? [q.answer]
-                    : []
-            );
+        const answers = inOrder(answersByTime.containing(line.fromSec)).flatMap((q) =>
+            (typeof q.evidence?.endSec === "number" ? Math.max(q.toSec, q.evidence.endSec) : q.toSec) >= line.toSec &&
+            q.answer &&
+            q.answer.toLowerCase() !== NONE_OF_THESE
+                ? [q.answer]
+                : []
+        );
         const decided = [...answers, ...confirmed.flatMap((range) => (range.speaker ? [range.speaker] : []))];
         const independent = [
             seats.get(line.index),

@@ -1,4 +1,4 @@
-import { IntervalIndex } from "@genesiscz/utils/math";
+import { IntervalIndex } from "@genesiscz/utils/array";
 import { nameKey, type RoomDevice, roomDeviceAccountKeys, rosterAccountKey } from "@genesiscz/utils/meetings/people";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { withoutEmptyRemoteSeats } from "@genesiscz/utils/meetings/room-people";
@@ -226,14 +226,22 @@ export function suggestSeats(options: {
         }
     }
     // The last range that holds a line's start wins, as before; each label's ranges are indexed by time once.
-    const indexed = new Map(
-        [...byLabel].map(([label, group]) => [
-            label,
-            new IntervalIndex(group, (range) => ({ from: range.fromSec, to: range.toSec })),
-        ])
-    );
+    const indexed = new Map<string, IntervalIndex<{ range: Range; at: number }>>();
+    for (const [label, group] of byLabel) {
+        const index = new IntervalIndex<{ range: Range; at: number }>();
+        for (const [at, range] of group.entries()) {
+            index.add(range.fromSec, range.toSec, { range, at });
+        }
+        indexed.set(label, index);
+    }
     for (const line of lines) {
-        const range = indexed.get(line.label)?.containing(line.startSec).at(-1);
+        const range = indexed
+            .get(line.label)
+            ?.containing(line.startSec)
+            .reduce<{ range: Range; at: number } | undefined>(
+                (last, hit) => (!last || hit.at > last.at ? hit : last),
+                undefined
+            )?.range;
         if (!range?.person || !human(range.person)) {
             continue;
         }

@@ -452,7 +452,7 @@ describe("the recorder keeps the meeting's sound", () => {
                           }
                 ).global.capture,
                 deps: {
-                    recorder: new MeterRecorder(() => {}),
+                    recorder: new MeterRecorder(async () => undefined),
                     liveDir,
                     startOcr: () => {},
                     notify: async () => {},

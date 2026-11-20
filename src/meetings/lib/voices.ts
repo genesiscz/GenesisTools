@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
+import { IntervalIndex } from "@genesiscz/utils/array";
 import { sha256FileAsync } from "@genesiscz/utils/fs/hash";
 import { sha256Json } from "@genesiscz/utils/hash";
 import { logger } from "@genesiscz/utils/logger";
-import { IntervalIndex } from "@genesiscz/utils/math";
 import { type MeetingsConfig, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { voiceRootMeeting } from "@genesiscz/utils/meetings/record";
@@ -133,17 +133,19 @@ interface SpokenIndex {
 
 function spokenIndex(transcript: ConstructorParameters<typeof TranscriptLines>[0]): SpokenIndex {
     const lines = new TranscriptLines(transcript);
-    const index = new IntervalIndex(
-        lines.entries.flatMap((entry, at) => {
-            const span = lines.span(at);
-            return span ? [{ text: entry.text, ...span }] : [];
-        }),
-        (line) => ({ from: line.fromSec, to: line.toSec })
-    );
+    const index = new IntervalIndex<{ text: string; at: number }>();
+    for (const [at, entry] of lines.entries.entries()) {
+        const span = lines.span(at);
+        if (span) {
+            index.add(span.fromSec, span.toSec, { text: entry.text, at });
+        }
+    }
+
     return {
         wordsBetween: (fromSec, toSec) =>
             index
                 .overlapping(fromSec, toSec)
+                .sort((a, b) => a.at - b.at)
                 .map((line) => line.text)
                 .join(" "),
     };

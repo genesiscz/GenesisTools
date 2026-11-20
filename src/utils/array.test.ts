@@ -76,4 +76,26 @@ describe("IntervalIndex", () => {
         expect(edges.overlapping(0, 10)).toEqual([]);
         expect(edges.overlapping(19.5, 30)).toEqual(["middle"]);
     });
+
+    it("finds the intervals that hold a point, both ends included", () => {
+        const spans = [
+            { name: "long", from: 0, to: 100 },
+            { name: "early", from: 1, to: 3 },
+            { name: "late", from: 50, to: 60 },
+            { name: "point", from: 70, to: 70 },
+        ];
+        const index = new IntervalIndex<string>();
+        for (const span of spans.toReversed()) {
+            index.add(span.from, span.to, span.name);
+        }
+
+        for (const point of [-1, 0, 3, 4, 50, 60, 70, 100, 101]) {
+            expect(index.containing(point).toSorted()).toEqual(
+                spans
+                    .filter((span) => span.from <= point && point <= span.to)
+                    .map((span) => span.name)
+                    .toSorted()
+            );
+        }
+    });
 });
