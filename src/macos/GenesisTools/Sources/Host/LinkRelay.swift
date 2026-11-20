@@ -50,21 +50,30 @@ enum LinkRelay {
 
     /// For a window face, before NSApplication exists: start the relay when none runs, and when this
     /// process is already registered with Launch Services, run this face again as a new instance and exit.
+    /// It runs again only once the relay holds its lock: the new instance is registered too and finds the relay
+    /// running, so the chain ends there. A relay that never claims the lock (its folder is missing, it crashed)
+    /// leaves this face to open its own window instead of starting copy after copy that each exit.
     static func ensure(_ arguments: [String]) {
         guard !isRunning else { return }
         let bundleId = Bundle.main.bundleIdentifier ?? ""
         let own = ProcessInfo.processInfo.processIdentifier
         let registered = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId)
             .contains { $0.processIdentifier == own }
-        start()
+        let relayRunning = start()
         guard registered, mayRunAgain(arguments) else {
             LinkRelay.note("started before \(arguments.first ?? "the settings window")")
+            return
+        }
+        guard relayRunning else {
+            LinkRelay.note("\(arguments.first ?? "") stays in this instance: no relay holds the lock")
             return
         }
         runAgainAsNewInstance(arguments)
     }
 
-    private static func start() {
+    /// Whether a relay holds the lock once the start returns.
+    @discardableResult
+    private static func start() -> Bool {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.arguments = [argument]
         configuration.createsNewApplicationInstance = true
@@ -85,9 +94,11 @@ enum LinkRelay {
         while !isRunning, Date() < deadline {
             Thread.sleep(forTimeInterval: 0.1)
         }
-        if !isRunning {
+        guard isRunning else {
             LinkRelay.note("not running after \(Int(startDeadline)) s; links keep reaching the window faces")
+            return false
         }
+        return true
     }
 
     /// Through Launch Services (FaceLaunch.swift), never as a plain child: a child outlived the WindowServer crash of
