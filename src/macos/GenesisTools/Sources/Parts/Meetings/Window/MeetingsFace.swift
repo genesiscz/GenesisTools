@@ -16,7 +16,8 @@ import SwiftUI
 //   (keeping the store's confirmed devices) or a complete people.devices.list result for a seats or Contacts picture.
 //   `--card <row id>` draws that row's pin card alone, and `--sheet history` (or `history:<row id>`) the history
 //   sheet alone: a popover and a sheet are windows of their own, which the window's picture does not hold.
-//   `--sheet seats` draws the seats sheet, and `--sheet selection:<from>-<to>` the transcript's selection popover for
+//   `--sheet seats` draws the seats sheet, `--sheet people-details` the People menu's Details sheet (the attendance
+//   log and the suggest notes), and `--sheet selection:<from>-<to>` the transcript's selection popover for
 //   those line indexes, then redraws it ten times with each redraw's main-thread time in app-perf.log.
 //   `--undo-person <name>` removes that person from the meeting, presses Undo on the notice, and pictures the notice
 //   once the undo has answered (at most 10 s): it writes to the record, so use it on a copy.
@@ -408,6 +409,12 @@ private func meetingsSnapshotPart(_ request: MeetingsRequest, model: MeetingsWin
         do { list = .loaded(try await detail.sourceMeetingsNear()) } catch { list = .failed(asFailure(error), previous: nil) }
         return AnyView(LinkSourceSheet(detail: detail, list: list, close: {}))
     }
+    if request.sheet == "people-details" {
+        if case .idle = detail.rows { detail.loadRows() }
+        _ = await waitUntil(60) { detail.rows.value != nil || detail.rows.failure != nil }
+        let attendance = detail.rows.value?.attendanceDetail ?? detail.rows.value?.attendanceWarning
+        return AnyView(MeetingPeopleDetailsSheet(attendance: attendance, notes: detail.suggestionWarnings, close: {}))
+    }
     if request.sheet == "seats" {
         let preview: Loadable<MeetingsAPI.SeatsSuggest.Suggestion>
         do {
@@ -680,7 +687,7 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
             let fullWindow = request.card == nil && (request.sheet == nil || request.sheet == "room-devices")
             if !fullWindow {
                 guard let part = await meetingsSnapshotPart(request, model: model, offers: offers) else {
-                    FileHandle.standardError.write(Data("meetings snapshot: no such part (--card needs a row id of --meeting, --sheet takes history, history:<row id>, voice-tools, word-timings, link-source, seats, room-devices, voice-library-settings, selection:<from>-<to>, person:<name> or person-voices:<name or email>)\n".utf8))
+                    FileHandle.standardError.write(Data("meetings snapshot: no such part (--card needs a row id of --meeting, --sheet takes history, history:<row id>, voice-tools, word-timings, link-source, seats, people-details, room-devices, voice-library-settings, selection:<from>-<to>, person:<name> or person-voices:<name or email>)\n".utf8))
                     exit(1)
                 }
                 window = MeetingsWindow.partWindow(part)
