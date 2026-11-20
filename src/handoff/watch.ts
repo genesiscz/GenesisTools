@@ -55,40 +55,26 @@ function cursorBefore(db: Database, cutoffIso: string): number {
 }
 
 /**
- * The handoff events behind the work store's changes after `cursor`, in journal order, and the new cursor. A refused
- * attempt changes nothing, so it has no change and is not listed. `minTs` drops the older changes of a backfill.
+ * One page of the handoff events behind the work store's changes after `cursor`: at most `limit` changes, in journal
+ * order, the new cursor, and whether more changes wait after it. A refused attempt changes nothing, so it has no change
+ * and is not listed. `minTs` drops the older changes of a backfill. A caller reads page by page, so a long backlog never
+ * loads at once.
  */
 export function handoffEventsFromFeed(
     db: Database,
     cursor: number,
-    minTs?: string
-): { events: WatchedHandoffEvent[]; cursor: number } {
+    { minTs, limit = FEED_BATCH }: { minTs?: string; limit?: number } = {}
+): { events: WatchedHandoffEvent[]; cursor: number; more: boolean } {
+    const changes = selectChangesAfter(db, cursor, limit);
     const uids: string[] = [];
     const wanted = new Set<string>();
-    let next = cursor;
 
-    for (;;) {
-        const changes = selectChangesAfter(db, next, FEED_BATCH);
+    for (const change of changes) {
+        const uid = legacyUid(change);
 
-        for (const change of changes) {
-            const uid = legacyUid(change);
-
-            if (uid !== null && !wanted.has(uid) && (minTs === undefined || change.ts >= minTs)) {
-                wanted.add(uid);
-                uids.push(uid);
-            }
-        }
-
-        const last = changes.at(-1);
-
-        if (last === undefined) {
-            break;
-        }
-
-        next = last.seq;
-
-        if (changes.length < FEED_BATCH) {
-            break;
+        if (uid !== null && !wanted.has(uid) && (minTs === undefined || change.ts >= minTs)) {
+            wanted.add(uid);
+            uids.push(uid);
         }
     }
 
@@ -97,7 +83,7 @@ export function handoffEventsFromFeed(
         const payload = payloads.get(uid);
         return payload === undefined ? [] : [payload as WatchedHandoffEvent];
     });
-    return { events, cursor: next };
+    return { events, cursor: changes.at(-1)?.seq ?? cursor, more: changes.length >= limit };
 }
 
 function oneLine(text: string, max: number): string {
@@ -198,6 +184,10 @@ export function watchHandoffs({
         }
     };
 
+    // The live cursor is taken before the name snapshot and the replay, so a rename or a post committed after it is
+    // read again by following, which learns its name; `seen` drops an event the replay already delivered.
+    let cursor = journalHead(db);
+
     for (const handoff of listHandoffRows(db)) {
         rename(handoff.id, handoff.name ?? null);
     }
@@ -232,14 +222,17 @@ export function watchHandoffs({
         onEvent(event, names);
     };
 
-    // The live cursor is the head before the replay, so a change written during it is read again; `seen` drops it.
-    let cursor = journalHead(db);
-
     if (sinceMs > 0) {
         const cutoff = new Date(now - sinceMs).toISOString();
+        let page = { cursor: cursorBefore(db, cutoff), more: true };
 
-        for (const event of handoffEventsFromFeed(db, cursorBefore(db, cutoff), cutoff).events) {
-            deliver(event, false);
+        while (page.more && page.cursor < cursor) {
+            const read = handoffEventsFromFeed(db, page.cursor, { minTs: cutoff });
+            page = read;
+
+            for (const event of read.events) {
+                deliver(event, false);
+            }
         }
     }
 
@@ -248,11 +241,17 @@ export function watchHandoffs({
         return { names, close: () => {} };
     }
 
-    const timer = setInterval(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let closed = false;
+    // One page per tick: a backlog is read page after page with a yield between them, and an empty feed waits a poll.
+    const tick = () => {
+        let more = false;
+
         try {
             catchUpHandoffs(db, base);
             const read = handoffEventsFromFeed(db, cursor);
             cursor = read.cursor;
+            more = read.more;
 
             for (const event of read.events) {
                 deliver(event, true);
@@ -260,13 +259,23 @@ export function watchHandoffs({
         } catch (err) {
             log.warn({ err }, "handoff watch could not read the change feed");
         }
-    }, FOLLOW_POLL_MS);
+
+        if (!closed) {
+            timer = setTimeout(tick, more ? 0 : FOLLOW_POLL_MS);
+        }
+    };
+    timer = setTimeout(tick, FOLLOW_POLL_MS);
 
     log.debug({ filters: [...wanted], sinceMs, cursor }, "handoff watch started");
     return {
         names,
         close: () => {
-            clearInterval(timer);
+            closed = true;
+
+            if (timer !== null) {
+                clearTimeout(timer);
+            }
+
             db.close();
         },
     };

@@ -2,9 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { executeHandoffActions, getHandoff, listHandoffs, postHandoff } from "./executor";
 import { generateEditId, generateEventUid, generateHandoffId } from "./ids";
 import { appendHandoffEvents } from "./log-store";
+import { openHandoffModel } from "./read-model";
 import { byFor, freshEnv } from "./test-utils";
 import type { HandoffEvent } from "./types";
-import { parseSince, watchHandoffs } from "./watch";
+import { handoffEventsFromFeed, parseSince, watchHandoffs } from "./watch";
 
 const POSTER = byFor("sess-poster", "poster");
 const WORKER = byFor("sess-worker", "worker");
@@ -370,6 +371,42 @@ describe("handoff watch", () => {
             dbPath: env.dbPath,
         });
         expect(none).toEqual([]);
+    });
+
+    test("the change feed reads one bounded page at a time, and the pages together equal the whole feed", () => {
+        const env = freshEnv();
+        const posted = postHandoff({ title: "Paged work", tasks: [{ text: "one" }] }, env.depsFor(POSTER)).handoff;
+        executeHandoffActions(
+            { id: posted.id, actions: [{ action: "modify_handoff", name: "paged-name" }] },
+            env.depsFor(POSTER)
+        );
+        executeHandoffActions(
+            { id: posted.id, actions: [{ action: "comment", text: "a later note" }] },
+            env.depsFor(POSTER)
+        );
+        const db = openHandoffModel(env.dbPath);
+
+        try {
+            const whole = handoffEventsFromFeed(db, 0, { limit: 10_000 });
+            expect(whole.more).toBe(false);
+
+            const paged: string[] = [];
+            let page = { cursor: 0, more: true };
+            let pages = 0;
+
+            while (page.more) {
+                const read = handoffEventsFromFeed(db, page.cursor, { limit: 1 });
+                expect(read.cursor).toBeGreaterThanOrEqual(page.cursor);
+                page = read;
+                pages++;
+                paged.push(...read.events.map((event) => event.uid));
+            }
+
+            expect(pages).toBeGreaterThan(1);
+            expect(new Set(paged)).toEqual(new Set(whole.events.map((event) => event.uid)));
+        } finally {
+            db.close();
+        }
     });
 
     test("parseSince accepts durations and 0, and refuses anything else", () => {
