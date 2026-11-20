@@ -8,7 +8,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { fillerListsOf, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { isArbitrationBusy, withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
-import { type AudioFacts, audioLanesOf } from "@genesiscz/utils/recording-editor/audio-lanes";
+import { type AudioFacts, audioLanesOf, movieTracksPlayed } from "@genesiscz/utils/recording-editor/audio-lanes";
 import { bubbleFromSidecar, cameraMoviePath, readCameraSidecar } from "@genesiscz/utils/recording-editor/camera";
 import { cutIssues, type EditIssue } from "@genesiscz/utils/recording-editor/check";
 import {
@@ -1468,43 +1468,48 @@ async function cleanRecordingAudio(options: {
 
 /**
  * The noise reduction of the edit made audible before an export: `seconds` (5) of the recording's sound from SOURCE
- * second `atSec`, every lane the export mixes (muted and silent lanes left out) through the filters the export uses
- * (`denoiseFilter`, a sidecar lane at track 0's strength, as `cleanRecordingAudio` cleans it), mixed into one file in
- * the denoise cache beside the movie. The edit's noise reduction is used, or the default strength when it is off. Each
- * new preview removes the earlier ones of the movie; the same start and settings reuse the file.
+ * second `atSec`, mixed as the export mixes it (EditRenderer): nothing when the edit's sound is off, else every lane of
+ * `audioLanesOf` (the saved lanes, or the ones the movie's tracks and sidecars make, muted tracks included) that is not
+ * muted or silent, at its volume times the recording's volume, a sidecar from its offset. Each goes through the
+ * filters the export uses (`denoiseFilter`, a sidecar lane at track 0's strength, as `cleanRecordingAudio` cleans it)
+ * into one file in the denoise cache beside the movie. The edit's noise reduction is used, or the default strength when
+ * it is off. Each new preview removes the earlier ones of the movie; the same start, settings and mix reuse the file.
  */
 export async function previewDenoise(
     value: string,
     options: { atSec: number; seconds?: number }
 ): Promise<{ path: string; fromSec: number; seconds: number; reductionDb: number; made: boolean; removed: number }> {
     const { project } = await openProject(value);
+
+    if (!project.audio.include) {
+        throw new Error("the edit's sound is off, so there is nothing to preview");
+    }
+
     const settings = project.audio.denoise ?? denoiseSchema.parse({});
     const source = project.source.video;
     const seconds = options.seconds ?? DENOISE_PREVIEW_SECONDS;
     const fromSec = Math.max(0, Math.round(options.atSec * 1000) / 1000);
-    const output = denoisePreviewPath({ source, settings, fromSec, seconds });
-    const removed = removeOldDenoisePreviews({ source, keep: output }).length;
-    const answer = { path: output, fromSec, seconds, reductionDb: settings.reductionDb, removed };
-
-    if (existsSync(output)) {
-        return { ...answer, made: false };
-    }
-
     const facts = await recordingLaneFacts(project, false);
-    const lanes = project.audio.lanes ?? (facts.mixedFrom.length ? audioLanesOf(project, facts) : undefined);
+    const lanes = audioLanesOf(project, facts);
+    const played = new Set(movieTracksPlayed(lanes, facts));
     const cleans = (track: number) => settings.tracks?.includes(track) ?? true;
-    const movieTrack = (track: number, volume = 1) => ({
-        track,
-        volume,
-        ...(cleans(track) ? { filter: denoiseFilter(settings, track) } : {}),
-    });
+    const gain = (volume: number) => volume * project.audio.volume;
     const inputs: DenoisePreviewInput[] = [];
-    const playing = (lanes ?? []).filter((lane) => !lane.muted && lane.volume > 0);
-    const tracks = lanes
-        ? playing.flatMap((lane) =>
-              lane.track !== undefined && lane.track < facts.movieTracks ? [movieTrack(lane.track, lane.volume)] : []
-          )
-        : [...Array(facts.movieTracks).keys()].map((track) => movieTrack(track));
+    // The renderer mixes music and voiceovers apart; a muted lane or a silent one adds nothing.
+    const playing = lanes.filter(
+        (lane) => lane.source !== "music" && lane.source !== "voiceover" && !lane.muted && gain(lane.volume) > 0
+    );
+    const tracks = playing.flatMap((lane) =>
+        !lane.file && lane.track !== undefined && played.has(lane.track)
+            ? [
+                  {
+                      track: lane.track,
+                      volume: gain(lane.volume),
+                      ...(cleans(lane.track) ? { filter: denoiseFilter(settings, lane.track) } : {}),
+                  },
+              ]
+            : []
+    );
 
     if (tracks.length > 0) {
         inputs.push({ file: source, fromSec, tracks });
@@ -1512,17 +1517,27 @@ export async function previewDenoise(
 
     for (const lane of playing) {
         const file = lane.file ? resolve(dirname(source), lane.file) : undefined;
+        // A lane that starts after the preview's window ends adds nothing to it.
+        const laneFromSec = fromSec - lane.offsetMs / 1000;
 
-        if (!file || !existsSync(file)) {
+        if (!file || !existsSync(file) || laneFromSec + seconds <= 0) {
             continue;
         }
 
         const clean = cleans(0) && (lane.source === "mic" || lane.source === "system");
         inputs.push({
             file,
-            fromSec: fromSec - lane.offsetMs / 1000,
-            tracks: [{ track: 0, volume: lane.volume, ...(clean ? { filter: denoiseFilter(settings, 0) } : {}) }],
+            fromSec: laneFromSec,
+            tracks: [{ track: 0, volume: gain(lane.volume), ...(clean ? { filter: denoiseFilter(settings, 0) } : {}) }],
         });
+    }
+
+    const output = denoisePreviewPath({ source, settings, fromSec, seconds, inputs });
+    const removed = removeOldDenoisePreviews({ source, keep: output }).length;
+    const answer = { path: output, fromSec, seconds, reductionDb: settings.reductionDb, removed };
+
+    if (existsSync(output)) {
+        return { ...answer, made: false };
     }
 
     mkdirSync(dirname(output), { recursive: true });

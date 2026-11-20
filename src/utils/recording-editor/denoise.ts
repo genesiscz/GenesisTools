@@ -179,8 +179,9 @@ export interface DenoisePreviewInput {
 
 /**
  * The ffmpeg command for the editor's noise reduction preview: `seconds` of each input from its start time, every track
- * through its filter, mixed into one AAC file. The same filters the export uses (`denoiseFilter`), so the preview sounds
- * as the export will.
+ * through its filter, mixed into one AAC file of `seconds`. The same filters the export uses (`denoiseFilter`), so the
+ * preview sounds as the export will. An input that starts later than the preview (`fromSec` below 0, a sidecar with an
+ * offset) plays from its own start after that much silence, as it does in the export.
  */
 export function denoisePreviewArgv(options: {
     inputs: DenoisePreviewInput[];
@@ -192,9 +193,12 @@ export function denoisePreviewArgv(options: {
     const labels: string[] = [];
 
     inputs.forEach((input, index) => {
+        const delayMs = Math.round(Math.max(0, -input.fromSec) * 1000);
+        const delay = delayMs > 0 ? `,adelay=${delayMs}:all=1` : "";
+
         for (const { track, filter, volume } of input.tracks) {
             const label = `a${labels.length}`;
-            chains.push(`[${index}:a:${track}]${filter ?? "anull"},volume=${volume ?? 1}[${label}]`);
+            chains.push(`[${index}:a:${track}]${filter ?? "anull"}${delay},volume=${volume ?? 1}[${label}]`);
             labels.push(`[${label}]`);
         }
     });
@@ -230,22 +234,39 @@ export function denoisePreviewArgv(options: {
         "aac",
         "-b:a",
         "192k",
+        "-t",
+        String(seconds),
         output,
     ];
 }
 
+/** Which version of a preview input file the preview mixed: a new recording of the same name is a new file. */
+function inputIdentity(file: string): { size: number; mtimeMs: number; ino: number } | null {
+    try {
+        const stat = statSync(file);
+        return { size: stat.size, mtimeMs: stat.mtimeMs, ino: stat.ino };
+    } catch {
+        return null;
+    }
+}
+
 /**
- * Where a preview of `source` goes: `.denoise/preview-<stem>-<hash>.m4a` beside it, the denoise cache the export uses.
- * The hash covers the start, the length and the settings, so a new strength is a new file.
+ * Where a preview of `source` goes: `.denoise/preview-<stem>-<hash>.m4a` beside it, the denoise cache the export
+ * uses. The hash covers the start, the length, the settings and the mix (`inputs`: each file, its version, tracks, volumes and start), so a new strength, a
+ * muted lane or a moved offset is a new file.
  */
 export function denoisePreviewPath(options: {
     source: string;
     settings: DenoiseSettings;
     fromSec: number;
     seconds: number;
+    inputs: DenoisePreviewInput[];
 }): string {
+    const mix = options.inputs.map((input) => ({ ...input, identity: inputIdentity(input.file) }));
     const key = createHash("sha256")
-        .update(SafeJSON.stringify({ settings: options.settings, fromSec: options.fromSec, seconds: options.seconds }))
+        .update(
+            SafeJSON.stringify({ settings: options.settings, fromSec: options.fromSec, seconds: options.seconds, mix })
+        )
         .digest("hex")
         .slice(0, 12);
     const stem = basename(options.source, extname(options.source));

@@ -4179,17 +4179,24 @@ describe("noise reduction on export", () => {
 
         expect(argv.slice(5, 11)).toEqual(["-ss", "12", "-t", "5", "-i", "/r/screen.mp4"]);
         expect(argv.slice(11, 17)).toEqual(["-ss", "0", "-t", "5", "-i", "/r/audio-mic.m4a"]);
+        // The microphone starts 1 s after the playhead: it plays after 1 s of silence, and the file stays 5 s long.
         expect(argv[argv.indexOf("-filter_complex") + 1]).toBe(
-            "[0:a:0]afftdn=nr=20:nf=-50:tn=1,volume=1[a0];[0:a:1]anull,volume=1[a1];[1:a:0]anull,volume=0.5[a2];[a0][a1][a2]amix=inputs=3:normalize=0:duration=longest[out]"
+            "[0:a:0]afftdn=nr=20:nf=-50:tn=1,volume=1[a0];[0:a:1]anull,volume=1[a1];[1:a:0]anull,adelay=1000:all=1,volume=0.5[a2];[a0][a1][a2]amix=inputs=3:normalize=0:duration=longest[out]"
         );
-        expect(argv.at(-1)).toBe("/r/.denoise/preview.m4a");
+        expect(argv.slice(-3)).toEqual(["-t", "5", "/r/.denoise/preview.m4a"]);
         expect(() => denoisePreviewArgv({ inputs: [], seconds: 5, output: "/x.m4a" })).toThrow("no sound");
-        // A new strength is a new file; the same start and strength are the same file.
-        const at = { source: "/r/screen.mp4", fromSec: 12, seconds: 5 };
+        // A new strength is a new file; the same start, strength and mix are the same file.
+        const inputs = [{ file: "/r/screen.mp4", fromSec: 12, tracks: [{ track: 0, volume: 1 }] }];
+        const at = { source: "/r/screen.mp4", fromSec: 12, seconds: 5, inputs };
         expect(denoisePreviewPath({ ...at, settings })).toBe(denoisePreviewPath({ ...at, settings }));
         expect(denoisePreviewPath({ ...at, settings })).not.toBe(
             denoisePreviewPath({ ...at, settings: { ...settings, reductionDb: 12 } })
         );
+        // A muted lane or a new volume changes the mix, so the old preview is never replayed for it.
+        expect(denoisePreviewPath({ ...at, settings })).not.toBe(
+            denoisePreviewPath({ ...at, settings, inputs: [{ ...inputs[0], tracks: [{ track: 0, volume: 0.5 }] }] })
+        );
+        expect(denoisePreviewPath({ ...at, settings })).not.toBe(denoisePreviewPath({ ...at, settings, inputs: [] }));
         expect(denoisePreviewPath({ ...at, settings })).toMatch(/\/r\/\.denoise\/preview-screen-[0-9a-f]{12}\.m4a$/);
     });
 
