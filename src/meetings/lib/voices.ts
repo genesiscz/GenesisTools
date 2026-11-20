@@ -125,6 +125,82 @@ export async function voiceReadMeeting(opened: OpenedMeeting): Promise<OpenedMee
     return opened;
 }
 
+/** The text spoken during an interval, from a time index built once per transcript. */
+interface SpokenIndex {
+    wordsBetween(fromSec: number, toSec: number): string;
+}
+
+function spokenIndex(transcript: ConstructorParameters<typeof TranscriptLines>[0]): SpokenIndex {
+    const lines = new TranscriptLines(transcript);
+    const spans = lines.entries
+        .flatMap((entry, at) => {
+            const span = lines.span(at);
+            return span ? [{ at, text: entry.text, ...span }] : [];
+        })
+        .sort((a, b) => a.fromSec - b.fromSec || a.at - b.at);
+    // The furthest end of any line up to each position: a backward walk stops once nothing earlier can still overlap.
+    const reach: number[] = [];
+    for (const [i, span] of spans.entries()) {
+        reach.push(Math.max(span.toSec, reach[i - 1] ?? Number.NEGATIVE_INFINITY));
+    }
+    return {
+        wordsBetween(fromSec, toSec) {
+            let low = 0;
+            let high = spans.length;
+            while (low < high) {
+                const mid = (low + high) >> 1;
+                if (spans[mid]!.fromSec < toSec) {
+                    low = mid + 1;
+                } else {
+                    high = mid;
+                }
+            }
+
+            const hits: Array<{ at: number; text: string }> = [];
+            for (let i = low - 1; i >= 0 && reach[i]! > fromSec; i--) {
+                if (spans[i]!.toSec > fromSec) {
+                    hits.push(spans[i]!);
+                }
+            }
+
+            return hits
+                .sort((a, b) => a.at - b.at)
+                .map((hit) => hit.text)
+                .join(" ");
+        },
+    };
+}
+
+/**
+ * The corrected line for a source line: its source index first, then its unique id, and its start time only when
+ * that time names a single corrected line.
+ */
+function correctedLineOf<T extends { sourceIndex?: number; id?: string; startSec?: number }>(
+    entries: readonly T[]
+): (index: number, entry: { id?: string; startSec?: number }) => T | undefined {
+    const bySource = new Map<number, T>();
+    const byId = new Map<string, T>();
+    const byStart = new Map<number, T | null>();
+    for (const current of entries) {
+        if (current.sourceIndex !== undefined && !bySource.has(current.sourceIndex)) {
+            bySource.set(current.sourceIndex, current);
+        }
+
+        if (current.id !== undefined && !byId.has(current.id)) {
+            byId.set(current.id, current);
+        }
+
+        if (current.startSec !== undefined) {
+            byStart.set(current.startSec, byStart.has(current.startSec) ? null : current);
+        }
+    }
+
+    return (index, entry) =>
+        bySource.get(index) ??
+        (entry.id !== undefined ? byId.get(entry.id) : undefined) ??
+        (entry.startSec !== undefined ? (byStart.get(entry.startSec) ?? undefined) : undefined);
+}
+
 export async function listProjectVoices(options: VoicesAccess & Browse) {
     const scope = explicitScope(options);
     const view = readVoiceLibrary();
@@ -141,7 +217,10 @@ export async function listProjectVoices(options: VoicesAccess & Browse) {
                 ? record.id === scope.meeting
                 : scope.kind !== "project" || record.project === scope.project,
     }).records;
+    const listed = new Map(records.map((record) => [record.id, record]));
+    const readRecords = new Map<string, MeetingRecord | undefined>();
     const openedMeetings = new Map<string, OpenedMeeting>();
+    const spokenIn = new Map<string, Promise<SpokenIndex>>();
     const people: VoicePersonRow[] = [];
     const directory = groupedOwners(listing);
     for (const group of selected) {
@@ -149,20 +228,22 @@ export async function listProjectVoices(options: VoicesAccess & Browse) {
         for (const [index, { sourceSha: _sha, ...sample }] of group.samples.entries()) {
             let words = "";
             let available = false;
-            const record = options.store.read(sample.meeting);
+            if (!readRecords.has(sample.meeting)) {
+                readRecords.set(sample.meeting, listed.get(sample.meeting) ?? options.store.read(sample.meeting));
+            }
+            const record = readRecords.get(sample.meeting);
             if (record) {
                 try {
                     const opened = openedMeetings.get(record.id) ?? openedOf(options, record);
                     openedMeetings.set(record.id, opened);
                     available = !!(await opened.sound()).slice({ ...sample, purpose: "listen" });
-                    const lines = new TranscriptLines((await opened.meeting()).transcript);
-                    words = lines.entries
-                        .filter((_entry, at) => {
-                            const span = lines.span(at);
-                            return span && span.fromSec < sample.toSec && span.toSec > sample.fromSec;
-                        })
-                        .map((entry) => entry.text)
-                        .join(" ");
+                    // One time index per meeting: each sample visits only the lines around its interval.
+                    let spoken = spokenIn.get(record.id);
+                    if (!spoken) {
+                        spoken = opened.meeting().then((meeting) => spokenIndex(meeting.transcript));
+                        spokenIn.set(record.id, spoken);
+                    }
+                    words = (await spoken).wordsBetween(sample.fromSec, sample.toSec);
                 } catch (error) {
                     log.debug({ error, meeting: sample.meeting }, "voice sample source unavailable");
                 }
@@ -274,6 +355,7 @@ export async function previewVoices(
         voiceOnly: true,
         applyAbove: config.global.suggest.applyAbove,
     });
+    const currentSpeaker = correctedLineOf(corrected.entries);
     return {
         meeting: record.id,
         ...(record.project ? { project: record.project } : {}),
@@ -288,13 +370,7 @@ export async function previewVoices(
                               ...label,
                               ...span,
                               text: entry.text,
-                              current:
-                                  corrected.entries.find(
-                                      (current) =>
-                                          current.sourceIndex === label.index ||
-                                          (entry.id !== undefined && current.id === entry.id) ||
-                                          (entry.startSec !== undefined && current.startSec === entry.startSec)
-                                  )?.speaker ?? entry.speaker,
+                              current: currentSpeaker(label.index, entry)?.speaker ?? entry.speaker,
                           },
                       ]
                     : [];
