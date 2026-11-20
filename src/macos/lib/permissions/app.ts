@@ -59,6 +59,7 @@ import {
 import { type ShareBundleResourcesReport, shareBundleResources } from "./bundle-resources";
 import { changedKeyLabels, codesignTrustClickCommand, keychainDialogOpen } from "./codesign-trust";
 import { SWIFT_FACE_TABLE_PATH, syncSwiftFaceTable } from "./face-table";
+import { type BuildLinkCheck, checkBuildLinks } from "./links";
 import {
     ALL_PART_IDS,
     APP_PARTS,
@@ -535,6 +536,8 @@ export interface BuildResult {
     identity: CodesignIdentity;
     signature: SignatureInfo;
     manifest: AppManifest;
+    /** Every build runs the launcher check (`.claude/rules/macos.md`); the caller shows it. */
+    links: BuildLinkCheck;
 }
 
 /** Stamp version and build number into the Info.plist template; throws when a marker is missing. */
@@ -1661,9 +1664,13 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
     });
     logger.info({ daemon }, "daemon after the bundle swap");
 
+    // On every build path (the build command, `tools update`, the build offer, a part build), not only the command.
+    step("check that a launcher run never checks in with Launch Services");
+    const links = await checkBuildLinks(bundlePath);
+
     logger.info({ bundlePath, signedWith: signature.authority }, "GenesisTools.app built");
 
-    return { bundlePath, identity, signature, manifest };
+    return { bundlePath, identity, signature, manifest, links };
 }
 
 /**

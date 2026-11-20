@@ -689,13 +689,32 @@ describe("link route", () => {
         expect(describeLinkRoute(route)).toBe("the link relay takes them (pid 4103)");
     });
 
+    it("names a router as stuck only once it outlived a minute", () => {
+        const startMs = Date.UTC(2026, 10, 20, 8, 0, 0);
+        const route = linkRoute(
+            [{ pid: 4200, order: 1 }],
+            new Map([[4200, { command: `${APP} https://example.test/a`, startMs }]])
+        );
+        expect(route.target?.kind).toBe("router");
+        expect(linkRouteProblem(route, startMs + 5_000)).toBeNull();
+        const problem = linkRouteProblem(route, startMs + 120_000) ?? "";
+        expect(problem).toContain("STUCK LINK ROUTER");
+        expect(problem).toContain("kill 4200");
+    });
+
     it("names a launcher run by its program and arguments, without Bun's preloads and script", () => {
         expect(
             holderArgs(
                 `${APP} /Users/example/.genesis-tools/bin/gt-cc --preload /repo/a.ts --preload /repo/b.ts /repo/src/cc/index.ts run work --resume abc`
             )
-        ).toBe("gt-cc run work --resume abc");
+        ).toBe("gt-cc run work --resume …");
         expect(holderArgs(`${APP} --hub --resume`)).toBe("--hub --resume");
+        // A value, a prompt or a credential never reaches the status line or the log.
+        expect(holderArgs(`${APP} /usr/local/bin/gt-ask ask what is my fixture-secret --api-key=fixture-key`)).toBe(
+            "gt-ask ask what …"
+        );
+        expect(holderArgs(`${APP} /opt/bun run poll.ts --token fixture-secret`)).toBe("bun run --token …");
+        expect(holderArgs(`${APP} --rpc {"q":"fixture-secret"}`)).toBe("--rpc …");
         expect(holderArgs(`${APP} https://example.test/reset?token=fixture-secret#x`)).toBe(
             "https://example.test/reset?…"
         );
