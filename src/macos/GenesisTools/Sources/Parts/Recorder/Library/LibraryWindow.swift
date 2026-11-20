@@ -323,7 +323,7 @@ struct LibraryView: View {
                     .font(.system(size: 12.5).monospacedDigit()).foregroundStyle(RecorderPalette.dim)
                 Spacer()
                 GhostButton("Record", symbol: "record.circle", tooltip: "Record the screen (the recorder's menu has more ways)",
-                            identifier: "recorder.library.record") { RecorderMenu.shared.startRecording(audio: false) }
+                            identifier: "recorder.library.record") { RecorderMenu.shared.startRecording(sound: .saved) }
                 HStack(spacing: 4) {
                     Image(systemName: "magnifyingglass").foregroundStyle(RecorderPalette.dim).font(.system(size: 12))
                     TextField("Search titles, speech and markers", text: $model.filter)
@@ -393,7 +393,7 @@ struct LibraryView: View {
                         .fixedSize(horizontal: false, vertical: true)
                     if model.items.isEmpty {
                         GhostButton("Record the Screen", symbol: "record.circle", tooltip: "Start a recording of the screen",
-                                    identifier: "recorder.library.recordEmpty") { RecorderMenu.shared.startRecording(audio: false) }
+                                    identifier: "recorder.library.recordEmpty") { RecorderMenu.shared.startRecording(sound: .saved) }
                     }
                     if !model.items.isEmpty && !model.searching {
                         GhostButton("Clear Search", symbol: "xmark.circle", tooltip: "Show every recording again",

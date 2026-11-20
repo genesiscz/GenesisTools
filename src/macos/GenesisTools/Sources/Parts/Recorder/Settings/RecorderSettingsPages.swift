@@ -98,7 +98,7 @@ private struct RecorderRecordingSettings: View {
     }
 
     private var movieCard: some View {
-        NativeSettingsCard("What the movie keeps", subtitle: "Record Screen with Audio in the menu bar turns both sound tracks on for that recording.") {
+        NativeSettingsCard("What the movie keeps", subtitle: "In the menu bar, Record Screen with Microphone and System Audio turns both sound tracks on for that recording, and Record Screen with System Audio Only records the Mac\u{2019}s sound alone.") {
             NativeSettingsToggle("System audio", detail: "What the Mac plays, as its own track.",
                                  identifier: "recorder.settings.systemAudio", isOn: model.capture(\.systemAudio))
             Divider()

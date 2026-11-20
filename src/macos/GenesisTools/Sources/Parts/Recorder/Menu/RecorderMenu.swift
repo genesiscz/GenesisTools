@@ -204,8 +204,16 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         let chord = RecorderShortcutBinding.load(.picker)
         picker.toolTip = chord.enabled ? "Also \(chord.chord.label) from any app" : "Its shortcut is off (Recorder Settings → Shortcuts, or the picker's Shortcuts)"
         menu.addItem(picker)
-        menu.addItem(row("Record Screen", symbol: "record.circle", action: #selector(recordScreen), key: ""))
-        menu.addItem(row("Record Screen with Audio", symbol: "mic.circle", action: #selector(recordScreenWithAudio), key: ""))
+        // Each preset is named by the sound it records (UX quirk Q10: "with Audio" also turned the microphone on).
+        let screen = row("Record Screen", symbol: "record.circle", action: #selector(recordScreen), key: "")
+        screen.toolTip = "Records with the sound sources saved in the capture picker"
+        menu.addItem(screen)
+        let both = row("Record Screen with Microphone and System Audio", symbol: "mic.circle", action: #selector(recordScreenWithAudio), key: "")
+        both.toolTip = "Turns both sound sources on for this recording"
+        menu.addItem(both)
+        let system = row("Record Screen with System Audio Only", symbol: "speaker.wave.2.circle", action: #selector(recordScreenWithSystemAudio), key: "")
+        system.toolTip = "Records the Mac's sound and leaves the microphone off for this recording"
+        menu.addItem(system)
         let drawn = row("Draw the Cursor in the Editor", symbol: nil, action: #selector(toggleDrawnCursor), key: "")
         drawn.state = Self.drawsCursor ? .on : .off
         drawn.toolTip = "Records without the system cursor; the editor draws it from the cursor track, smoothed and at any size. Off keeps the system cursor in the movie."
@@ -441,10 +449,12 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
 
     @objc private func recordScreen() { run(.recordScreen) }
     @objc private func recordScreenWithAudio() { run(.recordScreenWithAudio) }
+    @objc private func recordScreenWithSystemAudio() { run(.recordScreenWithSystemAudio) }
     @objc private func openPicker() { run(.picker) }
 
     enum Command: UInt8, Sendable {
-        case recordScreen = 1, recordScreenWithAudio, picker, openRecording, library, quit
+        /// The raw values cross the menu socket between processes, so a new command goes at the end.
+        case recordScreen = 1, recordScreenWithAudio, picker, openRecording, library, quit, recordScreenWithSystemAudio
     }
 
     func run(_ command: Command) {
@@ -453,8 +463,9 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
             return
         }
         switch command {
-        case .recordScreen: startRecording(audio: false)
-        case .recordScreenWithAudio: startRecording(audio: true)
+        case .recordScreen: startRecording(sound: .saved)
+        case .recordScreenWithAudio: startRecording(sound: .microphoneAndSystem)
+        case .recordScreenWithSystemAudio: startRecording(sound: .systemOnly)
         case .picker: CapturePicker.shared.show()
         case .openRecording: chooseRecording()
         case .library: LibraryWindow.shared.show(focus: true)
@@ -466,16 +477,26 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
     }
 
     /// Open the setup bar with the menu's sources. Record confirms the draft.
-    func startRecording(audio: Bool) {
-        CapturePicker.shared.show(preset: Self.menuOptions(audio: audio, saved: .load()))
+    func startRecording(sound: SoundPreset) {
+        CapturePicker.shared.show(preset: Self.menuOptions(sound: sound, saved: .load()))
     }
 
-    /// The saved options; "Record Screen with Audio" turns both audio sources on, "Record Screen" keeps the saved ones.
-    nonisolated static func menuOptions(audio: Bool, saved: CaptureOptions) -> CaptureOptions {
+    /// The sound of a Record Screen row: the sources saved in the picker, both sources, or the Mac's sound alone.
+    enum SoundPreset: Equatable, Sendable {
+        case saved, microphoneAndSystem, systemOnly
+    }
+
+    /// The saved options with the row's sound: the other choices (countdown, camera, frame rate) stay as saved.
+    nonisolated static func menuOptions(sound: SoundPreset, saved: CaptureOptions) -> CaptureOptions {
         var options = saved
-        if audio {
+        switch sound {
+        case .saved: break
+        case .microphoneAndSystem:
             options.systemAudio = true
             options.microphone = true
+        case .systemOnly:
+            options.systemAudio = true
+            options.microphone = false
         }
         return options
     }
