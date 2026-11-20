@@ -69,6 +69,8 @@ final class WidgetInboxFeedTests: XCTestCase {
         note.count = 3
         XCTAssertEqual(WidgetInboxOverview.summary([note]), "3 items · from 1 sender")
         XCTAssertEqual(WidgetInboxOverview.summary([note, items[0]]), "4 items · 1 waiting for your answer · from 1 session and 1 sender")
+        XCTAssertEqual(WidgetInboxOverview.summary([note], hidden: 2), "3 items · from 1 sender · 2 more items in their sessions",
+                       "entries the per-session limit left out are named, so a missing entry has a reason")
         for mode in ["session", "project"] {
             let runs = WidgetInboxFeed.runs([items[0], note], by: mode) { _ in "" }
             XCTAssertEqual(runs.map(\.runKey), ["sender/External", alpha.key])

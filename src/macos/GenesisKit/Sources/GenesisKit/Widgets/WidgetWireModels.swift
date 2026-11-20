@@ -853,6 +853,8 @@ public struct WidgetInboxSession: Codable, Equatable, Sendable {
     public var pendingItem: WidgetInboxItem?
     /// The session's listed entries for the inbox overview, waiting ones first, then newest; nil from an older hub.
     public var items: [WidgetInboxItem]? = nil
+    /// The session's entries `items` leaves out for the per-session limit; nil when it lists them all.
+    public var hiddenItems: Int? = nil
 }
 public struct WidgetInboxSummary: Codable, Equatable, Sendable {
     public var badgeCount: Int? = nil

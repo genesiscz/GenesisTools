@@ -1645,6 +1645,8 @@ public final class WidgetModel: ObservableObject {
     /// per-session list gives each session's pending and unread item. Stored when the inbox changes: up to 512
     /// sessions × 8 entries, sorted, is too much to derive in a body that reads it several times per pass.
     public private(set) var inboxOverviewItems: [WidgetInboxItem] = []
+    /// The entries the sessions' lists leave out for the per-session limit: the overview says they exist.
+    var inboxHiddenItems: Int { inbox.sessions.reduce(0) { $0 + ($1.hiddenItems ?? 0) } }
     /// Every staged decision of every session (the decision log's unsent picks and notes), stored with the inbox.
     @Published var stagedRows: [WidgetInboxItem] = []
     /// The staged decisions that may be sent: `stagedRows` without a decision dismissed or completed while its Undo

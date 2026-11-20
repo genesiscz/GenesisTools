@@ -357,6 +357,8 @@ export interface WidgetInboxSession {
     pendingItem?: WidgetInboxItem;
     /** The session's listed entries, the ones waiting for an answer first, then newest first; at most `INBOX_ITEMS_PER_SESSION`. */
     items?: WidgetInboxItem[];
+    /** The session's entries `items` leaves out for the per-session limit; absent when it lists them all. */
+    hiddenItems?: number;
 }
 
 /** How far back, and how many, decisions answered outside the widget the snapshot carries. */
@@ -1632,7 +1634,15 @@ export async function widgetSnapshot({
         sessions: [...inboxSessions.values()]
             .sort((a, b) => b.needsAnswer - a.needsAnswer || b.unread - a.unread)
             .slice(0, 512)
-            .map((entry) => ({ ...entry, items: listedInboxItems(entry.items ?? []) })),
+            .map((entry) => {
+                const all = entry.items ?? [];
+                const items = listedInboxItems(all);
+                return {
+                    ...entry,
+                    items,
+                    ...(all.length > items.length ? { hiddenItems: all.length - items.length } : {}),
+                };
+            }),
         staged,
         ...(decisionsComplete
             ? {

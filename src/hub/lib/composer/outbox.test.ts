@@ -2444,6 +2444,37 @@ test("a decision card's cited lines are read only for the cards the snapshot pub
     expect(published.every((card) => card.decision?.refs?.[0]?.excerpt === "const cited = 1;")).toBe(true);
 });
 
+test("a session shortened by the per-session limit names the entries it left out", async () => {
+    const directory = await root();
+    const file = join(directory, "decisions.jsonl");
+    await postDecisions(
+        file,
+        join(directory, "events.jsonl"),
+        {
+            sessionId: "many-entries-session",
+            provider: "claude",
+            cwd: "/fixture",
+            decisions: Array.from({ length: INBOX_ITEMS_PER_SESSION + 2 }, (_, index) => ({
+                prompt: `Ship ${index}?`,
+                options: ["yes", "no"],
+            })),
+        },
+        { env: {} }
+    );
+    const sources: WidgetSources = {
+        sessions: async () => [],
+        decisions: () => readDecisions(file),
+        forms: () => [],
+        answers: () => [],
+        agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+    };
+    const snapshot = await widgetSnapshot({ root: directory, sources });
+    const session = snapshot.notifications?.sessions.find((entry) => (entry.items?.length ?? 0) > 0);
+
+    expect(session?.items).toHaveLength(INBOX_ITEMS_PER_SESSION);
+    expect(session?.hiddenItems).toBe(2);
+});
+
 test("a session lists its waiting entries first, then the newest, at most eight", () => {
     const item = (id: string, at: number, needsAnswer = false) => ({
         id,

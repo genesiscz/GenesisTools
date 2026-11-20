@@ -253,7 +253,7 @@ struct WidgetInboxOverview: View {
                     }
                 }.frame(maxWidth: .infinity).padding(.vertical, 28)
             } else {
-                Text(Self.summary(items, waits: model.waitsForAnswer) + (feed ? " · newest first" : "")).font(.system(size: 11)).foregroundStyle(.secondary)
+                Text(Self.summary(items, waits: model.waitsForAnswer, hidden: model.inboxHiddenItems) + (feed ? " · newest first" : "")).font(.system(size: 11)).foregroundStyle(.secondary)
                     .padding(.bottom, 8)
                 // Hundreds of entries: lazy, so only the rows on screen exist (swift skill, dense lists).
                 LazyVStack(alignment: .leading, spacing: 10) {
@@ -353,7 +353,8 @@ struct WidgetInboxOverview: View {
 
     /// "12 items · 3 waiting · from 4 sessions". `waits`: whether an entry still waits for an answer
     /// (`WidgetModel.waitsForAnswer`).
-    static func summary(_ items: [WidgetInboxItem], waits: (WidgetInboxItem) -> Bool = \.needsAnswer) -> String {
+    /// `hidden`: entries the sessions' lists leave out for the per-session limit, named so a missing entry has a reason.
+    static func summary(_ items: [WidgetInboxItem], waits: (WidgetInboxItem) -> Bool = \.needsAnswer, hidden: Int = 0) -> String {
         let waiting = items.reduce(0) { $0 + (waits($1) ? $1.representedCount : 0) }
         let total = items.reduce(0) { $0 + $1.representedCount }
         let sessions = Set(items.filter { $0.message?.origin == nil }.map(\.key)).count
@@ -361,7 +362,8 @@ struct WidgetInboxOverview: View {
         let sources = [sessions > 0 ? Plural.count(sessions, "session") : nil,
                        senders > 0 ? Plural.count(senders, "sender") : nil].compactMap { $0 }.joined(separator: " and ")
         return [Plural.count(total, "item"), waiting > 0 ? WidgetWords.waiting(waiting) : nil,
-                sources.isEmpty ? nil : "from " + sources].compactMap { $0 }.joined(separator: " · ")
+                sources.isEmpty ? nil : "from " + sources,
+                hidden > 0 ? Plural.count(hidden, "more item") + " in their sessions" : nil].compactMap { $0 }.joined(separator: " · ")
     }
 
     private func toggle(_ item: WidgetInboxItem) {
