@@ -8,7 +8,7 @@ import { priorityToolsOnDisk } from "@genesiscz/utils/process/priority";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { skip } from "@genesiscz/utils/test/skip";
 import { taskWorkingDir } from "./config";
-import { runTask, TASK_SIGTERM_CLEANUP_MS, TASK_SIGTERM_GRACE_MS, taskArgv, taskPath } from "./runner";
+import { runTask, runUsage, TASK_SIGTERM_CLEANUP_MS, TASK_SIGTERM_GRACE_MS, taskArgv, taskPath } from "./runner";
 import type { DaemonTask } from "./types";
 
 const tempDirs: string[] = [];
@@ -270,6 +270,29 @@ describe("run log meta", () => {
         expect(exit.usage.cpuMs).toBeCloseTo(exit.usage.userMs + exit.usage.systemMs, 3);
         expect(exit.usage.maxRssMb).toBeGreaterThan(0);
         expect(result.usage).toEqual(exit.usage);
+    });
+
+    it("keeps the microseconds of the CPU times and the fraction of the wall time", () => {
+        // Bun's rusage is in microseconds and bytes; whole milliseconds would read 1234, 2, 1236 and 12.
+        const raw: Bun.ResourceUsage = {
+            contextSwitches: { voluntary: 0, involuntary: 0 },
+            cpuTime: { user: 1_234_567, system: 2_001, total: 1_236_568 },
+            maxRSS: 3 * 1_048_576,
+            messages: { sent: 0, received: 0 },
+            ops: { in: 0, out: 0 },
+            shmSize: 0,
+            signalCount: 0,
+            swapCount: 0,
+        };
+
+        expect(runUsage(raw, 12.3456)).toEqual({
+            userMs: 1234.567,
+            systemMs: 2.001,
+            cpuMs: 1236.568,
+            maxRssMb: 3,
+            wallMs: 12.346,
+        });
+        expect(runUsage(undefined, 1)).toBeUndefined();
     });
 
     it.skipIf(skip.onWindows)(
