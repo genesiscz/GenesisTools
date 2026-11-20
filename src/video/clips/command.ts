@@ -420,9 +420,16 @@ function offsetCell(clip: ManifestClip): string {
 
 function renderManifest(manifest: ClipsManifest): number {
     const duplicateOf = new Map<string, string>();
+    const insideOf = new Map<string, string>();
 
-    for (const overlap of findOverlaps(manifest).filter((entry) => entry.duplicate)) {
-        duplicateOf.set(overlap.b.id, overlap.a.id);
+    for (const overlap of findOverlaps(manifest)) {
+        if (overlap.duplicate) {
+            duplicateOf.set(overlap.b.id, overlap.a.id);
+        } else if (overlap.contained) {
+            const [shorter, longer] =
+                overlap.a.durationSec <= overlap.b.durationSec ? [overlap.a, overlap.b] : [overlap.b, overlap.a];
+            insideOf.set(shorter.id, longer.id);
+        }
     }
 
     let count = 0;
@@ -455,7 +462,13 @@ function renderManifest(manifest: ClipsManifest): number {
                     clip.source?.startAt ? new Date(clip.source.startAt).toLocaleTimeString("en-GB") : "",
                     truncateDisplay(clip.title, 36),
                     formatDuration(clip.durationSec, "s"),
-                    twin ? `same as ${twin.slice(-6)}` : clip.status === "failed" ? "failed" : "",
+                    twin
+                        ? `same as ${twin.slice(-6)}`
+                        : insideOf.has(clip.id)
+                          ? `inside ${insideOf.get(clip.id)?.slice(-6)}`
+                          : clip.status === "failed"
+                            ? "failed"
+                            : "",
                     truncateDisplay(clip.file ?? "", 40),
                 ]);
             }
@@ -465,7 +478,7 @@ function renderManifest(manifest: ClipsManifest): number {
     }
 
     out.log.info(
-        `${count} clips, ${duplicateOf.size} duplicates of another clip. "~" marks an offset counted from the stream start (the VOD playlist is closed), a few seconds off.`
+        `${count} clips, ${duplicateOf.size} duplicates of another clip, ${insideOf.size} inside a longer clip. "~" marks an offset counted from the stream start (the VOD playlist is closed), a few seconds off.`
     );
     return count;
 }
