@@ -162,12 +162,14 @@ final class MeetingsUXTests: XCTestCase {
         model.select("a")
         let detail = try XCTUnwrap(model.detail)
         let items = try JSONDecoder().decode([MeetingItem].self, from: Self.itemsJSON())
+        let confirmed = try items.required(0)
+        let rejected = try items.required(3)
 
-        detail.showDecided(try items.required(0), confirm: true, token: "t-1")
+        detail.showDecided(confirmed, confirm: true, token: "t-1")
         clock.advance(by: 10)
-        detail.showDecided(try items.required(3), confirm: false, token: "t-2")
+        detail.showDecided(rejected, confirm: false, token: "t-2")
         XCTAssertEqual(detail.notices.notices.map(\.text),
-                       ["Confirmed \(MeetingsWords.itemTitle(items[0]))", "Rejected \(MeetingsWords.itemTitle(items[3]))"],
+                       ["Confirmed \(MeetingsWords.itemTitle(confirmed))", "Rejected \(MeetingsWords.itemTitle(rejected))"],
                        "the second decision adds a notice; it does not replace the first")
         XCTAssertEqual(detail.notices.notices.map { $0.actions.map(\.label) }, [["Undo"], ["Undo"]],
                        "each decision keeps its own Undo")
@@ -175,9 +177,9 @@ final class MeetingsUXTests: XCTestCase {
         clock.advance(by: 19.9)
         XCTAssertEqual(detail.notices.notices.count, 2, "a notice with Undo stays 30 s by default (R15)")
         clock.advance(by: 0.1)
-        XCTAssertEqual(detail.notices.notices.map(\.text), ["Rejected \(MeetingsWords.itemTitle(items[3]))"],
+        XCTAssertEqual(detail.notices.notices.map(\.text), ["Rejected \(MeetingsWords.itemTitle(rejected))"],
                        "each notice leaves after its own time")
-        detail.showDecided(try items.required(0), confirm: true, token: nil)
+        detail.showDecided(confirmed, confirm: true, token: nil)
         XCTAssertEqual(detail.notices.notices.last?.actions.count, 0, "no token, no Undo: it could take back a decision made elsewhere")
     }
 
