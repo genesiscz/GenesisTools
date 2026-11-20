@@ -4510,6 +4510,21 @@ describe("recording layer contract", () => {
         expect(() => applyOp(edited, op({ op: "audioMute", id: "missing", from: 1, to: 2 }))).toThrow("missing");
     });
 
+    test("audioUnmute keeps overlapping muted parts in start order when it splits one", () => {
+        const op = (raw: unknown) => editOpSchema.parse(raw);
+        let edited = applyOp(wholeProject(source), op({ op: "audioMute", id: "mic", from: 1, to: 10 }), {
+            audioFacts: frames,
+        });
+        edited = applyOp(edited, op({ op: "audioMute", id: "mic", from: 2, to: 3 }));
+        edited = applyOp(edited, op({ op: "audioUnmute", id: "mic", from: 5, to: 6 }));
+        const lane = edited.audio.lanes?.find((one) => one.id === "mic");
+        expect(lane?.mutedRanges?.map(({ startUs, endUs }) => [startUs, endUs])).toEqual([
+            [1_000_000, 5_000_000],
+            [2_000_000, 3_000_000],
+            [6_000_000, 10_000_000],
+        ]);
+    });
+
     test("a lane's muted parts reach the mix as silent stretches on the source clock", () => {
         const lanes: AudioLane[] = [
             {

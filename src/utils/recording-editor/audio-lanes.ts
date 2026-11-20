@@ -240,6 +240,7 @@ export function unmuteAudioLaneRange(options: {
                     );
                 }
             } else if (range) {
+                // Parts may overlap, so a split part's tail can start after the next part: keep the start order.
                 after = before.flatMap((one) => {
                     if (one.endUs <= range.fromUs || one.startUs >= range.toUs) {
                         return [one];
@@ -252,6 +253,7 @@ export function unmuteAudioLaneRange(options: {
                             : [];
                     return [...head, ...tail];
                 });
+                after.sort((a, b) => a.startUs - b.startUs);
             } else {
                 throw new RangeError("audioUnmute takes a part id or a from and to range");
             }
