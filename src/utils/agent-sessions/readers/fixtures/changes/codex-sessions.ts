@@ -20,8 +20,14 @@ export function codexFixture(): Fixture {
             item: { type: "FileChange", id, changes: { [path]: change } },
         },
     });
+    const message = (text: string) => ({
+        type: "response_item",
+        payload: { type: "message", role: "user", content: [{ type: "input_text", text }] },
+    });
     for (let i = 1; i <= f.turns; i++) {
         records.push({ type: "event_msg", timestamp: at(i * 10), payload: { type: "task_started", turn_id: `p${i}` } });
+        // A harness preamble is not the prompt; the next user message is.
+        records.push(message("<environment_context>fixture</environment_context>"), message(`ask ${i}`));
         if (i === 1 || i === 3) {
             records.push({ type: "turn_context", payload: { cwd: i === 1 ? "/work/acme" : "/work/acme-tools" } });
         }
