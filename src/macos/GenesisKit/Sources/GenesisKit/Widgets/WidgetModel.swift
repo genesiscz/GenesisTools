@@ -2567,10 +2567,10 @@ public final class WidgetModel: ObservableObject {
             submittedAssets.formUnion(submitted.assetIds)
             if let card, answering || choice != nil { submittedCards.insert(card.id) }
             let sentKey = selectedKey
-            action(["action": "draft-text", "key": .string(sentKey), "text": ""]) { [weak self] in
+            action(["action": "draft-text", "key": .string(sentKey), "text": ""], completed: { [weak self] in
                 guard let self, self.drafts[sentKey]?.text.isEmpty ?? true else { return }
                 self.draftLanded(sentKey)
-            }
+            })
             drainJournal()
         } catch { report(error) }
     }
@@ -2702,10 +2702,10 @@ public final class WidgetModel: ObservableObject {
                     self.draftRevisions[key, default: 0] += 1
                     self.draftOwnership.pending(key)
                     let saved = restored.text
-                    self.action(["action": "draft-text", "key": .string(key), "text": .string(saved)]) { [weak self] in
+                    self.action(["action": "draft-text", "key": .string(key), "text": .string(saved)], completed: { [weak self] in
                         guard let self, self.drafts[key]?.text == saved else { return }
                         self.draftLanded(key)
-                    }
+                    })
                 } else {
                     self.draftLanded(key)
                 }
@@ -2992,10 +2992,10 @@ public final class WidgetModel: ObservableObject {
             draftTasks[key] = nil
             if !stopping {
                 let merged = drafts[key]?.text ?? ""
-                action(["action": "draft-text", "key": .string(key), "text": .string(merged)]) { [weak self] in
+                action(["action": "draft-text", "key": .string(key), "text": .string(merged)], completed: { [weak self] in
                     guard let self, self.drafts[key]?.text == merged else { return }
                     self.draftLanded(key)
-                }
+                })
             }
         }
         voiceKey = nil
