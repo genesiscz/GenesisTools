@@ -1025,6 +1025,23 @@ describe("shared indicator and departure APIs", () => {
         expect(leftAt(30)).toBe(30);
         expect(leftAt(31)).toBe(31);
         expect(leftAt(27)).toBe(27);
+        // An inexact attendance bound (here 29 s) may only be shortened, never moved later by the silence inference.
+        const bounded = meetingRecordSchema.parse({
+            ...meeting,
+            attendance: {
+                from: "fixture",
+                people: [{ name: "River Example", fromSec: 0, toSec: 29, leftAtExact: false }],
+            },
+        });
+        const boundedLeave = personStays({
+            record: bounded,
+            durationSec: 900,
+            lines,
+            speaking: [{ tSec: 27, speaking: ["River Example"] }],
+            silenceMinutes: 10,
+            callSilent: [{ fromSec: 31, toSec: 900 }],
+        }).find((person) => person.name === "River Example")?.stays[0]?.toSec;
+        expect(boundedLeave).toBe(29);
     });
 
     test("an answered sign-off names a witnessed joiner, and the answer may come before or after the sign-off", () => {

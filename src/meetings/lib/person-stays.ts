@@ -204,8 +204,10 @@ export function personStays(options: {
                             .filter((line) => line.startSec <= lastSec && lastSec < line.endSec)
                             .map((line) => line.endSec)
                     );
+                    // An inexact attendance bound may only be shortened: the inferred leave never runs past it.
+                    const leaveSec = Math.max(lastSec, Math.min(lineEnd, quiet.fromSec));
                     inexact.delete(stay);
-                    stay.toSec = Math.max(lastSec, Math.min(lineEnd, quiet.fromSec));
+                    stay.toSec = stay.toSec === undefined ? leaveSec : Math.min(stay.toSec, leaveSec);
                     stay.leaveSource = "silence";
                     stay.confidence = 0.5;
                 }
