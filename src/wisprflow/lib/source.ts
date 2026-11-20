@@ -1,5 +1,6 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
+import { withVaultPurpose } from "@genesiscz/utils/security/vault-purpose";
 import { readImportedExport } from "./imported";
 import { getLocalMeeting, localAvailable, localMeetingIdForShareSlug } from "./local";
 import { getMcpMeeting, McpUnavailableError, resolveMcpShareLink } from "./mcp";
@@ -122,7 +123,10 @@ export async function loadMeeting(
     const notLocal = options.source !== "mcp" && localAvailable();
 
     try {
-        const remote = await getMcpMeeting(id, { transcript: options.transcript });
+        const why = notLocal
+            ? `read Wispr Flow meeting ${id} from its MCP server through the mcp-manager gateway: it is not in this Mac's Wispr Flow app and was not imported`
+            : `read Wispr Flow meeting ${id} from its MCP server through the mcp-manager gateway`;
+        const remote = await withVaultPurpose(why, () => getMcpMeeting(id, { transcript: options.transcript }));
         log.debug({ id }, "meeting answered by MCP");
         return { source: "mcp", data: remote, notes };
     } catch (err) {
