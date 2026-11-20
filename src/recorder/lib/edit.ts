@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
@@ -13,8 +13,15 @@ import { bubbleFromSidecar, cameraMoviePath, readCameraSidecar } from "@genesisc
 import { cutIssues, type EditIssue } from "@genesiscz/utils/recording-editor/check";
 import {
     audioTrackCount,
+    DENOISE_PREVIEW_SECONDS,
+    type DenoisePreviewInput,
     denoisedSourcePath,
+    denoiseFilter,
+    denoisePreviewArgv,
+    denoisePreviewPath,
+    denoiseSchema,
     ensureDenoisedSource,
+    removeOldDenoisePreviews,
     syncDenoisedTranscript,
 } from "@genesiscz/utils/recording-editor/denoise";
 import { recordExport } from "@genesiscz/utils/recording-editor/exports";
@@ -1457,6 +1464,82 @@ async function cleanRecordingAudio(options: {
         }
     }
     return { ...clean, lanes: adjusted };
+}
+
+/**
+ * The noise reduction of the edit made audible before an export: `seconds` (5) of the recording's sound from SOURCE
+ * second `atSec`, every lane the export mixes (muted and silent lanes left out) through the filters the export uses
+ * (`denoiseFilter`, a sidecar lane at track 0's strength, as `cleanRecordingAudio` cleans it), mixed into one file in
+ * the denoise cache beside the movie. The edit's noise reduction is used, or the default strength when it is off. Each
+ * new preview removes the earlier ones of the movie; the same start and settings reuse the file.
+ */
+export async function previewDenoise(
+    value: string,
+    options: { atSec: number; seconds?: number }
+): Promise<{ path: string; fromSec: number; seconds: number; reductionDb: number; made: boolean; removed: number }> {
+    const { project } = await openProject(value);
+    const settings = project.audio.denoise ?? denoiseSchema.parse({});
+    const source = project.source.video;
+    const seconds = options.seconds ?? DENOISE_PREVIEW_SECONDS;
+    const fromSec = Math.max(0, Math.round(options.atSec * 1000) / 1000);
+    const output = denoisePreviewPath({ source, settings, fromSec, seconds });
+    const removed = removeOldDenoisePreviews({ source, keep: output }).length;
+    const answer = { path: output, fromSec, seconds, reductionDb: settings.reductionDb, removed };
+
+    if (existsSync(output)) {
+        return { ...answer, made: false };
+    }
+
+    const facts = await recordingLaneFacts(project, false);
+    const lanes = project.audio.lanes ?? (facts.mixedFrom.length ? audioLanesOf(project, facts) : undefined);
+    const cleans = (track: number) => settings.tracks?.includes(track) ?? true;
+    const movieTrack = (track: number, volume = 1) => ({
+        track,
+        volume,
+        ...(cleans(track) ? { filter: denoiseFilter(settings, track) } : {}),
+    });
+    const inputs: DenoisePreviewInput[] = [];
+    const playing = (lanes ?? []).filter((lane) => !lane.muted && lane.volume > 0);
+    const tracks = lanes
+        ? playing.flatMap((lane) =>
+              lane.track !== undefined && lane.track < facts.movieTracks ? [movieTrack(lane.track, lane.volume)] : []
+          )
+        : [...Array(facts.movieTracks).keys()].map((track) => movieTrack(track));
+
+    if (tracks.length > 0) {
+        inputs.push({ file: source, fromSec, tracks });
+    }
+
+    for (const lane of playing) {
+        const file = lane.file ? resolve(dirname(source), lane.file) : undefined;
+
+        if (!file || !existsSync(file)) {
+            continue;
+        }
+
+        const clean = cleans(0) && (lane.source === "mic" || lane.source === "system");
+        inputs.push({
+            file,
+            fromSec: fromSec - lane.offsetMs / 1000,
+            tracks: [{ track: 0, volume: lane.volume, ...(clean ? { filter: denoiseFilter(settings, 0) } : {}) }],
+        });
+    }
+
+    mkdirSync(dirname(output), { recursive: true });
+    const partial = `${output.slice(0, -4)}.${process.pid}.partial.m4a`;
+
+    try {
+        await runVideoCommand({
+            command: denoisePreviewArgv({ inputs, seconds, output: partial }),
+            timeoutMs: 120_000,
+        });
+        await rename(partial, output);
+    } finally {
+        await rm(partial, { force: true });
+    }
+
+    log.debug({ value, output, fromSec, seconds, inputs: inputs.length, removed }, "made a noise reduction preview");
+    return { ...answer, made: true };
 }
 
 /**

@@ -105,7 +105,15 @@ import logoPictureTypes from "./__fixtures__/logo-picture-types.json";
 import partAudio from "./__fixtures__/part-audio.json";
 import transcriptCuts from "./__fixtures__/transcript-cuts.json";
 import type { AudioFacts, AudioLane } from "./audio-lanes";
-import { denoisedSourceArgv, denoisedSourcePath, denoiseSchema, syncDenoisedTranscript } from "./denoise";
+import {
+    denoisedSourceArgv,
+    denoisedSourcePath,
+    denoisePreviewArgv,
+    denoisePreviewPath,
+    denoiseSchema,
+    removeOldDenoisePreviews,
+    syncDenoisedTranscript,
+} from "./denoise";
 import { MAX_SAMPLE_TIMES, RecordingEditor, sampleTimes } from "./editor";
 import { atempoChain, concatList, exportVideoArgv, sampleFpsFilter, speedArgv, trimArgv } from "./ffmpeg";
 import { transitionJoins } from "./fx";
@@ -4152,6 +4160,63 @@ describe("noise reduction on export", () => {
             "-c:v copy -c:a:0 copy -filter:a:1 afftdn=nr=12:nf=-50:tn=1 -c:a:1 aac -b:a:1 192k"
         );
         expect(argv.at(-1)).toBe("/rec/.denoise/screen-x.mp4");
+    });
+
+    test("the noise reduction preview cuts 5 s of each input, cleans with the export's filters and mixes one file", () => {
+        const settings = denoiseSchema.parse({ reductionDb: 20, tracks: [0] });
+        const argv = denoisePreviewArgv({
+            inputs: [
+                {
+                    file: "/r/screen.mp4",
+                    fromSec: 12,
+                    tracks: [{ track: 0, filter: "afftdn=nr=20:nf=-50:tn=1" }, { track: 1 }],
+                },
+                { file: "/r/audio-mic.m4a", fromSec: -1, tracks: [{ track: 0, volume: 0.5 }] },
+            ],
+            seconds: 5,
+            output: "/r/.denoise/preview.m4a",
+        });
+
+        expect(argv.slice(5, 11)).toEqual(["-ss", "12", "-t", "5", "-i", "/r/screen.mp4"]);
+        expect(argv.slice(11, 17)).toEqual(["-ss", "0", "-t", "5", "-i", "/r/audio-mic.m4a"]);
+        expect(argv[argv.indexOf("-filter_complex") + 1]).toBe(
+            "[0:a:0]afftdn=nr=20:nf=-50:tn=1,volume=1[a0];[0:a:1]anull,volume=1[a1];[1:a:0]anull,volume=0.5[a2];[a0][a1][a2]amix=inputs=3:normalize=0:duration=longest[out]"
+        );
+        expect(argv.at(-1)).toBe("/r/.denoise/preview.m4a");
+        expect(() => denoisePreviewArgv({ inputs: [], seconds: 5, output: "/x.m4a" })).toThrow("no sound");
+        // A new strength is a new file; the same start and strength are the same file.
+        const at = { source: "/r/screen.mp4", fromSec: 12, seconds: 5 };
+        expect(denoisePreviewPath({ ...at, settings })).toBe(denoisePreviewPath({ ...at, settings }));
+        expect(denoisePreviewPath({ ...at, settings })).not.toBe(
+            denoisePreviewPath({ ...at, settings: { ...settings, reductionDb: 12 } })
+        );
+        expect(denoisePreviewPath({ ...at, settings })).toMatch(/\/r\/\.denoise\/preview-screen-[0-9a-f]{12}\.m4a$/);
+    });
+
+    test("a new noise reduction preview removes the earlier ones of the movie only", () => {
+        const folder = mkdtempSync(join(tmpdir(), "gt-denoise-preview-"));
+        const cache = join(folder, ".denoise");
+        mkdirSync(cache);
+        for (const name of [
+            "preview-screen-aaa.m4a",
+            "preview-screen-bbb.m4a",
+            "preview-camera-ccc.m4a",
+            "screen-ddd.mp4",
+        ]) {
+            writeFileSync(join(cache, name), "x");
+        }
+
+        const removed = removeOldDenoisePreviews({
+            source: join(folder, "screen.mp4"),
+            keep: join(cache, "preview-screen-bbb.m4a"),
+        });
+
+        expect(removed).toEqual([join(cache, "preview-screen-aaa.m4a")]);
+        expect(readdirSync(cache).sort()).toEqual([
+            "preview-camera-ccc.m4a",
+            "preview-screen-bbb.m4a",
+            "screen-ddd.mp4",
+        ]);
     });
 
     test("a track can have its own strength: the op merges it and the copy filters that track at it", () => {

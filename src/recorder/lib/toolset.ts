@@ -96,6 +96,7 @@ import {
     exportAs,
     exportProgressPrinter,
     openProject,
+    previewDenoise,
     previewTranscriptCuts,
     recordingLaneFacts,
     transcriptWords,
@@ -726,6 +727,18 @@ const movieMethods = [
         result: z.unknown(),
         resultName: "{ path, width, height, source, output, export }",
         doc: "Shows one frame of the edit as it exports (zoom, clicks, cursor, captions, shortcuts, frame style) at OUTPUT seconds (what plays), so you can look at a change. source: true shows the recording as it was recorded at SOURCE seconds (the seconds ops take) instead. Without `out` the PNG goes to the run's scratch folder and is gone after the run; give `out` (a .png path) to keep it. It renders at preview size (at most 1080 pixels tall) unless full: true, which renders at the export's size (the source's own pixels when the export keeps them), for reading small text. The answer gives the time on both clocks. Call it with an object for the flags: still({ at: 12.5, source: true, full: true }).",
+        effect: "reversible",
+    }),
+    defineMethod({
+        name: "denoisePreview",
+        params: z.object({ at: surveyTimeSchema.optional(), seconds: z.number().min(1).max(30).optional() }).strict(),
+        positional: ["at", "seconds"],
+        result: z.unknown(),
+        resultName: "{ path, fromSec, seconds, reductionDb, made, removed }",
+        doc:
+            "Makes the noise reduction audible before an export: 5 s (seconds) of the recording's sound from SOURCE seconds `at` (0), every lane the export mixes cleaned with the edit's noise reduction (the default strength when it is off) through the export's own filters, as one .m4a in the denoise cache beside the movie. Each new preview removes the earlier ones; the same start and strength reuse the file (made: false). The editor's Preview button beside the strength plays it; " +
+            toolCommand("recorder denoise-preview") +
+            " does the same.",
         effect: "reversible",
     }),
     defineMethod({
@@ -2564,6 +2577,10 @@ export class Movie {
                       warnings: [`${seconds(askedUs)} s is past the end; this is the last moment, ${seconds(outUs)} s`],
                   }),
         };
+    }
+
+    async denoisePreview(at: z.infer<typeof timeSchema> = 0, seconds?: number) {
+        return previewDenoise(this.recording, { atSec: timeToUs(at) / 1_000_000, seconds });
     }
 
     async still(at: z.infer<typeof timeSchema> = 0, keep?: string, full?: boolean, source?: boolean) {

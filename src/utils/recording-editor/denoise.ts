@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -163,4 +163,110 @@ export function syncDenoisedTranscript(options: { transcript: string; copy: stri
 
     atomicWriteFileSync(options.copy, readFileSync(options.transcript));
     log.debug({ transcript: options.transcript, copy: options.copy }, "the cleaned copy has the current transcript");
+}
+
+/** How long the editor's noise reduction preview plays, in seconds. */
+export const DENOISE_PREVIEW_SECONDS = 5;
+
+/** One file of a noise reduction preview, from `fromSec` of it, with the audio tracks it mixes in. */
+export interface DenoisePreviewInput {
+    file: string;
+    fromSec: number;
+    /** Each track with its filter (`denoiseFilter`, absent: as recorded) and its volume (absent: 1). */
+    tracks: Array<{ track: number; filter?: string; volume?: number }>;
+}
+
+/**
+ * The ffmpeg command for the editor's noise reduction preview: `seconds` of each input from its start time, every track
+ * through its filter, mixed into one AAC file. The same filters the export uses (`denoiseFilter`), so the preview sounds
+ * as the export will.
+ */
+export function denoisePreviewArgv(options: {
+    inputs: DenoisePreviewInput[];
+    seconds: number;
+    output: string;
+}): string[] {
+    const { inputs, seconds, output } = options;
+    const chains: string[] = [];
+    const labels: string[] = [];
+
+    inputs.forEach((input, index) => {
+        for (const { track, filter, volume } of input.tracks) {
+            const label = `a${labels.length}`;
+            chains.push(`[${index}:a:${track}]${filter ?? "anull"},volume=${volume ?? 1}[${label}]`);
+            labels.push(`[${label}]`);
+        }
+    });
+
+    if (labels.length === 0) {
+        throw new Error("the preview has no sound to play");
+    }
+
+    const mix =
+        labels.length === 1
+            ? `${labels[0]}anull[out]`
+            : `${labels.join("")}amix=inputs=${labels.length}:normalize=0:duration=longest[out]`;
+    return [
+        "ffmpeg",
+        "-nostdin",
+        "-v",
+        "error",
+        "-y",
+        ...inputs.flatMap((input) => [
+            "-ss",
+            String(Math.max(0, input.fromSec)),
+            "-t",
+            String(seconds),
+            "-i",
+            input.file,
+        ]),
+        "-filter_complex",
+        [...chains, mix].join(";"),
+        "-map",
+        "[out]",
+        "-vn",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        output,
+    ];
+}
+
+/**
+ * Where a preview of `source` goes: `.denoise/preview-<stem>-<hash>.m4a` beside it, the denoise cache the export uses.
+ * The hash covers the start, the length and the settings, so a new strength is a new file.
+ */
+export function denoisePreviewPath(options: {
+    source: string;
+    settings: DenoiseSettings;
+    fromSec: number;
+    seconds: number;
+}): string {
+    const key = createHash("sha256")
+        .update(SafeJSON.stringify({ settings: options.settings, fromSec: options.fromSec, seconds: options.seconds }))
+        .digest("hex")
+        .slice(0, 12);
+    const stem = basename(options.source, extname(options.source));
+    return join(dirname(options.source), ".denoise", `preview-${stem}-${key}.m4a`);
+}
+
+/** Removes the earlier previews of `source` (every `preview-<stem>-*.m4a` but `keep`), so only the newest stays. */
+export function removeOldDenoisePreviews(options: { source: string; keep: string }): string[] {
+    const folder = join(dirname(options.source), ".denoise");
+
+    if (!existsSync(folder)) {
+        return [];
+    }
+
+    const prefix = `preview-${basename(options.source, extname(options.source))}-`;
+    const removed = readdirSync(folder)
+        .filter((name) => name.startsWith(prefix) && name.endsWith(".m4a") && join(folder, name) !== options.keep)
+        .map((name) => join(folder, name));
+
+    for (const path of removed) {
+        rmSync(path, { force: true });
+    }
+
+    return removed;
 }

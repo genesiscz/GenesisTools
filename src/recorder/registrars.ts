@@ -62,6 +62,10 @@ export const RECORDER_REGISTRARS: LazyRegistrar[] = [
     { names: ["rename"], load: async () => (await import("./commands/registrars/rename")).register },
     { names: ["import"], load: async () => (await import("./commands/registrars/import")).register },
     { names: ["copy"], load: async () => (await import("./commands/registrars/copy")).register },
+    {
+        names: ["denoise-preview"],
+        load: async () => (await import("./commands/registrars/denoise-preview")).register,
+    },
     { names: ["reveal"], load: async () => (await import("./commands/registrars/reveal")).register },
     { names: ["trash"], load: async () => (await import("./commands/registrars/trash")).register },
     {

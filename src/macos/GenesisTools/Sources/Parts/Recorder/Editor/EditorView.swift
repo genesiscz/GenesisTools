@@ -1492,13 +1492,16 @@ private struct AudioInspector: View {
 /// Noise reduction on export (the `denoise` op): on or off, each track in or out, and each track's strength.
 private struct NoiseReductionSection: View {
     @Bindable var model: EditorModel
+    /// The cleaned preview playing, and whether one is being made.
+    @State private var player: AVAudioPlayer?
+    @State private var making = false
 
     var body: some View {
         let denoise = model.project.audio.denoise
         let tracks = max(1, model.audioTrackCount)
         VStack(alignment: .leading, spacing: 8) {
             SwitchRow("Reduce noise", isOn: Binding(get: { denoise != nil }, set: { on in model.setDenoise(enabled: on) }))
-                .instantTooltip("Turns fan and room hum down in the export; the preview plays the sound as recorded")
+                .instantTooltip("Turns fan and room hum down in the export; the preview plays the sound as recorded, Preview plays it cleaned")
                 .accessibilityIdentifier("recorder.audio.denoise")
             if let denoise {
                 ForEach(0..<tracks, id: \.self) { index in
@@ -1520,7 +1523,21 @@ private struct NoiseReductionSection: View {
                         }
                     }
                 }
-                Text("12 dB takes hum away; above 25 dB words start to blur. Only the export is cleaned.")
+                HStack(spacing: 6) {
+                    if making {
+                        ProgressView().controlSize(.small).frame(width: 22, height: 22)
+                    } else {
+                        IconButton(systemName: player?.isPlaying == true ? "stop.fill" : "play.fill",
+                                   tooltip: player?.isPlaying == true ? "Stop the preview" : "Play 5 s from the playhead, cleaned at this strength") {
+                            togglePreview()
+                        }
+                        .accessibilityIdentifier("recorder.audio.denoise.preview")
+                    }
+                    Text(making ? "Cleaning 5 s from the playhead…" : "Preview 5 s from the playhead")
+                        .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                }
+                .onDisappear { stopPreview() }
+                Text("12 dB takes hum away; above 25 dB words start to blur. Only the export and Preview are cleaned.")
                     .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1528,6 +1545,38 @@ private struct NoiseReductionSection: View {
     }
 
     static func strengthLabel(_ db: Double) -> String { "\(Int(db.rounded())) dB" }
+
+    /// Stops a playing preview, else asks the engine for a new one and plays it.
+    private func togglePreview() {
+        if player?.isPlaying == true {
+            stopPreview()
+            return
+        }
+
+        if model.isPlaying { model.togglePlay() }
+        making = true
+        model.makeDenoisePreview { result in
+            making = false
+            switch result {
+            case let .success(url):
+                do {
+                    let next = try AVAudioPlayer(contentsOf: url)
+                    next.play()
+                    player = next
+                } catch {
+                    HubPerf.log("recorder.denoise.preview failed for \(url.path): \(error.localizedDescription)")
+                    model.show("The cleaned preview could not be played: \(error.localizedDescription)", error: true)
+                }
+            case let .failure(failure):
+                model.show("No cleaned preview: \(failure.reason)", error: true)
+            }
+        }
+    }
+
+    private func stopPreview() {
+        player?.stop()
+        player = nil
+    }
 }
 
 /// Music under the movie: a file, its level and how far it dips under speech.
