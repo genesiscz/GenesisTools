@@ -533,6 +533,38 @@ final class AudioSessionTests: XCTestCase {
         lock.unlock()
     }
 
+    func testRowOutputRefusesReliableRowsBeyondItsLimitReportsOnceAndDrainFails() {
+        let lock = NSLock()
+        var written: [String] = []
+        var overflows: [Int] = []
+        let output = AudioRowOutput(droppableLimit: 2, reliableLimit: 2) { _ in }
+        output.overflowed = { limit in
+            lock.lock()
+            overflows.append(limit)
+            lock.unlock()
+        }
+        let writing = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        output.send(droppable: false) {
+            writing.signal()
+            _ = release.wait(timeout: .now() + 5)
+        }
+        XCTAssertEqual(writing.wait(timeout: .now() + 3), .success, "the first row is being written")
+        for name in ["segment-2", "segment-3", "segment-4", "segment-5"] {
+            output.send(droppable: false) {
+                lock.lock()
+                written.append(name)
+                lock.unlock()
+            }
+        }
+        release.signal()
+        XCTAssertFalse(output.drain(timeout: 3), "a refused row means not every row was written")
+        lock.lock()
+        XCTAssertEqual(written, ["segment-2", "segment-3"])
+        XCTAssertEqual(overflows, [2], "the overflow is reported once, with the limit")
+        lock.unlock()
+    }
+
     func testABlockedReaderHoldsNeitherTheSampleQueueNorPauseAndMuteAndFinishWritesItsRows() async throws {
         let directory = try directory()
         let lock = NSLock()

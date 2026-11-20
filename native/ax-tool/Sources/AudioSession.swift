@@ -17,34 +17,77 @@ func sessionEncoderPrimingFrames(settings: [String: Any]) -> UInt32? {
 /// queue, and with it pause, mute and finish. A droppable row (a level reading) waits only while fewer than
 /// `droppableLimit` others do; beyond that the oldest waiting one goes, and the next written row is preceded by a
 /// warning that counts them. Segment rows and warnings are never dropped: `drain` waits for them with a deadline.
+/// They wait only while fewer than `reliableLimit` others do; the row beyond that is refused and `overflowed` is
+/// called once, so a reader that stopped for good fails the capture instead of growing the backlog forever.
+/// Waiting rows are keyed by send order, so writing the next row and dropping the oldest level row cost the same
+/// at any backlog, under the lock the sample queue shares.
 final class AudioRowOutput {
+    private struct Row {
+        let droppable: Bool
+        let write: () -> Void
+    }
+
     private let queue = DispatchQueue(label: "ax-tool.audio-session.output", qos: .utility)
     private let lock = NSLock()
     private let unwritten = DispatchGroup()
-    private var rows: [(droppable: Bool, write: () -> Void)] = []
-    private var waitingDroppable = 0
+    private var rows: [Int: Row] = [:]
+    private var nextSequence = 0
+    private var nextToWrite = 0
+    /// The send order of each waiting droppable row, oldest first from `droppableHead`.
+    private var droppableSequences: [Int] = []
+    private var droppableHead = 0
+    private var waitingReliable = 0
     private var dropped = 0
+    private var refused = false
     private var pumping = false
     private let droppableLimit: Int
+    private let reliableLimit: Int
     private let warnDropped: (Int) -> Void
+    /// Called once, off the lock, with the limit, when a reliable row is refused. Set it before the first `send`.
+    var overflowed: ((Int) -> Void)?
 
-    init(droppableLimit: Int = 32, warnDropped: @escaping (Int) -> Void) {
+    init(droppableLimit: Int = 32, reliableLimit: Int = 4096, warnDropped: @escaping (Int) -> Void) {
         self.droppableLimit = max(1, droppableLimit)
+        self.reliableLimit = max(1, reliableLimit)
         self.warnDropped = warnDropped
+    }
+
+    private var waitingDroppable: Int { droppableSequences.count - droppableHead }
+
+    /// Called under `lock`: forgets the oldest waiting droppable row's place and answers its send order.
+    private func takeOldestDroppable() -> Int {
+        let sequence = droppableSequences[droppableHead]
+        droppableHead += 1
+        if droppableHead >= 64, droppableHead * 2 >= droppableSequences.count {
+            droppableSequences.removeFirst(droppableHead)
+            droppableHead = 0
+        }
+        return sequence
     }
 
     /// Never blocks on the reader: the write runs later, on the output queue.
     func send(droppable: Bool, _ write: @escaping () -> Void) {
         lock.lock()
-        if droppable, waitingDroppable >= droppableLimit, let oldest = rows.firstIndex(where: { $0.droppable }) {
-            rows.remove(at: oldest)
-            waitingDroppable -= 1
+        if droppable, waitingDroppable >= droppableLimit {
+            rows[takeOldestDroppable()] = nil
             dropped += 1
             unwritten.leave()
         }
+        if !droppable, waitingReliable >= reliableLimit {
+            let first = !refused
+            refused = true
+            lock.unlock()
+            if first { overflowed?(reliableLimit) }
+            return
+        }
         unwritten.enter()
-        rows.append((droppable, write))
-        if droppable { waitingDroppable += 1 }
+        rows[nextSequence] = Row(droppable: droppable, write: write)
+        if droppable {
+            droppableSequences.append(nextSequence)
+        } else {
+            waitingReliable += 1
+        }
+        nextSequence += 1
         let start = !pumping
         pumping = true
         lock.unlock()
@@ -54,13 +97,22 @@ final class AudioRowOutput {
     private func pump() {
         while true {
             lock.lock()
-            guard !rows.isEmpty else {
+            var next: Row?
+            // Skips the places of dropped rows; each is skipped once.
+            while next == nil, nextToWrite < nextSequence {
+                next = rows.removeValue(forKey: nextToWrite)
+                nextToWrite += 1
+            }
+            guard let row = next else {
                 pumping = false
                 lock.unlock()
                 return
             }
-            let row = rows.removeFirst()
-            if row.droppable { waitingDroppable -= 1 }
+            if row.droppable {
+                _ = takeOldestDroppable()
+            } else {
+                waitingReliable -= 1
+            }
             let lost = dropped
             dropped = 0
             lock.unlock()
@@ -70,9 +122,12 @@ final class AudioRowOutput {
         }
     }
 
-    /// True when every row sent so far was written before the deadline.
+    /// True when every row sent so far was written before the deadline, and none was refused.
     func drain(timeout: TimeInterval) -> Bool {
-        unwritten.wait(timeout: .now() + timeout) == .success
+        guard unwritten.wait(timeout: .now() + timeout) == .success else { return false }
+        lock.lock()
+        defer { lock.unlock() }
+        return !refused
     }
 }
 
@@ -124,6 +179,12 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
         self.paused = paused
         self.clock = clock ?? { (CMClockGetTime(CMClockGetHostTimeClock()), Date()) }
         super.init()
+        output.overflowed = { [weak self] limit in
+            guard let self else { return }
+            queue.async {
+                self.fail("the reader stopped reading audio rows: \(limit) segment rows and warnings are waiting")
+            }
+        }
         if metering {
             levels = AudioLevelMeter(queue: queue, micID: micID) { [weak self] row in
                 self?.send(row, droppable: true, event: true)
