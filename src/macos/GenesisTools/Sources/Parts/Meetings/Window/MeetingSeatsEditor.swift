@@ -404,7 +404,23 @@ struct MeetingSeatChoices {
                 seats.remote += remote[PeopleText.personKey(person.name)] ?? []
             }
         }
+        seats.microphones = suggestion.seats.microphones.map { Self.microphones($0, keptIn: seats) }
         return seats
+    }
+
+    /// The suggestion's microphone groups (the engine keeps the saved ones), each with only the members this save still
+    /// seats on the group's side, as the engine filters them (`microphoneSide` in seat-suggest.ts). This Mac's group
+    /// carries room people; another group carries remote people when every member had a remote seat. An empty group goes.
+    private func microphones(_ groups: [MeetingSeats.Microphone], keptIn seats: MeetingSeats) -> [MeetingSeats.Microphone] {
+        let suggestedRemote = Set(suggestion.seats.remote.map { PeopleText.personKey($0.name) })
+        let room = Set(seats.roomRows.map { PeopleText.personKey($0.name) })
+        let remote = Set(seats.remote.map { PeopleText.personKey($0.name) })
+        return groups.compactMap { group in
+            let carriesRemote = group.id != "self" && group.people.allSatisfy { suggestedRemote.contains(PeopleText.personKey($0)) }
+            var kept = group
+            kept.people = group.people.filter { (carriesRemote ? remote : room).contains(PeopleText.personKey($0)) }
+            return kept.people.isEmpty ? nil : kept
+        }
     }
 
     private static func remoteStays(for name: String, record: MeetingRecordView?) -> [MeetingSeats.Remote] {
