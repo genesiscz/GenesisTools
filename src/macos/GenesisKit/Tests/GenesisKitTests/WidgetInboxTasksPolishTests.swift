@@ -112,7 +112,7 @@ final class WidgetTasksPolishTests: XCTestCase {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: image).perform([request])
+        try recognizeText(in: image, with: request)
         return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
     }
 
@@ -208,7 +208,7 @@ final class WidgetTasksPolishTests: XCTestCase {
         let ocr = VNRecognizeTextRequest()
         ocr.recognitionLevel = .accurate
         ocr.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: XCTUnwrap(bitmap.cgImage)).perform([ocr])
+        try recognizeText(in: XCTUnwrap(bitmap.cgImage), with: ocr)
         func click(_ label: String) throws {
             let line = try XCTUnwrap(ocr.results?.first { $0.topCandidates(1).first?.string.contains(label) == true })
             let location = NSPoint(x: line.boundingBox.midX * host.bounds.width, y: line.boundingBox.midY * host.bounds.height)

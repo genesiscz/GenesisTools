@@ -258,7 +258,7 @@ final class ClickyTests: XCTestCase {
             let request = VNRecognizeTextRequest()
             request.recognitionLevel = .accurate
             request.usesLanguageCorrection = false
-            try VNImageRequestHandler(cgImage: try XCTUnwrap(bitmap.cgImage)).perform([request])
+            try recognizeText(in: try XCTUnwrap(bitmap.cgImage), with: request)
             return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
         }
         XCTAssertTrue(try footer().contains("2025"), "the chart opens on its own period")

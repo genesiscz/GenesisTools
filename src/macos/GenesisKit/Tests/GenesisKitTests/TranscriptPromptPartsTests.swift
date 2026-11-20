@@ -92,7 +92,7 @@ final class TranscriptPromptPartsTests: XCTestCase {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: image).perform([request])
+        try recognizeText(in: image, with: request)
         let lines = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
         let seen = lines.joined(separator: "\n")
 

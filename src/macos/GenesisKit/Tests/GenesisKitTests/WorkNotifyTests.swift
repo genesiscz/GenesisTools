@@ -279,7 +279,7 @@ final class WorkNotifyTests: XCTestCase {
         defer { FrameProbe.enabled = probing }
         let image = try WorkNotifyPicture.render(WorkNotifyPane(screen: screen), name: "work-notify-after", folder: pictures)
         let request = GenesisKitFixtureTextRequest()
-        try VNImageRequestHandler(cgImage: image).perform([request])
+        try recognizeText(in: image, with: request)
         let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         for expected in ["Spotted", "Reopen", "delivered", "Bug", "Handoff", "Inbox line"] {
             XCTAssertTrue(text.contains(expected), "Missing \(expected) in \(text)")
@@ -451,7 +451,7 @@ enum WorkNativeMenuPicture {
         view.cacheDisplay(in: view.bounds, to: bitmap)
         let menuImage = try XCTUnwrap(bitmap.cgImage)
         let request = GenesisKitFixtureTextRequest()
-        try VNImageRequestHandler(cgImage: menuImage).perform([request])
+        try recognizeText(in: menuImage, with: request)
         let words = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         XCTAssertTrue(words.contains("Inbox line") && words.contains("For this project"), words)
         let directory = URL(fileURLWithPath: folder, isDirectory: true)

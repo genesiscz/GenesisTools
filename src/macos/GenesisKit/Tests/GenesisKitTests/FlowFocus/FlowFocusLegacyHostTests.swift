@@ -242,7 +242,7 @@ final class FlowFocusLegacyHostTests: XCTestCase {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: image).perform([request])
+        try recognizeText(in: image, with: request)
         let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
         XCTAssertTrue(text.contains("Quit the older Genesis (pid 4321)"), text)
         XCTAssertTrue(text.contains("kill 4321"), text)

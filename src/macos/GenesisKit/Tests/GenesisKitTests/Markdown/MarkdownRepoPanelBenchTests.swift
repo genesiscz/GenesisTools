@@ -574,7 +574,7 @@ final class RepoPanelBench {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
-        try? VNImageRequestHandler(cgImage: image).perform([request])
+        try? recognizeText(in: image, with: request)
         return (request.results ?? []).compactMap { observation in
             guard let text = observation.topCandidates(1).first?.string else { return nil }
             let box = observation.boundingBox
