@@ -45,6 +45,14 @@ struct EditChange: Identifiable, Equatable {
         default: "⌘Z puts it back"
         }
     }
+
+    /// What VoiceOver reads for the banner. A renderer warning says it is a warning and that no edit caused it, which
+    /// the triangle and the footer show; an edit or an undo names who made it.
+    var spokenLabel: String {
+        let text = lines.map(\.text).joined(separator: ". ")
+        if isWarning { return "Warning from \(by): \(text). \(hint)" }
+        return "\(action == nil ? "Edit from \(by)" : title): \(text)"
+    }
 }
 
 /// What changed between two versions of an edit, in words. Pure, so a test can read it without a window.
@@ -360,6 +368,6 @@ struct ChangeBanners: View {
         // The pointer on it keeps it up to be read; it goes its whole time after the pointer leaves.
         .onHover { model.holdBanner(change.id, hovering: $0) }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(change.action == nil ? "Edit from \(change.by)" : change.title): \(change.lines.map(\.text).joined(separator: ". "))")
+        .accessibilityLabel(change.spokenLabel)
     }
 }

@@ -1474,6 +1474,12 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertTrue(warning.isWarning)
         XCTAssertEqual(warning.hint, "No edit caused this, so ⌘Z does not change it")
         XCTAssertEqual(warning.title, "Renderer")
+        // VoiceOver hears what the triangle and the footer show: a warning that no edit caused.
+        let missing = EditChange(at: Date(), by: "Renderer", revision: 3, lines: [.init(symbol: "photo", text: "slate.png is missing")],
+                                 itemIDs: [], startUs: nil, touchesPicture: false, action: EditChange.warning)
+        XCTAssertEqual(missing.spokenLabel, "Warning from Renderer: slate.png is missing. No edit caused this, so ⌘Z does not change it")
+        XCTAssertEqual(edited.spokenLabel, "Edit from agent: \(edited.lines.map(\.text).joined(separator: ". "))")
+        XCTAssertTrue(undone.spokenLabel.hasPrefix("\(undone.title): "), undone.spokenLabel)
     }
 
     // Regression test: deep test 2026-11-07 R2-RE3 — an undo of Replace All (three caption lines fixed) said "Turned
