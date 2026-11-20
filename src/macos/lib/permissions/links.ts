@@ -55,17 +55,32 @@ export function linkHolderKind(command: string | null): LinkHolderKind {
     return first.includes("://") ? "router" : "launcher";
 }
 
-/** A word that names a subcommand (`run`, `work`, `hub-link`), not data. */
-const COMMAND_WORD = /^[a-z][a-z0-9-]{0,23}$/;
-/** A bare flag name; a flag with `=` or any value after it can carry a token, a prompt or a path. */
-const BARE_FLAG = /^--?[A-Za-z][A-Za-z0-9-]*$/;
-const SUBCOMMANDS_SHOWN = 2;
+/** A bare flag name: a long one, or a single-letter short one. `-pVALUE` and `--flag=value` can carry a token. */
+const BARE_FLAG = /^(?:--[A-Za-z][A-Za-z0-9-]*|-[A-Za-z])$/;
+/** A program name with no path (`bun`), which only the first word can be. */
+const PROGRAM_WORD = /^[a-z][a-z0-9-]{0,23}$/;
 
 /**
- * A safe label for the run after `MacOS/GenesisTools`, for status output and logs: the program's name, up to two
- * subcommand words, and bare flag names. Every value, prompt, path and other word goes, shown once as `…`, so a
- * launcher reads `gt-cc run work --resume …`; a link keeps its scheme, host and path. Bun's `--preload <file>` pairs
- * and the script path go without a mark.
+ * A link's scheme and host only. Its user-info, path, query and fragment can each carry a credential or a token, so
+ * any of them shows as one `/…`; a word that does not parse as a URL shows as `…`.
+ */
+function linkLabel(word: string): string {
+    try {
+        const url = new URL(word);
+        const origin = `${url.protocol}//${url.host}`;
+        const rest = url.username !== "" || url.password !== "" || url.pathname.replace(/^\/+/, "") !== "";
+        return rest || url.search !== "" || url.hash !== "" ? `${origin}/…` : origin;
+    } catch {
+        return "…";
+    }
+}
+
+/**
+ * A safe label for the run after `MacOS/GenesisTools`, for status output and logs: the program's name and bare flag
+ * names. Every positional word goes (a subcommand cannot be told from a value by its spelling, and no schema of every
+ * launcher's subcommands is at hand here), as does every value, prompt and path, shown once as `…`, so a launcher
+ * reads `gt-cc --resume …`; a link keeps only its scheme and host. Bun's `--preload <file>` pairs and the script path
+ * go without a mark.
  */
 export function holderArgs(command: string | null): string | null {
     if (command === null) {
@@ -74,8 +89,6 @@ export function holderArgs(command: string | null): string | null {
 
     const words = (command.match(/MacOS\/GenesisTools(?:\s+(.*))?$/)?.[1]?.trim() ?? "").split(/\s+/).filter(Boolean);
     const kept: string[] = [];
-    let subcommands = 0;
-    let sawFlag = false;
     let dropped = false;
 
     for (let index = 0; index < words.length; index++) {
@@ -96,25 +109,17 @@ export function holderArgs(command: string | null): string | null {
         }
 
         if (kept.length === 0 && word.includes("://")) {
-            // A link's query and fragment can carry a token; the scheme, host and path name the run well enough.
-            kept.push(word.replace(/[?#].*$/, "?…"));
+            kept.push(linkLabel(word));
             continue;
         }
 
         if (BARE_FLAG.test(word)) {
             kept.push(word);
-            sawFlag = true;
             continue;
         }
 
-        if (kept.length === 0 && COMMAND_WORD.test(word)) {
+        if (kept.length === 0 && PROGRAM_WORD.test(word)) {
             kept.push(word);
-            continue;
-        }
-
-        if (!sawFlag && subcommands < SUBCOMMANDS_SHOWN && COMMAND_WORD.test(word)) {
-            kept.push(word);
-            subcommands++;
             continue;
         }
 
