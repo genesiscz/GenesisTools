@@ -96,6 +96,7 @@
     "movie.sheet",
     "movie.itemsAt",
     "movie.still",
+    "movie.denoisePreview",
     "movie.find",
     "movie.switchDisplay",
     "movie.undoDisplaySwitch",
