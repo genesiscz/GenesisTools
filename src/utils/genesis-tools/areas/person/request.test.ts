@@ -287,6 +287,16 @@ test("a system dialog tells an Approve and a Cancel from a deadline and a failed
         ["darwin", { exitCode: 1, stdout: "", stderr: "" }, "failed"],
         ["linux", { exitCode: 0, stdout: "" }, "approved"],
         ["linux", { exitCode: 1, stdout: "" }, "cancelled"],
+        [
+            "linux",
+            { exitCode: 1, stdout: "", stderr: "Gtk-Message: GtkDialog mapped without a transient parent" },
+            "cancelled",
+        ],
+        [
+            "linux",
+            { exitCode: 1, stdout: "", stderr: "(zenity:42): Gtk-WARNING **: cannot open display: :0" },
+            "failed",
+        ],
         ["linux", { exitCode: 5, stdout: "" }, "gave-up"],
         ["linux", { exitCode: null, stdout: "" }, "gave-up"],
         ["linux", { exitCode: 255, stdout: "" }, "failed"],
@@ -774,13 +784,16 @@ test("one worker at a time presents a waiting request, and a settled request is 
     const entered = Promise.withResolvers<void>();
     const first = journal.claim(input.id, async () => {
         entered.resolve();
-        await release.promise;
+        await withTimeout(release.promise, 2_000, new Error("the first worker was never released"));
         return "first";
     });
-    await entered.promise;
-    const second = await journal.claim(input.id, async () => "second");
-    expect(second).toMatchObject({ claimed: false, view: { state: "waiting" } });
-    release.resolve();
+    try {
+        await withTimeout(entered.promise, 2_000, new Error("the first worker never entered its claim"));
+        const second = await journal.claim(input.id, async () => "second");
+        expect(second).toMatchObject({ claimed: false, view: { state: "waiting" } });
+    } finally {
+        release.resolve();
+    }
     expect(await first).toEqual({ claimed: true, value: "first" });
 
     await journal.withdraw(input.id);
@@ -898,7 +911,7 @@ test("two click workers for one request open its target once", async () => {
     const release = Promise.withResolvers<void>();
     const openWindow = mock(async () => {
         entered.resolve();
-        await release.promise;
+        await withTimeout(release.promise, 2_000, new Error("the first click worker was never released"));
         return { status: "ran" as const, via: "native" as const, value: {}, skipped: [] };
     });
     const showRequest = mock(async (request: PersonRequest) => ({
@@ -907,12 +920,15 @@ test("two click workers for one request open its target once", async () => {
         reason: null,
     }));
     const first = presentPostedRequest({ view, journal, openWindow, showRequest });
-    await entered.promise;
-    expect(await presentPostedRequest({ view, journal, openWindow, showRequest })).toMatchObject({
-        status: "pending",
-        reason: "Another worker is presenting this request.",
-    });
-    release.resolve();
+    try {
+        await withTimeout(entered.promise, 2_000, new Error("the first click worker never opened the target"));
+        expect(await presentPostedRequest({ view, journal, openWindow, showRequest })).toMatchObject({
+            status: "pending",
+            reason: "Another worker is presenting this request.",
+        });
+    } finally {
+        release.resolve();
+    }
     expect(await first).toMatchObject({ status: "done" });
     expect(openWindow).toHaveBeenCalledTimes(1);
     expect(showRequest).not.toHaveBeenCalled();
