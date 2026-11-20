@@ -60,7 +60,7 @@ fixture_suites() {
     while IFS= read -r file; do
         # Readers that are not beside their fixture, listed by hand.
         case "$file" in
-            src/utils/genesis-tools/service/__fixtures__/*)
+            src/utils/genesis-tools/service/__fixtures__/wire.json)
                 # scripts/gen-genesis-tools-rpc-swift.ts reads wire.json (WIRE_PATH); this suite checks it.
                 echo src/utils/genesis-tools/areas/person/request.test.ts
                 continue
