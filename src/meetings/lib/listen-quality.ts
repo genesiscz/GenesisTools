@@ -80,8 +80,9 @@ export function addQualityQuestions(options: {
             const fromSec = part[0]!.fromSec,
                 toSec = part.at(-1)!.fromSec;
             const first = part[0]!;
-            const excluded = options.callMutes?.forIndices(part.map((line) => line.index)) ?? [];
             const allowed = options.speakers?.choices(part.map((line) => line.index));
+            // Line eligibility already applies the full-line call mutes; the mute index is the fallback without it.
+            const excluded = allowed ? [] : (options.callMutes?.forIndices(part.map((line) => line.index)) ?? []);
             const eligible = (name: string) =>
                 allowed
                     ? allowed.some((other) => sameName(other, name))

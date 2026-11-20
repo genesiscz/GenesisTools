@@ -5,6 +5,7 @@ import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { LineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { MutedCallLines } from "./call-mutes";
+import { addQualityQuestions } from "./listen-quality";
 import { groupSpeakerQuestions, questionFor, refreshSpeakerQuestions } from "./questions";
 import { LineSpeakers } from "./speaker-evidence";
 import { applySuggestionChanges, planSuggestions, type SuggestInputs } from "./suggest";
@@ -285,5 +286,23 @@ describe("callers read line eligibility when it is given", () => {
             "Bob Example",
             "Carol Example",
         ]);
+    });
+
+    test("a spot check keeps the eligible person the mute index rules out", () => {
+        const prepare = (withSpeakers: boolean) => {
+            // A spot check samples lines whose speaker confidence is between 0.5 and 0.7.
+            const target = record([{ ...range, confidence: 0.6 }]);
+            const ids = addQualityQuestions({
+                record: target,
+                entries: transcript,
+                spotCheck: 1,
+                callMutes,
+                ...(withSpeakers ? { speakers: speakers(target) } : {}),
+            });
+            const question = target.items.find((item) => item.id === ids[0]);
+            return question?.kind === "question" ? question.choices : undefined;
+        };
+        expect(prepare(false)).not.toContain("Bob Example");
+        expect(prepare(true)).toContain("Bob Example");
     });
 });
