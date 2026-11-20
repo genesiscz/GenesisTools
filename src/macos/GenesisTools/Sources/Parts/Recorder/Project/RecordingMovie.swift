@@ -127,8 +127,8 @@ enum ExportLedger {
         case missing
         /// edit.json's revision; 0 for an edit saved before it had one.
         case known(Int)
-        /// edit.json exists but cannot be read, so which edit is current is unknown. Never read as revision 0: a
-        /// ledger entry for 0 must not match an edit nobody could read.
+        /// edit.json exists but cannot be read or is no edit (no source movie, no clip), so which edit is current is
+        /// unknown. Never read as revision 0: a ledger entry for 0 must not match an edit nobody could read.
         case unreadable
     }
 
@@ -137,6 +137,9 @@ enum ExportLedger {
         guard FileManager.default.fileExists(atPath: edit.path) else { return .missing }
         guard let data = try? Data(contentsOf: edit),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return .unreadable }
+        // An edit at all: the source movie and at least one clip, as every version has. `{}` is no legacy edit.
+        guard (object["source"] as? [String: Any])?["video"] is String,
+              let clips = object["clips"] as? [Any], !clips.isEmpty else { return .unreadable }
         guard let raw = object["revision"] else { return .known(0) }
         guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
               number.doubleValue >= 0, number.doubleValue == number.doubleValue.rounded() else { return .unreadable }

@@ -68,11 +68,20 @@ export type EditRevision =
     /** edit.json exists but cannot be read, so which edit is current is unknown. */
     | { kind: "unreadable" };
 
-const revisionSchema = z.object({ revision: z.number().int().nonnegative().default(0) });
+/**
+ * What makes edit.json an edit at all (the fields every version requires: the source movie and at least one clip),
+ * plus its revision, 0 for an edit saved before it had one. Swift: `ExportLedger.editRevision`.
+ */
+const revisionSchema = z.object({
+    source: z.object({ video: z.string() }),
+    clips: z.array(z.unknown()).min(1),
+    revision: z.number().int().nonnegative().default(0),
+});
 
 /**
- * edit.json's revision in a recording folder. Reads only that field. An edit.json that cannot be read or holds no valid
- * revision is `unreadable`, never revision 0: a ledger entry for 0 must not match an edit nobody could read.
+ * edit.json's revision in a recording folder. Reads only that field and the fields that make it an edit. An edit.json
+ * that cannot be read, is no edit (`{}`) or holds no valid revision is `unreadable`, never revision 0: a ledger entry
+ * for 0 must not match an edit nobody could read.
  */
 export function editRevisionOf(folder: string): EditRevision {
     const path = join(folder, "edit.json");

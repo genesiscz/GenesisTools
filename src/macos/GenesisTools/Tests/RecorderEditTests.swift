@@ -401,7 +401,13 @@ final class RecorderEditTests: XCTestCase {
 
     /// A recording folder with files, each `[name, seconds after a fixed time]`, as recording-movies.json lists them,
     /// with edit.json at the case's `edit` revision and exports.json from its `exports`.
-    private func recordingFolder(_ files: [[Any]], edit: Int? = nil, editUnreadable: Bool = false, exports: [[Any]] = []) throws -> URL {
+    /// edit.json at `revision`: the fields that make it an edit (`ExportLedger.editRevision` reads no edit as unreadable).
+    private func editJSON(_ revision: Int) throws -> Data {
+        try JSONSerialization.data(withJSONObject: ["source": ["video": "screen.mp4"], "clips": [[String: Any]()], "revision": revision])
+    }
+
+    private func recordingFolder(_ files: [[Any]], edit: Int? = nil, editUnreadable: Bool = false, editNotAnEdit: Bool = false,
+                                 exports: [[Any]] = []) throws -> URL {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("movie-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let base = Date(timeIntervalSince1970: 1_793_000_000)
@@ -412,10 +418,13 @@ final class RecorderEditTests: XCTestCase {
             try FileManager.default.setAttributes([.modificationDate: base.addingTimeInterval(offset)], ofItemAtPath: url.path)
         }
         if let edit {
-            try JSONSerialization.data(withJSONObject: ["revision": edit]).write(to: folder.appendingPathComponent("edit.json"))
+            try editJSON(edit).write(to: folder.appendingPathComponent("edit.json"))
         }
         if editUnreadable {
             try Data("{ cut off by a crash".utf8).write(to: folder.appendingPathComponent("edit.json"))
+        }
+        if editNotAnEdit {
+            try Data("{}".utf8).write(to: folder.appendingPathComponent("edit.json"))
         }
         if !exports.isEmpty {
             var files: [String: Any] = [:]
@@ -431,11 +440,12 @@ final class RecorderEditTests: XCTestCase {
     /// the same file as `tools recorder copy` and `movieOf`.
     func testTheMovieOfARecordingFolderMatchesTheSharedCases() throws {
         let cases = try SharedEditorFixture.cases("recording-movies.json")
-        XCTAssertGreaterThanOrEqual(cases.count, 13)
+        XCTAssertGreaterThanOrEqual(cases.count, 15)
         for item in cases {
             let name = try XCTUnwrap(item["name"] as? String)
             let folder = try recordingFolder(try XCTUnwrap(item["files"] as? [[Any]]), edit: (item["edit"] as? NSNumber)?.intValue,
                                              editUnreadable: item["editUnreadable"] as? Bool ?? false,
+                                             editNotAnEdit: item["editNotAnEdit"] as? Bool ?? false,
                                              exports: item["exports"] as? [[Any]] ?? [])
             defer { try? FileManager.default.removeItem(at: folder) }
             let shareable = RecordingMovie.shareable(in: folder)
@@ -456,7 +466,7 @@ final class RecorderEditTests: XCTestCase {
         try ExportLedger.record(folder.appendingPathComponent("screen-edited.mp4"), revision: 4, in: folder)
         XCTAssertEqual(RecordingMovie.shareable(in: folder).url?.lastPathComponent, "screen-edited.mp4")
         XCTAssertEqual(Set(ExportLedger.read(folder).keys), ["screen-edited.mp4"], "a gone export leaves the ledger")
-        try JSONSerialization.data(withJSONObject: ["revision": 5]).write(to: folder.appendingPathComponent("edit.json"))
+        try editJSON(5).write(to: folder.appendingPathComponent("edit.json"))
         XCTAssertEqual(RecordingMovie.shareable(in: folder), .stale(revision: 5))
     }
 

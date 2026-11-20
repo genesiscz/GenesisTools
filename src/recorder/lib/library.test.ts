@@ -323,21 +323,31 @@ function folderWith(files: Array<[string, number]>): string {
     return folder;
 }
 
+/** edit.json at `revision`: the fields that make it an edit (`editRevisionOf` reads no edit as unreadable). */
+function editAt(revision: number): string {
+    return SafeJSON.stringify({ source: { video: "screen.mp4" }, clips: [{}], revision });
+}
+
 /** A shared case's folder: its files, edit.json at its revision, and exports.json from its exports. */
 function movieCaseFolder(item: {
     files: Array<Array<string | number>>;
     edit?: number;
     editUnreadable?: boolean;
+    editNotAnEdit?: boolean;
     exports?: Array<Array<string | number | null>>;
 }): string {
     const folder = folderWith(item.files.map(([name, offset]) => [String(name), Number(offset)]));
 
     if (item.edit !== undefined) {
-        writeFileSync(join(folder, "edit.json"), SafeJSON.stringify({ revision: item.edit }));
+        writeFileSync(join(folder, "edit.json"), editAt(item.edit));
     }
 
     if (item.editUnreadable) {
         writeFileSync(join(folder, "edit.json"), "{ cut off by a crash");
+    }
+
+    if (item.editNotAnEdit) {
+        writeFileSync(join(folder, "edit.json"), "{}");
     }
 
     if (item.exports) {
@@ -875,14 +885,14 @@ describe("a recording's quick actions", () => {
             ["screen.mp4", 0],
             ["screen-edited.mp4", 10],
         ]);
-        writeFileSync(join(folder, "edit.json"), SafeJSON.stringify({ revision: 4 }));
+        writeFileSync(join(folder, "edit.json"), editAt(4));
         expect(shareableMovie(folder).kind).toBe("stale");
 
         await recordExport({ folder, file: join(folder, "screen-edited.mp4"), revision: 4 });
         expect(shareableMovie(folder)).toEqual({ kind: "file", path: join(folder, "screen-edited.mp4") });
 
         // One more change in the editor: the export no longer shows the edit, so nothing is handed out.
-        writeFileSync(join(folder, "edit.json"), SafeJSON.stringify({ revision: 5 }));
+        writeFileSync(join(folder, "edit.json"), editAt(5));
         expect(shareableMovie(folder)).toMatchObject({ kind: "stale", revision: 5 });
     });
 
@@ -915,13 +925,13 @@ describe("a recording's quick actions", () => {
 
     it("refuses to copy an export when the edit changed while it ran", async () => {
         const folder = folderWith([["screen.mp4", 0]]);
-        writeFileSync(join(folder, "edit.json"), SafeJSON.stringify({ revision: 2 }));
+        writeFileSync(join(folder, "edit.json"), editAt(2));
         const exported = join(folder, "screen-edited.mp4");
         const spy = spyOn(edits, "exportAs").mockImplementation(async () => {
             writeFileSync(exported, "movie");
             await recordExport({ folder, file: exported, revision: 2 });
             // A cut saved in the editor while the export rendered revision 2.
-            writeFileSync(join(folder, "edit.json"), SafeJSON.stringify({ revision: 3 }));
+            writeFileSync(join(folder, "edit.json"), editAt(3));
             return { ok: true, path: exported, bytes: 5, seconds: 0 };
         });
 
