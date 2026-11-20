@@ -464,8 +464,27 @@ final class AudioTrack {
         return true
     }
 
+    /// Whether the sidecar still owes silence up to `sidecarEnd` (a refused final buffer, a gap before a rotation).
+    private var sidecarOwesTail: Bool {
+        guard let end = sidecarEnd, let expected, let buffer = silenceTemplate,
+              let format = CMSampleBufferGetFormatDescription(buffer),
+              let rate = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee.mSampleRate, rate > 0 else {
+            return false
+        }
+        return Int((CMTimeGetSeconds(CMTimeSubtract(end, expected)) * rate).rounded()) > 0
+    }
+
     func finishSidecar() {
         guard let sidecar, let sidecarInput else { return }
+        // Nothing left to write: finish now. `markAsFinished` needs no readiness, while the readiness callback below
+        // never came for a real-time input that had just taken a large final append and stayed not ready (a 60 s
+        // segment written in one append under load lost its row, with a 10 s and a 120 s wait alike).
+        guard sidecarOwesTail else {
+            if let expected { sidecar.endSession(atSourceTime: expected) }
+            sidecarInput.markAsFinished()
+            finishSidecarWriting(sidecar)
+            return
+        }
         // Also preserve a refused final buffer; no later capture callback is needed to reveal this loss.
         let drained = DispatchSemaphore(value: 0)
         sidecarInput.requestMediaDataWhenReady(on: DispatchQueue(label: "ax-tool.audio-sidecar.finish")) { [self] in
@@ -484,6 +503,10 @@ final class AudioTrack {
             failures.append("the \(source.rawValue) sidecar could not preserve its final samples within 10s")
             return
         }
+        finishSidecarWriting(sidecar)
+    }
+
+    private func finishSidecarWriting(_ sidecar: AVAssetWriter) {
         let done = DispatchSemaphore(value: 0)
         sidecar.finishWriting { done.signal() }
         if done.wait(timeout: .now() + 10) == .timedOut || sidecar.status != .completed {
