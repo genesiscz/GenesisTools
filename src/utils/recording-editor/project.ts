@@ -5,7 +5,15 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
-import { type AudioFacts, audioLaneSchema, audioLanesSchema, setAudioLane, syncExtraAudioLanes } from "./audio-lanes";
+import {
+    type AudioFacts,
+    audioLaneSchema,
+    audioLanesSchema,
+    muteAudioLaneRange,
+    setAudioLane,
+    syncExtraAudioLanes,
+    unmuteAudioLaneRange,
+} from "./audio-lanes";
 import { bubbleRect, CAMERA_CORNERS, CAMERA_SHAPES, cameraBubbleSchema, hideCamera, showCamera } from "./camera";
 import { cursorSmoothSchema } from "./cursor-smooth";
 import { DENOISE_METHODS, denoiseSchema } from "./denoise";
@@ -3063,6 +3071,18 @@ export const editOpSchema = z.discriminatedUnion("op", [
             name: audioLaneSchema.shape.name,
         })
         .strict(),
+    /** Mutes a part of one sound lane over a source range; the part is an item of its own (a cough, a doorbell). */
+    z.object({ op: z.literal("audioMute"), id: audioLaneSchema.shape.id, ...rangeFields }).strict(),
+    /** Plays a sound lane again over a source range, or deletes one of its muted parts by its `part` id. */
+    z
+        .object({
+            op: z.literal("audioUnmute"),
+            id: audioLaneSchema.shape.id,
+            from: sourceTimeSchema.optional(),
+            to: sourceTimeSchema.optional(),
+            part: z.string().min(1).optional(),
+        })
+        .strict(),
     z.object({ op: z.literal("layerAdd"), kind: layerFields.kind, file: layerFields.file, ...layerPlacement }).strict(),
     z
         .object({
@@ -3496,6 +3516,30 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
     switch (op.op) {
         case "audioLane":
             return setAudioLane(project, op, facts);
+        case "audioMute": {
+            const fromUs = timeToUs(op.from);
+            const toUs = Math.min(project.source.durationUs, timeToUs(op.to));
+            checkRange(project, fromUs, toUs);
+            return muteAudioLaneRange({ project, id: op.id, fromUs, toUs, facts });
+        }
+        case "audioUnmute": {
+            if (op.part !== undefined) {
+                if (op.from !== undefined || op.to !== undefined) {
+                    throw new RangeError("audioUnmute takes a part id or a from and to range, not both");
+                }
+
+                return unmuteAudioLaneRange({ project, id: op.id, facts, part: op.part });
+            }
+
+            if (op.from === undefined || op.to === undefined) {
+                throw new RangeError("audioUnmute needs from and to (source seconds), or a part id");
+            }
+
+            const fromUs = timeToUs(op.from);
+            const toUs = Math.min(project.source.durationUs, timeToUs(op.to));
+            checkRange(project, fromUs, toUs);
+            return unmuteAudioLaneRange({ project, id: op.id, facts, range: { fromUs, toUs } });
+        }
         case "layerAdd":
             return addMediaLayer(project, op, facts);
         case "layerMove":

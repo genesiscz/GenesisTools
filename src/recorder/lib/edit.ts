@@ -718,7 +718,7 @@ async function probeFacts({
     audioFacts?: AudioFacts;
     playheadUs?: number;
 }): Promise<OpFacts> {
-    if (op.op === "audioLane" && !project.audio.lanes) {
+    if ((op.op === "audioLane" || op.op === "audioMute" || op.op === "audioUnmute") && !project.audio.lanes) {
         return { audioFacts: audioFacts ?? (await audioFactsOf(project.source.video, { prepare: true })) };
     }
 

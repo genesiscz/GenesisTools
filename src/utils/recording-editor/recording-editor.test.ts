@@ -55,6 +55,7 @@ import { laneItems, resolveLanes } from "@genesiscz/utils/recording-editor/lanes
 import {
     audibleTracks,
     integratedLoudness,
+    mutedRangesFilter,
     recordingLaneInputs,
     transcribedTracks,
 } from "@genesiscz/utils/recording-editor/loudness";
@@ -4471,6 +4472,66 @@ describe("recording layer contract", () => {
         expect(() => applyOp(changed, editOpSchema.parse({ op: "audioLane", id: "missing", muted: true }))).toThrow(
             "missing"
         );
+    });
+
+    test("audioMute silences a part of one lane as an item of its own, and audioUnmute gives it back", () => {
+        const project = wholeProject(source);
+        const op = (raw: unknown) => editOpSchema.parse(raw);
+        expect(() => applyOp(project, op({ op: "audioMute", id: "mic", from: 1, to: 2 }))).toThrow(
+            "audioMute needs the recording's sound sources"
+        );
+        let edited = applyOp(project, op({ op: "audioMute", id: "mic", from: 4, to: 6 }), { audioFacts: frames });
+        edited = applyOp(edited, op({ op: "audioMute", id: "mic", from: 1, to: 2.5 }));
+        const mic = () => edited.audio.lanes?.find((lane) => lane.id === "mic");
+        // In start order, each with its own id; the other lanes and the lane's own mute stay as they were.
+        expect(mic()?.mutedRanges?.map(({ startUs, endUs }) => [startUs, endUs])).toEqual([
+            [1_000_000, 2_500_000],
+            [4_000_000, 6_000_000],
+        ]);
+        expect(mic()?.muted).toBe(false);
+        expect(edited.audio.lanes?.find((lane) => lane.id === "system")).not.toHaveProperty("mutedRanges");
+        const [first, second] = mic()?.mutedRanges ?? [];
+        expect(first.id).not.toBe(second.id);
+
+        // A stretch in the middle splits the part; the part before keeps the id.
+        edited = applyOp(edited, op({ op: "audioUnmute", id: "mic", from: 5, to: 5.5 }));
+        expect(mic()?.mutedRanges?.map(({ id, startUs, endUs }) => [id === second.id, startUs, endUs])).toEqual([
+            [false, 1_000_000, 2_500_000],
+            [true, 4_000_000, 5_000_000],
+            [false, 5_500_000, 6_000_000],
+        ]);
+        edited = applyOp(edited, op({ op: "audioUnmute", id: "mic", part: first.id }));
+        edited = applyOp(edited, op({ op: "audioUnmute", id: "mic", from: 0, to: 12 }));
+        expect(mic()).not.toHaveProperty("mutedRanges");
+
+        expect(() => applyOp(edited, op({ op: "audioMute", id: "mic", from: 3, to: 3 }))).toThrow();
+        expect(() => applyOp(edited, op({ op: "audioUnmute", id: "mic", part: "u-gone" }))).toThrow("no muted part");
+        expect(() => applyOp(edited, op({ op: "audioUnmute", id: "mic" }))).toThrow("part id");
+        expect(() => applyOp(edited, op({ op: "audioMute", id: "missing", from: 1, to: 2 }))).toThrow("missing");
+    });
+
+    test("a lane's muted parts reach the mix as silent stretches on the source clock", () => {
+        const lanes: AudioLane[] = [
+            {
+                id: "movie-0",
+                source: "movie",
+                track: 0,
+                offsetMs: 0,
+                muted: false,
+                volume: 1,
+                mutedRanges: [{ id: "u1", startUs: 1_000_000, endUs: 2_500_000 }],
+            },
+        ];
+        const inputs = recordingLaneInputs({
+            video: "/movies/screen.mp4",
+            lanes,
+            facts: { movieTracks: 1, mixedFrom: [] },
+        });
+        expect(inputs.map((input) => input.mutedRanges)).toEqual([
+            [{ id: "u1", startUs: 1_000_000, endUs: 2_500_000 }],
+        ]);
+        expect(mutedRangesFilter(inputs[0].mutedRanges)).toBe("volume=enable='between(t,1,2.5)':volume=0,");
+        expect(mutedRangesFilter(undefined)).toBe("");
     });
 
     test("layerAdd returns a replayable id and layerMove sends it to the top and bottom", () => {

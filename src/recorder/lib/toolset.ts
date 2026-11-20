@@ -398,6 +398,16 @@ const movieMethods = [
         "audioLane",
         `Mutes, sets volume (0–2), or renames one sound lane. Returns the edit summary from the audioLane op in ${toolCommand("recorder apply")}.`
     ),
+    opEdit(
+        "audioMute",
+        "Mutes one sound lane (an id from audioLanes()) from `from` to `to` (SOURCE seconds, so it moves with a cut): a cough or a doorbell without muting the whole lane. Each call adds a muted part of its own (mutedRanges on the lane, with an id).",
+        ["id", "from", "to"]
+    ),
+    opEdit(
+        "audioUnmute",
+        "Plays a sound lane again from `from` to `to`: its muted parts lose that stretch (one may split in two). audioUnmute({ id, part }) deletes one muted part by its id instead.",
+        ["id", "from", "to", "part"]
+    ),
     defineMethod({
         name: "layers",
         params: z.object({}).strict(),
@@ -1938,6 +1948,22 @@ export class Movie {
 
     async audioLane(id: string, changes: Omit<Extract<EditOp, { op: "audioLane" }>, "op" | "id">) {
         return this.apply([{ ...changes, op: "audioLane", id }]);
+    }
+
+    async audioMute(id: string, from: z.infer<typeof timeSchema>, to: z.infer<typeof timeSchema>) {
+        return this.apply([{ op: "audioMute", id, from, to }]);
+    }
+
+    async audioUnmute(id: string, from?: z.infer<typeof timeSchema>, to?: z.infer<typeof timeSchema>, part?: string) {
+        return this.apply([
+            {
+                op: "audioUnmute",
+                id,
+                ...(from === undefined ? {} : { from }),
+                ...(to === undefined ? {} : { to }),
+                ...(part === undefined ? {} : { part }),
+            },
+        ]);
     }
 
     async layers() {
