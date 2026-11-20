@@ -42,6 +42,16 @@ struct CaptureSelectionOptions {
     }
 }
 
+/// The value of a flag that takes one; nil when the flag is absent. A flag given last with no value stops with
+/// invalid-argument instead of falling back to the default as `argValue` would.
+func optionValue(_ flag: String) -> String? {
+    switch flagValue(flag, in: args) {
+    case .absent: return nil
+    case .missing: errorExit("\(flag) needs a value", code: "invalid-argument")
+    case let .value(value): return value
+    }
+}
+
 /// A comma-separated list of positive CG window ids, or nil when the flag is absent.
 func windowIDList(_ flag: String) -> [CGWindowID]? {
     guard let raw = argValue(flag) else { return nil }
