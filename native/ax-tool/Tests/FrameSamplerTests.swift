@@ -245,11 +245,15 @@ final class CaptureCanvasGeometryTests: XCTestCase {
         XCTAssertNotEqual(screenMovieBitRate(width: 1510, height: 982, fps: 60), screenMovieBitRate(width: 1508, height: 980, fps: 60))
     }
 
-    /// `ax-tool capture … --movie-quality` with no preset after it is refused, never read as the default.
+    /// `ax-tool capture … --movie-quality` with no preset after it, or with another flag after it, is refused, never read
+    /// as the default or as a value.
     func testAFlagGivenLastWithNoValueIsMissingNotAbsent() {
         XCTAssertEqual(flagValue("--movie-quality", in: ["ax-tool", "capture", "--video-out", "a.mp4"]), .absent)
         XCTAssertEqual(flagValue("--movie-quality", in: ["ax-tool", "capture", "--movie-quality"]), .missing)
         XCTAssertEqual(flagValue("--movie-quality", in: ["ax-tool", "capture", "--movie-quality", "small"]), .value("small"))
+        // `--video-out --no-indicator` names no movie file; the next flag is never taken as the value.
+        XCTAssertEqual(flagValue("--video-out", in: ["ax-tool", "capture", "--video-out", "--no-indicator"]), .missing)
+        XCTAssertEqual(flagValue("--video-out", in: ["ax-tool", "capture", "--video-out", "./--odd.mp4"]), .value("./--odd.mp4"))
     }
 
     // Many separate changing patches (a 4K frame holds tens of thousands of blocks) must not run the all-pairs merge:
