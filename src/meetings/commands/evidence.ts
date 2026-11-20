@@ -259,6 +259,10 @@ async function evidence(
         }
 
         const table = labelIdentityTable(lines);
+        // A meeting someone else recorded (an imported export): the microphone is theirs, not the user's.
+        const recorder = record.recordedBy !== undefined;
+        const mine = recorder ? "the recording microphone" : "your microphone";
+        const myLabel = recorder ? "the recorder's label" : "your label";
         const identities = [...new Set([...table.values()].flatMap((row) => [...row.keys()]))].sort((a, b) =>
             a === SELF ? -1 : b === SELF ? 1 : a.localeCompare(b)
         );
@@ -268,7 +272,7 @@ async function evidence(
                 name === SELF
                     ? sharedNames.size > 1
                         ? `microphone group (${[...sharedNames].join(", ")})`
-                        : `you (${found.selfName ?? "mic"})`
+                        : `${recorder ? "the recorder" : "you"} (${found.selfName ?? "mic"})`
                     : name
             ),
         ]);
@@ -303,11 +307,11 @@ async function evidence(
         } else if (volume) {
             const say =
                 volume.sureMicWordsElsewhere !== undefined
-                    ? `${volume.sureMicWordsElsewhere} words are sure on your microphone under other labels; your label "${found.selfName}" holds ${volume.selfLabelWords}`
-                    : `your microphone recognized ${volume.micTokens} words; your label "${found.selfName}" holds ${volume.selfLabelWords}`;
+                    ? `${volume.sureMicWordsElsewhere} words are sure on ${mine} under other labels; ${myLabel} "${found.selfName}" holds ${volume.selfLabelWords}`
+                    : `${mine} recognized ${volume.micTokens} words; ${myLabel} "${found.selfName}" holds ${volume.selfLabelWords}`;
             volume.spread
                 ? ui.warn(
-                      `${say}: you are spread over other labels (${toolCommand("meetings", "suggest", record.id, "--rules", "evidence")})`
+                      `${say}: ${recorder ? "the recorder is" : "you are"} spread over other labels (${toolCommand("meetings", "suggest", record.id, "--rules", "evidence")})`
                   )
                 : ui.dim(say);
         }
