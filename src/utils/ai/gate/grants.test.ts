@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+    mkdirSync,
+    mkdtempSync,
+    readdirSync,
+    readFileSync,
+    renameSync,
+    statSync,
+    unlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { appendGateAudit, gatesAuditPath } from "@genesiscz/utils/audit/gates";
@@ -140,6 +149,27 @@ describe("grants", () => {
         );
 
         expect(listVaultSessionGrants(NOW).map((item) => item.sessionId)).toEqual(["s-one", "s-two"]);
+
+        // What the app's decoder refuses is refused here too: a record without a field it requires, another version.
+        const { method: _method, ...noMethod } = grant(643, "s-bad", T(60));
+        for (const file of [
+            { version: 1, grants: [grant(640, "s-one", T(60)), noMethod] },
+            { version: 1, grants: [{ ...grant(640, "s-one", T(60)), title: 7 }] },
+            { version: 2, grants: [grant(640, "s-one", T(60))] },
+        ]) {
+            const path = `${vaultSessionGrantsPath()}.malformed`;
+            writeFileSync(path, SafeJSON.stringify(file));
+            renameSync(path, vaultSessionGrantsPath());
+            expect(listVaultSessionGrants(NOW)).toEqual([]);
+        }
+
+        writeFileSync(
+            vaultSessionGrantsPath(),
+            SafeJSON.stringify({
+                version: 1,
+                grants: [grant(640, "s-one", T(60)), grant(641, "s-two", T(60)), grant(642, "s-old", NOW - 1)],
+            })
+        );
         expect(await revokeVaultSessionGrants("s-one")).toBe(1);
         expect(await revokeVaultSessionGrants("641")).toBe(1);
         expect(listVaultSessionGrants(NOW)).toEqual([]);

@@ -246,7 +246,11 @@ struct VaultCaller {
         if let cwd, !cwd.isEmpty {
             let file = (cwd as NSString).appendingPathComponent("bunfig.toml")
             let watched = config ?? (fileManager.fileExists(atPath: file) ? file : cwd)
-            if let startedAt {
+            if Self.isSymbolicLink(watched) {
+                // The read below follows the link, while the change time is the link's own: a change of its target
+                // would go unseen, so a linked file is never trusted.
+                found.append("bunfig.toml preload (\(watched) is a symbolic link)")
+            } else if let startedAt {
                 if let changed = Self.changeTime(of: watched), changed >= startedAt {
                     found.append("bunfig.toml preload (\(watched) changed after the process started)")
                 } else if Self.changeTime(of: watched) == nil {
@@ -269,6 +273,12 @@ struct VaultCaller {
         }
 
         return found
+    }
+
+    /// Whether the path itself (not what it points to) is a symbolic link.
+    private static func isSymbolicLink(_ path: String) -> Bool {
+        var info = stat()
+        return lstat(path, &info) == 0 && (info.st_mode & S_IFMT) == S_IFLNK
     }
 
     /// The inode change time of a path (a rename, a delete inside a folder and a write all move it), or nil.

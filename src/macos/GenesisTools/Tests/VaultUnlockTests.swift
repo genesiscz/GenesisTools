@@ -619,6 +619,14 @@ final class VaultUnlockTests: XCTestCase {
                                                            startedAt: later, config: config), [])
         XCTAssertEqual(VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: checkoutEntry,
                                                            startedAt: later, config: config), ["bunfig.toml preload ./p.ts"])
+
+        // A linked config is read through the link, but its change time is the link's: it is never trusted.
+        let target = checkout + "/target.bunfig.toml", linked = checkout + "/linked.bunfig.toml"
+        try "# no preload\n".write(toFile: target, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(atPath: linked, withDestinationPath: target)
+        XCTAssertEqual(VaultCaller.untrustedBunfigPreloads(cwd: work, home: home, xdgConfigHome: nil, own: [],
+                                                           startedAt: later, config: linked),
+                       ["bunfig.toml preload (\(linked) is a symbolic link)"])
     }
 
     func testARememberedApprovalCoversOnlyTheSameExecutableAndScriptUntilItEnds() {
@@ -1058,11 +1066,11 @@ final class VaultUnlockTests: XCTestCase {
     // Martin, 2026-11-17 21:27: one Claude session asked six times in four minutes for its own scratch script.
     func testASessionApprovalCoversItsAgentProcessAndEverythingBelowItWhileItLasts() {
         let zsh = VaultLineageEntry(pid: 812, startedAt: 2_000_000, name: "zsh")
-        let claude = VaultLineageEntry(pid: 640, startedAt: 1_000_000, name: "claude")
+        let claude = VaultLineageEntry(pid: 640, startedAt: 1_000_000, name: "claude", execGeneration: 4)
         let t3 = VaultLineageEntry(pid: 300, startedAt: 500_000, name: "T3 Code (Beta)")
         let lineage = [zsh, claude, t3]
         let anchor = VaultSessionAnchor.nearest(in: lineage)
-        XCTAssertEqual(anchor, VaultSessionAnchor(harness: "claude", pid: 640, startedAt: 1_000_000))
+        XCTAssertEqual(anchor, VaultSessionAnchor(harness: "claude", pid: 640, startedAt: 1_000_000, execGeneration: 4))
         XCTAssertNil(VaultSessionAnchor.nearest(in: [zsh, t3]), "no agent above the caller: nothing to approve as a session")
 
         let grant = VaultSessionGrant(anchor: anchor!, sessionId: "0f3a9c1e", title: "language model pass", grantedAt: 1_000,
@@ -1071,13 +1079,23 @@ final class VaultUnlockTests: XCTestCase {
         XCTAssertEqual(VaultSessionGrants.live(lineage: lineage, now: 2_000, in: file), grant)
         XCTAssertNil(VaultSessionGrants.live(lineage: lineage, now: 5_000, in: file), "it ends at its time")
 
-        let reused = [zsh, VaultLineageEntry(pid: 640, startedAt: 9_000_000, name: "claude")]
+        let reused = [zsh, VaultLineageEntry(pid: 640, startedAt: 9_000_000, name: "claude", execGeneration: 4)]
         XCTAssertNil(VaultSessionGrants.live(lineage: reused, now: 2_000, in: file), "a later process with the same pid is not the session")
-        let other = [VaultLineageEntry(pid: 641, startedAt: 1_000_000, name: "claude"), t3]
+        let other = [VaultLineageEntry(pid: 641, startedAt: 1_000_000, name: "claude", execGeneration: 4), t3]
         XCTAssertNil(VaultSessionGrants.live(lineage: other, now: 2_000, in: file), "another session asks for itself")
 
+        // An exec in place keeps the pid and the start time; only the exec generation tells the new image apart.
+        let execed = [zsh, VaultLineageEntry(pid: 640, startedAt: 1_000_000, name: "claude", execGeneration: 5), t3]
+        XCTAssertNil(VaultSessionGrants.live(lineage: execed, now: 2_000, in: file), "the program the agent exec'd is not the session")
+        var unversioned = grant
+        unversioned.anchor.execGeneration = nil
+        XCTAssertNil(VaultSessionGrants.live(lineage: lineage, now: 2_000, in: VaultSessionGrantsFile(version: 1, grants: [unversioned])),
+                     "an approval saved before the exec generation is asked for again")
+        XCTAssertNil(VaultSessionAnchor.nearest(in: [zsh, VaultLineageEntry(pid: 640, startedAt: 1_000_000, name: "claude")]),
+                     "a harness without an exec generation is not offered")
+
         // A headless `claude -p` the session starts is the narrower anchor to offer, and still inside the approval.
-        let nested = [VaultLineageEntry(pid: 900, startedAt: 3_000_000, name: "claude"), zsh, claude, t3]
+        let nested = [VaultLineageEntry(pid: 900, startedAt: 3_000_000, name: "claude", execGeneration: 2), zsh, claude, t3]
         XCTAssertEqual(VaultSessionAnchor.nearest(in: nested)?.pid, 900)
         XCTAssertEqual(VaultSessionGrants.live(lineage: nested, now: 2_000, in: file), grant)
 
@@ -1150,6 +1168,11 @@ final class VaultUnlockTests: XCTestCase {
         let stored = await VaultSessionGrants.store(grant, now: 1_000, to: path)
         XCTAssertTrue(stored)
         XCTAssertEqual(VaultSessionGrants.load(from: path).grants, [grant])
+
+        // Only version 1 is read, as `tools ai gate status` reads it (grants.test.ts has the same file).
+        try Data(#"{"version":2,"grants":[{"anchor":{"harness":"claude","pid":640,"startedAt":1},"grantedAt":1000,"until":9000,"method":"touch-id"}]}"#.utf8)
+            .write(to: URL(fileURLWithPath: path))
+        XCTAssertEqual(VaultSessionGrants.load(from: path).grants, [], "another version is not read")
     }
 }
 

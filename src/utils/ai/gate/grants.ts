@@ -222,13 +222,29 @@ interface VaultSessionGrantsFile {
     grants: VaultSessionGrant[];
 }
 
+function isOptionalString(value: unknown): boolean {
+    return value === undefined || value === null || typeof value === "string";
+}
+
+/**
+ * The fields the app's decoder requires (`VaultSessionGrant` in VaultSessionGrant.swift), so this list never shows a
+ * record the app cannot read, nor hides one it honours.
+ */
 function isVaultSessionGrant(value: unknown): value is VaultSessionGrant {
     return (
         isJsonObject(value) &&
         isJsonObject(value.anchor) &&
+        typeof value.anchor.harness === "string" &&
         typeof value.anchor.pid === "number" &&
         typeof value.anchor.startedAt === "number" &&
-        typeof value.until === "number"
+        (value.anchor.execGeneration === undefined ||
+            value.anchor.execGeneration === null ||
+            typeof value.anchor.execGeneration === "number") &&
+        isOptionalString(value.sessionId) &&
+        isOptionalString(value.title) &&
+        typeof value.grantedAt === "number" &&
+        typeof value.until === "number" &&
+        typeof value.method === "string"
     );
 }
 

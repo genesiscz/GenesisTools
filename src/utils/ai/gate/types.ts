@@ -112,7 +112,8 @@ export interface VaultGrant {
  * The app also ends one when that process exits. `sessionId` and `title` are what the window showed.
  */
 export interface VaultSessionGrant {
-    anchor: { harness: string; pid: number; startedAt: number };
+    /** `execGeneration` names the approved harness image; a record without it matches no process in the app. */
+    anchor: { harness: string; pid: number; startedAt: number; execGeneration?: number | null };
     sessionId?: string | null;
     title?: string | null;
     grantedAt: number;

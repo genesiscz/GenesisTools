@@ -115,6 +115,11 @@ enum VaultRecipient {
                         execGeneration: image.generation, imageUUID: image.uuid, executable: executable)
     }
 
+    /// The exec generation of `pid`, or nil when the kernel does not give it.
+    static func execGeneration(_ pid: pid_t) -> Int32? {
+        image(pid)?.generation
+    }
+
     /// `PROC_PIDUNIQIDENTIFIERINFO` is private: its struct is read by offset from XNU's proc_info_private.h
     /// (`p_uuid[16]`, `p_uniqueid`, `p_puniqueid`, `int32_t p_idversion`, then reserved fields; 56 bytes).
     /// A short read or a zero generation is no identity, so release is denied.
