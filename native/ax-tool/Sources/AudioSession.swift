@@ -13,13 +13,77 @@ func sessionEncoderPrimingFrames(settings: [String: Any]) -> UInt32? {
     return converter.primeInfo.leadingFrames
 }
 
+/// Event rows leave the process on their own serial queue, so a parent that stops reading never holds the sample
+/// queue, and with it pause, mute and finish. A droppable row (a level reading) waits only while fewer than
+/// `droppableLimit` others do; beyond that the oldest waiting one goes, and the next written row is preceded by a
+/// warning that counts them. Segment rows and warnings are never dropped: `drain` waits for them with a deadline.
+final class AudioRowOutput {
+    private let queue = DispatchQueue(label: "ax-tool.audio-session.output", qos: .utility)
+    private let lock = NSLock()
+    private let unwritten = DispatchGroup()
+    private var rows: [(droppable: Bool, write: () -> Void)] = []
+    private var waitingDroppable = 0
+    private var dropped = 0
+    private var pumping = false
+    private let droppableLimit: Int
+    private let warnDropped: (Int) -> Void
+
+    init(droppableLimit: Int = 32, warnDropped: @escaping (Int) -> Void) {
+        self.droppableLimit = max(1, droppableLimit)
+        self.warnDropped = warnDropped
+    }
+
+    /// Never blocks on the reader: the write runs later, on the output queue.
+    func send(droppable: Bool, _ write: @escaping () -> Void) {
+        lock.lock()
+        if droppable, waitingDroppable >= droppableLimit, let oldest = rows.firstIndex(where: { $0.droppable }) {
+            rows.remove(at: oldest)
+            waitingDroppable -= 1
+            dropped += 1
+            unwritten.leave()
+        }
+        unwritten.enter()
+        rows.append((droppable, write))
+        if droppable { waitingDroppable += 1 }
+        let start = !pumping
+        pumping = true
+        lock.unlock()
+        if start { queue.async { [self] in pump() } }
+    }
+
+    private func pump() {
+        while true {
+            lock.lock()
+            guard !rows.isEmpty else {
+                pumping = false
+                lock.unlock()
+                return
+            }
+            let row = rows.removeFirst()
+            if row.droppable { waitingDroppable -= 1 }
+            let lost = dropped
+            dropped = 0
+            lock.unlock()
+            if lost > 0 { warnDropped(lost) }
+            row.write()
+            unwritten.leave()
+        }
+    }
+
+    /// True when every row sent so far was written before the deadline.
+    func drain(timeout: TimeInterval) -> Bool {
+        unwritten.wait(timeout: .now() + timeout) == .success
+    }
+}
+
 /// Audio is delivered on one serial queue. Retired writers finish on another queue, so rotation never
 /// holds up the next segment's samples. Capture timestamps, including missing samples, rotate files.
+/// Rows go out through `output`, never from the sample queue itself.
 @available(macOS 13.0, *)
 final class SegmentedAudio: NSObject, SCStreamOutput {
     let queue = DispatchQueue(label: "ax-tool.audio-session.samples", qos: .userInitiated)
     private let finishing = DispatchGroup()
-    private let outputLock = NSLock()
+    let output: AudioRowOutput
     private let directory: URL
     private let segmentSeconds: Double
     private let clock: () -> (host: CMTime, wall: Date)
@@ -45,6 +109,16 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
         self.directory = directory
         self.monitorOnly = monitorOnly
         self.emit = emit
+        output = AudioRowOutput { [emit] count in
+            let row: [String: Any] = ["event": "warning", "droppedRows": count,
+                "message": "dropped \(count) audio level rows while the reader was not reading"]
+            if let emit, var data = try? JSONSerialization.data(withJSONObject: row, options: [.sortedKeys]) {
+                data.append(0x0a)
+                emit(data)
+            } else if emit == nil {
+                CaptureEvents.emit(row)
+            }
+        }
         segmentSeconds = seconds
         self.muted = Dictionary(uniqueKeysWithValues: muted.map { ($0, true) })
         self.paused = paused
@@ -52,9 +126,7 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
         super.init()
         if metering {
             levels = AudioLevelMeter(queue: queue, micID: micID) { [weak self] row in
-                guard let self else { return }
-                if self.emit != nil { self.writeRow(row) }
-                else { CaptureEvents.emit(row) }
+                self?.send(row, droppable: true, event: true)
             }
         }
     }
@@ -138,7 +210,7 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
                     }
                     // An established writer fills the missing time. A still empty track must take its zero
                     // from the next accepted buffer, since no file sample exists at this buffer's time.
-                    CaptureEvents.emit(["event": "warning", "message": "could not trim \(source.rawValue) segment overlap: range copy status \(copy.status)"])
+                    send(["event": "warning", "message": "could not trim \(source.rawValue) segment overlap: range copy status \(copy.status)"], event: true)
                     return
                 }
             }
@@ -166,7 +238,7 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
                     encoderPriming[source] = sessionEncoderPrimingFrames(settings: aacSettings(channels: audioChannelCount(source)))
                 }
                 if let frames = encoderPriming[source] { row["primingFrames"] = frames }
-                writeRow(row)
+                send(row)
             }
             let end = CMTimeAdd(time, CMTime(seconds: Double(length) / rate, preferredTimescale: 1_000_000_000))
             if track.end == nil || CMTimeCompare(end, track.end!) > 0 { track.end = end }
@@ -218,20 +290,23 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
             let row: [String: Any] = ["file": url.lastPathComponent, "source": source.rawValue,
                 "at": zeroAt, "zeroAt": zeroAt, "durationMs": track.fileTimeline.durationMs,
                 "mutedSpans": track.fileTimeline.mutedSpans, "lostSpans": track.lostSpans, "kept": "normal"]
-            writeRow(row)
+            send(row)
         }
     }
 
-    private func writeRow(_ row: [String: Any]) {
+    /// Segment rows go to stdout and `event` rows to the control events; a test's `emit` receives both.
+    private func send(_ row: [String: Any], droppable: Bool = false, event: Bool = false) {
+        if event, emit == nil {
+            output.send(droppable: droppable) { CaptureEvents.emit(row) }
+            return
+        }
         do {
             var data = try JSONSerialization.data(withJSONObject: row, options: [.sortedKeys])
             data.append(0x0a)
-            outputLock.lock()
-            defer { outputLock.unlock() }
             if let emit {
-                emit(data)
+                output.send(droppable: droppable) { emit(data) }
             } else {
-                FileHandle.standardOutput.write(data)
+                output.send(droppable: droppable) { FileHandle.standardOutput.write(data) }
             }
         } catch {
             failed?("could not encode an audio segment: \(error.localizedDescription)")
@@ -258,11 +333,16 @@ final class SegmentedAudio: NSObject, SCStreamOutput {
             for source in Array(tracks.keys) { retire(source) }
         }
         let finishing = self.finishing
+        let output = self.output
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             DispatchQueue.global(qos: .utility).async {
                 if finishing.wait(timeout: .now() + 15) == .timedOut {
                     continuation.resume(throwing: NSError(domain: "ax-tool", code: 75,
                         userInfo: [NSLocalizedDescriptionKey: "audio segments did not finish within 15s"]))
+                } else if !output.drain(timeout: 5) {
+                    // The last segment rows sit behind a reader that stopped reading; exiting now would lose them.
+                    continuation.resume(throwing: NSError(domain: "ax-tool", code: 75,
+                        userInfo: [NSLocalizedDescriptionKey: "audio segment rows were not read within 5s"]))
                 } else {
                     continuation.resume()
                 }

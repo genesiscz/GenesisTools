@@ -492,6 +492,7 @@ final class AudioSessionTests: XCTestCase {
         audio.queue.sync { audio.append(buffer, source: .mic) }
         let next = try pcm(samples: 4800, at: CMTimeAdd(first, CMTime(value: 100, timescale: 1000)))
         audio.queue.sync { audio.append(next, source: .mic) }
+        XCTAssertTrue(audio.output.drain(timeout: 3))
         XCTAssertEqual(lines.count, 1, "the open segment is announced once before finish")
         let started = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(lines.first)) as? [String: Any])
         XCTAssertEqual(started["event"] as? String, "segment-started")
@@ -502,6 +503,66 @@ final class AudioSessionTests: XCTestCase {
         try await audio.finish()
         let closed = try XCTUnwrap(closedRows(lines).first)
         XCTAssertEqual(closed["zeroAt"] as? String, started["zeroAt"] as? String)
+    }
+
+    func testRowOutputDropsTheOldestLevelRowsKeepsEveryOtherRowAndCountsTheDrops() {
+        let lock = NSLock()
+        var written: [String] = []
+        func record(_ name: String) {
+            lock.lock()
+            written.append(name)
+            lock.unlock()
+        }
+        let output = AudioRowOutput(droppableLimit: 2) { record("dropped \($0)") }
+        let writing = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        output.send(droppable: false) {
+            writing.signal()
+            _ = release.wait(timeout: .now() + 5)
+            record("segment-1")
+        }
+        XCTAssertEqual(writing.wait(timeout: .now() + 3), .success, "the first row is being written")
+        for name in ["level-1", "level-2"] { output.send(droppable: true) { record(name) } }
+        output.send(droppable: false) { record("segment-2") }
+        for name in ["level-3", "level-4"] { output.send(droppable: true) { record(name) } }
+        output.send(droppable: false) { record("final") }
+        XCTAssertFalse(output.drain(timeout: 0.1), "the reader is still blocked")
+        release.signal()
+        XCTAssertTrue(output.drain(timeout: 3))
+        lock.lock()
+        XCTAssertEqual(written, ["segment-1", "dropped 2", "segment-2", "level-3", "level-4", "final"])
+        lock.unlock()
+    }
+
+    func testABlockedReaderHoldsNeitherTheSampleQueueNorPauseAndMuteAndFinishWritesItsRows() async throws {
+        let directory = try directory()
+        let lock = NSLock()
+        var lines: [Data] = []
+        let release = DispatchSemaphore(value: 0)
+        let audio = SegmentedAudio(directory: directory, seconds: 60, emit: { data in
+            _ = release.wait(timeout: .now() + 10)
+            lock.lock()
+            lines.append(data)
+            lock.unlock()
+        })
+        let host = CMTime(value: 123, timescale: 1)
+        let started = Date()
+        let first = try pcm(samples: 4800, at: host)
+        audio.queue.sync { audio.append(first, source: .mic) }
+        let next = try pcm(samples: 4800, at: CMTimeAdd(host, CMTime(value: 100, timescale: 1000)))
+        audio.queue.sync { audio.append(next, source: .mic) }
+        audio.setMuted(.mic, true)
+        audio.setPaused(true)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2, "no call waited for the blocked reader")
+        XCTAssertFalse(audio.output.drain(timeout: 0.1))
+        release.signal()
+        release.signal()
+        try await audio.finish()
+        lock.lock()
+        let rows = lines
+        lock.unlock()
+        XCTAssertEqual(rows.count, 2, "the segment start and the closed segment are both written")
+        XCTAssertEqual(try closedRows(rows).first?["durationMs"] as? Int, 200)
     }
 
     func testEncoderReportsPrimingInFramesAtEachSampleRate() throws {
