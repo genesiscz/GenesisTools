@@ -603,6 +603,18 @@ export function withAppBuildSlot<T>(run: () => Promise<T>): Promise<T> {
     return withFileLock(appBuildLockPath(), run, BUILD_LOCK_TIMEOUT_MS);
 }
 
+/**
+ * Compiler warnings that fail every app and package build. Swift 5 mode binds an unlabeled trailing closure to the LAST
+ * closure parameter when forward and backward matching differ, and only warns: when `EmptyState` gained a second
+ * closure, every `EmptyState(...) { }` silently moved to it and seven empty states lost their button.
+ */
+export const SWIFT_WARNINGS_AS_ERRORS: readonly string[] = [
+    "-Xswiftc",
+    "-Werror",
+    "-Xswiftc",
+    "TrailingClosureMatching",
+];
+
 /** SwiftPM accepts both the short and long jobs option. Preserve a caller's explicit worker budget. */
 export function swiftJobArgs(args: readonly string[]): string[] {
     return args.some((arg) => /^(--jobs(?:=|$)|-j(?:\d+|$))/.test(arg)) ? [] : ["--jobs", "4"];
@@ -722,6 +734,7 @@ function appSwiftArgs(
 ): string[] {
     return [
         ...swiftJobArgs(args),
+        ...SWIFT_WARNINGS_AS_ERRORS,
         "-c",
         "debug",
         "-Xswiftc",
