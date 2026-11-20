@@ -510,12 +510,21 @@ extension MeetingsQuestionRowsTests {
         let old = ReviewRows(meeting: "copy", rows: [try question()], hidden: .init(lowPriority: 0, minPriority: 0))
         let fresh = ReviewRows(meeting: "copy", rows: [try question(status: "confirmed", token: "next")], hidden: old.hidden)
         var loads = 0
+        var firstCalls = 0
+        var secondCalls = 0
         var releaseFirst: CheckedContinuation<Void, Never>?
         var releaseSecond: CheckedContinuation<Void, Never>?
         let firstHeld = expectation(description: "the first load is in flight")
         let secondHeld = expectation(description: "the read after the write is in flight")
+        // Each closure parks only on its first call: a repeat load fails the test and returns at once, so a
+        // regression that reloads ends in a failed assertion instead of a load nobody resumes.
         let first = Task { try await refresh.read(key) {
             loads += 1
+            firstCalls += 1
+            guard firstCalls == 1 else {
+                XCTFail("The overtaken load loaded again")
+                return fresh
+            }
             await withCheckedContinuation { releaseFirst = $0; firstHeld.fulfill() }
             return old
         } }
@@ -524,6 +533,11 @@ extension MeetingsQuestionRowsTests {
         refresh.endWrite()
         let second = Task { try await refresh.read(key) {
             loads += 1
+            secondCalls += 1
+            guard secondCalls == 1 else {
+                XCTFail("The read after the write loaded again")
+                return fresh
+            }
             await withCheckedContinuation { releaseSecond = $0; secondHeld.fulfill() }
             return fresh
         } }
@@ -534,8 +548,11 @@ extension MeetingsQuestionRowsTests {
         }
         // The overtaken load returns stale rows while the newer read still loads: it must join that read, not reload.
         releaseFirst.resume()
-        // Main-actor turns, not a timer: the overtaken load runs until it parks on the newer read's task.
-        for _ in 0..<20 { await Task.yield() }
+        // The handoff signal: the overtaken load counts its finished read and decides, with no suspension between,
+        // whether to join the newer read or load again. Bounded by a deadline, so a load that never returns fails.
+        let deadline = ContinuousClock.now + .seconds(5)
+        while refresh.completedReadCount < 1, ContinuousClock.now < deadline { await Task.yield() }
+        XCTAssertEqual(refresh.completedReadCount, 1, "The overtaken load never returned its rows")
         XCTAssertEqual(loads, 2, "The overtaken load must not start a load of its own")
         releaseSecond.resume()
         let firstValue = try await first.value
