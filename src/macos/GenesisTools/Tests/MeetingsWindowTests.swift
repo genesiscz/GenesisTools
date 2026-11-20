@@ -123,7 +123,7 @@ final class MeetingsWindowTests: XCTestCase {
         model.go(.project("side"))
         XCTAssertEqual(model.visibleMeetings.map(\.id), ["c"])
         XCTAssertEqual(model.selectedMeetingID, "c", "a selection the place does not show moves to its first meeting")
-        XCTAssertEqual(overview.meetings[1].displayTitle, "Untitled meeting")
+        XCTAssertEqual(try overview.meetings.required(1).displayTitle, "Untitled meeting")
     }
 
     func testTheOpenOnSettingPicksTheFirstPlace() throws {
@@ -317,14 +317,14 @@ final class MeetingsWindowTests: XCTestCase {
         [{"type":"term","value":"SDK","spoken":["es dee kay"],"meaning":"old","level":"global"},
          {"type":"fix","value":"ID","substitution":"identity","caseSensitive":true,"level":"global"}]
         """.utf8))
-        XCTAssertEqual(entries[1].caseSensitive, true)
-        let term = entries[0]
+        XCTAssertEqual(try entries.required(1).caseSensitive, true)
+        let term = try entries.required(0)
         XCTAssertEqual(MeetingsSettingsModel.addEntryArgs(type: term.type, value: term.value, substitution: nil,
                                                           spoken: MeetingsDictionaryRules.spokenForms((term.spoken ?? []).joined(separator: ", ")),
                                                           meaning: "new meaning", scope: nil),
                        ["dictionary", "add", "SDK", "--type", "term", "--spoken", "es dee kay", "--meaning", "new meaning"])
         XCTAssertEqual(MeetingsSettingsModel.addEntryArgs(type: "fix", value: "ID", substitution: "identity",
-                                                          caseSensitive: entries[1].caseSensitive == true, scope: nil),
+                                                          caseSensitive: try entries.required(1).caseSensitive == true, scope: nil),
                        ["dictionary", "add", "ID", "identity", "--type", "fix", "--case-sensitive"])
         XCTAssertEqual(MeetingsDictionaryRules.spokenForms(" zus tent, ,zu stand "), ["zus tent", "zu stand"])
     }
@@ -460,7 +460,7 @@ final class MeetingsWindowTests: XCTestCase {
         """.utf8))
         XCTAssertEqual(MeetingsSettingsModel.pairedNote(Array(paired.prefix(1)), project: "shop"), "Paired Alice Example with shop")
         XCTAssertEqual(MeetingsSettingsModel.pairedNote(paired, project: "shop"), "Paired 2 people with shop")
-        XCTAssertEqual(MeetingsWords.pairedBy(paired[1].by), "by hand: from the meeting “Sync” on 2026-11-03")
+        XCTAssertEqual(MeetingsWords.pairedBy(try paired.required(1).by), "by hand: from the meeting “Sync” on 2026-11-03")
     }
 
     func testAProjectCardKeepsItsOpenStateAcrossARename() throws {

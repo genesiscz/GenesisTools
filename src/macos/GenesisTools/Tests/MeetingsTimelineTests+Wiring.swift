@@ -430,7 +430,7 @@ extension MeetingsTimelineTests {
         window.player.play(.time(100), in: "a", from: .row)
         try await until("the Moment plays") { window.player.phase == .playing }
         let items = try JSONDecoder().decode([MeetingItem].self, from: MeetingsUXTests.itemsJSON())
-        detail.showDecided(items[0], confirm: true, token: "t-1")
+        detail.showDecided(try items.required(0), confirm: true, token: "t-1")
         try await until("the dock and the stack are drawn") {
             (FrameProbe.frames["meetings.dock"]?.height ?? 0) > 40 && FrameProbe.frames["notice-stack"] != nil
         }

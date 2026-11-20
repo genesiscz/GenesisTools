@@ -213,9 +213,9 @@ final class MeetingsLibraryAPITests: XCTestCase {
         let plain = MeetingsAPI.ConfigEdit.Edit(path: "global.assign.ask", unset: true)
         let encoded = try MeetingsService.paramsObject(MeetingsAPI.ConfigEdit.Params(edits: [guarded, plain]))
         let edits = try XCTUnwrap(encoded["edits"] as? [[String: Any]])
-        XCTAssertTrue(edits[0]["expect"] is NSNull, "a null expect is sent")
-        XCTAssertNil(edits[1]["expect"], "no expect is left out")
-        XCTAssertNil(edits[1]["value"], "an unset sends no value")
+        XCTAssertTrue(try edits.required(0)["expect"] is NSNull, "a null expect is sent")
+        XCTAssertNil(try edits.required(1)["expect"], "no expect is left out")
+        XCTAssertNil(try edits.required(1)["value"], "an unset sends no value")
         let decoded = try MeetingsService.decode(MeetingsAPI.ConfigEdit.Params.self, encoded)
         XCTAssertEqual(decoded.edits, [guarded, plain])
     }

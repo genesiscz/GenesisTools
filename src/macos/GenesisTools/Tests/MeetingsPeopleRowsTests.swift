@@ -9,7 +9,7 @@ final class MeetingsPeopleRowsTests: XCTestCase {
         let groups = PresenceGroup.make(record)
         XCTAssertEqual(groups.map(\.title), ["Room", "Via Desk microphone", "Remote"])
         XCTAssertEqual(groups.flatMap { $0.people.map(\.id) }, ["Alice Example", "Bob Example", "Dana Example"])
-        XCTAssertEqual(groups[2].people[0].reads.map(\.tSec), [2])
+        XCTAssertEqual(try groups.required(2).people.required(0).reads.map(\.tSec), [2])
         XCTAssertTrue(PresenceGroup.make(nil).isEmpty)
         var unseated = record; unseated.seats = nil; XCTAssertEqual(PresenceGroup.make(unseated).map(\.title), ["Unknown seat"])
         try picture(VStack(alignment: .leading) { ForEach(groups) { group in

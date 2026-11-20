@@ -54,18 +54,18 @@ final class MeetingsTimedSeatsTests: XCTestCase {
         let saved = try JSONEncoder().encode(draft.parsed)
         let rows = try XCTUnwrap(JSONSerialization.jsonObject(with: saved) as? [String: Any])
         let room = try XCTUnwrap(rows["room"] as? [Any])
-        XCTAssertEqual(room[0] as? String, "Reed Example")
-        let interval = try XCTUnwrap(room[1] as? [String: Any])
+        XCTAssertEqual(try room.required(0) as? String, "Reed Example")
+        let interval = try XCTUnwrap(try room.required(1) as? [String: Any])
         XCTAssertEqual(interval["name"] as? String, "Fern Example")
         XCTAssertEqual(interval["fromSec"] as? Double, 60)
         XCTAssertEqual(interval["toSec"] as? Double, 120)
         let reopened = try JSONDecoder().decode(MeetingSeats.self, from: saved)
         XCTAssertEqual(reopened.remote.map(\.fromSec), [nil, 150, 5])
         XCTAssertEqual(reopened.remote.map(\.toSec), [60, nil, nil])
-        XCTAssertEqual(reopened.remote[1].label, "Guest")
+        XCTAssertEqual(try reopened.remote.required(1).label, "Guest")
         XCTAssertEqual(reopened.microphones, [.init(id: "self", people: ["Reed Example", "Fern Example"])])
         draft.roomLeaves[1] = "2:05"
-        XCTAssertEqual(draft.parsed.roomRows[1].toSec, 125)
+        XCTAssertEqual(try draft.parsed.roomRows.required(1).toSec, 125)
         draft.roomJoins[1] = "0:59"
         XCTAssertNotNil(draft.problem)
         draft.roomJoins[1] = "1:00"
@@ -79,8 +79,8 @@ final class MeetingsTimedSeatsTests: XCTestCase {
         draft.joins[2] = "0:05"
         draft.leaves[2] = "0:55"
         XCTAssertNil(draft.problem)
-        XCTAssertEqual(draft.parsed.remote[2].fromSec, 5)
-        XCTAssertEqual(draft.parsed.roomRows[1].toSec, 125)
+        XCTAssertEqual(try draft.parsed.remote.required(2).fromSec, 5)
+        XCTAssertEqual(try draft.parsed.roomRows.required(1).toSec, 125)
     }
 
     func testNewEmptyRemoteIntervalCannotBeSaved() throws {
@@ -138,12 +138,12 @@ final class MeetingsTimedSeatsTests: XCTestCase {
         XCTAssertEqual(draft.parsed.remote.map(\.fromSec), [1.387, 2.5])
         XCTAssertEqual(draft.times(.remote, at: 0).from, 1.387)
         draft.joins[0] = "0:30"
-        XCTAssertEqual(draft.parsed.remote[0].fromSec, 30)
+        XCTAssertEqual(try draft.parsed.remote.required(0).fromSec, 30)
         let room = MeetingSeatsDraft(try JSONDecoder().decode(MeetingSeats.self,
                                                               from: Data(#"{"room":[{"name":"Reed Example","fromSec":0.4,"toSec":120}]}"#.utf8)))
         XCTAssertEqual(room.roomJoins, [""])
         XCTAssertEqual(room.roomLeaves, ["02:00"])
-        XCTAssertEqual(room.parsed.roomRows[0].fromSec, 0.4)
+        XCTAssertEqual(try room.parsed.roomRows.required(0).fromSec, 0.4)
         XCTAssertEqual(room.times(.room, at: 0).to, 120)
         XCTAssertEqual(MeetingSeatsEditor.startPrompt, "At the start")
         XCTAssertEqual(MeetingSeatsEditor.endPrompt, "At the end")

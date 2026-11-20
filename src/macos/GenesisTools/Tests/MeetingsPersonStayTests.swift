@@ -72,7 +72,7 @@ final class MeetingsPersonStayTests: XCTestCase {
         var draft = MeetingSeatsDraft(seats)
         XCTAssertEqual(draft.joins, ["01:15"])
         draft.joins[0] = "1:"
-        XCTAssertEqual(draft.joins[0], "1:", "a half-typed time stays while it is typed")
+        XCTAssertEqual(try draft.joins.required(0), "1:", "a half-typed time stays while it is typed")
         XCTAssertEqual(draft.problem, "Dana Example: Write a time as 12:04 or 1:05:30, or leave it empty.")
         draft.joins[0] = "1:05"
         draft.leaves[0] = "1:00:00"
@@ -156,10 +156,10 @@ final class MeetingsPersonStayTests: XCTestCase {
         XCTAssertEqual(draft.newDevices, [.thisMac, .owner("Dana Example")])
 
         draft.addMicrophone(.thisMac)
-        XCTAssertEqual(draft.seats.microphones?[0], .init(id: "self", label: nil, people: ["Alice Example", "Bob Example"], deviceId: nil),
+        XCTAssertEqual(try draft.seats.microphones?.required(0), .init(id: "self", label: nil, people: ["Alice Example", "Bob Example"], deviceId: nil),
                        "this Mac's microphone starts with the room")
         draft.addMicrophone(.owner("Dana Example"))
-        XCTAssertEqual(draft.seats.microphones?[1],
+        XCTAssertEqual(try draft.seats.microphones?.required(1),
                        .init(id: "device:Dana Example", label: nil, people: ["Dana Example"], deviceId: "Dana Example"),
                        "a person's own device as the engine writes it")
         XCTAssertEqual(draft.newDevices, [], "every seat has its microphone")
@@ -167,10 +167,10 @@ final class MeetingsPersonStayTests: XCTestCase {
 
         draft.seatRemote("Bob Example")
         XCTAssertEqual(draft.seats.room, ["Alice Example"], "a person has one seat: Bob moves")
-        XCTAssertEqual(draft.seats.microphones?[0].people, ["Alice Example"], "and leaves the room's microphone")
+        XCTAssertEqual(try draft.seats.microphones?.required(0).people, ["Alice Example"], "and leaves the room's microphone")
         XCTAssertEqual(draft.eligible(1), ["Dana Example", "Bob Example"], "a device offers the remote people")
         draft.toggle("Bob Example", inMicrophone: 1)
-        XCTAssertEqual(draft.seats.microphones?[1].people, ["Dana Example", "Bob Example"])
+        XCTAssertEqual(try draft.seats.microphones?.required(1).people, ["Dana Example", "Bob Example"])
         XCTAssertEqual(draft.devices(for: 0).map(\.free), [true, false, true], "Dana's device is the other group")
 
         draft.toggle("Alice Example", inMicrophone: 0)
@@ -178,7 +178,7 @@ final class MeetingsPersonStayTests: XCTestCase {
         draft.removeMicrophone(at: 0)
         XCTAssertNil(draft.problem)
         draft.unseat("Dana Example")
-        XCTAssertEqual(draft.seats.microphones?[0].people, ["Bob Example"], "an unseated person leaves every microphone")
+        XCTAssertEqual(try draft.seats.microphones?.required(0).people, ["Bob Example"], "an unseated person leaves every microphone")
         let saved = draft.parsed
         XCTAssertEqual(saved.room, ["Alice Example"])
         XCTAssertEqual(saved.remote.map(\.name), ["Bob Example"])

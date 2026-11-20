@@ -370,7 +370,7 @@ final class MeetingsReviewFixTests: XCTestCase {
 
     func testForwardedMuteStopsAndReplacesExistingPlayback() throws {
         let (window, _, player, rows) = try autoplayFixture()
-        player.play(rows.rows[0].target, in: "m", from: .row)
+        player.play(try rows.rows.required(0).target, in: "m", from: .row)
         XCTAssertNotNil(player.top)
         MeetingsWindow(primary: false).apply(MeetingsRequest.parse(["--muted"]), to: window)
         XCTAssertNil(player.top, "forwarded mute must stop the previous player")
@@ -380,7 +380,7 @@ final class MeetingsReviewFixTests: XCTestCase {
     func testDelayedAutoplayCannotLeaveItsMeeting() async throws {
         let (window, detail, player, rows) = try autoplayFixture()
         defer { withExtendedLifetime(window) {} }
-        detail.autoplayNext(after: rows.rows[0])
+        detail.autoplayNext(after: try rows.rows.required(0))
         let pending = try XCTUnwrap(detail.autoplayTask)
         window.select("other", tab: .items)
         await pending.value
@@ -391,7 +391,7 @@ final class MeetingsReviewFixTests: XCTestCase {
     func testDelayedAutoplayCannotUseAReplacedPlayer() async throws {
         let (window, detail, player, rows) = try autoplayFixture()
         defer { withExtendedLifetime(window) {} }
-        detail.autoplayNext(after: rows.rows[0])
+        detail.autoplayNext(after: try rows.rows.required(0))
         let pending = try XCTUnwrap(detail.autoplayTask)
         window.player = MomentPlayer(engine: .init(cut: { _ in throw CancellationError() },
                                                    plan: { _ in .init(moment: nil, cannot: nil) },
@@ -404,7 +404,7 @@ final class MeetingsReviewFixTests: XCTestCase {
     func testDelayedAutoplayCannotReplaceAnotherStoppedOrFailedMoment() async throws {
         let (window, detail, player, rows) = try autoplayFixture()
         defer { withExtendedLifetime(window) {} }
-        detail.autoplayNext(after: rows.rows[0])
+        detail.autoplayNext(after: try rows.rows.required(0))
         let pending = try XCTUnwrap(detail.autoplayTask)
         player.play(.time(500), in: "m", from: .row)
         let selected = try XCTUnwrap(player.top?.id)
@@ -416,9 +416,9 @@ final class MeetingsReviewFixTests: XCTestCase {
     func testDelayedAutoplayStillPlaysForTheCurrentUnchangedMeeting() async throws {
         let (window, detail, player, rows) = try autoplayFixture()
         defer { withExtendedLifetime(window) {} }
-        detail.autoplayNext(after: rows.rows[0])
+        detail.autoplayNext(after: try rows.rows.required(0))
         try await XCTUnwrap(detail.autoplayTask).value
-        XCTAssertEqual(player.top?.target, rows.rows[1].target)
+        XCTAssertEqual(player.top?.target, try rows.rows.required(1).target)
         player.stop()
     }
 
@@ -541,8 +541,8 @@ final class MeetingsReviewFixTests: XCTestCase {
         let firstBefore = try XCTUnwrap(FrameProbe.frames["meetings.row.r1"])
 
         // What `decided` does after the service saved the answer: the row folds and the next open row is selected.
-        detail.foldAnswered(rows.rows[0], entry: try confirmed("r1"))
-        detail.autoplayNext(after: rows.rows[0])
+        detail.foldAnswered(try rows.rows.required(0), entry: try confirmed("r1"))
+        detail.autoplayNext(after: try rows.rows.required(0))
         settle()
         XCTAssertEqual(detail.selectedRow, "r2")
         XCTAssertEqual(detail.rows.value?.rows.first?.status, "confirmed", "the answered row folds at once (R16)")
@@ -565,10 +565,10 @@ final class MeetingsReviewFixTests: XCTestCase {
         let detail = MeetingDetailModel(id: "m", window: window)
         let rows = try termRows()
         detail.rows = .loaded(rows)
-        detail.foldAnswered(rows.rows[0], entry: try confirmed("r1"))
+        detail.foldAnswered(try rows.rows.required(0), entry: try confirmed("r1"))
         XCTAssertTrue(detail.heldFolds.isEmpty, "off: the row folds to one line at once")
         defaults.removeObject(forKey: MeetingsPreferences.Rows.keepPlace.key)
-        detail.foldAnswered(rows.rows[1], entry: try confirmed("r2"))
+        detail.foldAnswered(try rows.rows.required(1), entry: try confirmed("r2"))
         XCTAssertEqual(detail.heldFolds, ["r2"], "on by default")
         XCTAssertEqual(MeetingDetailModel.visibleRows(detail.rows.value?.rows ?? [], order: .priority, decided: .hidden,
                                                       keeping: detail.heldFolds).map(\.id),

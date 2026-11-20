@@ -138,9 +138,9 @@ final class MeetingsVoicesTests: XCTestCase {
         XCTAssertEqual(confirmed.who, .name("Speaker 2"))
         let blocks = TranscriptBlock.build(from: [voiced, confirmed])
         XCTAssertEqual(blocks.count, 2, "a voice name and a plain name are two blocks")
-        XCTAssertTrue(blocks[0].lines[0].marks.contains(.byVoice))
-        XCTAssertEqual(blocks[0].lines[0].voiceScore, 0.71)
-        XCTAssertFalse(blocks[1].lines[0].marks.contains(.byVoice))
+        XCTAssertTrue(try blocks.required(0).lines.required(0).marks.contains(.byVoice))
+        XCTAssertEqual(try blocks.required(0).lines.required(0).voiceScore, 0.71)
+        XCTAssertFalse(try blocks.required(1).lines.required(0).marks.contains(.byVoice))
 
         let text = try drawnText(VStack(alignment: .leading) {
             ForEach(blocks) { block in TranscriptBlockView(block: block, heardLineID: nil, selected: [], past: false, play: { _ in }) }

@@ -51,11 +51,11 @@ final class MeetingsTimelineTests: XCTestCase {
         let clusters = PinCluster.clusters(pins, in: 0...600, width: 600)
         XCTAssertEqual(clusters.map { $0.pins.map(\.id) }, [["i0", "i1", "i2"], ["i3", "i4"], ["i5"], ["i6"]],
                        "40 and 46 are 6 pt apart: two 16 pt marks there drew over each other")
-        XCTAssertEqual(clusters[0].x, 10, "merged marks stay anchored to their first pin")
-        XCTAssertEqual(clusters[0].range, 10...17)
-        XCTAssertEqual(clusters[1].x, 40)
-        XCTAssertEqual(clusters[1].room, 30)
-        XCTAssertEqual(clusters[3].room, 300)
+        XCTAssertEqual(try clusters.required(0).x, 10, "merged marks stay anchored to their first pin")
+        XCTAssertEqual(try clusters.required(0).range, 10...17)
+        XCTAssertEqual(try clusters.required(1).x, 40)
+        XCTAssertEqual(try clusters.required(1).room, 30)
+        XCTAssertEqual(try clusters.required(3).room, 300)
 
         // A dense stretch (a pin every 8 pt) is a row of counts, never one count for all of it, and never an overlap.
         let dense = stride(from: 100.0, through: 300, by: 8).enumerated().map { index, sec in
@@ -137,15 +137,15 @@ final class MeetingsTimelineTests: XCTestCase {
     }
 
     /// G-PLAY-5: a mark is dimmed only when every pin in it is filtered out; its state is the strongest of its pins.
-    func testAMergedMarkIsDimmedOnlyWhenEveryPinIsAndTakesItsStrongestState() {
+    func testAMergedMarkIsDimmedOnlyWhenEveryPinIsAndTakesItsStrongestState() throws {
         let pins = [
             TimelinePin(id: "a", sec: 10, text: "a", state: .done, dimmed: true),
             TimelinePin(id: "b", sec: 12, text: "b", state: .question, dimmed: false),
         ]
-        let mark = PinCluster.clusters(pins, in: 0...600, width: 600)[0]
+        let mark = try PinCluster.clusters(pins, in: 0...600, width: 600).required(0)
         XCTAssertFalse(mark.dimmed)
         XCTAssertEqual(mark.state, .question)
-        let hidden = PinCluster.clusters(pins.map { TimelinePin(id: $0.id, sec: $0.sec, text: $0.text, state: $0.state, dimmed: true) }, in: 0...600, width: 600)[0]
+        let hidden = try PinCluster.clusters(pins.map { TimelinePin(id: $0.id, sec: $0.sec, text: $0.text, state: $0.state, dimmed: true) }, in: 0...600, width: 600).required(0)
         XCTAssertTrue(hidden.dimmed)
     }
 
@@ -187,7 +187,7 @@ final class MeetingsTimelineTests: XCTestCase {
         // Far apart: one row, the texts whole.
         let apart = PinCluster.laid([pin("a", 3056.5, "one"), pin("b", 3058.5, "two")], in: 3056...3060, width: 1200, lanes: 2)
         XCTAssertEqual(apart.map(\.lane), [0, 0])
-        XCTAssertEqual(apart[0].room, 600, "the room to the next mark on the same row")
+        XCTAssertEqual(try apart.required(0).room, 600, "the room to the next mark on the same row")
         // The first mark's text does not fit before the second pin: the second goes one row down, the text stays whole.
         let near = PinCluster.laid([pin("a", 3057.0), pin("b", 3057.2)], in: 3056...3060, width: 1200, lanes: 2)
         XCTAssertEqual(near.map(\.lane), [0, 1])
@@ -252,9 +252,9 @@ final class MeetingsTimelineTests: XCTestCase {
                                          names: ["Speaker 1": "Alice Novak"])
         XCTAssertEqual(voices.legend.map(\.name), ["Speaker 2", "Alice Novak"], "the most spoken first, by the shown name")
         XCTAssertEqual(voices.spans.map(\.fromSec), [0, 20, 30], "in the order of their start")
-        XCTAssertEqual(voices.spans[1].color, KitPersonColor.color(for: "Alice Novak", among: ["Alice Novak", "Speaker 2"]),
+        XCTAssertEqual(try voices.spans.required(1).color, KitPersonColor.color(for: "Alice Novak", among: ["Alice Novak", "Speaker 2"]),
                        "the avatar's colour: the shown name among the meeting's shown names")
-        XCTAssertNotEqual(voices.spans[0].color, voices.spans[1].color)
+        XCTAssertNotEqual(try voices.spans.required(0).color, try voices.spans.required(1).color)
         XCTAssertTrue(TimelineDock.coloursVoices("speakers", look: .aurora))
         XCTAssertFalse(TimelineDock.coloursVoices("plain", look: .aurora))
         XCTAssertFalse(TimelineDock.coloursVoices("speakers", look: .classic), "the classic look keeps its one colour")

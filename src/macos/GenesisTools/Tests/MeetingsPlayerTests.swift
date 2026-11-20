@@ -235,14 +235,14 @@ final class MeetingsPlayerTests: XCTestCase {
         XCTAssertEqual(sounds.first?.currentTime, 0, "the clip plays from its start: the pad, then the tone at the spot")
         XCTAssertTrue(player.isPlaying(.item("i3"), in: "m"))
 
-        sounds[0].currentTime = 5.2
+        try sounds.required(0).currentTime = 5.2
         player.play(.item("i3"), in: "m", from: .row)
         XCTAssertEqual(player.phase, .paused, "a second click on the same row pauses (R14)")
         XCTAssertEqual(player.top?.pausedAt ?? 0, 100.2, accuracy: 0.0001)
         XCTAssertEqual(engine.cuts.count, 1, "and cuts nothing again")
         player.resume()
         XCTAssertEqual(player.phase, .playing)
-        XCTAssertEqual(sounds[0].currentTime, 4.75, accuracy: 0.0001, "play on goes back to the tone's end, not into the tone")
+        XCTAssertEqual(try sounds.required(0).currentTime, 4.75, accuracy: 0.0001, "play on goes back to the tone's end, not into the tone")
     }
 
     func testAClipThatFinishesCuttingDuringACommentWaitsUntilTheEditorCloses() async throws {
@@ -275,22 +275,22 @@ final class MeetingsPlayerTests: XCTestCase {
         let player = makePlayer()
         player.play(.item("q1"), in: "m", from: .row)
         try await until("the question plays") { player.phase == .playing }
-        sounds[0].currentTime = 8
+        try sounds.required(0).currentTime = 8
 
         player.play(.range(from: 730, to: 750), in: "m", from: .questionTime)
         XCTAssertEqual(player.stack.count, 2, "the question's own time layers up (R38)")
-        XCTAssertFalse(sounds[0].isPlaying, "the Moment below paused at once")
-        XCTAssertEqual(player.stack[0].pausedAt ?? 0, 103, accuracy: 0.0001)
+        XCTAssertFalse(try sounds.required(0).isPlaying, "the Moment below paused at once")
+        XCTAssertEqual(try player.stack.required(0).pausedAt ?? 0, 103, accuracy: 0.0001)
         try await until("the pushed Moment plays") { player.phase == .playing && self.sounds.count == 2 }
         XCTAssertEqual(playingCount, 1, "two sounds never play at once")
         XCTAssertEqual(player.top?.label, "12:10–12:30")
 
-        sounds[1].finish()
+        try sounds.required(1).finish()
         XCTAssertEqual(player.stack.count, 1, "the pushed Moment left when it ended")
-        XCTAssertTrue(sounds[1].stopped)
+        XCTAssertTrue(try sounds.required(1).stopped)
         XCTAssertEqual(player.phase, .playing, "the one below plays again")
-        XCTAssertTrue(sounds[0].isPlaying)
-        XCTAssertEqual(sounds[0].currentTime, 7, accuracy: 0.0001, "from where it stopped, 1 s earlier")
+        XCTAssertTrue(try sounds.required(0).isPlaying)
+        XCTAssertEqual(try sounds.required(0).currentTime, 7, accuracy: 0.0001, "from where it stopped, 1 s earlier")
         XCTAssertEqual(playingCount, 1)
     }
 
@@ -364,13 +364,13 @@ final class MeetingsPlayerTests: XCTestCase {
         player.pause()
         player.seek(to: 108)
         XCTAssertEqual(player.phase, .paused)
-        XCTAssertEqual(sounds[0].currentTime, 13, accuracy: 0.0001)
+        XCTAssertEqual(try sounds.required(0).currentTime, 13, accuracy: 0.0001)
         player.resume()
-        XCTAssertEqual(sounds[0].currentTime, 13, accuracy: 0.0001, "Play must keep the explicitly chosen time")
-        sounds[0].currentTime = 14
+        XCTAssertEqual(try sounds.required(0).currentTime, 13, accuracy: 0.0001, "Play must keep the explicitly chosen time")
+        try sounds.required(0).currentTime = 14
         player.pause()
         player.resume()
-        XCTAssertEqual(sounds[0].currentTime, 13, accuracy: 0.0001, "an ordinary pause still uses the one-second rewind")
+        XCTAssertEqual(try sounds.required(0).currentTime, 13, accuracy: 0.0001, "an ordinary pause still uses the one-second rewind")
     }
 
     func testReturningToAPausedSeekKeepsItsChosenTime() async throws {
@@ -382,7 +382,7 @@ final class MeetingsPlayerTests: XCTestCase {
         player.play(.time(40), in: "m", from: .questionTime)
         try await until("the pushed clip plays") { self.sounds.count == 2 && player.phase == .playing }
         player.pop()
-        XCTAssertEqual(sounds[0].currentTime, 13, accuracy: 0.0001)
+        XCTAssertEqual(try sounds.required(0).currentTime, 13, accuracy: 0.0001)
         XCTAssertEqual(player.phase, .playing)
     }
 
@@ -395,7 +395,7 @@ final class MeetingsPlayerTests: XCTestCase {
         player.pause()
         player.seek(to: 108)
         player.resume()
-        XCTAssertEqual(sounds[0].currentTime, 12, accuracy: 0.0001)
+        XCTAssertEqual(try sounds.required(0).currentTime, 12, accuracy: 0.0001)
     }
 
     func testATranscriptTimeSeeksInsideTheClipAndReplacesTheTopOutsideIt() async throws {
@@ -403,14 +403,14 @@ final class MeetingsPlayerTests: XCTestCase {
         player.play(.item("i3"), in: "m", from: .row)
         try await until("it plays") { player.phase == .playing }
         player.playTime(108, in: "m")
-        XCTAssertEqual(sounds[0].currentTime, 13, accuracy: 0.0001, "inside the clip: a seek, no new cut")
+        XCTAssertEqual(try sounds.required(0).currentTime, 13, accuracy: 0.0001, "inside the clip: a seek, no new cut")
         XCTAssertEqual(engine.cuts.count, 1)
 
         player.playTime(600, in: "m", from: .row)
         XCTAssertEqual(player.stack.count, 1)
         XCTAssertEqual(player.top?.target, .time(600), "outside the clip: the Moment at that time takes the top's place (G-PLAY-1)")
         try await until("the new Moment plays") { player.phase == .playing && self.sounds.count == 2 }
-        XCTAssertTrue(sounds[0].stopped)
+        XCTAssertTrue(try sounds.required(0).stopped)
         XCTAssertEqual(engine.cuts.last?.tone, false, "outside playback must not add a tone")
     }
 
@@ -418,14 +418,14 @@ final class MeetingsPlayerTests: XCTestCase {
         let player = makePlayer()
         player.play(.time(60), in: "m", from: .transcript)
         try await until("it plays") { player.phase == .playing }
-        sounds[0].finish()
+        try sounds.required(0).finish()
         XCTAssertEqual(player.phase, .ended(offerMore: true), "the default afterClip offers more")
         player.playMore()
         XCTAssertEqual(player.top?.target, .range(from: 75, to: 105), "30 s from the clip's end")
 
         defaults.set("stop", forKey: MeetingsPreferences.Playback.afterClip.key)
         try await until("it plays") { player.phase == .playing && self.sounds.count == 2 }
-        sounds[1].finish()
+        try sounds.required(1).finish()
         XCTAssertEqual(player.phase, .ended(offerMore: false))
     }
 
@@ -543,11 +543,11 @@ final class MeetingsPlayerTests: XCTestCase {
         player.playMeeting("m", at: 1234)
         try await until("it plays") { player.phase == .playing }
         XCTAssertEqual(player.top?.kind, .file)
-        XCTAssertEqual(sounds[0].url.lastPathComponent, "upload.ogg")
-        XCTAssertEqual(sounds[0].currentTime, 1234, "the file plays from the time: no cut")
+        XCTAssertEqual(try sounds.required(0).url.lastPathComponent, "upload.ogg")
+        XCTAssertEqual(try sounds.required(0).currentTime, 1234, "the file plays from the time: no cut")
         XCTAssertTrue(engine.cuts.isEmpty)
         player.playTime(2000, in: "m")
-        XCTAssertEqual(sounds[0].currentTime, 2000, "a seek in the whole meeting is instant")
+        XCTAssertEqual(try sounds.required(0).currentTime, 2000, "a seek in the whole meeting is instant")
     }
 
     func testSeveralTracksPlayAsSixtySecondMomentsOneAfterTheOther() async throws {
@@ -558,9 +558,9 @@ final class MeetingsPlayerTests: XCTestCase {
         XCTAssertEqual(player.top?.kind, .rolling)
         XCTAssertEqual(engine.cuts.first?.target, .range(from: 100, to: 160))
         XCTAssertEqual(engine.cuts.first?.padSec, 0, "the stretches meet end to start")
-        sounds[0].finish()
+        try sounds.required(0).finish()
         try await until("the next stretch is cut") { self.engine.cuts.count == 2 }
-        XCTAssertEqual(engine.cuts[1].target, .range(from: 160, to: 220))
+        XCTAssertEqual(try engine.cuts.required(1).target, .range(from: 160, to: 220))
     }
 
     func testTheViewSettingPlaysAnOutsideTimeAsTheWholeMeeting() async throws {
@@ -653,7 +653,7 @@ final class MeetingsPlayerTests: XCTestCase {
         player.showMeeting("m", from: 2926)
         XCTAssertEqual(player.stack.count, 1, "the same play moves there; no level is added")
         XCTAssertEqual(player.top?.label, "The meeting from 48:46", "the breadcrumb says where the sound is")
-        XCTAssertEqual(sounds[0].currentTime, 2926)
+        XCTAssertEqual(try sounds.required(0).currentTime, 2926)
         XCTAssertEqual(player.phase, .playing, "Show plays from the stretch's start, also from a pause")
     }
 
@@ -695,7 +695,7 @@ final class MeetingsPlayerTests: XCTestCase {
         let player = makePlayer()
         player.play(.item("i1"), in: "m", from: .row)
         try await until("it plays") { player.phase == .playing }
-        XCTAssertEqual(sounds[0].rate, 1.5)
+        XCTAssertEqual(try sounds.required(0).rate, 1.5)
     }
 }
 
@@ -710,7 +710,7 @@ extension MeetingsPlayerTests {
         player.playMeeting("m", at: 3590)
         try await until("it plays") { player.phase == .playing }
         XCTAssertEqual(player.top?.kind, .file)
-        sounds[0].finish()
+        try sounds.required(0).finish()
         XCTAssertEqual(player.phase, .ended(offerMore: false), "the recording's end is the end: no repeat, no more past it")
         try await Task.sleep(for: .milliseconds(50))
         XCTAssertTrue(engine.cuts.isEmpty, "nothing past the recording is cut")

@@ -173,7 +173,7 @@ extension MeetingsQuestionRowsTests {
         XCTAssertEqual(PeopleText.questionPeople([present, absent], choices: [], query: "", hideAbsent: false).count, 2)
     }
     func testL17EveryDecidedLineKeepsItsFullText() throws {
-        XCTAssertGreaterThan(evidence().decidedLines[0].text.count, 240)
+        XCTAssertGreaterThan(try evidence().decidedLines.required(0).text.count, 240)
         let row = try JSONDecoder().decode(ReviewRow.self, from: Data(#"{"id":"q","label":"Q1","kind":"question","status":"suggested","what":"Who?","parts":[{"kind":"said","text":"Old truncated quote"}],"choices":[],"edit":"answer","sources":[],"target":{"kind":"item","id":"q"}}"#.utf8))
         let detail = MeetingDetailModel(id: "copy", window: nil)
         detail.rows = .loaded(.init(meeting: "copy", rows: [row], hidden: .init(lowPriority: 0, minPriority: 0), questionDetails: [evidence()]))

@@ -637,7 +637,7 @@ final class MeetingsServiceTests: XCTestCase {
                     XCTAssertEqual(row.choices.first?.confidence, 0.82, "\(label): the suggested choice's confidence")
                     XCTAssertNil(row.choices.dropFirst().first?.confidence, "\(label): a speaker candidate shows none")
                     XCTAssertEqual(row.decision?.by, "an agent (Claude Code, session 11111111)", label)
-                    XCTAssertEqual(row.choices[1].action.decision(on: row), .confirm(["i1"], speaker: "Dana Example"))
+                    XCTAssertEqual(try row.choices.required(1).action.decision(on: row), .confirm(["i1"], speaker: "Dana Example"))
                 }
             case MeetingsAPI.CommentStage.name:
                 try roundTrip(MeetingsAPI.CommentStage.Params.self, params, label)
@@ -2087,8 +2087,8 @@ extension MeetingsServiceTests {
         let encoded = try MeetingsService.paramsObject(action)
         let segments = try XCTUnwrap(encoded["segments"] as? [[String: Any]])
         XCTAssertEqual(segments.count, 2)
-        XCTAssertEqual(segments[1]["fromWord"] as? Int, 3)
-        XCTAssertEqual(segments[1]["speaker"] as? String, "Bob Example")
+        XCTAssertEqual(try segments.required(1)["fromWord"] as? Int, 3)
+        XCTAssertEqual(try segments.required(1)["speaker"] as? String, "Bob Example")
     }
 }
 

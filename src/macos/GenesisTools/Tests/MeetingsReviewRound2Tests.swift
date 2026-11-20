@@ -87,7 +87,7 @@ final class MeetingsReviewRound2Tests: XCTestCase {
     // MARK: Both saves of the reach sheet carry the same choices (PR 766, PR 799)
 
     func testOnlyThisQuestionCarriesTheStruckItemsAndTheSpellingChoices() throws {
-        let row = try JSONDecoder().decode(ReviewRows.self, from: MeetingsReviewRowTests.rowsJSON).rows[0]
+        let row = try JSONDecoder().decode(ReviewRows.self, from: MeetingsReviewRowTests.rowsJSON).rows.required(0)
         let reach = try JSONDecoder().decode(DecisionReach.self, from: MeetingsReviewRowTests.reachJSON)
         let spelling = DecisionAction.SpellingReach(lines: [.init(atSec: 12, line: 3)], dictionary: false)
         let respell = MeetingDetailModel.PendingReach(row: row, action: .respell("t1", to: "Atlas"), reason: nil, reach: reach)
@@ -141,9 +141,9 @@ final class MeetingsReviewRound2Tests: XCTestCase {
         window.loadSettings(quiet: true)
         try await until("the second read waits") { held.waiting.count == 2 }
         let newer = try config(language: "en"), older = try config(language: "cs")
-        held.waiting[1].resume(returning: newer)
+        try held.waiting.required(1).resume(returning: newer)
         try await until("the newer read lands") { window.settingsRaw == newer.raw }
-        held.waiting[0].resume(returning: older)
+        try held.waiting.required(0).resume(returning: older)
         try await Task.sleep(for: .milliseconds(50))
         XCTAssertEqual(window.settingsRaw, newer.raw, "the next write names the value the config holds, not an older read")
         XCTAssertEqual(window.settings.value, newer.value)

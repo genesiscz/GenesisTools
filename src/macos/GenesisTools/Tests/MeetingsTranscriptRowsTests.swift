@@ -271,16 +271,16 @@ final class MeetingsTranscriptRowsTests: XCTestCase {
         XCTAssertEqual(facts.speakerEvidence, TranscriptBlocksPane.lineEvidence(Array(shown.prefix(2)), items: all, ruleNames: input.ruleNames),
                        "the speaker ranges taken out once give the sentences the popover gave from every item")
         XCTAssertEqual(facts.speakerEvidence, ["Named by the speaker range 00:05 to 00:30. Only one person was in the call."])
-        XCTAssertEqual(facts.notes.map(\.id), [ids[1]], "only the line with evidence has notes")
+        XCTAssertEqual(facts.notes.map(\.id), [try ids.required(1)], "only the line with evidence has notes")
         XCTAssertEqual(facts.notes.first?.acoustic, ["Call level (RMS): 0.0000"])
         input.evidence = []
         update(input)
         XCTAssertEqual(builds, 2)
         XCTAssertEqual(cache.facts?.notes, [])
-        input.selection = [ids[2]]
+        input.selection = [try ids.required(2)]
         update(input)
         XCTAssertEqual(builds, 3)
-        XCTAssertEqual(cache.facts?.lines.map(\.id), [ids[2]])
+        XCTAssertEqual(cache.facts?.lines.map(\.id), [try ids.required(2)])
         update(nil)
         XCTAssertNil(cache.facts)
         XCTAssertEqual(builds, 3, "closing the popover releases the input without rebuilding")
