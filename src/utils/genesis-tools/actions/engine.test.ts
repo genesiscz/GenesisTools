@@ -397,6 +397,56 @@ describe("runAreaAction", () => {
         expect(outcome.skipped[0]?.reason).toContain("within 50 ms while its needs were checked");
     });
 
+    test("a need check that ends after the deadline starts no further check and no build", async () => {
+        const display = Promise.withResolvers<boolean>();
+        const builds: Array<string | null> = [];
+        const late = defineArea({
+            area: "late",
+            summary: "",
+            actions: {
+                act: defineAction({
+                    summary: "",
+                    args: z.object({}),
+                    result: z.object({}),
+                    native: { needs: [Need.person.display, Need.app.part("hub")], run: () => ({}) },
+                    fix: (ctx) => ctx.build("hub"),
+                }),
+            },
+        });
+        const builder: AppBuilder = {
+            build: async (part) => {
+                builds.push(part);
+            },
+            offerBuild: async () => false,
+            buildCommand: () => "build-it",
+        };
+        const facts = fakeFacts({
+            hasDisplay: () => display.promise,
+            appManifest: () => ({ buildId: "b1", parts: [], rpcMethods: null }),
+        });
+        const config = createConfigStore({
+            registry: { late },
+            file: join(mkdtempSync(join(tmpdir(), "gt-actions-")), "config.json"),
+        });
+        const outcome = await runAreaAction({ late }, "late.act", {}, deps({ facts, builder, config }), {
+            timeoutMs: 20,
+        });
+
+        expect(outcome.skipped.map((skip) => skip.code)).toEqual(["timed-out"]);
+        display.resolve(true);
+        await Bun.sleep(5);
+        expect(builds).toEqual([]);
+    });
+
+    test("an id naming an inherited member is an unknown action", async () => {
+        await expect(runAreaAction(REGISTRY, "demo.constructor", {}, deps())).rejects.toThrow(
+            'no action "demo.constructor"'
+        );
+        await expect(runAreaAction(REGISTRY, "constructor.name", {}, deps())).rejects.toThrow(
+            'no action "constructor.name"'
+        );
+    });
+
     test("a way past the deadline sees ctx.signal abort, and its effect is reported as unknown", async () => {
         const signals: AbortSignal[] = [];
         const slow = defineArea({
