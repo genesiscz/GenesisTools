@@ -3,7 +3,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import * as files from "node:fs/promises";
-import { chmod, mkdir, mkdtemp, readdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rename, rmdir, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { DeliveryUnknownError } from "@app/question/lib/decisions/deliver";
@@ -801,6 +801,24 @@ describe("widget source and delivery contracts", () => {
         expect(readDecisions(files.file).find((entry) => entry.id === stored.id)?.state).not.toBe("drafted");
     });
 
+    /**
+     * Refuses every later write of the decision log: each of its files becomes a folder, which no write can open as a
+     * file, whatever the runner's privileges (a read-only mode does not stop root). Returns the undo.
+     */
+    async function refuseRecord(files: { file: string; events: string }): Promise<() => Promise<void>> {
+        for (const path of [files.file, files.events]) {
+            await rename(path, `${path}.kept`).catch(() => undefined);
+            await mkdir(path);
+        }
+
+        return async () => {
+            for (const path of [files.file, files.events]) {
+                await rmdir(path);
+                await rename(`${path}.kept`, path).catch(() => undefined);
+            }
+        };
+    }
+
     test("a delivered answer whose record failed says delivered, so the widget does not offer Send again", async () => {
         const directory = await root();
         const files = { file: join(directory, "decisions.jsonl"), events: join(directory, "events.jsonl") };
@@ -813,6 +831,7 @@ describe("widget source and delivery contracts", () => {
         await updateDecisions(files.file, files.events, {
             updates: [{ id: stored.id, state: "drafted", draftOption: "a" }],
         });
+        let undo: (() => Promise<void>) | undefined;
         let result: Awaited<ReturnType<typeof sendStagedDecisions>>;
 
         try {
@@ -822,19 +841,66 @@ describe("widget source and delivery contracts", () => {
                 deliver: {
                     codexWorkerFor: () => "fixture-worker",
                     runTool: async () => {
-                        // The agent got the answers; the folder then refuses the record of the delivery.
-                        await chmod(directory, 0o555);
+                        // The agent got the answers; the log then refuses the record of the delivery.
+                        undo = await refuseRecord(files);
                         return { success: true, stdout: '{"queued":false,"turnId":"fixture-turn"}', stderr: "" };
                     },
                 },
             });
         } finally {
-            await chmod(directory, 0o755);
+            await undo?.();
         }
 
         expect(result).toMatchObject({ sent: 1, queued: 0, failed: 0 });
         expect(result.sessions[0]).toMatchObject({ session: "stored-b", stored: true, delivered: true });
         expect(result.sessions[0]?.error).toContain("reached the agent");
+    });
+
+    test("a Send again whose delivery reached the agent and whose record failed counts as delivered, not failed", async () => {
+        const directory = await root();
+        const files = { file: join(directory, "decisions.jsonl"), events: join(directory, "events.jsonl") };
+        const [row] = await postDecisions(
+            files.file,
+            files.events,
+            { sessionId: "resend-b", provider: "codex", decisions: [{ prompt: "Ship?", options: ["yes", "no"] }] },
+            { env: {} }
+        );
+        await updateDecisions(files.file, files.events, {
+            updates: [{ id: row.id, state: "drafted", draftOption: "a" }],
+        });
+        const nowhere = await sendStagedDecisions({
+            ids: [row.id],
+            files,
+            deliver: {
+                codexWorkerFor: () => null,
+                runTool: async () => {
+                    throw new Error("No transport may run");
+                },
+            },
+        });
+        expect(nowhere).toMatchObject({ sent: 0, queued: 1, failed: 0 });
+        let undo: (() => Promise<void>) | undefined;
+        let again: Awaited<ReturnType<typeof resendAnsweredDecisions>>;
+
+        try {
+            again = await resendAnsweredDecisions({
+                ids: [row.id],
+                files,
+                deliver: {
+                    codexWorkerFor: () => "fixture-worker",
+                    runTool: async () => {
+                        undo = await refuseRecord(files);
+                        return { success: true, stdout: '{"queued":false,"turnId":"fixture-turn"}', stderr: "" };
+                    },
+                },
+            });
+        } finally {
+            await undo?.();
+        }
+
+        expect(again).toMatchObject({ sent: 1, queued: 0, failed: 0 });
+        expect(again.sessions[0]).toMatchObject({ session: "resend-b", stored: true, delivered: true });
+        expect(again.sessions[0]?.error).toContain("reached the agent");
     });
 
     test("a Cancel after the agent got the message lets the send record it, so Send again types nothing twice", async () => {

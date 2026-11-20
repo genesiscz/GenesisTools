@@ -1,5 +1,6 @@
 import { queueReserved } from "@app/question/lib/decisions/answers";
 import type { DeliverDeps } from "@app/question/lib/decisions/deliver";
+import { DeliveredUnrecordedError } from "@app/question/lib/decisions/delivery-errors";
 import { loadDecisionsHookConfig } from "@app/question/lib/decisions/hook-config";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { sendAnsweredDecisions } from "@app/question/lib/decisions/send";
@@ -264,7 +265,17 @@ export async function resendAnsweredDecisions({
                 result.queued += free.length;
             }
         } catch (error) {
-            result.sessions.push({ session, numbers, error: error instanceof Error ? error.message : String(error) });
+            const message = error instanceof Error ? error.message : String(error);
+
+            // The answers reached the agent and only their record failed: a Send again would type them twice.
+            if (error instanceof DeliveredUnrecordedError) {
+                logger.warn({ session, numbers, error }, "widget resend: delivered, its record failed");
+                result.sessions.push({ session, numbers, error: message, stored: true, delivered: true });
+                result.sent += free.length;
+                continue;
+            }
+
+            result.sessions.push({ session, numbers, error: message });
             result.failed += free.length;
         }
     }
