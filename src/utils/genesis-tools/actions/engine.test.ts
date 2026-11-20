@@ -673,6 +673,36 @@ describe("state store", () => {
         expect(mine.get("app", "installed")).toEqual({ ...value, stale: true });
     });
 
+    test("a read snapshot is frozen, in the disk store and in memory, so only a report changes state", async () => {
+        const file = join(mkdtempSync(join(tmpdir(), "gt-actions-state-")), "state.json");
+        const value = { value: ["rpc.hello"], at: "2026-11-17T12:00:00.000Z", source: "app" as const };
+        const disk = createStateStore({ file });
+        await disk.report("app", "rpcMethods", value);
+        const memory = memoryStateStore();
+        await memory.report("app", "rpcMethods", value);
+
+        for (const store of [disk, memory]) {
+            const read = store.get<string[]>("app", "rpcMethods");
+            expect(() => read?.value.push("injected")).toThrow();
+            expect(() => {
+                store.read().areas.app = {};
+            }).toThrow();
+            expect(store.get("app", "rpcMethods")).toEqual(value);
+        }
+
+        expect(value.value).toEqual(["rpc.hello"]);
+    });
+
+    test("a memory report with an aborted signal changes nothing, as on disk", async () => {
+        const memory = memoryStateStore();
+        const caller = new AbortController();
+        caller.abort(new Error("cancelled"));
+        const value = { value: true, at: "2026-11-17T12:00:00.000Z", source: "probe" as const };
+
+        await expect(memory.report("app", "installed", value, { signal: caller.signal })).rejects.toThrow("cancelled");
+        expect(memory.get("app", "installed")).toBeUndefined();
+    });
+
     test("a state file that does not parse reads empty, and the next report replaces it", async () => {
         const file = join(mkdtempSync(join(tmpdir(), "gt-actions-state-")), "state.json");
         writeFileSync(file, '{"version": 1, "areas": {');

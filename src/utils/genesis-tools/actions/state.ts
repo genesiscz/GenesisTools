@@ -29,6 +29,10 @@ export interface GenesisToolsStateFile {
     areas: Record<string, Record<string, StateValue>>;
 }
 
+/**
+ * `read` and `get` answer frozen values: they are the store's own snapshot, so a caller that wants to change state
+ * reports it, and a change made in place throws instead of altering what later checks read.
+ */
 export interface StateStore {
     read(): GenesisToolsStateFile;
     get<T = unknown>(area: string, key: string): StateValue<T> | undefined;
@@ -103,6 +107,19 @@ function decodeStateFile(raw: unknown): GenesisToolsStateFile {
     return { version: 1, areas };
 }
 
+/** Freezes `value` and every object and array inside it, and answers it. */
+function deepFreeze<T>(value: T): T {
+    if (typeof value === "object" && value !== null && !Object.isFrozen(value)) {
+        for (const inner of Object.values(value)) {
+            deepFreeze(inner);
+        }
+
+        Object.freeze(value);
+    }
+
+    return value;
+}
+
 function withValue(
     file: GenesisToolsStateFile,
     area: string,
@@ -168,8 +185,8 @@ export function createStateStore(options: StateStoreOptions = {}): StateStore {
             state = emptyState();
         }
 
-        cached = { key, state };
-        return state;
+        cached = { key, state: deepFreeze(state) };
+        return cached.state;
     }
 
     async function change(
@@ -203,17 +220,20 @@ export function createStateStore(options: StateStoreOptions = {}): StateStore {
 
 /** A state store in memory, for tests and for runs that must not write (`explain` without `--fresh`). */
 export function memoryStateStore(initial: GenesisToolsStateFile = emptyState()): StateStore {
-    let state = initial;
+    // Copies: the caller keeps its own objects, and the store's snapshot is frozen like the disk store's.
+    let state = deepFreeze(structuredClone(initial));
 
     return {
         read: () => state,
         get: <T>(area: string, key: string) => state.areas[area]?.[key] as StateValue<T> | undefined,
-        report: async (area, key, value) => {
-            state = withValue(state, area, key, value);
+        report: async (area, key, value, reportOptions) => {
+            // As the disk store: a cancel seen before the change stops it.
+            reportOptions?.signal?.throwIfAborted();
+            state = deepFreeze(withValue(state, area, key, structuredClone(value)));
         },
         markStale: async (area, key) => {
             const current = state.areas[area]?.[key];
-            state = withValue(state, area, key, current ? { ...current, stale: true } : null);
+            state = deepFreeze(withValue(state, area, key, current ? { ...current, stale: true } : null));
         },
     };
 }
