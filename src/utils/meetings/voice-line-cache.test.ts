@@ -101,6 +101,34 @@ test("a reopened line cache reuses every ready, quiet, short and speechless span
     expect(f.compute).not.toHaveBeenCalled();
 });
 
+test("a preview reads another pass's cache for hits and saves only its own lines to its own file", async () => {
+    const f = await fixture();
+    await voice.embedVoiceLines({ ...f.options, cachePath: f.cachePath });
+    const suggestion = readFileSync(f.cachePath, "utf8");
+    const previewPath = join(f.cachePath, "..", "seat-voice-lines.json");
+    const options = {
+        ...f.options,
+        spans: [
+            { index: 0, fromSec: 0, toSec: 2 },
+            { index: 1, fromSec: 5, toSec: 7 },
+        ],
+        cachePath: previewPath,
+        fallbackCachePath: f.cachePath,
+    };
+    f.decode.mockClear();
+    const first = await voice.embedVoiceLines(options);
+    // Only the span the suggestion pass never embedded is decoded; its cache file is left as it was.
+    expect(f.decode).toHaveBeenCalledTimes(1);
+    expect(readFileSync(f.cachePath, "utf8")).toBe(suggestion);
+    const preview = z
+        .object({ entries: z.record(z.string(), z.unknown()) })
+        .parse(SafeJSON.parse(readFileSync(previewPath, "utf8")));
+    expect(Object.keys(preview.entries)).toHaveLength(1);
+    f.decode.mockClear();
+    expect(await voice.embedVoiceLines(options)).toEqual(first);
+    expect(f.decode).not.toHaveBeenCalled();
+});
+
 test("a failed window decode is tried once per chunk, and a later pass decodes it again", async () => {
     const f = await fixture();
     f.decode.mockRejectedValueOnce(new Error("decoder deadline passed"));

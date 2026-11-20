@@ -22,6 +22,7 @@ import {
     localVoiceDecisions,
     meetingPredictionVoices,
     meetingVoiceCachePath,
+    seatVoiceCachePath,
 } from "./speaker-labels/voice";
 import { nameByVoice, type VoiceLine } from "./voice-names";
 
@@ -324,8 +325,9 @@ export async function readSeatVoiceHints(options: {
                 lines: spans,
                 config,
                 sound,
-                cachePath: meetingVoiceCachePath(opened),
-                readOnlyCache: true,
+                // A second open embeds only the lines whose clip changed; the suggestion pass's cache stays its own.
+                cachePath: seatVoiceCachePath(opened),
+                fallbackCachePath: meetingVoiceCachePath(opened),
             });
         } catch (error) {
             if (!(error instanceof VoiceUnavailableError)) {

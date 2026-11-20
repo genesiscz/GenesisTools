@@ -53,10 +53,19 @@ export class VoiceLineCache {
     private readonly changed: Entries = {};
 
     constructor(
-        private readonly options: { source: VoiceEmbeddingProvenance["source"]; model: string; cachePath?: string }
+        private readonly options: {
+            source: VoiceEmbeddingProvenance["source"];
+            model: string;
+            cachePath?: string;
+            /** Another pass's cache read for hits only: `save` never writes into it. */
+            fallbackCachePath?: string;
+        }
     ) {
         this.file = options.cachePath;
-        this.entries = this.file ? readEntries(this.file) : {};
+        this.entries = {
+            ...(options.fallbackCachePath ? readEntries(options.fallbackCachePath) : {}),
+            ...(this.file ? readEntries(this.file) : {}),
+        };
     }
 
     private key(span: Omit<VoiceEmbeddingProvenance, "source">): string {

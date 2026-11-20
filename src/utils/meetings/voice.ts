@@ -449,6 +449,8 @@ export async function embedVoiceLines(options: {
     cachePath?: string;
     /** Reuse matching entries and compute misses in memory. A preview never persists them. */
     readOnlyCache?: boolean;
+    /** Another pass's cache, read for hits only; computed lines are saved to `cachePath`, never into it. */
+    fallbackCachePath?: string;
     workerPrefix?: readonly string[];
     /** The worker takes itself out of background first (`clearOwnBackground`): the voice pass at normal priority. */
     clearBackground?: boolean;
@@ -478,6 +480,7 @@ export async function embedVoiceLines(options: {
                 source,
                 model: backend.model,
                 cachePath: options.cachePath ?? (await voiceLineCachePath(audioPath)),
+                fallbackCachePath: options.fallbackCachePath,
             });
         } catch (error) {
             logger.debug({ error }, "Voice line cache unavailable; computing without it");

@@ -116,6 +116,7 @@ export async function embedSeatLines(
         sound: MeetingSound;
         cachePath?: string;
         readOnlyCache?: boolean;
+        fallbackCachePath?: string;
         config?: MeetingsConfig;
         onProgress?: VoiceProgress;
         signal?: AbortSignal;
@@ -159,6 +160,7 @@ export async function embedSeatLines(
             audioPath: group.path,
             cachePath: context.cachePath,
             readOnlyCache: context.readOnlyCache,
+            fallbackCachePath: context.fallbackCachePath,
             workerPrefix: worker.prefix,
             clearBackground: worker.clearBackground,
             workers: worker.workers,
@@ -219,6 +221,11 @@ function comparedSamples(options: {
 
 export function meetingVoiceCachePath(opened: OpenedMeeting): string {
     return join(opened.store.folder(opened.record.id), "evidence", "voice-lines.json");
+}
+
+/** The seats editor's voice preview keeps its own lines here, so its spans never enter the suggestion pass's cache. */
+export function seatVoiceCachePath(opened: OpenedMeeting): string {
+    return join(opened.store.folder(opened.record.id), "evidence", "seat-voice-lines.json");
 }
 
 async function meetingVoiceLines(opened: OpenedMeeting, context: LabelContext): Promise<VoiceLine[]> {
