@@ -13,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { vaultPurpose } from "@genesiscz/utils/security/vault-purpose";
 import { atomicWriteIo } from "@genesiscz/utils/storage/atomic-file";
 import { groupTurns } from "@genesiscz/utils/transcribe/render";
 import { applyFixes, buildVocabulary, findSuspectTerms, selectFixes } from "@genesiscz/utils/transcribe/terms";
@@ -1121,6 +1122,26 @@ describe("an export imported from another Mac", () => {
             ["system", "Hi Alice."],
         ]);
         expect(evidence.audioPath).toBe(join(folder!, "upload.ogg"));
+    });
+
+    test("asking the MCP for a meeting this Mac lacks tells the vault window why", async () => {
+        const available = spyOn(local, "localAvailable").mockReturnValue(false);
+        let asked: string | undefined;
+        const remote = spyOn(mcp, "getMcpMeeting").mockImplementation(async () => {
+            asked = vaultPurpose();
+            throw new mcp.McpUnavailableError("fetch failed");
+        });
+
+        try {
+            await expect(loadMeeting("not-here-fixture-1", { source: "auto", transcript: true })).rejects.toThrow();
+            expect(asked).toBe(
+                "read Wispr Flow meeting not-here-fixture-1 from its MCP server through the mcp-manager gateway"
+            );
+            expect(vaultPurpose()).toBeUndefined();
+        } finally {
+            available.mockRestore();
+            remote.mockRestore();
+        }
     });
 
     test("a meeting with no folder on this Mac has no evidence, not an empty one", async () => {
