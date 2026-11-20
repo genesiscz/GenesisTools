@@ -47,6 +47,7 @@ export type VoiceOwner = PersonRefValue;
 const legacyStoreSchema = voiceStoreSchema.extend({
     people: z.record(nonblank, z.object({ email: nonblank.optional(), samples: z.array(voicePrintSchema.strict()) })),
 });
+type LegacyStore = z.infer<typeof legacyStoreSchema>;
 
 export const sourceSchema = z.strictObject({
     rootMeeting: nonblank,
@@ -397,6 +398,24 @@ function recordedRoot(store: MeetingStore, id: string) {
     return record ? voiceRootMeeting(store, record) : id;
 }
 
+/** The model most samples were taken with; a tie goes to the first file by name. Files without samples do not vote. */
+function electedModel(stores: readonly LegacyStore[]): string {
+    const counts = new Map<string, number>();
+    for (const store of stores) {
+        const samples = Object.values(store.people).reduce((sum, person) => sum + person.samples.length, 0);
+        if (samples > 0 && store.model.trim()) {
+            counts.set(store.model, (counts.get(store.model) ?? 0) + samples);
+        }
+    }
+    let best = "";
+    for (const [model, count] of counts) {
+        if (count > (counts.get(best) ?? 0)) {
+            best = model;
+        }
+    }
+    return best;
+}
+
 function reconcile(projects: string[], options: MigrationOptions) {
     const library = readDocument();
     const manifests = new Map(library.imports.map((entry) => [entry.project, entry]));
@@ -407,21 +426,32 @@ function reconcile(projects: string[], options: MigrationOptions) {
     const conflicts: VoiceLibrarySnapshot["conflicts"] = [];
     let imported = 0;
     let changed = false;
+    const pending: Array<{ project: string; file: string; fileDigest: string; raw: LegacyStore }> = [];
     for (const project of projects) {
         const file = join(toolDataDir("meetings", "voices"), `${project}.json`);
-        const prior = manifests.get(project);
         try {
             projectNameSchema.parse(project);
             const bytes = readFileSync(file);
             const fileDigest = createHash("sha256").update(bytes).digest("hex");
-            if (prior?.fileDigest === fileDigest) {
+            if (manifests.get(project)?.fileDigest === fileDigest) {
                 continue;
             }
             const raw = legacyStoreSchema.parse(SafeJSON.parse(bytes.toString("utf8")));
+            pending.push({ project, file, fileDigest, raw });
+        } catch (error) {
+            conflicts.push({ project, file, message: error instanceof Error ? error.message : String(error) });
+        }
+    }
+    // A library with no model yet takes the model of most samples, never of the first file by name: one leftover file
+    // with another model (a test fixture, a model upgrade) must not turn every real project into the conflict.
+    const expected = library.model || electedModel(pending.map(({ raw }) => raw));
+    for (const { project, file, fileDigest, raw } of pending) {
+        const prior = manifests.get(project);
+        try {
             if (Object.values(raw.people).some((p) => p.samples.length > 0)) {
-                if (!raw.model.trim() || (library.model && library.model !== raw.model)) {
+                if (!raw.model.trim() || (expected && expected !== raw.model)) {
                     throw new Error(
-                        `Voice model conflict: found '${raw.model}', expected '${library.model || "a model identity"}'`
+                        `Voice model conflict: found '${raw.model}', expected '${expected || "a model identity"}'`
                     );
                 }
                 library.model = raw.model;

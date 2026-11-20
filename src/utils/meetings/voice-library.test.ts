@@ -201,6 +201,21 @@ test("a busy v1 writer and failures on both sides of publication recover the lat
     expect(readFileSync(newPath, "utf8")).toBe(lateBytes);
 });
 
+test("a leftover file with another model is the conflict even when its name sorts first, so the real samples stay", async () => {
+    legacy("aaa-leftover", [print(1)], first, "other-model");
+    legacy("garden", [print(2), print(3)]);
+    legacy("studio", [print(4)], second);
+    const { readVoiceLibrary, predictionPrints } = await library();
+    const view = readVoiceLibrary();
+    expect(view.library.model).toBe(model);
+    expect(view.conflicts.map((conflict) => conflict.project)).toEqual(["aaa-leftover"]);
+    expect(predictionPrints({ project: "garden", scope: "all", view }).samples.map((s) => s.project)).toEqual([
+        "garden",
+        "garden",
+        "studio",
+    ]);
+});
+
 test("model and validation conflicts identify the source, allow scoped recovery and prevent partial first or later writes", async () => {
     const one = legacy("garden", [print(1)]);
     const other = legacy("studio", [print(2)], second, "incompatible");
