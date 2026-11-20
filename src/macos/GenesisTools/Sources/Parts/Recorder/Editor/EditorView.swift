@@ -935,9 +935,9 @@ struct CaptionLinesList: View {
                            identifier: "recorder.captions.find")
                 .frame(height: 22)
             HStack(spacing: 6) {
-                AgentTextField("Replace with", text: $replacement, identifier: "recorder.captions.replace") {
+                AgentTextField("Replace with", text: $replacement, identifier: "recorder.captions.replace", onSubmit: {
                     model.replaceWords(find: find, replace: replacement)
-                }
+                })
                 .frame(height: 22)
                 GhostButton("Replace All", symbol: "text.badge.checkmark", tooltip: "Replace these words in every line (whole words, any case; ⌘Z takes it back)",
                             identifier: "recorder.captions.replaceAll") { model.replaceWords(find: find, replace: replacement) }

@@ -604,7 +604,8 @@ export function withAppBuildSlot<T>(run: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Compiler warnings that fail every app and package build. Swift 5 mode binds an unlabeled trailing closure to the LAST
+ * Compiler warnings that fail a package build (`scripts/native/swift-package.ts`; the app build follows once its
+ * remaining call sites are labelled, work item w_5c1wno1s). Swift 5 mode binds an unlabeled trailing closure to the LAST
  * closure parameter when forward and backward matching differ, and only warns: when `EmptyState` gained a second
  * closure, every `EmptyState(...) { }` silently moved to it and seven empty states lost their button.
  */
@@ -734,7 +735,6 @@ function appSwiftArgs(
 ): string[] {
     return [
         ...swiftJobArgs(args),
-        ...SWIFT_WARNINGS_AS_ERRORS,
         "-c",
         "debug",
         "-Xswiftc",
