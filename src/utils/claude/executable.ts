@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, win32 } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { endDetachedGroup } from "@genesiscz/utils/process/killWithEscalation";
 
 /** Where Claude Code's installers put the binary when the shell that runs us has no PATH entry for it. */
 export function claudeInstallLocations(home: string = homedir()): string[] {
@@ -26,9 +27,12 @@ export interface FindClaudeExecutableDeps {
 
 const SHELL_LOOKUP_TIMEOUT_MS = 3000;
 
-/** Uses the user's rc files when Claude's PATH entry exists only in an interactive shell. */
+/**
+ * Uses the user's rc files when Claude's PATH entry exists only in an interactive shell. Detached, so the shell leads
+ * its own process group and anything an rc file starts ends with it.
+ */
 function spawnShellLookup(shell: string) {
-    return Bun.spawn({ cmd: [shell, "-ic", "command -v claude"], stdio: ["ignore", "pipe", "ignore"] });
+    return Bun.spawn({ cmd: [shell, "-ic", "command -v claude"], stdio: ["ignore", "pipe", "ignore"], detached: true });
 }
 
 /** Bounds shell startup, stdout and exit together; lookup failure only skips the optional CLI. */
@@ -38,11 +42,15 @@ export async function interactiveShellLookup(
     const shell = env.paths.getShell("/bin/sh");
     let proc: ReturnType<typeof spawnShellLookup> | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let outputOpen = true;
 
     try {
         proc = (opts.spawn ?? spawnShellLookup)(shell);
+        const output = new Response(proc.stdout).text().finally(() => {
+            outputOpen = false;
+        });
         const [stdout] = await Promise.race([
-            Promise.all([new Response(proc.stdout).text(), proc.exited]),
+            Promise.all([output, proc.exited]),
             new Promise<never>((_, reject) => {
                 timer = setTimeout(() => reject(new Error("timeout")), opts.timeoutMs ?? SHELL_LOOKUP_TIMEOUT_MS);
             }),
@@ -57,7 +65,10 @@ export async function interactiveShellLookup(
         return null;
     } finally {
         clearTimeout(timer);
-        proc?.kill();
+        if (proc) {
+            endDetachedGroup(proc, { outputOpen, what: "claude shell lookup" });
+            proc.kill();
+        }
     }
 }
 
