@@ -54,6 +54,7 @@ class FakeConnector implements Connector<unknown> {
     readonly can = { create: true, pull: true, labels: true, comments: false, parents: false };
     pushed: PushIntent[] = [];
     unavailable = false;
+    failure = "temporarily unavailable";
     batches: { context: ConnectorContext; titles: string[] }[] = [];
     pulls: ConnectorContext[] = [];
     remote = new Map<string, RemoteItem>();
@@ -67,7 +68,7 @@ class FakeConnector implements Connector<unknown> {
         this.pushed.push(...intents);
 
         if (this.unavailable) {
-            return intents.map(() => ({ ok: false as const, error: "temporarily unavailable" }));
+            return intents.map(() => ({ ok: false as const, error: this.failure }));
         }
 
         return intents.map((intent) => {
@@ -288,7 +289,9 @@ describe("drift in the other direction", () => {
         fake.unavailable = true;
         await write(ctx("s1"), { verb: "comment", ref: id, text: "a later change" });
         await runSyncOnce(deps());
-        expect(selectPairings(db, { item: id })[0]).toMatchObject({ state: "failed" });
+        const failed = selectPairings(db, { item: id })[0];
+        expect(failed.state).toBe("failed");
+        expect(failed.note).toBe("temporarily unavailable\nchanged here, owned outside: title");
 
         fake.unavailable = false;
         await write(ctx("s1"), { verb: "comment", ref: id, text: "one more change" });
@@ -298,6 +301,44 @@ describe("drift in the other direction", () => {
         expect(pairing.state).toBe("drift");
         expect(pairing.note).toStartWith("changed here, owned outside: title");
         expect(fake.remote.get("R-6")?.title).toBe("made outside");
+    });
+
+    test("a pull that restores the remote title clears its local drift, so a later push reads in-sync", async () => {
+        fake.remote.set("R-7", { remoteKey: "R-7", title: "made outside", state: "open" });
+        const id = (await pullRemote(deps(), { connector: "fake", remoteKeys: ["R-7"] })).made[0];
+        await runSyncOnce(deps());
+        await write(ctx("s1"), { verb: "edit", ref: id, title: "renamed here" });
+        await runSyncOnce(deps());
+        expect(selectPairings(db, { item: id })[0]).toMatchObject({ state: "drift" });
+
+        await pullRemote(deps(), { connector: "fake", remoteKeys: ["R-7"] });
+        expect(selectPairings(db, { item: id })[0]).toMatchObject({ state: "in-sync" });
+
+        await write(ctx("s1"), { verb: "comment", ref: id, text: "a later change" });
+        expect((await runSyncOnce(deps())).pushed).toBe(1);
+        const pairing = selectPairings(db, { item: id })[0];
+        expect(pairing.state).toBe("in-sync");
+        expect(pairing.note).toBeUndefined();
+    });
+
+    test("a connector error that starts like a drift line is never kept as drift after a successful push", async () => {
+        fake.remote.set("R-8", { remoteKey: "R-8", title: "made outside", state: "open" });
+        const id = (await pullRemote(deps(), { connector: "fake", remoteKeys: ["R-8"] })).made[0];
+        await runSyncOnce(deps());
+
+        fake.unavailable = true;
+        fake.failure = "changed here, owned outside: title\nand a second line";
+        await write(ctx("s1"), { verb: "comment", ref: id, text: "a change" });
+        await runSyncOnce(deps());
+        const failed = selectPairings(db, { item: id })[0];
+        expect(failed.state).toBe("failed");
+        expect(failed.note).toBe("changed here, owned outside: title and a second line");
+
+        fake.unavailable = false;
+        fake.failure = "temporarily unavailable";
+        await write(ctx("s1"), { verb: "comment", ref: id, text: "one more change" });
+        expect((await runSyncOnce(deps())).pushed).toBe(1);
+        expect(selectPairings(db, { item: id })[0]).toMatchObject({ state: "in-sync" });
     });
 });
 

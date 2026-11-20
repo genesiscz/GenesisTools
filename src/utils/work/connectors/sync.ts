@@ -303,7 +303,10 @@ async function pushProject({
                             writePairing(db, deps, {
                                 ...(pairing ?? newPairing(item.id, id, deps.now())),
                                 state: "held",
-                                note: "a change needs a lead or the owner to release it",
+                                note: noteOf({
+                                    reason: "a change needs a lead or the owner to release it",
+                                    local: pairing ? localDriftFacts(pairing) : [],
+                                }),
                             });
                         }
 
@@ -355,14 +358,14 @@ async function pushProject({
                 const result = results[index] ?? { ok: false as const, error: "the connector answered no result" };
                 const base = intent.pairing ?? newPairing(intent.item.id, id, deps.now());
 
-                const localDrift = localDriftLines(base.note);
+                const local = localDriftFacts(base);
 
                 if (result.ok) {
                     writePairing(db, deps, {
                         ...base,
                         remoteKey: result.remoteKey,
-                        state: localDrift.length > 0 ? "drift" : "in-sync",
-                        note: localDrift.length > 0 ? localDrift.join("\n") : undefined,
+                        state: local.length > 0 ? "drift" : "in-sync",
+                        note: noteOf({ local }),
                     });
                     report.pushed++;
                 } else {
@@ -370,7 +373,7 @@ async function pushProject({
                         ...base,
                         remoteKey: result.remoteKey ?? base.remoteKey,
                         state: "failed",
-                        note: [result.error, ...localDrift].join("\n"),
+                        note: noteOf({ reason: result.error, local }),
                     });
                     report.failed++;
                 }
@@ -379,12 +382,47 @@ async function pushProject({
     }
 }
 
+/** A failed or held pairing's note starts with its reason, kept to one line so it never reads as a drift line. */
+function hasReasonLine(pairing: Pick<Pairing, "state">): boolean {
+    return pairing.state === "failed" || pairing.state === "held";
+}
+
 /**
- * The local-drift lines of a pairing note. A push never sends a fact the outside owns, so a successful push leaves that
- * difference in place and the pairing stays drift; a remote-drift line (a fact owned here) is settled by the push.
+ * The facts of a pairing's local-drift line: facts the outside owns that were changed here. A push never sends them, so
+ * a successful push leaves that difference in place and the pairing stays drift; a remote-drift line (a fact owned
+ * here) is settled by the push. The reason line of a failed or held pairing is skipped, so a connector error that
+ * happens to start with the drift prefix is never read as drift.
  */
-function localDriftLines(note: string | undefined): string[] {
-    return (note ?? "").split("\n").filter((line) => line.startsWith(DRIFT_NOTE_PREFIX.local));
+function localDriftFacts(pairing: Pick<Pairing, "state" | "note">): SyncedFact[] {
+    const lines = (pairing.note ?? "").split("\n").slice(hasReasonLine(pairing) ? 1 : 0);
+    const named = lines
+        .filter((line) => line.startsWith(DRIFT_NOTE_PREFIX.local))
+        .flatMap((line) => line.slice(DRIFT_NOTE_PREFIX.local.length).split(","))
+        .map((word) => word.trim());
+    return SYNCED_FACTS.filter((fact) => named.includes(fact));
+}
+
+/** The reason line of a failed or held pairing's note, when it has one. */
+function reasonOf(pairing: Pick<Pairing, "state" | "note">): string | undefined {
+    return hasReasonLine(pairing) ? pairing.note?.split("\n")[0] || undefined : undefined;
+}
+
+/** A pairing note from its parts: a one-line reason first, then a remote-drift and a local-drift line. */
+function noteOf({
+    reason,
+    remote = [],
+    local = [],
+}: {
+    reason?: string;
+    remote?: readonly SyncedFact[];
+    local?: readonly SyncedFact[];
+}): string | undefined {
+    const lines = [
+        reason?.replace(/\s+/g, " ").trim() || undefined,
+        remote.length > 0 ? `${DRIFT_NOTE_PREFIX.remote} ${remote.join(", ")}` : undefined,
+        local.length > 0 ? `${DRIFT_NOTE_PREFIX.local} ${local.join(", ")}` : undefined,
+    ].filter((line): line is string => line !== undefined);
+    return lines.length > 0 ? lines.join("\n") : undefined;
 }
 
 /**
@@ -404,16 +442,15 @@ function markLocalDrift(deps: SyncDeps, changes: readonly Change[], report: Sync
             const owned = SYNCED_FACTS.filter((fact) => pairing.origin[fact] === "remote" && keys.includes(fact));
 
             if (owned.length > 0) {
+                const local = localDriftFacts(pairing);
                 inTransaction(deps.db, () =>
                     writePairing(deps.db, deps, {
                         ...pairing,
-                        state: pairing.state === "failed" || pairing.state === "held" ? pairing.state : "drift",
-                        note: [
-                            pairing.state === "failed" || pairing.state === "held" ? pairing.note : undefined,
-                            `${DRIFT_NOTE_PREFIX.local} ${owned.join(", ")}`,
-                        ]
-                            .filter(Boolean)
-                            .join("\n"),
+                        state: hasReasonLine(pairing) ? pairing.state : "drift",
+                        note: noteOf({
+                            reason: reasonOf(pairing),
+                            local: SYNCED_FACTS.filter((fact) => local.includes(fact) || owned.includes(fact)),
+                        }),
                     })
                 );
                 report.drift++;
@@ -623,6 +660,8 @@ export async function pullRemote(
 
             const set: ItemPatch = {};
             const drifted: SyncedFact[] = [];
+            // Facts the outside owns that this pull leaves equal to the remote: their local drift is resolved.
+            const settled: SyncedFact[] = [];
 
             for (const fact of SYNCED_FACTS) {
                 const theirs = remoteFact(remote, fact);
@@ -631,6 +670,11 @@ export async function pullRemote(
                     fact === "state" && connector.stateMatches !== undefined
                         ? connector.stateMatches(remote, item.state)
                         : SafeJSON.stringify(theirs) === SafeJSON.stringify(factOf(item, fact));
+
+                if (theirs !== undefined && pairing.origin[fact] === "remote") {
+                    settled.push(fact);
+                }
+
                 if (theirs === undefined || matches) {
                     continue;
                 }
@@ -661,13 +705,23 @@ export async function pullRemote(
                 report.updated.push(item.id);
             }
 
+            const before = localDriftFacts(pairing);
+            const local = before.filter((fact) => !settled.includes(fact));
+
             if (drifted.length > 0) {
                 writePairing(db, deps, {
                     ...pairing,
                     state: "drift",
-                    note: `${DRIFT_NOTE_PREFIX.remote} ${drifted.join(", ")}`,
+                    note: noteOf({ remote: drifted, local }),
                 });
                 report.drift.push(item.id);
+            } else if (local.length < before.length) {
+                const keep = hasReasonLine(pairing) || pairing.state === "pending";
+                writePairing(db, deps, {
+                    ...pairing,
+                    state: keep ? pairing.state : local.length > 0 ? "drift" : "in-sync",
+                    note: noteOf({ reason: reasonOf(pairing), local }),
+                });
             }
         }
     });
