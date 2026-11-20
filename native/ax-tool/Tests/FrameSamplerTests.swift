@@ -241,6 +241,13 @@ final class CaptureCanvasGeometryTests: XCTestCase {
         XCTAssertEqual(MovieQuality.small.bitRate(width: 1028, height: 614, fps: 60), standard / 2)
     }
 
+    /// `ax-tool capture … --movie-quality` with no preset after it is refused, never read as the default.
+    func testAFlagGivenLastWithNoValueIsMissingNotAbsent() {
+        XCTAssertEqual(flagValue("--movie-quality", in: ["ax-tool", "capture", "--video-out", "a.mp4"]), .absent)
+        XCTAssertEqual(flagValue("--movie-quality", in: ["ax-tool", "capture", "--movie-quality"]), .missing)
+        XCTAssertEqual(flagValue("--movie-quality", in: ["ax-tool", "capture", "--movie-quality", "small"]), .value("small"))
+    }
+
     // Many separate changing patches (a 4K frame holds tens of thousands of blocks) must not run the all-pairs merge:
     // past 64 regions they become one box, so the frame queue keeps its pace.
     func testAFragmentedFrameMergesIntoOneBoxWithoutThePairwiseSearch() {

@@ -67,13 +67,13 @@ func captureSelectionOptions(mode: String) -> CaptureSelectionOptions {
         guard singular.allSatisfy({ !CommandLine.arguments.contains($0) }) else {
             errorExit("isolated mode uses --window-ids/--include-app, not singular window selectors or --region", code: "invalid-argument")
         }
-    } else if !ids.isEmpty || !apps.isEmpty || argValue("--canvas") != nil {
+    } else if !ids.isEmpty || !apps.isEmpty || optionValue("--canvas") != nil {
         errorExit("--window-ids, --include-app and --canvas require isolated mode", code: "invalid-argument")
     }
-    let canvas = argValue("--canvas") ?? "crop"
+    let canvas = optionValue("--canvas") ?? "crop"
     guard ["crop", "display"].contains(canvas) else { errorExit("--canvas must be crop or display", code: "invalid-argument") }
     var size: CGSize?
-    if let raw = argValue("--output-size") {
+    if let raw = optionValue("--output-size") {
         let raws = raw.split(separator: "x", omittingEmptySubsequences: false)
         let parts = raws.compactMap { Int($0) }
         guard raws.count == 2, parts.count == 2, parts.allSatisfy({ $0 >= 2 && $0 <= 16384 }) else {
@@ -82,29 +82,29 @@ func captureSelectionOptions(mode: String) -> CaptureSelectionOptions {
         size = CGSize(width: parts[0], height: parts[1])
     }
     var scale: CGFloat?
-    if let raw = argValue("--output-scale") {
+    if let raw = optionValue("--output-scale") {
         guard size == nil, let number = Double(raw), number.isFinite, number > 0, number <= 8 else {
             errorExit("--output-scale must be greater than 0 and at most 8, and cannot accompany --output-size", code: "invalid-argument")
         }
         scale = CGFloat(number)
     }
     let transparent = args.contains("--transparent")
-    let codec = argValue("--codec") ?? "h264"
+    let codec = optionValue("--codec") ?? "h264"
     guard ["h264", "prores4444"].contains(codec) else { errorExit("--codec must be h264 or prores4444", code: "invalid-argument") }
     if transparent && !["window", "isolated"].contains(mode) {
         errorExit("--transparent requires window or isolated mode", code: "invalid-argument")
     }
     var movieQuality = MovieQuality.standard
-    if let raw = argValue("--movie-quality") {
+    if let raw = optionValue("--movie-quality") {
         guard let preset = MovieQuality(rawValue: raw) else {
             errorExit("--movie-quality must be standard, high or small", code: "invalid-argument")
         }
         movieQuality = preset
     }
-    if movieQuality != .standard && (argValue("--video-out") == nil || codec != "h264") {
+    if movieQuality != .standard && (optionValue("--video-out") == nil || codec != "h264") {
         errorExit("--movie-quality applies to an H.264 movie (--video-out without --codec prores4444)", code: "invalid-argument")
     }
-    if let video = argValue("--video-out") {
+    if let video = optionValue("--video-out") {
         if transparent && codec != "prores4444" {
             errorExit("Transparent video needs --codec prores4444 and a .mov output; H.264/MP4 has no alpha", code: "invalid-argument")
         }

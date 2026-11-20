@@ -18,6 +18,19 @@ public func preparationFocusesElement(action: String) -> Bool {
     !["click", "drag"].contains(action)
 }
 
+/// A flag's value in an argument list: absent, given as the last argument with no value, or its value. `argValue` in
+/// ax-tool returns nil for both of the first two, so a bare `--movie-quality` at the end silently meant the default.
+public enum FlagValue: Equatable {
+    case absent
+    case missing
+    case value(String)
+}
+
+public func flagValue(_ flag: String, in args: [String]) -> FlagValue {
+    guard let index = args.firstIndex(of: flag) else { return .absent }
+    return index + 1 < args.count ? .value(args[index + 1]) : .missing
+}
+
 public struct WorkflowArguments {
     public let values: [String: String]
     public let flags: Set<String>
