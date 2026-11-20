@@ -8,8 +8,10 @@ import {
     formatList,
     formatNumber,
     formatRelativeTime,
+    formatTimecode,
     formatTokens,
     parseDuration,
+    parseTimecode,
     requireDuration,
 } from "./format";
 import { generateId } from "./id";
@@ -379,5 +381,21 @@ describe("generateId", () => {
 
         expect(ids.size).toBe(100);
         expect([...ids].every((id) => id.length > 0)).toBe(true);
+    });
+});
+
+describe("timecodes", () => {
+    it("writes H:MM:SS and reads it back with M:SS and plain seconds", () => {
+        expect(formatTimecode(19295.55)).toBe("5:21:35");
+        expect(formatTimecode(65)).toBe("0:01:05");
+        expect(parseTimecode("5:21:35")).toBe(19295);
+        expect(parseTimecode("21:35")).toBe(1295);
+        expect(parseTimecode("19295.5")).toBe(19295.5);
+    });
+
+    it("refuses minutes or seconds past 59 and text that is no timecode", () => {
+        expect(parseTimecode("1:75:00")).toBeNull();
+        expect(parseTimecode("1:00:60")).toBeNull();
+        expect(parseTimecode("90m")).toBeNull();
     });
 });

@@ -20,6 +20,8 @@ export interface HlsSegment {
     sequence: number;
     uri: string;
     durationSec: number;
+    /** `EXT-X-PROGRAM-DATE-TIME` right before the segment: the wall-clock time of its first frame, as written. */
+    programDateTime?: string;
 }
 
 export interface HlsMediaPlaylist {
@@ -125,6 +127,7 @@ function parseMedia(lines: string[], baseUrl: string): HlsMediaPlaylist {
         usesByteRanges: false,
     };
     let duration: number | null = null;
+    let programDateTime: string | null = null;
 
     for (const line of lines) {
         if (line.startsWith("#EXT-X-TARGETDURATION:")) {
@@ -151,6 +154,8 @@ function parseMedia(lines: string[], baseUrl: string): HlsMediaPlaylist {
             if (method && method !== "NONE") {
                 playlist.encryption = method;
             }
+        } else if (line.startsWith("#EXT-X-PROGRAM-DATE-TIME:")) {
+            programDateTime = tagValue(line);
         } else if (line.startsWith("#EXT-X-BYTERANGE")) {
             playlist.usesByteRanges = true;
         } else if (line.startsWith("#EXTINF:")) {
@@ -160,8 +165,10 @@ function parseMedia(lines: string[], baseUrl: string): HlsMediaPlaylist {
                 sequence: playlist.mediaSequence + playlist.segments.length,
                 uri: new URL(line, baseUrl).href,
                 durationSec: duration,
+                ...(programDateTime ? { programDateTime } : {}),
             });
             duration = null;
+            programDateTime = null;
         }
     }
 

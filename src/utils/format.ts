@@ -464,3 +464,37 @@ export function formatCountdown(remainingMs: number): string {
 
     return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
+
+// ============= Timecodes =============
+
+/** Seconds as `H:MM:SS`, the form a video player and `ffmpeg -ss` both read (`5:21:35`). Fractions are cut. */
+export function formatTimecode(totalSeconds: number): string {
+    const whole = Math.max(0, Math.floor(totalSeconds));
+    const hours = Math.floor(whole / 3600);
+    const minutes = Math.floor((whole % 3600) / 60);
+    const seconds = whole % 60;
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+/** `H:MM:SS`, `M:SS` or plain seconds (`5:21:35`, `21:35`, `19295.5`) as seconds; null for anything else. */
+export function parseTimecode(input: string): number | null {
+    const text = input.trim();
+
+    if (/^\d+(\.\d+)?$/.test(text)) {
+        return Number(text);
+    }
+
+    const match = text.match(/^(?:(\d+):)?(\d{1,2}):(\d{1,2}(?:\.\d+)?)$/);
+
+    if (!match) {
+        return null;
+    }
+
+    const [, hours, minutes, seconds] = match;
+
+    if (Number(minutes) > 59 || Number(seconds) >= 60) {
+        return null;
+    }
+
+    return Number(hours ?? 0) * 3600 + Number(minutes) * 60 + Number(seconds);
+}

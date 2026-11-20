@@ -69,6 +69,23 @@ a.m4s
     });
 });
 
+describe("parsePlaylist program date time", () => {
+    it("gives each segment the program date time written before it, and none to the rest", () => {
+        const text = `#EXTM3U
+#EXT-X-PROGRAM-DATE-TIME:2026-11-19T01:48:23.16Z
+#EXT-X-BYTERANGE:2092816@4399200
+#EXTINF:2.000,
+1921.ts
+#EXTINF:2.000,
+1922.ts
+`;
+        const playlist = parsePlaylist(text, `${BASE}clip.m3u8`);
+        const segments = playlist.kind === "media" ? playlist.segments : [];
+
+        expect(segments.map((segment) => segment.programDateTime)).toEqual(["2026-11-19T01:48:23.16Z", undefined]);
+    });
+});
+
 describe("deriveSegmentTemplate", () => {
     it("cuts the run that equals the sequence, not an earlier number in the name", () => {
         const playlist = parsePlaylist(LIVE, `${BASE}stream_720p.m3u8`);
