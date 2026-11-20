@@ -682,7 +682,7 @@ class TerminalAdapter implements ListenAdapter {
                 decided?.kind === "question" &&
                 decided.group === "words" &&
                 decided.about === "term"
-                    ? ` · ${heardTimes(decided)} places fixed`
+                    ? ` · ${heardTimes(decided)} places ${note.outcome.answer.toLowerCase() === decided.heard?.toLowerCase() ? "kept as heard" : "fixed"}`
                     : "";
             ui.ok(
                 note.outcome === "skip"
@@ -895,9 +895,11 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
     const settings = await new MeetingsConfigStore().read();
     const threshold = applyAbove ?? settings.global.suggest.applyAbove;
     const eligible = openQuestions(meeting).filter((question) => withinListenThreshold(question, threshold));
+    // A fresh spot-check sample is drawn without the threshold, so it keeps only the questions the threshold allows.
+    const eligibleIds = new Set(eligible.map((question) => question.id));
     let selected: string[] | undefined =
         group === "spot-check" && sampled !== undefined
-            ? sampled
+            ? sampled.filter((id) => eligibleIds.has(id))
             : group === "all"
               ? undefined
               : eligible.filter((question) => (question.group ?? "rules") === group).map((question) => question.id);
