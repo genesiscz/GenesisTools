@@ -106,7 +106,9 @@ interface FakeRun {
     /** Ends the run by itself, as the recorder's deadline or a failure would. */
     end: (result: SegmentResult, writeMovie?: boolean) => Promise<void>;
     /** The first frame arrives (runs arm at once unless the fake was made with `armLater`), when the recorder said. */
-    arm: (start?: { firstFrameAt: number }) => void;
+    arm: (start?: { firstFrameAt: number; display?: { id: number; name: string } }) => void;
+    /** A Follow display run moved to another display. */
+    displayChanged?: (display: { id: number; name: string }) => void;
 }
 
 /**
@@ -126,7 +128,7 @@ function fakeRecorder(
 ) {
     const runs: FakeRun[] = [];
     const recorder: SegmentRecorder = {
-        record({ target, rates, output, maxSeconds, signal, onRecording, onPreparing }) {
+        record({ target, rates, output, maxSeconds, signal, onRecording, onPreparing, onDisplayChanged }) {
             if (options.prepares) {
                 onPreparing?.();
             }
@@ -141,11 +143,11 @@ function fakeRecorder(
 
                     resolve(result);
                 };
-                const arm = (start?: { firstFrameAt: number }) => {
+                const arm = (start?: { firstFrameAt: number; display?: { id: number; name: string } }) => {
                     armed = true;
                     onRecording(start);
                 };
-                runs.push({ target, rates, output, maxSeconds, signal, end, arm });
+                runs.push({ target, rates, output, maxSeconds, signal, end, arm, displayChanged: onDisplayChanged });
                 if (options.failFirst && index === 0) {
                     void end({ ok: false, endedBy: "failure", error: "[screen-recording-denied] no grant" }, false);
                     return;
@@ -504,6 +506,30 @@ describe("RecordingSession", () => {
         expect(await recording.finished).toBe("done");
         expect(joined).toHaveLength(0);
         expect(await readFile(join(root, "out.mp4"), "utf8")).toBe("movie 0 app");
+    });
+
+    it("keeps the movie time of each display a Follow display take records from, across a pause", async () => {
+        const side = { id: 9, name: "Side" };
+        const builtIn = { id: 7, name: "Built-in" };
+        const { recorder, runs } = fakeRecorder({ armLater: true });
+        const recording = session(recorder);
+        await recording.start();
+        runs[0].arm({ firstFrameAt: clock, display: side });
+        clock += 1500;
+        runs[0].displayChanged?.(builtIn);
+        runs[0].displayChanged?.(builtIn);
+        await recording.command({ cmd: "pause" });
+        await recording.command({ cmd: "resume" });
+        runs[1].arm({ firstFrameAt: clock, display: builtIn });
+        clock += 500;
+        runs[1].displayChanged?.(side);
+        await recording.command({ cmd: "stop" });
+        expect(await recording.finished).toBe("done");
+        expect(recording.displaySwitches()).toEqual([
+            { atMs: 0, display: side },
+            { atMs: 1500, display: builtIn },
+            { atMs: 1500, display: side },
+        ]);
     });
 
     it("restart drops every earlier segment and the clock", async () => {

@@ -561,6 +561,7 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
     }
 
     const spans = session.movieSpans();
+    const displays = options.target.kind === "display" && options.target.follow ? session.displaySwitches() : [];
     const cameraProblem = cameraStarted
         ? await endRecordingCamera({ folder, outcome, spans, host: options.cameraHost })
         : undefined;
@@ -591,7 +592,13 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
             ...manifest.settings,
             // Each kept segment on the wall clock, for any clock that has to line up with this movie (the camera's).
             video: existsSync(movie)
-                ? { file: "screen.mp4", durationMs, ...frameStats, ...(spans.length ? { spans } : {}) }
+                ? {
+                      file: "screen.mp4",
+                      durationMs,
+                      ...frameStats,
+                      ...(spans.length ? { spans } : {}),
+                      ...(displays.length ? { displays } : {}),
+                  }
                 : undefined,
             outcome,
             markers: activeControl.markers,

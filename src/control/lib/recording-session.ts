@@ -6,7 +6,7 @@ import { withTimeout } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { recorderSettingsSchema } from "@genesiscz/utils/screen-recorder/control";
-import type { RecordingSpan } from "@genesiscz/utils/screen-recorder/library";
+import type { RecordingDisplaySwitch, RecordingSpan } from "@genesiscz/utils/screen-recorder/library";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
 import { NATIVE_FRAMES_MAX_SECONDS, NATIVE_MOVIE_MAX_SECONDS } from "./capture-plan";
@@ -247,6 +247,8 @@ export function recordingsDir(...segments: string[]): string {
  */
 export class RecordingSession {
     private capturedDisplay?: SegmentStart["display"];
+    /** Each display the kept segments recorded from, at its movie time; a restart drops them with the segments. */
+    private switches: RecordingDisplaySwitch[] = [];
     private state: RecordingState | "ended" = "paused";
     private target: RecordingTarget;
     private readonly segments: FinishedSegment[] = [];
@@ -581,6 +583,7 @@ export class RecordingSession {
                         return;
                     }
                     this.capturedDisplay = display;
+                    this.noteDisplay(run.movieOffsetMs + this.liveMs(run), display);
                     this.setState("recording", run.reason);
                 },
                 onPreparing: () => {
@@ -619,6 +622,10 @@ export class RecordingSession {
         const now = this.now();
         run.startedAt = Math.min(now, Math.max(run.requestedAt, start?.firstFrameAt ?? now));
         this.capturedDisplay = start?.display;
+        if (start?.display) {
+            this.noteDisplay(run.movieOffsetMs, start.display);
+        }
+
         run.settleFramed();
         clearTimeout(run.slowStart);
         log.debug({ index: run.index }, "recording segment started");
@@ -777,7 +784,21 @@ export class RecordingSession {
         }
     }
 
+    /** The display each stretch of the movie came from, in movie order (`settings.video.displays`). */
+    displaySwitches(): RecordingDisplaySwitch[] {
+        return this.switches.map((row) => ({ atMs: Math.round(row.atMs), display: { ...row.display } }));
+    }
+
+    private noteDisplay(atMs: number, display: RecordingDisplaySwitch["display"]): void {
+        if (this.switches.at(-1)?.display.id === display.id) {
+            return;
+        }
+
+        this.switches.push({ atMs, display });
+    }
+
     private async deleteSegments(): Promise<void> {
+        this.switches = [];
         for (const segment of this.segments.splice(0)) {
             try {
                 await unlink(segment.path);
