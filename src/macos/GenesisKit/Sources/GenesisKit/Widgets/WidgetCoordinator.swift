@@ -496,8 +496,8 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         }
     }
 
-    /// The shortcut: opens the agents pane with the keyboard in it, or closes the open panel (staged decisions still
-    /// ask first).
+    /// The shortcut: opens the agents pane with the keyboard in it (with the hover list's open entry, when one is
+    /// open), or closes the open panel (staged decisions still ask first).
     func toggleFromShortcut() {
         guard panelsEnabled else { return }
         if model.expanded != nil {
@@ -510,7 +510,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             return
         }
         PerfLog.mark("widget.shortcut open \(surface.key)")
-        model.openModule("agents", on: surface)
+        model.openFromShortcut(on: surface)
     }
 
     public func registerModule(_ module: WidgetModuleDescriptor) throws {

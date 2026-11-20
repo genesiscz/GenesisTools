@@ -226,6 +226,19 @@ final class WidgetInboxFeedTests: XCTestCase {
         XCTAssertEqual(calls, [["action": "inbox-clear", "at": .number(cutoff)]])
     }
 
+    /// The Open Widget shortcut keeps the entry the reader opened in the hover list: it opens in its session.
+    func testTheShortcutOpensTheHoverListsOpenEntryInItsSession() throws {
+        let model = try makeModel()
+        defer { model.stop() }
+        model.actionRunner = { _ in ["ok": true] }
+        let entry = try XCTUnwrap(model.inboxOverviewItems.first { $0.id == items[1].id })
+        model.togglePreviewEntry(entry)
+        model.openFromShortcut(on: WidgetSurfaceID(edge: .right))
+        XCTAssertEqual(model.selectedCardID, entry.id)
+        XCTAssertEqual(model.section, "Inbox")
+        XCTAssertFalse(model.previewEntryOpen)
+    }
+
     func testHoverSegmentsKeepTheSessionFilterWhenItemsIsSelected() throws {
         let model = try makeModel()
         defer { model.stop() }

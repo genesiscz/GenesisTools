@@ -268,6 +268,17 @@ public final class WidgetModel: ObservableObject {
         previewOpenItemID = nil
     }
 
+    /// The Open Widget shortcut: an entry the reader opened in the hover list opens in its session, so the expanded
+    /// widget keeps it; with none open, the agents pane opens as it last was.
+    func openFromShortcut(on surface: WidgetSurfaceID) {
+        if let id = previewOpenItemID, let item = inboxOverviewItems.first(where: { $0.id == id }) {
+            closePreviewEntry()
+            openInboxItem(item, on: surface)
+            return
+        }
+        openModule("agents", on: surface)
+    }
+
     private func resumeHoverExit() {
         guard !stopping, !dialogOpen, let surface = hoveredSurface,
               !pointerInside.contains(surface.key) else { return }
