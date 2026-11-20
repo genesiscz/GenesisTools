@@ -212,7 +212,14 @@ export class EvalConfigError extends Error {
 
 // ── JSON, canonical form, hash ───────────────────────────────────────────────
 
-const JsonSchema = z.json();
+/**
+ * Any JSON value, with the checks of `z.json()`. Its type is named because tsc-rs 0.8 reports a false TS5115 on the
+ * inferred type of `z.json()`; the engine imports only zod and its own files, so it keeps this copy of
+ * `jsonValueSchema` (src/utils/json-value-schema.ts).
+ */
+export const JsonSchema: z.ZodType<Json, Json> = z.lazy(() =>
+    z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(JsonSchema), z.record(z.string(), JsonSchema)])
+);
 
 /** A plain JSON copy of a value (undefined properties dropped). Throws when the value is not JSON. */
 export function toJson(value: unknown): Json {
