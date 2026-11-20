@@ -15,7 +15,7 @@ export const remindersSettings = z.object({}).passthrough();
 export const remindersConnector: Connector<unknown> = {
     id: "reminders",
     settings: remindersSettings,
-    can: { create: true, pull: false, labels: false, comments: false, parents: false },
+    can: { create: true, pull: false, labels: false, comments: false, parents: false, links: false },
 
     async status() {
         return { ok: process.platform === "darwin", detail: "Reminders.app through EventKit" };
