@@ -24,7 +24,9 @@ struct CaptureSelectionOptions {
     /// do it, because ScreenCaptureKit ignores it on macOS 15 and later.
     let excludedWindowIDs: Set<CGWindowID>
 
-    func dimensions(points: CGSize, nativeScale: CGFloat, video: Bool) -> CGSize {
+    /// The output size; an H.264 movie is sized by `quality` (default: the `--movie-quality` preset). `.standard` gives
+    /// the size its bit rate is computed from.
+    func dimensions(points: CGSize, nativeScale: CGFloat, video: Bool, quality: MovieQuality? = nil) -> CGSize {
         let requested = outputSize ?? CGSize(width: (points.width * (outputScale ?? nativeScale)).rounded(),
                                               height: (points.height * (outputScale ?? nativeScale)).rounded())
         guard requested.width >= 2, requested.height >= 2, requested.width <= 16384, requested.height <= 16384 else {
@@ -34,7 +36,7 @@ struct CaptureSelectionOptions {
             if outputSize != nil && (Int(requested.width) % 2 != 0 || Int(requested.height) % 2 != 0) {
                 errorExit("H.264 output dimensions must be even; choose ProRes 4444 MOV for odd sizes", code: "invalid-argument")
             }
-            return movieQuality.movieSize(CGSize(width: Int(requested.width) & ~1, height: Int(requested.height) & ~1))
+            return (quality ?? movieQuality).movieSize(CGSize(width: Int(requested.width) & ~1, height: Int(requested.height) & ~1))
         }
         return requested
     }
@@ -535,6 +537,8 @@ func captureIsolatedWindows(_ options: RecordOptions) {
     let canvas = displayCanvas ?? selected.reduce(CGRect.null) { $0.union($1.bounds) }
     let nativeScale = selected.map(\.scale).max() ?? 1
     let output = options.selection.dimensions(points: canvas.size, nativeScale: nativeScale, video: options.videoOut != nil)
+    let standard = options.selection.dimensions(points: canvas.size, nativeScale: nativeScale, video: options.videoOut != nil,
+                                                quality: .standard)
     let recorder = NativeRecorder(options: options, configuration: SCStreamConfiguration())
     let compositor = IsolatedCompositor(recorder: recorder, options: options, selected: selected, windows: isolatedWindowRows(rows),
                                         canvas: canvas, displayCanvas: displayCanvas, output: output)
@@ -550,7 +554,7 @@ func captureIsolatedWindows(_ options: RecordOptions) {
     defer { indicator.close() }
     var startedStreams: [SCStream] = []
     do {
-        try recorder.prepareVideo(width: Int(output.width), height: Int(output.height))
+        try recorder.prepareVideo(width: Int(output.width), height: Int(output.height), standard: standard)
         for target in selected {
             guard let window = content.windows.first(where: { $0.windowID == target.id }) else { continue }
             let source = IsolatedWindowSource(target: target, window: window, fps: options.activeFps)

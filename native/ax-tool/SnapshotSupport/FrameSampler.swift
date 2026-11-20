@@ -416,12 +416,13 @@ public enum MovieQuality: String, CaseIterable, Sendable {
         return CGSize(width: max(2, Int(size.width / 2) & ~1), height: max(2, Int(size.height / 2) & ~1))
     }
 
-    /// The average bit rate of a movie `width` × `height` pixels, already sized by `movieSize`.
-    public func bitRate(width: Int, height: Int, fps: Double) -> Int {
+    /// The average bit rate of the movie, from the size Standard records (`standardWidth` × `standardHeight`, before
+    /// `movieSize` halves it for Small): Small's even rounding of the halved sides never changes its rate.
+    public func bitRate(standardWidth width: Int, standardHeight height: Int, fps: Double) -> Int {
         switch self {
         case .standard: screenMovieBitRate(width: width, height: height, fps: fps)
         case .high: 2 * screenMovieBitRate(width: width, height: height, fps: fps)
-        case .small: screenMovieBitRate(width: width * 2, height: height * 2, fps: fps) / 2
+        case .small: screenMovieBitRate(width: width, height: height, fps: fps) / 2
         }
     }
 }

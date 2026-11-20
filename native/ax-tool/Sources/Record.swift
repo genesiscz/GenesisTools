@@ -663,7 +663,8 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         }
     }
 
-    func prepareVideo(width: Int, height: Int) throws {
+    /// `standard` is the size the movie would have at `--movie-quality standard`, which its bit rate is computed from.
+    func prepareVideo(width: Int, height: Int, standard: CGSize) throws {
         guard let path = options.videoOut else { return }
         let url = URL(fileURLWithPath: path)
         guard !FileManager.default.fileExists(atPath: path) else {
@@ -682,7 +683,7 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             AVVideoHeightKey: height,
         ]
         if options.selection.codec != "prores4444" {
-            settings[AVVideoCompressionPropertiesKey] = h264Compression(width: width, height: height, fps: options.activeFps)
+            settings[AVVideoCompressionPropertiesKey] = h264Compression(standard: standard, fps: options.activeFps)
         }
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         input.expectsMediaDataInRealTime = true
@@ -705,9 +706,10 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         self.adaptor = adaptor
     }
 
-    private func h264Compression(width: Int, height: Int, fps: Double) -> [String: Any] {
+    private func h264Compression(standard: CGSize, fps: Double) -> [String: Any] {
         [
-            AVVideoAverageBitRateKey: options.selection.movieQuality.bitRate(width: width, height: height, fps: fps),
+            AVVideoAverageBitRateKey: options.selection.movieQuality.bitRate(standardWidth: Int(standard.width),
+                                                                             standardHeight: Int(standard.height), fps: fps),
             AVVideoExpectedSourceFrameRateKey: Int(fps.rounded()),
             AVVideoMaxKeyFrameIntervalKey: max(1, Int((fps * 2).rounded())),
             AVVideoAllowFrameReorderingKey: false,
@@ -1155,6 +1157,7 @@ func cmdCaptureScreen() {
     // been configured one pixel smaller. The adaptor then refused every append and only a
     // generic writer-status warning said so.
     let output = recordOutputSize(options, points: pointSize, scale: display.scale)
+    let standard = recordOutputSize(options, points: pointSize, scale: display.scale, quality: .standard)
     let width = Int(output.width)
     let height = Int(output.height)
     configuration.width = width
@@ -1177,7 +1180,7 @@ func cmdCaptureScreen() {
 
     let recorder = NativeRecorder(options: options, configuration: configuration, displayID: display.id)
     do {
-        try recorder.prepareVideo(width: width, height: height)
+        try recorder.prepareVideo(width: width, height: height, standard: standard)
     } catch {
         errorExit("cannot open --video-out: \(error.localizedDescription)")
     }
@@ -1382,9 +1385,9 @@ func cmdCaptureScreen() {
 
 /// The stream output size: the selection's size at the display scale, then capped by `--max-long-side`.
 private func recordOutputSize(_ options: RecordOptions, points: CGSize, scale: CGFloat,
-                              maxLongSide: Int?? = nil) -> CGSize {
+                              maxLongSide: Int?? = nil, quality: MovieQuality? = nil) -> CGSize {
     let video = options.videoOut != nil
-    let size = options.selection.dimensions(points: points, nativeScale: scale, video: video)
+    let size = options.selection.dimensions(points: points, nativeScale: scale, video: video, quality: quality)
     return capLongSide(size, maxLongSide: maxLongSide ?? options.maxLongSide, even: video && options.selection.codec == "h264")
 }
 

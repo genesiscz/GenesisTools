@@ -236,9 +236,13 @@ final class CaptureCanvasGeometryTests: XCTestCase {
         XCTAssertEqual(MovieQuality.small.movieSize(native), CGSize(width: 1028, height: 614))
         XCTAssertEqual(MovieQuality.small.movieSize(CGSize(width: 1510, height: 982)), CGSize(width: 754, height: 490), "even sides")
         let standard = screenMovieBitRate(width: 2056, height: 1228, fps: 60)
-        XCTAssertEqual(MovieQuality.standard.bitRate(width: 2056, height: 1228, fps: 60), standard)
-        XCTAssertEqual(MovieQuality.high.bitRate(width: 2056, height: 1228, fps: 60), 2 * standard)
-        XCTAssertEqual(MovieQuality.small.bitRate(width: 1028, height: 614, fps: 60), standard / 2)
+        XCTAssertEqual(MovieQuality.standard.bitRate(standardWidth: 2056, standardHeight: 1228, fps: 60), standard)
+        XCTAssertEqual(MovieQuality.high.bitRate(standardWidth: 2056, standardHeight: 1228, fps: 60), 2 * standard)
+        XCTAssertEqual(MovieQuality.small.bitRate(standardWidth: 2056, standardHeight: 1228, fps: 60), standard / 2)
+        // 1510 × 982 records 754 × 490 at Small; the rate is still half of 1510 × 982's, not of the rounded 1508 × 980.
+        XCTAssertEqual(MovieQuality.small.bitRate(standardWidth: 1510, standardHeight: 982, fps: 60),
+                       screenMovieBitRate(width: 1510, height: 982, fps: 60) / 2)
+        XCTAssertNotEqual(screenMovieBitRate(width: 1510, height: 982, fps: 60), screenMovieBitRate(width: 1508, height: 980, fps: 60))
     }
 
     /// `ax-tool capture … --movie-quality` with no preset after it is refused, never read as the default.
