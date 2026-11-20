@@ -156,7 +156,10 @@ export function registerCaptureSessionCommands(capture: Command): void {
         .option("--fps <n>", "Frame rate while something moves, 0.5–120", "60")
         .option("--idle-fps <n>", "Frame rate while still, 0.1–5 (default: keep the active frame rate)")
         .option("--no-indicator", "Hide the red border around what is recorded (never in the movie either way)")
-        .option("--max-seconds <n>", `Longest recording, 1–${RECORDING_SESSION_MAX_SECONDS} s`)
+        .option(
+            "--max-seconds <n>",
+            `Longest recording, 1–${RECORDING_SESSION_MAX_SECONDS} s; without --stop-on-stdin the limit stops and keeps the movie`
+        )
         .option("--output <path>", "Where the joined movie goes (default ~/.genesis-tools/control/recordings/)")
         .action(async (flags: SessionFlags) => {
             // A host that dies closes the pipe: the next write fails with EPIPE, which would end this process with
@@ -178,6 +181,12 @@ export function registerCaptureSessionCommands(capture: Command): void {
                 log.info({ event }, "recording event");
 
                 control?.observe(event);
+
+                // At the limit the session pauses and waits for its host. Without commands on stdin nobody would ever
+                // send the stop, so the process waited until it was killed: the limit stops and keeps the movie.
+                if (event.event === "state" && event.reason === "limit" && !flags.stopOnStdin) {
+                    void session?.command({ cmd: "stop" });
+                }
 
                 // Each state event re-anchors the floating controls' clock on the movie time; an error changes only
                 // the entry.
