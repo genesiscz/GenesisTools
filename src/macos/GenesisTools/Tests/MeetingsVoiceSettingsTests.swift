@@ -42,6 +42,35 @@ final class MeetingsVoiceSettingsTests: XCTestCase {
         XCTAssertEqual(writes, ["global.speakerLabels.voice.supportOnSeatLines": "true"])
     }
 
+    /// w_pg962cdp: the five voice exclusion settings read the engine's defaults, refuse values the config refuses, and
+    /// each control writes its own key under `global.speakerLabels.voice.exclusion`.
+    func testVoiceExclusionReadsItsDefaultsAndWritesEachKey() throws {
+        XCTAssertEqual(MeetingsVoiceNaming(raw: nil).exclusion, MeetingsVoiceNaming.Exclusion())
+        let set = try raw(#"""
+        {"global":{"speakerLabels":{"voice":{"exclusion":{"enabled":false,"margin":0.3,"maxConfidence":0.5,"minLines":5,"coherence":0.9}}}}}
+        """#)
+        XCTAssertEqual(MeetingsVoiceNaming(raw: set).exclusion,
+                       .init(enabled: false, margin: 0.3, maxConfidence: 0.5, minLines: 5, coherence: 0.9))
+        let wrong = try raw(#"{"global":{"speakerLabels":{"voice":{"exclusion":{"margin":3,"maxConfidence":1.5,"minLines":1e300}}}}}"#)
+        let read = MeetingsVoiceNaming(raw: wrong).exclusion
+        XCTAssertEqual(read.margin, 0.15)
+        XCTAssertEqual(read.maxConfidence, 0.69)
+        XCTAssertEqual(read.minLines, MeetingsVoiceNaming.Exclusion.maxLines, "a huge count is clamped, never a trap")
+
+        var writes = [String: String]()
+        let card = MeetingsVoiceNamingCard(naming: MeetingsVoiceNaming(raw: nil)) { path, value in
+            writes[path.joined(separator: ".")] = "\(value)"
+        }
+        card.chooseExclusion("enabled", false)
+        card.chooseExclusion("minLines", 4)
+        card.chooseExclusion("coherence", 0.8)
+        XCTAssertEqual(writes, [
+            "global.speakerLabels.voice.exclusion.enabled": "false",
+            "global.speakerLabels.voice.exclusion.minLines": "4",
+            "global.speakerLabels.voice.exclusion.coherence": "0.8",
+        ])
+    }
+
     func testRoomDeviceThresholdReadsAndWritesTheSeatSetting() throws {
         let config = try raw(#"{"global":{"speakerLabels":{"seat":{"deviceOfferMinMeetings":7}}}}"#)
         var writes: [String: Int] = [:]
