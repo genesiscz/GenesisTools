@@ -404,7 +404,7 @@ struct MeetingSeatChoices {
                 seats.remote += remote[PeopleText.personKey(person.name)] ?? []
             }
         }
-        seats.microphones = suggestion.seats.microphones.map { Self.microphones($0, keptIn: seats) }
+        seats.microphones = suggestion.seats.microphones.map { self.microphones($0, keptIn: seats) }
         return seats
     }
 
