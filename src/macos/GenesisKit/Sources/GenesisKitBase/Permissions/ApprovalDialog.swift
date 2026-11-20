@@ -93,6 +93,8 @@ public final class ApprovalDialogModel: ObservableObject {
     public let rememberChoices: [ApprovalRemember]
     public let rememberNote: String?
     public let allowTitle: String
+    /// The word on the refusing button: "Deny" for a request that runs something, "Not now" for a notice.
+    public let denyTitle: String
     public let deadline: Date?
     public let deadlineLabel: String
     public let identifier: String
@@ -148,7 +150,7 @@ public final class ApprovalDialogModel: ObservableObject {
                 allowTitle: String, deadline: Date?, identifier: String, items: [ApprovalItem] = [],
                 verifier: ApprovalVerifier? = nil, links: [ApprovalLink] = [], summary: String? = nil,
                 disposals: [ApprovalChoice] = [], hint: String? = nil, selectable: Bool = false,
-                touchIDWaitsForClick: Bool = false, deadlineLabel: String = "Denies itself in ") {
+                touchIDWaitsForClick: Bool = false, deadlineLabel: String = "Denies itself in ", denyTitle: String = "Deny") {
         self.title = title
         self.purpose = purpose
         self.command = command
@@ -160,6 +162,7 @@ public final class ApprovalDialogModel: ObservableObject {
         self.rememberChoices = rememberChoices
         self.rememberNote = rememberNote
         self.allowTitle = allowTitle
+        self.denyTitle = denyTitle
         self.deadline = deadline
         self.deadlineLabel = deadlineLabel
         self.identifier = identifier
@@ -538,7 +541,7 @@ public struct ApprovalDialogView: View {
                     .fixedSize()
             }
             Spacer(minLength: 8)
-            Button("Deny", action: model.deny)
+            Button(model.denyTitle, action: model.deny)
                 .keyboardShortcut(.cancelAction)
                 .accessibilityIdentifier("\(model.identifier)-deny")
             Button(model.allowTitle, action: model.allow)
@@ -590,7 +593,7 @@ struct ApprovalVerifyFooter: View {
         }
         // Esc denies at once, with the note open or not: the Deny… button only opens the note.
         .background {
-            Button("Deny", action: model.deny)
+            Button(model.denyTitle, action: model.deny)
                 .keyboardShortcut(.cancelAction)
                 .opacity(0)
                 .frame(width: 0, height: 0)
@@ -693,7 +696,7 @@ struct ApprovalVerifyFooter: View {
                 .focused($noteFocused)
                 .onSubmit(model.deny)
                 .accessibilityIdentifier("\(model.identifier)-deny-note")
-            Button("Deny", action: model.deny)
+            Button(model.denyTitle, action: model.deny)
                 .pointerCursor()
                 .accessibilityIdentifier("\(model.identifier)-deny")
             Button("Cancel", action: model.cancelDenyNote)
@@ -742,7 +745,7 @@ struct ApprovalVerifyFooter: View {
                     .help(nothingSelected ? "Tick at least one row first." : "Turns the sensor on; then touch it to approve.")
                     .accessibilityIdentifier("\(model.identifier)-arm")
             }
-            Button("Deny…", action: model.denyWithNote)
+            Button("\(model.denyTitle)…", action: model.denyWithNote)
                 .pointerCursor()
                 .help("Deny, with a word for the agent. Esc denies at once.")
                 .accessibilityIdentifier("\(model.identifier)-deny")

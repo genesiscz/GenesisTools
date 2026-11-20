@@ -45,6 +45,7 @@ final class RequestPresentTests: XCTestCase {
         XCTAssertEqual(model.title, request.title)
         XCTAssertEqual(model.purpose, request.reason)
         XCTAssertEqual(model.allowTitle, "Acknowledge")
+        XCTAssertEqual(model.denyTitle, "Not now", "a notice runs nothing, so it is put off, never denied")
         XCTAssertNil(model.verifier)
         XCTAssertEqual(model.deadlineLabel, "Stops waiting in ")
         var allows = 0
