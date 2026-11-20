@@ -245,8 +245,10 @@ export async function startGenesisToolsService(
     Object.assign(handlers, extra);
     const table = toRpcTable<typeof genesisToolsApi, ServiceCall>(genesisToolsApi, handlers);
     let repeating = false;
+    /** Aborts when the host stops: a repeat pass then sends and records nothing more, so a new host owns the requests. */
+    const stopping = new AbortController();
     async function repeatNotices(): Promise<void> {
-        if (repeating) {
+        if (repeating || stopping.signal.aborted) {
             return;
         }
 
@@ -258,6 +260,10 @@ export async function startGenesisToolsService(
             }
 
             for (const view of journal.pending()) {
+                if (stopping.signal.aborted) {
+                    return;
+                }
+
                 const last = view.events.findLast((event) => event.type === "delivered");
                 if (
                     view.state !== "waiting" ||
@@ -275,8 +281,10 @@ export async function startGenesisToolsService(
 
                 const result = await runAreaAction(AREAS, "person.notifyThenAsk", view.request, deps, {
                     timeoutMs: 15_000,
+                    signal: stopping.signal,
                 });
                 if (
+                    !stopping.signal.aborted &&
                     result.status === "ran" &&
                     typeof result.value === "object" &&
                     result.value !== null &&
@@ -321,6 +329,7 @@ export async function startGenesisToolsService(
         },
         keepAlive: { idle: () => journal.pending().length > 0 },
         onStopped: () => {
+            stopping.abort(new Error("the GenesisTools service stopped"));
             offConfig();
             offJournal?.();
             offEvents();
