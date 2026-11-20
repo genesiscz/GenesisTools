@@ -4,7 +4,7 @@ import { type FileIdentity, fileIdentity } from "@genesiscz/utils/fs/identity-ca
 import { createWatcher, type WatcherOptions, type WatcherSubscription } from "@genesiscz/utils/fs/watcher";
 import { logger } from "@genesiscz/utils/logger";
 import { PEOPLE_FILE } from "@genesiscz/utils/meetings/people-book";
-import { MEETING_FILE, MOMENTS_FOLDER } from "@genesiscz/utils/meetings/record";
+import { MEETING_FILE, MOMENTS_FOLDER, SOURCE_COPY_FOLDER } from "@genesiscz/utils/meetings/record";
 import { MEETING_PARTS } from "./api";
 
 const { log } = logger.scoped("meetings-service");
@@ -84,7 +84,7 @@ export class MeetingsFolderWatch {
         this.watchedRoot = realpathSync(this.options.root);
         this.subscription = await createWatcher(this.watchedRoot, (events) => this.heard(events), {
             debounceMs: this.options.coalesceMs ?? FOLDER_WATCH_COALESCE_MS,
-            ignorePatterns: [`**/${MOMENTS_FOLDER}/**`, "**/evidence/**", "**/.*"],
+            ignorePatterns: [`**/${MOMENTS_FOLDER}/**`, `**/${SOURCE_COPY_FOLDER}/**`, "**/evidence/**", "**/.*"],
             filter: (event) => {
                 const path = this.relativePath(event.path);
                 return (

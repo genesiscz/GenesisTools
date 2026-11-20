@@ -778,7 +778,7 @@ async function speakersRename(ref: string, label: string, name: string, opts: { 
 
     try {
         // A label the transcript does not have would rename nothing and say it did (MC11): name the labels instead.
-        const labels = [...new Set((await meetingTranscript(record)).map((entry) => entry.speaker))];
+        const labels = [...new Set((await meetingTranscript(record, store)).map((entry) => entry.speaker))];
 
         if (!labels.includes(label) && record.speakers.labels[label] === undefined) {
             fail(`${record.id} has no label "${label}". Its labels: ${labels.map((one) => `"${one}"`).join(", ")}`);

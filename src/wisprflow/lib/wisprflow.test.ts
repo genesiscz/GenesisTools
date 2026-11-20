@@ -23,7 +23,7 @@ import { completeTranscript, parseLive } from "./live";
 import * as local from "./local";
 import * as mcp from "./mcp";
 import { pageText, parseMcpTranscript } from "./mcp";
-import { mergeRoster } from "./meeting-source";
+import { mergeRoster, wisprflowSource } from "./meeting-source";
 import { mergeFrontmatter, writeGuarded } from "./output";
 import { renderMarkdown, renderSrt, showMarkdown } from "./render";
 import { loadMeeting } from "./source";
@@ -844,6 +844,11 @@ describe("an export imported from another Mac", () => {
             expect(loaded.source).toBe("imported");
             expect(loaded.notes).toContain("The meeting was imported from an export.");
             expect(loaded.data.transcript).toHaveLength(2);
+
+            // Someone else recorded it: its self is the person at that microphone, and the record's block says so.
+            const meeting = await wisprflowSource.load(meetingId);
+            expect(meeting.recordedBy).toEqual({ owner: false, person: "Alice Example" });
+            expect(wisprflowSource.describe(meeting).imported).toEqual({ from: "export", recordedBy: "Alice Example" });
 
             const audio = await wisprAudioAccess({ dir: join(folder!, "no-wispr-app") }).files();
             expect(audio).toContainEqual({ sourceMeetingId: meetingId, path: join(folder!, "upload.ogg") });
