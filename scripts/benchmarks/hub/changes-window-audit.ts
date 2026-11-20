@@ -2,6 +2,7 @@
 import { type Dirent, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { auditClaudeChanges, auditClaudeFacts } from "@genesiscz/utils/agent-sessions/readers/claude-changes-audit";
+import { canonicalClaudeTranscriptSync } from "@genesiscz/utils/agent-sessions/readers/claude-locate";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -83,12 +84,18 @@ const equalAudit = async () => {
         if (seen.has(sessionId)) {
             continue;
         }
-        seen.add(sessionId);
         try {
+            // Both reads resolve the session id to its canonical copy. A larger copy in another home is not what
+            // they read, so it is counted apart and the canonical copy is audited when its size comes up.
+            if (canonicalClaudeTranscriptSync(sessionId) !== file.path) {
+                totals.equalNotCanonical = (totals.equalNotCanonical ?? 0) + 1;
+                continue;
+            }
+            seen.add(sessionId);
             const log = readChangeLog(sessionId);
             const full = loadSessionChanges({ sessionId, log });
-            if (!full.transcriptPath) {
-                throw new Error("no full transcript for equality check");
+            if (full.transcriptPath !== file.path) {
+                throw new Error("the full read did not read the selected transcript");
             }
             for (const count of [1, 5, 20]) {
                 let verificationMismatch = false;
@@ -125,7 +132,10 @@ const equalAudit = async () => {
                 });
                 totals.equalChecked = (totals.equalChecked ?? 0) + 1;
                 totals.equalMismatch =
-                    (totals.equalMismatch ?? 0) + Number(verificationMismatch || render(full) !== render(recent));
+                    (totals.equalMismatch ?? 0) +
+                    Number(
+                        verificationMismatch || recent.transcriptPath !== file.path || render(full) !== render(recent)
+                    );
             }
         } catch {
             unreadable++;
