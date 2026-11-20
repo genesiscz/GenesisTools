@@ -12,8 +12,10 @@
  * longest time the event loop answered nobody, and `together.failed` counts the calls that failed beside the others.
  *
  * The modules are imported from `<checkout>`, so another worktree's copy (an older commit) runs its own code.
- * Nothing here writes the object store: the Changes call runs without `--store-blobs`. `big-session.ts` also sets
- * `GENESIS_TOOLS_CHANGES_READ_ONLY=1`, so no saved Claude changes facts are written; set it yourself to run one alone.
+ * Nothing here writes the object store: the Changes call runs without `--store-blobs`. It does save the Claude
+ * changes facts, as every real ask does, because a cold ask that reopens them is what this benchmark measures; the
+ * saved facts are checked by inode and prefix before use, so they change no later answer. Set
+ * `GENESIS_TOOLS_CHANGES_READ_ONLY=1` to measure a cold ask that may not save them.
  */
 import { createHash } from "node:crypto";
 import { join } from "node:path";

@@ -106,12 +106,10 @@ async function sample(checkout: string, mode: "each" | "together" | "changes") {
     const result = await boundedCommand({
         command: [process.execPath, "run", CHILD, checkout, session as string, mode],
         timeoutMs: SAMPLE_DEADLINE_MS,
-        // A sample reads the user's real sessions: it may read the saved Claude changes facts, never write them.
-        environment: {
-            ...env.getProcessEnv(),
-            GENESIS_TOOLS_CHANGES_READ_ONLY: "1",
-            ...(mode === "changes" ? { PROFILE: "session-changes", PROFILE_TO_STDERR: "1" } : {}),
-        },
+        environment:
+            mode === "changes"
+                ? { ...env.getProcessEnv(), PROFILE: "session-changes", PROFILE_TO_STDERR: "1" }
+                : undefined,
         cwd: REPO,
     });
 
