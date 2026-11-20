@@ -539,9 +539,6 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(text, "Copied proxy.mp4 to the clipboard.")
     }
 
-    /// The defect: the menu bar's Recent rows and the library both move a recording to the Trash, but only the library
-    /// kept where it went, so a recording trashed from the menu had no Put Back. Both now read one kept entry.
-    @MainActor
     /// Reduce noise turned off while a preview is made: the answer that arrives later never starts playing.
     @MainActor
     func testASoundPreviewWhoseControlsWentAwayNeverPlays() throws {
@@ -561,6 +558,9 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertFalse(preview.isPlaying)
     }
 
+    /// The defect: the menu bar's Recent rows and the library both move a recording to the Trash, but only the library
+    /// kept where it went, so a recording trashed from the menu had no Put Back. Both now read one kept entry.
+    @MainActor
     func testATrashedRecordingIsPutBackFromTheOneKeptEntry() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("trash-\(UUID().uuidString)")
         let from = root.appendingPathComponent("library/2026-11-04_10-00-demo")
