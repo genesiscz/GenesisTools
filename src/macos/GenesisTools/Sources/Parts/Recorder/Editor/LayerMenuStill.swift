@@ -53,7 +53,7 @@ extension View {
 }
 
 @available(macOS 14.4, *)
-private struct NativeMenuStill: NSViewRepresentable {
+struct NativeMenuStill: NSViewRepresentable {
     let commands: AnyView
     func makeNSView(context: Context) -> MenuItems {
         let menu = NSHostingMenu(rootView: commands)
