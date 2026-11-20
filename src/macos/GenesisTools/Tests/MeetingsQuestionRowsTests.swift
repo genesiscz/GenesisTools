@@ -516,6 +516,9 @@ extension MeetingsQuestionRowsTests {
         var releaseSecond: CheckedContinuation<Void, Never>?
         let firstHeld = expectation(description: "the first load is in flight")
         let secondHeld = expectation(description: "the read after the write is in flight")
+        let handoff = expectation(description: "the overtaken load returned its rows")
+        // A regression that loads again reports a second read; the load count below fails it, not an over-fulfil.
+        handoff.assertForOverFulfill = false
         // Each closure parks only on its first call: a repeat load fails the test and returns at once, so a
         // regression that reloads ends in a failed assertion instead of a load nobody resumes.
         let first = Task { try await refresh.read(key) {
@@ -547,11 +550,12 @@ extension MeetingsQuestionRowsTests {
             return XCTFail("A rows load never started")
         }
         // The overtaken load returns stale rows while the newer read still loads: it must join that read, not reload.
+        // The handoff signal: the overtaken load reports its finished read and decides, with no suspension between,
+        // whether to join the newer read or load again. The timeout fails a load that never returns.
+        refresh.onReadCompleted = { handoff.fulfill() }
         releaseFirst.resume()
-        // The handoff signal: the overtaken load counts its finished read and decides, with no suspension between,
-        // whether to join the newer read or load again. Bounded by a deadline, so a load that never returns fails.
-        let deadline = ContinuousClock.now + .seconds(5)
-        while refresh.completedReadCount < 1, ContinuousClock.now < deadline { await Task.yield() }
+        await fulfillment(of: [handoff], timeout: 5)
+        refresh.onReadCompleted = nil
         XCTAssertEqual(refresh.completedReadCount, 1, "The overtaken load never returned its rows")
         XCTAssertEqual(loads, 2, "The overtaken load must not start a load of its own")
         releaseSecond.resume()

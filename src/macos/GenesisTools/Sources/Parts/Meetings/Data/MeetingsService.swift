@@ -1208,6 +1208,9 @@ final class MeetingsRowsRefresh {
     private var snapshots: [Key: ReviewRows] = [:]
     private var recent: [Key] = []
     private(set) var completedReadCount = 0
+    /// Called each time a load returns its rows, before the load decides to keep them, join a newer read or load
+    /// again; tests wait on it instead of polling `completedReadCount`.
+    var onReadCompleted: (() -> Void)?
 
     init(quietWindow: Duration = .milliseconds(150)) { self.quietWindow = quietWindow }
 
@@ -1255,6 +1258,7 @@ final class MeetingsRowsRefresh {
                 entry.loadedAt = turn
                 let rows = try await load()
                 self.completedReadCount += 1
+                self.onReadCompleted?()
                 guard turn == self.generation else {
                     entry.loadedAt = nil
                     // A read that started after the write already loads this key: share its rows.
