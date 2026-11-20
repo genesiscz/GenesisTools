@@ -817,11 +817,17 @@ test("a surface's reason for a failure or a decline is the outcome's reason, als
     const failed = await journal.settle(input.id, "failed", "the dialog could not open");
     expect(failed).toMatchObject({ status: "failed", reason: "the dialog could not open", outputTail: "" });
     const declined = await journal.settle("notice:declined", "declined", "the person said no");
-    expect(declined).toMatchObject({ status: "declined", reason: "the person said no" });
+    // The surface's reason is no note the person wrote.
+    expect(declined).toMatchObject({ status: "declined", reason: "the person said no", note: null });
 
     const reopened = createRequestJournal({ dir, now });
     expect(reopened.get(input.id)?.outcome).toEqual(failed);
     expect(reopened.get("notice:declined")?.outcome).toEqual(declined);
+
+    // A journal written before `reason` existed kept the surface's reason in the note.
+    await journal.post({ input: { ...input, id: "notice:legacy" } });
+    journal.append("notice:legacy", { type: "declined", at: now().toISOString(), via: "notice", note: "older reason" });
+    expect(journal.get("notice:legacy")?.outcome).toMatchObject({ reason: "older reason", note: "older reason" });
 });
 
 test("one worker at a time presents a waiting request, and a settled request is not presented", async () => {

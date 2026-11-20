@@ -145,7 +145,8 @@ function step(fold: Fold, entry: RequestEvent): void {
                 status: "declined",
                 via: entry.via,
                 note: entry.note,
-                reason: entry.reason ?? fold.outcome.reason,
+                // A journal from before `reason` kept the surface's reason in `note`.
+                reason: entry.reason === undefined ? (entry.note ?? fold.outcome.reason) : entry.reason,
             };
             fold.ended = true;
             break;
@@ -641,9 +642,8 @@ export function createRequestJournal(
                         { type: "finished", at: stamp, exitCode: 0, outputTail: "", verified: null },
                     ]);
                 } else if (status === "declined") {
-                    writeEvents(id, [
-                        { type: "declined", at: stamp, via: detail.via ?? "notice", note: reason, reason },
-                    ]);
+                    // A surface's reason is not the person's note: no surface hands one in, so the note stays empty.
+                    writeEvents(id, [{ type: "declined", at: stamp, via: detail.via ?? "notice", note: null, reason }]);
                 } else if (status === "obsolete") {
                     writeEvents(id, [{ type: "obsolete", at: stamp, reason: reason ?? "The condition went away." }]);
                 } else {
