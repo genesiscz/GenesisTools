@@ -379,7 +379,7 @@ public struct WidgetDraft: Codable, Equatable, Sendable {
         self.assetIds = assetIds
     }
 }
-/// The widget Usage module's preferences (`usage` in the widget schema, src/hub/lib/widget/types.ts).
+/// The widget Usage module's preferences (`usage` in the widget schema, src/utils/widget/types.ts).
 public struct WidgetUsagePreferences: Codable, Equatable, Sendable {
     /// The window an account's ring shows: the week (default) or the 5 hours.
     public var ringWindow: WidgetUsageRingWindow?
@@ -425,7 +425,7 @@ private extension KeyedDecodingContainer {
 }
 
 /// The widget's stored settings. The hub resolves every default before a snapshot leaves it (`widgetPreferencesSchema`
-/// in src/hub/lib/widget/types.ts, `prefault({})` in the state schema), so only the settings the hub keeps optional are
+/// in src/utils/widget/types.ts, `prefault({})` in the state schema), so only the settings the hub keeps optional are
 /// optional here. Writes go through `WidgetPreferencesStore`, by field.
 public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var excludedKeys: [String]
@@ -726,7 +726,7 @@ public struct WidgetOutgoing: Codable, Identifiable, Equatable, Sendable {
     public var needsRecovery: Bool { ["failed", "waiting-route", "unknown"].contains(state) }
     public static let shownHistory = 20
     /// The last 20 messages plus every older unsettled one: an unsettled message blocks its whole conversation, so
-    /// its Retry, Edit and review controls must stay reachable. Mirrors `shownOutgoing` in src/hub/lib/widget/types.ts.
+    /// its Retry, Edit and review controls must stay reachable. Mirrors `shownOutgoing` in src/utils/widget/types.ts.
     public static func shown(_ messages: [WidgetOutgoing]) -> [WidgetOutgoing] {
         let start = messages.count - shownHistory
         return messages.enumerated().filter { $0.offset >= start || !$0.element.isSettled }.map(\.element)

@@ -21,7 +21,7 @@ you report that something is missing. What they do (2026-10-24):
 - A SwiftUI `Button` reads as one VoiceOver element with its label; a row built from `.onTapGesture` does not.
 - Keymaps: `HubKeymap.swift` and `WidgetKeymap.swift` hold the shortcuts. Search them before "there is no shortcut".
 - Preferences: a constant may already be a setting. Search `WidgetPreferences` (GenesisKit
-  `Widgets/WidgetWireModels.swift`), `src/hub/lib/widget/types.ts` and the settings pages before "not configurable".
+  `Widgets/WidgetWireModels.swift`), `src/utils/widget/types.ts` and the settings pages before "not configurable".
 
 An absence claim ("no Esc", "no undo", "never announced", "no hover") needs a search across the whole package, not
 only the file in front of you: `rg -n '<what>' src/macos --type swift`. Put the command and its count in the finding.

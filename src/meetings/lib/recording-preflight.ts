@@ -1,7 +1,6 @@
 import type { readLivePermissions } from "@app/control/lib/permissions";
-// lint-rules-ignore: the recording grant card is a field of the hub widget state, and widget storage has no src/utils home yet
-import { mutateWidgetState } from "@app/hub/lib/widget/storage";
 import type { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { mutateWidgetState } from "@genesiscz/utils/widget/storage";
 
 const HOUR_MS = 60 * 60_000;
 const checked = new WeakMap<MeetingStore, { at: number; enabled: boolean; needsMic: boolean; cardEnabled: boolean }>();

@@ -807,7 +807,7 @@ public final class WidgetModel: ObservableObject {
     }
 
     /// `state.json` of this model's widget root, the file `hub widget` reads preferences from
-    /// (`src/hub/lib/widget/storage.ts`: the state root, else `$GENESIS_TOOLS_HOME/.genesis-tools/hub/widget`).
+    /// (`src/utils/widget/storage.ts`: the state root, else `$GENESIS_TOOLS_HOME/.genesis-tools/hub/widget`).
     nonisolated static func widgetStateFile(stateRoot: String?,
                                             environment: [String: String] = ProcessInfo.processInfo.environment) -> String {
         if let stateRoot {
