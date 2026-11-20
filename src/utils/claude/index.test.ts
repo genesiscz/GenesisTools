@@ -39,6 +39,23 @@ describe("findClaudeCommand timeout cleanup", () => {
         const after = Bun.spawnSync(["pgrep", "-f", marker], { env: process.env }).stdout.toString().trim();
         expect(after).toBe("");
     });
+
+    test("a candidate that closes stdout and keeps running still runs out of time", async () => {
+        _setFindClaudeCommandTestHooks({
+            candidates: ["quiet-wrapper", "binary"],
+            timeoutMs: 100,
+            spawnProbe: (candidate) =>
+                Bun.spawn({
+                    env: process.env,
+                    cmd: ["bash", "-c", candidate === "binary" ? "echo '9.9.9 (Claude Code)'" : "exec >&-; sleep 30"],
+                    stdio: ["ignore", "pipe", "pipe"],
+                }),
+        });
+
+        const started = performance.now();
+        expect(await findClaudeCommand()).toBe("binary");
+        expect(performance.now() - started).toBeLessThan(5000);
+    });
 });
 
 describe("pickClaudeCommand", () => {

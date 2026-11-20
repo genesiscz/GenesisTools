@@ -226,19 +226,24 @@ async function probeClaudeCandidate(input: {
     shell: string;
     timeoutMs: number;
 }): Promise<ClaudeCandidateVerdict> {
-    const proc = findClaudeCommandTestHooks?.spawnProbe
-        ? findClaudeCommandTestHooks.spawnProbe(input.candidate, input.shell)
-        : Bun.spawn({
-              cmd: [input.shell, "-ic", probeScript(input.candidate)],
-              stdio: ["ignore", "pipe", "pipe"],
-          });
+    let proc: ReturnType<typeof Bun.spawn> | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
     try {
+        const started = findClaudeCommandTestHooks?.spawnProbe
+            ? findClaudeCommandTestHooks.spawnProbe(input.candidate, input.shell)
+            : Bun.spawn({
+                  cmd: [input.shell, "-ic", probeScript(input.candidate)],
+                  stdio: ["ignore", "pipe", "pipe"],
+              });
+        proc = started;
+        // The deadline covers the exit too: a wrapper can close stdout and keep running.
         const stdout = await Promise.race([
-            new Response(proc.stdout).text(),
-            new Promise<string>((_, reject) => setTimeout(() => reject(new Error("timeout")), input.timeoutMs)),
+            Promise.all([new Response(started.stdout).text(), started.exited]).then(([text]) => text),
+            new Promise<string>((_, reject) => {
+                timer = setTimeout(() => reject(new Error("timeout")), input.timeoutMs);
+            }),
         ]);
-        await proc.exited;
 
         if (proc.exitCode === NOT_DEFINED_EXIT) {
             return "not-claude";
@@ -253,7 +258,8 @@ async function probeClaudeCandidate(input: {
         // Timeout or spawn failure
         return "no-answer";
     } finally {
-        proc.kill();
+        clearTimeout(timer);
+        proc?.kill();
     }
 }
 
