@@ -26,7 +26,8 @@ const { log } = logger.scoped("recorder-quick-actions");
 
 /**
  * The file Copy Movie hands out (`shareableMovieOf`): the newest export of the edit as it is now, the recording's own
- * movie when it has no edit, or `stale` when the edit changed after its last export.
+ * movie when it has no edit, `stale` when the edit changed after its last export, or `unreadable` when edit.json cannot
+ * be read.
  */
 export function shareableMovie(folder: string): ShareableMovie {
     return shareableMovieOf({ folder, ownMovie: movieOf(folder) });
@@ -89,6 +90,10 @@ async function currentMovie(folder: string): Promise<{ path: string | undefined;
 
     if (shareable.kind === "none") {
         return { path: undefined, exported: false };
+    }
+
+    if (shareable.kind === "unreadable") {
+        throw new Error(shareable.reason);
     }
 
     log.debug({ folder, reason: shareable.reason }, "no export of the current edit; exporting one");

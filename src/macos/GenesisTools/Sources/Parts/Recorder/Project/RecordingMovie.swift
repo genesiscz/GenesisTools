@@ -52,6 +52,8 @@ enum RecordingMovie {
         case stale(revision: Int)
         /// No movie at all (a frames recording before its proxy).
         case none
+        /// edit.json cannot be read, so no export can be shown to match the edit: nothing is handed out.
+        case unreadable
 
         var url: URL? {
             if case let .file(url) = self { return url }
@@ -61,9 +63,15 @@ enum RecordingMovie {
 
     /// The one rule for the file a recording shares, as `shareableMovieOf` (src/utils/recording-editor/exports.ts):
     /// the newest export whose recorded edit revision (exports.json, `ExportLedger`) equals edit.json's revision now;
-    /// with no edit, the newest export of the unedited recording, else its own movie. Reads files: call it at a click.
+    /// with no edit, the newest export of the unedited recording, else its own movie. An edit.json that cannot be read
+    /// is `unreadable`, never revision 0. Reads files: call it at a click.
     static func shareable(in folder: URL) -> Shareable {
-        let revision = ExportLedger.editRevision(in: folder)
+        let revision: Int?
+        switch ExportLedger.editRevision(in: folder) {
+        case .missing: revision = nil
+        case let .known(value): revision = value
+        case .unreadable: return .unreadable
+        }
         let modified = { (url: URL) in (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast }
         let current = ExportLedger.read(folder)
             .filter { $0.value.revision == revision && !$0.key.contains(".partial.") }
@@ -103,13 +111,26 @@ enum ExportLedger {
         key.hasPrefix("/") ? URL(fileURLWithPath: key) : folder.appendingPathComponent(key)
     }
 
-    /// edit.json's revision; nil when the recording has no edit.
-    static func editRevision(in folder: URL) -> Int? {
+    /// edit.json's revision, as `editRevisionOf` (src/utils/recording-editor/exports.ts) reads it.
+    enum EditRevision: Equatable {
+        /// The recording has no edit.json.
+        case missing
+        /// edit.json's revision; 0 for an edit saved before it had one.
+        case known(Int)
+        /// edit.json exists but cannot be read, so which edit is current is unknown. Never read as revision 0: a
+        /// ledger entry for 0 must not match an edit nobody could read.
+        case unreadable
+    }
+
+    static func editRevision(in folder: URL) -> EditRevision {
         let edit = folder.appendingPathComponent("edit.json")
-        guard FileManager.default.fileExists(atPath: edit.path) else { return nil }
+        guard FileManager.default.fileExists(atPath: edit.path) else { return .missing }
         guard let data = try? Data(contentsOf: edit),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return 0 }
-        return (object["revision"] as? NSNumber)?.intValue ?? 0
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return .unreadable }
+        guard let raw = object["revision"] else { return .known(0) }
+        guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.doubleValue >= 0, number.doubleValue == number.doubleValue.rounded() else { return .unreadable }
+        return .known(number.intValue)
     }
 
     /// Records that `export` is a whole export of the edit at `revision`; entries whose file is gone are dropped.

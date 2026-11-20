@@ -102,6 +102,8 @@ enum RecordingActions {
                 }
             case .none:
                 report(.failed("“\(item.title)” has no movie to copy."))
+            case .unreadable:
+                report(.failed("“\(item.title)” was not copied: its edit.json could not be read, so no export can be shown to match the edit."))
             }
         case .copyGIF:
             report(.working("Making a GIF of “\(item.title)”…"))

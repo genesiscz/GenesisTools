@@ -401,7 +401,7 @@ final class RecorderEditTests: XCTestCase {
 
     /// A recording folder with files, each `[name, seconds after a fixed time]`, as recording-movies.json lists them,
     /// with edit.json at the case's `edit` revision and exports.json from its `exports`.
-    private func recordingFolder(_ files: [[Any]], edit: Int? = nil, exports: [[Any]] = []) throws -> URL {
+    private func recordingFolder(_ files: [[Any]], edit: Int? = nil, editUnreadable: Bool = false, exports: [[Any]] = []) throws -> URL {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("movie-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let base = Date(timeIntervalSince1970: 1_793_000_000)
@@ -413,6 +413,9 @@ final class RecorderEditTests: XCTestCase {
         }
         if let edit {
             try JSONSerialization.data(withJSONObject: ["revision": edit]).write(to: folder.appendingPathComponent("edit.json"))
+        }
+        if editUnreadable {
+            try Data("{ cut off by a crash".utf8).write(to: folder.appendingPathComponent("edit.json"))
         }
         if !exports.isEmpty {
             var files: [String: Any] = [:]
@@ -432,12 +435,14 @@ final class RecorderEditTests: XCTestCase {
         for item in cases {
             let name = try XCTUnwrap(item["name"] as? String)
             let folder = try recordingFolder(try XCTUnwrap(item["files"] as? [[Any]]), edit: (item["edit"] as? NSNumber)?.intValue,
+                                             editUnreadable: item["editUnreadable"] as? Bool ?? false,
                                              exports: item["exports"] as? [[Any]] ?? [])
             defer { try? FileManager.default.removeItem(at: folder) }
             let shareable = RecordingMovie.shareable(in: folder)
             XCTAssertEqual(RecordingMovie.own(in: folder)?.lastPathComponent, item["movie"] as? String, name)
             XCTAssertEqual(shareable.url?.lastPathComponent, item["shareable"] as? String, name)
             if case .stale = shareable { XCTAssertEqual(item["stale"] as? Bool, true, name) } else { XCTAssertNil(item["stale"], name) }
+            if case .unreadable = shareable { XCTAssertEqual(item["unreadable"] as? Bool, true, name) } else { XCTAssertNil(item["unreadable"], name) }
         }
     }
 

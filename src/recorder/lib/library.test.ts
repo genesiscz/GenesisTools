@@ -324,12 +324,17 @@ function folderWith(files: Array<[string, number]>): string {
 function movieCaseFolder(item: {
     files: Array<Array<string | number>>;
     edit?: number;
+    editUnreadable?: boolean;
     exports?: Array<Array<string | number | null>>;
 }): string {
     const folder = folderWith(item.files.map(([name, offset]) => [String(name), Number(offset)]));
 
     if (item.edit !== undefined) {
         writeFileSync(join(folder, "edit.json"), SafeJSON.stringify({ revision: item.edit }));
+    }
+
+    if (item.editUnreadable) {
+        writeFileSync(join(folder, "edit.json"), "{ cut off by a crash");
     }
 
     if (item.exports) {
@@ -355,6 +360,7 @@ describe("the movie of a recording folder", () => {
             expect(movieOf(folder) ? basename(movieOf(folder) ?? "") : null).toBe(item.movie);
             expect(shareable.kind === "file" ? basename(shareable.path) : null).toBe(item.shareable);
             expect(shareable.kind === "stale").toBe("stale" in item && item.stale === true);
+            expect(shareable.kind === "unreadable").toBe("unreadable" in item && item.unreadable === true);
         });
     }
 });

@@ -55,22 +55,41 @@ export function readExportLedger(folder: string): ExportLedger {
     return EMPTY;
 }
 
-/** edit.json's revision in a recording folder; null when the recording has no edit. Reads only that field. */
-export function editRevisionOf(folder: string): number | null {
+/** edit.json's revision in a recording folder. */
+export type EditRevision =
+    /** The recording has no edit.json. */
+    | { kind: "missing" }
+    /** edit.json's revision; 0 for an edit saved before it had one. */
+    | { kind: "known"; revision: number }
+    /** edit.json exists but cannot be read, so which edit is current is unknown. */
+    | { kind: "unreadable" };
+
+const revisionSchema = z.object({ revision: z.number().int().nonnegative().default(0) });
+
+/**
+ * edit.json's revision in a recording folder. Reads only that field. An edit.json that cannot be read or holds no valid
+ * revision is `unreadable`, never revision 0: a ledger entry for 0 must not match an edit nobody could read.
+ */
+export function editRevisionOf(folder: string): EditRevision {
     const path = join(folder, "edit.json");
 
     if (!existsSync(path)) {
-        return null;
+        return { kind: "missing" };
     }
 
     try {
-        const value: unknown = SafeJSON.parse(readFileSync(path, "utf8"));
-        const revision = z.object({ revision: z.number().int().nonnegative().default(0) }).safeParse(value);
-        return revision.success ? revision.data.revision : 0;
+        const parsed = revisionSchema.safeParse(SafeJSON.parse(readFileSync(path, "utf8")));
+
+        if (parsed.success) {
+            return { kind: "known", revision: parsed.data.revision };
+        }
+
+        log.warn({ path, issues: parsed.error.issues.length }, "edit.json holds no valid revision");
     } catch (error) {
         log.warn({ error, path }, "edit.json could not be read for its revision");
-        return 0;
     }
+
+    return { kind: "unreadable" };
 }
 
 function ledgerKey(folder: string, file: string): string {
@@ -114,13 +133,15 @@ export type ShareableMovie =
     /** The recording has an edit and no export shows it: export first. */
     | { kind: "stale"; revision: number; reason: string }
     /** No movie at all (a frames recording before its proxy). */
-    | { kind: "none" };
+    | { kind: "none" }
+    /** edit.json cannot be read, so no export can be shown to match the edit: nothing is handed out. */
+    | { kind: "unreadable"; reason: string };
 
 /**
  * The one rule for the file a recording shares (Swift: RecordingMovie.shareable). The newest export whose recorded
  * revision equals edit.json's revision now; with no edit, the newest export of the unedited recording, else its own
  * movie. An edited recording without such an export is `stale`: handing out an older export or the unedited movie
- * would show parts the edit hides.
+ * would show parts the edit hides. An edit.json that cannot be read is `unreadable`: nothing is known to match it.
  */
 export function shareableMovieOf({
     folder,
@@ -129,7 +150,16 @@ export function shareableMovieOf({
     folder: string;
     ownMovie: string | undefined;
 }): ShareableMovie {
-    const revision = editRevisionOf(folder);
+    const edit = editRevisionOf(folder);
+
+    if (edit.kind === "unreadable") {
+        return {
+            kind: "unreadable",
+            reason: "edit.json could not be read, so no export can be shown to match the edit",
+        };
+    }
+
+    const revision = edit.kind === "known" ? edit.revision : null;
     const current = Object.entries(readExportLedger(folder).files)
         .filter(([key, entry]) => entry.revision === revision && !key.includes(".partial."))
         .map(([key]) => (isAbsolute(key) ? key : join(folder, key)))

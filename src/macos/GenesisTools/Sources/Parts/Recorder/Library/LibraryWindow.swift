@@ -608,6 +608,9 @@ struct LibraryCard: View {
                 return NSItemProvider()
             case .none:
                 return NSItemProvider()
+            case .unreadable:
+                report(.failed("“\(item.title)” has an edit.json that could not be read, so no export can be shown to match the edit."))
+                return NSItemProvider()
             }
         }
         .contextMenu { RecordingActionsMenu(item: item, report: report) }
