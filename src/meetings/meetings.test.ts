@@ -1296,6 +1296,26 @@ describe("the words a review row shows (U9, U13, U15 to U18)", () => {
         }
     });
 
+    test("a voice range that passed the cosine gate shows its cosine, never the 0.80 gate, as its voice score", async () => {
+        const { reviewRows } = await import("./lib/review-rows");
+        const { itemWhat } = await import("./lib/item-text");
+        const gated = item({
+            id: "i1",
+            kind: "speaker-range",
+            label: "Speaker 2",
+            fromSec: 60,
+            toSec: 60,
+            speaker: "Alice Example",
+            confidence: 0.8,
+            rules: [MeetingRule.VoiceEmbedding],
+            evidence: { endSec: 64, decisionGate: "cosine and margin", score: 0.71 },
+        });
+        const row = reviewRows({ ...record, items: [gated] }, { minPriority: 0 }).rows[0]!;
+        expect(row.confidence).toBe(0.71);
+        expect(row.choices.find((choice) => choice.role === "suggested")?.confidence).toBe(0.71);
+        expect(itemWhat(gated)).toEndWith("→ Alice Example by voice 0.71");
+    });
+
     test("every kind has a word from one table, and an unreliable label says what its choices do", async () => {
         const { reviewRow } = await import("./lib/review-rows");
         const label = item({

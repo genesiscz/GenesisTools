@@ -1146,6 +1146,7 @@ export function speakerEvidence(options: EvidenceInput): EvaluatedEvidence {
                     .get(label)
                     ?.some((item) => line.startSec >= item.fromSec && line.startSec <= item.toSec)
             ) {
+                const cosine = voice.candidates.find((candidate) => sameName(candidate.person, voice.person!))?.score;
                 const item: NewItem = {
                     kind: "speaker-range",
                     status: "suggested",
@@ -1158,6 +1159,8 @@ export function speakerEvidence(options: EvidenceInput): EvaluatedEvidence {
                     evidence: {
                         endSec: line.endSec,
                         voice,
+                        // The voice score a row shows; the confidence above is the rule's gate.
+                        ...(cosine === undefined ? {} : { score: cosine }),
                         decisionGate: "cosine and margin",
                         confidenceMeaning: "rule gate passed; cosine is not probability",
                     },
