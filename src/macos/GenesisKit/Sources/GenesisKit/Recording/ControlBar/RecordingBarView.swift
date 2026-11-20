@@ -675,23 +675,26 @@ public struct RecordingBarView: View {
     @ViewBuilder private func choice<Value: Hashable>(_ label: String, _ id: String, value: Value, values: [Value],
                                          title: @escaping (Value) -> String, reason: String? = nil, scope: String?,
                                          compact: Bool = false, select: @escaping (Value) -> Void) -> some View {
-        let face = VStack(alignment: .leading, spacing: 1) {
-            if !compact { Text(label).font(.caption).foregroundStyle(.secondary) }
-            HStack(spacing: 3) {
-                Text(title(value)).lineLimit(1)
-                Image(systemName: "chevron.down").font(.caption2)
-            }
-            if !compact, let scope { Text(scope).font(.caption).foregroundStyle(.secondary) }
-        }.frame(minWidth: 24, minHeight: 26)
+        // The chevron marks a choice that opens; a read-only value draws none, so it never looks like a dropdown.
+        let face = { (opens: Bool) in
+            VStack(alignment: .leading, spacing: 1) {
+                if !compact { Text(label).font(.caption).foregroundStyle(.secondary) }
+                HStack(spacing: 3) {
+                    Text(title(value)).lineLimit(1)
+                    if opens { Image(systemName: "chevron.down").font(.caption2) }
+                }
+                if !compact, let scope { Text(scope).font(.caption).foregroundStyle(.secondary) }
+            }.frame(minWidth: 24, minHeight: 26)
+        }
         Group {
             if reason != nil {
                 // A disabled menu dims its label once more, on top of the caption's grey: the choice was almost
                 // invisible. Drawn as a plain value in the secondary colour it stays readable; the tooltip says why.
-                face.foregroundStyle(.secondary)
+                face(false).foregroundStyle(.secondary)
             } else if useInlineMenus {
                 Button {
                     showMenu(label, options: values.map(title), selected: values.firstIndex(of: value)) { select(values[$0]) }
-                } label: { face }
+                } label: { face(true) }
                 .buttonStyle(.genHoverRow())
             } else {
                 Menu {
@@ -701,7 +704,7 @@ public struct RecordingBarView: View {
                             else { Text(title(option)) }
                         }
                     }
-                } label: { face }
+                } label: { face(true) }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden)
             }
         }
