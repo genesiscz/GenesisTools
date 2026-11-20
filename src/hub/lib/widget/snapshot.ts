@@ -357,7 +357,10 @@ export interface WidgetInboxSession {
     pendingItem?: WidgetInboxItem;
     /** The session's listed entries, the ones waiting for an answer first, then newest first; at most `INBOX_ITEMS_PER_SESSION`. */
     items?: WidgetInboxItem[];
-    /** The session's entries `items` leaves out for the per-session limit; absent when it lists them all. */
+    /**
+     * The entries `items` leaves out for the per-session limit, counted as the overview counts listed ones (a row
+     * that stands for several entries counts each); absent when it lists them all.
+     */
     hiddenItems?: number;
 }
 
@@ -376,6 +379,11 @@ export const INBOX_UNREAD_KEPT_PER_SESSION = 3;
  * unread entries keep their places, so a session with many waiting decisions still shows its newest answer in the
  * newest-first feed.
  */
+/** How many entries some rows stand for: a row with `count` stands for that many, the overview's `representedCount`. */
+function representedEntries(items: readonly WidgetInboxItem[]): number {
+    return items.reduce((total, item) => total + Math.max(1, item.count ?? 1), 0);
+}
+
 export function listedInboxItems(items: WidgetInboxItem[]): WidgetInboxItem[] {
     const newest = (a: WidgetInboxItem, b: WidgetInboxItem) => b.at - a.at;
     const waiting = items.filter((item) => item.needsAnswer).sort(newest);
@@ -1637,11 +1645,8 @@ export async function widgetSnapshot({
             .map((entry) => {
                 const all = entry.items ?? [];
                 const items = listedInboxItems(all);
-                return {
-                    ...entry,
-                    items,
-                    ...(all.length > items.length ? { hiddenItems: all.length - items.length } : {}),
-                };
+                const hiddenItems = representedEntries(all) - representedEntries(items);
+                return { ...entry, items, ...(hiddenItems > 0 ? { hiddenItems } : {}) };
             }),
         staged,
         ...(decisionsComplete
@@ -1756,7 +1761,7 @@ export async function widgetSnapshot({
         cards.push({
             id: `answer:${row.id}`,
             kind: "answer",
-            ...(row.tag === "message" && row.sessionId === "unknown"
+            ...(row.tag === "message" && row.sessionId === EXTERNAL_SESSION_ID
                 ? { messageOrigin: externalMessageOrigin(row.project, row.agentLabel?.trim() || row.source) }
                 : {}),
             ...(!inboxKind(kinds, row.tag === "message" ? "message" : "answer").show
