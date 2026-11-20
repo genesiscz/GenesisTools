@@ -355,21 +355,36 @@ async function pushProject({
                 const result = results[index] ?? { ok: false as const, error: "the connector answered no result" };
                 const base = intent.pairing ?? newPairing(intent.item.id, id, deps.now());
 
+                const localDrift = localDriftLines(base.note);
+
                 if (result.ok) {
-                    writePairing(db, deps, { ...base, remoteKey: result.remoteKey, state: "in-sync", note: undefined });
+                    writePairing(db, deps, {
+                        ...base,
+                        remoteKey: result.remoteKey,
+                        state: localDrift.length > 0 ? "drift" : "in-sync",
+                        note: localDrift.length > 0 ? localDrift.join("\n") : undefined,
+                    });
                     report.pushed++;
                 } else {
                     writePairing(db, deps, {
                         ...base,
                         remoteKey: result.remoteKey ?? base.remoteKey,
                         state: "failed",
-                        note: result.error,
+                        note: [result.error, ...localDrift].join("\n"),
                     });
                     report.failed++;
                 }
             });
         });
     }
+}
+
+/**
+ * The local-drift lines of a pairing note. A push never sends a fact the outside owns, so a successful push leaves that
+ * difference in place and the pairing stays drift; a remote-drift line (a fact owned here) is settled by the push.
+ */
+function localDriftLines(note: string | undefined): string[] {
+    return (note ?? "").split("\n").filter((line) => line.startsWith(DRIFT_NOTE_PREFIX.local));
 }
 
 /**

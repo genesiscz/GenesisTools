@@ -276,6 +276,29 @@ describe("drift in the other direction", () => {
         await runSyncOnce(deps());
         expect(fake.remote.get(key)?.title).toBe("locally owned edit");
     });
+
+    test("a later successful push keeps the drift of a fact the outside owns, also through a failed push", async () => {
+        fake.remote.set("R-6", { remoteKey: "R-6", title: "made outside", state: "open" });
+        const id = (await pullRemote(deps(), { connector: "fake", remoteKeys: ["R-6"] })).made[0];
+        await runSyncOnce(deps());
+        await write(ctx("s1"), { verb: "edit", ref: id, title: "renamed here" });
+        await runSyncOnce(deps());
+        expect(selectPairings(db, { item: id })[0]).toMatchObject({ state: "drift" });
+
+        fake.unavailable = true;
+        await write(ctx("s1"), { verb: "comment", ref: id, text: "a later change" });
+        await runSyncOnce(deps());
+        expect(selectPairings(db, { item: id })[0]).toMatchObject({ state: "failed" });
+
+        fake.unavailable = false;
+        await write(ctx("s1"), { verb: "comment", ref: id, text: "one more change" });
+        const report = await runSyncOnce(deps());
+        expect(report.pushed).toBe(1);
+        const pairing = selectPairings(db, { item: id })[0];
+        expect(pairing.state).toBe("drift");
+        expect(pairing.note).toStartWith("changed here, owned outside: title");
+        expect(fake.remote.get("R-6")?.title).toBe("made outside");
+    });
 });
 
 describe("the connector config", () => {
