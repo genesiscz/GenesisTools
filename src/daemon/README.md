@@ -240,7 +240,8 @@ run, without a restart.
 
 Each run is `sh -c "<command>"` with stdin closed, in its own process group. The PATH starts with the checkout's root,
 so `tools <name>` in a command is that checkout's `tools`, then the daemon's PATH, then `/usr/sbin` and `/sbin`.
-Each run starts in a new empty folder of its own, `~/.genesis-tools/daemon/task-cwd/<task>-<run id>/`, so nothing
+Each run starts in a new empty folder of its own, `~/.genesis-tools/daemon/task-cwd/<task>-<run id>-<random>/`
+(`GENESIS_TOOLS_DAEMON_DIR` moves it, and the task name is cut to 64 characters there), so nothing
 another run writes changes it. The daemon removes it after the run; a folder the task wrote files into stays, with a
 warning in the day log. GenesisTools.app will not remember or auto-allow a vault-key request from a bun process whose
 working folder changed after it started, and the home folder changes every few seconds: from `$HOME`, 24 of 1771
@@ -368,8 +369,8 @@ writes the file atomically. A hand edit takes effect on the next tick. A task wi
 Environment variables:
 
 - `GENESIS_TOOLS_HOME` moves the whole `~/.genesis-tools` folder, the daemon's files with it.
-- `GENESIS_TOOLS_DAEMON_DIR` moves only the pidfile and the run logs. `config.json` and `daemon-stderr.log` stay in
-  `~/.genesis-tools/daemon/`.
+- `GENESIS_TOOLS_DAEMON_DIR` moves only the pidfile, the run logs and the runs' working folders (`task-cwd/`).
+  `config.json` and `daemon-stderr.log` stay in `~/.genesis-tools/daemon/`.
 - `GENESIS_TOOLS_DAEMON_WAKEFUL_TICK_MS` is for tests: how often an idle daemon checks for a stop signal.
 
 The launchd job gets only `HOME` and `PATH`. These variables set in your shell change only where the CLI (`status`,
@@ -385,10 +386,11 @@ The launchd job gets only `HOME` and `PATH`. These variables set in your shell c
   the timeout, the retries, the retry-at times), prints `{ "error": "..." }` and exits 1. A bad choice for
   `--enabled`, `--notify`, `--priority` or `--missed-run`, or no setting at all, prints a text error with no JSON on
   stdout and exits 1. A wrong value writes nothing.
-- `run <name> --json`: `{ task, ok, exitCode, duration_ms, logFile, runId }`. `exitCode` is null when the run timed
-  out. The process exits 0 when the task exited 0, else 1.
+- `run <name> --json`: `{ task, ok, exitCode, duration_ms, logFile, runId, usage? }`. `exitCode` is null when the run
+  timed out. `usage` is the exit record's usage below; it is absent when the runtime gave no rusage. The process exits 0 when the task exited 0, else 1.
 - Every run log's `exit` record carries `usage: { userMs, systemMs, cpuMs, maxRssMb, wallMs }` since 2026-11-18: the
-  rusage of the task process, which includes every child it waited for, and `wallMs`, the process's own lifetime on a
+  rusage of the task process, which includes every child it waited for (`maxRssMb` is the largest peak of one of
+  those processes, not their sum while they ran together), and `wallMs`, the process's own lifetime on a
   monotonic clock (`duration_ms` also holds the wait for its output pipes). `cpuMs / wallMs` is the average number of
   cores the run kept busy. `stats` shows it per run, and CPU P50 and CPU max per task in the overview and the task
   view; older runs show none. A negative or non-finite figure in a log counts as missing.

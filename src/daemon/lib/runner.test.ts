@@ -267,8 +267,45 @@ describe("run log meta", () => {
         expect(exit.usage.cpuMs).toBeGreaterThanOrEqual(childCpuMs - 5);
         expect(exit.usage.wallMs).toBeGreaterThan(0);
         expect(exit.usage.wallMs).toBeLessThanOrEqual(result.duration_ms);
-        expect(exit.usage.cpuMs).toBe(exit.usage.userMs + exit.usage.systemMs);
+        expect(exit.usage.cpuMs).toBeCloseTo(exit.usage.userMs + exit.usage.systemMs, 3);
         expect(exit.usage.maxRssMb).toBeGreaterThan(0);
         expect(result.usage).toEqual(exit.usage);
+    });
+
+    it.skipIf(skip.onWindows)(
+        "logs the process's own lifetime, without the wait for a pipe a child keeps open",
+        async () => {
+            const logsBaseDir = makeTempDir();
+            // The shell exits at once, while a background sleep keeps stdout open: the runner waits its drain grace for the
+            // pipe, which duration_ms holds and wallMs must not.
+            const task: DaemonTask = {
+                name: "drain-task",
+                command: "sleep 1 & exit 0",
+                every: "every 1 hour",
+                retries: 0,
+                enabled: true,
+            };
+            const result = await runTask(task, 1, logsBaseDir);
+
+            expect(result.exitCode).toBe(0);
+            expect(result.usage?.wallMs).toBeDefined();
+            expect(result.duration_ms - (result.usage?.wallMs ?? 0)).toBeGreaterThanOrEqual(200);
+        }
+    );
+
+    it.skipIf(skip.onWindows)("runs a task whose name fills a whole path component", async () => {
+        const logsBaseDir = makeTempDir();
+        const task: DaemonTask = {
+            name: "n".repeat(250),
+            command: "pwd",
+            every: "every 1 hour",
+            retries: 0,
+            enabled: true,
+        };
+        const result = await runTask(task, 1, logsBaseDir);
+
+        expect(result.exitCode).toBe(0);
+        expect(stdoutOf(result.logFile)[0]).toContain(`/${"n".repeat(64)}-${result.runId}-`);
+        expect(readdirSync(taskWorkingDir())).toEqual([]);
     });
 });

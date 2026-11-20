@@ -47,7 +47,9 @@ export function getPidFile(): string {
  * no other run writes into. GenesisTools.app refuses to remember, or to auto-allow, a vault-key request from a bun
  * process whose working folder changed after it started, because a self-deleting bunfig.toml preload looks exactly
  * like that (`untrustedBunfigPreloads` in VaultUnlock.swift). The home folder changes every few seconds, so in it 24
- * of 1771 usage polls (2026-11-16..17) put up a Touch ID window.
+ * of 1771 usage polls (2026-11-16..17) put up a Touch ID window. The empty folder removes only that one reason: the
+ * app still asks when bun starts without the launcher's `--config=` flag, or when the caller fails its other checks.
+ * `GENESIS_TOOLS_DAEMON_DIR` moves this folder with the run logs (`resolveBaseDir`).
  */
 export function taskWorkingDir(): string {
     return join(resolveBaseDir(), "task-cwd");
