@@ -21,6 +21,7 @@ export interface WireSchema {
     default?: unknown;
     format?: string;
     minItems?: number;
+    maxItems?: number;
     minimum?: number;
     $ref?: string;
     allOf?: WireSchema[];
@@ -173,9 +174,11 @@ export function wireSamples(schema: WireSchema): unknown[] {
         case "array": {
             const items = wireSamples(schema.items ?? {});
             const min = schema.minItems ?? 0;
+            // A row per item sample, within the array's bounds: an array capped at zero items has only the empty row.
+            const length = Math.min(Math.max(min, 1), schema.maxItems ?? Number.POSITIVE_INFINITY);
             return [
                 Array.from({ length: min }, () => items[0]),
-                ...items.map((item) => Array.from({ length: Math.max(min, 1) }, () => item)),
+                ...(length > 0 ? items.map((item) => Array.from({ length }, () => item)) : []),
             ];
         }
         case "string":

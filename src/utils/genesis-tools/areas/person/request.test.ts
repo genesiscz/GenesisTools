@@ -556,6 +556,16 @@ test("a defaulted nullable field inside one arm of a union still reaches the dec
     ]);
 });
 
+test("the wire samples of an array stay within its item bounds", () => {
+    const nullable: WireSchema = { anyOf: [{ type: "string" }, { type: "null" }] };
+    expect(wireSamples({ type: "array", items: nullable, maxItems: 0 })).toEqual([[]]);
+    expect(wireSamples({ type: "array", items: nullable, minItems: 2, maxItems: 2 })).toEqual([
+        ["fixture", "fixture"],
+        ["fixture", "fixture"],
+        [null, null],
+    ]);
+});
+
 test("every generated fixture parses in TypeScript and generated files are current", () => {
     const rows: unknown = SafeJSON.parse(readFileSync(WIRE_PATH, "utf8"));
     if (!Array.isArray(rows)) {
