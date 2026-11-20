@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, type Stats, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { shellCommandLine } from "@genesiscz/utils/shell/quote";
@@ -30,14 +30,25 @@ function removeCommandFile(file: string): void {
 
 /**
  * Deletes the `.command` files in `dir` that no terminal started within {@link STALE_COMMAND_FILE_MS}. A file that
- * goes between the listing and its stat (its terminal started it, and it deleted itself) is skipped.
+ * goes between the listing and its stat (its terminal started it, and it deleted itself) is skipped, and so is one that
+ * cannot be inspected: it costs only its own entry, so the other old files (their argv may hold a secret) still go.
  */
 export function removeStaleCommandFiles(dir: string, now: number = Date.now()): string[] {
     const removed: string[] = [];
 
     for (const name of readdirSync(dir)) {
+        if (!name.endsWith(".command")) {
+            continue;
+        }
+
         const file = join(dir, name);
-        const stat = name.endsWith(".command") ? statSync(file, { throwIfNoEntry: false }) : undefined;
+        let stat: Stats | undefined;
+        try {
+            stat = statSync(file, { throwIfNoEntry: false });
+        } catch (error) {
+            logger.warn({ error, file }, "visible run: cannot inspect an old command file, skipping it");
+            continue;
+        }
 
         if (stat && now - stat.mtimeMs > STALE_COMMAND_FILE_MS) {
             removeCommandFile(file);
@@ -84,7 +95,7 @@ export async function runVisibly(options: {
     options.signal?.throwIfAborted();
     const dir = toolDataDir("genesis-tools", "terminal");
     mkdirSync(dir, { recursive: true, mode: 0o700 });
-    // Clean-up is best effort: an old file that cannot be inspected must not stop this run.
+    // Clean-up is best effort: a folder that cannot be listed must not stop this run (a file costs only its entry).
     try {
         removeStaleCommandFiles(dir);
     } catch (error) {

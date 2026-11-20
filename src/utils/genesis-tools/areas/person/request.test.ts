@@ -239,6 +239,8 @@ test("a visible-run script deletes itself first, and a .command file no terminal
     utimesSync(other, past, past);
     // A file that went between the listing and its stat (its terminal started it) is skipped, not an error.
     symlinkSync(join(dir, "missing-target"), join(dir, "gone.command"));
+    // A file that cannot be inspected (a symlink loop fails its stat) costs only its own entry.
+    symlinkSync(join(dir, "loop.command"), join(dir, "loop.command"));
     expect(removeStaleCommandFiles(dir, now)).toEqual([old]);
     expect([existsSync(old), existsSync(fresh), existsSync(other)]).toEqual([false, true, true]);
 });
