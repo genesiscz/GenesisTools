@@ -267,7 +267,10 @@ export async function learnMeetingVoices(options: {
                     skip(row, "confirmed person's identity changed");
                     continue;
                 }
-                if (view.library.model && view.library.samples.length > 0 && view.library.model !== change.model) {
+                // One model per batch: a library with prints keeps its model, and an empty one takes the model of the
+                // first accepted change, so a second model is skipped here instead of failing the whole batch.
+                const pinned = view.library.samples.length > 0 ? view.library.model : changes[0]?.model;
+                if (pinned && pinned !== change.model) {
                     skip(row, "sample uses a different voice model from the project");
                     continue;
                 }
