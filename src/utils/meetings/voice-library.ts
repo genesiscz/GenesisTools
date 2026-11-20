@@ -102,6 +102,8 @@ const receiptSchema = z.discriminatedUnion("kind", [
         token: nonblank,
         revision,
         requestDigest: nonblank.optional(),
+        /** The library's model when the correction was written; older receipts have none. */
+        model: nonblank.optional(),
         positions: z.array(revision).optional(),
         impact: z
             .object({
@@ -129,6 +131,8 @@ export const voiceLibrarySchema = z
         version: z.literal(2),
         revision,
         model: z.string(),
+        /** The revision that switched to `model` from another one; absent while the model never changed. */
+        modelSince: revision.optional(),
         samples: z.array(sampleSchema),
         rejected: z.array(rejectionSchema),
         imports: z.array(manifestSchema),
@@ -328,14 +332,10 @@ function importTuple(project: string, model: string, owner: VoiceOwner, p: Voice
 type IdDigest = NonNullable<MigrationOptions["idDigest"]>;
 const defaultIdDigest: IdDigest = (tuple, occurrence) => sha256Json([tuple, occurrence]);
 
-function importProject(input: {
-    library: LibraryV2;
-    manifest: Manifest;
-    raw: z.infer<typeof legacyStoreSchema>;
-    reserved: Set<SampleId>;
-    idDigest: IdDigest;
-}): number {
-    const { library, manifest, raw, reserved, idDigest } = input;
+type LegacyAddition = { owner: VoiceOwner; print: VoicePrint; tuple: string; occurrence: number };
+
+/** The legacy prints the manifest has not imported yet: a rewrite that only changed the file's bytes has none. */
+function legacyAdditions(manifest: Manifest, raw: z.infer<typeof legacyStoreSchema>): LegacyAddition[] {
     const known = new Map<string, Set<number>>();
     // Keep a row's original tuple even after a move or deletion. A digest alone cannot distinguish a true collision.
     for (const row of manifest.rows) {
@@ -344,7 +344,7 @@ function importProject(input: {
         known.set(row.tuple, occurrences);
     }
     const counts = new Map<string, number>();
-    const additions: Array<{ owner: VoiceOwner; print: VoicePrint; tuple: string; occurrence: number }> = [];
+    const additions: LegacyAddition[] = [];
     for (const name of Object.keys(raw.people).sort()) {
         const { samples, email } = raw.people[name]!;
         const owner = email ? { name, email } : { name };
@@ -358,6 +358,17 @@ function importProject(input: {
             additions.push({ owner, print, tuple, occurrence });
         }
     }
+    return additions;
+}
+
+function importProject(input: {
+    library: LibraryV2;
+    manifest: Manifest;
+    additions: LegacyAddition[];
+    reserved: Set<SampleId>;
+    idDigest: IdDigest;
+}): number {
+    const { library, manifest, additions, reserved, idDigest } = input;
     // Choose the winner of a collision in canonical order. Append samples in the original numbered order below.
     const ids = new Map<(typeof additions)[number], SampleId>();
     const ordered = [...additions].sort((a, b) =>
@@ -442,25 +453,29 @@ function reconcile(projects: string[], options: MigrationOptions) {
             conflicts.push({ project, file, message: error instanceof Error ? error.message : String(error) });
         }
     }
-    // A library with no model yet takes the model of most samples, never of the first file by name: one leftover file
+    // A library with no samples yet takes the model of most samples, never of the first file by name: one leftover file
     // with another model (a test fixture, a model upgrade) must not turn every real project into the conflict.
-    const expected = library.model || electedModel(pending.map(({ raw }) => raw));
+    const elected = electedModel(pending.map(({ raw }) => raw));
     for (const { project, file, fileDigest, raw } of pending) {
         const prior = manifests.get(project);
         try {
-            if (Object.values(raw.people).some((p) => p.samples.length > 0)) {
+            const manifest = prior ?? { project, fileDigest, rows: [] };
+            // Prints the manifest already imported keep the model they were imported with, even after the library
+            // moved to another model; only a print not imported yet must match the library.
+            const additions = legacyAdditions(manifest, raw);
+            if (additions.length > 0) {
+                const expected = library.samples.length > 0 ? library.model : elected;
                 if (!raw.model.trim() || (expected && expected !== raw.model)) {
                     throw new Error(
                         `Voice model conflict: found '${raw.model}', expected '${expected || "a model identity"}'`
                     );
                 }
-                library.model = raw.model;
+                setLibraryModel(library, raw.model);
             }
-            const manifest = prior ?? { project, fileDigest, rows: [] };
             imported += importProject({
                 library,
                 manifest,
-                raw,
+                additions,
                 reserved,
                 idDigest: options.idDigest ?? defaultIdDigest,
             });
@@ -771,6 +786,28 @@ export type InsertReceipt =
     | { status: "added" | "already-present" | "conflict"; id: SampleId; revision: number }
     | { status: "refused"; reason: Refusal | "ambiguous-source"; revision: number };
 
+/** The library holds one model for every print: another model may enrol only once no print is left. */
+function acceptsModel(library: Pick<LibraryV2, "model" | "samples">, model: string): boolean {
+    return !library.model || library.samples.length === 0 || library.model === model;
+}
+
+/** Sets the library's model, and records the revision being written when that replaces another model. */
+function setLibraryModel(library: LibraryV2, model: string): void {
+    if (library.model && library.model !== model) {
+        library.modelSince = library.revision + 1;
+    }
+    library.model = model;
+}
+
+/** The model that was current when `revision` was written, or undefined when the library cannot tell. */
+function modelAt(library: LibraryV2, revision: number, recorded: string | undefined): string | undefined {
+    if (recorded) {
+        return recorded;
+    }
+
+    return library.modelSince === undefined || revision >= library.modelSince ? library.model : undefined;
+}
+
 function insertLocked(
     library: LibraryV2,
     input: ConfirmedSampleInput,
@@ -787,8 +824,7 @@ function insertLocked(
         source.rootMeeting = recordedRoot(new MeetingStore(), source.rootMeeting);
     }
     const model = nonblank.parse(input.model);
-    // The model binds only the prints that remain: after the last one is removed, a new model may enrol.
-    if (library.model && library.samples.length > 0 && library.model !== model) {
+    if (!acceptsModel(library, model)) {
         throw new Error(
             `Voice model changed: project '${project}' supplied '${model}', library uses '${library.model}'`
         );
@@ -887,7 +923,7 @@ function insertLocked(
         if (prior) {
             library.samples = library.samples.filter((s) => s.id !== prior.id);
         }
-        library.model = model;
+        setLibraryModel(library, model);
         library.samples.push({
             ...print,
             id,
@@ -1068,9 +1104,11 @@ export function changeVoiceLearning(options: {
         const newReceipts = library.receipts.filter((r) => !previousReceipts.has(r));
         const oldReceipts = beforeReceipts.filter((r) => !currentReceipts.has(r));
         const changed = !!(inserted.length || removed.length || newReceipts.length || oldReceipts.length);
-        const rollback = () => {
+        /** Undoes this batch; `notRestored` lists the removed prints left out because another model now holds the library. */
+        const rollback = (): { notRestored: VoiceSample[] } => {
+            const notRestored: VoiceSample[] = [];
             if (!changed || options.dryRun) {
-                return;
+                return { notRestored };
             }
             transact((current) => {
                 // Only this batch's versions may be put back if a different process corrected a binding meanwhile.
@@ -1080,7 +1118,15 @@ export function changeVoiceLearning(options: {
                         current.samples.splice(index, 1);
                     }
                 }
+                // A removed print goes back only beside prints of its own model, since the library labels all prints
+                // with one model. A print another process's model now occupies stays out and is reported.
+                const ownModel = current.samples.length === 0 || current.model === beforeModel;
                 for (const s of removed) {
+                    if (!ownModel) {
+                        notRestored.push(s);
+                        continue;
+                    }
+
                     if (
                         !current.samples.some((row) => row.id === s.id || sameLine(row.source, s.source)) &&
                         !refused(current, s.source, s.owner)
@@ -1101,16 +1147,17 @@ export function changeVoiceLearning(options: {
                             )
                     )
                 );
-                if (!current.samples.length) {
-                    current.model = beforeModel;
+                if (ownModel && current.model !== beforeModel) {
+                    setLibraryModel(current, beforeModel);
                 }
                 return { changed: true, result: undefined };
             });
+            return { notRestored };
         };
         return { changed, result: { results, rollback } };
     }
     if (!options.add.length && !options.remove?.length) {
-        return { results: [], rollback: () => {} };
+        return { results: [], rollback: (): { notRestored: VoiceSample[] } => ({ notRestored: [] }) };
     }
     if (options.dryRun) {
         const pending = reconcile(legacyProjects(), {});
@@ -1152,6 +1199,7 @@ function correctionEdit(library: LibraryV2, action: VoiceCorrection) {
         token,
         requestDigest,
         revision: library.revision + 1,
+        ...(library.model ? { model: library.model } : {}),
         ...(impact ? { impact } : {}),
         before: [],
         after: [],
@@ -1270,6 +1318,19 @@ function correctionEdit(library: LibraryV2, action: VoiceCorrection) {
         throw new Error("Stale voice correction. A new attachment occupies this source.");
     }
     library.rejected.push(...receipt.addedRefusals);
+    if (action.kind === "revert" && receipt.after.length) {
+        const original = library.receipts.find((r) => r.kind === "correct" && r.token === action.correction);
+        const restoredModel =
+            original?.kind === "correct" ? modelAt(library, original.revision, original.model) : undefined;
+        // The prints put back were embedded by the model of the correction's time; the library labels all prints
+        // with one model, so they return only into an empty library or one that still uses that model.
+        if (!restoredModel || !acceptsModel(library, restoredModel)) {
+            throw new Error("Stale voice correction. The voice library now uses another voice model.");
+        }
+
+        setLibraryModel(library, restoredModel);
+        receipt.model = restoredModel;
+    }
     for (const [i, sample] of receipt.after.entries()) {
         if (
             !sample.transferred &&
