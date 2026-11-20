@@ -97,6 +97,17 @@ export function meetingVoiceSeeds(options: {
     // order of the assignments and the record order of the ranges.
     // A hit keeps its list position, so the newest assignment and the record order win as in a scan.
     const inOrder = <T>(hits: Array<{ row: T; at: number }>) => hits.sort((a, b) => a.at - b.at).map((hit) => hit.row);
+    // The single winner in one pass, without sorting every hit.
+    const firstOf = <T>(hits: Array<{ row: T; at: number }>): T | undefined => {
+        let best: { row: T; at: number } | undefined;
+        for (const hit of hits) {
+            if (!best || hit.at < best.at) {
+                best = hit;
+            }
+        }
+
+        return best?.row;
+    };
     const byLabel = <T extends { label: string; fromSec: number; toSec: number }>(rows: readonly T[]) => {
         const groups = new Map<string, IntervalIndex<{ row: T; at: number }>>();
         for (const [at, row] of rows.entries()) {
@@ -109,8 +120,8 @@ export function meetingVoiceSeeds(options: {
             group.add(row.fromSec, row.toSec, { row, at });
         }
 
-        return (label: string | undefined, sec: number): T[] =>
-            label === undefined ? [] : inOrder(groups.get(label)?.containing(sec) ?? []);
+        return (label: string | undefined, sec: number): Array<{ row: T; at: number }> =>
+            label === undefined ? [] : (groups.get(label)?.containing(sec) ?? []);
     };
     const assignmentsAt = byLabel(assignments);
     const rangesAt = byLabel(ranges);
@@ -126,14 +137,14 @@ export function meetingVoiceSeeds(options: {
             range.toSec >= line.toSec ||
             (typeof range.evidence?.endSec === "number" && range.evidence.endSec >= line.toSec) ||
             range.evidence?.transcriptLine === line.index;
-        const assignment = assignmentsAt(label, line.fromSec)[0];
+        const assignment = firstOf(assignmentsAt(label, line.fromSec));
         if (assignment) {
             if (wholly(assignment) && assignedByPerson.has(`${assignment.id}|${assignment.at}`)) {
                 certain.set(line.index, assignment.person);
             }
             continue;
         }
-        const covering = rangesAt(label, line.fromSec).filter(
+        const covering = inOrder(rangesAt(label, line.fromSec)).filter(
             (range) => range.evidence?.transcriptLine === undefined || range.evidence.transcriptLine === line.index
         );
         const confirmed = covering.filter((range) => range.status === "confirmed");
