@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { meetingsPeopleCommand } from "@genesiscz/utils/genesis-tools/tools/system";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { MeetingsConfig } from "./config";
 import { mappedRoomDevices, nameKey, type PersonRef, roomDeviceAccountKeys, rosterAccountKey } from "./people";
@@ -845,10 +846,12 @@ export class PeopleDirectory {
         const answers = await Promise.all(
             asked.map(async (source) => {
                 const replies = await Promise.all(texts.map((text) => read(source, { text, limit })));
+                // A refusal seen on either search is the source's state: access was withdrawn, so a sibling answer
+                // (possibly cached) is not reported. A search that merely failed keeps the other one's people.
+                const refusal = replies.find((reply) => reply.state === "refused");
                 const ok = replies.filter((reply) => reply.state === "ok");
-                const answer: SourceAnswer = ok.length
-                    ? { state: "ok", people: ok.flatMap((reply) => reply.people) }
-                    : replies[0]!;
+                const answer: SourceAnswer =
+                    refusal ?? (ok.length ? { state: "ok", people: distinctPeople(ok) } : replies[0]!);
                 return { source, answer };
             })
         );
@@ -886,6 +889,22 @@ export class PeopleDirectory {
         ];
         return { identities: grouped, sources };
     }
+}
+
+/** The people of several answers of one source, each identical record once: both searches can return the same one. */
+function distinctPeople(answers: Array<Extract<SourceAnswer, { state: "ok" }>>): SourcePerson[] {
+    const seen = new Set<string>();
+    return answers
+        .flatMap((answer) => answer.people)
+        .filter((person) => {
+            const key = SafeJSON.stringify(person);
+            if (seen.has(key)) {
+                return false;
+            }
+
+            seen.add(key);
+            return true;
+        });
 }
 
 /** A reference split once: an `email:` id with its email, a `name:` id with its name key, or plain text. */
