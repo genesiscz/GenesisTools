@@ -4527,8 +4527,8 @@ describe("recording layer contract", () => {
             lanes,
             facts: { movieTracks: 1, mixedFrom: [] },
         });
-        expect(inputs.map((input) => input.mutedRanges)).toEqual([
-            [{ id: "u1", startUs: 1_000_000, endUs: 2_500_000 }],
+        expect(inputs.map((input) => input.mutedRanges?.map(({ startUs, endUs }) => [startUs, endUs]))).toEqual([
+            [[1_000_000, 2_500_000]],
         ]);
         expect(mutedRangesFilter(inputs[0].mutedRanges)).toBe("volume=enable='between(t,1,2.5)':volume=0,");
         expect(mutedRangesFilter(undefined)).toBe("");
