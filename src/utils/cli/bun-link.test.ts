@@ -1,5 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, readdirSync, readFileSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import {
+    chmodSync,
+    lstatSync,
+    mkdirSync,
+    mkdtempSync,
+    readdirSync,
+    readFileSync,
+    statSync,
+    symlinkSync,
+    unlinkSync,
+    utimesSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -170,19 +182,73 @@ describe.skipIf(skip.onWindows)("namedBunExecPath", () => {
             expect(readdirSync(binDir)).toEqual(["gt-race"]);
         });
 
-        it("two starts at once over a stale file: the last rename wins and the file is whole", () => {
+        it("two starts at once over a stale file: the second keeps the first one's clone", () => {
             placeNamedBun({ name: "race", bunPath: fakeBun, binDir, kind: "link" });
             upgradeBun();
+            let winner: bigint | undefined;
             const path = clone("race", {
                 beforePublish: () => {
                     // The other start sees the stale hard link too and publishes first.
                     clone("race");
+                    winner = statSync(join(binDir, "gt-race"), { bigint: true }).ino;
                 },
             });
 
+            expect(statSync(path, { bigint: true }).ino).toBe(winner as bigint);
             expect(statSync(path).nlink).toBe(1);
             expect(readFileSync(path, "utf8")).toBe(readFileSync(fakeBun, "utf8"));
             expect(readdirSync(binDir)).toEqual(["gt-race"]);
+        });
+
+        it("a name that another start is placing right now: the bun binary, and nothing is changed", () => {
+            mkdirSync(join(binDir, ".gt-busy.lock"), { recursive: true });
+
+            expect(clone("busy")).toBe(fakeBun);
+            expect(readdirSync(binDir)).toEqual([".gt-busy.lock"]);
+        });
+
+        it("a lock left by a start that died is taken over", () => {
+            const lock = join(binDir, ".gt-dead.lock");
+            mkdirSync(lock, { recursive: true });
+            const old = new Date(Date.now() - 60_000);
+            utimesSync(lock, old, old);
+
+            expect(clone("dead")).toBe(join(binDir, "gt-dead"));
+            expect(readdirSync(binDir)).toEqual(["gt-dead"]);
+        });
+
+        it("a symbolic link under the name is not started: a clone replaces the link, not the file it names", () => {
+            const planted = join(home, "planted");
+            writeFileSync(planted, readFileSync(fakeBun), { mode: 0o755 });
+            const bun = statSync(fakeBun);
+            utimesSync(planted, bun.atime, bun.mtime);
+            mkdirSync(binDir, { recursive: true });
+            symlinkSync(planted, join(binDir, "gt-sym"));
+
+            const path = clone("sym");
+
+            expect(lstatSync(path).isSymbolicLink()).toBe(false);
+            expect(statSync(path).ino).not.toBe(statSync(planted).ino);
+            expect(readFileSync(planted, "utf8")).toBe(readFileSync(fakeBun, "utf8"));
+        });
+
+        it("a file under the name that the group can write to is made again", () => {
+            const path = clone("open");
+            const before = statSync(path).ino;
+            chmodSync(path, 0o775);
+
+            clone("open");
+
+            expect(statSync(path).ino).not.toBe(before);
+            expect(statSync(path).mode & 0o777).toBe(0o755);
+        });
+
+        it("a folder that another user can write to is never used: the bun binary", () => {
+            mkdirSync(binDir, { recursive: true });
+            chmodSync(binDir, 0o777);
+
+            expect(clone("shared")).toBe(fakeBun);
+            expect(readdirSync(binDir)).toEqual([]);
         });
 
         it("a volume that cannot clone gets a hard link", () => {

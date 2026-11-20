@@ -2,9 +2,12 @@ import {
     type BigIntStats,
     existsSync,
     linkSync,
+    lstatSync,
     mkdirSync,
     readdirSync,
     renameSync,
+    rmdirSync,
+    rmSync,
     statSync,
     unlinkSync,
 } from "node:fs";
@@ -12,6 +15,7 @@ import { basename, join } from "node:path";
 import { type CopyFile, cloneOrCopy } from "@genesiscz/utils/fs/clone";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
+import { fileNameSlug } from "@genesiscz/utils/string";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 
 /**
@@ -30,7 +34,11 @@ export type BunNameKind = "clone" | "link" | "none";
  * (Genesis.app, cmux) and starts `/usr/bin/env bun` is SIGKILLed by Taskgated,
  * so it is always the running interpreter's own binary, never PATH "bun".
  *
- * On macOS each name is an APFS clone with its own inode, never a hard link.
+ * On macOS each name is an APFS clone with its own inode when the volume can
+ * clone. A volume that cannot clone gets a hard link, as before. A failure, a
+ * name that another start is placing right now, or a folder that another user
+ * can write to gets the bun binary itself. In those two cases the caller has
+ * no path of its own, so the grant below is not stable for it.
  * macOS keys a privacy grant (TCC) by the path of the responsible program, and
  * for an inode with many hard links the kernel reports whichever name it
  * resolved last: one bare `bun` process was named `gt-genesis-tools` by tccd
@@ -65,7 +73,7 @@ function defaultBunNameKind(): BunNameKind {
 
 /** The file name a tool's bun gets: `gt-<name>`, with characters unsafe in a file name replaced by "-". */
 export function bunNameFor(name: string): string {
-    return `gt-${name.replace(/[^\w.-]+/g, "-")}`;
+    return `gt-${fileNameSlug(name)}`;
 }
 
 /**
@@ -98,11 +106,25 @@ export function placeNamedBun({
         const source = statSync(bunPath, { bigint: true });
 
         if (kind === "clone") {
+            if (!isPrivateDir(binDir)) {
+                logger.debug(
+                    { binDir },
+                    "[bun-link] another user can write to the folder of the names, using the bun binary"
+                );
+                return bunPath;
+            }
+
             if (isCurrentClone(target, source)) {
                 return target;
             }
 
-            if (placeClone({ bunPath, source, target, binDir, copyFile, beforePublish })) {
+            const placed = placeClone({ bunPath, source, target, binDir, copyFile, beforePublish });
+
+            if (placed === "busy") {
+                return bunPath;
+            }
+
+            if (placed === "placed") {
                 if (source.nlink > 1n) {
                     cloneOtherHardLinks({ bunPath, source, binDir, copyFile });
                 }
@@ -119,20 +141,81 @@ export function placeNamedBun({
     }
 }
 
+/** Write permission for the group or for everyone. */
+const OTHERS_MAY_WRITE = 0o022n;
+/** A lock older than this was left by a start that died: the work under it takes well under a millisecond. */
+const LOCK_STALE_MS = 10_000;
+
+const ownUid = (): bigint => BigInt(process.getuid?.() ?? -1);
+
 /**
- * Whether `target` is already a clone of the current bun: one name only (a hard link of bun has more), and bun's
- * size and modification time, which a clone keeps (checked 2026-11-20). `bun upgrade` writes a new file, so the
- * stamp changes and the clone is made again.
+ * Whether only this user can put a file into `dir` (a folder that does not exist yet is made by this user). The
+ * returned path is started as bun, so a folder that another user can write to is never used.
  */
-function isCurrentClone(target: string, source: BigIntStats): boolean {
-    const stat = statSync(target, { bigint: true, throwIfNoEntry: false });
-    return stat !== undefined && stat.nlink === 1n && stat.size === source.size && stat.mtimeNs === source.mtimeNs;
+function isPrivateDir(dir: string): boolean {
+    const stat = lstatSync(dir, { bigint: true, throwIfNoEntry: false });
+    return stat === undefined || (stat.isDirectory() && stat.uid === ownUid() && (stat.mode & OTHERS_MAY_WRITE) === 0n);
 }
 
 /**
- * Clones bun beside `target` and renames the clone over it, so a start never sees a half-written file. False when
- * this volume cannot clone. When another start published a current clone while this one cloned, that one stays and
- * this one goes: a binary that may have just started is never replaced.
+ * Whether `target` is already a clone of the current bun. The path is started as bun, so it has to be what this code
+ * put there: a regular file and no symbolic link, of this user, that nobody else can write to, in a folder nobody
+ * else can write to (`isPrivateDir`), on bun's volume (a clone cannot leave it), with one name only (a hard link of
+ * bun has more), and with bun's size and modification time, which a clone keeps (checked 2026-11-20). `bun upgrade`
+ * writes a new file, so the stamp changes and the clone is made again. Its bytes are not compared: that would read
+ * 60 MB on every start. A file that passes all of this was put there by this user, who can replace bun itself too.
+ */
+function isCurrentClone(target: string, source: BigIntStats): boolean {
+    const stat = lstatSync(target, { bigint: true, throwIfNoEntry: false });
+
+    if (stat === undefined) {
+        return false;
+    }
+
+    return (
+        stat.isFile() &&
+        stat.nlink === 1n &&
+        stat.dev === source.dev &&
+        stat.uid === ownUid() &&
+        (stat.mode & OTHERS_MAY_WRITE) === 0n &&
+        stat.size === source.size &&
+        stat.mtimeNs === source.mtimeNs
+    );
+}
+
+/** Takes the lock of one name: a folder, which only one start can make. False while another start holds it. */
+function takeLock(lock: string): boolean {
+    for (const attempt of [1, 2]) {
+        try {
+            mkdirSync(lock);
+            return true;
+        } catch (err) {
+            if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
+                throw err;
+            }
+        }
+
+        const stat = statSync(lock, { throwIfNoEntry: false });
+
+        if (attempt === 2 || (stat !== undefined && Date.now() - stat.mtimeMs < LOCK_STALE_MS)) {
+            return false;
+        }
+
+        try {
+            rmdirSync(lock);
+        } catch (err) {
+            logger.debug({ err, lock }, "[bun-link] another start removed the old lock first");
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Clones bun beside `target` and renames the clone over it, so a start never sees a half-written file.
+ * `unsupported`: this volume cannot clone. The last check and the rename happen under a lock of the name, so two
+ * starts never both rename: the second one finds the first one's clone and keeps it, and a binary that may have
+ * just started is never replaced. `busy`: another start holds the lock and its clone is not there yet.
  */
 function placeClone({
     bunPath,
@@ -148,28 +231,36 @@ function placeClone({
     binDir: string;
     copyFile?: CopyFile;
     beforePublish?: () => void;
-}): boolean {
-    mkdirSync(binDir, { recursive: true });
+}): "placed" | "unsupported" | "busy" {
+    mkdirSync(binDir, { recursive: true, mode: 0o755 });
     const tmp = join(binDir, `.${basename(target)}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`);
     const placement = cloneOrCopy({ source: bunPath, destination: tmp, mode: 0o755, mayCopy: false, copyFile });
 
     if (placement !== "cloned") {
-        return false;
+        return "unsupported";
     }
+
+    const lock = join(binDir, `.${basename(target)}.lock`);
 
     try {
         beforePublish?.();
 
-        if (isCurrentClone(target, source)) {
-            unlinkSync(tmp);
-            return true;
+        if (!takeLock(lock)) {
+            return isCurrentClone(target, source) ? "placed" : "busy";
         }
 
-        renameSync(tmp, target);
-        return true;
-    } catch (err) {
-        unlinkSync(tmp);
-        throw err;
+        try {
+            if (!isCurrentClone(target, source)) {
+                renameSync(tmp, target);
+            }
+
+            return "placed";
+        } finally {
+            rmdirSync(lock);
+        }
+    } finally {
+        // Gone already when it was renamed into place.
+        rmSync(tmp, { force: true });
     }
 }
 
