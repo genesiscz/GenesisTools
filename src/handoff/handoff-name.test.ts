@@ -421,14 +421,24 @@ describe("handoff watch", () => {
 
             while (page.more) {
                 const read = handoffEventsFromFeed(db, page.cursor, { limit: 1 });
-                expect(read.cursor).toBeGreaterThanOrEqual(page.cursor);
+
+                // A page that promises more must move the cursor, or a stuck reader would loop here for ever.
+                if (read.more) {
+                    expect(read.cursor).toBeGreaterThan(page.cursor);
+                } else {
+                    expect(read.cursor).toBeGreaterThanOrEqual(page.cursor);
+                }
+
                 page = read;
                 pages++;
                 paged.push(...read.events.map((event) => event.uid));
             }
 
             expect(pages).toBeGreaterThan(1);
-            expect(new Set(paged)).toEqual(new Set(whole.events.map((event) => event.uid)));
+            // One event can stand behind several changes, so its uid repeats on consecutive pages (the watch drops
+            // the repeat by uid). Any other repeat, or another order, fails here.
+            const collapsed = paged.filter((uid, index) => uid !== paged[index - 1]);
+            expect(collapsed).toEqual(whole.events.map((event) => event.uid));
         } finally {
             db.close();
         }
