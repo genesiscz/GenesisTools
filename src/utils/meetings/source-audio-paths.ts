@@ -34,7 +34,7 @@ export function recordedSoundExpires(): boolean {
     const capture = isObject(parsed) && isObject(parsed.global) ? parsed.global.capture : undefined;
     const days = isObject(capture) ? capture.audioRetentionDays : undefined;
     // The same rule as the config schema (`z.number().int().positive()`): a value the config refuses keeps the sound.
-    return typeof days === "number" && Number.isInteger(days) && days > 0;
+    return typeof days === "number" && Number.isSafeInteger(days) && days > 0;
 }
 
 /**

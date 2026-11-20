@@ -117,9 +117,11 @@ describe("capture retention", () => {
             expect(matchPreset(join(meeting, "audio"), [preset])).toBeNull();
             expect(matchPreset(join(meeting, "frames"), [preset])).toBe(preset);
             // A value the config schema refuses (it takes a positive integer) keeps the protection.
-            writeFileSync(configPath, SafeJSON.stringify({ global: { capture: { audioRetentionDays: 0.5 } } }));
-            expect(protectsMeetingSourceAudio(join(meeting, "audio"))).toBe(true);
-            expect(matchPreset(join(meeting, "audio"), [preset])).toBeNull();
+            for (const refused of [0.5, Number.MAX_SAFE_INTEGER + 1]) {
+                writeFileSync(configPath, SafeJSON.stringify({ global: { capture: { audioRetentionDays: refused } } }));
+                expect(protectsMeetingSourceAudio(join(meeting, "audio"))).toBe(true);
+                expect(matchPreset(join(meeting, "audio"), [preset])).toBeNull();
+            }
             writeFileSync(configPath, SafeJSON.stringify({ global: { capture: { audioRetentionDays: 60 } } }));
             expect(protectsMeetingSourceAudio(join(meeting, "audio"))).toBe(false);
             expect(matchPreset(join(meeting, "audio"), [preset])).toBe(preset);
