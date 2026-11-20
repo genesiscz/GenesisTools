@@ -268,6 +268,27 @@ test("an aborted pass kills its worker at once and names nothing; an aborted sig
     expect(spawn.mock.calls.length).toBe(spawned);
 });
 
+test("a cancel that lands while the finished lines are saved rejects the call and keeps the saved lines", async () => {
+    const { VoiceLineCache } = await import("./voice-line-cache");
+    const f = await fixture();
+    const controller = new AbortController();
+    const save = VoiceLineCache.prototype.save;
+    const saving = spyOn(VoiceLineCache.prototype, "save").mockImplementation(async function (
+        this: InstanceType<typeof VoiceLineCache>
+    ) {
+        controller.abort(new Error("cancelled during the save"));
+        await save.call(this);
+    });
+    spies.push(saving);
+    await expect(voice.embedVoiceLines({ ...f.options, signal: controller.signal })).rejects.toThrow(
+        "cancelled during the save"
+    );
+    saving.mockRestore();
+    f.compute.mockClear();
+    await voice.embedVoiceLines(f.options);
+    expect(f.compute).not.toHaveBeenCalled();
+});
+
 test("cached anchors count once and only missing channels go to workers, even across a chunk failure", async () => {
     const f = await fixture();
     const options = {

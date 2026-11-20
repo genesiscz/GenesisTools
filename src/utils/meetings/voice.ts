@@ -556,8 +556,6 @@ export async function embedVoiceLines(options: {
             })
         )
     );
-    const aborted = options.signal?.aborted === true;
-
     // Commit in input order, independent of worker completion. For repeated millisecond keys the first
     // cacheable result wins, just as if each line had looked up the one before it in a serial pass.
     for (const line of pending) {
@@ -579,8 +577,9 @@ export async function embedVoiceLines(options: {
     if (!options.readOnlyCache) {
         await cache?.save();
     }
-    if (aborted) {
-        throw options.signal?.reason;
+    // Read after the save: a cancel that lands while the finished lines are saved still rejects the call.
+    if (options.signal?.aborted) {
+        throw options.signal.reason;
     }
 
     for (const outcome of filled) {
