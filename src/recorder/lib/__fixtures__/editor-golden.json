@@ -1564,6 +1564,68 @@
       }
     },
     {
+      "name": "a microphone lane with two muted parts",
+      "project": {
+        "version": 1,
+        "source": {
+          "video": "/movies/screen.mp4",
+          "durationUs": 10000000,
+          "width": 1920,
+          "height": 1080
+        },
+        "clips": [
+          {
+            "id": "c00000000",
+            "fromUs": 0,
+            "toUs": 10000000,
+            "speed": 1
+          }
+        ],
+        "zooms": [],
+        "audio": {
+          "include": true,
+          "volume": 1,
+          "mutedTracks": [],
+          "lanes": [
+            {
+              "id": "mic",
+              "source": "mic",
+              "file": "mic.m4a",
+              "offsetMs": 40,
+              "muted": false,
+              "volume": 1,
+              "mutedRanges": [
+                {
+                  "id": "u1",
+                  "startUs": 1000000,
+                  "endUs": 1500000
+                },
+                {
+                  "id": "u2",
+                  "startUs": 4000000,
+                  "endUs": 4250000
+                }
+              ]
+            },
+            {
+              "id": "movie-1",
+              "source": "movie",
+              "track": 1,
+              "offsetMs": 0,
+              "muted": false,
+              "volume": 0.5
+            }
+          ]
+        },
+        "export": {
+          "codec": "h264",
+          "maxHeight": 0,
+          "output": ""
+        },
+        "revision": 0
+      }
+    },
+    {
       "name": "voiceover clips and music ducking",
       "project": {
         "version": 1,

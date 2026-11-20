@@ -13,6 +13,15 @@ extension EditProject {
         var muted = false
         var volume = 1.0
         var name: String?
+        /// Parts the mix plays silent, on the source clock, in start order; nil when the whole lane plays
+        /// (`audioMutedRangeSchema` in src/utils/recording-editor/audio-lanes.ts).
+        var mutedRanges: [MutedRange]?
+
+        struct MutedRange: Codable, Equatable, Identifiable {
+            var id: String
+            var startUs: Int64
+            var endUs: Int64
+        }
 
         var displayName: String {
             if let name, !name.isEmpty { return name }
@@ -101,6 +110,7 @@ extension EditProject.AudioLane {
                   offsetMs: try c.decodeIfPresent(Int.self, forKey: .offsetMs) ?? 0,
                   muted: try c.decodeIfPresent(Bool.self, forKey: .muted) ?? false,
                   volume: try c.decodeIfPresent(Double.self, forKey: .volume) ?? 1,
-                  name: try c.decodeIfPresent(String.self, forKey: .name))
+                  name: try c.decodeIfPresent(String.self, forKey: .name),
+                  mutedRanges: try c.decodeIfPresent([MutedRange].self, forKey: .mutedRanges))
     }
 }

@@ -297,6 +297,44 @@ final class RecorderLayersRenderTests: XCTestCase {
         XCTAssertTrue(sound.isEmpty)
     }
 
+    /// A lane's muted part leaves a gap in its track, so it plays silent as the TypeScript lane mix does; the other
+    /// lane keeps its whole sound.
+    func testMutedPartOfALaneLeavesASilentGapInOnlyThatLane() async throws {
+        let dir = try folder()
+        var edit = try await source(in: dir)
+        try tone(dir.appendingPathComponent("mic.wav"), frequencies: [220])
+        try tone(dir.appendingPathComponent("system.wav"), frequencies: [660])
+        edit.audio.lanes = [.init(id: "mic", source: .mic, file: "mic.wav",
+                                  mutedRanges: [.init(id: "u1", startUs: 200_000, endUs: 400_000)]),
+                            .init(id: "system", source: .system, file: "system.wav")]
+        let rendered = try await render(edit)
+        var played: [String: [(Double, Double, Double)]] = [:]
+        for track in rendered.composition.tracks(withMediaType: .audio) {
+            let segments = track.segments.filter { !$0.isEmpty }
+            let name = try XCTUnwrap(segments.first?.sourceURL?.lastPathComponent)
+            played[name] = segments.map {
+                ($0.timeMapping.source.start.seconds, $0.timeMapping.target.start.seconds, $0.timeMapping.target.duration.seconds)
+            }
+        }
+        let mic = try XCTUnwrap(played["mic.wav"]), system = try XCTUnwrap(played["system.wav"])
+        XCTAssertEqual(mic.count, 2)
+        for (segment, expected) in zip(mic, [(0.0, 0.0, 0.2), (0.4, 0.4, 0.6)]) {
+            XCTAssertEqual(segment.0, expected.0, accuracy: 0.001)
+            XCTAssertEqual(segment.1, expected.1, accuracy: 0.001)
+            XCTAssertEqual(segment.2, expected.2, accuracy: 0.001)
+        }
+        XCTAssertEqual(system.count, 1)
+        XCTAssertEqual(system.first?.2 ?? 0, 1, accuracy: 0.001)
+    }
+
+    func testAudibleLeavesOutEveryMutedRangeInOrder() {
+        XCTAssertEqual(EditRenderer.audible(0..<10, muted: []), [0..<10])
+        XCTAssertEqual(EditRenderer.audible(0..<10, muted: [6..<8, 2..<3]), [0..<2, 3..<6, 8..<10])
+        XCTAssertEqual(EditRenderer.audible(2..<10, muted: [0..<4, 3..<5, 9..<12]), [5..<9])
+        XCTAssertEqual(EditRenderer.audible(2..<5, muted: [0..<6]), [])
+        XCTAssertEqual(EditRenderer.audible(2..<5, muted: [5..<6, 0..<2]), [2..<5])
+    }
+
     func testRepeatedMovieTrackPlaysOnceAtTheFirstLanesGain() async throws {
         var edit = try await source(in: folder(), mixed: true)
         edit.audio.lanes = [.init(id: "first", source: .movie, track: 0, volume: 0.6),

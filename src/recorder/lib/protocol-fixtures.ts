@@ -453,6 +453,31 @@ function goldenProjects(): Array<{ name: string; project: EditProject }> {
         { name: "the looks, the export and the sound", project: looks },
         { name: "the looks a recorded track turns on, and music", project: stableIds(tracked) },
         { name: "a camera with two hidden parts and lanes", project: camera },
+        // Muted parts of one sound lane: the window must keep them when it saves the edit itself.
+        {
+            name: "a microphone lane with two muted parts",
+            project: editProjectSchema.parse({
+                ...wholeProject(source),
+                audio: {
+                    include: true,
+                    volume: 1,
+                    mutedTracks: [],
+                    lanes: [
+                        {
+                            id: "mic",
+                            source: "mic",
+                            file: "mic.m4a",
+                            offsetMs: 40,
+                            mutedRanges: [
+                                { id: "u1", startUs: 1_000_000, endUs: 1_500_000 },
+                                { id: "u2", startUs: 4_000_000, endUs: 4_250_000 },
+                            ],
+                        },
+                        { id: "movie-1", source: "movie", track: 1, volume: 0.5 },
+                    ],
+                },
+            }),
+        },
         // R4 voiceover clips, 8 music ducking
         {
             name: "voiceover clips and music ducking",

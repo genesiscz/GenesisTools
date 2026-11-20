@@ -18,7 +18,18 @@ struct EditorSoundRow: Identifiable, Equatable {
     var id: String { lane.id }
     var name: String { mixed ? "Mixed sound" : lane.displayName }
     var level: String { "\(Int((lane.volume * 100).rounded()))%" }
-    var accessibilityValue: String { lane.muted ? "muted" : level }
+    var accessibilityValue: String {
+        if lane.muted { return "muted" }
+        let parts = lane.mutedRanges?.count ?? 0
+        return parts == 0 ? level : "\(level), \(parts) muted \(parts == 1 ? "part" : "parts")"
+    }
+
+    /// Whether the middle of a source span lies in one of the lane's muted parts.
+    func silent(source: Range<Int64>) -> Bool {
+        guard let parts = lane.mutedRanges, !parts.isEmpty else { return false }
+        let middle = source.lowerBound + (source.upperBound - source.lowerBound) / 2
+        return parts.contains { middle >= $0.startUs && middle < $0.endUs }
+    }
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.lane == rhs.lane && lhs.waveform === rhs.waveform && lhs.voiceover == rhs.voiceover
@@ -90,6 +101,14 @@ struct SoundLanesView: View {
                             } else {
                                 Text("\(percent)%")
                             }
+                        }
+                    }
+                    if EditorModel.lanePartsMute(row.lane) {
+                        Divider()
+                        Button("Mute Selection") { model.muteSelection(row) }
+                            .disabled(model.soundSelection == nil)
+                        ForEach(row.lane.mutedRanges ?? []) { part in
+                            Button("Unmute \(model.mutedPartTitle(part))") { model.unmutePart(row, part) }
                         }
                     }
                 }
@@ -207,7 +226,7 @@ private struct LaneWaveform: View {
         let ready = row.waveform.hasAudio
         Canvas { context, size in
             guard ready else { return }
-            var bars = Path()
+            var bars = Path(), silent = Path()
             for clip in placed {
                 let width = scale.width(clip.clip.outputDurationUs)
                 let count = max(1, Int(width / 3))
@@ -216,14 +235,16 @@ private struct LaneWaveform: View {
                     func span(start: Int64, length: Int64) -> Range<Int64> {
                         (start + Int64(Double(length) * a))..<(start + Int64(Double(length) * b))
                     }
-                    let peak = row.peak(source: span(start: clip.clip.fromUs, length: clip.clip.sourceDurationUs),
-                                        output: span(start: clip.outStartUs, length: clip.clip.outputDurationUs))
+                    let source = span(start: clip.clip.fromUs, length: clip.clip.sourceDurationUs)
+                    let peak = row.peak(source: source, output: span(start: clip.outStartUs, length: clip.clip.outputDurationUs))
                     let height = CGFloat(peak) * size.height
-                    bars.addRect(CGRect(x: scale.x(clip.outStartUs) + a * width,
-                                        y: (size.height - height) / 2, width: 2, height: height))
+                    let bar = CGRect(x: scale.x(clip.outStartUs) + a * width, y: (size.height - height) / 2, width: 2, height: height)
+                    // A muted part draws dim, as the whole lane does when it is muted.
+                    if row.silent(source: source) { silent.addRect(bar) } else { bars.addRect(bar) }
                 }
             }
             context.fill(bars, with: .color(.green.opacity(row.lane.muted ? 0.25 : 0.8)))
+            context.fill(silent, with: .color(.green.opacity(0.25)))
         }
         .accessibilityHidden(true)
         .allowsHitTesting(false)

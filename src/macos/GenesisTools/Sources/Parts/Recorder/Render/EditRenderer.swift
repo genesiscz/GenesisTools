@@ -675,9 +675,10 @@ private struct SourceAudioMix {
     let ramps: [(startUs: Int64, endUs: Int64, from: Double, to: Double)]
 
     /// A file's time zero is at originUs on the source clock. A looping inset repeats on the picture's period,
-    /// including silence if its sound is shorter or starts later than its picture.
+    /// including silence if its sound is shorter or starts later than its picture. `muted` source ranges (a lane's
+    /// muted parts) are left out, so they play silent, as the TypeScript lane mix's `volume=0` steps do.
     func add(_ track: AVAssetTrack, gain: Float, span: Range<Int64>, originUs: Int64 = 0,
-             periodUs: Int64? = nil) async throws -> AVMutableAudioMixInputParameters? {
+             periodUs: Int64? = nil, muted: [Range<Int64>] = []) async throws -> AVMutableAudioMixInputParameters? {
         let available = try await track.load(.timeRange)
         guard available.isValid, available.start.isNumeric, available.end.isNumeric, available.duration > .zero else { return nil }
         let soundStart = available.start.convertScale(1_000_000, method: .roundHalfAwayFromZero).value
@@ -715,7 +716,9 @@ private struct SourceAudioMix {
                 repeat {
                     let from = max(start, origin + soundStart)
                     let to = min(end, origin + min(soundEnd, periodUs ?? soundEnd))
-                    try insert(from: from, to: to, origin: origin, under: placed)
+                    for piece in EditRenderer.audible(from..<max(from, to), muted: muted) {
+                        try insert(from: piece.lowerBound, to: piece.upperBound, origin: origin, under: placed)
+                    }
                     guard let periodUs else { break }
                     origin += periodUs
                 } while origin < end
@@ -741,7 +744,7 @@ private struct SourceAudioMix {
     }
 
     func file(_ asset: AVURLAsset, gain: Float, span: Range<Int64>, originUs: Int64, periodUs: Int64? = nil,
-              warnings: RenderWarnings) async -> AVMutableAudioMixInputParameters? {
+              muted: [Range<Int64>] = [], warnings: RenderWarnings) async -> AVMutableAudioMixInputParameters? {
         guard FileManager.default.fileExists(atPath: asset.url.path) else {
             warnings.skipped(asset.url)
             return nil
@@ -753,11 +756,25 @@ private struct SourceAudioMix {
             }
             // A track alone does not retain its source asset through the inserts.
             defer { withExtendedLifetime(asset) {} }
-            return try await add(track, gain: gain, span: span, originUs: originUs, periodUs: periodUs)
+            return try await add(track, gain: gain, span: span, originUs: originUs, periodUs: periodUs, muted: muted)
         } catch {
             warnings.skipped(asset.url)
             return nil
         }
+    }
+}
+
+extension EditRenderer {
+    /// The parts of `range` outside every `muted` range, in order.
+    static func audible(_ range: Range<Int64>, muted: [Range<Int64>]) -> [Range<Int64>] {
+        var pieces: [Range<Int64>] = []
+        var start = range.lowerBound
+        for part in muted.sorted(by: { $0.lowerBound < $1.lowerBound }) where part.upperBound > start && part.lowerBound < range.upperBound {
+            if part.lowerBound > start { pieces.append(start..<part.lowerBound) }
+            start = max(start, part.upperBound)
+        }
+        if start < range.upperBound { pieces.append(start..<range.upperBound) }
+        return pieces
     }
 }
 
@@ -1192,13 +1209,14 @@ struct EditRenderer {
             var played = Set(project.movieTracksPlayed(lanes, facts: facts))
             for lane in lanes where lane.source != .music && lane.source != .voiceover {
                 let gain = lane.muted ? 0 : Float(lane.volume * project.audio.volume)
+                let muted = (lane.mutedRanges ?? []).compactMap { $0.endUs > $0.startUs ? $0.startUs..<$0.endUs : nil }
                 if let file = lane.file {
                     if let input = await mix.file(AVURLAsset(url: media.fileURL(file)), gain: gain, span: movieSpan,
-                                                  originUs: Int64(lane.offsetMs) * 1000, warnings: warnings) {
+                                                  originUs: Int64(lane.offsetMs) * 1000, muted: muted, warnings: warnings) {
                         inputs.append(input)
                     }
                 } else if let i = lane.track, played.remove(i) != nil,
-                          let input = try await mix.add(tracks[i], gain: gain, span: movieSpan) {
+                          let input = try await mix.add(tracks[i], gain: gain, span: movieSpan, muted: muted) {
                     inputs.append(input)
                 }
             }
