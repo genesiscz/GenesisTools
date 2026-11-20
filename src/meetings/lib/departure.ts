@@ -224,9 +224,11 @@ function exchangeDeparture({
 export function identifiedDepartures(options: DepartureEvidence): IdentifiedDeparture[] {
     const departures: IdentifiedDeparture[] = [];
     const pass = new DeparturePass(options);
-    const hinted = new Map(
+    // A farewell hint names its line by time and diarizer label: another label's line at the same second keeps the
+    // phrase check, so its own evidence cannot turn it into a departure.
+    const hinted = new Set(
         options.hints.flatMap((hint) =>
-            hint.kind === "leave-then-continues" ? hint.leaves.map((leave) => [leave.atSec, hint.label] as const) : []
+            hint.kind === "leave-then-continues" ? hint.leaves.map((leave) => `${leave.atSec}|${hint.label}`) : []
         )
     );
     const remote = (name: string) =>
@@ -235,8 +237,8 @@ export function identifiedDepartures(options: DepartureEvidence): IdentifiedDepa
         !options.devices?.some(({ account }) => rosterAccountKey(account) === rosterAccountKey(name));
     for (const line of options.lines) {
         const atSec = line.startSec;
-        const label = hinted.get(atSec);
-        if ((!label && !isLeavePhrase(line.text)) || !onCall(line)) {
+        const hintedLeave = hinted.has(`${atSec}|${line.label}`);
+        if ((!hintedLeave && !isLeavePhrase(line.text)) || !onCall(line)) {
             continue;
         }
         const present = options.presence?.filter(
@@ -316,7 +318,7 @@ export function identifiedDepartures(options: DepartureEvidence): IdentifiedDepa
         departures.push({
             name,
             atSec,
-            ...(sameName(name, label ?? line.label) ? { label: label ?? line.label } : {}),
+            ...(sameName(name, line.label) ? { label: line.label } : {}),
             reason:
                 leaving.length === 1
                     ? "attendance"

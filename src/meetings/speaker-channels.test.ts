@@ -1103,7 +1103,8 @@ describe("shared indicator and departure APIs", () => {
         );
         // A goodbye under Carol's own label names its label, so the suggest rules keep that label's leave hint.
         const own = [{ ...hints[0]!, label: "Carol Example" }];
-        expect(identifiedDepartures({ hints: own, lines: shown, selfName: USER, presence })).toEqual([
+        const ownLines = [{ ...shown[0]!, label: "Carol Example" }];
+        expect(identifiedDepartures({ hints: own, lines: ownLines, selfName: USER, presence })).toEqual([
             { name: "Carol Example", atSec: 0, label: "Carol Example", reason: "indicator" },
         ]);
     });
