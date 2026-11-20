@@ -440,7 +440,7 @@ final class RecorderEditTests: XCTestCase {
     /// the same file as `tools recorder copy` and `movieOf`.
     func testTheMovieOfARecordingFolderMatchesTheSharedCases() throws {
         let cases = try SharedEditorFixture.cases("recording-movies.json")
-        XCTAssertGreaterThanOrEqual(cases.count, 15)
+        XCTAssertGreaterThanOrEqual(cases.count, 16)
         for item in cases {
             let name = try XCTUnwrap(item["name"] as? String)
             let folder = try recordingFolder(try XCTUnwrap(item["files"] as? [[Any]]), edit: (item["edit"] as? NSNumber)?.intValue,

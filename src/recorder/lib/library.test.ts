@@ -20,7 +20,12 @@ import recordingMovies from "@genesiscz/utils/recording-editor/__fixtures__/reco
 import screenSearch from "@genesiscz/utils/recording-editor/__fixtures__/screen-search.json";
 import { analysisCachePath } from "@genesiscz/utils/recording-editor/analysis-cache";
 import type { MovieEvent } from "@genesiscz/utils/recording-editor/events";
-import { EXPORT_LEDGER_FILE, readExportLedger, recordExport } from "@genesiscz/utils/recording-editor/exports";
+import {
+    EXPORT_LEDGER_FILE,
+    isMovieExportFormat,
+    readExportLedger,
+    recordExport,
+} from "@genesiscz/utils/recording-editor/exports";
 import { applyOp, editOpSchema, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
 import { RecorderControl, type RecorderMethod, type StopAnswer } from "@genesiscz/utils/screen-recorder/control";
 import { recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
@@ -921,6 +926,10 @@ describe("a recording's quick actions", () => {
             Object.entries(readExportLedger(folder).files).map(([file, entry]) => [file, entry.revision])
         );
         expect(revisions).toEqual(exportLedgerCase.revisions);
+    });
+
+    it("records only movie exports, so a GIF is never handed out as the movie", () => {
+        expect(["mp4", "webm", "gif"].filter(isMovieExportFormat)).toEqual(["mp4", "webm"]);
     });
 
     it("refuses to copy an export when the edit changed while it ran", async () => {

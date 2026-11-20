@@ -32,7 +32,7 @@
             "shareable": "screen.mov"
         },
         {
-            "name": "an unedited recording hands out its newest recorded finished export",
+            "name": "an unedited recording hands out its newest recorded finished movie export, never a GIF or a partial file",
             "files": [
                 ["screen.mp4", 0],
                 ["screen-edited.mp4", 10],
@@ -45,7 +45,7 @@
                 ["screen-edited.partial.mp4", null]
             ],
             "movie": "screen.mp4",
-            "shareable": "screen-edited.gif"
+            "shareable": "screen-edited.mp4"
         },
         {
             "name": "the camera's movie is not an export",
@@ -181,6 +181,21 @@
             "movie": "screen.mp4",
             "shareable": null,
             "unreadable": true
+        },
+        {
+            "name": "a GIF recorded at the current revision is no movie: the movie export is handed out, never the newer GIF",
+            "files": [
+                ["screen.mp4", 0],
+                ["screen-edited.mp4", 10],
+                ["screen-edited.gif", 20]
+            ],
+            "edit": 2,
+            "exports": [
+                ["screen-edited.mp4", 2],
+                ["screen-edited.gif", 2]
+            ],
+            "movie": "screen.mp4",
+            "shareable": "screen-edited.mp4"
         }
     ]
 }

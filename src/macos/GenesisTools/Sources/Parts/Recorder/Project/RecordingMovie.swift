@@ -74,7 +74,8 @@ enum RecordingMovie {
         }
         let modified = { (url: URL) in (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast }
         let current = ExportLedger.read(folder)
-            .filter { $0.value.revision == revision && !$0.key.contains(".partial.") }
+            // A GIF is no movie, and a `.partial.` file is still being written (an older build recorded GIFs).
+            .filter { $0.value.revision == revision && !$0.key.contains(".partial.") && !$0.key.lowercased().hasSuffix(".gif") }
             .map { ExportLedger.url(of: $0.key, in: folder) }
             .filter { FileManager.default.fileExists(atPath: $0.path) }
         if let newest = current.max(by: { modified($0) < modified($1) }) { return .file(newest) }
@@ -83,9 +84,9 @@ enum RecordingMovie {
     }
 }
 
-/// exports.json beside a recording's edit: which edit revision each whole export rendered. The window's MP4 export
-/// records here; every other export records through `recordExport` (src/utils/recording-editor/exports.ts), the same
-/// shape. A part of the edit is never recorded, so it is never handed out as the movie.
+/// exports.json beside a recording's edit: which edit revision each whole movie export rendered. The window's MP4
+/// export records here; every other movie export records through `recordExport` (src/utils/recording-editor/exports.ts),
+/// the same shape. A part of the edit and a GIF are never recorded, so neither is handed out as the movie.
 enum ExportLedger {
     static let file = "exports.json"
 

@@ -9,12 +9,23 @@ import { z } from "zod";
 const { log } = logger.scoped("recording-exports");
 
 /**
- * Which edit each whole export of a recording shows. Every route that writes a whole export records it here, beside
- * the recording's edit.json: `exportAs` in src/recorder/lib/edit.ts (the CLI, the REPL, the service, Copy Movie and
- * Copy as GIF, the window's GIF, WebM and cleaned-sound MP4) and the window's own MP4 export (EditorModel, through
- * ExportLedger in RecordingMovie.swift). A part of the edit is never recorded, so it is never handed out as the movie.
+ * Which edit each whole movie export of a recording shows. Every route that writes a whole MP4 or WebM records it
+ * here, beside the recording's edit.json: `exportAs` in src/recorder/lib/edit.ts (the CLI, the REPL, the service, Copy
+ * Movie, the window's WebM and cleaned-sound MP4) and the window's own MP4 export (EditorModel, through ExportLedger in
+ * RecordingMovie.swift). A part of the edit and a GIF are never recorded, so neither is handed out as the movie; a GIF
+ * entry an older build wrote is skipped when reading.
  */
 export const EXPORT_LEDGER_FILE = "exports.json";
+
+/** Whether an export in `format` is a movie Copy Movie may hand out: MP4 and WebM, never a GIF. */
+export function isMovieExportFormat(format: string): boolean {
+    return format === "mp4" || format === "webm";
+}
+
+/** Whether a ledger key names a finished movie (not a GIF, not a `.partial.` file still being written). */
+function isFinishedMovieKey(key: string): boolean {
+    return !key.includes(".partial.") && !key.toLowerCase().endsWith(".gif");
+}
 
 const ledgerSchema = z.object({
     version: z.literal(1),
@@ -178,7 +189,7 @@ export function shareableMovieOf({
 
     const revision = edit.kind === "known" ? edit.revision : null;
     const current = Object.entries(readExportLedger(folder).files)
-        .filter(([key, entry]) => entry.revision === revision && !key.includes(".partial."))
+        .filter(([key, entry]) => entry.revision === revision && isFinishedMovieKey(key))
         .map(([key]) => (isAbsolute(key) ? key : join(folder, key)))
         .filter((path) => existsSync(path))
         .map((path) => ({ path, modified: statSync(path).mtimeMs }))

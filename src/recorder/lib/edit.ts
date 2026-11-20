@@ -24,7 +24,7 @@ import {
     removeOldDenoisePreviews,
     syncDenoisedTranscript,
 } from "@genesiscz/utils/recording-editor/denoise";
-import { recordExport } from "@genesiscz/utils/recording-editor/exports";
+import { isMovieExportFormat, recordExport } from "@genesiscz/utils/recording-editor/exports";
 import { exportVideoArgv } from "@genesiscz/utils/recording-editor/ffmpeg";
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
 import { integratedLoudness, recordingLaneInputs } from "@genesiscz/utils/recording-editor/loudness";
@@ -1630,11 +1630,11 @@ export async function exportAs(
         }
     }
 
-    const rendered: { revision: number | null } = { revision: null };
+    const rendered: RenderedExport = { revision: null };
     const answer = await renderExport(value, options, rendered);
 
-    if (answer.ok && answer.path) {
-        // Copy Movie and a drag hand out only an export of the edit as it is now (shareableMovieOf).
+    // Copy Movie and a drag hand out only a movie export of the edit as it is now (shareableMovieOf); a GIF is no movie.
+    if (answer.ok && answer.path && rendered.format !== undefined && isMovieExportFormat(rendered.format)) {
         await recordExport({ folder: dirname(editPathOf(value)), file: answer.path, revision: rendered.revision });
     }
 
@@ -1642,14 +1642,20 @@ export async function exportAs(
     return finishExport({ value, answer, subtitles: options.subtitles });
 }
 
+/** What `renderExport` rendered, for the export ledger: the edit's revision (null without an edit.json) and format. */
+interface RenderedExport {
+    revision: number | null;
+    format?: ExportFormat;
+}
+
 /**
  * Renders the whole edit into its export target in the asked format; finishExport adds the subtitles and chapters.
- * `rendered.revision` gets the edit's revision it rendered (null without an edit.json), for the export ledger.
+ * `rendered` gets the edit's revision it rendered and the format, for the export ledger.
  */
 async function renderExport(
     value: string,
     options: { out?: string; format?: ExportFormat } & ExportRun,
-    rendered: { revision: number | null } = { revision: null }
+    rendered: RenderedExport = { revision: null }
 ): Promise<ExportAnswer & { replaced?: boolean }> {
     const opened = await openProject(value);
     rendered.revision = opened.fresh ? null : opened.project.revision;
@@ -1658,6 +1664,8 @@ async function renderExport(
     if (!isExportFormat(asked)) {
         return formatRefusal(asked);
     }
+
+    rendered.format = asked;
 
     const host = { size: options.size, onProgress: options.onProgress };
     const output = exportTargetOf({
