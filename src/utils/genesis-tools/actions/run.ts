@@ -1,3 +1,4 @@
+import { errorMessage } from "@genesiscz/utils/error-message";
 import {
     checkNeed,
     describeNeed,
@@ -6,6 +7,7 @@ import {
     type NeedSpec,
 } from "@genesiscz/utils/genesis-tools/capability/needs";
 import { logger } from "@genesiscz/utils/logger";
+import { untilAborted } from "@genesiscz/utils/until-aborted";
 import type { z } from "zod";
 import {
     type ActionContext,
@@ -103,17 +105,19 @@ async function applyFix(decision: FixDecision, need: NeedSpec, deps: EngineDeps,
     return (await checkNeed(need, { ...env, fresh: true })).ok;
 }
 
-function messageOf(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
-}
-
 /** A need's answer; a check that throws is a failed need of this way, never a failed action. */
 async function checkedNeed(need: NeedSpec, env: NeedEnv): Promise<NeedResult> {
     try {
         return await checkNeed(need, env);
     } catch (error) {
         logger.warn({ need: describeNeed(need), error }, "genesis-tools actions: a need check threw");
-        return { ok: false, code: "threw", reason: `the check threw: ${messageOf(error)}`, fix: null, from: "probe" };
+        return {
+            ok: false,
+            code: "threw",
+            reason: `the check threw: ${errorMessage(error)}`,
+            fix: null,
+            from: "probe",
+        };
     }
 }
 
@@ -155,7 +159,10 @@ async function firstFailedNeed(params: {
                     { way: params.way, need: describeNeed(need), error },
                     "genesis-tools actions: a fix failed"
                 );
-                return { need, result: { ...result, reason: `${result.reason}; the fix failed: ${messageOf(error)}` } };
+                return {
+                    need,
+                    result: { ...result, reason: `${result.reason}; the fix failed: ${errorMessage(error)}` },
+                };
             }
         }
 
@@ -203,20 +210,6 @@ function runDeadline(budgetMs: number, outer: AbortSignal | undefined): RunDeadl
             outer?.removeEventListener("abort", onOuterAbort);
         },
     };
-}
-
-/** `work`, or the abort reason once `signal` aborts first. The work is not stopped here: a way reads `ctx.signal`. */
-async function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
-    signal.throwIfAborted();
-    const aborted = Promise.withResolvers<never>();
-    const onAbort = (): void => aborted.reject(signal.reason);
-    signal.addEventListener("abort", onAbort, { once: true });
-
-    try {
-        return await Promise.race([work, aborted.promise]);
-    } finally {
-        signal.removeEventListener("abort", onAbort);
-    }
 }
 
 function contextFor(params: {
@@ -291,7 +284,7 @@ export async function runAreaAction(
     const ended = (way: WayName, started: boolean): ActionOutcome<unknown> => {
         const reason: unknown = deadline.signal.reason;
         const why =
-            reason instanceof ActionDeadlineError ? reason.message : `the caller cancelled: ${messageOf(reason)}`;
+            reason instanceof ActionDeadlineError ? reason.message : `the caller cancelled: ${errorMessage(reason)}`;
         skip(
             way,
             "timed-out",
@@ -374,7 +367,7 @@ export async function runAreaAction(
                 }
 
                 logger.debug({ id, way, error }, "genesis-tools actions: a way threw");
-                skip(way, "threw", messageOf(error));
+                skip(way, "threw", errorMessage(error));
             }
         }
 

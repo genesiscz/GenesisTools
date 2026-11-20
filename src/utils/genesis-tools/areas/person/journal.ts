@@ -253,7 +253,7 @@ interface FileRequestJournal extends RequestJournal {
 const MAX_NAME_BYTES = 255;
 
 /** A file name that fits every file system and keeps ids that differ only in letter case apart. */
-function fileStem(id: string): string {
+function requestDigest(id: string): string {
     if (!REQUEST_ID_PATTERN.test(id)) {
         throw new Error("Invalid request id");
     }
@@ -263,7 +263,7 @@ function fileStem(id: string): string {
 
 /** The journal file name of a request id. */
 export function requestFileName(id: string): string {
-    return `${fileStem(id)}.jsonl`;
+    return `${requestDigest(id)}.jsonl`;
 }
 
 export function createRequestJournal(
@@ -323,7 +323,7 @@ export function createRequestJournal(
 
     function lockOf(id: string, purpose: "write" | "present"): string {
         mkdirSync(dir, { recursive: true, mode: 0o700 });
-        return join(dir, `${fileStem(id)}.${purpose}.lock`);
+        return join(dir, `${requestDigest(id)}.${purpose}.lock`);
     }
 
     /** Every terminal transition and every first post of one id runs under this lock, in every process. */
