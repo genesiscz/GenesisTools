@@ -8,7 +8,7 @@ import { env } from "@genesiscz/utils/env";
 import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { optIn } from "@genesiscz/utils/test/skip";
 import { Curve, RATE, stereo } from "./dsp";
-import { duck } from "./effects";
+import { applyEffects, duck } from "./effects";
 import { parseLoudness, probeMedia } from "./measure";
 import { encodeMidi } from "./midi";
 import { mixMusic, musicFilterGraph, placeMusic } from "./mix";
@@ -17,7 +17,7 @@ import { fluidSynthArgs, renderScore, searchBoost } from "./render";
 import { setsToInstall } from "./samples";
 import { builtinScore, TRACK_KEYS } from "./scores";
 import { PINNED_SOUNDFONT } from "./soundfont";
-import { guardLows, limit } from "./space";
+import { guardLows, limit, room } from "./space";
 import { needsStems, playSample, resolvePatch } from "./stems";
 import { renderSynth } from "./synth";
 import { TAPS, tapAudio, tapAudition } from "./taps";
@@ -671,4 +671,25 @@ describe.skipIf(!canRender)("a real FluidSynth render", () => {
             await rm(dir, { recursive: true, force: true });
         }
     }, 120_000);
+});
+
+describe("cancellation inside the effect chain and the room", () => {
+    test("an aborted operation stops the effect chain and the shared room before they render", async () => {
+        const reason = new Error("stop render");
+        const controller = new AbortController();
+        controller.abort(reason);
+        const buffer = stereo(RATE);
+        const signal = controller.signal;
+        const effects = { drive: { amount: 0.5 } };
+
+        await expect(
+            withMusicSignal({
+                signal,
+                run: () => applyEffects({ buffer, effects, lanes: new Map(), triggers: () => [] }),
+            })
+        ).rejects.toBe(reason);
+        await expect(withMusicSignal({ signal, run: () => room(buffer, { size: 0.5, damp: 0.5 }) })).rejects.toBe(
+            reason
+        );
+    });
 });
