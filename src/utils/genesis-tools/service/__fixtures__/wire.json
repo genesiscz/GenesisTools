@@ -4609,6 +4609,7 @@
     "params": {
       "scope": "project",
       "project": "fixture",
+      "surface": "hub",
       "notify": {
         "type": "epic",
         "action": "spotted",
@@ -4657,6 +4658,7 @@
     "params": {
       "scope": "project",
       "project": "fixture",
+      "surface": "hub",
       "notify": {
         "type": "epic",
         "action": "spotted",

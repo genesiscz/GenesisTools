@@ -8520,6 +8520,11 @@ public enum WorkConfigSetParamsScope: String, Codable, Sendable {
     case value1 = "global"
 }
 
+public enum WorkConfigSetParamsSurface: String, Codable, Sendable {
+    case value0 = "hub"
+    case value1 = "widget"
+}
+
 public enum WorkConfigSetParamsNotifyType: String, Codable, Sendable {
     case value0 = "epic"
     case value1 = "handoff"
@@ -8784,21 +8789,24 @@ public struct WorkConfigSetParamsCall: Codable, Sendable {
 public struct WorkConfigSetParams: Codable, Sendable {
     public var `scope`: WorkConfigSetParamsScope
     public var `project`: String?
+    public var `surface`: WorkConfigSetParamsSurface?
     public var `notify`: WorkConfigSetParamsNotify?
     public var `restore`: [WorkConfigSetParamsRestoreItem]?
     public var `call`: WorkConfigSetParamsCall?
-    public init(`scope`: WorkConfigSetParamsScope, `project`: String? = nil, `notify`: WorkConfigSetParamsNotify? = nil, `restore`: [WorkConfigSetParamsRestoreItem]? = nil, `call`: WorkConfigSetParamsCall? = nil) {
+    public init(`scope`: WorkConfigSetParamsScope, `project`: String? = nil, `surface`: WorkConfigSetParamsSurface? = nil, `notify`: WorkConfigSetParamsNotify? = nil, `restore`: [WorkConfigSetParamsRestoreItem]? = nil, `call`: WorkConfigSetParamsCall? = nil) {
         self.`scope` = `scope`
         self.`project` = `project`
+        self.`surface` = `surface`
         self.`notify` = `notify`
         self.`restore` = `restore`
         self.`call` = `call`
     }
-    private enum CodingKeys: String, CodingKey { case `scope`; case `project`; case `notify`; case `restore`; case `call` }
+    private enum CodingKeys: String, CodingKey { case `scope`; case `project`; case `surface`; case `notify`; case `restore`; case `call` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`scope` = try box.decode(WorkConfigSetParamsScope.self, forKey: .`scope`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
+        self.`surface` = try box.decodeIfPresent(WorkConfigSetParamsSurface.self, forKey: .`surface`)
         self.`notify` = try box.decodeIfPresent(WorkConfigSetParamsNotify.self, forKey: .`notify`)
         self.`restore` = try box.decodeIfPresent([WorkConfigSetParamsRestoreItem].self, forKey: .`restore`)
         self.`call` = try box.decodeIfPresent(WorkConfigSetParamsCall.self, forKey: .`call`)
@@ -8807,6 +8815,7 @@ public struct WorkConfigSetParams: Codable, Sendable {
         var box = encoder.container(keyedBy: CodingKeys.self)
         try box.encode(`scope`, forKey: .`scope`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
+        try box.encodeIfPresent(`surface`, forKey: .`surface`)
         try box.encodeIfPresent(`notify`, forKey: .`notify`)
         try box.encodeIfPresent(`restore`, forKey: .`restore`)
         try box.encodeIfPresent(`call`, forKey: .`call`)

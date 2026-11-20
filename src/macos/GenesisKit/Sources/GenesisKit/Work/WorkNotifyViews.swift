@@ -65,6 +65,8 @@ enum WorkNotifyWords {
         case "config.global": return "All projects"
         case "config.repo": return "This repository's file"
         case "config.project": return "This project"
+        case "surface.hub": return "The hub, for this project"
+        case "surface.widget": return "The widget, for this project"
         default: return "Built in"
         }
     }
@@ -103,14 +105,14 @@ enum WorkNotifyMenu {
                       chooseScope: @escaping (WorkNotifyScope) -> Void,
                       apply: @escaping (WorkNotifyScope, String, String, String?) -> Void) -> [MenuButtonItem] {
         let id = "work-notify-menu-\(target.type)-\(target.action)"
-        if let cell = target.cell, !cell.writable {
+        if let cell = target.cell, !cell.writable(at: scope) {
             var items: [MenuButtonItem] = [.note("Set in \(cell.repoPath.map(PathDisplay.tilde) ?? "this repository's file")")]
             if let file = cell.repoPath {
                 items.append(.action("Open the file", systemImage: "doc.text", identifier: id + "-file") { PathOpener.primary(file) })
             }
             return items
         }
-        let writable = target.cells.contains(where: \.writable)
+        let writable = target.cells.contains { $0.writable(at: scope) }
         let current = Set(target.cells.map(\.level))
         var items: [MenuButtonItem] = WorkNotifyWords.levels.map { level in
             .action(WorkNotifyWords.level(level), checked: current == [level], enabled: enabled && !busy && writable,
@@ -120,8 +122,7 @@ enum WorkNotifyMenu {
         }
         items.append(.divider)
         if let cell = target.cell {
-            let scopeLayer = scope == .project ? "config.project" : "config.global"
-            let stored = cell.layers.first { $0.layer == scopeLayer }
+            let stored = cell.layers.first { $0.layer == scope.layer }
             let wildcard = stored?.wildcard == true
             let inherited = cell.inheriting(scope)
             let resetTitle = inherited.layer == "default"
@@ -139,12 +140,16 @@ enum WorkNotifyMenu {
                 apply(scope, target.type, target.action, nil)
             })
         }
-        if target.cells.contains(where: { !$0.writable }) {
+        if target.cells.contains(where: { !$0.writable(at: scope) }) {
             items.append(.note("Rules set in the repository file stay unchanged."))
         }
         items += [.divider,
                   .action("For this project", checked: scope == .project, systemImage: "folder", identifier: id + "-project") { chooseScope(.project) },
-                  .action("For all projects", checked: scope == .global, systemImage: "square.stack", identifier: id + "-global") { chooseScope(.global) }]
+                  .action("For all projects", checked: scope == .global, systemImage: "square.stack", identifier: id + "-global") { chooseScope(.global) },
+                  .action("In the hub, for this project", checked: scope == .hub, systemImage: "macwindow",
+                          identifier: id + "-hub") { chooseScope(.hub) },
+                  .action("In the widget, for this project", checked: scope == .widget, systemImage: "rectangle.topthird.inset.filled",
+                          identifier: id + "-widget") { chooseScope(.widget) }]
         if !enabled { items.append(.note("Changes need the GenesisTools service; it is not running.")) }
         if busy { items.append(.note("Saving the previous change.")) }
         return items

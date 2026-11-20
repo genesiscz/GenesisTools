@@ -156,6 +156,34 @@ final class WorkNotifyTests: XCTestCase {
         XCTAssertEqual(applied, [.global])
     }
 
+    // w_qhr1zs58: the hub and widget overrides (`projects.<p>.surfaces.<surface>.notify`) are set from the same grid.
+    func testAHubOverrideIsSetAndResetFromTheGridEvenOverARepositoryRule() throws {
+        let cell = WorkNotifyCell(action: "spotted", level: "banner", from: "surface.hub", layers: [
+            .init(layer: "default", level: "list"),
+            .init(layer: "config.repo", level: "off", rule: .level("off")),
+            .init(layer: "config.project", level: nil),
+            .init(layer: "surface.hub", level: "banner", rule: .level("banner")),
+            .init(layer: "surface.widget", level: nil),
+        ])
+        XCTAssertFalse(cell.writable(at: .project), "the repository's file still decides the project rule")
+        XCTAssertTrue(cell.writable(at: .hub))
+        XCTAssertEqual(cell.inheriting(.hub).layer, "config.repo")
+        XCTAssertEqual(WorkNotifyScope.hub.surface, "hub")
+        XCTAssertNil(WorkNotifyScope.project.surface)
+
+        let target = WorkNotifyMenu.Target(type: "bug", action: "spotted", cells: [cell])
+        var applied: [(WorkNotifyScope, String?)] = []
+        var chosen: [WorkNotifyScope] = []
+        let native = MenuButtonPresenter.menu(WorkNotifyMenu.items(target: target, scope: .hub, enabled: true,
+            chooseScope: { chosen.append($0) }, apply: { scope, _, _, level in applied.append((scope, level)) }))
+        XCTAssertEqual(native.item(withTitle: "In the hub, for this project")?.state, .on)
+        try choose("Use inherited level (Nobody, from this repository's file)", in: native)
+        try choose("In the widget, for this project", in: native)
+        XCTAssertEqual(applied.map(\.0), [.hub])
+        XCTAssertEqual(applied.map(\.1), [nil])
+        XCTAssertEqual(chosen, [.widget])
+    }
+
     func testResetThatExposesARepositoryRuleDoesNotOfferUndo() async throws {
         let source = NotifyFixtureSource()
         let repo = try XCTUnwrap(source.rows[0].cells[0].layers.firstIndex { $0.layer == "config.repo" })
