@@ -500,6 +500,47 @@ extension MeetingsQuestionRowsTests {
         XCTAssertEqual(refresh.cached(key), fresh, "Rows loaded before a write are never cached")
     }
 
+    func testALoadAWriteOvertookSharesThePendingReadThatStartedAfterTheWrite() async throws {
+        let refresh = MeetingsRowsRefresh(quietWindow: .zero)
+        let key = MeetingsAPI.MeetingRows.Params(meeting: "copy", lowPriority: nil)
+        let old = ReviewRows(meeting: "copy", rows: [try question()], hidden: .init(lowPriority: 0, minPriority: 0))
+        let fresh = ReviewRows(meeting: "copy", rows: [try question(status: "confirmed", token: "next")], hidden: old.hidden)
+        var loads = 0
+        var releaseFirst: CheckedContinuation<Void, Never>?
+        var releaseSecond: CheckedContinuation<Void, Never>?
+        let firstHeld = expectation(description: "the first load is in flight")
+        let secondHeld = expectation(description: "the read after the write is in flight")
+        let first = Task { try await refresh.read(key) {
+            loads += 1
+            await withCheckedContinuation { releaseFirst = $0; firstHeld.fulfill() }
+            return old
+        } }
+        await fulfillment(of: [firstHeld], timeout: 5)
+        refresh.beginWrite()
+        refresh.endWrite()
+        let second = Task { try await refresh.read(key) {
+            loads += 1
+            await withCheckedContinuation { releaseSecond = $0; secondHeld.fulfill() }
+            return fresh
+        } }
+        await fulfillment(of: [secondHeld], timeout: 5)
+        guard let releaseFirst, let releaseSecond else {
+            first.cancel(); second.cancel()
+            return XCTFail("A rows load never started")
+        }
+        // The overtaken load returns stale rows while the newer read still loads: it must join that read, not reload.
+        releaseFirst.resume()
+        // Main-actor turns, not a timer: the overtaken load runs until it parks on the newer read's task.
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(loads, 2, "The overtaken load must not start a load of its own")
+        releaseSecond.resume()
+        let firstValue = try await first.value
+        let secondValue = try await second.value
+        XCTAssertEqual(firstValue, fresh)
+        XCTAssertEqual(secondValue, fresh)
+        XCTAssertEqual(loads, 2, "One key and generation loads once")
+    }
+
     /// Opt-in scratch driver: exercises the window's apply/patch/evidence-read path on an isolated duplicate only.
     func testTenAnswerServicePath() async throws {
         guard let input = ProcessInfo.processInfo.environment["MEETINGS_ANSWER_BENCH"] else { throw XCTSkip("Scratch benchmark only") }

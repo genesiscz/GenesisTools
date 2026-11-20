@@ -1188,8 +1188,9 @@ struct MeetingsRead<Value: Decodable> {
 /// Only rows reads are shared. A cancelled pane cannot cancel another pane's evidence request; writes keep their
 /// own replies and patches. The quiet wait uses write completion, so a slow answer does not start a full rows read
 /// in the middle of the next answer. Failed reads are never cached. A read joins a pending one only while that one
-/// still waits or loads after the latest write: rows loaded before an answer would show the answered row open again,
-/// and a load a write overtook loads again for the callers already waiting on it.
+/// still waits or loads after the latest write: rows loaded before an answer would show the answered row open again.
+/// A load a write overtook hands its callers to the read that started after the write when one is pending, and
+/// loads again only when none is, so one key and generation never has two loads.
 @MainActor
 final class MeetingsRowsRefresh {
     typealias Key = MeetingsAPI.MeetingRows.Params
@@ -1256,6 +1257,10 @@ final class MeetingsRowsRefresh {
                 self.completedReadCount += 1
                 guard turn == self.generation else {
                     entry.loadedAt = nil
+                    // A read that started after the write already loads this key: share its rows.
+                    if let current = self.pending[key], current !== entry, let newer = current.task {
+                        return try await newer.value
+                    }
                     continue
                 }
                 self.snapshots[key] = rows
