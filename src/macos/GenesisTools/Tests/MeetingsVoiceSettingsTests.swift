@@ -29,6 +29,19 @@ final class MeetingsVoiceSettingsTests: XCTestCase {
         XCTAssertEqual(writes, ["global.speakerLabels.voice.sampleScope": "all", "global.speakerLabels.voice.outlierBelow": "-0.12"])
     }
 
+    /// w_x5qig18n: the voice support on seat lines is a switch on the Speakers page, not only `tools meetings config set`.
+    func testSeatLineSupportReadsItsDefaultAndWritesTheVoiceSetting() throws {
+        XCTAssertTrue(MeetingsVoiceNaming(raw: nil).supportOnSeatLines, "the engine's default is on")
+        let off = try raw(#"{"global":{"speakerLabels":{"voice":{"supportOnSeatLines":false}}}}"#)
+        XCTAssertFalse(MeetingsVoiceNaming(raw: off).supportOnSeatLines)
+        var writes = [String: String]()
+        let card = MeetingsVoiceNamingCard(naming: MeetingsVoiceNaming(raw: off)) { path, value in
+            writes[path.joined(separator: ".")] = "\(value)"
+        }
+        card.chooseSupport(true)
+        XCTAssertEqual(writes, ["global.speakerLabels.voice.supportOnSeatLines": "true"])
+    }
+
     func testRoomDeviceThresholdReadsAndWritesTheSeatSetting() throws {
         let config = try raw(#"{"global":{"speakerLabels":{"seat":{"deviceOfferMinMeetings":7}}}}"#)
         var writes: [String: Int] = [:]

@@ -55,6 +55,8 @@ struct MeetingsSpeakersPage: View {
                 .nativeSettingsAnchor("roomDevices")
             MeetingsVoiceLibraryCard(config: MeetingsVoiceCompute(raw: model.settingsRaw)) { path, value in model.set(path, value) }
                 .nativeSettingsAnchor("voiceLibrary")
+            MeetingsVoiceNamingCard(naming: MeetingsVoiceNaming(raw: model.settingsRaw)) { path, value in model.set(path, value) }
+                .nativeSettingsAnchor("voiceNaming")
             MeetingsVoicePassCard(compute: MeetingsVoiceCompute(raw: model.settingsRaw), autoNow: autoNow) { path, value in
                 model.set(path, value)
             }
@@ -124,6 +126,37 @@ struct MeetingsVoiceLibraryCard: View {
 
     func chooseScope(_ choice: String) { set(MeetingsVoiceCompute.libraryPath + ["sampleScope"], choice) }
     func chooseThreshold(_ value: Double) { set(MeetingsVoiceCompute.libraryPath + ["outlierBelow"], value) }
+}
+
+/// How the voice names lines (`global.speakerLabels.voice` of the meetings config) as this side reads them. A missing
+/// key reads as the engine's default in src/utils/meetings/config.ts.
+struct MeetingsVoiceNaming: Equatable {
+    var supportOnSeatLines = true
+
+    init() {}
+
+    init(raw: JSONValue?) {
+        let voice = raw?.at(MeetingsVoiceCompute.libraryPath) ?? .null
+        if case .bool(let on) = voice.at(["supportOnSeatLines"]) { supportOnSeatLines = on }
+    }
+}
+
+/// The voice naming card: what the voice checks on a line the seat already names.
+struct MeetingsVoiceNamingCard: View {
+    let naming: MeetingsVoiceNaming
+    let set: ([String], Any) -> Void
+
+    var body: some View {
+        NativeSettingsCard("Naming by voice", subtitle: "How saved voice samples help name who spoke. A change applies from the next pass.") {
+            NativeSettingsToggle("Support seat names with the voice",
+                                 detail: "Also compare a line the seat gives to its only person with that person's samples, and show a match beside the seat's name. "
+                                    + "When off, the voice checks such a line only for a stranger.",
+                                 identifier: "meetings.voice.supportOnSeatLines",
+                                 isOn: Binding(get: { naming.supportOnSeatLines }, set: chooseSupport))
+        }
+    }
+
+    func chooseSupport(_ on: Bool) { set(MeetingsVoiceCompute.libraryPath + ["supportOnSeatLines"], on) }
 }
 
 /// The voice pass card: its priority and its worker count, each choice explained with what it costs on a real meeting.
