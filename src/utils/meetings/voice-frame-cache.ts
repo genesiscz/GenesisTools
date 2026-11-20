@@ -111,7 +111,10 @@ async function readFrames(cachePath: string, key: string): Promise<VoiceFrame[] 
         logger.debug({ error, cachePath }, "Voice frame cache could not be read");
         return undefined;
     } finally {
-        await handle.close();
+        // A close failure must not override the answer: the frames already read, or a miss that falls back to the audio.
+        await handle.close().catch((error: unknown) => {
+            logger.debug({ error, cachePath }, "Voice frame cache could not be closed");
+        });
     }
 }
 
