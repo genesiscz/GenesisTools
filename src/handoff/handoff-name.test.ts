@@ -289,6 +289,7 @@ describe("handoff watch", () => {
                 seen.push(event.id);
             },
             base: env.base,
+            dbPath: env.dbPath,
         });
 
         expect(seen.length).toBeGreaterThan(0);
@@ -304,6 +305,7 @@ describe("handoff watch", () => {
                 stale.push(event.id);
             },
             base: env.base,
+            dbPath: env.dbPath,
         });
         expect(stale).toEqual([]);
     });
@@ -322,6 +324,7 @@ describe("handoff watch", () => {
                 delivered.resolve();
             },
             base: env.base,
+            dbPath: env.dbPath,
         });
 
         try {
@@ -335,6 +338,38 @@ describe("handoff watch", () => {
         } finally {
             watch.close();
         }
+    });
+
+    test("the replay reads the work store's change feed, and no event carries the poster's edit credential", () => {
+        const env = freshEnv();
+        const posted = postHandoff({ title: "Feed work", tasks: [{ text: "one" }] }, env.depsFor(POSTER)).handoff;
+        const seen: Array<{ ev: string; editId?: unknown }> = [];
+        watchHandoffs({
+            filters: [posted.id],
+            sinceMs: parseSince("1h"),
+            follow: false,
+            onEvent: (event) => {
+                seen.push({ ev: event.ev, editId: (event as { editId?: unknown }).editId });
+            },
+            base: env.base,
+            dbPath: env.dbPath,
+        });
+
+        expect(seen.map((event) => event.ev)).toContain("post");
+        expect(seen.every((event) => event.editId === undefined)).toBe(true);
+
+        const none: string[] = [];
+        watchHandoffs({
+            filters: [posted.id],
+            sinceMs: 0,
+            follow: false,
+            onEvent: (event) => {
+                none.push(event.ev);
+            },
+            base: env.base,
+            dbPath: env.dbPath,
+        });
+        expect(none).toEqual([]);
     });
 
     test("parseSince accepts durations and 0, and refuses anything else", () => {

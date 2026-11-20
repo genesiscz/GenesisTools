@@ -1,14 +1,21 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { createRollingJsonlStream } from "@genesiscz/utils/fs/rolling-jsonl-stream";
-import { parseJsonlChunk } from "@genesiscz/utils/jsonl";
+import type { Database } from "bun:sqlite";
 import { logger } from "@genesiscz/utils/logger";
-import { handoffLogDir, todayHandoffLogFile } from "./log-store";
+import type { Change } from "@genesiscz/utils/work/model/change";
+import { journalHead, selectChangesAfter } from "@genesiscz/utils/work/store/rows";
+import { catchUpHandoffs, handoffPayloadsByUid, listHandoffRows, openHandoffModel } from "./read-model";
 import type { HandoffEvent } from "./types";
 
 const log = logger.child({ component: "handoff:watch" });
-const DAY_FILE = /^(\d{4}-\d{2}-\d{2})\.jsonl$/;
-const NAME_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
+/** How often a following watch reads the change feed; a new event shows within this. */
+const FOLLOW_POLL_MS = 1_000;
+const FEED_BATCH = 500;
+
+/** A handoff event as the work store keeps it: the poster's edit credential is stripped at insert. */
+export type WatchedHandoffEvent = HandoffEvent extends infer E
+    ? E extends unknown
+        ? Omit<E, "editId">
+        : never
+    : never;
 
 /** `30m`, `6h`, `2d`, `90s`; `0` or empty means "no replay". Anything else throws. */
 export function parseSince(value: string | undefined, now = Date.now()): number {
@@ -34,39 +41,63 @@ export function parseSince(value: string | undefined, now = Date.now()): number 
     return ms;
 }
 
-/** Every event in the day files from `sinceMs` ago until now, oldest first. */
-export function readHandoffEvents(sinceMs: number, base?: string, now = Date.now()): HandoffEvent[] {
-    const dir = handoffLogDir(base);
+/** The uid of the handoff event behind a change, when the change came from one. */
+function legacyUid(change: Change): string | null {
+    return change.origin.via === "legacy" ? change.origin.uid : null;
+}
 
-    if (sinceMs <= 0 || !existsSync(dir)) {
-        return [];
-    }
+/** The first journal position whose change is at or after `cutoffIso`, minus one (a cursor for `selectChangesAfter`). */
+function cursorBefore(db: Database, cutoffIso: string): number {
+    const row = db
+        .query<{ seq: number | null }, [string]>("SELECT MIN(seq) AS seq FROM changes WHERE ts >= ?")
+        .get(cutoffIso);
+    return row?.seq === null || row?.seq === undefined ? journalHead(db) : row.seq - 1;
+}
 
-    const cutoff = now - sinceMs;
-    const firstDay = new Date(cutoff).toISOString().slice(0, 10);
-    const events: HandoffEvent[] = [];
+/**
+ * The handoff events behind the work store's changes after `cursor`, in journal order, and the new cursor. A refused
+ * attempt changes nothing, so it has no change and is not listed. `minTs` drops the older changes of a backfill.
+ */
+export function handoffEventsFromFeed(
+    db: Database,
+    cursor: number,
+    minTs?: string
+): { events: WatchedHandoffEvent[]; cursor: number } {
+    const uids: string[] = [];
+    const wanted = new Set<string>();
+    let next = cursor;
 
-    for (const name of readdirSync(dir).sort()) {
-        const day = DAY_FILE.exec(name)?.[1];
+    for (;;) {
+        const changes = selectChangesAfter(db, next, FEED_BATCH);
 
-        if (!day || day < firstDay) {
-            continue;
-        }
+        for (const change of changes) {
+            const uid = legacyUid(change);
 
-        try {
-            const { values } = parseJsonlChunk<HandoffEvent>(readFileSync(join(dir, name)));
-
-            for (const event of values) {
-                if (Date.parse(event.ts) >= cutoff) {
-                    events.push(event);
-                }
+            if (uid !== null && !wanted.has(uid) && (minTs === undefined || change.ts >= minTs)) {
+                wanted.add(uid);
+                uids.push(uid);
             }
-        } catch (err) {
-            log.warn({ err, file: name }, "handoff day file unreadable");
+        }
+
+        const last = changes.at(-1);
+
+        if (last === undefined) {
+            break;
+        }
+
+        next = last.seq;
+
+        if (changes.length < FEED_BATCH) {
+            break;
         }
     }
 
-    return events.sort((a, b) => a.ts.localeCompare(b.ts));
+    const payloads = handoffPayloadsByUid(db, uids);
+    const events = uids.flatMap((uid) => {
+        const payload = payloads.get(uid);
+        return payload === undefined ? [] : [payload as WatchedHandoffEvent];
+    });
+    return { events, cursor: next };
 }
 
 function oneLine(text: string, max: number): string {
@@ -74,7 +105,7 @@ function oneLine(text: string, max: number): string {
     return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 
-function describe(event: HandoffEvent): string {
+function describe(event: WatchedHandoffEvent): string {
     switch (event.ev) {
         case "post":
             return `"${event.title}" (${event.tasks.length} tasks)`;
@@ -102,7 +133,7 @@ function describe(event: HandoffEvent): string {
     }
 }
 
-export function formatHandoffEvent(event: HandoffEvent, names: Map<string, string>): string {
+export function formatHandoffEvent(event: WatchedHandoffEvent, names: Map<string, string>): string {
     const time = new Date(event.ts).toLocaleTimeString("en-GB", { hour12: false });
     const who = `${event.by.agent}${event.by.sessionId ? `:${event.by.sessionId.slice(0, 8)}` : ""}`;
     const name = names.get(event.id);
@@ -116,9 +147,10 @@ export interface HandoffWatch {
 }
 
 /**
- * Replay `sinceMs` of history, then follow the live log. `filters` are handoff ids (with or
- * without `h_`) or readable names; empty follows every handoff. Events are de-duplicated by uid,
- * so the replay and the live tail can overlap safely.
+ * Replay `sinceMs` of history, then follow the work store's change feed (`changes`, by journal position) and print the
+ * handoff event behind each change. `filters` are handoff ids (with or without `h_`) or readable names; empty follows
+ * every handoff. Events are de-duplicated by uid. Each read first folds what an older producer appended only to the
+ * old day file, as every handoff reader does (`withHandoffReadDb`), until those producers write the store directly.
  */
 export function watchHandoffs({
     filters,
@@ -126,13 +158,19 @@ export function watchHandoffs({
     follow,
     onEvent,
     base,
+    dbPath,
+    now = Date.now(),
 }: {
     filters: string[];
     sinceMs: number;
     follow: boolean;
-    onEvent: (event: HandoffEvent, names: Map<string, string>) => void;
+    onEvent: (event: WatchedHandoffEvent, names: Map<string, string>) => void;
     base?: string;
+    dbPath?: string;
+    now?: number;
 }): HandoffWatch {
+    const db = openHandoffModel(dbPath);
+    catchUpHandoffs(db, base);
     const names = new Map<string, string>();
     const idsByName = new Map<string, string>();
     const seen = new Set<string>();
@@ -152,7 +190,7 @@ export function watchHandoffs({
         }
     };
 
-    const learn = (event: HandoffEvent) => {
+    const learn = (event: WatchedHandoffEvent) => {
         if (event.ev === "post" && event.name) {
             rename(event.id, event.name);
         } else if (event.ev === "modify_handoff" && event.name !== undefined) {
@@ -160,8 +198,8 @@ export function watchHandoffs({
         }
     };
 
-    for (const event of readHandoffEvents(NAME_LOOKBACK_MS, base)) {
-        learn(event);
+    for (const handoff of listHandoffRows(db)) {
+        rename(handoff.id, handoff.name ?? null);
     }
 
     const wanted = new Set(
@@ -172,8 +210,8 @@ export function watchHandoffs({
     );
     const nameFilters = new Set(filters);
     // A name posted or given by a rename after the watch started is not in `wanted`, so a live event also
-    // matches by its current name. The replay does not: re-learning history rewinds `names` to old names.
-    const matches = (event: HandoffEvent, live: boolean): boolean => {
+    // matches by its current name. The replay does not: its events can carry a name the handoff no longer has.
+    const matches = (event: WatchedHandoffEvent, live: boolean): boolean => {
         if (wanted.size === 0 || wanted.has(event.id)) {
             return true;
         }
@@ -181,8 +219,10 @@ export function watchHandoffs({
         const name = live ? names.get(event.id) : undefined;
         return name !== undefined && nameFilters.has(name);
     };
-    const deliver = (event: HandoffEvent, live: boolean) => {
-        learn(event);
+    const deliver = (event: WatchedHandoffEvent, live: boolean) => {
+        if (live) {
+            learn(event);
+        }
 
         if (seen.has(event.uid) || !matches(event, live)) {
             return;
@@ -192,23 +232,42 @@ export function watchHandoffs({
         onEvent(event, names);
     };
 
-    // The tailer pins its offset synchronously and delivers on a later tick, so starting it before
-    // the synchronous replay leaves no gap; anything both paths see is dropped by `seen`.
-    const stream = follow
-        ? createRollingJsonlStream<HandoffEvent>({
-              fileForNow: () => todayHandoffLogFile(base),
-              onLine: (event) => deliver(event, true),
-          })
-        : null;
+    // The live cursor is the head before the replay, so a change written during it is read again; `seen` drops it.
+    let cursor = journalHead(db);
 
-    for (const event of readHandoffEvents(sinceMs, base)) {
-        deliver(event, false);
+    if (sinceMs > 0) {
+        const cutoff = new Date(now - sinceMs).toISOString();
+
+        for (const event of handoffEventsFromFeed(db, cursorBefore(db, cutoff), cutoff).events) {
+            deliver(event, false);
+        }
     }
 
-    if (!stream) {
+    if (!follow) {
+        db.close();
         return { names, close: () => {} };
     }
 
-    log.debug({ filters: [...wanted], sinceMs }, "handoff watch started");
-    return { names, close: () => stream.close() };
+    const timer = setInterval(() => {
+        try {
+            catchUpHandoffs(db, base);
+            const read = handoffEventsFromFeed(db, cursor);
+            cursor = read.cursor;
+
+            for (const event of read.events) {
+                deliver(event, true);
+            }
+        } catch (err) {
+            log.warn({ err }, "handoff watch could not read the change feed");
+        }
+    }, FOLLOW_POLL_MS);
+
+    log.debug({ filters: [...wanted], sinceMs, cursor }, "handoff watch started");
+    return {
+        names,
+        close: () => {
+            clearInterval(timer);
+            db.close();
+        },
+    };
 }

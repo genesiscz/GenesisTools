@@ -386,6 +386,29 @@ function rowToPublicEvent(row: EventRow): HandoffPublicEvent {
     return { ...event, outcome: toOutcome({ ok: row.ok, error: row.error, extra: row.extra }) };
 }
 
+/**
+ * The stored payloads of these events, keyed by uid, without the fold's verdict. The poster's edit credential is
+ * stripped at insert, so a payload never carries it.
+ */
+export function handoffPayloadsByUid(db: Database, uids: readonly string[]): Map<string, unknown> {
+    const payloads = new Map<string, unknown>();
+
+    for (let start = 0; start < uids.length; start += 500) {
+        const chunk = uids.slice(start, start + 500);
+        const rows = db
+            .query<{ uid: string; payload: string }, string[]>(
+                `SELECT uid, payload FROM handoff_events WHERE uid IN (${chunk.map(() => "?").join(", ")})`
+            )
+            .all(...chunk);
+
+        for (const row of rows) {
+            payloads.set(row.uid, SafeJSON.parse(row.payload, { strict: true }));
+        }
+    }
+
+    return payloads;
+}
+
 /** The insertion order is the order in which the model applied the events. */
 export function* iterateHandoffEvents(db: Database, handoffId: string): Iterable<HandoffPublicEvent> {
     const rows = db.query<EventRow, [string]>(`${EVENT_SELECT} WHERE e.handoff_id = ? ORDER BY e.rowid`);

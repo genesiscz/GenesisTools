@@ -5,7 +5,6 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 import { executeHandoffActions } from "./executor";
-import { toPublicEvent } from "./read-model";
 import { formatHandoffEvent, parseSince, watchHandoffs } from "./watch";
 
 const program = new Command()
@@ -67,8 +66,8 @@ program
             sinceMs,
             follow: !opts.once,
             onEvent: (event, names) => {
-                // The poster credential stays in the log for the fold; a --json reader gets the event without it.
-                out.println(opts.json ? SafeJSON.stringify(toPublicEvent(event)) : formatHandoffEvent(event, names));
+                // The work store keeps each event without the poster's edit credential, so --json never prints it.
+                out.println(opts.json ? SafeJSON.stringify(event) : formatHandoffEvent(event, names));
             },
         });
 
