@@ -90,6 +90,9 @@ title over `settings.titleLimit` (500) with the full title at the top of the bod
 - **Body.** An item without a body sends its fields (where, why, what a user sees, cost, measured), closed by a
   comment with the hash of the text. A later push replaces the outside body only when it is empty or still that
   untouched text, so a description written by hand outside stays. A pull does not count the untouched text as drift.
+- **Rate limits.** A door call refused with `rate_limited` waits and tries again in the same pass (the server's
+  Retry-After when it names one, else a pause that doubles from 1 s to 30 s, at most 8 tries), and the calls after it
+  start with that pause. A long pass renews the sync's lease as it goes.
 - **Who pushes.** By default anyone pushes a work item; an epic, a handoff and a note (idea, risk, limit) need the
   session that made it, a lead or the owner, as their edits do. A move under another parent is a reference: any
   session may write it (`tools work edit <id> --parent <epic>`), and its push is not held.
