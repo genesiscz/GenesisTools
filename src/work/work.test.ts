@@ -18,11 +18,12 @@ import { ownerAtSurface } from "./adapters/actor";
 import { openLegacySource } from "./adapters/legacy-source";
 import { connectorPort, syncNeededAfter } from "./connectors";
 import {
+    factsOfPatch,
     hasLink,
     isUntouchedRender,
-    keepsOutsideBody,
     linksOf,
     localTypeOf,
+    outsideFacts,
     outsideType,
     pacedCall,
     patchOf,
@@ -350,7 +351,7 @@ describe("the tracker connector", () => {
         expect(localTypeOf("journey", [], settings)).toBeUndefined();
     });
 
-    test("an item without a body sends its fields as a marked render; a body edited outside is kept", () => {
+    test("an item without a body sends its fields as a marked render, read back as empty until it has a base", () => {
         const { body: _body, ...bare } = item;
         const spotted: Item = {
             ...bare,
@@ -373,11 +374,15 @@ describe("the tracker connector", () => {
         const older = String(
             patchOf({ item: { ...spotted, fields: { why: "older" } }, pairing: null, labels: [] }, true, settings).body
         );
-        expect(keepsOutsideBody(render, "")).toBe(false);
-        expect(keepsOutsideBody(render, older)).toBe(false);
-        expect(keepsOutsideBody(render, render)).toBe(true);
-        expect(keepsOutsideBody(render, "written by hand")).toBe(true);
-        expect(keepsOutsideBody(render, older.replace("older", "edited by hand"))).toBe(true);
+        expect(factsOfPatch(patch)).toMatchObject({ title: "short", type: "story", state: "todo", body: render });
+        const ours = factsOfPatch(patch);
+        expect(outsideFacts({ body: older, status: "todo", parentId: null }, { base: {}, ours }).body).toBe("");
+        expect(outsideFacts({ body: render }, { base: {}, ours }).body).toBe(render);
+        expect(outsideFacts({ body: older }, { base: { body: older }, ours }).body).toBe(older);
+        expect(outsideFacts({ body: "written by hand", parentId: 3540 }, { base: {}, ours })).toMatchObject({
+            body: "written by hand",
+            parent: "3540",
+        });
     });
 
     test("a rate limit is waited out: Retry-After when named, else a doubling pause up to the cap", () => {

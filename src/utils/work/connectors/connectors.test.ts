@@ -13,7 +13,15 @@ import { applyChange } from "../store/apply";
 import { openWorkDb } from "../store/db";
 import { selectItem, selectPairings } from "../store/rows";
 import { connectorConfigOf } from "./config";
-import { previewSync, pullRemote, releaseHeld, runSyncOnce, type SyncDeps } from "./sync";
+import {
+    noteStandingDrift,
+    previewSync,
+    pullRemote,
+    releaseHeld,
+    resolveDrift,
+    runSyncOnce,
+    type SyncDeps,
+} from "./sync";
 import type { Connector, ConnectorContext, PushIntent, RemoteItem } from "./types";
 
 let db: Database;
@@ -58,6 +66,8 @@ class FakeConnector implements Connector<unknown> {
     failure = "temporarily unavailable";
     batches: { context: ConnectorContext; titles: string[] }[] = [];
     keptAlive: (boolean | undefined)[] = [];
+    /** Titles edited outside by key; a push leaves them unless forced, as the tracker does. */
+    editedOutside = new Map<string, string>();
     pulls: ConnectorContext[] = [];
     remote = new Map<string, RemoteItem>();
 
@@ -77,6 +87,18 @@ class FakeConnector implements Connector<unknown> {
         return intents.map((intent) => {
             const key = intent.pairing?.remoteKey || `R-${intent.item.id}`;
             const prior = this.remote.get(key);
+            const outside = this.editedOutside.get(key);
+
+            if (outside !== undefined && outside !== intent.item.title && !intent.force?.includes("title")) {
+                return {
+                    ok: true as const,
+                    remoteKey: key,
+                    sent: {},
+                    changedOutside: [{ fact: "title" as const, outside, here: intent.item.title }],
+                };
+            }
+
+            this.editedOutside.delete(key);
             this.remote.set(key, {
                 remoteKey: key,
                 title: intent.pairing?.origin.title === "remote" ? prior?.title : intent.item.title,
@@ -266,6 +288,41 @@ describe("the sync consumer", () => {
         const report = await runSyncOnce(deps());
         expect(report.held).toBe(0);
         expect(report.pushed).toBe(1);
+    });
+
+    test("a title edited outside is not overwritten: the pairing drifts, every pass names it, and resolve settles it", async () => {
+        const made = await write(ctx("s1"), { verb: "add", title: "first", type: "bug" });
+        const id = made.ok ? made.data.items[0].id : asItemId("none");
+        await runSyncOnce(deps());
+        fake.editedOutside.set(`R-${id}`, "renamed outside");
+        fake.remote.set(`R-${id}`, { remoteKey: `R-${id}`, title: "renamed outside", state: "open" });
+
+        await write(ctx("s1"), { verb: "edit", ref: id, title: "renamed here" });
+        const pass = await runSyncOnce(deps());
+        expect(pass.drift).toBe(1);
+        expect(pass.problems?.[0]).toMatchObject({ item: id, state: "drift" });
+        expect(pass.problems?.[0].note).toContain('title (outside "renamed outside", here "renamed here")');
+        expect(selectPairings(db, { item: id })[0]).toMatchObject({
+            state: "drift",
+            note: "changed outside, owned here: title",
+        });
+        expect(noteStandingDrift(db, await runSyncOnce(deps())).notes?.at(-1)).toContain(
+            `1 item(s) differ outside and here (${id})`
+        );
+
+        const theirs = await resolveDrift(deps(), { item: id, take: "theirs" });
+        expect(theirs.drift).toBe(0);
+        expect(selectItem(db, id)?.title).toBe("renamed outside");
+        expect(selectPairings(db, { item: id })[0].state).toBe("in-sync");
+
+        fake.editedOutside.set(`R-${id}`, "outside again");
+        await write(ctx("s1"), { verb: "edit", ref: id, title: "mine" });
+        await runSyncOnce(deps());
+        expect(selectPairings(db, { item: id })[0].state).toBe("drift");
+        const ours = await resolveDrift(deps(), { item: id, take: "ours" });
+        expect(ours.pushed).toBe(1);
+        expect(fake.pushed.at(-1)?.force).toEqual(["title"]);
+        expect(selectPairings(db, { item: id })[0].state).toBe("in-sync");
     });
 
     test("a change by a role that may not push is held, and a release pushes it", async () => {
