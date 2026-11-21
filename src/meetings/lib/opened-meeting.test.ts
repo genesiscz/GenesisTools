@@ -1197,6 +1197,84 @@ describe("the record's own copy of its source", () => {
         expect(clock).toHaveBeenLastCalledWith("abc", { remote: false });
     });
 
+    test("the first read of an older record saves the evidence and the clock while the source may still go remote", async () => {
+        const { store, record } = await newRecord();
+        const folder = store.folder(record.id);
+        const live = fakeSource();
+        // Like an MCP-only Wispr meeting: a read limited to this Mac fails.
+        const remoteOnly: TranscriptSource = {
+            ...live,
+            load: async (id, options) => {
+                if (options?.remote === false) {
+                    throw new Error("not on this Mac");
+                }
+
+                return live.load(id);
+            },
+            recordingClock: async (id, options) => {
+                if (options?.remote === false) {
+                    throw new Error("not on this Mac");
+                }
+
+                return live.recordingClock(id);
+            },
+        };
+        const backed = copyBackedSource(remoteOnly, folder);
+        await backed.load("abc");
+        expect(readSourceCopy(folder, "evidence", ref)?.value?.selfName).toBe("Alice Example");
+        expect(readSourceCopy(folder, "clock", ref)?.value?.startedAt).toBe("2026-11-02T15:00:05.000Z");
+        expect((await backed.recordingClock("abc"))?.startedAt).toBe("2026-11-02T15:00:05.000Z");
+    });
+
+    test("a copy cut short is ignored, and the next answer replaces it", async () => {
+        const { store, record } = await newRecord();
+        const folder = store.folder(record.id);
+        const backed = copyBackedSource(fakeSource(), folder);
+        await backed.load("abc");
+        const path = join(folder, "source-copy", "meeting.json");
+        const text = readFileSync(path, "utf8");
+        writeFileSync(path, text.slice(0, text.length - 20));
+        expect(readSourceCopy(folder, "meeting", ref)).toBeUndefined();
+        await backed.load("abc");
+        expect(readSourceCopy(folder, "meeting", ref)?.value.transcript).toHaveLength(2);
+        writeFileSync(path, "{ not json");
+        expect(readSourceCopy(folder, "meeting", ref)).toBeUndefined();
+        await backed.load("abc");
+        expect(readSourceCopy(folder, "meeting", ref)?.value.title).toBe("Planning");
+    });
+
+    test("the copy's revision changes when only its clock changes", async () => {
+        const { store, record } = await newRecord();
+        const folder = store.folder(record.id);
+        const failing = (clock: string): TranscriptSource => ({
+            ...fakeSource({ clock }),
+            revision: async () => {
+                throw new Error("no revision");
+            },
+        });
+        await copyBackedSource(failing("2026-11-02T15:00:05.000Z"), folder).load("abc");
+        const before = await copyBackedSource(failing("2026-11-02T15:00:05.000Z"), folder).revision("abc");
+        expect(await copyBackedSource(failing("2026-11-02T15:00:05.000Z"), folder).revision("abc")).toBe(before);
+        await copyBackedSource(failing("2026-11-02T15:00:09.000Z"), folder).recordingClock("abc");
+        expect(await copyBackedSource(failing("2026-11-02T15:00:09.000Z"), folder).revision("abc")).not.toBe(before);
+    });
+
+    test("a source that must not write answers from the copy and leaves the record as it was", async () => {
+        const { store, record } = await newRecord();
+        const folder = store.folder(record.id);
+        await copyBackedSource(fakeSource(), folder, { save: false }).load("abc");
+        expect(existsSync(join(folder, "source-copy"))).toBe(false);
+        await copyBackedSource(fakeSource(), folder).load("abc");
+        const savedAt = readSourceCopy(folder, "meeting", ref)?.savedAt;
+        const changed: TranscriptSource = {
+            ...fakeSource(),
+            load: async () => ({ ...(await fakeSource().load("abc")), title: "Renamed" }),
+        };
+        expect((await copyBackedSource(changed, folder, { save: false }).load("abc")).title).toBe("Renamed");
+        expect(readSourceCopy(folder, "meeting", ref)?.savedAt).toBe(savedAt);
+        expect(readSourceCopy(folder, "meeting", ref)?.value.title).toBe("Planning");
+    });
+
     test("a record whose source code cannot be opened reads its copy", async () => {
         const { store, record } = await newRecord();
         const folder = store.folder(record.id);
@@ -1204,7 +1282,8 @@ describe("the record's own copy of its source", () => {
         await copyBackedSource(fakeSource(), folder).load("abc");
         const only = copyOnlySource("wisprflow", folder, "abc");
         expect((await only?.load("abc"))?.title).toBe("Planning");
-        expect(await only?.evidence("abc")).toBeNull();
+        // The first read saved the evidence and the clock too.
+        expect((await only?.evidence("abc"))?.selfName).toBe("Alice Example");
         expect(await only?.revision("abc")).toStartWith("source-copy:");
     });
 

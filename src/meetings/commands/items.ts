@@ -46,7 +46,7 @@ import { questionLabel, questionWarnings } from "../lib/questions";
 import { type ReviewRow, type RowPart, reviewRow } from "../lib/review-rows";
 import { withMeetingsClient } from "../lib/service/client";
 import { errorText, fail, formatFlag, hintIfSeatsUnset, resolveEnum, TOOL } from "../lib/shared";
-import { localMeetingTranscript, meetingTranscript } from "../lib/sources";
+import { linkedSource, localMeetingTranscript, meetingTranscript } from "../lib/sources";
 import { printSpeakerStats } from "../lib/speakers-view";
 import { isSuggestRule, SUGGEST_RULES } from "../lib/suggest";
 import { runSuggest } from "../lib/suggest-run";
@@ -856,7 +856,9 @@ async function transcript(
             ui.warn(warning);
         }
         if (opts.probeThresholds !== undefined) {
-            const source = await OpenedMeeting.of(store, record).meeting();
+            // A probe writes nothing: the record's source copy answers when the source cannot, but is not refreshed.
+            const linked = await linkedSource(record, store, { saveCopy: false });
+            const source = await OpenedMeeting.of(store, record, linked).meeting();
             const levels =
                 typeof opts.probeThresholds === "string"
                     ? opts.probeThresholds.split(",").map(Number)
