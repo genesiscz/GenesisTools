@@ -40,6 +40,8 @@ const manifestClipSchema = z.object({
     /** The MP4's name inside the folder; null while no download has succeeded. */
     file: z.string().nullable(),
     bytes: z.number(),
+    /** The quality of `file` (`1080p60`, `source`); absent in records written before qualities were recorded. */
+    quality: z.string().nullish(),
     status: z.enum(["saved", "exists", "failed"]),
     error: z.string().optional(),
     recordedAt: z.string(),
@@ -178,6 +180,8 @@ export function recordClips({
             likes: clip.likes,
             file: keepFile ? before.file : row.status === "failed" ? null : basename(row.output),
             bytes: keepFile ? before.bytes : row.bytes,
+            // A skipped file was not read, so the quality recorded with it stays.
+            quality: (keepFile ? before.quality : row.quality) ?? before?.quality ?? null,
             status: keepFile ? before.status : row.status,
             ...(row.error && !keepFile ? { error: row.error } : {}),
             recordedAt: now,

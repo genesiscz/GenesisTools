@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { chooseQuality } from "@genesiscz/utils/video/choose-quality";
 import { parseKickTarget } from "../kick/api";
 import { parseTwitchTarget } from "../twitch/api";
 import { type ClipsManifest, findOverlaps, type ManifestClip } from "./manifest";
@@ -127,5 +128,37 @@ describe("findOverlaps", () => {
             ["b", "c", 5, "overlap"],
             ["d", "f", 30, "contained"],
         ]);
+    });
+});
+
+describe("chooseQuality", () => {
+    const offered = [
+        { name: "1080p60", height: 1080 },
+        { name: "720p60", height: 720 },
+        { name: "720p", height: 720 },
+        { name: "360p", height: 360 },
+    ];
+    const pick = (quality?: string) =>
+        chooseQuality({
+            options: offered,
+            quality,
+            names: (option) => [option.name],
+            height: (option) => option.height,
+        }).name;
+
+    it("takes the first option for best or no quality, and the last for worst", () => {
+        expect(pick()).toBe("1080p60");
+        expect(pick("BEST")).toBe("1080p60");
+        expect(pick("worst")).toBe("360p");
+    });
+
+    it("matches an option's own name before a height, and a height to its best option", () => {
+        expect(pick("720p")).toBe("720p");
+        expect(pick("720")).toBe("720p60");
+        expect(pick("720P60")).toBe("720p60");
+    });
+
+    it("names the offered qualities when none matches", () => {
+        expect(() => pick("480p")).toThrow("Offered: best, worst, 1080p60, 720p60, 720p, 360p");
     });
 });

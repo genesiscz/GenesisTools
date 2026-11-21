@@ -1,4 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
+import { chooseQuality } from "@genesiscz/utils/video/choose-quality";
 import { mapPool } from "../clips/download";
 import { readStreamSpan, readVodPlayback, type StreamSpan } from "../clips/hls";
 import type { Clip, ClipProvider, ClipSource, PlacedClips, Vod, VodPlayback } from "../clips/types";
@@ -158,7 +159,12 @@ export const kickProvider: ClipProvider = {
         return listKickClips({ ...options, sort });
     },
     fetchClip: fetchKickClip,
-    clipMediaUrl: async (clip) => clip.mediaUrl,
+    clipQualities: false,
+    // Kick's clip playlist is one media playlist in the stream's own quality; no other rendition exists.
+    clipMedia: async ({ clip, quality }) => {
+        chooseQuality({ options: ["source"], quality, names: (name) => [name], height: () => null });
+        return { url: clip.mediaUrl, quality: "source", best: true };
+    },
     clipFileId: (clip) => clip.id.replace(/^clip_/, ""),
     clipIdFromFileName: (name) => {
         const ulid = name.match(FILE_CLIP_ID)?.[1];

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { slugify } from "@genesiscz/utils/string";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
-import type { Clip, ClipProvider } from "./types";
+import type { Clip, ClipMedia, ClipProvider } from "./types";
 
 /** A clip is at most a few minutes long; a remux that runs past this has stalled on the CDN. */
 const REMUX_TIMEOUT_MS = 10 * 60_000;
@@ -15,14 +15,24 @@ export interface ClipDownloadRow {
     output: string;
     status: ClipDownloadStatus;
     bytes: number;
+    /** The quality saved (`1080p60`, `source`); null when an existing file was skipped unread. */
+    quality: string | null;
     error?: string;
 }
 
-/** `<channel>-<YYYY-MM-DD>-<title>-<clip id>.mp4`, so a rerun finds the file it saved and skips it. */
-export function clipFileName(provider: ClipProvider, clip: Clip): string {
+/**
+ * `<channel>-<YYYY-MM-DD>-<title>[-<quality>]-<clip id>.mp4`, so a rerun finds the file it saved and skips it. The
+ * quality is in the name only when a better one is offered, so a lower quality never takes the best one's file.
+ */
+export function clipFileName(provider: ClipProvider, clip: Clip, quality?: string | null): string {
     const day = clip.createdAt.slice(0, 10);
-    const parts = [clip.channel, day, slugify(clip.title), provider.clipFileId(clip)];
+    const parts = [clip.channel, day, slugify(clip.title), quality ?? "", provider.clipFileId(clip)];
     return `${parts.filter(Boolean).join("-")}.mp4`;
+}
+
+/** True when `quality` asks for the best one, which is also the default. */
+function asksBest(quality: string | undefined): boolean {
+    return !quality || quality.trim().toLowerCase() === "best";
 }
 
 /** Runs `task` over the items with at most `jobs` at once; results keep the item order. Stops taking items on abort. */
@@ -59,26 +69,34 @@ export async function mapPool<T, R>({
 export async function downloadClip({
     provider,
     clip,
+    quality,
     outDir,
     force,
     signal,
 }: {
     provider: ClipProvider;
     clip: Clip;
+    quality?: string;
     outDir: string;
     force: boolean;
     signal?: AbortSignal;
 }): Promise<ClipDownloadRow> {
-    const output = join(outDir, clipFileName(provider, clip));
-
-    if (!force && existsSync(output) && statSync(output).size > 0) {
-        return { clip, output, status: "exists", bytes: statSync(output).size };
-    }
-
-    const part = `${output}.part`;
+    let output = join(outDir, clipFileName(provider, clip));
+    let media: ClipMedia | null = null;
+    const part = () => `${output}.part`;
 
     try {
-        const mediaUrl = await provider.clipMediaUrl(clip, signal);
+        // Another quality's file name is known only once the site has named the quality it serves.
+        if (!asksBest(quality)) {
+            media = await provider.clipMedia({ clip, quality, signal });
+            output = join(outDir, clipFileName(provider, clip, media.best ? null : media.quality));
+        }
+
+        if (!force && existsSync(output) && statSync(output).size > 0) {
+            return { clip, output, status: "exists", bytes: statSync(output).size, quality: media?.quality ?? null };
+        }
+
+        media ??= await provider.clipMedia({ clip, signal });
         const command = [
             "ffmpeg",
             "-hide_banner",
@@ -86,7 +104,7 @@ export async function downloadClip({
             "error",
             "-y",
             "-i",
-            mediaUrl,
+            media.url,
             "-c",
             "copy",
             "-bsf:a",
@@ -95,7 +113,7 @@ export async function downloadClip({
             "+faststart",
             "-f",
             "mp4",
-            part,
+            part(),
         ];
         await runVideoCommand({ command, signal, timeoutMs: REMUX_TIMEOUT_MS });
     } catch (error) {
@@ -105,19 +123,20 @@ export async function downloadClip({
 
         logger.warn({ error, provider: provider.id, clip: clip.id }, "Clip download failed");
         const message = error instanceof Error ? error.message.trim().split("\n").slice(-1)[0] : String(error);
-        return { clip, output, status: "failed", bytes: 0, error: message };
+        return { clip, output, status: "failed", bytes: 0, quality: media?.quality ?? null, error: message };
     }
 
-    renameSync(part, output);
+    renameSync(part(), output);
     const bytes = statSync(output).size;
-    logger.debug({ provider: provider.id, clip: clip.id, output, bytes }, "Clip saved");
-    return { clip, output, status: "saved", bytes };
+    logger.debug({ provider: provider.id, clip: clip.id, output, bytes, quality: media.quality }, "Clip saved");
+    return { clip, output, status: "saved", bytes, quality: media.quality };
 }
 
 /** Downloads the clips with `jobs` copies at once, in list order; `onRow` hears each one as it finishes. */
 export async function downloadClips({
     provider,
     clips,
+    quality,
     outDir,
     jobs,
     force,
@@ -126,6 +145,7 @@ export async function downloadClips({
 }: {
     provider: ClipProvider;
     clips: Clip[];
+    quality?: string;
     outDir: string;
     jobs: number;
     force: boolean;
@@ -138,7 +158,7 @@ export async function downloadClips({
         jobs,
         signal,
         task: async (clip) => {
-            const row = await downloadClip({ provider, clip, outDir, force, signal });
+            const row = await downloadClip({ provider, clip, quality, outDir, force, signal });
             done++;
             onRow?.(row, done);
             return row;

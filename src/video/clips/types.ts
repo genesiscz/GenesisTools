@@ -85,6 +85,15 @@ export interface VodPlayback {
     startAt: string | null;
 }
 
+/** A clip file the site serves now (Twitch signs its URL with a fresh token). */
+export interface ClipMedia {
+    url: string;
+    /** `1080p60`, `720p`; `source` when the site serves one quality only. */
+    quality: string;
+    /** True when no better quality is offered. */
+    best: boolean;
+}
+
 export interface PlacedClips {
     sources: Map<string, ClipSource | null>;
     vods: Array<{ vod: Vod; playback: VodPlayback | null }>;
@@ -113,8 +122,10 @@ export interface ClipProvider {
     parseTarget(input: string): ClipTarget;
     listClips(options: ListClipsOptions): Promise<Clip[]>;
     fetchClip(id: string, signal?: AbortSignal): Promise<Clip>;
-    /** A URL ffmpeg can read the clip from now (Twitch signs it with a fresh token). */
-    clipMediaUrl(clip: Clip, signal?: AbortSignal): Promise<string>;
+    /** True when the site serves a clip in more than one quality (Twitch). Kick serves only the stream's own. */
+    clipQualities: boolean;
+    /** The clip in `quality` (see `chooseQuality`, default `best`), at a URL ffmpeg can read now. */
+    clipMedia(options: { clip: Clip; quality?: string; signal?: AbortSignal }): Promise<ClipMedia>;
     /** The part of a clip file name that names the clip, and back; a rerun finds its file by it. */
     clipFileId(clip: Clip): string;
     clipIdFromFileName(name: string): string | null;

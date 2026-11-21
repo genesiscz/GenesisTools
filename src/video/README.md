@@ -415,6 +415,7 @@ tools video kick list-clips "https://kick.com/somechannel/clips?sort=date&range=
 tools video kick download somechannel --since 12h --limit 0 --out-dir ./clips
 tools video twitch list-clips "https://www.twitch.tv/somechannel/clips?filter=clips&range=7d" --limit 50
 tools video twitch download https://www.twitch.tv/somechannel/clip/<slug> --out-dir ./clips
+tools video twitch download somechannel --quality 720p --out-dir ./clips-720p
 tools video kick vods somechannel
 tools video kick download-vod https://kick.com/somechannel/videos/<uuid> --from 1:00:00 --to 1:05:00
 tools video twitch download-vod --clip <clip url> --pad 30s --quality 720p --out-dir ./vods
@@ -430,20 +431,26 @@ tools video kick manifest ./clips --backfill
   (default Kick `all`, Twitch `week`), `--limit <n>` clips per channel (default 20, `0` for all).
 - `--since <when>` keeps only clips made since then: a duration back from now (`12h`, `90m`, `2d`), `HH:MM` today, or
   an ISO date. With Kick `--sort date` the pages stop at the first page that reaches back past it.
+- `--quality <name>` (`download`): `best` (default), `worst`, a height such as `720p`, or a name such as `720p60`.
+  Twitch serves a clip in several qualities (measured 2026-11-21 on one clip: `1080p60`, `720p60`, `480p`, `360p`); a
+  clip that lacks the asked one fails and names the ones it has. Kick serves a clip only in the stream's own quality
+  (one media playlist, no other renditions), so Kick `download` refuses any other `--quality`; cut a lower quality from
+  the VOD with `download-vod --clip … --quality …`.
 - `--out-dir <dir>` (default the current folder), `--jobs <n>` clips at once (default 3), `--force` downloads a clip
   again. Without `--force` a clip whose file exists is skipped, so a rerun only fetches new clips.
 - `--json` prints the clips (`list-clips`) or one row per clip with `status` `saved`, `exists` or `failed` and its
   `source` (`download`). A failed clip sets exit code 1.
 
-Clip files are named `<channel>-<YYYY-MM-DD>-<title>-<id>.mp4` (Kick: the clip id without `clip_`; Twitch:
-`tw_<slug>`). `ffmpeg -c copy` copies Kick's HLS playlist or Twitch's MP4 into `<file>.part` and renames it only after
+Clip files are named `<channel>-<YYYY-MM-DD>-<title>[-<quality>]-<id>.mp4` (Kick: the clip id without `clip_`;
+Twitch: `tw_<slug>`). The quality is in the name only when the site offers a better one, so a `720p60` copy sits next
+to the best one instead of replacing it. `ffmpeg -c copy` copies Kick's HLS playlist or Twitch's MP4 into `<file>.part` and renames it only after
 ffmpeg exits 0. Everything needs `ffmpeg` on the PATH and no login: Kick's public web API, and Twitch's GQL with the
 client id twitch.tv itself sends.
 
 **The manifest.** `download` writes `clips-manifest.json` into the folder, one section per site
 (`providers.kick`, `providers.twitch`), each with `clips` (by clip id), `vods` (by stream id) and `vodParts` (by file).
 A clip record holds the title, the clip page URL, the media URL, channel, creator, category, views, length, its file
-and its `source`: the stream id, the VOD id and page, the stream time it covers (`startAt`, `endAt`) and its place in
+with that file's `quality` (`1080p60`, Kick `source`; absent for a file only read by `--backfill`), and its `source`: the stream id, the VOD id and page, the stream time it covers (`startAt`, `endAt`) and its place in
 the VOD (`vodOffsetSec`, `vodEndOffsetSec`, and Twitch's `vodUrlAtClip` with `?t=`). Kick clips have no description;
 Twitch's API gives none either. `offsetFrom` says how the place was found:
 
@@ -463,8 +470,8 @@ the manifest existed.
 **VOD cuts.** `vods <channel>` lists the streams and their VOD access. `download-vod [vod]` cuts the VOD (a VOD URL or
 id) with `ffmpeg -ss … -t … -c copy` into `<channel>-<date>-<title>-<VOD id>[-<from>_<to>]-<quality>.mp4` and records
 it in `vodParts`; `--from` and `--to` take `1:02:03`, `62:03`, seconds or `90m`. `--clip <clip>` cuts the clip's moment
-plus `--pad` (default `30s`) on each side, and finds the VOD itself. `--quality` picks a variant (`1080p`, `720p`,
-`480p`; default the highest). A cut whose size estimate (variant bitrate times length) does not fit on the disk with
+plus `--pad` (default `30s`) on each side, and finds the VOD itself. `--quality` picks a variant as `download` does (`best`,
+`worst`, `720p`, `720p60`; default the highest bitrate). A cut whose size estimate (variant bitrate times length) does not fit on the disk with
 2 GB to spare is refused. A subscriber-only VOD (Kick `subscriber_only`, Twitch's CDN answering 403) cannot be cut
 without a login.
 

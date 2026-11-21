@@ -41,6 +41,7 @@ interface ListFlags {
 }
 
 interface DownloadFlags extends ListFlags {
+    quality?: string;
     outDir: string;
     jobs: string;
     force?: boolean;
@@ -294,6 +295,7 @@ function publicRow(row: ClipDownloadRow, manifest: ClipsManifest) {
         output: row.output,
         status: row.status,
         bytes: row.bytes,
+        quality: row.quality,
         source: manifest.providers[row.clip.provider]?.clips[row.clip.id]?.source ?? null,
         ...(row.error ? { error: row.error } : {}),
     };
@@ -302,6 +304,14 @@ function publicRow(row: ClipDownloadRow, manifest: ClipsManifest) {
 async function runDownload(provider: ClipProvider, inputs: string[], flags: DownloadFlags): Promise<void> {
     const outDir = resolve(flags.outDir);
     const jobs = Math.max(1, parseNonNegativeInt(flags.jobs, "--jobs"));
+
+    if (!provider.clipQualities && !["best", "worst", "source"].includes((flags.quality ?? "best").toLowerCase())) {
+        out.log.error(
+            `${provider.label} serves each clip in one quality, the stream's own. --quality ${flags.quality} works for VOD cuts: ${command(provider, "download-vod", "--clip", "<clip url>", "--quality", flags.quality ?? "")}`
+        );
+        process.exitCode = 1;
+        return;
+    }
 
     await withInterrupt(
         async (signal) => {
@@ -322,6 +332,7 @@ async function runDownload(provider: ClipProvider, inputs: string[], flags: Down
             const rows = await downloadClips({
                 provider,
                 clips,
+                quality: flags.quality,
                 outDir,
                 jobs,
                 force: Boolean(flags.force),
@@ -349,7 +360,7 @@ async function runDownload(provider: ClipProvider, inputs: string[], flags: Down
             spinner?.stop(
                 `${saved.length} saved, ${rows.length - saved.length - failed.length} already there, ${failed.length} failed`
             );
-            const table = createBoxTable(["STATUS", "TITLE", "SIZE", "FILE"]);
+            const table = createBoxTable(["STATUS", "TITLE", "QUALITY", "SIZE", "FILE"]);
 
             for (const row of rows) {
                 const dot =
@@ -361,6 +372,7 @@ async function runDownload(provider: ClipProvider, inputs: string[], flags: Down
                 table.push([
                     dot,
                     truncateDisplay(row.clip.title, 36),
+                    row.quality ?? "",
                     row.bytes ? formatBytes(row.bytes) : "",
                     row.error ? truncateDisplay(row.error, 60) : basename(row.output),
                 ]);
@@ -396,7 +408,13 @@ async function rowsFromFiles({
 
             try {
                 const clip = await provider.fetchClip(id, signal);
-                rows.push({ clip, output: join(dir, name), status: "exists", bytes: statSync(join(dir, name)).size });
+                rows.push({
+                    clip,
+                    output: join(dir, name),
+                    status: "exists",
+                    bytes: statSync(join(dir, name)).size,
+                    quality: null,
+                });
             } catch (error) {
                 signal.throwIfAborted();
                 logger.warn({ error, provider: provider.id, file: name }, "Clip of a file is not readable");
@@ -728,6 +746,12 @@ export function registerClipCommands(program: Command, provider: ClipProvider): 
             .description(
                 `Download clips as MP4 (ffmpeg -c copy, no re-encode). A target is a clip URL or id, or a channel or clips page, which downloads the clips list-clips shows for it. A clip already saved is skipped. The folder's ${CLIPS_MANIFEST_FILE} records each clip with its title, URL and place in its VOD.`
             )
+            .option(
+                "--quality <name>",
+                provider.clipQualities
+                    ? "best (default), worst, a height such as 720p, or a name such as 720p60. A clip without it fails and names the qualities it has."
+                    : `best (default). ${provider.label} serves each clip in the stream's own quality only.`
+            )
             .option("--out-dir <dir>", "Folder for the MP4 files", ".")
             .option("--jobs <n>", "Clips downloaded at once", "3")
             .option("--force", "Download a clip again even when its file exists")
@@ -750,7 +774,7 @@ export function registerClipCommands(program: Command, provider: ClipProvider): 
         .option("--pad <duration>", "With --clip: extra time before and after the clip", "30s")
         .option("--from <time>", "Start, into the VOD: 1:02:03, 62:03, seconds or 90m")
         .option("--to <time>", "End, into the VOD (default: the VOD's end)")
-        .option("--quality <name>", "A variant such as 1080p, 720p or 480p (default: the highest)")
+        .option("--quality <name>", "best (default), worst, a height such as 720p, or a variant name such as 720p60")
         .option("--out-dir <dir>", "Folder for the MP4", ".")
         .option("--force", "Cut again even when the file exists")
         .option("--json", "Print the result as JSON")
