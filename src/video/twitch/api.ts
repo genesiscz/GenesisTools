@@ -2,6 +2,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { chooseQuality } from "@genesiscz/utils/video/choose-quality";
 import { z } from "zod";
+import type { FetchedText } from "../clips/hls";
 import { CLIP_RANGES, type Clip, type ClipMedia, type ClipRange, type ClipTarget, type Vod } from "../clips/types";
 
 const GQL_URL = "https://gql.twitch.tv/gql";
@@ -36,7 +37,8 @@ const VOD_ID = /^\d{5,}$/;
 const RESERVED_PATHS = new Set(["directory", "videos", "search", "settings", "downloads", "p", "jobs", "turbo"]);
 
 const clipFields = `id slug title url viewCount durationSeconds createdAt thumbnailURL videoOffsetSeconds
-    curator { login displayName } game { name } broadcaster { login displayName } video { id }`;
+    curator { login displayName } game { name } broadcaster { login displayName } video { id }
+    videoQualities { quality frameRate sourceURL }`;
 const vodFields = "id title createdAt lengthSeconds status owner { login displayName }";
 
 const clipSchema = z.object({
@@ -53,7 +55,19 @@ const clipSchema = z.object({
     game: z.object({ name: z.string() }).nullish(),
     broadcaster: z.object({ login: z.string(), displayName: z.string() }).nullish(),
     video: z.object({ id: z.string() }).nullish(),
+    videoQualities: z
+        .array(z.object({ quality: z.string(), frameRate: z.number().nullish(), sourceURL: z.string() }))
+        .nullish(),
 });
+
+type TwitchQuality = { quality: string; frameRate?: number | null; sourceURL: string };
+
+/** Best first: the highest resolution, then the highest frame rate. */
+function byQuality(qualities: TwitchQuality[]): TwitchQuality[] {
+    return qualities.toSorted(
+        (a, b) => Number(b.quality) - Number(a.quality) || (b.frameRate ?? 0) - (a.frameRate ?? 0)
+    );
+}
 
 const vodSchema = z.object({
     id: z.string(),
@@ -139,7 +153,11 @@ export function parseTwitchTarget(input: string): ClipTarget {
         throw new Error(`"${input}" names no Twitch channel`);
     }
 
-    if (second === "clip" && third && CLIP_SLUG.test(third)) {
+    if (second === "clip") {
+        if (!third || !CLIP_SLUG.test(third)) {
+            throw new Error(`"${input}" names no Twitch clip`);
+        }
+
         return { kind: "clip", id: third };
     }
 
@@ -205,7 +223,8 @@ function toClip(raw: z.infer<typeof clipSchema>): Clip {
         id: raw.slug,
         title: raw.title,
         pageUrl: raw.url,
-        mediaUrl: raw.url,
+        // The best MP4 without a token: a stable name for the file; it plays only once signed (`twitchClipMedia`).
+        mediaUrl: byQuality(raw.videoQualities ?? [])[0]?.sourceURL ?? null,
         thumbnailUrl: raw.thumbnailURL ?? null,
         durationSec: raw.durationSeconds,
         views: raw.viewCount,
@@ -231,7 +250,8 @@ function toVod(raw: z.infer<typeof vodSchema>, channel: string): Vod {
         startedAt: new Date(raw.createdAt).toISOString(),
         durationSec: raw.lengthSeconds,
         live: raw.status === "RECORDING",
-        access: "public",
+        // Twitch's VOD record says nothing about who may watch; its CDN refuses a subscriber-only VOD at the cut.
+        access: "unknown",
         pageUrl: `https://www.twitch.tv/videos/${raw.id}`,
     };
 }
@@ -256,10 +276,12 @@ export async function listTwitchClips({
     since?: Date;
     signal?: AbortSignal;
 }): Promise<Clip[]> {
-    const clips: Clip[] = [];
+    let clips: Clip[] = [];
     const max = limit === 0 || sort === "date" ? Number.POSITIVE_INFINITY : limit;
+    const newestFirst = (a: Clip, b: Clip) => b.createdAt.localeCompare(a.createdAt);
     let cursor: string | null = null;
     let pages = 0;
+    const seen = new Set<string>();
 
     while (clips.length < max) {
         const after: string = cursor ? `, after: ${literal(cursor)}` : "";
@@ -277,17 +299,34 @@ export async function listTwitchClips({
         const { edges, pageInfo } = page.user.clips;
         const found = edges.map((edge) => toClip(edge.node));
         clips.push(...(since ? found.filter((clip) => Date.parse(clip.createdAt) >= since.getTime()) : found));
+
+        // A date order reads every page, but keeps only the newest `limit` clips seen so far.
+        if (sort === "date" && limit > 0 && clips.length > limit) {
+            clips = clips.sort(newestFirst).slice(0, limit);
+        }
+
         const nextCursor: string | null = edges.at(-1)?.cursor ?? null;
 
-        if (!pageInfo.hasNextPage || edges.length === 0 || !nextCursor || nextCursor === cursor) {
+        if (!pageInfo.hasNextPage || edges.length === 0 || !nextCursor) {
             break;
+        }
+
+        if (nextCursor === cursor || seen.has(nextCursor)) {
+            throw new TwitchApiError(
+                `Twitch's clip pages of ${channel} loop: page ${pages + 1} would repeat an earlier one; stopped with ${clips.length} clips`,
+                null
+            );
+        }
+
+        if (cursor) {
+            seen.add(cursor);
         }
 
         cursor = nextCursor;
     }
 
     logger.debug({ channel, sort, range, limit, pages, found: clips.length }, "Twitch clips listed");
-    const ordered = sort === "date" ? clips.sort((a, b) => b.createdAt.localeCompare(a.createdAt)) : clips;
+    const ordered = sort === "date" ? clips.sort(newestFirst) : clips;
     return limit === 0 ? ordered : ordered.slice(0, limit);
 }
 
@@ -334,9 +373,7 @@ export async function twitchClipMedia({
         }),
         signal,
     });
-    const offered = (clip?.videoQualities ?? []).toSorted(
-        (a, b) => Number(b.quality) - Number(a.quality) || (b.frameRate ?? 0) - (a.frameRate ?? 0)
-    );
+    const offered = byQuality(clip?.videoQualities ?? []);
 
     if (!clip || offered.length === 0) {
         throw new TwitchApiError(`Twitch serves no video for clip "${slug}"`, 404);
@@ -408,8 +445,8 @@ export async function twitchVodPlaylistUrl(id: string, signal?: AbortSignal): Pr
     return `${USHER_URL}/${encodeURIComponent(id)}.m3u8?${params}`;
 }
 
-/** A playlist from Twitch's CDN; HTTP 403 there means a subscriber-only VOD. */
-export async function fetchTwitchText(url: string, signal?: AbortSignal): Promise<string> {
+/** A playlist from Twitch's CDN, with the URL it came from; HTTP 403 there means a subscriber-only VOD. */
+export async function fetchTwitchText(url: string, signal?: AbortSignal): Promise<FetchedText> {
     const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
     const response = await fetch(url, { signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
     const text = await response.text();
@@ -423,5 +460,5 @@ export async function fetchTwitchText(url: string, signal?: AbortSignal): Promis
         throw new TwitchApiError(`Twitch's CDN answered HTTP ${response.status}`, response.status);
     }
 
-    return text;
+    return { text, url: response.url || url };
 }

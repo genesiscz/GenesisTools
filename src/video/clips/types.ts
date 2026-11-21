@@ -1,4 +1,7 @@
-/** The sites `tools video` reads clips and VODs from. Adding one is a folder and an entry in `CLIP_PROVIDERS`. */
+/**
+ * The sites `tools video` reads clips and VODs from. Adding one is a folder, its id here and its entry in
+ * `CLIP_PROVIDERS` (`providers.ts`); that table's key type makes a missing id or entry a compile error.
+ */
 export const CLIP_PROVIDER_IDS = ["kick", "twitch"] as const;
 export type ClipProviderId = (typeof CLIP_PROVIDER_IDS)[number];
 
@@ -12,8 +15,8 @@ export interface Clip {
     title: string;
     /** The clip's page on the site. */
     pageUrl: string;
-    /** The clip's video: Kick's HLS playlist, Twitch's MP4 (which still needs a token to play). */
-    mediaUrl: string;
+    /** The clip's video: Kick's HLS playlist, Twitch's MP4 without its token (it plays only signed); null when unsaid. */
+    mediaUrl: string | null;
     thumbnailUrl: string | null;
     durationSec: number;
     views: number;
@@ -41,7 +44,7 @@ export interface Vod {
     startedAt: string;
     durationSec: number;
     live: boolean;
-    /** The site's own word: `public`, `subscriber_only`, … */
+    /** The site's own word (`public`, `subscriber_only`, …); `unknown` when the site's list does not say (Twitch). */
     access: string;
     pageUrl: string | null;
 }
@@ -131,9 +134,20 @@ export interface ClipProvider {
     clipFileId(clip: Clip): string;
     clipIdFromFileName(name: string): string | null;
     listVods(channel: string, signal?: AbortSignal): Promise<Vod[]>;
+    /** One VOD by the id in its URL. */
     fetchVod(id: string, signal?: AbortSignal): Promise<Vod>;
+    /** The VOD of the stream the clip was cut from; throws with the reason when the site gives no such VOD. */
+    vodOfClip(clip: Clip, signal?: AbortSignal): Promise<Vod>;
     /** The VOD's variant for a cut (`quality`: a name such as `720p`, else the best); throws with the reason when the site serves none (subscriber-only, gone). */
     vodPlayback(options: { vod: Vod; quality?: string; signal?: AbortSignal }): Promise<VodPlayback>;
-    /** Each clip's place in its VOD, and the VODs it read for that. A failed request leaves a clip unplaced. */
-    placeClips(options: { clips: Clip[]; jobs: number; signal?: AbortSignal }): Promise<PlacedClips>;
+    /**
+     * Each clip's place in its VOD, and the VODs it read for that. A failed request leaves a clip unplaced. `vod`: the
+     * VOD and variant already read (a cut), used instead of reading the channel's VODs again.
+     */
+    placeClips(options: {
+        clips: Clip[];
+        jobs: number;
+        signal?: AbortSignal;
+        vod?: { vod: Vod; playback: VodPlayback };
+    }): Promise<PlacedClips>;
 }

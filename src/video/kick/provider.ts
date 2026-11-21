@@ -1,12 +1,13 @@
+import { mapPool } from "@genesiscz/utils/async";
 import { logger } from "@genesiscz/utils/logger";
 import { chooseQuality } from "@genesiscz/utils/video/choose-quality";
-import { mapPool } from "../clips/download";
 import { readStreamSpan, readVodPlayback, type StreamSpan } from "../clips/hls";
 import type { Clip, ClipProvider, ClipSource, OffsetSource, PlacedClips, Vod, VodPlayback } from "../clips/types";
 import {
     fetchKickClip,
     fetchKickText,
     fetchKickVod,
+    isKickVodId,
     KICK_CLIP_SORTS,
     type KickClipSort,
     type KickVodInfo,
@@ -94,7 +95,8 @@ export function placeBySpan({
     };
 }
 
-async function placeKickClips({
+/** The VODs of the clips' streams from the channels' VOD lists, each with its default variant when Kick serves it. */
+async function readKickVods({
     clips,
     jobs,
     signal,
@@ -102,7 +104,7 @@ async function placeKickClips({
     clips: Clip[];
     jobs: number;
     signal?: AbortSignal;
-}): Promise<PlacedClips> {
+}): Promise<Array<{ vod: Vod; playback: VodPlayback | null }>> {
     const infoByStream = new Map<string, KickVodInfo>();
 
     for (const channel of new Set(clips.map((clip) => clip.channel))) {
@@ -118,7 +120,7 @@ async function placeKickClips({
 
     const streams = new Set(clips.map((clip) => clip.streamId).filter((id) => id !== null));
     const used = [...infoByStream.values()].filter((info) => streams.has(info.vod.streamId));
-    const vods = await mapPool({
+    return mapPool({
         items: used,
         jobs,
         signal,
@@ -144,7 +146,22 @@ async function placeKickClips({
             }
         },
     });
-    const playbackByStream = new Map(vods.map((entry) => [entry.vod.streamId, entry.playback]));
+}
+
+async function placeKickClips({
+    clips,
+    jobs,
+    signal,
+    vod: known,
+}: {
+    clips: Clip[];
+    jobs: number;
+    signal?: AbortSignal;
+    vod?: { vod: Vod; playback: VodPlayback };
+}): Promise<PlacedClips> {
+    // A cut already read its VOD and the variant it cuts: that variant's start is the origin of the cut's offsets.
+    const vods = known ? [known] : await readKickVods({ clips, jobs, signal });
+    const vodByStream = new Map(vods.map((entry) => [entry.vod.streamId, entry]));
     const spans = new Map<string, StreamSpan | null>();
 
     await mapPool({
@@ -153,6 +170,10 @@ async function placeKickClips({
         signal,
         task: async (clip) => {
             try {
+                if (!clip.mediaUrl) {
+                    throw new Error(`Kick names no playlist for clip ${clip.id}`);
+                }
+
                 spans.set(clip.id, await readStreamSpan({ url: clip.mediaUrl, fetchText: fetchKickText, signal }));
             } catch (error) {
                 signal?.throwIfAborted();
@@ -190,8 +211,8 @@ async function placeKickClips({
                     streamId,
                     span,
                     fittedStartAt: fittedByStream.get(streamId) ?? null,
-                    vod: infoByStream.get(streamId)?.vod ?? null,
-                    playback: playbackByStream.get(streamId) ?? null,
+                    vod: vodByStream.get(streamId)?.vod ?? null,
+                    playback: vodByStream.get(streamId)?.playback ?? null,
                 })
             );
         }
@@ -219,6 +240,11 @@ export const kickProvider: ClipProvider = {
     // Kick's clip playlist is one media playlist in the stream's own quality; no other rendition exists.
     clipMedia: async ({ clip, quality }) => {
         chooseQuality({ options: ["source"], quality, names: (name) => [name], height: () => null });
+
+        if (!clip.mediaUrl) {
+            throw new Error(`Kick names no playlist for clip ${clip.id}`);
+        }
+
         return { url: clip.mediaUrl, quality: "source", best: true };
     },
     clipFileId: (clip) => clip.id.replace(/^clip_/, ""),
@@ -228,10 +254,32 @@ export const kickProvider: ClipProvider = {
     },
     listVods: async (channel, signal) => (await listKickVods(channel, signal)).map((info) => info.vod),
     fetchVod: async (id, signal) => (await fetchKickVod(id, signal)).vod,
+    vodOfClip: async (clip, signal) => {
+        if (!clip.streamId) {
+            throw new Error(`Kick names no stream for clip ${clip.id}`);
+        }
+
+        const listed = (await listKickVods(clip.channel, signal)).find((info) => info.vod.streamId === clip.streamId);
+
+        if (!listed) {
+            // Kick's clip names only the numeric stream id, and the VOD detail route takes only the VOD's uuid.
+            throw new Error(
+                `The VOD list of ${clip.channel} has no VOD of stream ${clip.streamId} (clip ${clip.id}); Kick finds an older VOD only by its URL: pass it as [vod]`
+            );
+        }
+
+        return listed.vod;
+    },
     vodPlayback: async ({ vod, quality, signal }) => {
         const listed = (await listKickVods(vod.channel, signal)).find((info) => info.vod.streamId === vod.streamId);
-        const masterUrl = playlistOf(listed ?? (await fetchKickVod(vod.id, signal)));
-        return readVodPlayback({ masterUrl, quality, fetchText: fetchKickText, signal });
+        // The list gives a playlist only from the stream's own record; the VOD detail also has the video's. A VOD the
+        // list calls closed stays closed; one it lists open without a playlist is asked for in detail.
+        const closed = listed !== undefined && listed.vod.access !== "public";
+        const info =
+            listed?.playlistUrl || closed || !isKickVodId(vod.id)
+                ? (listed ?? { vod, playlistUrl: null })
+                : await fetchKickVod(vod.id, signal);
+        return readVodPlayback({ masterUrl: playlistOf(info), quality, fetchText: fetchKickText, signal });
     },
     placeClips: placeKickClips,
 };

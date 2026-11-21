@@ -1,8 +1,8 @@
+import { mapPool } from "@genesiscz/utils/async";
 import { formatTimecode } from "@genesiscz/utils/format";
 import { logger } from "@genesiscz/utils/logger";
-import { mapPool } from "../clips/download";
 import { readVodPlayback } from "../clips/hls";
-import type { Clip, ClipProvider, ClipSource, PlacedClips, Vod } from "../clips/types";
+import type { Clip, ClipProvider, ClipSource, PlacedClips, Vod, VodPlayback } from "../clips/types";
 import {
     fetchTwitchClip,
     fetchTwitchText,
@@ -58,14 +58,18 @@ async function placeTwitchClips({
     clips,
     jobs,
     signal,
+    vod: known,
 }: {
     clips: Clip[];
     jobs: number;
     signal?: AbortSignal;
+    vod?: { vod: Vod; playback: VodPlayback };
 }): Promise<PlacedClips> {
-    const vodById = new Map<string, Vod>();
+    const vodById = new Map<string, Vod>(known ? [[known.vod.id, known.vod]] : []);
+    // A cut already read its VOD; the clip carries its own offset, so no channel list is needed.
+    const channels = known ? [] : new Set(clips.map((clip) => clip.channel));
 
-    for (const channel of new Set(clips.map((clip) => clip.channel))) {
+    for (const channel of channels) {
         try {
             for (const vod of await listTwitchVods(channel, signal)) {
                 vodById.set(vod.id, vod);
@@ -97,7 +101,9 @@ async function placeTwitchClips({
         clips.map((clip) => [clip.id, placeByOffset(clip, clip.streamId ? (vodById.get(clip.streamId) ?? null) : null)])
     );
     const used = new Set(clips.map((clip) => clip.streamId));
-    const vods = [...vodById.values()].filter((vod) => used.has(vod.id)).map((vod) => ({ vod, playback: null }));
+    const vods = [...vodById.values()]
+        .filter((vod) => used.has(vod.id))
+        .map((vod) => ({ vod, playback: known?.vod.id === vod.id ? known.playback : null }));
     return { sources, vods };
 }
 
@@ -122,6 +128,14 @@ export const twitchProvider: ClipProvider = {
     clipIdFromFileName: (name) => name.match(FILE_CLIP_SLUG)?.[1] ?? null,
     listVods: listTwitchVods,
     fetchVod: fetchTwitchVod,
+    vodOfClip: async (clip, signal) => {
+        if (!clip.streamId) {
+            throw new Error(`Twitch names no VOD for clip ${clip.id}`);
+        }
+
+        // A Twitch clip names its VOD's own id.
+        return fetchTwitchVod(clip.streamId, signal);
+    },
     vodPlayback: async ({ vod, quality, signal }) => {
         const masterUrl = await twitchVodPlaylistUrl(vod.id, signal);
         return readVodPlayback({ masterUrl, quality, fetchText: fetchTwitchText, signal });
