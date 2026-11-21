@@ -1,4 +1,5 @@
 import AppKit
+import GenesisKitFixtures
 import XCTest
 @testable import GenesisKit
 
@@ -10,6 +11,71 @@ final class RecordingPickerTests: XCTestCase {
                                        bounds: .init(x: 0, y: 0, width: 100, height: 100))
     private let display = RecordingDisplay(index: 0, name: "Main", isPrimary: true, width: 900, height: 700)
     private let side = RecordingDisplay(index: 1, name: "Side", isPrimary: false, width: 700, height: 500)
+
+    func testTheRecordableRuleMatchesTheCLIContract() throws {
+        struct Contract: Decodable {
+            struct Rect: Decodable { let x, y, width, height: Double }
+            struct Case: Decodable {
+                let name: String
+                let window: RecordableWindow.Facts
+                let reason: RecordableWindow.Reason?
+            }
+            let displays: [Rect]
+            let cases: [Case]
+        }
+        let contract = try JSONDecoder().decode(Contract.self, from: KitFixture.data("contract-recordable-windows.json", in: "Recording"))
+        XCTAssertGreaterThanOrEqual(contract.cases.count, 20)
+        let displays = contract.displays.map { CGRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height) }
+        for item in contract.cases {
+            XCTAssertEqual(RecordableWindow.reason(item.window, displays: displays), item.reason, item.name)
+        }
+    }
+
+    func testAClickOnADimmedWindowPicksTheWindowNotTheDimmer() {
+        let display = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        func row(_ id: UInt32, pid: Int32, app: String, title: String?, frame: CGRect, alpha: Double = 1,
+                 layer: Int = 0, sharing: Int = 1) -> [String: Any] {
+            var row: [String: Any] = [kCGWindowNumber as String: id, kCGWindowOwnerPID as String: pid,
+                                      kCGWindowOwnerName as String: app, kCGWindowLayer as String: layer,
+                                      kCGWindowAlpha as String: alpha, kCGWindowSharingState as String: sharing,
+                                      kCGWindowBounds as String: frame.dictionaryRepresentation]
+            row[kCGWindowName as String] = title
+            return row
+        }
+        // Front to back: the active window, a palette, the dimmer under it, a dimmed window, the picker's own panel.
+        let rows = [
+            row(1, pid: 10, app: "Editor", title: "Active", frame: CGRect(x: 600, y: 100, width: 700, height: 500)),
+            row(2, pid: 10, app: "Editor", title: "Colors", frame: CGRect(x: 40, y: 40, width: 200, height: 260), layer: 3),
+            row(3, pid: 20, app: "Dimmer", title: nil, frame: display, alpha: 0.63),
+            row(4, pid: 30, app: "Notes", title: "Dimmed", frame: CGRect(x: 20, y: 20, width: 500, height: 400)),
+            row(5, pid: 40, app: "GenesisTools", title: "Pick", frame: display, sharing: 0),
+        ]
+        let kinds: [Int32: RecordableWindow.OwnerKind] = [10: .regular, 20: .accessory, 30: .regular, 40: .accessory]
+        let offered = RecordableWindow.offered(rows: rows, displays: [display]) { kinds[$0] ?? .none }
+        XCTAssertEqual(offered.map(\.id), [1, 4])
+        XCTAssertEqual(WindowClickPicker.window(at: CGPoint(x: 100, y: 100), in: offered, excluding: [])?.title, "Dimmed")
+        XCTAssertNil(WindowClickPicker.window(at: CGPoint(x: 1400, y: 880), in: offered, excluding: []),
+                     "the dimmer alone under the pointer offers nothing")
+    }
+
+    func testTheDisplaysTabOffersFollowDisplayFirstWhenTheEngineCanFollow() {
+        let targets = RecordingTargets(windows: [], apps: [], displays: [display, side])
+        let offered = RecordingPickerRow.rows(targets, tab: .displays, query: "", offersFollow: true)
+        XCTAssertEqual(offered.map(\.id), ["display-follow", "display-0", "display-1"])
+        XCTAssertEqual(offered.first?.target, .followDisplay)
+        XCTAssertEqual(RecordingPickerRow.rows(targets, tab: .displays, query: "").map(\.id), ["display-0", "display-1"])
+        XCTAssertEqual(RecordingPickerRow.rows(targets, tab: .displays, query: "follow", offersFollow: true).map(\.id),
+                       ["display-follow"])
+        XCTAssertEqual(RecordingPickerRow.rows(targets, tab: .displays, query: "side", offersFollow: true).map(\.id),
+                       ["display-1"])
+        // The outline marks the display a following take starts on: the one under the pointer.
+        let screens = [CGRect(x: 0, y: 0, width: 900, height: 700), CGRect(x: 900, y: 0, width: 700, height: 500)]
+        XCTAssertEqual(RecordingPickerGeometry.rects(.followDisplay, windows: [], screens: screens, pointer: CGPoint(x: 1000, y: 10)),
+                       [screens[1].insetBy(dx: 6, dy: 6)])
+        XCTAssertEqual(RecordingPickerGeometry.rects(.followDisplay, windows: [], screens: screens),
+                       [screens[0].insetBy(dx: 6, dy: 6)])
+        XCTAssertTrue(WidgetSessionEngine.movieCapabilities.targets.contains(.follow))
+    }
 
     func testTabsAndPhysicalChords() {
         let tabs = RecordingPickerTab.allCases

@@ -18,6 +18,7 @@ import { readLines } from "@genesiscz/utils/screen-recorder/process";
 import * as mediaFacts from "@genesiscz/utils/video/media-facts";
 import * as videoProbe from "@genesiscz/utils/video/probe";
 import * as videoProcess from "@genesiscz/utils/video/process";
+import { sessionAudioOf } from "../commands/capture-session";
 import { captureDiagnostics, validateBenchmark } from "../scripts/recorder-benchmark-policy";
 import * as captureRunner from "./capture-runner";
 import { nativeCaptureArgv, validateCaptureOptions } from "./native-record";
@@ -1909,6 +1910,52 @@ describe("recording commands and targets", () => {
         });
     });
 
+    it("leaves a dimmer over a whole display out of the windows and keeps its app's settings window", () => {
+        const display = { x: 0, y: 0, width: 1440, height: 900 };
+        const raw = {
+            ok: true,
+            windows: [
+                {
+                    pid: 20,
+                    app: "Editor",
+                    windowId: 7,
+                    title: "a.txt",
+                    bounds: { x: 10, y: 40, width: 600, height: 400 },
+                },
+                {
+                    pid: 40,
+                    app: "Dimmer",
+                    windowId: 8,
+                    bounds: display,
+                    alpha: 0.63,
+                    sharingState: 1,
+                    ownerKind: "accessory",
+                },
+                {
+                    pid: 40,
+                    app: "Dimmer",
+                    windowId: 9,
+                    title: "Dimmer Settings",
+                    bounds: { x: 300, y: 200, width: 632, height: 412 },
+                    alpha: 1,
+                    sharingState: 1,
+                    ownerKind: "accessory",
+                },
+                {
+                    pid: 50,
+                    app: "Recorder",
+                    windowId: 10,
+                    title: "Choose what to record",
+                    bounds: { x: 300, y: 200, width: 380, height: 420 },
+                    sharingState: 0,
+                },
+            ],
+        };
+        expect(parseRecordingWindows(raw, [display]).map((window) => window.id)).toEqual([7, 9]);
+        // Without the displays' frames the dimmer cannot be told from a window; the unreadable panel still goes.
+        expect(parseRecordingWindows(raw).map((window) => window.id)).toEqual([7, 8, 9]);
+    });
+
     it("lists windows without system chrome or slivers, groups apps and picks the frontmost app's window", () => {
         const raw = {
             ok: true,
@@ -2029,20 +2076,33 @@ describe("segmentCaptureSpec", () => {
         expect(spec.idleFps).toBeUndefined();
     });
 
-    it("refuses audio for a window or app but preserves the independent cursor track", () => {
+    it("records audio for a window or app, with the system sound scope, and keeps the independent cursor track", () => {
         const targets: RecordingTarget[] = [
             { kind: "window", windowIds: [7] },
             { kind: "app", app: "Notes" },
         ];
-        const asks: NativeRecorderOptions[] = [{ audio: ["mic"] }];
+        const asks: NativeRecorderOptions[] = [
+            { audio: ["mic"], micDevice: "BuiltInMicrophoneDevice" },
+            { audio: ["system", "mic"], systemAudioScope: "app" },
+        ];
 
         for (const target of targets) {
-            for (const options of asks) {
-                expect(() =>
-                    segmentCaptureSpec({ target, output: "/tmp/segment.mp4", maxSeconds: 60, options })
-                ).toThrow("those need a display or an area target");
-            }
+            const mic = segmentCaptureSpec({ target, output: "/tmp/segment.mp4", maxSeconds: 60, options: asks[0] });
+            expect(mic).toMatchObject({ mode: "isolated", audio: ["mic"], micDevice: "BuiltInMicrophoneDevice" });
+            expect(mic.systemAudioScope).toBeUndefined();
+            const both = segmentCaptureSpec({ target, output: "/tmp/segment.mp4", maxSeconds: 60, options: asks[1] });
+            expect(both).toMatchObject({ mode: "isolated", audio: ["system", "mic"], systemAudioScope: "app" });
         }
+
+        // A display segment of a take that switches keeps everything the Mac plays, whatever the scope says.
+        const display = segmentCaptureSpec({
+            target: { kind: "display", screenIndex: 0 },
+            output: "/tmp/segment.mp4",
+            maxSeconds: 60,
+            options: asks[1],
+        });
+        expect(display.audio).toEqual(["system", "mic"]);
+        expect(display.systemAudioScope).toBeUndefined();
 
         for (const target of targets) {
             const spec = segmentCaptureSpec({
@@ -2079,6 +2139,24 @@ describe("start flags for a target", () => {
         expect(() => parseWindowIdList("41,x", "--exclude-window-ids")).toThrow(
             "--exclude-window-ids takes CG window ids"
         );
+    });
+
+    it("gives the widget's capture session the movie recorder's sound flags, system first", () => {
+        expect(sessionAudioOf({})).toEqual({});
+        expect(sessionAudioOf({ audio: "mic,system", micDevice: "BuiltInMicrophoneDevice" })).toEqual({
+            audio: ["system", "mic"],
+            micDevice: "BuiltInMicrophoneDevice",
+        });
+        expect(sessionAudioOf({ audio: "system", systemAudioScope: "app" })).toEqual({
+            audio: ["system"],
+            systemAudioScope: "app",
+        });
+        expect(() => sessionAudioOf({ audio: "speakers" })).toThrow("--audio takes system, mic or system,mic");
+        expect(() => sessionAudioOf({ micDevice: "BuiltInMicrophoneDevice" })).toThrow(
+            "--mic-device needs --audio mic"
+        );
+        expect(() => sessionAudioOf({ audio: "mic", systemAudioScope: "app" })).toThrow("needs --audio system");
+        expect(() => sessionAudioOf({ audio: "system", systemAudioScope: true })).toThrow("--system-audio-scope");
     });
 });
 

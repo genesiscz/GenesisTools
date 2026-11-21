@@ -3,6 +3,8 @@ import Foundation
 
 public enum RecordingTargetKind: String, Codable, CaseIterable, Hashable, Sendable {
     case window, app, display, area, displays
+    /// The display in use: the take follows the pointer and the focus from display to display.
+    case follow
 }
 
 /// The existing window, app and display encodings are also the widget capture session's command format.
@@ -13,6 +15,9 @@ public enum RecordingTarget: Hashable, Sendable {
     /// Cocoa screen points on the chosen display. The index remains a label and a fallback for old records.
     case area(rect: CGRect, display: Int, displayID: UInt32? = nil)
     case displays(indices: [Int])
+    /// The display in use, followed live to another display when the pointer or the focus goes there. On the wire it
+    /// is a display with `follow: true` (`tools control capture session`, the recorder's `target.switch`).
+    case followDisplay
 
     public var kind: RecordingTargetKind {
         switch self {
@@ -21,6 +26,7 @@ public enum RecordingTarget: Hashable, Sendable {
         case .display: return .display
         case .area: return .area
         case .displays: return .displays
+        case .followDisplay: return .follow
         }
     }
 
@@ -66,6 +72,8 @@ public enum RecordingTarget: Hashable, Sendable {
             hasher.combine(rect.maxY)
         case let .displays(indices):
             hasher.combine(indices)
+        case .followDisplay:
+            break
         }
     }
 
@@ -81,6 +89,7 @@ public enum RecordingTarget: Hashable, Sendable {
             return name ?? "Display \(index + 1)"
         case let .area(_, display, _): return "Area on Display \(display + 1)"
         case let .displays(indices): return "Displays " + indices.map { String($0 + 1) }.joined(separator: ", ")
+        case .followDisplay: return "Follow display"
         }
     }
 
@@ -95,6 +104,7 @@ public enum RecordingTarget: Hashable, Sendable {
             return "The whole display"
         case .area: return "Selected area"
         case .displays: return "Selected displays"
+        case .followDisplay: return "The display in use, following the pointer and the focus"
         }
     }
 
@@ -105,6 +115,7 @@ public enum RecordingTarget: Hashable, Sendable {
         case .display: return "display"
         case .area: return "rectangle.dashed"
         case .displays: return "display.2"
+        case .followDisplay: return "rectangle.2.swap"
         }
     }
 
@@ -113,7 +124,7 @@ public enum RecordingTarget: Hashable, Sendable {
         switch self {
         case let .window(_, _, _, pid): return pid
         case let .app(app, _): return Int32(app)
-        case .display, .area, .displays: return nil
+        case .display, .area, .displays, .followDisplay: return nil
         }
     }
 
@@ -133,11 +144,14 @@ public enum RecordingTarget: Hashable, Sendable {
 }
 
 extension RecordingTarget: Codable {
-    private enum Keys: String, CodingKey { case kind, windowIds, app, title, pid, name, screenIndex, rect, indices, displayID }
+    private enum Keys: String, CodingKey {
+        case kind, windowIds, app, title, pid, name, screenIndex, rect, indices, displayID, follow
+    }
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: Keys.self)
-        try container.encode(kind, forKey: .kind)
+        // A following display travels as a display with `follow`, the shape both engines read; its index is unused.
+        try container.encode(self == .followDisplay ? .display : kind, forKey: .kind)
         switch self {
         case let .window(ids, app, title, pid):
             try container.encode(ids, forKey: .windowIds)
@@ -157,11 +171,15 @@ extension RecordingTarget: Codable {
                                                        width: rect.size.width, height: rect.size.height), forKey: .rect)
         case let .displays(indices):
             try container.encode(indices, forKey: .indices)
+        case .followDisplay:
+            try container.encode(0, forKey: .screenIndex)
+            try container.encode(true, forKey: .follow)
         }
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: Keys.self)
+        let follows = try container.decodeIfPresent(Bool.self, forKey: .follow) == true
         switch try container.decode(RecordingTargetKind.self, forKey: .kind) {
         case .window:
             self = .window(
@@ -172,6 +190,8 @@ extension RecordingTarget: Codable {
         case .app:
             self = .app(app: try container.decode(String.self, forKey: .app),
                         name: try container.decodeIfPresent(String.self, forKey: .name))
+        case .display where follows, .follow:
+            self = .followDisplay
         case .display:
             self = .display(index: try container.decode(Int.self, forKey: .screenIndex),
                             name: try container.decodeIfPresent(String.self, forKey: .name))
@@ -251,6 +271,16 @@ public struct RecordingDisplay: Decodable, Identifiable, Hashable, Sendable {
     }
 
     public var target: RecordingTarget { .display(index: index, name: name) }
+
+    /// The connected display with this CoreGraphics id, under the name a recorder gave it; nil once it is gone.
+    @MainActor public static func connected(displayID: UInt32, name: String,
+                                            screens: [NSScreen] = NSScreen.screens) -> RecordingDisplay? {
+        guard let index = screens.firstIndex(where: {
+            ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == displayID
+        }) else { return nil }
+        let frame = screens[index].frame
+        return RecordingDisplay(index: index, name: name, isPrimary: index == 0, width: frame.width, height: frame.height)
+    }
 }
 
 /// Everything a picker offers.
@@ -304,4 +334,11 @@ struct RecordingSessionLine: Decodable {
     let message: String?
     let code: String?
     let fatal: Bool?
+    /// The display a following take records now (`display` on a state event).
+    let display: Display?
+
+    struct Display: Decodable {
+        let id: Double
+        let name: String
+    }
 }

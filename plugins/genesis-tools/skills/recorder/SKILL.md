@@ -95,8 +95,14 @@ Use the display IDs from `r.displays.list()` in place of 37. Use an input ID fro
 The service forwards `switchTarget` as `target.switch`. It forwards `restart` as `restart` through `recording.call`.
 
 For setup, use `movies.record({ display: 0, audio: ["mic"], camera: true })` or
-`tools recorder start --display 0 --audio mic --camera`. Use `recorder.start({ displays: "all" })` or
-`tools recorder start --frames --displays all` for several displays.
+`tools recorder start --display 0 --audio mic --camera`. A window or app takes the same sound:
+`movies.record({ window: [WINDOW_ID], audio: ["system", "mic"], systemAudioScope: "app" })` or
+`tools recorder start --window WINDOW_ID --audio system,mic --system-audio-scope app` keeps only that app's sound in
+the system track (the default `all` keeps everything the Mac plays). Use `recorder.start({ displays: "all" })` or
+`tools recorder start --frames --displays all` for several displays. `--display follow` (REPL `movies.record({ display:
+"follow" })`, the bar's "Follow display") records the display in use and follows the pointer and the focus to another
+one after half a second; it is also what a start with no target does. The pickers never offer an overlay (a dimmer
+over a whole display) as a window.
 Countdown and threshold use `countdown` and `threshold` in `movies.record()` or `--countdown` and `--threshold` at start.
 To keep the system cursor, use `systemCursor: true` or `--system-cursor`.
 The movie preset is `movieQuality: "high"` or `--movie-quality high`: `standard` (the default) is the native size,
@@ -150,6 +156,27 @@ Use the path to your image for `logo.png`. Replace `l12345678` with its ID from 
 
 To hide the camera, use `layer {id: "camera", hidden: true}`.
 The editor refuses to delete the camera. Set `hidden` to `false` to show it again.
+
+## Several displays
+
+A frames recording of two or more displays keeps each display's frames apart. Its proxy movie shows one display per
+segment. The editor draws one row per display above the frames: a card where the movie shows that display, a faint slot
+where another display shows. Click a slot to show that display there. Drag a switch line to move the switch.
+Right-click a row to hide the display from a segment, or to show it in the selected range or from the playhead.
+
+Read the segments back with `await m.displays()` or `tools recorder displays <recording> --json`. The answer lists
+each display, each segment and the switch times, in source seconds. Each change below makes the movie again as one
+undo step. `await m.undoDisplaySwitch()` and `tools recorder proxy <recording> --undo-switch` take it back.
+
+| Operation | JSON for the CLI | Movie handle |
+|---|---|---|
+| Show display 2 from 0:10 to 0:20 | `{"op":"switchDisplay","display":2,"from":10,"to":20}` | `await m.switchDisplay({ display: 2, from: 10, to: 20 })` |
+| Hide display 2 from 0:12 to 0:16 | `{"op":"hideDisplay","display":2,"from":12,"to":16}` | `await m.hideDisplay(2, 12, 16)` |
+| Hide display 2 everywhere | `{"op":"hideDisplay","display":2}` | `await m.hideDisplay(2)` |
+| Move the switch at 0:20 to 0:22.5 | `{"op":"moveDisplaySwitch","at":20,"to":22.5}` | `await m.moveDisplaySwitch(20, 22.5)` |
+
+`tools recorder apply` runs these ops before the edit ops of the same call. A movie or a video recording has no
+displays to change, and the refusal says so. A follow-display movie keeps no record of its switches yet.
 
 ## Demo mode (one call, a finished demo)
 

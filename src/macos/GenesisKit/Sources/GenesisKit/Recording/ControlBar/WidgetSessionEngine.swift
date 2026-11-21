@@ -6,15 +6,14 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
     /// A change to active FPS, idle FPS or the motion threshold starts a new segment, or waits for Resume when paused.
     public var capabilities: RecordingCapabilities { Self.movieCapabilities }
     public static let movieCapabilities = RecordingCapabilities(
-        targets: [.window, .app, .display, .area], liveTargetSwitch: true, liveFrameRate: true,
-        maxDurationMs: RecordingSessionController.maximumDurationMs, sources: [], fixedMovieQuality: .standard, reasonUnavailable: [
-            "no.microphone": "Widget recordings are silent video. Record sound with the full recorder (⌘7).",
-            "no.systemAudio": "Widget recordings are silent video. Record sound with the full recorder (⌘7).",
+        targets: [.window, .app, .display, .area, .follow], liveTargetSwitch: true, liveFrameRate: true,
+        maxDurationMs: RecordingSessionController.maximumDurationMs, sources: [.microphone, .systemAudio],
+        fixedMovieQuality: .standard, reasonUnavailable: [
             "no.camera": "Add a camera with the full recorder (⌘7).",
             "displays": "Record several displays with the full recorder (⌘7).",
-            "microphone": "Widget recordings have no microphone track to mute.",
-            "microphoneDevice": "Widget recordings have no microphone input. Choose one in the full recorder (⌘7).",
-            "systemAudio": "Widget recordings have no system audio track to mute.",
+            "microphone": "The widget keeps the sound chosen at start.",
+            "microphoneDevice": "The widget keeps the microphone chosen at start.",
+            "systemAudio": "The widget keeps the sound chosen at start.",
             "camera": "Add a camera with the full recorder (⌘7).",
             "quality": "The widget records at the target’s native size.",
             "drawsCursor": "The widget uses the capture session’s cursor setting.",
@@ -24,6 +23,7 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
     private let output: AsyncStream<RecordingEngineEvent>.Continuation
     private let makeController: @MainActor () -> RecordingSessionController
     private let showsBorder: @MainActor () -> Bool
+    private let systemScope: @MainActor () -> SystemAudioScope
     private let keepsOverlays: @MainActor () -> Bool
     private let finishTimeout: Duration
     private var controller: RecordingSessionController?
@@ -46,9 +46,11 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
     }
 
     init(makeController: @escaping @MainActor () -> RecordingSessionController, showsBorder: @escaping @MainActor () -> Bool,
+         systemScope: @escaping @MainActor () -> SystemAudioScope = { SystemAudioScope.load() },
          keepsOverlays: @escaping @MainActor () -> Bool = { false }, finishTimeout: Duration = .seconds(240)) {
         self.makeController = makeController
         self.showsBorder = showsBorder
+        self.systemScope = systemScope
         self.keepsOverlays = keepsOverlays
         self.finishTimeout = finishTimeout
         (events, output) = AsyncStream.makeStream(of: RecordingEngineEvent.self)
@@ -89,7 +91,8 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
         }
         do {
             try session.start(target: target, excludeWindowIDs: excludeWindowIDs, frameRate: setup.frameRate,
-                              showsBorder: showsBorder(), stillFrameRate: setup.stillFrameRate, keepsOverlays: keepsOverlays())
+                              showsBorder: showsBorder(), stillFrameRate: setup.stillFrameRate,
+                              sound: RecordingSessionSound(setup, systemScope: systemScope()), keepsOverlays: keepsOverlays())
         } catch {
             controller = nil
             take = nil
@@ -141,7 +144,13 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
     }
 
     public func audioDevices() async throws -> (inputs: [RecordingAudioDevice], outputs: [RecordingAudioDevice]) {
-        ([], [])
+        await Task.detached {
+            let uid = AudioDevices.systemDefaultInput()?.uid
+            let inputs = AudioDevices.inputs().map { RecordingAudioDevice(id: $0.uid, name: $0.name, isDefault: $0.uid == uid) }
+            let defaultOutput = AudioOutputs.systemDefaultID()
+            let outputs = AudioOutputs.outputs().map { RecordingAudioDevice(id: $0.uid, name: $0.name, isDefault: $0.id == defaultOutput) }
+            return (inputs, outputs)
+        }.value
     }
 
     private func reserveTake() -> String {
@@ -216,6 +225,9 @@ public final class WidgetSessionEngine: RecordingEngineAdapter {
             default: break
             }
             if let ms = event.elapsedMs { emit(.elapsed(milliseconds: ms)) }
+            if event.target == .followDisplay, let display = event.display, let id = UInt32(exactly: display.id) {
+                emit(.liveDisplay(RecordingDisplay.connected(displayID: id, name: display.name)))
+            }
         case "elapsed":
             if let ms = event.elapsedMs { emit(.elapsed(milliseconds: ms)) }
         case "preparing":

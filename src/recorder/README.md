@@ -56,8 +56,10 @@ Target flags of `start` (one at most):
 | `--app <name>` | this app's windows (name, bundle id or pid) |
 | `--region <x,y,w,h>` | an area, in global screen points from the top-left corner (CoreGraphics) |
 
-A display that is not connected, or an area off every display, is refused, naming the displays. A window or app
-movie has no audio: `--audio` needs `--display` or `--region`. Every target keeps cursor positions and clicks,
+A display that is not connected, or an area off every display, is refused, naming the displays. Every target
+records sound with `--audio`. A window or app movie's system track keeps everything the Mac plays, as a display
+movie does; `--system-audio-scope app` keeps only the recorded app's sound (ScreenCaptureKit filters sound per app,
+never per window). Every target keeps cursor positions and clicks,
 including a recording with the cursor hidden. Window clicks outside the selected windows are excluded. Shortcuts
 are kept unless `--no-shortcuts` is set. An area is recorded in ax-tool's region mode.
 
@@ -67,6 +69,7 @@ Movie flags of `start`:
 |---|---|---|
 | `--audio <sources>` | none | `system`, `mic` or `system,mic`, one track per source |
 | `--mic-device <uid>` | needs `--audio mic` | the microphone, an id from `ax-tool audio-devices` |
+| `--system-audio-scope [scope]` | `all`; needs `--audio system` | a window or app movie's system sound: `all` (everything the Mac plays) or `app` (only the recorded app); a display or area keeps everything |
 | `--fps <n>` | 60, 1 to 120 | frames per second while something moves |
 | `--idle-fps <n>` | keeps `--fps`, 0.1 to 5 | frames per second while nothing moves |
 | `--threshold <percent>` | 0.5, 0 to 100 | how much of the picture must change to leave the idle rate |
@@ -269,6 +272,7 @@ tools recorder finish <recording> <movie> [--from T --to T]  # subtitles and cha
 tools recorder proxy <recording> [--display most-change|ID] [--window 10] [--switch FROM-TO=ID]... [--keep-plan]
 tools recorder proxy <recording> --plan <file>   # the proxy with exactly that display plan (a copy of a proxy.json)
 tools recorder proxy <recording> --undo-switch   # take the last display switch back (--redo-switch makes it again)
+tools recorder displays <recording> [--json]     # each display, the segments and the switch points (source seconds)
 ```
 
 `export --size` takes `1920x1080`, `1920x` (width) or `x1080` (height). Progress prints on stderr every 10 %; stdout
@@ -285,6 +289,13 @@ editor's ⌘Z and the REPL's `undoDisplaySwitch()` take back the same one. A mee
 captions with the speakers' names. The picture holds every display that has frames (bars round a smaller one), so a
 switch never moves an edit's hidden parts; an edit made on an older proxy is moved onto the new picture once (one undo
 step, `fitToProxy`). `edit` makes the proxy by itself for a frames-only recording.
+
+`displays` reads the plan back: every display with frames, the segments from start to end and the switch times. The
+editor draws one row per display from the same plan, with the switch points as lines. Three ops of `apply` change it,
+each call one undo step: `switchDisplay` (`{display, from, to}`), `hideDisplay` (`{display, from?, to?}`: the display
+next to each of its segments shows instead) and `moveDisplaySwitch` (`{at, to}`). The REPL's `m.displays()`,
+`m.switchDisplay()`, `m.hideDisplay()` and `m.moveDisplaySwitch()` call the same code
+(`src/recorder/lib/display-ops.ts`).
 
 ### Windows and the service
 
@@ -467,8 +478,9 @@ A new rate or threshold applies to the next segment. A running movie ends its se
 A paused movie applies it when it resumes. The full recorder's bar changes Change needed with the same call.
 The widget's bar has no Change needed control.
 
-Select the sources before you start. A full recorder window or app movie has no audio track.
-Choose **Select an Area** or a display for a movie with sound. The movie engine keeps its start-time audio settings.
+Select the sources before you start. Every target records the sources you choose, each as its own track: a
+display, an area, a window and an app alike. Settings → Recorder → What the movie keeps → "System audio of a window
+or app" picks whose sound a window or app movie keeps. The movie engine keeps its start-time audio settings.
 A frames take can mute a source or switch the microphone when it has the track and the live command.
 The widget records silent video. Its bar disables the camera and Add marker.
 The camera starts with a movie. The bar disables Change needed when both frame rates are equal.

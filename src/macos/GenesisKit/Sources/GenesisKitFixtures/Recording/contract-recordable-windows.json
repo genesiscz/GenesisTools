@@ -1,0 +1,124 @@
+{
+    "about": "Which on-screen windows a recording picker offers. GenesisKit RecordableWindow.reason and src/utils/screen-recorder/recordable-window.ts unrecordableReason both pass every case. Bounds are global CoreGraphics points; reason null means the window is offered.",
+    "displays": [
+        { "x": 0, "y": 0, "width": 2056, "height": 1329 },
+        { "x": 1072, "y": -1440, "width": 3440, "height": 1440 }
+    ],
+    "cases": [
+        {
+            "name": "a document window of a Dock app",
+            "window": { "app": "Editor", "title": "Notes", "bounds": { "x": 204, "y": 177, "width": 1077, "height": 1116 }, "layer": 0, "alpha": 1, "sharingState": 1, "ownerKind": "regular" },
+            "reason": null
+        },
+        {
+            "name": "a dimmer laid over the main display (HazeOver)",
+            "window": { "app": "HazeOver", "title": "", "bounds": { "x": 0, "y": 0, "width": 2056, "height": 1329 }, "layer": 0, "alpha": 0.6287922263145447, "sharingState": 1, "ownerKind": "accessory" },
+            "reason": "overlay"
+        },
+        {
+            "name": "the same dimmer over the second display",
+            "window": { "app": "HazeOver", "bounds": { "x": 1072, "y": -1440, "width": 3440, "height": 1440 }, "layer": 0, "alpha": 0.627711296081543, "sharingState": 1, "ownerKind": "accessory" },
+            "reason": "overlay"
+        },
+        {
+            "name": "a dimmer row from an older lister without owner facts is still caught by its alpha",
+            "window": { "app": "HazeOver", "bounds": { "x": 0, "y": 0, "width": 2056, "height": 1329 }, "alpha": 0.63 },
+            "reason": "overlay"
+        },
+        {
+            "name": "an opaque untitled layer of a menu bar app over a whole display (an annotation layer)",
+            "window": { "app": "Pointer Studio", "title": "", "bounds": { "x": 0, "y": 0, "width": 2056, "height": 1329 }, "layer": 0, "alpha": 1, "sharingState": 1, "ownerKind": "accessory" },
+            "reason": "overlay"
+        },
+        {
+            "name": "the dimmer app's own settings window",
+            "window": { "app": "HazeOver", "title": "HazeOver Settings", "bounds": { "x": 3634, "y": -755, "width": 632, "height": 412 }, "layer": 0, "alpha": 1, "sharingState": 1, "ownerKind": "accessory" },
+            "reason": null
+        },
+        {
+            "name": "an untitled window of a menu bar app that leaves the display visible",
+            "window": { "app": "Helper", "title": "", "bounds": { "x": 2362, "y": -1229, "width": 860, "height": 688 }, "layer": 0, "alpha": 1, "sharingState": 1, "ownerKind": "accessory" },
+            "reason": null
+        },
+        {
+            "name": "a menu bar extra",
+            "window": { "app": "Clock Bar", "title": "Item-0", "bounds": { "x": 1800, "y": 0, "width": 80, "height": 39 }, "layer": 25, "alpha": 1, "sharingState": 1, "ownerKind": "accessory" },
+            "reason": "level"
+        },
+        {
+            "name": "a floating palette",
+            "window": { "app": "Editor", "title": "Colors", "bounds": { "x": 900, "y": 300, "width": 260, "height": 340 }, "layer": 3, "alpha": 1, "sharingState": 1, "ownerKind": "regular" },
+            "reason": "level"
+        },
+        {
+            "name": "a sheet attached to a document window",
+            "window": { "app": "Editor", "title": "", "bounds": { "x": 502, "y": 205, "width": 480, "height": 300 }, "layer": 0, "alpha": 1, "sharingState": 1, "ownerKind": "regular" },
+            "reason": null
+        },
+        {
+            "name": "a zoomed window under the menu bar",
+            "window": { "app": "Browser", "title": "Docs", "bounds": { "x": 0, "y": 39, "width": 2056, "height": 1290 }, "layer": 0, "alpha": 1, "sharingState": 1, "ownerKind": "regular" },
+            "reason": null
+        },
+        {
+            "name": "a Dock app in native full screen",
+            "window": { "app": "Browser", "title": "Docs", "bounds": { "x": 0, "y": 0, "width": 2056, "height": 1329 }, "layer": 0, "alpha": 1, "sharingState": 1, "ownerKind": "regular" },
+            "reason": null
+        },
+        {
+            "name": "an untitled Dock app window over a whole display (a full screen player)",
+            "window": { "app": "Player", "title": "", "bounds": { "x": 1072, "y": -1440, "width": 3440, "height": 1440 }, "layer": 0, "alpha": 1, "sharingState": 1, "ownerKind": "regular" },
+            "reason": null
+        },
+        {
+            "name": "a see-through Dock app window over a whole display",
+            "window": { "app": "Tinter", "title": "Tint", "bounds": { "x": 0, "y": 0, "width": 2056, "height": 1329 }, "layer": 0, "alpha": 0.9, "sharingState": 1, "ownerKind": "regular" },
+            "reason": "overlay"
+        },
+        {
+            "name": "a see-through window that leaves the display visible",
+            "window": { "app": "Terminal", "title": "shell", "bounds": { "x": 86, "y": 88, "width": 951, "height": 673 }, "layer": 0, "alpha": 0.85, "sharingState": 1, "ownerKind": "regular" },
+            "reason": null
+        },
+        {
+            "name": "a fully transparent helper",
+            "window": { "app": "HazeOver", "bounds": { "x": 100, "y": 1227, "width": 200, "height": 200 }, "layer": 0, "alpha": 0, "sharingState": 0, "ownerKind": "accessory" },
+            "reason": "invisible"
+        },
+        {
+            "name": "a window screen capture cannot read (the recorder's own panel)",
+            "window": { "app": "GenesisTools", "title": "Choose what to record", "bounds": { "x": 800, "y": 400, "width": 380, "height": 420 }, "layer": 0, "alpha": 1, "sharingState": 0, "ownerKind": "accessory" },
+            "reason": "not-shareable"
+        },
+        {
+            "name": "a strip of a menu bar app",
+            "window": { "app": "Rail", "title": "Widgets", "bounds": { "x": 4468, "y": -611, "width": 44, "height": 202 }, "layer": 0, "alpha": 1, "sharingState": 1, "ownerKind": "accessory" },
+            "reason": "tiny"
+        },
+        {
+            "name": "the Dock",
+            "window": { "app": "Dock", "title": "Dock", "bounds": { "x": 0, "y": 1250, "width": 2056, "height": 79 }, "layer": 0, "alpha": 1, "sharingState": 1, "ownerKind": "regular" },
+            "reason": "system"
+        },
+        {
+            "name": "a window with no owner name",
+            "window": { "app": "", "bounds": { "x": 10, "y": 10, "width": 600, "height": 400 } },
+            "reason": "system"
+        },
+        {
+            "name": "a window no app owns",
+            "window": { "app": "Server", "title": "", "bounds": { "x": 10, "y": 10, "width": 600, "height": 400 }, "layer": 0, "alpha": 1, "sharingState": 1, "ownerKind": "none" },
+            "reason": "no-app"
+        },
+        {
+            "name": "a background-only process's window",
+            "window": { "app": "agentd", "title": "", "bounds": { "x": 10, "y": 10, "width": 600, "height": 400 }, "layer": 0, "alpha": 1, "sharingState": 1, "ownerKind": "background" },
+            "reason": "no-app"
+        },
+        {
+            "name": "a row from an older lister without facts",
+            "window": { "app": "Editor", "title": "Notes", "bounds": { "x": 0, "y": 0, "width": 580, "height": 420 } },
+            "reason": null
+        }
+    ]
+}

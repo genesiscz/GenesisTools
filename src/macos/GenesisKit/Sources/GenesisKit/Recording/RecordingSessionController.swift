@@ -14,6 +14,40 @@ extension ToolsLineStream: RecordingCommandChannel {
     public func send(_ line: String) throws { try sendInput(line) }
 }
 
+/// The sound a session records, each source its own movie track, for every target. A nil microphone is the system's
+/// default input.
+public struct RecordingSessionSound: Equatable, Sendable {
+    public var microphone: Bool
+    public var systemAudio: Bool
+    public var microphoneID: String?
+    public var systemScope: SystemAudioScope
+
+    public static let none = RecordingSessionSound(microphone: false, systemAudio: false)
+
+    public init(microphone: Bool, systemAudio: Bool, microphoneID: String? = nil, systemScope: SystemAudioScope = .all) {
+        self.microphone = microphone
+        self.systemAudio = systemAudio
+        self.microphoneID = microphoneID
+        self.systemScope = systemScope
+    }
+
+    /// The sources a take's setup records: on and not muted at the start.
+    public init(_ setup: RecordingSetup, systemScope: SystemAudioScope) {
+        self.init(microphone: setup.microphone.enabled && !setup.microphone.muted,
+                  systemAudio: setup.systemAudio.enabled && !setup.systemAudio.muted,
+                  microphoneID: setup.microphone.deviceID, systemScope: systemScope)
+    }
+
+    /// `--audio system,mic [--mic-device <uid>] [--system-audio-scope app]`, system first as the tracks are.
+    func arguments(target: RecordingTarget) -> [String] {
+        let sources = (systemAudio ? ["system"] : []) + (microphone ? ["mic"] : [])
+        guard !sources.isEmpty else { return [] }
+        var args = ["--audio", sources.joined(separator: ",")]
+        if microphone, let microphoneID { args += ["--mic-device", microphoneID] }
+        return args + systemScope.arguments(target: target, recordsSystemAudio: systemAudio)
+    }
+}
+
 /// Drives one recording session through `tools control capture session --json --stop-on-stdin` and publishes what it
 /// reports. It knows nothing about who records or what happens to the movie: the host gets `onDone` with the movie,
 /// `onDiscarded`, or `onFailed`.
@@ -69,7 +103,8 @@ public final class RecordingSessionController: ObservableObject {
 
     /// The arguments after `tools control`.
     private func arguments(target: RecordingTarget, excludeWindowIDs: [Int], frameRate: Int,
-                           stillFrameRate: Double, showsBorder: Bool, keepsOverlays: Bool) throws -> [String] {
+                           stillFrameRate: Double, showsBorder: Bool, sound: RecordingSessionSound,
+                           keepsOverlays: Bool) throws -> [String] {
         let data = try JSONSerialization.data(withJSONObject: sessionTarget(target), options: [.sortedKeys])
         let json = String(decoding: data, as: UTF8.self)
         var args = ["capture", "session", "--json", "--stop-on-stdin", "--target", json, "--fps", String(frameRate)]
@@ -80,6 +115,7 @@ public final class RecordingSessionController: ObservableObject {
             args += ["--exclude-window-ids", excludeWindowIDs.map(String.init).joined(separator: ",")]
         }
         if !showsBorder { args.append("--no-indicator") }
+        args += sound.arguments(target: target)
         if keepsOverlays { args.append("--keep-overlays") }
         return args
     }
@@ -87,10 +123,11 @@ public final class RecordingSessionController: ObservableObject {
     /// Starts recording `target`. `excludeWindowIDs` are windows the movie never shows (the controls panel).
     /// `keepsOverlays` keeps dimming overlays (HazeOver) in the movie, which the recorder leaves out by default.
     public func start(target: RecordingTarget, excludeWindowIDs: [Int], frameRate: Int, showsBorder: Bool,
-                      stillFrameRate: Double = 0, keepsOverlays: Bool = false) throws {
+                      stillFrameRate: Double = 0, sound: RecordingSessionSound = .none, keepsOverlays: Bool = false) throws {
         guard channel == nil, !ended else { return }
         let args = try arguments(target: target, excludeWindowIDs: excludeWindowIDs, frameRate: frameRate,
-                                 stillFrameRate: stillFrameRate, showsBorder: showsBorder, keepsOverlays: keepsOverlays)
+                                 stillFrameRate: stillFrameRate, showsBorder: showsBorder, sound: sound,
+                                 keepsOverlays: keepsOverlays)
         self.target = target
         phase = .starting
         let lines: @MainActor ([String]) -> Void = { [weak self] in self?.receive($0) }
