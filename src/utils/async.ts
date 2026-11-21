@@ -239,3 +239,34 @@ export async function concurrentMap<T, R>({
 
     return result;
 }
+
+// ============= Ordered Pool =============
+
+/**
+ * Runs `task` over the items with at most `jobs` at once; each worker takes the next item when it finishes one, and the
+ * results keep the item order. On abort the workers take no new item; the results of the items they finished come back.
+ */
+export async function mapPool<T, R>({
+    items,
+    jobs,
+    signal,
+    task,
+}: {
+    items: T[];
+    jobs: number;
+    signal?: AbortSignal;
+    task: (item: T, index: number) => Promise<R>;
+}): Promise<R[]> {
+    const results: R[] = new Array(items.length);
+    let next = 0;
+
+    async function worker(): Promise<void> {
+        while (next < items.length && !signal?.aborted) {
+            const index = next++;
+            results[index] = await task(items[index], index);
+        }
+    }
+
+    await Promise.all(Array.from({ length: Math.max(1, Math.min(jobs, items.length)) }, worker));
+    return results.filter((result) => result !== undefined);
+}

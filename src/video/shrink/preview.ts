@@ -1,5 +1,6 @@
 import { mkdirSync, statSync } from "node:fs";
 import { extname, join } from "node:path";
+import { formatTimecode } from "@genesiscz/utils/format";
 import { logger } from "@genesiscz/utils/logger";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { type MediaFacts, primaryVideo } from "@genesiscz/utils/video/media-facts";
@@ -515,11 +516,5 @@ export function missesTarget(plan: ShrinkPlan, preview: PresetPreview): boolean 
 }
 
 export function formatClock(seconds: number): string {
-    const whole = Math.max(0, Math.floor(seconds));
-    const h = Math.floor(whole / 3600);
-    const m = Math.floor((whole % 3600) / 60);
-    const s = whole % 60;
-    const mm = String(m).padStart(2, "0");
-    const ss = String(s).padStart(2, "0");
-    return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`;
+    return formatTimecode(seconds, { hours: "auto" });
 }
