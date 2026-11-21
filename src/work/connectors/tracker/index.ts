@@ -5,10 +5,11 @@
  * parent; a link becomes a task link.
  */
 // lint-rules-ignore: the MCP kit lives in the scripts tool; a connector is tool code that calls an MCP server
+import { createHash } from "node:crypto";
 import { data, isError, text, withKit } from "@app/scripts/lib/kit";
 import type { Connector, PushIntent, PushResult, RemoteItem } from "@genesiscz/utils/work/connectors/types";
-import type { Item } from "@genesiscz/utils/work/model/item";
-import type { ItemState, ItemType, LinkKind } from "@genesiscz/utils/work/model/vocab";
+import type { Item, ItemFields } from "@genesiscz/utils/work/model/item";
+import { ITEM_TYPES, type ItemState, type ItemType, type LinkKind } from "@genesiscz/utils/work/model/vocab";
 import { z } from "zod";
 
 export const trackerSettings = z.object({
@@ -20,6 +21,13 @@ export const trackerSettings = z.object({
     workspace: z.string().optional(),
     /** The longest title the tracker takes; a longer one is cut there, and the full title opens the body. */
     titleLimit: z.number().int().positive().optional(),
+    /** The outside type of each local type; a type left out takes the default of DEFAULT_TYPES. */
+    types: z.partialRecord(z.enum(ITEM_TYPES), z.string().min(1)).optional(),
+    /**
+     * The label that keeps the local type on a task whose outside type is another (`{type}` is the local type), so a
+     * pull gives the local type back. An empty string sends no label.
+     */
+    typeLabel: z.string().optional(),
 });
 
 /** The title limit of the tracker this connector was first written for. */
@@ -45,14 +53,107 @@ const STATE_OF: Record<string, ItemState> = {
     cancelled: "dropped",
 };
 
-const OUTSIDE_TYPES = new Set(["task", "bug", "epic", "todo", "story"]);
+/** The outside type of each local type in the tracker this connector was first written for. */
+const DEFAULT_TYPES: Record<ItemType, string> = {
+    epic: "epic",
+    handoff: "task",
+    feature: "story",
+    bug: "bug",
+    incident: "bug",
+    task: "task",
+    test: "qa",
+    cleanup: "task",
+    check: "qa",
+    idea: "task",
+    risk: "watch",
+    limit: "task",
+    todo: "todo",
+};
 
-function outsideType(type: ItemType): string {
-    return OUTSIDE_TYPES.has(type) ? type : "task";
+const DEFAULT_TYPE_LABEL = "type:{type}";
+
+export function outsideType(type: ItemType, settings: TrackerSettings): string {
+    return settings.types?.[type] ?? DEFAULT_TYPES[type];
 }
 
-function localType(type: unknown): ItemType | undefined {
-    return type === "bug" || type === "epic" || type === "task" || type === "todo" ? type : undefined;
+function typeLabelOf(type: ItemType, settings: TrackerSettings): string | undefined {
+    const template = settings.typeLabel ?? DEFAULT_TYPE_LABEL;
+    return template === "" ? undefined : template.replaceAll("{type}", type);
+}
+
+/** The type labels a push adds and removes: the local type's label when the outside type differs, no other. */
+export function typeLabels(type: ItemType, settings: TrackerSettings): { add: string[]; remove: string[] } {
+    const wanted = outsideType(type, settings) !== type ? typeLabelOf(type, settings) : undefined;
+    const remove = ITEM_TYPES.map((other) => typeLabelOf(other, settings)).filter(
+        (label): label is string => label !== undefined && label !== wanted
+    );
+    return { add: wanted !== undefined ? [wanted] : [], remove };
+}
+
+/**
+ * The local type of an outside task: the type label when it still fits the outside type, else the one local type
+ * that maps to it (the type of the same name first). An outside type no local type maps to gives nothing.
+ */
+export function localTypeOf(
+    remote: unknown,
+    labels: readonly string[],
+    settings: TrackerSettings
+): ItemType | undefined {
+    if (typeof remote !== "string") {
+        return undefined;
+    }
+
+    const labelled = ITEM_TYPES.find(
+        (type) => labels.includes(typeLabelOf(type, settings) ?? "") && outsideType(type, settings) === remote
+    );
+
+    if (labelled !== undefined) {
+        return labelled;
+    }
+
+    const candidates = ITEM_TYPES.filter((type) => outsideType(type, settings) === remote);
+    const same = candidates.find((type) => type === remote);
+    return same ?? (candidates.length === 1 ? candidates[0] : undefined);
+}
+
+/** The fields a body is made of, in the order a reader wants them. */
+const BODY_FIELDS: readonly { field: keyof ItemFields; label: string }[] = [
+    { field: "where", label: "Where" },
+    { field: "why", label: "Why" },
+    { field: "userSees", label: "What a user sees" },
+    { field: "cost", label: "Cost" },
+    { field: "measured", label: "Measured" },
+];
+
+const RENDER_MARK = /\n*<!-- tools work: from the item's fields, ([0-9a-f]{12}) -->\s*$/;
+
+function hashOf(textToHash: string): string {
+    return createHash("sha256").update(textToHash.trim()).digest("hex").slice(0, 12);
+}
+
+/** The body of an item that has none: its fields, one paragraph each. Nothing when no field is filled. */
+function fieldsText(item: Item): string | undefined {
+    const paragraphs = BODY_FIELDS.flatMap(({ field, label }) => {
+        const value = item.fields[field];
+        return typeof value === "string" && value.trim() !== "" ? [`**${label}:** ${value.trim()}`] : [];
+    });
+    return paragraphs.length > 0 ? paragraphs.join("\n\n") : undefined;
+}
+
+/** A body made from the fields, closed by a mark with the hash of the text, so a later push knows it is untouched. */
+function markRender(body: string): string {
+    return `${body}\n\n<!-- tools work: from the item's fields, ${hashOf(body)} -->`;
+}
+
+/** An update leaves the outside body alone when it already is this render, or someone wrote it by hand. */
+export function keepsOutsideBody(render: string, theirs: string): boolean {
+    return theirs === render || (theirs !== "" && !isUntouchedRender(theirs));
+}
+
+/** True for a body this connector rendered from the fields and nobody has edited since. */
+export function isUntouchedRender(body: string): boolean {
+    const mark = RENDER_MARK.exec(body);
+    return mark !== null && hashOf(body.slice(0, mark.index)) === mark[1];
 }
 
 /** The answer of a door: its JSON, or an error with the server's own text. */
@@ -80,24 +181,41 @@ function scoped(settings: TrackerSettings, args: Record<string, unknown>): Recor
     return settings.workspace !== undefined ? { ...args, workspace: settings.workspace } : args;
 }
 
+/** The task of a door's answer: under `task`, or the answer itself. */
+function taskOf(reply: Record<string, unknown>): Record<string, unknown> {
+    const task = reply.task;
+    return task !== null && typeof task === "object" && !Array.isArray(task)
+        ? (task as Record<string, unknown>)
+        : reply;
+}
+
+function bodyOf(task: Record<string, unknown>): string {
+    return typeof task.body === "string" ? task.body : "";
+}
+
 /** A numeric key is sent as a number, as the task doors expect; any other key as it is. */
 function taskId(key: string): number | string {
     return /^\d+$/.test(key) ? Number(key) : key;
 }
 
-/** The title as the tracker takes it, and the body that carries the full title when it had to be cut. */
+/**
+ * The title as the tracker takes it, and the body: the item's own, or its fields when it has none (marked as a
+ * render). A title over the limit is cut, and the full title opens the body.
+ */
 function titleAndBody(item: Item, limit: number): { title: string; body?: string } {
     const chars = Array.from(item.title);
-    const body = item.body !== null && item.body !== undefined ? item.body : undefined;
+    const own = item.body !== null && item.body !== undefined && item.body !== "" ? item.body : undefined;
+    const rendered = own === undefined ? fieldsText(item) : undefined;
+    const cut = chars.length > limit;
+    const title = cut ? `${chars.slice(0, limit - 1).join("")}…` : item.title;
+    const text = own ?? rendered;
+    const full = cut ? (text !== undefined ? `${item.title}\n\n${text}` : item.title) : text;
 
-    if (chars.length <= limit) {
-        return body !== undefined ? { title: item.title, body } : { title: item.title };
+    if (full === undefined) {
+        return item.body === "" ? { title, body: "" } : { title };
     }
 
-    return {
-        title: `${chars.slice(0, limit - 1).join("")}…`,
-        body: body !== undefined && body !== "" ? `${item.title}\n\n${body}` : item.title,
-    };
+    return { title, body: rendered !== undefined ? markRender(full) : full };
 }
 
 /** What a push sends: the facts the local side owns. A task born outside keeps its own title, text and parent. */
@@ -107,7 +225,7 @@ export function patchOf(intent: PushIntent, bornHere: boolean, settings: Tracker
 
     if (bornHere) {
         Object.assign(patch, titleAndBody(item, settings.titleLimit ?? DEFAULT_TITLE_LIMIT));
-        patch.type = outsideType(item.type);
+        patch.type = outsideType(item.type, settings);
 
         if (intent.parentKey !== undefined) {
             patch.parentId = taskId(intent.parentKey);
@@ -202,6 +320,20 @@ export const trackerConnector: Connector<unknown> = {
 
                     try {
                         const bornHere = intent.pairing === null || intent.pairing.born === "local";
+                        const types = bornHere ? typeLabels(intent.item.type, settings) : { add: [], remove: [] };
+                        const labels = [...intent.labels, ...types.add];
+                        let outside: Record<string, unknown> | undefined;
+                        const outsideTask = async (): Promise<Record<string, unknown>> => {
+                            outside ??= answer(
+                                await kit.call(
+                                    settings.server,
+                                    "get",
+                                    scoped(settings, { kind: "task", id: taskId(key), include: ["links"] })
+                                ),
+                                "get"
+                            );
+                            return outside;
+                        };
 
                         if (key === "") {
                             const made = answer(
@@ -212,7 +344,7 @@ export const trackerConnector: Connector<unknown> = {
                                         kind: "task",
                                         project: settings.project,
                                         ...patchOf(intent, true, settings),
-                                        labels: intent.labels,
+                                        labels,
                                     })
                                 ),
                                 "create"
@@ -225,38 +357,43 @@ export const trackerConnector: Connector<unknown> = {
 
                             key = id;
                         } else {
+                            const patch = patchOf(intent, bornHere, settings);
+
+                            // A body rendered from the fields replaces only an empty outside body or an earlier
+                            // render nobody edited; a body written by hand outside stays.
+                            if (typeof patch.body === "string" && isUntouchedRender(patch.body)) {
+                                if (keepsOutsideBody(patch.body, bodyOf(taskOf(await outsideTask())))) {
+                                    delete patch.body;
+                                }
+                            }
+
                             answer(
                                 await kit.call(
                                     settings.server,
                                     "update",
-                                    scoped(settings, { kind: "task", id: key, ...patchOf(intent, bornHere, settings) })
+                                    scoped(settings, { kind: "task", id: key, ...patch })
                                 ),
                                 "update"
                             );
                         }
 
-                        if (intent.labels.length > 0) {
+                        if (labels.length > 0 || types.remove.length > 0) {
                             answer(
                                 await kit.call(
                                     settings.server,
                                     "label_task",
-                                    scoped(settings, { id: key, add: intent.labels })
+                                    scoped(settings, {
+                                        id: key,
+                                        add: labels,
+                                        ...(types.remove.length > 0 ? { remove: types.remove } : {}),
+                                    })
                                 ),
                                 "label_task"
                             );
                         }
 
                         if (bornHere && intent.links !== undefined && intent.links.length > 0) {
-                            const existing = linksOf(
-                                answer(
-                                    await kit.call(
-                                        settings.server,
-                                        "get",
-                                        scoped(settings, { kind: "task", id: taskId(key), include: ["links"] })
-                                    ),
-                                    "get links"
-                                )
-                            );
+                            const existing = linksOf(await outsideTask());
 
                             for (const link of intent.links) {
                                 const wanted = { ...RELATION_OF[link.kind], target: link.remoteKey };
@@ -310,10 +447,7 @@ export const trackerConnector: Connector<unknown> = {
                         await kit.call(settings.server, "get", scoped(settings, { kind: "task", id: key })),
                         `get ${key}`
                     );
-                    const task = (reply.task !== null && typeof reply.task === "object" ? reply.task : reply) as Record<
-                        string,
-                        unknown
-                    >;
+                    const task = taskOf(reply);
                     const status = typeof task.status === "string" ? task.status : undefined;
                     const labels = Array.isArray(task.labels)
                         ? task.labels.flatMap((label: unknown) => {
@@ -333,11 +467,13 @@ export const trackerConnector: Connector<unknown> = {
                               return [];
                           })
                         : undefined;
+                    const type = localTypeOf(task.type, labels ?? [], settings);
                     remotes.push({
                         remoteKey: key,
                         ...(typeof task.title === "string" ? { title: task.title } : {}),
-                        ...(typeof task.body === "string" ? { body: task.body } : {}),
-                        ...(localType(task.type) !== undefined ? { type: localType(task.type) } : {}),
+                        // An untouched render of the fields is the item's own body as this side sent it, not a change.
+                        ...(typeof task.body === "string" && !isUntouchedRender(task.body) ? { body: task.body } : {}),
+                        ...(type !== undefined ? { type } : {}),
                         ...(status !== undefined && Object.hasOwn(STATE_OF, status) ? { state: STATE_OF[status] } : {}),
                         ...(status !== undefined ? { status } : {}),
                         ...(labels !== undefined ? { labels } : {}),

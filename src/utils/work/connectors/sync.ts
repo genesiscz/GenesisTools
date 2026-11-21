@@ -64,13 +64,13 @@ const LEASE_MS = 120_000;
 const BATCH = 500;
 const RETRY_AFTER_MS = 30_000;
 
-/** Who may push by default (design C, the last row of the write rules). */
+/** Who may push by default: the edit row of the write rules, so the session that made an epic or a note pushes it. */
 function defaultPush(type: ItemType): readonly Role[] | "anyone" {
-    if (type === "epic" || levelOf(type) === "note") {
-        return ["lead", "owner"];
+    if (type === "epic" || type === "handoff" || levelOf(type) === "note") {
+        return ["poster", "lead", "owner"];
     }
 
-    return type === "handoff" ? ["poster", "lead", "owner"] : "anyone";
+    return "anyone";
 }
 
 const CONNECTOR_ACTOR = (id: string): Actor => ({
@@ -200,10 +200,17 @@ type PushMode =
 
 const HELD_NOTE = "a change needs a lead or the owner to release it";
 
-function pushActors(db: Database, id: ItemId, after: number): Actor[] {
+/**
+ * The actors whose changes a push carries. A move under another parent is a reference, which anyone may write by
+ * default, so it holds nothing unless the project set its own push rule (`withPlacements`).
+ */
+function pushActors(db: Database, id: ItemId, after: number, withPlacements: boolean): Actor[] {
+    const placements = withPlacements
+        ? ""
+        : " AND NOT (kind IN ('linked', 'unlinked') AND json_extract(payload, '$.kind') = 'parent')";
     return db
         .query<{ actor: string }, [ItemId, number]>(
-            "SELECT DISTINCT actor FROM changes WHERE item = ? AND seq > ? AND json_extract(origin, '$.via') <> 'connector'"
+            `SELECT DISTINCT actor FROM changes WHERE item = ? AND seq > ? AND json_extract(origin, '$.via') <> 'connector'${placements}`
         )
         .all(id, after)
         .map(({ actor }) => SafeJSON.parse(actor) as Actor);
@@ -320,12 +327,18 @@ function planPushes(input: {
         }
 
         if (mode.kind === "sync") {
-            if (!mode.touched.has(item.id) && (pairing?.state !== "failed" || pairing.updatedTs > mode.retryBefore)) {
+            // A held item comes back in every pass, so a later sync still says why it was not made or updated.
+            if (
+                !mode.touched.has(item.id) &&
+                pairing?.state !== "held" &&
+                (pairing?.state !== "failed" || pairing.updatedTs > mode.retryBefore)
+            ) {
                 continue;
             }
 
-            const rule = config.push(item.type) ?? defaultPush(item.type);
-            const actors = rule === "anyone" ? [] : pushActors(db, item.id, mode.cursor);
+            const own = config.push(item.type);
+            const rule = own ?? defaultPush(item.type);
+            const actors = rule === "anyone" ? [] : pushActors(db, item.id, mode.cursor, own !== undefined);
             const blocked = actors.some(
                 (actor) =>
                     !allows(
@@ -653,6 +666,13 @@ function pairedItems(db: Database): ItemId[] {
         .map(({ item }) => item);
 }
 
+function heldItems(db: Database): ItemId[] {
+    return db
+        .query<{ item: ItemId }, [number]>("SELECT DISTINCT item FROM pairings WHERE state = 'held' LIMIT ?")
+        .all(BATCH)
+        .map(({ item }) => item);
+}
+
 function failedBefore(db: Database, retryBefore: string): ItemId[] {
     return db
         .query<{ item: ItemId }, [string, number]>(
@@ -699,7 +719,7 @@ export async function previewSync(deps: SyncDeps, options: SyncOptions = {}): Pr
     }
 
     report.cursor = cursor;
-    const ids = new Set([...touched, ...failedBefore(db, retryBefore)]);
+    const ids = new Set([...touched, ...failedBefore(db, retryBefore), ...heldItems(db)]);
     const items = [...ids].map((id) => selectItem(db, id)).filter((item) => item !== null);
     await pushItems({
         deps,
@@ -737,7 +757,7 @@ export async function runSyncOnce(deps: SyncDeps, options: SyncOptions = {}): Pr
                 }
             }
 
-            const retries = retryFailed ? failedBefore(db, retryBefore) : [];
+            const retries = retryFailed ? [...failedBefore(db, retryBefore), ...heldItems(db)] : [];
             retryFailed = false;
             const ids = new Set([...touched, ...retries]);
             const items = [...ids].map((id) => selectItem(db, id)).filter((item) => item !== null);

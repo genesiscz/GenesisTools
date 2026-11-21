@@ -13,7 +13,7 @@ export const REPO_WORK_VERSION = 1;
 export const RULE_FIELDS = ["title", "body", "acceptance", "severity", "for", ...FIELD_NAMES] as const;
 export type RuleField = (typeof RULE_FIELDS)[number];
 
-/** The writes a role rule governs. `reference` is a link that is not `parent`. */
+/** The writes a role rule governs. `reference` is a link, or an edit that only moves the item under another parent. */
 export const WRITE_VERBS = [
     "spot",
     "comment",

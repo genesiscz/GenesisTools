@@ -28,6 +28,7 @@ export interface RuleLayerInput {
 
 const ANYONE: RoleRule = "anyone";
 const LEAD_OWNER: RoleRule = ["lead", "owner"];
+const POSTER_LEAD_OWNER: RoleRule = ["poster", "lead", "owner"];
 
 /** The write rules per level (design C, P3): the built-in defaults. */
 function defaultWrite(type: ItemType, verb: WriteVerb): RoleRule {
@@ -50,16 +51,23 @@ function defaultWrite(type: ItemType, verb: WriteVerb): RoleRule {
 
             return type === "handoff" ? ["worker", "poster", "owner"] : ANYONE;
         case "edit":
+            // The session that made an epic or a note may edit it too (the owner asked not to restrict agents too
+            // much, D5); another session still needs a lead or the owner.
+            if (type === "epic" || level === "note" || type === "handoff") {
+                return POSTER_LEAD_OWNER;
+            }
+
+            return ANYONE;
         case "drop":
             if (type === "epic" || level === "note") {
                 return LEAD_OWNER;
             }
 
-            return type === "handoff" ? ["poster", "lead", "owner"] : ANYONE;
+            return type === "handoff" ? POSTER_LEAD_OWNER : ANYONE;
         case "accept":
             // The design gave lead and owner only. The poster (the session that spotted it) may accept its own find
             // too, because the owner asked not to restrict agents too much (D5); an idea stays the owner's.
-            return type === "idea" ? ["owner"] : ["poster", "lead", "owner"];
+            return type === "idea" ? ["owner"] : POSTER_LEAD_OWNER;
     }
 }
 

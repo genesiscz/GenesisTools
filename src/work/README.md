@@ -83,6 +83,18 @@ which new items it makes: the tasks of a handoff only with `scope.handoffTasks: 
 syncs. The tracker connector sends an item's parent as the outside task's parent, its links as task links, and cuts a
 title over `settings.titleLimit` (500) with the full title at the top of the body.
 
-`tools work sync` prints each held or failed item with its reason, and what it did not make and why. `--dry-run`
+- **Types.** `settings.types` maps a local type to the tracker's type (defaults: feature story, incident bug, test
+  qa, check qa, risk watch, epic, bug, task and todo as they are, the rest task). When the two differ, the task gets
+  the label `settings.typeLabel` (`type:{type}`; an empty string turns it off), and a pull reads the local type
+  back from it.
+- **Body.** An item without a body sends its fields (where, why, what a user sees, cost, measured), closed by a
+  comment with the hash of the text. A later push replaces the outside body only when it is empty or still that
+  untouched text, so a description written by hand outside stays. A pull does not count the untouched text as drift.
+- **Who pushes.** By default anyone pushes a work item; an epic, a handoff and a note (idea, risk, limit) need the
+  session that made it, a lead or the owner, as their edits do. A move under another parent is a reference: any
+  session may write it (`tools work edit <id> --parent <epic>`), and its push is not held.
+
+`tools work sync` prints each held or failed item with its reason, and what it did not make and why. A held item
+comes back in every later pass until `sync --release <id>` pushes it. `--dry-run`
 lists the items a pass would make, update and hold, and sends nothing. `--all` pushes every paired item again, for
 example after a connector learns a new fact.
