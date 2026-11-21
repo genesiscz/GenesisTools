@@ -128,6 +128,11 @@ export interface ClipProvider {
     fetchClip(id: string, signal?: AbortSignal): Promise<Clip>;
     /** True when the site serves a clip in more than one quality (Twitch). Kick serves only the stream's own. */
     clipQualities: boolean;
+    /**
+     * True when a clip's stream time is read from its own playlist (Kick), so a VOD playlist start recorded earlier can
+     * place it exactly. False when the stream time is derived from the site's offset (Twitch), which then stays as is.
+     */
+    clipTimesFromPlaylist: boolean;
     /** The clip in `quality` (see `chooseQuality`, default `best`), at a URL ffmpeg can read now. */
     clipMedia(options: { clip: Clip; quality?: string; signal?: AbortSignal }): Promise<ClipMedia>;
     /** The part of a clip file name that names the clip, and back; a rerun finds its file by it. */

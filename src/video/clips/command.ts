@@ -277,7 +277,7 @@ async function updateManifest({
             const section = providerSection(manifest, provider.id);
             // VODs first: a clip of a VOD whose playlist is closed now is placed from the playlist start recorded before.
             recordVods(section, vods);
-            recordClips({ section, rows, sources });
+            recordClips({ section, rows, sources, rebaseOnPlaylistStart: provider.clipTimesFromPlaylist });
         },
     });
 }

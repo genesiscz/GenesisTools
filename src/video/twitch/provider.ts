@@ -123,6 +123,7 @@ export const twitchProvider: ClipProvider = {
     },
     fetchClip: fetchTwitchClip,
     clipQualities: true,
+    clipTimesFromPlaylist: false,
     clipMedia: ({ clip, quality, signal }) => twitchClipMedia({ slug: clip.id, quality, signal }),
     clipFileId: (clip) => `tw_${clip.id}`,
     clipIdFromFileName: (name) => name.match(FILE_CLIP_SLUG)?.[1] ?? null,

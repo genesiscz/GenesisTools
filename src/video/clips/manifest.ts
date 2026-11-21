@@ -211,10 +211,13 @@ export function recordClips({
     section,
     rows,
     sources,
+    rebaseOnPlaylistStart,
 }: {
     section: ProviderSection;
     rows: ClipDownloadRow[];
     sources: Map<string, ClipSource | null>;
+    /** The provider's `clipTimesFromPlaylist`: only then does a recorded VOD playlist start re-place a clip. */
+    rebaseOnPlaylistStart: boolean;
 }): void {
     const now = new Date().toISOString();
 
@@ -262,7 +265,9 @@ export function recordClips({
             status: keepFile ? before.status : row.status,
             ...(row.error && !keepFile ? { error: row.error } : {}),
             recordedAt: now,
-            source: placeFromKnownPlaylist(section, sources.get(clip.id) ?? before?.source ?? null),
+            source: rebaseOnPlaylistStart
+                ? placeFromKnownPlaylist(section, sources.get(clip.id) ?? before?.source ?? null)
+                : (sources.get(clip.id) ?? before?.source ?? null),
         };
     }
 }
