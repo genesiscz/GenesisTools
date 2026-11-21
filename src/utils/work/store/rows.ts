@@ -286,7 +286,7 @@ export function selectPairings(
         )
         .all(...params)
         .map((row) => {
-            const origin = parse<{ facts: Pairing["origin"]; note?: string }>(row.origin);
+            const origin = parse<{ facts: Pairing["origin"]; note?: string; sent?: Pairing["sent"] }>(row.origin);
             return {
                 item: asItemId(row.item),
                 connector: row.connector,
@@ -296,6 +296,7 @@ export function selectPairings(
                 state: row.state as Pairing["state"],
                 updatedTs: row.updated_ts,
                 ...(origin.note !== undefined ? { note: origin.note } : {}),
+                ...(origin.sent !== undefined ? { sent: origin.sent } : {}),
             };
         });
 }

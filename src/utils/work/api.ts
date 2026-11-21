@@ -4,6 +4,7 @@
  */
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { z } from "zod";
+import { SYNCED_FACTS } from "./connectors/types";
 import { ITEM_STATES, ITEM_TYPES, LINK_KINDS, LOG_RESULTS, SEVERITIES } from "./model/vocab";
 import { NOTIFY_ACTIONS, NOTIFY_LEVELS, NOTIFY_SURFACES, notifyRuleSchema } from "./rules/config";
 import { configResultSchema, configSetResultSchema, listRowSchema, treeResultSchema, triageRowSchema } from "./wire";
@@ -312,12 +313,25 @@ export const workMethods = {
         name: "sync",
         params: z.object({
             release: z.string().optional().describe("push this item's held change now"),
+            all: z.boolean().optional().describe("push every paired item again, not only the changed ones"),
+            resolve: z
+                .string()
+                .optional()
+                .describe("an item that differs outside and here, or all: keep one side (with --take)"),
+            take: z
+                .enum(["ours", "theirs"])
+                .optional()
+                .describe("ours writes this side outside; theirs copies the outside here"),
+            facts: z
+                .array(z.enum(SYNCED_FACTS))
+                .optional()
+                .describe("the facts --resolve settles; default: the ones its drift note names"),
         }),
         result: z.unknown(),
-        resultName: `${reply}, data: { pushed, held, failed, skipped?, cursor }`,
+        resultName: `${reply}, data: { pushed, held, failed, drift, skipped?, cursor, problems?, notes?, preview? }`,
         effect: "reversible",
         reaches: ["user"],
-        doc: "One pass of the sync consumer under its lease, or --release <ref> for a held change.",
+        doc: "One pass of the sync consumer under its lease, --release <ref> for a held change, or --resolve <ref> --take ours|theirs for an item that differs outside and here; --dry-run lists what a pass would push.",
     }),
     addMember: defineMethod({
         name: "addMember",

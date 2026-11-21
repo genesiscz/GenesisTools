@@ -9,10 +9,19 @@ import { asItemId } from "../model/item";
 import { projectCounts } from "../read";
 import { projectRuleLoader, setWorkConfigValue } from "../rules/load";
 import { type WorkContext, write } from "../service";
+import { applyChange } from "../store/apply";
 import { openWorkDb } from "../store/db";
 import { selectItem, selectPairings } from "../store/rows";
 import { connectorConfigOf } from "./config";
-import { pullRemote, releaseHeld, runSyncOnce, type SyncDeps } from "./sync";
+import {
+    noteStandingDrift,
+    previewSync,
+    pullRemote,
+    releaseHeld,
+    resolveDrift,
+    runSyncOnce,
+    type SyncDeps,
+} from "./sync";
 import type { Connector, ConnectorContext, PushIntent, RemoteItem } from "./types";
 
 let db: Database;
@@ -51,11 +60,14 @@ function ctx(sessionId: string, kind: Actor["kind"] = "agent"): WorkContext {
 class FakeConnector implements Connector<unknown> {
     readonly id = "fake";
     readonly settings = z.unknown();
-    readonly can = { create: true, pull: true, labels: true, comments: false, parents: false };
+    can = { create: true, pull: true, labels: true, comments: false, parents: false, links: false };
     pushed: PushIntent[] = [];
     unavailable = false;
     failure = "temporarily unavailable";
     batches: { context: ConnectorContext; titles: string[] }[] = [];
+    keptAlive: (boolean | undefined)[] = [];
+    /** Titles edited outside by key; a push leaves them unless forced, as the tracker does. */
+    editedOutside = new Map<string, string>();
     pulls: ConnectorContext[] = [];
     remote = new Map<string, RemoteItem>();
 
@@ -65,6 +77,7 @@ class FakeConnector implements Connector<unknown> {
 
     async push(intents: readonly PushIntent[], context: ConnectorContext) {
         this.batches.push({ context, titles: intents.map(({ item }) => item.title) });
+        this.keptAlive.push(context.keepAlive?.());
         this.pushed.push(...intents);
 
         if (this.unavailable) {
@@ -74,6 +87,18 @@ class FakeConnector implements Connector<unknown> {
         return intents.map((intent) => {
             const key = intent.pairing?.remoteKey || `R-${intent.item.id}`;
             const prior = this.remote.get(key);
+            const outside = this.editedOutside.get(key);
+
+            if (outside !== undefined && outside !== intent.item.title && !intent.force?.includes("title")) {
+                return {
+                    ok: true as const,
+                    remoteKey: key,
+                    sent: {},
+                    changedOutside: [{ fact: "title" as const, outside, here: intent.item.title }],
+                };
+            }
+
+            this.editedOutside.delete(key);
             this.remote.set(key, {
                 remoteKey: key,
                 title: intent.pairing?.origin.title === "remote" ? prior?.title : intent.item.title,
@@ -175,12 +200,27 @@ describe("the sync consumer", () => {
         expect(report.pushed).toBe(3);
         expect(loads).toEqual(["App", "Other"]);
         expect(fake.batches).toEqual([
-            { context: { project: "App", settings: { target: "App" }, machinePrefix: "m-" }, titles: ["app bug"] },
             {
-                context: { project: "Other", settings: { target: "Other" }, machinePrefix: "m-" },
+                context: {
+                    project: "App",
+                    settings: { target: "App" },
+                    machinePrefix: "m-",
+                    keepAlive: expect.any(Function),
+                },
+                titles: ["app bug"],
+            },
+            {
+                context: {
+                    project: "Other",
+                    settings: { target: "Other" },
+                    machinePrefix: "m-",
+                    keepAlive: expect.any(Function),
+                },
                 titles: ["first task", "second task"],
             },
         ]);
+        // The lease is held during each push, so a connector that waits can renew it.
+        expect(fake.keptAlive).toEqual([true, true]);
         for (const { item, labels } of fake.pushed) {
             expect(labels).toEqual([`${item.project}/${item.id}`]);
         }
@@ -221,6 +261,68 @@ describe("the sync consumer", () => {
         const again = await runSyncOnce(deps());
         expect(again.pushed).toBe(0);
         expect(fake.pushed).toHaveLength(1);
+    });
+
+    test("an agent's own epic is made outside; a hold by another session comes back in every later pass", async () => {
+        const epic = await write(ctx("maker"), { verb: "add", title: "agent epic", type: "epic" });
+        const id = epic.ok ? epic.data.items[0].id : asItemId("none");
+        expect((await runSyncOnce(deps())).held).toBe(0);
+        expect(selectPairings(db, { item: id })[0].state).toBe("in-sync");
+
+        await write(ctx("other"), { verb: "comment", ref: id, text: "a note" });
+        expect((await runSyncOnce(deps())).held).toBe(1);
+        const later = await runSyncOnce(deps());
+        expect(later.held).toBe(1);
+        expect(later.problems?.[0]).toMatchObject({ item: id, state: "held" });
+        expect((await previewSync(deps())).preview?.hold).toEqual([id]);
+    });
+
+    test("a move under another parent by any session is pushed, not held", async () => {
+        const top = await write(ctx("owner-s", "owner"), { verb: "add", title: "top", type: "epic" });
+        const sub = await write(ctx("owner-s", "owner"), { verb: "add", title: "sub", type: "epic" });
+        const topId = top.ok ? top.data.items[0].id : asItemId("none");
+        const subId = sub.ok ? sub.data.items[0].id : asItemId("none");
+        await runSyncOnce(deps());
+
+        expect((await write(ctx("other"), { verb: "edit", ref: subId, parent: topId })).ok).toBe(true);
+        const report = await runSyncOnce(deps());
+        expect(report.held).toBe(0);
+        expect(report.pushed).toBe(1);
+    });
+
+    test("a title edited outside is not overwritten: the pairing drifts, every pass names it, and resolve settles it", async () => {
+        const made = await write(ctx("s1"), { verb: "add", title: "first", type: "bug" });
+        const id = made.ok ? made.data.items[0].id : asItemId("none");
+        await runSyncOnce(deps());
+        fake.editedOutside.set(`R-${id}`, "renamed outside");
+        fake.remote.set(`R-${id}`, { remoteKey: `R-${id}`, title: "renamed outside", state: "open" });
+
+        await write(ctx("s1"), { verb: "edit", ref: id, title: "renamed here" });
+        const pass = await runSyncOnce(deps());
+        expect(pass.drift).toBe(1);
+        expect(pass.problems?.[0]).toMatchObject({ item: id, state: "drift" });
+        expect(pass.problems?.[0].note).toContain('title (outside "renamed outside", here "renamed here")');
+        expect(selectPairings(db, { item: id })[0]).toMatchObject({
+            state: "drift",
+            note: "changed outside, owned here: title",
+        });
+        expect(noteStandingDrift(db, await runSyncOnce(deps())).notes?.at(-1)).toContain(
+            `1 item(s) differ outside and here (${id})`
+        );
+
+        const theirs = await resolveDrift(deps(), { item: id, take: "theirs" });
+        expect(theirs.drift).toBe(0);
+        expect(selectItem(db, id)?.title).toBe("renamed outside");
+        expect(selectPairings(db, { item: id })[0].state).toBe("in-sync");
+
+        fake.editedOutside.set(`R-${id}`, "outside again");
+        await write(ctx("s1"), { verb: "edit", ref: id, title: "mine" });
+        await runSyncOnce(deps());
+        expect(selectPairings(db, { item: id })[0].state).toBe("drift");
+        const ours = await resolveDrift(deps(), { item: id, take: "ours" });
+        expect(ours.pushed).toBe(1);
+        expect(fake.pushed.at(-1)?.force).toEqual(["title"]);
+        expect(selectPairings(db, { item: id })[0].state).toBe("in-sync");
     });
 
     test("a change by a role that may not push is held, and a release pushes it", async () => {
@@ -377,7 +479,11 @@ describe("the connector methods", () => {
             ok: true,
             dryRun: true,
         });
-        expect(await callWork("sync", {}, preview)).toMatchObject({ ok: true, dryRun: true });
+        expect(await callWork("sync", {}, preview)).toMatchObject({
+            ok: true,
+            dryRun: true,
+            data: { preview: { create: [id], update: [], hold: [] } },
+        });
         expect(await callWork("sync", { release: id }, preview)).toMatchObject({ ok: true, dryRun: true });
         expect(fake.pulls).toEqual([]);
         expect(fake.pushed).toEqual([]);
@@ -422,6 +528,157 @@ describe("the connector methods", () => {
         const missing = await callWork("pair", { ref: "w_missing0", connector: "fake", key: "1" }, session(true));
         expect(missing.ok ? "" : missing.diagnostics[0].code).toBe("NOT_FOUND");
         expect(id).toMatch(/^w_/);
+    });
+});
+
+describe("what a push makes outside", () => {
+    async function useConfig(value: Record<string, unknown>): Promise<void> {
+        const set = await setWorkConfigValue({ configPath, path: "global.rules.connectors.fake", value });
+        expect(set.ok).toBe(true);
+    }
+
+    async function add(
+        type: "epic" | "task" | "bug",
+        title: string,
+        parent?: ItemId,
+        tags?: string[]
+    ): Promise<ItemId> {
+        const made = await write(ctx("owner-s", "owner"), {
+            verb: "add",
+            title,
+            type,
+            ...(parent !== undefined ? { parent } : {}),
+            ...(tags !== undefined ? { tags } : {}),
+        });
+        return made.ok ? made.data.items[0].id : asItemId("none");
+    }
+
+    function memberOf(handoff: string, item: ItemId, slot: string): void {
+        applyChange(db, {
+            v: 1,
+            ts: new Date().toISOString(),
+            item: asItemId(handoff),
+            actor: actor("s1"),
+            kind: "linked",
+            payload: { kind: "member", to: item, slot },
+            origin: { via: "local" },
+        });
+    }
+
+    test("a child made in the same pass carries its parent's outside key, and its links carry theirs", async () => {
+        Object.assign(fake.can, { parents: true, links: true });
+        await useConfig({ enabled: true, createTypes: ["epic", "task", "bug"] });
+        const epic = await add("epic", "the epic");
+        const child = await add("task", "a child", epic);
+        const other = await add("bug", "a related bug");
+        await write(ctx("owner-s", "owner"), { verb: "link", ref: other, kind: "related", to: epic });
+
+        const report = await runSyncOnce(deps());
+        expect(report).toMatchObject({ pushed: 3, failed: 0 });
+        const intents = new Map(fake.pushed.map((intent) => [intent.item.id, intent]));
+        expect(intents.get(epic)?.parentKey).toBeUndefined();
+        expect(intents.get(child)?.parentKey).toBe(`R-${epic}`);
+        expect(intents.get(other)?.links).toEqual([{ kind: "related", remoteKey: `R-${epic}` }]);
+        expect(fake.batches.map((batch) => batch.titles)).toEqual([["the epic"], ["a child", "a related bug"]]);
+
+        fake.pushed = [];
+        const again = await runSyncOnce(deps(), { all: true });
+        expect(again.pushed).toBe(3);
+        expect(new Map(fake.pushed.map((intent) => [intent.item.id, intent.parentKey])).get(child)).toBe(`R-${epic}`);
+    });
+
+    test("a connector without parents gets no parent key", async () => {
+        await useConfig({ enabled: true, createTypes: ["epic", "task"] });
+        const epic = await add("epic", "the epic");
+        await add("task", "a child", epic);
+        await runSyncOnce(deps());
+        expect(fake.pushed.map((intent) => intent.parentKey)).toEqual([undefined, undefined]);
+    });
+
+    test("a handoff's tasks are not made outside unless the scope says so; the report says why", async () => {
+        await useConfig({ enabled: true, createTypes: ["task", "bug"] });
+        const task = await add("task", "a session's step");
+        memberOf("h_fixture1", task, "t1");
+        const bug = await add("bug", "a team bug");
+
+        const report = await runSyncOnce(deps());
+        expect(fake.pushed.map((intent) => intent.item.id)).toEqual([bug]);
+        expect(report.notes).toEqual([
+            "fake in App: 1 handoff task(s) not made outside, because scope.handoffTasks is off",
+        ]);
+        expect(selectPairings(db, { item: task })).toEqual([]);
+
+        await useConfig({ enabled: true, createTypes: ["task", "bug"], scope: { handoffTasks: true } });
+        // A write on a handoff task goes through its handoff; the journal entry alone is what the sync reads.
+        applyChange(db, {
+            v: 1,
+            ts: new Date().toISOString(),
+            item: task,
+            actor: actor("s1"),
+            kind: "edited",
+            payload: { set: { title: "a step, renamed" } },
+            origin: { via: "local" },
+        });
+        await runSyncOnce(deps());
+        expect(selectPairings(db, { item: task })[0].state).toBe("in-sync");
+    });
+
+    test("scope.under and scope.tags take an item under a listed one or with a listed tag, and nothing else", async () => {
+        const epic = await add("epic", "the epic");
+        await useConfig({
+            enabled: true,
+            createTypes: ["epic", "task", "bug"],
+            scope: { under: [epic], tags: ["team"] },
+        });
+        const child = await add("task", "under it", epic);
+        const loose = await add("bug", "elsewhere");
+        const tagged = await add("bug", "tagged", undefined, ["team"]);
+
+        const report = await runSyncOnce(deps());
+        expect(new Set(fake.pushed.map((intent) => intent.item.id))).toEqual(new Set([epic, child, tagged]));
+        expect(selectPairings(db, { item: loose })).toEqual([]);
+        expect(report.notes).toEqual([
+            "fake in App: 1 new item(s) not made outside, outside scope.under and scope.tags",
+        ]);
+    });
+
+    test("an empty createTypes says so; a held item and a failed item come back with their reasons", async () => {
+        await useConfig({ enabled: true, createTypes: [] });
+        await add("bug", "nothing makes me");
+        const empty = await runSyncOnce(deps());
+        expect(empty.notes).toEqual(["fake in App: 1 new item(s) not made outside, because createTypes is empty"]);
+
+        await useConfig({ enabled: true, createTypes: ["bug", "epic"] });
+        const epic = await write(ctx("agent-s"), { verb: "spot", title: "an epic", type: "epic", fields: {} });
+        const epicId = epic.ok ? epic.data.items[0].id : asItemId("none");
+        await write(ctx("other-s"), { verb: "comment", ref: epicId, text: "not the poster" });
+        fake.unavailable = true;
+        const bug = await spot("s1", "bug", "fails");
+        const report = await runSyncOnce(deps());
+        expect(report.problems).toEqual([
+            {
+                item: epicId,
+                connector: "fake",
+                state: "held",
+                note: `a change needs a lead or the owner to release it; release it with \`sync --release ${epicId}\``,
+            },
+            { item: bug, connector: "fake", state: "failed", note: "temporarily unavailable" },
+        ]);
+    });
+
+    test("a preview lists what a pass would make, update and hold, and changes nothing", async () => {
+        const first = await spot("s1", "bug", "already out");
+        await runSyncOnce(deps());
+        await write(ctx("s1"), { verb: "comment", ref: first, text: "changed" });
+        const fresh = await spot("s1", "bug", "new");
+        const cursors = db.query("SELECT * FROM cursors").all();
+        fake.pushed = [];
+
+        const preview = await previewSync(deps());
+        expect(preview.preview).toEqual({ create: [fresh], update: [first], hold: [] });
+        expect(fake.pushed).toEqual([]);
+        expect(db.query("SELECT * FROM cursors").all()).toEqual(cursors);
+        expect(selectPairings(db, { item: fresh })).toEqual([]);
     });
 });
 

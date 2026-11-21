@@ -5,7 +5,7 @@ import { executeHandoffActions, getHandoff, type HandoffDeps, postHandoff } from
 import { byFor, freshEnv, type TestEnv } from "@app/handoff/test-utils";
 import { makeTempDir } from "@genesiscz/utils/paths";
 import { parityOf } from "@genesiscz/utils/work/legacy/shadow";
-import type { Actor } from "@genesiscz/utils/work/model/item";
+import { type Actor, asItemId, type Item } from "@genesiscz/utils/work/model/item";
 import type { SessionDelivery } from "@genesiscz/utils/work/ports";
 import { listItems, showItem } from "@genesiscz/utils/work/read";
 import { reopen } from "@genesiscz/utils/work/reopen";
@@ -17,6 +17,19 @@ import { legacyHandoffs } from "./adapters";
 import { ownerAtSurface } from "./adapters/actor";
 import { openLegacySource } from "./adapters/legacy-source";
 import { connectorPort, syncNeededAfter } from "./connectors";
+import {
+    factsOfPatch,
+    hasLink,
+    isUntouchedRender,
+    linksOf,
+    localTypeOf,
+    outsideFacts,
+    outsideType,
+    pacedCall,
+    patchOf,
+    rateLimitPause,
+    typeLabels,
+} from "./connectors/tracker";
 
 const actor: Actor = {
     kind: "agent",
@@ -285,5 +298,148 @@ describe("add-member (P5 decision 5)", () => {
         expect(getHandoff({ id: handoff }, deps).handoff.tasks.map((t) => t.text)).toContain(
             "the owner moves this one in"
         );
+    });
+});
+
+describe("the tracker connector", () => {
+    const item: Item = {
+        id: asItemId("w_fixture1"),
+        type: "task",
+        state: "open",
+        project: "App",
+        rev: 1,
+        title: "x".repeat(510),
+        body: "the text",
+        tags: [],
+        fields: {},
+        createdBy: actor,
+        createdTs: "2026-11-20T00:00:00.000Z",
+        updatedTs: "2026-11-20T00:00:00.000Z",
+    };
+
+    test("a title over the limit is cut there, the full title opens the body, and the parent goes by its id", () => {
+        const patch = patchOf({ item, pairing: null, labels: [], parentKey: "3540" }, true, {
+            server: "tracker",
+            project: "app",
+        });
+        expect(Array.from(String(patch.title))).toHaveLength(500);
+        expect(String(patch.title).endsWith("…")).toBe(true);
+        expect(patch.body).toBe(`${"x".repeat(510)}\n\nthe text`);
+        expect(patch.parentId).toBe(3540);
+        expect(
+            patchOf({ item, pairing: null, labels: [], parentKey: "3540" }, false, { server: "t", project: "a" })
+        ).toEqual({
+            status: "todo",
+        });
+    });
+
+    const settings = { server: "t", project: "a" };
+
+    test("each local type has an outside type; a lossy one keeps its type in a label, and a pull gives it back", () => {
+        expect(outsideType("feature", settings)).toBe("story");
+        expect(outsideType("feature", { ...settings, types: { feature: "task" } })).toBe("task");
+        expect(typeLabels("feature", settings).add).toEqual(["type:feature"]);
+        expect(typeLabels("feature", settings).remove).not.toContain("type:feature");
+        expect(typeLabels("bug", settings).add).toEqual([]);
+        expect(typeLabels("bug", settings).remove).toContain("type:incident");
+        expect(typeLabels("feature", { ...settings, typeLabel: "" })).toEqual({ add: [], remove: [] });
+        expect(localTypeOf("qa", ["type:check"], settings)).toBe("check");
+        expect(localTypeOf("qa", [], settings)).toBeUndefined();
+        expect(localTypeOf("bug", [], settings)).toBe("bug");
+        expect(localTypeOf("story", [], settings)).toBe("feature");
+        expect(localTypeOf("bug", ["type:feature"], settings)).toBe("bug");
+        expect(localTypeOf("journey", [], settings)).toBeUndefined();
+    });
+
+    test("an item without a body sends its fields as a marked render, read back as empty until it has a base", () => {
+        const { body: _body, ...bare } = item;
+        const spotted: Item = {
+            ...bare,
+            type: "feature",
+            title: "short",
+            fields: { where: "a.ts:1", why: "it breaks", userSees: "an error" },
+        };
+        const patch = patchOf({ item: spotted, pairing: null, labels: [] }, true, settings);
+        const render = String(patch.body);
+        expect(patch.type).toBe("story");
+        expect(render.startsWith("**Where:** a.ts:1\n\n**Why:** it breaks\n\n**What a user sees:** an error")).toBe(
+            true
+        );
+        expect(isUntouchedRender(render)).toBe(true);
+        expect(isUntouchedRender(render.replace("it breaks", "it breaks badly"))).toBe(false);
+        expect(patchOf({ item: { ...spotted, fields: {} }, pairing: null, labels: [] }, true, settings).body).toBe(
+            undefined
+        );
+
+        const older = String(
+            patchOf({ item: { ...spotted, fields: { why: "older" } }, pairing: null, labels: [] }, true, settings).body
+        );
+        expect(factsOfPatch(patch)).toMatchObject({ title: "short", type: "story", state: "todo", body: render });
+        const ours = factsOfPatch(patch);
+        expect(outsideFacts({ body: older, status: "todo", parentId: null }, { base: {}, ours }).body).toBe("");
+        expect(outsideFacts({ body: render }, { base: {}, ours }).body).toBe(render);
+        expect(outsideFacts({ body: older }, { base: { body: older }, ours }).body).toBe(older);
+        expect(outsideFacts({ body: "written by hand", parentId: 3540 }, { base: {}, ours })).toMatchObject({
+            body: "written by hand",
+            parent: "3540",
+        });
+    });
+
+    test("a rate limit is waited out: Retry-After when named, else a doubling pause up to the cap", () => {
+        const limits = { baseMs: 1000, maxMs: 30_000 };
+        expect(rateLimitPause('{"code":"rate_limited"} Retry-After: 7', 0, limits)).toBe(7000);
+        expect(rateLimitPause("Wait for the Retry-After interval before retrying.", 0, limits)).toBe(1000);
+        expect(rateLimitPause("rate_limited", 4000, limits)).toBe(8000);
+        expect(rateLimitPause("rate_limited", 20_000, limits)).toBe(30_000);
+    });
+
+    test("a paced call retries a rate-limited door, answers its result, and stops when the lease is lost", async () => {
+        const refusal = new Error('Error POSTing to endpoint: {"code":"rate_limited","error":"rate limit exceeded"}');
+        let tries = 0;
+        const flaky = async () => {
+            tries++;
+
+            if (tries <= 2) {
+                throw refusal;
+            }
+
+            return { content: [{ type: "text", text: '{"id":1}' }] };
+        };
+        const call = pacedCall(flaky, { baseMs: 1, maxMs: 4 });
+        expect(await call("tracker", "update", {})).toEqual({ content: [{ type: "text", text: '{"id":1}' }] });
+        expect(tries).toBe(3);
+
+        let renewals = 0;
+        const always = async () => {
+            throw refusal;
+        };
+        const stopped = pacedCall(always, { baseMs: 1, maxMs: 4, keepAlive: () => ++renewals < 2 });
+        await expect(stopped("tracker", "update", {})).rejects.toThrow("rate_limited");
+        expect(renewals).toBe(2);
+
+        const other = pacedCall(async () => {
+            throw new Error("forbidden");
+        });
+        await expect(other("tracker", "update", {})).rejects.toThrow("forbidden");
+
+        const answered = pacedCall(async () => ({ isError: true, content: [{ type: "text", text: "rate_limited" }] }), {
+            baseMs: 1,
+            maxMs: 2,
+            maxAttempts: 3,
+        });
+        await expect(answered("tracker", "update", {})).rejects.toThrow("rate_limited");
+    });
+
+    test("links read back from either side; relates counts both ways, the others only from their own side", () => {
+        const links = linksOf({
+            id: 3528,
+            links: [
+                { direction: "out", id: 1, rel: "relates", task: { id: 3540 } },
+                { direction: "in", id: 2, rel: "blocks", task: { id: 3541 } },
+            ],
+        });
+        expect(hasLink(links, { rel: "relates", target: "3540" })).toBe(true);
+        expect(hasLink(links, { rel: "blocks", target: "3541" })).toBe(false);
+        expect(hasLink(links, { rel: "relates", target: "3541" })).toBe(false);
     });
 });
