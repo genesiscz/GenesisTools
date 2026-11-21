@@ -18,6 +18,14 @@ export class VideoCommandExitError extends Error {
     }
 }
 
+/**
+ * The text with every URL's query replaced: a media URL's query often carries a signed token (Twitch's `sig` and
+ * `token`), and ffmpeg repeats its input URL in its errors. Logs, thrown messages and saved errors show this form.
+ */
+export function redactUrlQueries(text: string): string {
+    return text.replace(/(\b[a-z][a-z0-9+.-]*:\/\/[^\s?#"']+)\?[^\s#"']*/gi, "$1?[redacted]");
+}
+
 /** Why the child-deadline watchdog ended the run without the program judging its input, or null for a real exit. */
 function watchdogReason({ program, status }: { program: string; status: number | null }): string | null {
     if (status === CHILD_EXEC_FAILED_EXIT) {
@@ -43,7 +51,10 @@ export async function runVideoCommand({
     timeoutMs?: number;
     onStdout?: (chunk: Uint8Array) => void;
 }): Promise<string> {
-    logger.debug({ command, timeoutMs, streamed: Boolean(onStdout) }, "Video process started");
+    logger.debug(
+        { command: command.map(redactUrlQueries), timeoutMs, streamed: Boolean(onStdout) },
+        "Video process started"
+    );
     const result = await profiler.scope("video").measureAsync(command[0], () =>
         boundedCommand({
             command,
@@ -55,12 +66,14 @@ export async function runVideoCommand({
     );
     signal?.throwIfAborted();
     if (result.error || result.status !== 0) {
+        const stderr = redactUrlQueries(result.stderr);
         logger.warn(
-            { error: result.error, status: result.status, stderr: result.stderr.slice(-4000) },
+            { error: result.error, status: result.status, stderr: stderr.slice(-4000) },
             "Video process failed"
         );
         const notRun = result.error ? null : watchdogReason({ program: command[0], status: result.status });
-        const message = result.error?.message ?? (result.stderr.slice(-2000) || notRun || "Video process failed");
+        const raw = result.error?.message ?? (stderr.slice(-2000) || notRun || "Video process failed");
+        const message = redactUrlQueries(raw);
 
         if (!result.error && result.status !== null && !notRun) {
             throw new VideoCommandExitError(message, result.status);

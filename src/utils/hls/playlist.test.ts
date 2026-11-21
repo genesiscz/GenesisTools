@@ -69,6 +69,38 @@ a.m4s
     });
 });
 
+describe("parsePlaylist variant frame rate", () => {
+    it("reads FRAME-RATE when a variant names one", () => {
+        const text = `#EXTM3U
+#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1280x720,FRAME-RATE=60.000
+720p60/index.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720
+720p30/index.m3u8
+`;
+        const playlist = parsePlaylist(text, `${BASE}master.m3u8`);
+        const variants = playlist.kind === "master" ? playlist.variants : [];
+
+        expect(variants.map((variant) => variant.frameRate)).toEqual([60, undefined]);
+    });
+});
+
+describe("parsePlaylist program date time", () => {
+    it("gives each segment the program date time written before it, and none to the rest", () => {
+        const text = `#EXTM3U
+#EXT-X-PROGRAM-DATE-TIME:2026-11-19T01:48:23.16Z
+#EXT-X-BYTERANGE:2092816@4399200
+#EXTINF:2.000,
+1921.ts
+#EXTINF:2.000,
+1922.ts
+`;
+        const playlist = parsePlaylist(text, `${BASE}clip.m3u8`);
+        const segments = playlist.kind === "media" ? playlist.segments : [];
+
+        expect(segments.map((segment) => segment.programDateTime)).toEqual(["2026-11-19T01:48:23.16Z", undefined]);
+    });
+});
+
 describe("deriveSegmentTemplate", () => {
     it("cuts the run that equals the sequence, not an earlier number in the name", () => {
         const playlist = parsePlaylist(LIVE, `${BASE}stream_720p.m3u8`);

@@ -5,6 +5,8 @@ export interface HlsVariant {
     bandwidth: number;
     width?: number;
     height?: number;
+    /** `EXT-X-STREAM-INF` FRAME-RATE, when the variant names one. */
+    frameRate?: number;
     /** `EXT-X-STREAM-INF` AUDIO group id, when the variant names one. */
     audioGroup?: string;
 }
@@ -20,6 +22,8 @@ export interface HlsSegment {
     sequence: number;
     uri: string;
     durationSec: number;
+    /** `EXT-X-PROGRAM-DATE-TIME` right before the segment: the wall-clock time of its first frame, as written. */
+    programDateTime?: string;
 }
 
 export interface HlsMediaPlaylist {
@@ -102,11 +106,13 @@ function parseMaster(lines: string[], baseUrl: string): HlsMasterPlaylist {
         }
 
         const [width, height] = (pending.RESOLUTION ?? "").split("x").map(Number);
+        const frameRate = Number(pending["FRAME-RATE"]);
         variants.push({
             uri: new URL(line, baseUrl).href,
             bandwidth: Number(pending.BANDWIDTH) || 0,
             width: Number.isFinite(width) && width > 0 ? width : undefined,
             height: Number.isFinite(height) && height > 0 ? height : undefined,
+            ...(Number.isFinite(frameRate) && frameRate > 0 ? { frameRate } : {}),
             audioGroup: pending.AUDIO,
         });
         pending = null;
@@ -125,6 +131,7 @@ function parseMedia(lines: string[], baseUrl: string): HlsMediaPlaylist {
         usesByteRanges: false,
     };
     let duration: number | null = null;
+    let programDateTime: string | null = null;
 
     for (const line of lines) {
         if (line.startsWith("#EXT-X-TARGETDURATION:")) {
@@ -151,6 +158,8 @@ function parseMedia(lines: string[], baseUrl: string): HlsMediaPlaylist {
             if (method && method !== "NONE") {
                 playlist.encryption = method;
             }
+        } else if (line.startsWith("#EXT-X-PROGRAM-DATE-TIME:")) {
+            programDateTime = tagValue(line);
         } else if (line.startsWith("#EXT-X-BYTERANGE")) {
             playlist.usesByteRanges = true;
         } else if (line.startsWith("#EXTINF:")) {
@@ -160,8 +169,10 @@ function parseMedia(lines: string[], baseUrl: string): HlsMediaPlaylist {
                 sequence: playlist.mediaSequence + playlist.segments.length,
                 uri: new URL(line, baseUrl).href,
                 durationSec: duration,
+                ...(programDateTime ? { programDateTime } : {}),
             });
             duration = null;
+            programDateTime = null;
         }
     }
 

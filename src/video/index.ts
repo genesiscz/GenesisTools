@@ -22,6 +22,7 @@ import {
 import { secondsToMicroseconds } from "@genesiscz/utils/video/sampling";
 import { VIDEO_FPS, VIDEO_GROUPS, videoSettingsSchema } from "@genesiscz/utils/video/types";
 import { Command } from "commander";
+import { registerAllClipCommands } from "./clips/command";
 import { collectInputs, encodeVideos, exitCodeFor, renderRows, summarize } from "./encode";
 import { createEncodeReporter, ENCODE_FORMATS, isEncodeFormat } from "./encode-progress";
 import { registerShrinkCommand } from "./shrink/command";
@@ -313,12 +314,15 @@ export function registerVideoCommands(program: Command): void {
         );
     registerShrinkCommand(program);
     registerStreamCommands(program);
+    registerAllClipCommands(program);
 }
 
 if (import.meta.main) {
     const program = new Command()
         .name("video")
-        .description("Local video inspection, evidence preparation and HLS stream downloads");
+        .description(
+            "Local video inspection, evidence preparation, HLS stream downloads and Kick and Twitch clips and VODs"
+        );
     registerVideoCommands(program);
     await runTool(program, { tool: "video" });
 }
