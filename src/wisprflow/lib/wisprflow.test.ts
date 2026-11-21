@@ -6,6 +6,7 @@ import {
     mkdtempSync,
     readdirSync,
     readFileSync,
+    renameSync,
     rmSync,
     writeFileSync,
     writeSync,
@@ -24,7 +25,7 @@ import { completeTranscript, parseLive } from "./live";
 import * as local from "./local";
 import * as mcp from "./mcp";
 import { pageText, parseMcpTranscript } from "./mcp";
-import { mergeRoster, wisprflowSource } from "./meeting-source";
+import { mergeRoster, sourcedCalendar, wisprflowSource } from "./meeting-source";
 import { mergeFrontmatter, writeGuarded } from "./output";
 import { renderMarkdown, renderSrt, showMarkdown } from "./render";
 import { loadMeeting } from "./source";
@@ -827,7 +828,7 @@ describe("an export imported from another Mac", () => {
     }
 
     test("import, then the reader answers from the store and the evidence carries the channel of each line", async () => {
-        const result = importExport({ folder: exportFolder() });
+        const result = await importExport({ folder: exportFolder() });
 
         expect(result.status).toBe("imported");
         expect(result.copied.map((file) => file.name)).toEqual(
@@ -853,10 +854,26 @@ describe("an export imported from another Mac", () => {
 
             const audio = await wisprAudioAccess({ dir: join(folder!, "no-wispr-app") }).files();
             expect(audio).toContainEqual({ sourceMeetingId: meetingId, path: join(folder!, "upload.ogg") });
+            // The audio discovery may make the record first: it names the recorder, so the record does not call them "you".
             expect(await wisprAudioAccess({ dir: join(folder!, "no-wispr-app") }).load(meetingId)).toMatchObject({
                 sourceMeetingId: meetingId,
                 title: "Fixture sync",
+                participants: [{ name: "Alice Example", self: true }, { name: "Bob Example" }],
+                recordedBy: { owner: false, person: "Alice Example" },
             });
+
+            // Another import store answers from itself, the same one its files() lists.
+            const otherRoot = mkdtempSync(join(tmpdir(), "wispr-imported-"));
+            mkdirSync(join(otherRoot, meetingId));
+            writeFileSync(
+                join(otherRoot, meetingId, "meeting.json"),
+                readFileSync(join(exportFolder("Fixture sync, other store"), "meeting.json"), "utf8")
+            );
+            const other = wisprAudioAccess({ dir: join(folder!, "no-wispr-app"), importedRoot: () => otherRoot });
+            expect((await other.load(meetingId))?.title).toBe("Fixture sync, other store");
+
+            // The export holds no calendar event, and this Mac's calendar never stands in for it.
+            expect(sourcedCalendar(loaded)).toBeUndefined();
         } finally {
             available.mockRestore();
         }
@@ -892,23 +909,70 @@ describe("an export imported from another Mac", () => {
     test("a meeting with no folder on this Mac has no evidence, not an empty one", async () => {
         const available = spyOn(local, "localAvailable").mockReturnValue(true);
         const known = spyOn(local, "hasLocalMeeting").mockReturnValue(false);
+        // The installed app's database stays out of the test.
+        const self = spyOn(local, "localSelfName").mockReturnValue(undefined);
 
         try {
             expect(await wisprflowSource.evidence("no-folder-fixture-1")).toBeNull();
+            // A database row whose folder is gone has no evidence either, so a record's copy keeps the saved one.
+            known.mockReturnValue(true);
+            expect(await wisprflowSource.evidence("no-folder-fixture-1")).toBeNull();
+            expect(self).not.toHaveBeenCalled();
         } finally {
             available.mockRestore();
             known.mockRestore();
+            self.mockRestore();
         }
     });
 
-    test("the same export again changes nothing, and a different one is refused until --force", () => {
-        importExport({ folder: exportFolder() });
+    test("an export without raw files still names its recorder", async () => {
+        const folder = exportFolder();
+        rmSync(join(folder, "wispr-raw"), { recursive: true });
+        const available = spyOn(local, "localAvailable").mockReturnValue(false);
 
-        expect(importExport({ folder: exportFolder() })).toMatchObject({ status: "unchanged", copied: [] });
+        try {
+            await importExport({ folder, force: true });
+            expect((await wisprflowSource.load(meetingId)).recordedBy).toEqual({
+                owner: false,
+                person: "Alice Example",
+            });
+        } finally {
+            available.mockRestore();
+        }
+    });
+
+    test("the same export again changes nothing, and a different one is refused until --force", async () => {
+        await importExport({ folder: exportFolder(), force: true });
+
+        expect(await importExport({ folder: exportFolder() })).toMatchObject({ status: "unchanged", copied: [] });
 
         const renamed = exportFolder("Fixture sync, renamed");
-        expect(() => importExport({ folder: renamed })).toThrow(ImportConflictError);
-        expect(importExport({ folder: renamed, force: true }).status).toBe("replaced");
+        await expect(importExport({ folder: renamed })).rejects.toThrow(ImportConflictError);
+        expect((await importExport({ folder: renamed, force: true })).status).toBe("replaced");
         expect(readFileSync(join(importedMeetingFolder(meetingId)!, "meeting.json"), "utf8")).toContain("renamed");
+        // The replaced import went to the trash; nothing is left aside or staged.
+        const left = readdirSync(join(importedMeetingFolder(meetingId)!, ".."));
+        expect(left.filter((name) => /\.(replaced|staging)-/.test(name))).toEqual([]);
+    });
+
+    test("a replacement cut off between its renames gets the previous import back", async () => {
+        await importExport({ folder: exportFolder(), force: true });
+        const target = importedMeetingFolder(meetingId)!;
+        const aside = join(target, "..", `.${meetingId}.replaced-1-1`);
+        renameSync(target, aside);
+
+        expect(await importExport({ folder: exportFolder() })).toMatchObject({ status: "unchanged" });
+        expect(existsSync(aside)).toBe(false);
+        expect(importedMeetingFolder(meetingId)).toBe(target);
+    });
+
+    test("two imports of one meeting take turns", async () => {
+        await importExport({ folder: exportFolder(), force: true });
+        const results = await Promise.all([
+            importExport({ folder: exportFolder("Fixture sync, first"), force: true }),
+            importExport({ folder: exportFolder("Fixture sync, second"), force: true }),
+        ]);
+        expect(results.map((result) => result.status)).toEqual(["replaced", "replaced"]);
+        expect(readFileSync(join(importedMeetingFolder(meetingId)!, "meeting.json"), "utf8")).toContain("second");
     });
 });

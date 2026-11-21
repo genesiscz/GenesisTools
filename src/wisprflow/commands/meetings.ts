@@ -16,7 +16,7 @@ import pc from "picocolors";
 import { ImportConflictError, importExport } from "../lib/imported";
 import { listLocalMeetings, localAvailable } from "../lib/local";
 import { listMcpMeetings, listMcpSeries } from "../lib/mcp";
-import { calendarFor } from "../lib/meeting-source";
+import { sourcedCalendar } from "../lib/meeting-source";
 import { writeGuarded } from "../lib/output";
 import { type RenderOptions, renderMarkdown, renderSrt, renderText, renderVtt, showMarkdown } from "../lib/render";
 import { loadMeeting, resolveMeetingRef } from "../lib/source";
@@ -280,7 +280,7 @@ async function show(ref: string, opts: Record<string, unknown>): Promise<void> {
                 )
             );
         } else {
-            out.print(showMarkdown(loaded.data, loaded.source, calendarFor(loaded.data)));
+            out.print(showMarkdown(loaded.data, loaded.source, sourcedCalendar(loaded)));
         }
     } catch (err) {
         fail(errorText(err));
@@ -307,6 +307,7 @@ async function exportMeetings(refs: string[], opts: Record<string, unknown>): Pr
             const loaded = await loadMeeting(id, { source, transcript: true });
             reportSource(loaded.source, loaded.notes);
             const meeting = loaded.data;
+            const calendar = sourcedCalendar(loaded);
             const folder = join(dir, exportDirName(meeting));
             const base: RenderOptions = {
                 source: loaded.source,
@@ -316,11 +317,11 @@ async function exportMeetings(refs: string[], opts: Record<string, unknown>): Pr
                 firstNames: opts.firstNames === true,
             };
             const files: Array<[string, string, boolean]> = [
-                ["Summary.md", showMarkdown(meeting, loaded.source, calendarFor(meeting)), true],
+                ["Summary.md", showMarkdown(meeting, loaded.source, calendar), true],
                 ["Transcript.md", renderMarkdown(meeting, base), true],
                 [
                     "meeting.json",
-                    `${SafeJSON.stringify({ source: loaded.source, meeting, calendar: calendarFor(meeting) ?? null }, null, 2)}\n`,
+                    `${SafeJSON.stringify({ source: loaded.source, meeting, calendar: calendar ?? null }, null, 2)}\n`,
                     false,
                 ],
             ];
@@ -334,9 +335,9 @@ async function exportMeetings(refs: string[], opts: Record<string, unknown>): Pr
     }
 }
 
-function importMeeting(folder: string, opts: { force?: boolean; json?: boolean }): void {
+async function importMeeting(folder: string, opts: { force?: boolean; json?: boolean }): Promise<void> {
     try {
-        const result = importExport({ folder: resolve(folder), force: opts.force === true });
+        const result = await importExport({ folder: resolve(folder), force: opts.force === true });
 
         if (opts.json) {
             out.result(SafeJSON.stringify(result, null, 2));
