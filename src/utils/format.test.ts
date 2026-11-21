@@ -391,11 +391,16 @@ describe("timecodes", () => {
         expect(parseTimecode("5:21:35")).toBe(19295);
         expect(parseTimecode("21:35")).toBe(1295);
         expect(parseTimecode("19295.5")).toBe(19295.5);
+        expect(parseTimecode("62:03")).toBe(3723);
+        expect(formatTimecode(65, { hours: "auto" })).toBe("1:05");
+        expect(formatTimecode(3725, { hours: "auto" })).toBe("1:02:05");
     });
 
     it("refuses minutes or seconds past 59 and text that is no timecode", () => {
         expect(parseTimecode("1:75:00")).toBeNull();
         expect(parseTimecode("1:00:60")).toBeNull();
         expect(parseTimecode("90m")).toBeNull();
+        expect(parseTimecode("9".repeat(400))).toBeNull();
+        expect(parseTimecode(`${"9".repeat(400)}:00`)).toBeNull();
     });
 });

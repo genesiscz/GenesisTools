@@ -69,6 +69,21 @@ a.m4s
     });
 });
 
+describe("parsePlaylist variant frame rate", () => {
+    it("reads FRAME-RATE when a variant names one", () => {
+        const text = `#EXTM3U
+#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1280x720,FRAME-RATE=60.000
+720p60/index.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720
+720p30/index.m3u8
+`;
+        const playlist = parsePlaylist(text, `${BASE}master.m3u8`);
+        const variants = playlist.kind === "master" ? playlist.variants : [];
+
+        expect(variants.map((variant) => variant.frameRate)).toEqual([60, undefined]);
+    });
+});
+
 describe("parsePlaylist program date time", () => {
     it("gives each segment the program date time written before it, and none to the rest", () => {
         const text = `#EXTM3U

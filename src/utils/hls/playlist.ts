@@ -5,6 +5,8 @@ export interface HlsVariant {
     bandwidth: number;
     width?: number;
     height?: number;
+    /** `EXT-X-STREAM-INF` FRAME-RATE, when the variant names one. */
+    frameRate?: number;
     /** `EXT-X-STREAM-INF` AUDIO group id, when the variant names one. */
     audioGroup?: string;
 }
@@ -104,11 +106,13 @@ function parseMaster(lines: string[], baseUrl: string): HlsMasterPlaylist {
         }
 
         const [width, height] = (pending.RESOLUTION ?? "").split("x").map(Number);
+        const frameRate = Number(pending["FRAME-RATE"]);
         variants.push({
             uri: new URL(line, baseUrl).href,
             bandwidth: Number(pending.BANDWIDTH) || 0,
             width: Number.isFinite(width) && width > 0 ? width : undefined,
             height: Number.isFinite(height) && height > 0 ? height : undefined,
+            ...(Number.isFinite(frameRate) && frameRate > 0 ? { frameRate } : {}),
             audioGroup: pending.AUDIO,
         });
         pending = null;
