@@ -522,9 +522,13 @@ final class EditorModel {
     nonisolated static func changedParts(_ a: EditProject, _ b: EditProject) -> [String] {
         var parts = EditParts.all.filter { $0.differs(a, b) }.map(\.key)
         // A count change (an add or a delete) is its own step, never part of a drag.
-        if (a.zooms.count, a.redactions?.count, a.texts?.count, a.shapes?.count, a.clips.count, a.markers?.count)
-            != (b.zooms.count, b.redactions?.count, b.texts?.count, b.shapes?.count, b.clips.count, b.markers?.count)
-            || (a.camera == nil, a.camera?.hidden.count) != (b.camera == nil, b.camera?.hidden.count) { parts.append("count") }
+        // In typed steps: as one comparison of two tuples this took the type checker 5 s with the 26.5 SDK.
+        let countsA: [Int?] = [a.zooms.count, a.redactions?.count, a.texts?.count, a.shapes?.count, a.clips.count, a.markers?.count]
+        let countsB: [Int?] = [b.zooms.count, b.redactions?.count, b.texts?.count, b.shapes?.count, b.clips.count, b.markers?.count]
+        let cameraA: Int? = a.camera?.hidden.count
+        let cameraB: Int? = b.camera?.hidden.count
+        let cameraChanged: Bool = (a.camera == nil) != (b.camera == nil) || cameraA != cameraB
+        if countsA != countsB || cameraChanged { parts.append("count") }
         return parts
     }
 
