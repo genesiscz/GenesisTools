@@ -29,7 +29,19 @@ export interface Pairing {
     state: PairingState;
     /** Why the pairing is held, drifted or failed. */
     note?: string;
+    /** What this side last wrote outside for each fact, the base of the check before the next push. */
+    sent?: SentFacts;
     updatedTs: string;
+}
+
+/** A fact's value as the connector writes it outside (its own words: the outside type, the cut title). */
+export type SentFacts = Partial<Record<SyncedFact, string>>;
+
+/** A fact that changed outside since this side last wrote it, so a push left it as it is. */
+export interface FactChangedOutside {
+    fact: SyncedFact;
+    outside: string;
+    here: string;
 }
 
 /** Who owns which fact, by the side that made the item (spec P5 decision 3). */
@@ -56,9 +68,20 @@ export interface PushIntent {
     parentKey?: string;
     /** The item's own links to items this connector already made outside. */
     links?: { kind: LinkKind; remoteKey: string }[];
+    /** Facts to write even when they changed outside (`sync --resolve <id> --take ours`). */
+    force?: readonly SyncedFact[];
 }
 
-export type PushResult = { ok: true; remoteKey: string } | { ok: false; error: string; remoteKey?: string };
+export type PushResult =
+    | {
+          ok: true;
+          remoteKey: string;
+          /** The facts now equal on both sides, as written outside; absent from a connector that does not check. */
+          sent?: SentFacts;
+          /** Facts left as they are because they changed outside since the last push. */
+          changedOutside?: FactChangedOutside[];
+      }
+    | { ok: false; error: string; remoteKey?: string };
 
 /** One outside item as a connector reads it. */
 export interface RemoteItem {

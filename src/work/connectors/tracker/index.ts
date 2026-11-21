@@ -8,7 +8,16 @@
 import { createHash } from "node:crypto";
 import { data, isError, type Kit, text, withKit } from "@app/scripts/lib/kit";
 import { retry } from "@genesiscz/utils/async";
-import type { Connector, PushIntent, PushResult, RemoteItem } from "@genesiscz/utils/work/connectors/types";
+import { judgeFacts } from "@genesiscz/utils/work/connectors/three-way";
+import type {
+    Connector,
+    FactChangedOutside,
+    PushIntent,
+    PushResult,
+    RemoteItem,
+    SentFacts,
+    SyncedFact,
+} from "@genesiscz/utils/work/connectors/types";
 import type { Item, ItemFields } from "@genesiscz/utils/work/model/item";
 import { ITEM_TYPES, type ItemState, type ItemType, type LinkKind } from "@genesiscz/utils/work/model/vocab";
 import { z } from "zod";
@@ -146,11 +155,6 @@ function markRender(body: string): string {
     return `${body}\n\n<!-- tools work: from the item's fields, ${hashOf(body)} -->`;
 }
 
-/** An update leaves the outside body alone when it already is this render, or someone wrote it by hand. */
-export function keepsOutsideBody(render: string, theirs: string): boolean {
-    return theirs === render || (theirs !== "" && !isUntouchedRender(theirs));
-}
-
 /** True for a body this connector rendered from the fields and nobody has edited since. */
 export function isUntouchedRender(body: string): boolean {
     const mark = RENDER_MARK.exec(body);
@@ -188,10 +192,6 @@ function taskOf(reply: Record<string, unknown>): Record<string, unknown> {
     return task !== null && typeof task === "object" && !Array.isArray(task)
         ? (task as Record<string, unknown>)
         : reply;
-}
-
-function bodyOf(task: Record<string, unknown>): string {
-    return typeof task.body === "string" ? task.body : "";
 }
 
 const RATE_LIMITED = /rate_limited|rate limit exceeded|too many requests/i;
@@ -258,6 +258,61 @@ export function pacedCall(
         pause = pause >= 2 * baseMs ? Math.floor(pause / 2) : 0;
         return result;
     };
+}
+
+/** The patch key of each fact a push writes. */
+const PATCH_KEY_OF: Partial<Record<SyncedFact, string>> = {
+    state: "status",
+    title: "title",
+    body: "body",
+    type: "type",
+    parent: "parentId",
+};
+
+/** The facts a patch writes, in the words it writes them. */
+export function factsOfPatch(patch: Record<string, unknown>): SentFacts {
+    const facts: SentFacts = {};
+
+    for (const [fact, key] of Object.entries(PATCH_KEY_OF) as [SyncedFact, string][]) {
+        const value = patch[key];
+
+        if (typeof value === "string" || typeof value === "number") {
+            facts[fact] = String(value);
+        }
+    }
+
+    return facts;
+}
+
+/**
+ * The same facts as the task holds them. With no base for the body (a pairing from before the check), an untouched
+ * render of the fields counts as empty, so the newer render replaces it.
+ */
+export function outsideFacts(
+    task: Record<string, unknown>,
+    { base, ours }: { base: SentFacts; ours: SentFacts }
+): SentFacts {
+    const text = (value: unknown): string | undefined =>
+        typeof value === "string" || typeof value === "number" ? String(value) : undefined;
+    const body = text(task.body) ?? "";
+    const facts: SentFacts = {
+        state: text(task.status),
+        title: text(task.title),
+        body: base.body === undefined && body !== ours.body && isUntouchedRender(body) ? "" : body,
+        type: text(task.type),
+        parent: text(task.parentId) ?? "",
+    };
+    return Object.fromEntries(Object.entries(facts).filter(([, value]) => value !== undefined));
+}
+
+/** The patch with only the facts to write (its other keys, such as labels, stay). */
+function withOnly(patch: Record<string, unknown>, send: readonly SyncedFact[]): Record<string, unknown> {
+    const dropped = new Set(
+        (Object.entries(PATCH_KEY_OF) as [SyncedFact, string][])
+            .filter(([fact]) => !send.includes(fact))
+            .map(([, key]) => key)
+    );
+    return Object.fromEntries(Object.entries(patch).filter(([key]) => !dropped.has(key)));
 }
 
 /** A numeric key is sent as a number, as the task doors expect; any other key as it is. */
@@ -412,17 +467,17 @@ export const trackerConnector: Connector<unknown> = {
                             return outside;
                         };
 
+                        let sent: SentFacts = {};
+                        let changedOutside: FactChangedOutside[] = [];
+
                         if (key === "") {
+                            const patch = patchOf(intent, true, settings);
+                            sent = factsOfPatch(patch);
                             const made = answer(
                                 await call(
                                     settings.server,
                                     "create",
-                                    scoped(settings, {
-                                        kind: "task",
-                                        project: settings.project,
-                                        ...patchOf(intent, true, settings),
-                                        labels,
-                                    })
+                                    scoped(settings, { kind: "task", project: settings.project, ...patch, labels })
                                 ),
                                 "create"
                             );
@@ -434,24 +489,30 @@ export const trackerConnector: Connector<unknown> = {
 
                             key = id;
                         } else {
+                            // Read the task first: a fact edited outside since the last push is never overwritten.
                             const patch = patchOf(intent, bornHere, settings);
+                            const base = intent.pairing?.sent ?? {};
+                            const ours = factsOfPatch(patch);
+                            const judged = judgeFacts({
+                                ours,
+                                theirs: outsideFacts(taskOf(await outsideTask()), { base, ours }),
+                                base,
+                                ...(intent.force !== undefined ? { force: intent.force } : {}),
+                            });
+                            const update = withOnly(patch, judged.send);
+                            sent = judged.sent;
+                            changedOutside = judged.changedOutside;
 
-                            // A body rendered from the fields replaces only an empty outside body or an earlier
-                            // render nobody edited; a body written by hand outside stays.
-                            if (typeof patch.body === "string" && isUntouchedRender(patch.body)) {
-                                if (keepsOutsideBody(patch.body, bodyOf(taskOf(await outsideTask())))) {
-                                    delete patch.body;
-                                }
+                            if (Object.keys(update).length > 0) {
+                                answer(
+                                    await call(
+                                        settings.server,
+                                        "update",
+                                        scoped(settings, { kind: "task", id: key, ...update })
+                                    ),
+                                    "update"
+                                );
                             }
-
-                            answer(
-                                await call(
-                                    settings.server,
-                                    "update",
-                                    scoped(settings, { kind: "task", id: key, ...patch })
-                                ),
-                                "update"
-                            );
                         }
 
                         if (labels.length > 0 || types.remove.length > 0) {
@@ -497,7 +558,12 @@ export const trackerConnector: Connector<unknown> = {
                             }
                         }
 
-                        results.push({ ok: true, remoteKey: key });
+                        results.push({
+                            ok: true,
+                            remoteKey: key,
+                            sent,
+                            ...(changedOutside.length > 0 ? { changedOutside } : {}),
+                        });
                     } catch (error) {
                         results.push({
                             ok: false,

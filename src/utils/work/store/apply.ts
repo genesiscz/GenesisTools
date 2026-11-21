@@ -174,7 +174,11 @@ function applyPaired(db: Database, change: NewChange): void {
             pairing.connector,
             pairing.remoteKey,
             pairing.born,
-            json({ facts: pairing.origin, ...(pairing.note !== undefined ? { note: pairing.note } : {}) }),
+            json({
+                facts: pairing.origin,
+                ...(pairing.note !== undefined ? { note: pairing.note } : {}),
+                ...(pairing.sent !== undefined ? { sent: pairing.sent } : {}),
+            }),
             pairing.state,
             change.ts,
         ]
