@@ -79,6 +79,11 @@ export interface ConnectorContext<S = unknown> {
     project: string;
     /** The machine part of the label (`machine.prefix` of the config). */
     machinePrefix: string;
+    /**
+     * Renews the sync's lease during a long push (a connector that waits out a rate limit calls it before each
+     * wait); false when the lease is lost, so the connector stops waiting.
+     */
+    keepAlive?: () => boolean;
 }
 
 export interface Connector<S = unknown> {

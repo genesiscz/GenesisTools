@@ -6,7 +6,8 @@
  */
 // lint-rules-ignore: the MCP kit lives in the scripts tool; a connector is tool code that calls an MCP server
 import { createHash } from "node:crypto";
-import { data, isError, text, withKit } from "@app/scripts/lib/kit";
+import { data, isError, type Kit, text, withKit } from "@app/scripts/lib/kit";
+import { retry } from "@genesiscz/utils/async";
 import type { Connector, PushIntent, PushResult, RemoteItem } from "@genesiscz/utils/work/connectors/types";
 import type { Item, ItemFields } from "@genesiscz/utils/work/model/item";
 import { ITEM_TYPES, type ItemState, type ItemType, type LinkKind } from "@genesiscz/utils/work/model/vocab";
@@ -193,6 +194,72 @@ function bodyOf(task: Record<string, unknown>): string {
     return typeof task.body === "string" ? task.body : "";
 }
 
+const RATE_LIMITED = /rate_limited|rate limit exceeded|too many requests/i;
+const RETRY_AFTER = /retry[-_ ]?after\D{0,4}(\d+(?:\.\d+)?)/i;
+
+function messageOf(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
+/** The pause before the next try of a rate-limited call: the server's Retry-After when it names one, else double. */
+export function rateLimitPause(message: string, previousMs: number, limits: { baseMs: number; maxMs: number }): number {
+    const named = RETRY_AFTER.exec(message);
+
+    if (named !== null) {
+        return Math.min(Math.ceil(Number(named[1]) * 1000), limits.maxMs);
+    }
+
+    return Math.min(Math.max(previousMs * 2, limits.baseMs), limits.maxMs);
+}
+
+export interface PacingOptions {
+    /** False when the caller lost its lease: stop waiting and fail the call. */
+    keepAlive?: () => boolean;
+    baseMs?: number;
+    maxMs?: number;
+    maxAttempts?: number;
+}
+
+/**
+ * A door call that waits out a rate limit and paces the calls after it: each try after a refusal waits the
+ * server's Retry-After (else a doubling pause from `baseMs` to `maxMs`), the next calls start with that pause, and
+ * each call that passes halves it. A thrown transport error and an `isError` answer count alike; any other error
+ * goes back at once.
+ */
+export function pacedCall(
+    call: Kit["call"],
+    { keepAlive, baseMs = 1000, maxMs = 30_000, maxAttempts = 8 }: PacingOptions = {}
+): Kit["call"] {
+    let pause = 0;
+    return async (server, tool, args) => {
+        if (pause > 0) {
+            await Bun.sleep(pause);
+        }
+
+        const result = await retry(
+            async () => {
+                const raw = await call(server, tool, args);
+
+                if (isError(raw) && RATE_LIMITED.test(text(raw))) {
+                    throw new Error(text(raw));
+                }
+
+                return raw;
+            },
+            {
+                maxAttempts,
+                shouldRetry: (error) => RATE_LIMITED.test(messageOf(error)) && keepAlive?.() !== false,
+                getDelay: (_attempt, error) => {
+                    pause = rateLimitPause(messageOf(error), pause, { baseMs, maxMs });
+                    return pause;
+                },
+            }
+        );
+        pause = pause >= 2 * baseMs ? Math.floor(pause / 2) : 0;
+        return result;
+    };
+}
+
 /** A numeric key is sent as a number, as the task doors expect; any other key as it is. */
 function taskId(key: string): number | string {
     return /^\d+$/.test(key) ? Number(key) : key;
@@ -313,10 +380,20 @@ export const trackerConnector: Connector<unknown> = {
         const settings = trackerSettings.parse(ctx.settings);
         return withKit(
             async (kit) => {
+                const call = pacedCall(
+                    kit.call.bind(kit),
+                    ctx.keepAlive !== undefined ? { keepAlive: ctx.keepAlive } : {}
+                );
                 const results: PushResult[] = [];
 
                 for (const intent of intents) {
                     let key = intent.pairing?.remoteKey ?? "";
+
+                    // A long wave renews the sync's lease as it goes; without it the pass would drop every answer.
+                    if (ctx.keepAlive?.() === false) {
+                        results.push({ ok: false, error: "the sync lease was lost; the next pass pushes it" });
+                        continue;
+                    }
 
                     try {
                         const bornHere = intent.pairing === null || intent.pairing.born === "local";
@@ -325,7 +402,7 @@ export const trackerConnector: Connector<unknown> = {
                         let outside: Record<string, unknown> | undefined;
                         const outsideTask = async (): Promise<Record<string, unknown>> => {
                             outside ??= answer(
-                                await kit.call(
+                                await call(
                                     settings.server,
                                     "get",
                                     scoped(settings, { kind: "task", id: taskId(key), include: ["links"] })
@@ -337,7 +414,7 @@ export const trackerConnector: Connector<unknown> = {
 
                         if (key === "") {
                             const made = answer(
-                                await kit.call(
+                                await call(
                                     settings.server,
                                     "create",
                                     scoped(settings, {
@@ -368,7 +445,7 @@ export const trackerConnector: Connector<unknown> = {
                             }
 
                             answer(
-                                await kit.call(
+                                await call(
                                     settings.server,
                                     "update",
                                     scoped(settings, { kind: "task", id: key, ...patch })
@@ -379,7 +456,7 @@ export const trackerConnector: Connector<unknown> = {
 
                         if (labels.length > 0 || types.remove.length > 0) {
                             answer(
-                                await kit.call(
+                                await call(
                                     settings.server,
                                     "label_task",
                                     scoped(settings, {
@@ -403,7 +480,7 @@ export const trackerConnector: Connector<unknown> = {
                                 }
 
                                 answer(
-                                    await kit.call(
+                                    await call(
                                         settings.server,
                                         "create",
                                         scoped(settings, {
@@ -440,11 +517,12 @@ export const trackerConnector: Connector<unknown> = {
         const settings = trackerSettings.parse(ctx.settings);
         return withKit(
             async (kit) => {
+                const call = pacedCall(kit.call.bind(kit));
                 const remotes: RemoteItem[] = [];
 
                 for (const key of ask.remoteKeys) {
                     const reply = answer(
-                        await kit.call(settings.server, "get", scoped(settings, { kind: "task", id: key })),
+                        await call(settings.server, "get", scoped(settings, { kind: "task", id: key })),
                         `get ${key}`
                     );
                     const task = taskOf(reply);
