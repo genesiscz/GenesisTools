@@ -32,6 +32,8 @@ const CHANNEL_SLUG = /^[a-z0-9_-]+$/i;
 const VOD_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Paths on kick.com that are not a channel. */
 const RESERVED_PATHS = new Set(["api", "categories", "browse", "following", "search", "clips", "video"]);
+/** No stream runs a week; a larger `vod_starts_at` is no offset. */
+const MAX_VOD_OFFSET_SEC = 7 * 86_400;
 
 const clipSchema = z.object({
     id: z.string(),
@@ -208,6 +210,13 @@ export function parseKickTarget(input: string): ClipTarget {
     };
 }
 
+/** Kick's `vod_starts_at` when it is a usable offset: whole seconds, above 0 (0 means not placed yet), under a week. */
+export function siteOffset(value: number | null | undefined): number | null {
+    return typeof value === "number" && Number.isSafeInteger(value) && value > 0 && value <= MAX_VOD_OFFSET_SEC
+        ? value
+        : null;
+}
+
 function clipTarget(id: string): ClipTarget {
     return { kind: "clip", id: `clip_${id.slice(5).toUpperCase()}` };
 }
@@ -226,7 +235,7 @@ function toClip(raw: z.infer<typeof clipSchema>): Clip {
         channel: raw.channel.slug,
         channelName: raw.channel.username,
         streamId: raw.livestream_id ?? null,
-        vodOffsetSec: raw.vod_starts_at ? raw.vod_starts_at : null,
+        vodOffsetSec: siteOffset(raw.vod_starts_at),
         creator: raw.creator?.username ?? null,
         category: raw.category?.name ?? null,
         mature: raw.is_mature ?? false,

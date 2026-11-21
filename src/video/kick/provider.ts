@@ -42,17 +42,56 @@ function playlistOf(info: KickVodInfo): string {
  * the windows do not meet, the median of their middles.
  */
 export function fitVodStart(clips: Array<{ startAt: string; siteOffsetSec: number }>): string | null {
-    const latest = clips.map((clip) => Date.parse(clip.startAt) / 1000 - clip.siteOffsetSec);
+    const latest = clips
+        .map((clip) => Date.parse(clip.startAt) / 1000 - clip.siteOffsetSec)
+        .filter((value) => Number.isFinite(value));
 
     if (latest.length === 0) {
         return null;
     }
 
-    const high = Math.min(...latest);
-    const low = Math.max(...latest) - 1;
-    const middles = latest.map((value) => value - 0.5).sort((a, b) => a - b);
-    const start = low <= high ? (low + high) / 2 : middles[Math.floor(middles.length / 2)];
-    return new Date(Math.round(start * 1000)).toISOString();
+    // A loop, not Math.min(...latest): a backfill of every clip can pass more values than a call takes arguments.
+    let high = Number.POSITIVE_INFINITY;
+    let low = Number.NEGATIVE_INFINITY;
+
+    for (const value of latest) {
+        high = Math.min(high, value);
+        low = Math.max(low, value - 1);
+    }
+
+    const start =
+        low <= high
+            ? (low + high) / 2
+            : latest.map((value) => value - 0.5).sort((a, b) => a - b)[Math.floor(latest.length / 2)];
+    const at = new Date(Math.round(start * 1000));
+    return Number.isFinite(at.getTime()) ? at.toISOString() : null;
+}
+
+/** A clip whose playlist carries no stream time keeps Kick's whole-second offset, with no stream time (`site`). */
+function placeBySiteOffset({
+    clip,
+    streamId,
+    vod,
+}: {
+    clip: Clip;
+    streamId: string;
+    vod: Vod | null;
+}): ClipSource | null {
+    if (clip.vodOffsetSec === null) {
+        return null;
+    }
+
+    return {
+        streamId,
+        vodId: vod?.id ?? null,
+        vodPageUrl: vod?.pageUrl ?? null,
+        vodUrlAtClip: null,
+        startAt: null,
+        endAt: null,
+        vodOffsetSec: clip.vodOffsetSec,
+        vodEndOffsetSec: clip.vodOffsetSec + clip.durationSec,
+        offsetFrom: "site",
+    };
 }
 
 /**
@@ -185,7 +224,8 @@ async function placeKickClips({
     const fittedByStream = new Map<string, string | null>();
 
     for (const [streamId, group] of Map.groupBy(clips, (clip) => clip.streamId)) {
-        if (streamId) {
+        // A stream whose VOD playlist gave its start is placed from that; no fit is needed.
+        if (streamId && !vodByStream.get(streamId)?.playback?.startAt) {
             const fitted = group.flatMap((clip) => {
                 const span = spans.get(clip.id);
                 return span && clip.vodOffsetSec !== null
@@ -202,8 +242,10 @@ async function placeKickClips({
         const streamId = clip.streamId;
         const span = spans.get(clip.id);
 
-        if (!streamId || span === null) {
+        if (!streamId) {
             sources.set(clip.id, null);
+        } else if (span === null) {
+            sources.set(clip.id, placeBySiteOffset({ clip, streamId, vod: vodByStream.get(streamId)?.vod ?? null }));
         } else if (span) {
             sources.set(
                 clip.id,
@@ -237,6 +279,7 @@ export const kickProvider: ClipProvider = {
     },
     fetchClip: fetchKickClip,
     clipQualities: false,
+    clipTimesFromPlaylist: true,
     // Kick's clip playlist is one media playlist in the stream's own quality; no other rendition exists.
     clipMedia: async ({ clip, quality }) => {
         chooseQuality({ options: ["source"], quality, names: (name) => [name], height: () => null });

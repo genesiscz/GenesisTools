@@ -474,12 +474,14 @@ Twitch's API gives none either. `offsetFrom` says how the place was found:
   the clips together narrow it: on three public VODs the window was 0.07 to 0.15 s wide and its middle within 0.05 s
   of the playlist's own start. The offsets count from that middle, so clips of one VOD keep their exact distances. One
   clip alone is within 0.5 s, so run `manifest --backfill` to fit with all clips of the folder. Kick gives 0 until it
-  has placed a fresh clip; 0 counts as none.
+  has placed a fresh clip; 0 counts as none, as does a value that is not a whole number of seconds under a week. A Kick
+  clip whose playlist carries no stream time keeps this offset with no `startAt`.
 - `vod-playlist`: Kick clip and VOD playlists both carry the stream time of every segment (also for a clip cut from a
   VOD later), so the offset is their difference. Measured 2026-11-20 on one fattypillow clip: the clip's audio matched
   the cut at that offset within 0.07 s.
 - A VOD playlist read once keeps its start in the manifest's `vods`. When the site closes it later (Kick turned a public
-  VOD subscriber-only within a day), clips of that VOD are still placed from that start (`vod-playlist`).
+  VOD subscriber-only within a day), Kick clips of that VOD are still placed from that start (`vod-playlist`). A Twitch
+  clip keeps Twitch's own offset, since its stream time is derived from that offset.
 - `stream-start`: no playlist and no site offset, so the offset counts from Kick's stream start, a few seconds off
   (on 80 subscriber-only clips: 3.6 to 4.8 s early). `manifest` marks these with `~`.
 

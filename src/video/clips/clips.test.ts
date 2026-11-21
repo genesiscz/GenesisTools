@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chooseQuality } from "@genesiscz/utils/video/choose-quality";
 import { redactUrlQueries } from "@genesiscz/utils/video/process";
-import { kickTimeSchema, parseKickTarget, retryAfterMs } from "../kick/api";
+import { kickTimeSchema, parseKickTarget, retryAfterMs, siteOffset } from "../kick/api";
 import { fitVodStart, placeBySpan } from "../kick/provider";
 import { parseTwitchTarget } from "../twitch/api";
 import { clipFileName } from "./download";
@@ -460,6 +460,26 @@ describe("placeBySpan (Kick)", () => {
         expect(fitted).toBe("2026-11-19T00:00:00.525Z");
         expect(fitVodStart([])).toBeNull();
     });
+
+    it("fits a group larger than a call takes arguments", () => {
+        const many = Array.from({ length: 200_000 }, (_, index) => ({
+            startAt: new Date(Date.parse("2026-11-19T00:00:00.300Z") + index * 1000).toISOString(),
+            siteOffsetSec: index,
+        }));
+        // Every clip allows the same window, 23:59:59.300 to 00:00:00.300; the fit is its middle.
+        expect(fitVodStart(many)).toBe("2026-11-18T23:59:59.800Z");
+    });
+
+    it("takes only whole, positive offsets under a week from Kick", () => {
+        expect([
+            siteOffset(120),
+            siteOffset(0),
+            siteOffset(-5),
+            siteOffset(1.5),
+            siteOffset(1e12),
+            siteOffset(null),
+        ]).toEqual([120, null, null, null, null, null]);
+    });
 });
 
 function kickClip(): Clip {
@@ -494,6 +514,7 @@ describe("recordClips", () => {
                 section,
                 rows: [{ clip: twitchClip, output, status, bytes: 1, quality }],
                 sources: new Map(),
+                rebaseOnPlaylistStart: false,
             });
 
         record("/clips/a-720p-tw_x.mp4", "720p", "saved");
@@ -555,6 +576,7 @@ describe("recordClips", () => {
             section,
             rows: [{ clip, output: "/clips/a.mp4", status: "saved", bytes: 1, quality: "source" }],
             sources: new Map([["clip_1", site]]),
+            rebaseOnPlaylistStart: true,
         });
 
         const source = section.clips.clip_1.source;
@@ -563,5 +585,14 @@ describe("recordClips", () => {
             22226.802,
             "vod-playlist",
         ]);
+
+        // Twitch's stream time comes from its own offset: a recorded playlist start never moves it.
+        recordClips({
+            section,
+            rows: [{ clip, output: "/clips/a.mp4", status: "saved", bytes: 1, quality: "source" }],
+            sources: new Map([["clip_1", site]]),
+            rebaseOnPlaylistStart: false,
+        });
+        expect(section.clips.clip_1.source?.vodOffsetSec).toBe(22193);
     });
 });
