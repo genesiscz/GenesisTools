@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -47,6 +47,96 @@ function copyPath(folder: string, part: SourceCopyPart): string {
     return join(folder, SOURCE_COPY_FOLDER, `${part}.json`);
 }
 
+/** What a copy file says about itself, without its value. */
+interface CopyHeader {
+    sourceId: string;
+    sourceMeetingId: string;
+    savedAt: string;
+    sha256: string;
+}
+
+/**
+ * The bytes read for a copy's header. `saveSourceCopy` writes the header keys before the value, so a check that needs
+ * only the digest or the meeting it names (every read of a record) reads this much, not the whole transcript.
+ */
+const HEADER_BYTES = 4096;
+const JSON_STRING = String.raw`"(?:[^"\\]|\\.)*"`;
+const HEADER_RE = new RegExp(
+    `^\\{"version":1,"sourceId":(${JSON_STRING}),"sourceMeetingId":(${JSON_STRING}),"savedAt":(${JSON_STRING}),"sha256":"([0-9a-f]{64})","value":`
+);
+
+function jsonString(literal: string): string | undefined {
+    const value: unknown = SafeJSON.parse(literal, { strict: true });
+    return typeof value === "string" ? value : undefined;
+}
+
+/** The whole copy file, or undefined when it is missing, cut short or of another shape (a valid answer then replaces it). */
+function readCopyFile(path: string): z.infer<typeof copyFileSchema> | undefined {
+    if (!existsSync(path)) {
+        return undefined;
+    }
+
+    try {
+        const parsed = copyFileSchema.safeParse(SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }));
+
+        if (parsed.success) {
+            return parsed.data;
+        }
+
+        log.warn({ path, issues: parsed.error.issues.length }, "the record's source copy is unreadable; it is ignored");
+    } catch (error) {
+        log.warn({ error, path }, "the record's source copy is unreadable; it is ignored");
+    }
+
+    return undefined;
+}
+
+/** The header from the first bytes of the file; a file written another way is read in full. */
+function readCopyHeader(path: string): CopyHeader | undefined {
+    let head: string;
+    // A file cut short (a full disk under an older writer) loses its closing brace: it is read in full and ignored.
+    let whole: boolean;
+
+    try {
+        const fd = openSync(path, "r");
+
+        try {
+            const buffer = Buffer.alloc(HEADER_BYTES);
+            const size = fstatSync(fd).size;
+            head = buffer.subarray(0, readSync(fd, buffer, 0, HEADER_BYTES, 0)).toString("utf8");
+            const tail = Buffer.alloc(2);
+            whole = size >= 2 && readSync(fd, tail, 0, 2, size - 2) === 2 && tail.toString("utf8") === "}\n";
+        } finally {
+            closeSync(fd);
+        }
+    } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+            return undefined;
+        }
+
+        log.warn({ error, path }, "the record's source copy is unreadable; it is ignored");
+        return undefined;
+    }
+
+    const match = whole ? head.match(HEADER_RE) : null;
+    const [sourceId, sourceMeetingId, savedAt] = match ? [match[1], match[2], match[3]].map(jsonString) : [];
+
+    if (match?.[4] && sourceId !== undefined && sourceMeetingId !== undefined && savedAt !== undefined) {
+        return { sourceId, sourceMeetingId, savedAt, sha256: match[4] };
+    }
+
+    const file = readCopyFile(path);
+    return file
+        ? { sourceId: file.sourceId, sourceMeetingId: file.sourceMeetingId, savedAt: file.savedAt, sha256: file.sha256 }
+        : undefined;
+}
+
+/** The header of one saved part for this source meeting; undefined when none is saved or it names another meeting. */
+function copyHeader(folder: string, part: SourceCopyPart, ref: SourceCopyRef): CopyHeader | undefined {
+    const header = readCopyHeader(copyPath(folder, part));
+    return header?.sourceId === ref.sourceId && header.sourceMeetingId === ref.sourceMeetingId ? header : undefined;
+}
+
 /**
  * The copy never keeps the provider's audio path: that file belongs to the provider and goes with it, and a path that
  * is gone would offer sound tracks that cannot play. The record's own audio is its preserved source audio
@@ -72,22 +162,9 @@ export function readSourceCopy<P extends SourceCopyPart>(
     part: P,
     ref: SourceCopyRef
 ): { sha256: string; savedAt: string; value: SourceCopyParts[P] } | undefined {
-    const path = copyPath(folder, part);
+    const file = readCopyFile(copyPath(folder, part));
 
-    if (!existsSync(path)) {
-        return undefined;
-    }
-
-    const parsed = copyFileSchema.safeParse(SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }));
-
-    if (!parsed.success) {
-        log.warn({ path, issues: parsed.error.issues.length }, "the record's source copy is unreadable; it is ignored");
-        return undefined;
-    }
-
-    const file = parsed.data;
-
-    if (file.sourceId !== ref.sourceId || file.sourceMeetingId !== ref.sourceMeetingId) {
+    if (!file || file.sourceId !== ref.sourceId || file.sourceMeetingId !== ref.sourceMeetingId) {
         return undefined;
     }
 
@@ -105,7 +182,7 @@ export function saveSourceCopy<P extends SourceCopyPart>(
     const kept = withoutProviderAudio(value);
     const sha256 = digest(kept);
 
-    if (readSourceCopy(folder, part, ref)?.sha256 === sha256) {
+    if (copyHeader(folder, part, ref)?.sha256 === sha256) {
         return false;
     }
 
@@ -125,12 +202,21 @@ export async function captureSourceCopy(options: {
     meeting: SourceMeeting;
 }): Promise<void> {
     const { folder, source, meeting } = options;
-    const ref = { sourceId: source.id, sourceMeetingId: meeting.sourceMeetingId };
-    saveSourceCopy(folder, "meeting", ref, meeting);
+    saveSourceCopy(folder, "meeting", { sourceId: source.id, sourceMeetingId: meeting.sourceMeetingId }, meeting);
+    await captureEvidenceAndClock({ folder, source, sourceMeetingId: meeting.sourceMeetingId });
+}
 
+/** Saves the evidence and the clock the source answers now; a failed read keeps the older copy of that part. */
+async function captureEvidenceAndClock(options: {
+    folder: string;
+    source: TranscriptSource;
+    sourceMeetingId: string;
+}): Promise<void> {
+    const { folder, source, sourceMeetingId } = options;
+    const ref = { sourceId: source.id, sourceMeetingId };
     const [evidence, clock] = await Promise.allSettled([
-        source.evidence(meeting.sourceMeetingId),
-        source.recordingClock(meeting.sourceMeetingId),
+        source.evidence(sourceMeetingId),
+        source.recordingClock(sourceMeetingId),
     ]);
 
     if (evidence.status === "fulfilled") {
@@ -169,24 +255,35 @@ function keep<P extends "evidence" | "clock">(
     return value;
 }
 
-/** The copy's token for `revision` when the source cannot answer one. */
+/** The copy's token for `revision` when the source cannot answer one: the meeting and the clock it was read with. */
 function copyRevision(folder: string, ref: SourceCopyRef): string | undefined {
-    const saved = readSourceCopy(folder, "meeting", ref);
-    return saved ? `source-copy:${saved.sha256}` : undefined;
+    const meeting = copyHeader(folder, "meeting", ref);
+    const clock = copyHeader(folder, "clock", ref);
+    return meeting ? `source-copy:${meeting.sha256}${clock ? `:${clock.sha256}` : ""}` : undefined;
 }
 
 /**
  * The source, with the record's copy behind the reads a record needs: each answer refreshes the copy, and a read that
  * fails answers from the copy when one is saved. Without a copy the source's error is thrown as before.
  *
- * With a saved copy, the source is read only from this Mac (`remote: false`): a plain read (`show`, `transcript`, the
- * window) never dials a remote service or asks for the vault key. `new`, `link` and a refresh read the source directly
- * and may go remote, which brings a server-only change into the copy (D41, 2026-11-20).
+ * With a saved copy of a part, that part is read from the source only on this Mac (`remote: false`): a plain read
+ * (`show`, `transcript`, the window) never dials a remote service or asks for the vault key. `new`, `link` and a
+ * refresh read the source directly and may go remote, which brings a server-only change into the copy (D41,
+ * 2026-11-20). The first read that saves the meeting also saves the evidence and the clock while the source may still
+ * go remote, so a record made before this copy existed keeps all three parts.
+ *
+ * `save: false` answers from the copy when the source cannot, but writes nothing (a probe that must not change the
+ * record).
  */
-export function copyBackedSource(source: TranscriptSource, folder: string): TranscriptSource {
+export function copyBackedSource(
+    source: TranscriptSource,
+    folder: string,
+    options: { save?: boolean } = {}
+): TranscriptSource {
+    const saving = options.save ?? true;
     const refOf = (sourceMeetingId: string) => ({ sourceId: source.id, sourceMeetingId });
-    const reach = (sourceMeetingId: string) =>
-        readSourceCopy(folder, "meeting", refOf(sourceMeetingId)) ? { remote: false } : {};
+    const reach = (part: SourceCopyPart, sourceMeetingId: string) =>
+        copyHeader(folder, part, refOf(sourceMeetingId)) ? { remote: false } : {};
 
     async function backed<P extends SourceCopyPart>(
         part: P,
@@ -209,6 +306,10 @@ export function copyBackedSource(source: TranscriptSource, folder: string): Tran
             return saved.value;
         }
 
+        if (!saving) {
+            return value;
+        }
+
         try {
             return save(value);
         } catch (error) {
@@ -220,16 +321,26 @@ export function copyBackedSource(source: TranscriptSource, folder: string): Tran
 
     return {
         ...source,
-        load: (id) =>
-            backed(
+        load: async (id) => {
+            const first = saving && !copyHeader(folder, "meeting", refOf(id));
+            const meeting = await backed(
                 "meeting",
                 id,
-                () => source.load(id, reach(id)),
-                (meeting) => {
-                    saveSourceCopy(folder, "meeting", refOf(id), meeting);
-                    return meeting;
+                () => source.load(id, reach("meeting", id)),
+                (loaded) => {
+                    saveSourceCopy(folder, "meeting", refOf(id), loaded);
+                    return loaded;
                 }
-            ),
+            );
+
+            if (first && copyHeader(folder, "meeting", refOf(id))) {
+                await captureEvidenceAndClock({ folder, source, sourceMeetingId: id }).catch((error: unknown) => {
+                    log.warn({ error, folder }, "the record's first evidence and clock copy could not be saved");
+                });
+            }
+
+            return meeting;
+        },
         evidence: (id) =>
             backed(
                 "evidence",
@@ -241,7 +352,7 @@ export function copyBackedSource(source: TranscriptSource, folder: string): Tran
             backed(
                 "clock",
                 id,
-                () => source.recordingClock(id, reach(id)),
+                () => source.recordingClock(id, reach("clock", id)),
                 (clock) => keep(folder, "clock", refOf(id), clock)
             ),
         revision: async (id) => {
@@ -270,10 +381,7 @@ export function copyOnlySource(
     folder: string,
     sourceMeetingId: string
 ): TranscriptSource | undefined {
-    const ref = { sourceId, sourceMeetingId };
-    const meeting = readSourceCopy(folder, "meeting", ref);
-
-    if (!meeting) {
+    if (!copyHeader(folder, "meeting", { sourceId, sourceMeetingId })) {
         return undefined;
     }
 
