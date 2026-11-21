@@ -7190,6 +7190,33 @@ describe("speakers stats text", () => {
         expect(table).toContain("Speaker 3 ");
         expect(table).not.toContain("Speaker 3 →");
     });
+
+    test("in a meeting someone else recorded, the sole attendee at the microphone is the recorder, not you", () => {
+        const hint = {
+            kind: "sole-attendee" as const,
+            label: "Speaker 1",
+            strength: "strong" as const,
+            person: "Alice Example",
+            self: true,
+            ranges: [{ fromSec: 0, toSec: 10, lines: 2 }],
+        };
+        const warned: string[] = [];
+        const println = spyOn(out, "println").mockImplementation(() => {});
+        const warn = spyOn(ui, "warn").mockImplementation((text: string) => {
+            warned.push(text);
+        });
+
+        try {
+            printSpeakerStats({ timed: true, speakers: [], hints: [hint] }, { recorder: true });
+            printSpeakerStats({ timed: true, speakers: [], hints: [hint] });
+        } finally {
+            println.mockRestore();
+            warn.mockRestore();
+        }
+
+        expect(warned[0]).toContain("only the recorder (Alice Example) was in the call");
+        expect(warned[1]).toContain("only you (Alice Example) was in the call");
+    });
 });
 
 describe("screen boxes", () => {
