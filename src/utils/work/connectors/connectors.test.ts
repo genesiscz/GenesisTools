@@ -224,6 +224,33 @@ describe("the sync consumer", () => {
         expect(fake.pushed).toHaveLength(1);
     });
 
+    test("an agent's own epic is made outside; a hold by another session comes back in every later pass", async () => {
+        const epic = await write(ctx("maker"), { verb: "add", title: "agent epic", type: "epic" });
+        const id = epic.ok ? epic.data.items[0].id : asItemId("none");
+        expect((await runSyncOnce(deps())).held).toBe(0);
+        expect(selectPairings(db, { item: id })[0].state).toBe("in-sync");
+
+        await write(ctx("other"), { verb: "comment", ref: id, text: "a note" });
+        expect((await runSyncOnce(deps())).held).toBe(1);
+        const later = await runSyncOnce(deps());
+        expect(later.held).toBe(1);
+        expect(later.problems?.[0]).toMatchObject({ item: id, state: "held" });
+        expect((await previewSync(deps())).preview?.hold).toEqual([id]);
+    });
+
+    test("a move under another parent by any session is pushed, not held", async () => {
+        const top = await write(ctx("owner-s", "owner"), { verb: "add", title: "top", type: "epic" });
+        const sub = await write(ctx("owner-s", "owner"), { verb: "add", title: "sub", type: "epic" });
+        const topId = top.ok ? top.data.items[0].id : asItemId("none");
+        const subId = sub.ok ? sub.data.items[0].id : asItemId("none");
+        await runSyncOnce(deps());
+
+        expect((await write(ctx("other"), { verb: "edit", ref: subId, parent: topId })).ok).toBe(true);
+        const report = await runSyncOnce(deps());
+        expect(report.held).toBe(0);
+        expect(report.pushed).toBe(1);
+    });
+
     test("a change by a role that may not push is held, and a release pushes it", async () => {
         const epic = await write(ctx("owner-s", "owner"), { verb: "add", title: "big", type: "epic" });
         const id = epic.ok ? epic.data.items[0].id : asItemId("none");
@@ -550,6 +577,7 @@ describe("what a push makes outside", () => {
         await useConfig({ enabled: true, createTypes: ["bug", "epic"] });
         const epic = await write(ctx("agent-s"), { verb: "spot", title: "an epic", type: "epic", fields: {} });
         const epicId = epic.ok ? epic.data.items[0].id : asItemId("none");
+        await write(ctx("other-s"), { verb: "comment", ref: epicId, text: "not the poster" });
         fake.unavailable = true;
         const bug = await spot("s1", "bug", "fails");
         const report = await runSyncOnce(deps());

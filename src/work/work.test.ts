@@ -17,7 +17,16 @@ import { legacyHandoffs } from "./adapters";
 import { ownerAtSurface } from "./adapters/actor";
 import { openLegacySource } from "./adapters/legacy-source";
 import { connectorPort, syncNeededAfter } from "./connectors";
-import { hasLink, linksOf, patchOf } from "./connectors/tracker";
+import {
+    hasLink,
+    isUntouchedRender,
+    keepsOutsideBody,
+    linksOf,
+    localTypeOf,
+    outsideType,
+    patchOf,
+    typeLabels,
+} from "./connectors/tracker";
 
 const actor: Actor = {
     kind: "agent",
@@ -319,6 +328,54 @@ describe("the tracker connector", () => {
         ).toEqual({
             status: "todo",
         });
+    });
+
+    const settings = { server: "t", project: "a" };
+
+    test("each local type has an outside type; a lossy one keeps its type in a label, and a pull gives it back", () => {
+        expect(outsideType("feature", settings)).toBe("story");
+        expect(outsideType("feature", { ...settings, types: { feature: "task" } })).toBe("task");
+        expect(typeLabels("feature", settings).add).toEqual(["type:feature"]);
+        expect(typeLabels("feature", settings).remove).not.toContain("type:feature");
+        expect(typeLabels("bug", settings).add).toEqual([]);
+        expect(typeLabels("bug", settings).remove).toContain("type:incident");
+        expect(typeLabels("feature", { ...settings, typeLabel: "" })).toEqual({ add: [], remove: [] });
+        expect(localTypeOf("qa", ["type:check"], settings)).toBe("check");
+        expect(localTypeOf("qa", [], settings)).toBeUndefined();
+        expect(localTypeOf("bug", [], settings)).toBe("bug");
+        expect(localTypeOf("story", [], settings)).toBe("feature");
+        expect(localTypeOf("bug", ["type:feature"], settings)).toBe("bug");
+        expect(localTypeOf("journey", [], settings)).toBeUndefined();
+    });
+
+    test("an item without a body sends its fields as a marked render; a body edited outside is kept", () => {
+        const { body: _body, ...bare } = item;
+        const spotted: Item = {
+            ...bare,
+            type: "feature",
+            title: "short",
+            fields: { where: "a.ts:1", why: "it breaks", userSees: "an error" },
+        };
+        const patch = patchOf({ item: spotted, pairing: null, labels: [] }, true, settings);
+        const render = String(patch.body);
+        expect(patch.type).toBe("story");
+        expect(render.startsWith("**Where:** a.ts:1\n\n**Why:** it breaks\n\n**What a user sees:** an error")).toBe(
+            true
+        );
+        expect(isUntouchedRender(render)).toBe(true);
+        expect(isUntouchedRender(render.replace("it breaks", "it breaks badly"))).toBe(false);
+        expect(patchOf({ item: { ...spotted, fields: {} }, pairing: null, labels: [] }, true, settings).body).toBe(
+            undefined
+        );
+
+        const older = String(
+            patchOf({ item: { ...spotted, fields: { why: "older" } }, pairing: null, labels: [] }, true, settings).body
+        );
+        expect(keepsOutsideBody(render, "")).toBe(false);
+        expect(keepsOutsideBody(render, older)).toBe(false);
+        expect(keepsOutsideBody(render, render)).toBe(true);
+        expect(keepsOutsideBody(render, "written by hand")).toBe(true);
+        expect(keepsOutsideBody(render, older.replace("older", "edited by hand"))).toBe(true);
     });
 
     test("links read back from either side; relates counts both ways, the others only from their own side", () => {
