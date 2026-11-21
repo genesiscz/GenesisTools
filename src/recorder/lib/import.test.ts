@@ -246,7 +246,9 @@ describe.skipIf(!hasFfmpeg)("movies.import", () => {
             const tagged = await refusal(hev1);
             expect(tagged).toContain("its video is HEVC tagged hev1, which the editor (AVFoundation) does not play");
             expect(tagged).toContain("-c copy -tag:v hvc1");
-            expect(await refusal(hdr)).toContain("is an HDR movie (PQ); the editor takes SDR movies only");
+            const bright = await refusal(hdr);
+            expect(bright).toContain("is an HDR movie (PQ); the editor takes SDR movies only");
+            expect(bright).toContain("--preset Preset3840x2160 --output");
             expect(await refusal(turned)).toContain(
                 "is turned 45°; the editor takes a movie turned 0°, 90°, 180° or 270° only"
             );

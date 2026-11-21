@@ -209,6 +209,16 @@ function ffmpegHint(source: string, args: string, suffix: string): string {
 }
 
 /**
+ * The line that makes an SDR copy of an HDR movie with `avconvert`, which comes with macOS. Not ffmpeg: its tone
+ * mapping needs the zscale filter, and Homebrew's ffmpeg has none. The preset is a largest size (it never enlarges),
+ * and its copy is H.264 in BT.709 (checked 2026-11-21 on an HLG movie at 3840 x 2160 and at 1280 x 720).
+ */
+function sdrCopyHint(source: string): string {
+    const copy = join(dirname(source), `${basename(source, extname(source))}-sdr.mov`);
+    return `avconvert --source ${shellWord(source)} --preset Preset3840x2160 --output ${shellWord(copy)}`;
+}
+
+/**
  * The length of the movie's video as the editor reads it, or why the editor does not play the movie, in the import's
  * words. It reads the stream the editor's probe reads (the first video stream) by the same rules: its length first,
  * the file's when it has none, and HDR and a turn other than a quarter turn refused. The codec is the import's own
@@ -256,7 +266,7 @@ async function editorVideoUs(source: string): Promise<number> {
 
     if (hdr) {
         throw new Error(
-            `${source} is an HDR movie (${hdr}); the editor takes SDR movies only: convert it to an SDR copy first (an app that exports SDR, or ffmpeg with its zscale and tonemap filters)`
+            `${source} is an HDR movie (${hdr}); the editor takes SDR movies only. Make an SDR copy first, with the avconvert of macOS: ${sdrCopyHint(source)}`
         );
     }
 

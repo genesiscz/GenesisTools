@@ -341,7 +341,9 @@ each with its reason, and the import reads the file the way the editor's probe d
   `AVURLAsset` on macOS 27), with an ffmpeg line that converts it to H.264;
 - HEVC tagged `hev1` (ffmpeg's libx265 default in an .mp4), with an ffmpeg line that puts it under `hvc1` without
   encoding it again;
-- an HDR movie (PQ or HLG, such as an iPhone's HDR video): the editor takes SDR movies only;
+- an HDR movie (PQ or HLG, such as an iPhone's HDR video): the editor takes SDR movies only, and the refusal gives
+  the `avconvert` line that makes an SDR copy (`avconvert` comes with macOS; Homebrew's ffmpeg has no zscale filter
+  for the tone mapping);
 - a movie turned by anything but 0, 90, 180 or 270 degrees.
 
 The editor's own probe then reads the copy and refuses a movie over its limits (12 hours, 48 megapixels, 64 GiB). A
@@ -961,6 +963,12 @@ again); the first run may ask for the AI vault key in GenesisTools.app. A movie 
 - **"GenesisTools.app has no recorder part yet: building it".** The installed app lacks the recorder part, and the
   CLI builds it (about a minute). From the REPL, run `tools macos permissions build --add-part recorder` in a shell
   first.
+- **The app build stops with "unable to type-check this expression in reasonable time".** Seen with the Command Line
+  Tools (no Xcode), which build against the 26.5 SDK: split the named expression into typed `let` steps. Find the next
+  ones before they fail with `-Xswiftc -Xfrontend -Xswiftc -warn-long-expression-type-checking=400`.
+- **A hand-written ffmpeg command fails with "Unrecognized option 'filter_complex_script'".** ffmpeg 9 removed that
+  option: read the graph from a file with `-/filter_complex <file>`. The recorder's own commands pass
+  `-filter_complex` and are not affected.
 - **A start fails with a permission error.** Grant Screen Recording (and Microphone or Camera when you record them)
   in System Settings. `tools macos permissions` exits 1 while a grant is missing.
 - **`--camera` is refused.** The menu bar recorder must run, because only it writes `camera.mov`. Start it with
