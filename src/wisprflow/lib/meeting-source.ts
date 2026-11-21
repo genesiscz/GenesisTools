@@ -4,7 +4,13 @@ import { logger } from "@genesiscz/utils/logger";
 import type { MeetingCalendar } from "@genesiscz/utils/meetings/record";
 import type { MeetingEvidence, SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
 import { readEvidence } from "./evidence";
-import { importedMeetingFolder, importedMeetingRevision, importedSelfName, readImportedExport } from "./imported";
+import {
+    importedMeetingFolder,
+    importedMeetingRevision,
+    importedRecordedBy,
+    importedSelfName,
+    readImportedExport,
+} from "./imported";
 import {
     dictionaryCandidates,
     hasLocalMeeting,
@@ -26,8 +32,17 @@ const { log } = logger.scoped("wisprflow-meeting-source");
 /** A calendar event counts as this meeting's when it starts this close to the recording. */
 const CALENDAR_WITHIN_MS = 15 * 60_000;
 
+/**
+ * The meeting's calendar event. An imported meeting keeps the event of the Mac that recorded it, or none: this Mac's
+ * calendar never stands in for it, since its nearest event may be another call. Every other meeting takes the local
+ * Wispr calendar event that starts closest to it.
+ */
+export function sourcedCalendar(loaded: Sourced<Meeting>): MeetingCalendar | undefined {
+    return loaded.source === "imported" ? readImportedExport(loaded.data.id)?.calendar : calendarFor(loaded.data);
+}
+
 /** The Wispr calendar event that starts closest to the meeting (within 15 minutes), from the local app data. */
-export function calendarFor(meeting: Meeting): MeetingCalendar | undefined {
+function calendarFor(meeting: Meeting): MeetingCalendar | undefined {
     if (!localAvailable()) {
         return undefined;
     }
@@ -58,10 +73,13 @@ export function calendarFor(meeting: Meeting): MeetingCalendar | undefined {
  * meeting, else an imported export, else the app's folder when the app is here (it may hold files without a row).
  */
 function rawFolder(id: string): { folder: string; selfName?: string } | undefined {
-    const local = () => ({ folder: join(WISPR_DIR, "meetings", id), selfName: localSelfName(id) });
+    // No folder means no evidence (null), not an empty one: a record's copy keeps what an earlier read saw. The folder
+    // is checked before the self name, which opens the app's database.
+    const localFolder = join(WISPR_DIR, "meetings", id);
+    const here = localAvailable() && existsSync(localFolder);
 
-    if (localAvailable() && hasLocalMeeting(id)) {
-        return local();
+    if (here && hasLocalMeeting(id)) {
+        return { folder: localFolder, selfName: localSelfName(id) };
     }
 
     const imported = readImportedExport(id);
@@ -71,13 +89,8 @@ function rawFolder(id: string): { folder: string; selfName?: string } | undefine
         return { folder, selfName: importedSelfName(imported.meeting) };
     }
 
-    if (!localAvailable()) {
-        return undefined;
-    }
-
-    // No folder means no evidence (null), not an empty one: a record's copy keeps what an earlier read saw.
-    const fallback = local();
-    return existsSync(fallback.folder) ? fallback : undefined;
+    // The app's folder may hold files without a database row.
+    return here ? { folder: localFolder, selfName: localSelfName(id) } : undefined;
 }
 
 function evidenceOf(id: string): MeetingEvidence | null {
@@ -130,9 +143,7 @@ export function mergeRoster(
 function toSourceMeeting(loaded: Sourced<Meeting>): SourceMeeting {
     const meeting = loaded.data;
     const evidence = evidenceOf(meeting.id);
-    // An imported meeting keeps the calendar event of the Mac that recorded it; this Mac's calendar may not have it.
-    const calendar =
-        (loaded.source === "imported" ? readImportedExport(meeting.id)?.calendar : undefined) ?? calendarFor(meeting);
+    const calendar = sourcedCalendar(loaded);
     return {
         sourceMeetingId: meeting.id,
         title: meeting.title,
@@ -145,9 +156,14 @@ function toSourceMeeting(loaded: Sourced<Meeting>): SourceMeeting {
         calendar,
         folders: meeting.folders.map((folder) => folder.name),
         ...(meeting.summary?.trim() ? { summary: meeting.summary } : {}),
-        // An imported export was recorded on another Mac: its `self` is the person at that microphone.
+        // An imported export was recorded on another Mac: its `self` is the person at that microphone. The export marks
+        // that person even when it carries no raw evidence files.
         ...(loaded.source === "imported"
-            ? { recordedBy: { owner: false as const, ...(evidence?.selfName ? { person: evidence.selfName } : {}) } }
+            ? {
+                  recordedBy: evidence?.selfName
+                      ? { owner: false as const, person: evidence.selfName }
+                      : importedRecordedBy(meeting),
+              }
             : {}),
     };
 }
