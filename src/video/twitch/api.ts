@@ -1,7 +1,8 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { chooseQuality } from "@genesiscz/utils/video/choose-quality";
 import { z } from "zod";
-import { CLIP_RANGES, type Clip, type ClipRange, type ClipTarget, type Vod } from "../clips/types";
+import { CLIP_RANGES, type Clip, type ClipMedia, type ClipRange, type ClipTarget, type Vod } from "../clips/types";
 
 const GQL_URL = "https://gql.twitch.tv/gql";
 const USHER_URL = "https://usher.ttvnw.net/vod";
@@ -304,8 +305,21 @@ export async function fetchTwitchClip(slug: string, signal?: AbortSignal): Promi
     return toClip(clip);
 }
 
-/** The clip's best MP4, signed with a fresh playback token (it expires after about a day). */
-export async function twitchClipMediaUrl(slug: string, signal?: AbortSignal): Promise<string> {
+/** `1080p60` from Twitch's `1080` and 60 fps; 30 fps and below take no suffix. */
+function twitchQualityName({ quality, frameRate }: { quality: string; frameRate?: number | null }): string {
+    return frameRate && frameRate > 31 ? `${quality}p${Math.round(frameRate)}` : `${quality}p`;
+}
+
+/** The clip's MP4 in `quality` (default `best`), signed with a fresh playback token (it expires after about a day). */
+export async function twitchClipMedia({
+    slug,
+    quality,
+    signal,
+}: {
+    slug: string;
+    quality?: string;
+    signal?: AbortSignal;
+}): Promise<ClipMedia> {
     const { clip } = await gql({
         query: `query { clip(slug: ${literal(slug)}) { playbackAccessToken(params: ${PLAYER_PARAMS}) { signature value } videoQualities { quality frameRate sourceURL } } }`,
         pick: z.object({
@@ -320,16 +334,26 @@ export async function twitchClipMediaUrl(slug: string, signal?: AbortSignal): Pr
         }),
         signal,
     });
-    const best = clip?.videoQualities.toSorted(
+    const offered = (clip?.videoQualities ?? []).toSorted(
         (a, b) => Number(b.quality) - Number(a.quality) || (b.frameRate ?? 0) - (a.frameRate ?? 0)
-    )[0];
+    );
 
-    if (!clip || !best) {
+    if (!clip || offered.length === 0) {
         throw new TwitchApiError(`Twitch serves no video for clip "${slug}"`, 404);
     }
 
+    const chosen = chooseQuality({
+        options: offered,
+        quality,
+        names: (option) => [twitchQualityName(option)],
+        height: (option) => Number(option.quality),
+    });
     const { signature, value } = clip.playbackAccessToken;
-    return `${best.sourceURL}?sig=${signature}&token=${encodeURIComponent(value)}`;
+    return {
+        url: `${chosen.sourceURL}?sig=${signature}&token=${encodeURIComponent(value)}`,
+        quality: twitchQualityName(chosen),
+        best: chosen === offered[0],
+    };
 }
 
 /** The channel's past broadcasts, newest first. */

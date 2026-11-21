@@ -12,7 +12,7 @@ import {
     parseTwitchTarget,
     TWITCH_CLIP_SORTS,
     type TwitchClipSort,
-    twitchClipMediaUrl,
+    twitchClipMedia,
     twitchVodPlaylistUrl,
 } from "./api";
 
@@ -116,7 +116,8 @@ export const twitchProvider: ClipProvider = {
         return listTwitchClips({ ...options, sort });
     },
     fetchClip: fetchTwitchClip,
-    clipMediaUrl: (clip, signal) => twitchClipMediaUrl(clip.id, signal),
+    clipQualities: true,
+    clipMedia: ({ clip, quality, signal }) => twitchClipMedia({ slug: clip.id, quality, signal }),
     clipFileId: (clip) => `tw_${clip.id}`,
     clipIdFromFileName: (name) => name.match(FILE_CLIP_SLUG)?.[1] ?? null,
     listVods: listTwitchVods,
