@@ -66,6 +66,7 @@ import { describeSetting, SETTABLE_KEYS, type SetResult, setHooksConfig } from "
 import { BUILT_IN_RULES } from "../lib/hooks/tool-rules";
 import { writeJsonFile } from "../lib/hooks/write-json";
 import { registerRuleCommands, registerRulePicker, ruleState, shortPath } from "./hooks-rules";
+import { registerStatusModeCommands } from "./hooks-status-modes";
 
 /** A harness with a hook file of its own (`HOOK_INSTALLERS`). */
 type InstallableHarness = HarnessName;
@@ -605,6 +606,7 @@ export function registerHooksCommands(program: Command): void {
     registerMods(hooks);
 
     const diffCommand = hooks.command("diff").description("The Bash diff hook");
+    registerStatusModeCommands(diffCommand);
 
     diffCommand
         .command("show <call>")

@@ -20,7 +20,8 @@ export type GuardDelivery = "block" | "warn" | "context" | "quiet" | "capped" | 
 
 let recorder: MetricsRecorder | undefined;
 
-function hookRecorder(): MetricsRecorder {
+/** The hooks' one buffered metrics writer, shared by the guard and the status shadow record. */
+export function hookRecorder(): MetricsRecorder {
     // Buffered and written once, on the hook's exit: one append to the spool, no service and no SQLite.
     recorder ??= createMetricsRecorder({ writer: "agents-hooks" });
     return recorder;
