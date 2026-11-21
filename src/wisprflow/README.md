@@ -59,8 +59,10 @@ stderr, so stdout holds only the result. `--source auto|local|mcp` picks the sou
 - `meetings export <meetings...> --dir <dir>`: one sub-folder per meeting with `Summary.md`, `Transcript.md` and
   `meeting.json`. `--dir` is required. `--only <files>` (a comma list of `summary`, `transcript`, `json`; default all three), `--confirm`, `--timestamps`, `--first-names`, `--source`.
 - `meetings import <folder>`: copies a meeting that was recorded on another Mac and another Wispr Flow account into
-  this tool's import store, `~/.genesis-tools/wisprflow/imported/<meeting id>/`. After that, every command here and
-  `tools meetings` (`--source wisprflow:<id>`) read it as if it were on this Mac.
+  this tool's import store, `~/.genesis-tools/wisprflow/imported/<meeting id>/`. After that, the commands that take
+  one meeting by its id (`meetings show`, `transcript`, `export`) and `tools meetings` (`--source wisprflow:<id>`)
+  read it as if it were on this Mac. An import is found by its exact meeting id only: `meetings list`, a share link
+  and the pickers do not show it, and `meetings series` reads the MCP only.
   - The folder is one sub-folder of `meetings export`: `meeting.json` (required), `Summary.md`, `Transcript.md`. Add
     the raw files of the recording Mac's `~/Library/Application Support/Wispr Flow/meetings/<id>/` beside them or in
     a `wispr-raw/` sub-folder: `live.ndjson`, `refined.ndjson`, `native-language-evidence.json`,
@@ -69,7 +71,7 @@ stderr, so stdout holds only the result. `--source auto|local|mcp` picks the sou
     there is nothing to play.
   - Each file is an APFS clone where the volume allows it, so the copy costs no disk space.
   - The same content again changes nothing (`unchanged`). A different export of the same meeting is refused, and
-    nothing is written; `--force` replaces it and moves the old import to the GenesisTools trash.
+    nothing is written; `--force` replaces it: the old import goes to the GenesisTools trash once the new one is in place, and comes back when the new one cannot be put there.
   - It prints each copied file and the known files the export lacks. `--json` prints
     `{ status, meetingId, title, folder, copied[], missing[] }`.
 - `meetings series <meeting>`: every recorded occurrence of the recurring meeting this one belongs to. MCP only, so it
@@ -263,7 +265,8 @@ tools mcp-manager gateway status          # is the local gateway running?
 
 ## For agents
 
-- **A meeting from another Mac:** `meetings import <folder>` first. The `source` of every answer is then `imported`.
+- **A meeting from another Mac:** `meetings import <folder>` first. Then `meetings show|transcript|export <meeting id>`
+  answer with `source: imported`; `meetings list` and `series` do not see the import.
 - **JSON:** `--format json` on `meetings list|show|transcript|series`, `notes list|show` and
   `calendar upcoming|search`. Each of these answers names its `source`. Lists are `{ source, meetings }`,
   `{ source, notes }` or `{ source, events }`, and `notes show` is `{ source, note }`. Calendar events carry `people`
