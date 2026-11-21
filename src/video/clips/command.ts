@@ -1,5 +1,6 @@
-import { mkdirSync, readdirSync, statSync } from "node:fs";
+import { mkdirSync, readdirSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
+import { mapPool } from "@genesiscz/utils/async";
 import { parseNonNegativeInt } from "@genesiscz/utils/cli";
 import { pickEnumFlag } from "@genesiscz/utils/cli/enum-flag";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
@@ -12,11 +13,13 @@ import {
     formatTimecode,
     parseDuration,
     parseTimecode,
+    requireDuration,
 } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
 import { createBoxTable, formatDotStatus, truncateDisplay } from "@genesiscz/utils/table";
 import type { Command } from "commander";
-import { type ClipDownloadRow, downloadClips, mapPool } from "./download";
+import { type ClipDownloadRow, downloadClips } from "./download";
+import { regularFileBytes } from "./files";
 import {
     CLIPS_MANIFEST_FILE,
     type ClipsManifest,
@@ -26,7 +29,7 @@ import {
     readManifest,
     recordClips,
     recordVods,
-    writeManifest,
+    updateManifestFile,
 } from "./manifest";
 import { CLIP_PROVIDERS } from "./providers";
 import { CLIP_PROVIDER_IDS, CLIP_RANGES, type Clip, type ClipProvider, type ClipRange, type Vod } from "./types";
@@ -130,16 +133,17 @@ async function listFilters({
     return { sort, range, limit, since };
 }
 
-/** `12h`, `90m`, `2d` count back from now; `HH:MM` and ISO dates name the instant. */
+/** `12h`, `90m`, `2d` count back from now; `HH:MM` and ISO dates name the instant. Null for no valid instant. */
 function parseSinceFlag(value: string): Date | null {
     const at = parseSince(value);
 
     if (at) {
-        return at;
+        return Number.isFinite(at.getTime()) ? at : null;
     }
 
     const ms = parseDuration(value);
-    return ms > 0 ? new Date(Date.now() - ms) : null;
+    const since = new Date(Date.now() - ms);
+    return ms > 0 && Number.isFinite(since.getTime()) ? since : null;
 }
 
 function renderClipTable(clips: Clip[]): void {
@@ -266,13 +270,16 @@ async function updateManifest({
     // A manifest that does not parse fails here, before the requests, and is never overwritten.
     readManifest(dir);
     const { sources, vods } = await provider.placeClips({ clips: rows.map((row) => row.clip), jobs, signal });
-    const manifest = readManifest(dir);
-    const section = providerSection(manifest, provider.id);
-    // VODs first: a clip of a VOD whose playlist is closed now is placed from the playlist start recorded before.
-    recordVods(section, vods);
-    recordClips({ section, rows, sources });
-    writeManifest(dir, manifest);
-    return manifest;
+    return updateManifestFile({
+        dir,
+        signal,
+        change: (manifest) => {
+            const section = providerSection(manifest, provider.id);
+            // VODs first: a clip of a VOD whose playlist is closed now is placed from the playlist start recorded before.
+            recordVods(section, vods);
+            recordClips({ section, rows, sources });
+        },
+    });
 }
 
 function reportManifest(provider: ClipProvider, dir: string, manifest: ClipsManifest): void {
@@ -323,6 +330,11 @@ async function runDownload(provider: ClipProvider, inputs: string[], flags: Down
             }
 
             if (clips.length === 0) {
+                if (flags.json) {
+                    out.result({ manifest: join(outDir, CLIPS_MANIFEST_FILE), clips: [] });
+                    return;
+                }
+
                 out.log.warn("No clips to download.");
                 return;
             }
@@ -398,7 +410,10 @@ async function rowsFromFiles({
     jobs: number;
     signal: AbortSignal;
 }): Promise<ClipDownloadRow[]> {
-    const files = readdirSync(dir).filter((name) => provider.clipIdFromFileName(name) !== null);
+    // Only real, non-empty files: a folder or an empty placeholder with a clip's name is no saved clip.
+    const files = readdirSync(dir).filter(
+        (name) => provider.clipIdFromFileName(name) !== null && regularFileBytes(join(dir, name)) > 0
+    );
     const rows: ClipDownloadRow[] = [];
     await mapPool({
         items: files,
@@ -413,7 +428,7 @@ async function rowsFromFiles({
                     clip,
                     output: join(dir, name),
                     status: "exists",
-                    bytes: statSync(join(dir, name)).size,
+                    bytes: regularFileBytes(join(dir, name)),
                     quality: null,
                 });
             } catch (error) {
@@ -423,7 +438,8 @@ async function rowsFromFiles({
             }
         },
     });
-    return rows;
+    // Requests finish in any order; the file order makes a rerun record the same file last.
+    return rows.sort((a, b) => a.output.localeCompare(b.output));
 }
 
 function offsetCell(clip: ManifestClip): string {
@@ -444,10 +460,8 @@ function renderManifest(manifest: ClipsManifest): number {
     for (const overlap of findOverlaps(manifest)) {
         if (overlap.duplicate) {
             duplicateOf.set(overlap.b.id, overlap.a.id);
-        } else if (overlap.contained) {
-            const [shorter, longer] =
-                overlap.a.durationSec <= overlap.b.durationSec ? [overlap.a, overlap.b] : [overlap.b, overlap.a];
-            insideOf.set(shorter.id, longer.id);
+        } else if (overlap.containedId) {
+            insideOf.set(overlap.containedId, overlap.containedId === overlap.a.id ? overlap.b.id : overlap.a.id);
         }
     }
 
@@ -571,15 +585,6 @@ async function vodFromInput(provider: ClipProvider, input: string, signal: Abort
     return provider.fetchVod(target.id, signal);
 }
 
-async function vodOfClip(provider: ClipProvider, clip: Clip, signal: AbortSignal): Promise<Vod> {
-    if (!clip.streamId) {
-        throw new Error(`${provider.label} names no stream for clip ${clip.id}`);
-    }
-
-    const listed = (await provider.listVods(clip.channel, signal)).find((vod) => vod.streamId === clip.streamId);
-    return listed ?? provider.fetchVod(clip.streamId, signal);
-}
-
 async function runDownloadVod(provider: ClipProvider, input: string | undefined, flags: VodFlags): Promise<void> {
     if (!input && !flags.clip) {
         out.log.error(`Name a VOD or a clip: ${command(provider, "download-vod", "--clip", "<clip url>")}`);
@@ -587,8 +592,31 @@ async function runDownloadVod(provider: ClipProvider, input: string | undefined,
         return;
     }
 
+    if (flags.clip && (flags.from !== undefined || flags.to !== undefined)) {
+        out.log.error("--clip sets the range itself (the clip plus --pad); leave out --from and --to");
+        process.exitCode = 1;
+        return;
+    }
+
+    let padSec: number;
+    let fromFlag: number | null;
+    let toFlag: number | null;
+
+    try {
+        padSec = requireDuration(flags.pad) / 1000;
+        fromFlag = flags.from !== undefined ? parseOffsetFlag("--from", flags.from) : null;
+        toFlag = flags.to !== undefined ? parseOffsetFlag("--to", flags.to) : null;
+    } catch (error) {
+        out.log.error(
+            error instanceof Error
+                ? error.message.replace(/^Invalid duration/, "--pad: invalid duration")
+                : String(error)
+        );
+        process.exitCode = 1;
+        return;
+    }
+
     const outDir = resolve(flags.outDir);
-    const padSec = parseDuration(flags.pad) / 1000;
 
     await withInterrupt(
         async (signal) => {
@@ -596,19 +624,25 @@ async function runDownloadVod(provider: ClipProvider, input: string | undefined,
             const vod = input
                 ? await vodFromInput(provider, input, signal)
                 : clip
-                  ? await vodOfClip(provider, clip, signal)
+                  ? await provider.vodOfClip(clip, signal)
                   : null;
 
             if (!vod) {
                 throw new Error("Name a VOD or pass --clip");
             }
 
+            if (clip && clip.streamId !== vod.streamId) {
+                throw new Error(
+                    `Clip ${clip.id} was cut from stream ${clip.streamId ?? "(none named)"}, and the VOD ${vod.id} records stream ${vod.streamId}; leave out [vod] to cut the clip's own VOD`
+                );
+            }
+
             const playback = await provider.vodPlayback({ vod, quality: flags.quality, signal });
-            let fromSec = flags.from ? parseOffsetFlag("--from", flags.from) : 0;
-            let toSec = flags.to ? parseOffsetFlag("--to", flags.to) : playback.durationSec;
+            let fromSec = fromFlag ?? 0;
+            let toSec = toFlag ?? playback.durationSec;
 
             if (clip) {
-                const placed = await provider.placeClips({ clips: [clip], jobs: 1, signal });
+                const placed = await provider.placeClips({ clips: [clip], jobs: 1, signal, vod: { vod, playback } });
                 const source = placed.sources.get(clip.id);
 
                 if (source?.vodOffsetSec == null || source.vodEndOffsetSec == null) {
@@ -641,11 +675,8 @@ async function runDownloadVod(provider: ClipProvider, input: string | undefined,
                 force: Boolean(flags.force),
                 signal,
             });
-            const manifest = readManifest(outDir);
-            const section = providerSection(manifest, provider.id);
-            recordVods(section, [{ vod, playback }]);
             const file = basename(result.output);
-            section.vodParts[file] = {
+            const part = {
                 file,
                 vodId: vod.id,
                 streamId: vod.streamId,
@@ -657,10 +688,18 @@ async function runDownloadVod(provider: ClipProvider, input: string | undefined,
                 savedAt: new Date().toISOString(),
                 clipId: clip?.id ?? null,
             };
-            writeManifest(outDir, manifest);
+            await updateManifestFile({
+                dir: outDir,
+                signal,
+                change: (manifest) => {
+                    const section = providerSection(manifest, provider.id);
+                    recordVods(section, [{ vod, playback }]);
+                    section.vodParts[file] = part;
+                },
+            });
 
             if (flags.json) {
-                out.result({ ...section.vodParts[file], status: result.status, output: result.output });
+                out.result({ ...part, status: result.status, output: result.output });
                 return;
             }
 
