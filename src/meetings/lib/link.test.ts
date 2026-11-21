@@ -236,6 +236,46 @@ describe("link: the call's start (MC2)", () => {
         expect(record.end).toBe("2026-11-05T14:10:00.000Z");
     });
 
+    test("a relink to another recorder moves the microphone mark and keeps the people", () => {
+        const record = recordAt("2026-11-05T13:02:36.208Z");
+        applySource({
+            record,
+            sourceId: "wisprflow",
+            block: { meetingId: "7e900336-aaaa" },
+            meeting: {
+                ...meeting,
+                participants: [
+                    { name: "Martin Example", self: true, from: ["wisprflow"] },
+                    { name: "Alice Example", from: ["wisprflow"] },
+                ],
+            },
+        });
+        applySource({
+            record,
+            sourceId: "wisprflow",
+            block: { meetingId: "7e900336-bbbb" },
+            meeting: {
+                ...meeting,
+                sourceMeetingId: "7e900336-bbbb",
+                participants: [
+                    { name: "Alice Example", self: true, from: ["wisprflow"] },
+                    { name: "Martin Example", from: ["wisprflow"] },
+                ],
+                recordedBy: { owner: false, person: "Alice Example" },
+            },
+        });
+
+        expect(record.participants.map((person) => [person.name, person.self ?? false])).toEqual([
+            ["Martin Example", false],
+            ["Alice Example", true],
+        ]);
+        expect(record.recordedBy).toEqual({ owner: false, person: "Alice Example", from: "wisprflow" });
+
+        // A source that names nobody at the microphone leaves the mark where it is.
+        applySource({ record, sourceId: "wisprflow", block: { meetingId: "7e900336-bbbb" }, meeting });
+        expect(record.participants.find((person) => person.self)?.name).toBe("Alice Example");
+    });
+
     test("a record that started before the call keeps its own start", () => {
         const record = recordAt("2026-11-05T12:58:00.000Z");
         applySource({ record, sourceId: "wisprflow", block: { meetingId: "7e900336-aaaa" }, meeting });

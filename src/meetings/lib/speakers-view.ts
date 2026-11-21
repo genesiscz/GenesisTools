@@ -27,7 +27,8 @@ function rangesText(ranges: PresenceRange[]): string {
         .join("; ");
 }
 
-function hintText(hint: SpeakerHint, attendance: string): string {
+/** `recorder`: someone else recorded the meeting, so the hint's self is the person at that microphone, not the user. */
+function hintText(hint: SpeakerHint, attendance: string, recorder: boolean): string {
     if (hint.kind === "label-drift") {
         return `${hint.person}: in the call but silent under their own label from ${formatClock(Math.max(0, hint.fromSec))} to ${formatClock(hint.toSec)} (${MeetingRule.LabelDrift}), so their voice is probably under other labels`;
     }
@@ -37,7 +38,7 @@ function hintText(hint: SpeakerHint, attendance: string): string {
     }
 
     if (hint.kind === "sole-attendee") {
-        const person = hint.self ? `you (${hint.person})` : hint.person;
+        const person = hint.self ? `${recorder ? "the recorder" : "you"} (${hint.person})` : hint.person;
         return `${hint.label}: only ${person} was in the call (${attendance}), so these lines are ${person}: ${rangesText(hint.ranges)}`;
     }
 
@@ -82,6 +83,8 @@ export function printSpeakerStats(
         attendance?: string;
         /** The meeting's renames (`speakers rename`): a renamed label reads `Speaker 2 → Tester A`. */
         renames?: Record<string, string>;
+        /** Someone else recorded the meeting (the record's `recordedBy`): its self is the recorder, not "you". */
+        recorder?: boolean;
     } = {}
 ): void {
     const attendance = options.attendance ?? "attendance";
@@ -129,9 +132,9 @@ export function printSpeakerStats(
 
     for (const hint of stats.hints) {
         if (hint.strength === "weak") {
-            ui.dim(hintText(hint, attendance));
+            ui.dim(hintText(hint, attendance, options.recorder === true));
         } else {
-            ui.warn(hintText(hint, attendance));
+            ui.warn(hintText(hint, attendance, options.recorder === true));
         }
     }
 }
