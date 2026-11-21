@@ -2,6 +2,7 @@ import { abortableSleep } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
+import type { FetchedText } from "../clips/hls";
 import { CLIP_RANGES, type Clip, type ClipRange, type ClipTarget, type Vod } from "../clips/types";
 
 const API_ROOT = "https://kick.com/api/v2";
@@ -13,7 +14,10 @@ const REQUEST_TIMEOUT_MS = 20_000;
  * lost 292 of them). A 429 waits for `Retry-After`, else 2, 4, 8, 16, 30 s, and tries again.
  */
 const RATE_LIMIT_RETRIES = 6;
+/** The longest wait of the doubling fallback when Kick names no `Retry-After`. */
 const RATE_LIMIT_MAX_WAIT_MS = 30_000;
+/** A `Retry-After` longer than this is not waited out: the request fails and says when to try again. */
+const RETRY_AFTER_MAX_MS = 15 * 60_000;
 /** Kick answers a request without a browser user agent with a Cloudflare page more often. */
 const BROWSER_USER_AGENT =
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36";
@@ -22,7 +26,7 @@ export const KICK_CLIP_SORTS = ["date", "view"] as const;
 export type KickClipSort = (typeof KICK_CLIP_SORTS)[number];
 
 /** A clip id: `clip_` and a 26 character ULID. */
-const CLIP_ID = /clip_[0-9A-HJKMNP-TV-Z]{26}/i;
+const CLIP_ID = /^clip_[0-9A-HJKMNP-TV-Z]{26}$/i;
 const CHANNEL_SLUG = /^[a-z0-9_-]+$/i;
 /** A VOD id: the uuid in `kick.com/<channel>/videos/<uuid>`. */
 const VOD_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -49,10 +53,23 @@ const clipSchema = z.object({
     channel: z.object({ username: z.string(), slug: z.string() }),
 });
 
-/** Kick writes a stream's start as `2026-11-19 17:28:55` (UTC) in lists and with `+00:00` in the VOD detail. */
-const kickTimeSchema = z.string().transform((value) => {
-    const iso = value.includes("T") ? value : `${value.replace(" ", "T")}Z`;
-    return new Date(iso).toISOString();
+/**
+ * Kick writes a stream's start as `2026-11-19 17:28:55` (UTC) in lists and with `+00:00` in the VOD detail. A time
+ * without a zone is UTC; a value that is no date is a schema issue, so the caller's invalid-answer handling reports it.
+ */
+export const kickTimeSchema = z.string().transform((value, ctx) => {
+    const withT = value
+        .trim()
+        .replace(" ", "T")
+        .replace(/([+-]\d{2})(\d{2})$/, "$1:$2");
+    const at = Date.parse(/(Z|[+-]\d{2}:\d{2})$/i.test(withT) ? withT : `${withT}Z`);
+
+    if (Number.isNaN(at)) {
+        ctx.addIssue({ code: "custom", message: `"${value}" is not a Kick time`, input: value });
+        return z.NEVER;
+    }
+
+    return new Date(at).toISOString();
 });
 
 const livestreamSchema = z.object({
@@ -79,6 +96,11 @@ const vodDetailSchema = z.object({
 
 const clipListSchema = z.object({ clips: z.array(clipSchema), nextCursor: z.string().nullish() });
 const clipDetailSchema = z.object({ clip: clipSchema });
+
+/** True for a Kick VOD id (the uuid in a VOD URL); Kick's VOD detail route takes nothing else. */
+export function isKickVodId(id: string): boolean {
+    return VOD_UUID.test(id);
+}
 
 /** A Kick VOD and the playlist Kick serves for it without a login (null for subscriber-only and removed VODs). */
 export interface KickVodInfo {
@@ -112,10 +134,9 @@ function isRange(value: string | null): value is ClipRange {
  */
 export function parseKickTarget(input: string): ClipTarget {
     const text = input.trim();
-    const clipId = text.match(CLIP_ID)?.[0];
 
-    if (clipId) {
-        return { kind: "clip", id: `clip_${clipId.slice(5).toUpperCase()}` };
+    if (CLIP_ID.test(text)) {
+        return clipTarget(text);
     }
 
     if (VOD_UUID.test(text)) {
@@ -139,15 +160,42 @@ export function parseKickTarget(input: string): ClipTarget {
         throw new Error(`"${input}" is not a kick.com URL`);
     }
 
-    const [first, section, id] = url.pathname.split("/").filter(Boolean);
+    const [first, section, id, ...rest] = url.pathname.split("/").filter(Boolean);
     const channel = first?.toLowerCase();
 
     if (!channel || RESERVED_PATHS.has(channel) || !CHANNEL_SLUG.test(channel)) {
         throw new Error(`"${input}" names no Kick channel`);
     }
 
-    if (section === "videos" && id && VOD_UUID.test(id)) {
+    // Only the page shapes Kick has: a channel, its clips or videos tab, one clip, one VOD.
+    if ((section && section !== "clips" && section !== "videos") || rest.length > 0) {
+        throw new Error(`"${input}" is not a Kick channel, clips page, clip or VOD URL`);
+    }
+
+    if (section === "clips" && id) {
+        if (!CLIP_ID.test(id)) {
+            throw new Error(`"${input}" names no Kick clip (${id} is not a clip id)`);
+        }
+
+        return clipTarget(id);
+    }
+
+    if (section === "videos" && id) {
+        if (!VOD_UUID.test(id)) {
+            throw new Error(`"${input}" names no Kick VOD (${id} is not a VOD id)`);
+        }
+
         return { kind: "vod", id: id.toLowerCase() };
+    }
+
+    const clipParam = url.searchParams.get("clip");
+
+    if (clipParam !== null) {
+        if (!CLIP_ID.test(clipParam)) {
+            throw new Error(`"${input}" names no Kick clip (${clipParam} is not a clip id)`);
+        }
+
+        return clipTarget(clipParam);
     }
 
     const sort = url.searchParams.get("sort");
@@ -158,6 +206,10 @@ export function parseKickTarget(input: string): ClipTarget {
         ...(isSort(sort) ? { sort } : {}),
         ...(isRange(range) ? { range } : {}),
     };
+}
+
+function clipTarget(id: string): ClipTarget {
+    return { kind: "clip", id: `clip_${id.slice(5).toUpperCase()}` };
 }
 
 function toClip(raw: z.infer<typeof clipSchema>): Clip {
@@ -182,13 +234,27 @@ function toClip(raw: z.infer<typeof clipSchema>): Clip {
     };
 }
 
-function retryAfterMs(header: string | null, attempt: number): number {
+/** The wait `Retry-After` asks for (seconds or an HTTP date), as Kick says it; else 2, 4, 8, 16, 30 s by attempt. */
+export function retryAfterMs(header: string | null, attempt: number, now = Date.now()): number {
     const seconds = Number(header);
-    const fallback = 2000 * 2 ** attempt;
-    return Math.min(RATE_LIMIT_MAX_WAIT_MS, Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : fallback);
+
+    if (header && Number.isFinite(seconds) && seconds > 0) {
+        return seconds * 1000;
+    }
+
+    const at = header ? Date.parse(header) : Number.NaN;
+
+    if (!Number.isNaN(at) && at > now) {
+        return at - now;
+    }
+
+    return Math.min(RATE_LIMIT_MAX_WAIT_MS, 2000 * 2 ** attempt);
 }
 
-async function request(url: string, signal?: AbortSignal): Promise<{ status: number; ok: boolean; text: string }> {
+async function request(
+    url: string,
+    signal?: AbortSignal
+): Promise<{ status: number; ok: boolean; text: string; url: string }> {
     for (let attempt = 0; ; attempt++) {
         const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
         logger.debug({ url, attempt }, "Kick request");
@@ -197,27 +263,37 @@ async function request(url: string, signal?: AbortSignal): Promise<{ status: num
             signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
         });
         const text = await response.text();
+        const answer = { status: response.status, ok: response.ok, text, url: response.url || url };
 
         if (response.status !== 429 || attempt >= RATE_LIMIT_RETRIES) {
-            return { status: response.status, ok: response.ok, text };
+            return answer;
         }
 
         const wait = retryAfterMs(response.headers.get("retry-after"), attempt);
+
+        if (wait > RETRY_AFTER_MAX_MS) {
+            logger.warn({ url, wait }, "Kick rate limit asks for a longer wait than this run waits out");
+            throw new KickApiError(
+                `Kick's rate limit asks to wait ${Math.ceil(wait / 60_000)} min; try again then`,
+                429
+            );
+        }
+
         logger.debug({ url, attempt, wait }, "Kick rate limit; waiting");
         await abortableSleep(wait, signal);
     }
 }
 
-/** A playlist or another text file from Kick's CDN, sent as the API requests are. */
-export async function fetchKickText(url: string, signal?: AbortSignal): Promise<string> {
-    const { status, ok, text } = await request(url, signal);
+/** A playlist or another text file from Kick's CDN, sent as the API requests are, with the URL it came from. */
+export async function fetchKickText(url: string, signal?: AbortSignal): Promise<FetchedText> {
+    const answer = await request(url, signal);
 
-    if (!ok) {
-        logger.warn({ url, status, body: text.slice(0, 300) }, "Kick CDN request failed");
-        throw new KickApiError(`Kick answered HTTP ${status} for ${url}`, status);
+    if (!answer.ok) {
+        logger.warn({ url, status: answer.status, body: answer.text.slice(0, 300) }, "Kick CDN request failed");
+        throw new KickApiError(`Kick answered HTTP ${answer.status} for ${url}`, answer.status);
     }
 
-    return text;
+    return { text: answer.text, url: answer.url };
 }
 
 async function getJson<T>({
@@ -354,6 +430,7 @@ export async function listKickClips({
     const max = limit === 0 ? Number.POSITIVE_INFINITY : limit;
     let cursor: string | null = null;
     let pages = 0;
+    const seen = new Set<string>();
 
     while (clips.length < max) {
         const params = new URLSearchParams({ sort, time: range });
@@ -375,8 +452,19 @@ export async function listKickClips({
             sort === "date" &&
             found.some((clip) => Date.parse(clip.createdAt) < since.getTime());
 
-        if (reachedPast || !page.nextCursor || page.clips.length === 0 || page.nextCursor === cursor) {
+        if (reachedPast || !page.nextCursor || page.clips.length === 0) {
             break;
+        }
+
+        if (page.nextCursor === cursor || seen.has(page.nextCursor)) {
+            throw new KickApiError(
+                `Kick's clip pages of ${channel} loop: page ${pages + 1} would repeat an earlier one; stopped with ${clips.length} clips`,
+                null
+            );
+        }
+
+        if (cursor) {
+            seen.add(cursor);
         }
 
         cursor = page.nextCursor;
