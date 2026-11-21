@@ -911,6 +911,7 @@ enum MeetingsWords {
         case "platform": return "named by the call"
         case "llm": return "named by the transcript polish"
         case "self": return "you"
+        case "recorder": return "recorded the call"
         case "unknown": return "not named yet"
         case nil: return nil
         default: return origin

@@ -11,23 +11,30 @@ tools video probe ./demo.mp4                                 # size, length, cod
 tools video frames ./demo.mp4 --fps 2 --frames-per-image 16  # contact sheets plus every sampled frame
 tools video shrink ./talk.mp4 --to 400MB                     # try every preset, recommend one, encode, check
 tools video encode ./clips --dry-run                         # what a batch re-encode would do; writes nothing
-tools video stream download ./page.har --list                # every source a saved HAR leads to
-tools video stream download ./page.har --out talk.mp4        # download one; run it again to resume
+tools video stream download ./page.har --out talk.mp4        # save a broadcast from a HAR; run it again to resume
+tools video kick download somechannel --range day --out-dir ./clips  # a channel's clips as MP4 (twitch alike)
 ```
 
 `probe`, `frames`, `shrink` and `encode` need `ffmpeg` and `ffprobe` on the PATH (`brew install ffmpeg` installs both).
 `stream download` needs `ffmpeg` only for an `--out` that does not end in `.ts`; a platform recording download and
-`--list` need neither. Silent videos (no audio track) work: `probe` reads the first video stream only.
+`--list` need neither. Of the clip commands, only `download` and `download-vod` need `ffmpeg`; `list-clips`, `vods` and
+`manifest` (also `--backfill`) use only HTTP and the folder. Silent videos (no audio track) work: `probe` reads the first video stream only.
 
 ## Commands
 
-| Command                    | What it does                                          |
-|----------------------------|-------------------------------------------------------|
-| `probe <input>`            | Print a video's facts as JSON                         |
-| `frames <input>`           | Sample frames into PNGs and labeled contact sheets    |
-| `shrink <file>`            | Measure the presets, recommend one, encode, check     |
-| `encode <paths...>`        | Re-encode files or folders, keep only verified output |
-| `stream download [source]` | Save a broadcast from a HAR, a URL or a browser page  |
+| Command                      | What it does                                             |
+|------------------------------|----------------------------------------------------------|
+| `probe <input>`              | Print a video's facts as JSON                            |
+| `frames <input>`             | Sample frames into PNGs and labeled contact sheets       |
+| `shrink <file>`              | Measure the presets, recommend one, encode, check        |
+| `encode <paths...>`          | Re-encode files or folders, keep only verified output    |
+| `stream download [source]`   | Save a broadcast from a HAR, a URL or a browser page     |
+| `kick list-clips <channel>`  | List a Kick channel's clips                              |
+| `kick download <targets...>` | Save Kick clips as MP4 (no re-encode) with a manifest    |
+| `kick vods <channel>`        | List a Kick channel's VODs and their access              |
+| `kick download-vod [vod]`    | Cut a Kick VOD, a time range of it, or a clip's moment   |
+| `kick manifest <dir>`        | Show a folder's clips by VOD; `--backfill` records files |
+| `twitch …`                   | The same five commands for Twitch                        |
 
 `-v, --verbose` turns on debug logging, `--readme` prints this page, and `tools video help <command>` (or
 `<command> --help`) prints a command's flags.
@@ -393,6 +400,111 @@ playlist they were captured for, never to another host a playlist points at.
 A new platform is one file in `stream/providers/` that implements `StreamProvider` (find its answers in a HAR, ask the
 API now) and one entry in `STREAM_PROVIDERS`.
 
+### kick, twitch: clips, VODs and the clips manifest
+
+`tools video kick …` and `tools video twitch …` have the same five commands. Each site is one `ClipProvider`
+(`src/video/kick/provider.ts`, `src/video/twitch/provider.ts`) in the `CLIP_PROVIDERS` table
+(`src/video/clips/providers.ts`); the commands, the download, the manifest and the VOD cut in `src/video/clips/` are
+shared. A new site is one folder, its id in `CLIP_PROVIDER_IDS` (`src/video/clips/types.ts`) and one entry in that
+table; the table's key type makes a missing id or entry a compile error.
+
+```sh
+tools video kick list-clips "https://kick.com/somechannel/clips?sort=date&range=day"
+tools video kick download somechannel --since 12h --limit 0 --out-dir ./clips
+tools video twitch list-clips "https://www.twitch.tv/somechannel/clips?filter=clips&range=7d" --limit 50
+tools video twitch download "https://www.twitch.tv/somechannel/clip/SomeClipName-a1B2c3D4e5F6g7H8" --out-dir ./clips
+tools video twitch download somechannel --quality 720p --out-dir ./clips-720p
+tools video kick vods somechannel
+tools video kick download-vod "https://kick.com/somechannel/videos/0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b" \
+    --from 1:00:00 \
+    --to 1:05:00
+tools video twitch download-vod \
+    --clip "https://www.twitch.tv/somechannel/clip/SomeClipName-a1B2c3D4e5F6g7H8" \
+    --pad 30s \
+    --quality 720p \
+    --out-dir ./vods
+tools video kick manifest ./clips --backfill
+```
+
+- `list-clips <channel>` takes a name, a channel page, or a clips page URL copied from the browser. The page's own
+  sort (Kick) and range are used; `--sort` and `--range` override them.
+- `download <targets...>` takes clip URLs, bare clip ids (Kick `clip_…`, Twitch slugs) and channel or clips page
+  URLs. A channel downloads the clips that `list-clips` shows for the same flags.
+- `--sort`: Kick `date` (default) or `view`; Twitch `view` (default), `trending` or `date`. Twitch's API refuses a date
+  order, so Twitch `date` reads every page of the range by views and sorts it here. `--range day|week|month|all`
+  (default Kick `all`, Twitch `week`), `--limit <n>` clips per channel (default 20, `0` for all).
+- `--since <when>` keeps only clips made since then: a duration back from now (`12h`, `90m`, `2d`), `HH:MM` today, or
+  an ISO date. With Kick `--sort date` the pages stop at the first page that reaches back past it.
+- `--quality <name>` (`download`): `best` (default), `worst`, a height such as `720p`, or a name such as `720p60`.
+  Twitch serves a clip in several qualities (measured 2026-11-21 on one clip: `1080p60`, `720p60`, `480p`, `360p`); a
+  clip that lacks the asked one fails and names the ones it has. Kick serves a clip only in the stream's own quality
+  (one media playlist, no other renditions), so Kick `download` refuses any other `--quality`; cut a lower quality from
+  the VOD with `download-vod --clip … --quality …`.
+- `--out-dir <dir>` (default the current folder), `--jobs <n>` clips at once (default 3), `--force` downloads a clip
+  again. Without `--force` a clip whose file exists is skipped, so a rerun only fetches new clips.
+- `--json` prints the clips (`list-clips`) or one row per clip with `status` `saved`, `exists` or `failed` and its
+  `source` (`download`). A failed clip sets exit code 1.
+
+Clip files are named `<channel>-<YYYY-MM-DD>-<title>[-<quality>]-<id>.mp4` (Kick: the clip id without `clip_`;
+Twitch: `tw_<slug>`). Every part from the site's answer keeps only letters, digits, `_` and `-`, so a name never
+leaves `--out-dir`. The quality is in the name only when the site offers a better one, so a `720p60` copy sits next to
+the best one instead of replacing it. `ffmpeg -c copy` copies Kick's HLS playlist or Twitch's MP4 into a private
+hidden folder made for that run (`.video-part-XXXXXX/` in `--out-dir`), and the file takes its final name only after
+ffmpeg exits 0. Without `--force` a file another run published meanwhile stays, and the clip reports `exists`. A
+failed or stopped copy leaves nothing behind, and one clip's failure (ffmpeg or the disk) is a `failed` row that does
+not stop the others. ffmpeg opens only https media on a public host (`-protocol_whitelist https,tls,tcp,crypto`), and
+the day log shows media URLs without their query, which carries Twitch's playback token. No command needs a login:
+Kick's public web API, and Twitch's GQL with the client id twitch.tv itself sends.
+
+**The manifest.** `download` writes `clips-manifest.json` into the folder, one section per site
+(`providers.kick`, `providers.twitch`), each with `clips` (by clip id), `vods` (by stream id) and `vodParts` (by file).
+A clip record holds the title, the clip page URL, the media URL (Kick's playlist; Twitch's best MP4 without its token,
+which plays only once signed), channel, creator, category, views, length, its latest file with that file's `quality`
+(`1080p60`, Kick `source`; null for a file only read by `--backfill`), `files` (every saved file of the clip by name,
+each with its own `bytes` and `quality`, so a `720p` copy beside the best one keeps its own), and its `source`: the
+stream id, the VOD id and page, the stream time it covers (`startAt`, `endAt`) and its place in the VOD
+(`vodOffsetSec`, `vodEndOffsetSec`, and Twitch's `vodUrlAtClip` with `?t=`). Each write reads the file again under a
+lock (`clips-manifest.json.lock` while it writes), so a Kick download, a Twitch download and a VOD cut into one folder
+at once keep each other's records. Kick clips have no description;
+Twitch's API gives none either. `offsetFrom` says how the place was found:
+
+- `site`: the site names the offset. Twitch: `videoOffsetSeconds`. Kick, when the VOD playlist is closed:
+  `vod_starts_at`, which is the exact offset rounded down to a whole second (measured 2026-11-21 on 309 clips with a
+  `vod-playlist` offset: 0 to 0.97 s early). So every clip of a VOD puts the VOD's start in a one-second window, and
+  the clips together narrow it: on three public VODs the window was 0.07 to 0.15 s wide and its middle within 0.05 s
+  of the playlist's own start. The offsets count from that middle, so clips of one VOD keep their exact distances. One
+  clip alone is within 0.5 s, so run `manifest --backfill` to fit with all clips of the folder. Kick gives 0 until it
+  has placed a fresh clip; 0 counts as none, as does a value that is not a whole number of seconds under a week. A Kick
+  clip whose playlist carries no stream time keeps this offset with no `startAt`.
+- `vod-playlist`: Kick clip and VOD playlists both carry the stream time of every segment (also for a clip cut from a
+  VOD later), so the offset is their difference. Measured 2026-11-20 on one fattypillow clip: the clip's audio matched
+  the cut at that offset within 0.07 s.
+- A VOD playlist read once keeps its start in the manifest's `vods`. When the site closes it later (Kick turned a public
+  VOD subscriber-only within a day), Kick clips of that VOD are still placed from that start (`vod-playlist`). A Twitch
+  clip keeps Twitch's own offset, since its stream time is derived from that offset.
+- `stream-start`: no playlist and no site offset, so the offset counts from Kick's stream start, a few seconds off
+  (on 80 subscriber-only clips: 3.6 to 4.8 s early). `manifest` marks these with `~`.
+
+`manifest <dir>` prints the clips by VOD, sorted by their place. It names a clip that overlaps another by at least
+90% of the longer one ("same as …", the same span clipped twice) and a clip that lies inside a longer clip
+("inside …"). Two clips are compared on VOD offsets when both have them, else on stream time when both have it.
+`--json` prints the manifest and every overlapping pair with `duplicate`, `contained` and `containedId` (the clip
+inside the other). `--backfill` reads every non-empty clip file of that site in the folder from the site again and
+records it: use it for files saved before the manifest existed.
+
+**VOD cuts.** `vods <channel>` lists the streams and their VOD access (Kick's word; Twitch's list does not say, so
+`unknown`). `download-vod [vod]` cuts the VOD (a VOD URL or id) with `ffmpeg -ss … -t … -c copy` into
+`<channel>-<date>-<title>-<VOD id>[-<from>_<to>]-<quality>.mp4` and records it in `vodParts`. The range is in the name
+to the millisecond (`1-02-03.250`) and is left out only for the whole VOD. `--from` and `--to` take `1:02:03`, `62:03`,
+seconds or `90m`. `--clip <clip>` cuts the clip's moment plus `--pad` (default `30s`) on each side and finds the VOD
+itself; it refuses `--from` and `--to`, and a `[vod]` of another stream than the clip's. Kick finds a clip's VOD only in
+the channel's recent VOD list; for an older one pass its URL as `[vod]`. `--quality` picks a variant as `download`
+does (`best`, `worst`, `720p`, `720p60`; default the highest bitrate). A variant is named by its height and frame rate
+(`720p60`; 30 fps and below take no suffix), and two variants of one name add their folder (`720p-720p30`). A variant
+whose audio is a separate playlist is refused, since the copy would have no sound. A cut whose size estimate (variant
+bitrate times length, 12 Mbit/s when the playlist names no bitrate) does not fit on the disk with 2 GB to spare is
+refused. A subscriber-only VOD (Kick `subscriber_only`, Twitch's CDN answering 403) cannot be cut without a login.
+
 ## How it works
 
 Where data lives:
@@ -402,6 +514,8 @@ Where data lives:
   and tokens. Nothing removes old captures or old generations; delete them with `tools rm` when you are done.
 - Beside a stream output: `<out>.parts/` (segments and `state.json`, mode 600) and `<out>.part` (a recording
   download in progress).
+- In a clips `--out-dir`: `clips-manifest.json`, `clips-manifest.json.lock` while a run writes it, and a hidden
+  `.video-part-XXXXXX/` folder while ffmpeg copies a clip or cuts a VOD.
 - Beside an encode input: the hidden `.<name>.<ext>.<codec>-XXXXXX/` work folder while it runs, then
   `<name>.<codec>.<ext>`, or the original path with `--replace`.
 - Beside a shrink input: the result as `<name>.<codec>.<ext>` (or the original path with `--replace`), and
@@ -414,8 +528,11 @@ What it calls:
   `ffmpeg -encoders` and `ffmpeg -filters`.
 - The `tools rm` trash for `--replace` originals and finished parts folders.
 - Your Chromium browser over its DevTools debug port for `--chrome-cdp`.
-- The CDN and, for StreamYard, the platform's public webinar API, with the headers from the HAR. Nothing else goes
-  over the network, and nothing costs money.
+- The CDN and, for StreamYard, the platform's public webinar API, with the headers from the HAR.
+- For `kick`: Kick's public web API (`kick.com/api/v1`, `kick.com/api/v2`) and its clip and VOD CDN. For `twitch`:
+  Twitch's GQL (`gql.twitch.tv`), its playback token route (`usher.ttvnw.net`) and its clip and VOD CDN. Listing
+  (`list-clips`, `vods`, `manifest`) needs no ffmpeg.
+- Nothing else goes over the network, and nothing costs money.
 
 ## For agents
 

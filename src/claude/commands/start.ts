@@ -11,7 +11,6 @@ import {
     FABLE_MODEL_OPTION_NAME,
     OPUS_MODEL_OPTION,
     pinnedLaunchEnv,
-    subscriptionTypeOf,
 } from "@app/claude/lib/launch-env";
 import { type LaunchableModel, modelFamilyOf, resolveModelSpec } from "@app/claude/lib/models";
 import { fmtHours, type ScoredAccount, scoreAccounts, sortGrouped } from "@app/claude/lib/usage/account-picker";
@@ -1208,8 +1207,16 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
             TOOLS_CLAUDE_AUTH: "keychain",
         };
         delete launchEnv.CLAUDE_CODE_OAUTH_TOKEN;
+        // A keychain login has its own scopes; a pinned parent's list belongs to the token removed above.
+        delete launchEnv.CLAUDE_CODE_OAUTH_SCOPES;
     } else {
-        launchEnv = { ...process.env, ...pinnedLaunchEnv(account, longLivedToken ?? "") };
+        launchEnv = {
+            ...process.env,
+            ...pinnedLaunchEnv(account, {
+                value: longLivedToken ?? "",
+                scopes: account.credentials.longLivedTokenScopes,
+            }),
+        };
     }
 
     // Claude Code's own Bash edit-diff renderer is otherwise gated by a per-account
@@ -1236,7 +1243,9 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
                 env: {
                     accountName: account.name,
                     oauthToken: longLivedToken,
-                    subscriptionType: subscriptionTypeOf(account),
+                    // The lead's own values, so a teammate starts Code Mode exactly when its lead does.
+                    oauthScopes: launchEnv.CLAUDE_CODE_OAUTH_SCOPES,
+                    subscriptionType: launchEnv.CLAUDE_CODE_SUBSCRIPTION_TYPE,
                     fableModel: FABLE_MODEL_ID,
                     customModelOption: FABLE_MODEL_OPTION,
                     customModelOptionName: FABLE_MODEL_OPTION_NAME,

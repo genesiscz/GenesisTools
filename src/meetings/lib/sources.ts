@@ -1,6 +1,7 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { logger } from "@genesiscz/utils/logger";
 import { MeetingsStateError } from "@genesiscz/utils/meetings/conflict";
-import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
+import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import {
     MEETING_SOURCE_IDS,
     type MeetingSourceId,
@@ -9,6 +10,9 @@ import {
 } from "@genesiscz/utils/meetings/sources";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import type { LocalSourceAudio } from "./source-audio-discovery";
+import { copyBackedSource, copyOnlySource } from "./source-copy";
+
+const { log } = logger.scoped("meetings-sources");
 
 /** Source capabilities live together; a local preview must never use an automatic remote fallback. */
 const MEETING_SOURCES: Record<
@@ -52,7 +56,10 @@ export async function meetingSource(id: string): Promise<TranscriptSource> {
     }
 
     const source = await MEETING_SOURCES[id].open();
-    return { ...source, load: async (sourceMeetingId) => composedMeeting(await source.load(sourceMeetingId)) };
+    return {
+        ...source,
+        load: async (sourceMeetingId, options) => composedMeeting(await source.load(sourceMeetingId, options)),
+    };
 }
 
 /** The meeting this Mac's provider records right now (the source-audio passes' live lookup in production). */
@@ -95,8 +102,17 @@ export interface LinkedSource {
     sourceMeetingId: string;
 }
 
-/** The first linked source that names a meeting of its own, with that meeting's id. Throws a message ready to print. */
-export async function linkedSource(record: MeetingRecord): Promise<LinkedSource> {
+/**
+ * The first linked source that names a meeting of its own, with that meeting's id. Throws a message ready to print.
+ * With the record's `store`, the source keeps the record's own copy of its answers (source-copy.ts) and answers from
+ * that copy when it cannot read: its source code cannot be opened, or a read fails. `saveCopy: false` still answers from
+ * the copy but never writes it (a probe).
+ */
+export async function linkedSource(
+    record: MeetingRecord,
+    store?: MeetingStore,
+    options: { saveCopy?: boolean } = {}
+): Promise<LinkedSource> {
     const ref = sourceRefOf(record);
 
     if (!ref) {
@@ -106,12 +122,34 @@ export async function linkedSource(record: MeetingRecord): Promise<LinkedSource>
         );
     }
 
-    return { source: await meetingSource(ref.sourceId), sourceMeetingId: ref.sourceMeetingId };
+    if (!store) {
+        return { source: await meetingSource(ref.sourceId), sourceMeetingId: ref.sourceMeetingId };
+    }
+
+    const folder = store.folder(record.id);
+
+    try {
+        return {
+            source: copyBackedSource(await meetingSource(ref.sourceId), folder, { save: options.saveCopy }),
+            sourceMeetingId: ref.sourceMeetingId,
+        };
+    } catch (error) {
+        const copy = isMeetingSourceId(ref.sourceId)
+            ? copyOnlySource(ref.sourceId, folder, ref.sourceMeetingId)
+            : undefined;
+
+        if (!copy) {
+            throw error;
+        }
+
+        log.warn({ error, meeting: record.id }, "the source cannot be opened; the record's own copy answers");
+        return { source: copy, sourceMeetingId: ref.sourceMeetingId };
+    }
 }
 
-/** The linked source's transcript, on its own labels. */
-export async function meetingTranscript(record: MeetingRecord): Promise<TranscriptEntry[]> {
-    const { source, sourceMeetingId } = await linkedSource(record);
+/** The linked source's transcript, on its own labels; with `store`, the record's copy answers when the source cannot. */
+export async function meetingTranscript(record: MeetingRecord, store?: MeetingStore): Promise<TranscriptEntry[]> {
+    const { source, sourceMeetingId } = await linkedSource(record, store);
     return (await source.load(sourceMeetingId)).transcript;
 }
 

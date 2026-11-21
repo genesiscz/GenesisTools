@@ -650,7 +650,7 @@ export type ClearableCredential =
 const EXPIRY_OF: Partial<Record<ClearableCredential, string[]>> = {
     accessToken: ["expiresAt"],
     refreshToken: ["refreshExpiresAt"],
-    longLivedToken: ["longLivedTokenExpiresAt"],
+    longLivedToken: ["longLivedTokenExpiresAt", "longLivedTokenScopes"],
 };
 
 /**

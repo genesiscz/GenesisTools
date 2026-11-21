@@ -100,12 +100,12 @@ export function readSessionTodos(db: Database, sessionId?: string): { rows: Stor
                 title: string;
                 body: string | null;
                 state: ItemState;
-                updatedTs: string;
                 owner: string | null;
+                updatedTs: string;
             },
             [string, ...string[]]
         >(
-            `SELECT p.meta, i.title, i.body, i.state, i.updated_ts AS updatedTs, i.for_who AS owner
+            `SELECT p.meta, i.title, i.body, i.state, i.for_who AS owner, i.updated_ts AS updatedTs
              FROM pointers p JOIN items i ON i.id = p.item
              WHERE p.kind = ?${sessionId === undefined ? "" : " AND json_extract(p.meta, '$.sessionId') = ?"}
              ORDER BY i.updated_ts DESC, i.id`
@@ -125,14 +125,14 @@ export function readSessionTodos(db: Database, sessionId?: string): { rows: Stor
             return [
                 {
                     ...rest,
-                    for: r.owner ?? rest.for,
                     ...(rest.title !== undefined ||
                     r.title !== mirrorTitle({ prompt: r.body ?? "", number: rest.number })
                         ? { title: r.title }
                         : {}),
+                    for: r.owner ?? rest.for,
+                    updatedTs: r.updatedTs > rest.updatedTs ? r.updatedTs : rest.updatedTs,
                     prompt: r.body ?? "",
                     state,
-                    updatedTs: r.updatedTs > rest.updatedTs ? r.updatedTs : rest.updatedTs,
                 },
             ];
         });

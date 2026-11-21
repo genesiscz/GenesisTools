@@ -40,6 +40,8 @@ final class ToolsRecorderEngine: RecordingEngineAdapter {
     private var framing = false
     private var watcher: LiveRecordingsWatcher?
     private var releasePreparation: (@MainActor () -> Void)?
+    /// The display last reported to the bar, so a status refresh that changes nothing sends nothing.
+    private var reportedDisplay: RecordingDisplay?
     var followedDisplay: RecordingDisplay? {
         guard let display = entry?.displays.first, let id = UInt32(exactly: display.id),
               let index = CaptureChoice.screenIDs.firstIndex(of: id),
@@ -104,12 +106,7 @@ final class ToolsRecorderEngine: RecordingEngineAdapter {
         var targets = Set(RecordingTargetKind.allCases)
         if frames { targets = [.display, .displays] }
         else if methods != nil { targets.remove(.displays) }
-        // A window or app movie never carries sound in this recorder, before a take as well as during it.
-        var reasons = [
-            "camera": "The camera starts with the recording",
-            "windowAudio": "A window movie has no audio. Choose a display or an area to record sound.",
-            "appAudio": "An app movie has no audio. Choose a display or an area to record sound.",
-        ]
+        var reasons = ["camera": "The camera starts with the recording"]
         if !supports("restart") { reasons["restart"] = "This recorder does not offer Restart." }
         if !supports("audio.mute") {
             reasons["microphone"] = "This recorder keeps the audio sources chosen at start."
@@ -176,6 +173,7 @@ final class ToolsRecorderEngine: RecordingEngineAdapter {
         let ids = Array(Set(excludeWindowIDs + preparation.previewWindows)).filter { $0 > 0 }.sorted()
         let args = try CaptureOptions.barArguments(setup, threshold: threshold, shortcuts: shortcuts, excluding: ids,
                                                    screens: NSScreen.screens.map(\.frame), displayIDs: CaptureChoice.screenIDs,
+                                                   systemAudioScope: SystemAudioScope.load(),
                                                    keepOverlays: CaptureOptions.load().keepOverlays)
         let id: String = try await withCheckedThrowingContinuation { continuation in
             started = continuation
@@ -204,11 +202,11 @@ final class ToolsRecorderEngine: RecordingEngineAdapter {
         if found.kind == "library" {
             let watcher = LiveRecordingsWatcher()
             self.watcher = watcher
-                watcher.onRefresh = { [weak self] list in
-                    if let current = list.first(where: { $0.id == id }) { self?.observe(current) }
-                }
-                watcher.start()
+            watcher.onRefresh = { [weak self] list in
+                if let current = list.first(where: { $0.id == id }) { self?.observe(current) }
             }
+            watcher.start()
+        }
     }
 
     private func finishStartup(_ token: UUID, with answer: Result<Void, Error>) {
@@ -252,6 +250,11 @@ final class ToolsRecorderEngine: RecordingEngineAdapter {
         } == true
         if !needsRestartFrame && (CaptureCountdown.hasFirstFrame(recording) || sessionHasFrames || (foreign && recording.isPaused)) {
             firstFrame()
+        }
+        let display = followedDisplay
+        if display != reportedDisplay {
+            reportedDisplay = display
+            emit(.liveDisplay(display))
         }
         if recording.isPaused != paused { paused = recording.isPaused; emit(paused ? .paused : .resumed) }
         if framing { emit(.elapsed(milliseconds: recording.elapsedMs(now: Date()))) }

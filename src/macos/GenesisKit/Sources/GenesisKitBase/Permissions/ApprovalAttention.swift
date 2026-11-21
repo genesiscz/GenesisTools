@@ -119,6 +119,7 @@ final class ApprovalReminder {
     private var pending: DispatchWorkItem?
     private var expiry: DispatchWorkItem?
     private var postedID: String?
+    private var replyWatch: ApprovalReplyWatch?
     private var stopped = false
 
     init(model: ApprovalDialogModel, onClick: @escaping () -> Void) {
@@ -172,7 +173,10 @@ final class ApprovalReminder {
         content.body = model.purpose
         content.sound = ApprovalAttention.sound == "none" ? nil : UNNotificationSound.default
         content.threadIdentifier = "approval.\(model.identifier)"
-        content.userInfo = [ApprovalNotificationRelay.tokenKey: token]
+        // The host that takes a click writes its reply into `replyDir` (Notify.swift `writeReply`): stamping it makes
+        // that the folder this process watches, also when the clicked process runs on another GENESIS_TOOLS_HOME.
+        let replyDir = GenesisToolsHome.path("app/replies")
+        content.userInfo = [ApprovalNotificationRelay.tokenKey: token, "replyDir": replyDir]
         let id = "approval.\(model.identifier).\(token)"
         // No authorization prompt here: a prompt in the middle of an approval is the wrong moment, and the first grant
         // is `tools notify authorize` (macos.md). Without it the add fails, the log says so, and the panel still waits.
@@ -190,6 +194,12 @@ final class ApprovalReminder {
                         return
                     }
                     self.postedID = id
+                    // macOS gives a click on the card to the OLDEST GenesisTools process, which is rarely this one, and
+                    // that process only writes a reply file. Without this watch the click did nothing (2026-11-19).
+                    self.replyWatch = ApprovalReplyWatch(dir: replyDir, notificationId: id) { [weak self] in
+                        KitHost.log("approval \(identifier) reminder clicked in another process id=\(id)")
+                        self?.onClick()
+                    }
                     KitHost.log("approval \(identifier) reminder posted id=\(id)")
                 }
             }
@@ -204,6 +214,8 @@ final class ApprovalReminder {
         pending = nil
         expiry?.cancel()
         expiry = nil
+        replyWatch?.stop()
+        replyWatch = nil
         guard let center = Self.center else { return }
         if let id = postedID {
             center.removePendingNotificationRequests(withIdentifiers: [id])
@@ -211,6 +223,64 @@ final class ApprovalReminder {
             postedID = nil
         }
         ApprovalNotificationRelay.unregister(token: token, center: center)
+    }
+}
+
+/// Waits for the reply file another process writes when the user clicks this process's card, then calls `onReply`
+/// once and removes the file. Event-driven: a dispatch source on the folder, plus one look when it starts, for a
+/// click that landed before the watch did.
+@MainActor
+final class ApprovalReplyWatch {
+    private let path: String
+    private let onReply: () -> Void
+    private var source: DispatchSourceFileSystemObject?
+    private var fired = false
+
+    init(dir: String, notificationId: String, onReply: @escaping () -> Void) {
+        path = (dir as NSString).appendingPathComponent("\(notificationId).json")
+        self.onReply = onReply
+
+        do {
+            try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        } catch {
+            KitHost.log("approval reply watch cannot create \(dir): \(error.localizedDescription)")
+            return
+        }
+
+        let descriptor = open(dir, O_EVTONLY)
+        guard descriptor >= 0 else {
+            KitHost.log("approval reply watch cannot open \(dir): errno \(errno)")
+            return
+        }
+
+        let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor, eventMask: [.write],
+                                                               queue: .main)
+        source.setEventHandler { [weak self] in
+            MainActor.assumeIsolated { self?.check() }
+        }
+        source.setCancelHandler { close(descriptor) }
+        self.source = source
+        source.resume()
+        check()
+    }
+
+    func stop() {
+        source?.cancel()
+        source = nil
+    }
+
+    private func check() {
+        guard !fired, FileManager.default.fileExists(atPath: path) else { return }
+        fired = true
+        stop()
+
+        do {
+            try FileManager.default.removeItem(atPath: path)
+        } catch {
+            KitHost.log("approval reply watch could not remove \(path): \(error.localizedDescription)")
+        }
+
+        onReply()
     }
 }
 

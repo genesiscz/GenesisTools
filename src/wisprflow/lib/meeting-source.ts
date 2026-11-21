@@ -2,10 +2,18 @@ import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import type { MeetingCalendar } from "@genesiscz/utils/meetings/record";
-import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
+import type { MeetingEvidence, SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
 import { readEvidence } from "./evidence";
 import {
+    importedMeetingFolder,
+    importedMeetingRevision,
+    importedRecordedBy,
+    importedSelfName,
+    readImportedExport,
+} from "./imported";
+import {
     dictionaryCandidates,
+    hasLocalMeeting,
     listLocalCalendar,
     listLocalFolders,
     listLocalMeetings,
@@ -17,15 +25,24 @@ import {
     WISPR_DIR,
 } from "./local";
 import { loadMeeting } from "./source";
-import type { Meeting } from "./types";
+import type { Meeting, Sourced } from "./types";
 
 const { log } = logger.scoped("wisprflow-meeting-source");
 
 /** A calendar event counts as this meeting's when it starts this close to the recording. */
 const CALENDAR_WITHIN_MS = 15 * 60_000;
 
+/**
+ * The meeting's calendar event. An imported meeting keeps the event of the Mac that recorded it, or none: this Mac's
+ * calendar never stands in for it, since its nearest event may be another call. Every other meeting takes the local
+ * Wispr calendar event that starts closest to it.
+ */
+export function sourcedCalendar(loaded: Sourced<Meeting>): MeetingCalendar | undefined {
+    return loaded.source === "imported" ? readImportedExport(loaded.data.id)?.calendar : calendarFor(loaded.data);
+}
+
 /** The Wispr calendar event that starts closest to the meeting (within 15 minutes), from the local app data. */
-export function calendarFor(meeting: Meeting): MeetingCalendar | undefined {
+function calendarFor(meeting: Meeting): MeetingCalendar | undefined {
     if (!localAvailable()) {
         return undefined;
     }
@@ -52,12 +69,42 @@ export function calendarFor(meeting: Meeting): MeetingCalendar | undefined {
 }
 
 /**
+ * The meeting's raw Wispr folder and the recording user's name: the app's own data when this Mac's database holds the
+ * meeting, else an imported export, else the app's folder when the app is here (it may hold files without a row).
+ */
+function rawFolder(id: string): { folder: string; selfName?: string } | undefined {
+    // No folder means no evidence (null), not an empty one: a record's copy keeps what an earlier read saw. The folder
+    // is checked before the self name, which opens the app's database.
+    const localFolder = join(WISPR_DIR, "meetings", id);
+    const here = localAvailable() && existsSync(localFolder);
+
+    if (here && hasLocalMeeting(id)) {
+        return { folder: localFolder, selfName: localSelfName(id) };
+    }
+
+    const imported = readImportedExport(id);
+    const folder = importedMeetingFolder(id);
+
+    if (imported && folder) {
+        return { folder, selfName: importedSelfName(imported.meeting) };
+    }
+
+    // The app's folder may hold files without a database row.
+    return here ? { folder: localFolder, selfName: localSelfName(id) } : undefined;
+}
+
+function evidenceOf(id: string): MeetingEvidence | null {
+    const raw = rawFolder(id);
+    return raw ? readEvidence(raw.folder, raw.selfName) : null;
+}
+
+/**
  * The participants, with the recording user marked. Wispr knows the user as a person of the speaker map (origin
  * "self") even when no speaker is assigned to them, so the name may be missing from the speaker list.
  */
-function participantsOf(meeting: Meeting): SourceMeeting["participants"] {
-    const self = localAvailable() ? localSelfName(meeting.id) : undefined;
-    const roster = localAvailable() ? (readEvidence(meeting.id, self).participants ?? []) : [];
+function participantsOf(meeting: Meeting, evidence: MeetingEvidence | null): SourceMeeting["participants"] {
+    const self = evidence?.selfName;
+    const roster = evidence?.participants ?? [];
     const people: SourceMeeting["participants"] = meeting.participants.map((person) => ({
         name: person.name,
         ...(person.isSelf || person.name === self ? { self: true } : {}),
@@ -93,19 +140,31 @@ export function mergeRoster(
     return merged;
 }
 
-function toSourceMeeting(meeting: Meeting): SourceMeeting {
+function toSourceMeeting(loaded: Sourced<Meeting>): SourceMeeting {
+    const meeting = loaded.data;
+    const evidence = evidenceOf(meeting.id);
+    const calendar = sourcedCalendar(loaded);
     return {
         sourceMeetingId: meeting.id,
         title: meeting.title,
         start: meeting.start,
         ...(meeting.end ? { end: meeting.end } : {}),
-        participants: participantsOf(meeting),
-        observations: localAvailable() ? readEvidence(meeting.id, localSelfName(meeting.id)).speaking : undefined,
+        participants: participantsOf(meeting, evidence),
+        observations: evidence?.speaking,
         speakers: meeting.participants,
         transcript: meeting.transcript,
-        calendar: calendarFor(meeting),
+        calendar,
         folders: meeting.folders.map((folder) => folder.name),
         ...(meeting.summary?.trim() ? { summary: meeting.summary } : {}),
+        // An imported export was recorded on another Mac: its `self` is the person at that microphone. The export marks
+        // that person even when it carries no raw evidence files.
+        ...(loaded.source === "imported"
+            ? {
+                  recordedBy: evidence?.selfName
+                      ? { owner: false as const, person: evidence.selfName }
+                      : importedRecordedBy(meeting),
+              }
+            : {}),
     };
 }
 
@@ -115,15 +174,22 @@ export const wisprflowSource: TranscriptSource = {
     sourceLayout: "left-mic",
     label: "Wispr Flow",
 
-    async load(sourceMeetingId) {
-        const loaded = await loadMeeting(sourceMeetingId, { source: "auto", transcript: true });
+    async load(sourceMeetingId, options) {
+        const loaded = await loadMeeting(sourceMeetingId, {
+            source: options?.remote === false ? "local" : "auto",
+            transcript: true,
+        });
         log.debug({ id: sourceMeetingId, source: loaded.source, notes: loaded.notes }, "wisprflow meeting loaded");
-        return toSourceMeeting(loaded.data);
+        return toSourceMeeting(loaded);
     },
 
     async revision(sourceMeetingId) {
-        // Only the local copy has a cheap revision; a meeting the MCP answers is read again each time.
-        return (localAvailable() ? localMeetingRevision(sourceMeetingId) : undefined) ?? null;
+        // Only the local copy and an imported export have a cheap revision; a meeting the MCP answers is read again.
+        return (
+            (localAvailable() ? localMeetingRevision(sourceMeetingId) : undefined) ??
+            importedMeetingRevision(sourceMeetingId) ??
+            null
+        );
     },
 
     describe(meeting) {
@@ -131,6 +197,15 @@ export const wisprflowSource: TranscriptSource = {
             meetingId: meeting.sourceMeetingId,
             folders: meeting.folders,
             ...(meeting.calendar?.eventId ? { calendarEventId: meeting.calendar.eventId } : {}),
+            // Read from the import store (`tools wisprflow meetings import`), not this Mac's Wispr Flow.
+            ...(meeting.recordedBy
+                ? {
+                      imported: {
+                          from: "export",
+                          ...(meeting.recordedBy.person ? { recordedBy: meeting.recordedBy.person } : {}),
+                      },
+                  }
+                : {}),
         };
     },
 
@@ -139,19 +214,18 @@ export const wisprflowSource: TranscriptSource = {
         return localAvailable() ? dictionaryCandidates() : [];
     },
 
-    async recordingClock(sourceMeetingId) {
+    async recordingClock(sourceMeetingId, options) {
         // Transcript second 0 is the meeting's start (checked 2026-11-02 against Teams leave times, within 4 s).
-        const loaded = await loadMeeting(sourceMeetingId, { source: "auto", transcript: false });
+        const loaded = await loadMeeting(sourceMeetingId, {
+            source: options?.remote === false ? "local" : "auto",
+            transcript: false,
+        });
         return { startedAt: loaded.data.start };
     },
 
     async evidence(sourceMeetingId) {
-        // The raw meeting folder exists only in the local app data; the MCP keeps none of it.
-        if (!localAvailable()) {
-            return null;
-        }
-
-        return readEvidence(sourceMeetingId, localSelfName(sourceMeetingId));
+        // The raw meeting folder exists only in the local app data or an imported export; the MCP keeps none of it.
+        return evidenceOf(sourceMeetingId);
     },
 
     async liveRecording() {

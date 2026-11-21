@@ -2,6 +2,9 @@ import { DEFAULT_LIMITS_PROVIDER, type UsageLimitsDb } from "@genesiscz/utils/ai
 import { formatDuration as formatDurationShared } from "@genesiscz/utils/format";
 import { calculateRollingRates, projectTimeToLimit, type RollingRates, type TimestampedValue } from "./rate-math";
 
+/** Moved to the shared math module; re-exported so no caller changes. */
+export { percentile } from "@genesiscz/utils/math";
+
 /**
  * "≈35m at pace" — how long a bucket lasts at the OBSERVED burn rate.
  *
@@ -45,20 +48,6 @@ function median(values: number[]): number | undefined {
     const mid = Math.floor(sorted.length / 2);
 
     return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-}
-
-/** The `p`-th percentile (0..1) with linear interpolation between ranks; undefined for no values. */
-export function percentile(values: readonly number[], p: number): number | undefined {
-    if (values.length === 0) {
-        return undefined;
-    }
-
-    const sorted = [...values].sort((a, b) => a - b);
-    const rank = Math.min(Math.max(p, 0), 1) * (sorted.length - 1);
-    const low = Math.floor(rank);
-    const high = Math.ceil(rank);
-
-    return sorted[low] + (sorted[high] - sorted[low]) * (rank - low);
 }
 
 /**

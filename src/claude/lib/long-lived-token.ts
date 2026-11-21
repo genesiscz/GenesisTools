@@ -34,6 +34,8 @@ export interface ApplyLongLivedTokenInput {
      * behind by a previously minted token instead of mislabelling the new one.
      */
     expiresAt?: number;
+    /** The scopes the server granted a token we minted. Undefined clears them, by the same rule as `expiresAt`. */
+    scopes?: string[];
     /**
      * The org the identity probe proved the token belongs to, written in the
      * SAME mutation as the token itself (PR #343 review round 11).
@@ -60,6 +62,12 @@ export async function applyLongLivedToken(data: AiConfigData, input: ApplyLongLi
         delete entry.credentials.longLivedTokenExpiresAt;
     } else {
         entry.credentials.longLivedTokenExpiresAt = input.expiresAt;
+    }
+
+    if (input.scopes === undefined) {
+        delete entry.credentials.longLivedTokenScopes;
+    } else {
+        entry.credentials.longLivedTokenScopes = input.scopes;
     }
 
     if (input.organizationUuid) {

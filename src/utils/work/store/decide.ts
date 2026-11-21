@@ -1242,6 +1242,20 @@ function guard(command: WorkCommand, view: StoreView, env: WriteEnv): Decision |
         case "delivered":
             return null;
         case "edit": {
+            const onlyParent =
+                command.parent !== undefined &&
+                command.type === undefined &&
+                command.for === undefined &&
+                command.title === undefined &&
+                command.severity === undefined &&
+                command.during === undefined &&
+                Object.keys(command.fields ?? {}).length === 0;
+
+            // A move under another parent changes nothing in the item, so it is judged as a reference.
+            if (onlyParent) {
+                return check(command.ref, "reference");
+            }
+
             const onlyDeferral =
                 command.type === undefined &&
                 command.parent === undefined &&

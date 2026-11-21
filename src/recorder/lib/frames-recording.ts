@@ -49,6 +49,10 @@ const MOVIE_ONLY: ReadonlyArray<readonly [string, (flags: StartFlags) => boolean
     ["--window", (flags) => flags.window !== undefined],
     ["--app", (flags) => flags.app !== undefined],
     ["--region", (flags) => flags.region !== undefined],
+    [
+        "--system-audio-scope (a frames recording keeps everything the Mac plays)",
+        (flags) => flags.systemAudioScope !== undefined,
+    ],
     ["--camera", (flags) => flags.camera === true],
     ["--movie-quality", (flags) => flags.movieQuality !== undefined && flags.movieQuality !== false],
     ["--system-cursor", (flags) => flags.systemCursor === true],

@@ -151,12 +151,6 @@ export class MeetingsToolset extends ReplToolset {
         const resolveSample = serviceCall("voices.sample");
         return {
             meetings: {
-                levels: async (input: z.input<typeof levels.params> = {}) => {
-                    const { meeting, seconds } = levels.params.parse(input);
-                    return meeting === undefined
-                        ? liveMeetingLevels({ seconds: seconds ?? 3 })
-                        : savedMeetingLevels(store, meeting);
-                },
                 roomDevices: (params: MeetingsParams<"people.devices.list"> = {}) =>
                     withMeetingsClient((client) => client.call("people.devices.list", params)),
                 decideRoomDevice: serviceCall("people.devices.decide"),
@@ -212,6 +206,12 @@ export class MeetingsToolset extends ReplToolset {
                         undo: serviceCall("voices.undo"),
                     }
                 ),
+                levels: async (input: z.input<typeof levels.params> = {}) => {
+                    const { meeting, seconds } = levels.params.parse(input);
+                    return meeting === undefined
+                        ? liveMeetingLevels({ seconds: seconds ?? 3 })
+                        : savedMeetingLevels(store, meeting);
+                },
                 audio: {
                     plan: async (input: z.input<typeof audioPlan.params> = {}) => {
                         audioPlan.params.parse(input);

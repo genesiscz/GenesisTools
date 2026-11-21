@@ -59,6 +59,7 @@ import {
     type LocalSourceAudio,
     planSourceAudio,
 } from "./source-audio-discovery";
+import { readSourceCopy } from "./source-copy";
 import * as sources from "./sources";
 
 /**
@@ -233,6 +234,46 @@ describe("link: the call's start (MC2)", () => {
         record.end = "2026-11-05T14:10:00.000Z";
         applySource({ record, sourceId: "wisprflow", block: { meetingId: "7e900336-aaaa" }, meeting });
         expect(record.end).toBe("2026-11-05T14:10:00.000Z");
+    });
+
+    test("a relink to another recorder moves the microphone mark and keeps the people", () => {
+        const record = recordAt("2026-11-05T13:02:36.208Z");
+        applySource({
+            record,
+            sourceId: "wisprflow",
+            block: { meetingId: "7e900336-aaaa" },
+            meeting: {
+                ...meeting,
+                participants: [
+                    { name: "Martin Example", self: true, from: ["wisprflow"] },
+                    { name: "Alice Example", from: ["wisprflow"] },
+                ],
+            },
+        });
+        applySource({
+            record,
+            sourceId: "wisprflow",
+            block: { meetingId: "7e900336-bbbb" },
+            meeting: {
+                ...meeting,
+                sourceMeetingId: "7e900336-bbbb",
+                participants: [
+                    { name: "Alice Example", self: true, from: ["wisprflow"] },
+                    { name: "Martin Example", from: ["wisprflow"] },
+                ],
+                recordedBy: { owner: false, person: "Alice Example" },
+            },
+        });
+
+        expect(record.participants.map((person) => [person.name, person.self ?? false])).toEqual([
+            ["Martin Example", false],
+            ["Alice Example", true],
+        ]);
+        expect(record.recordedBy).toEqual({ owner: false, person: "Alice Example", from: "wisprflow" });
+
+        // A source that names nobody at the microphone leaves the mark where it is.
+        applySource({ record, sourceId: "wisprflow", block: { meetingId: "7e900336-bbbb" }, meeting });
+        expect(record.participants.find((person) => person.self)?.name).toBe("Alice Example");
     });
 
     test("a record that started before the call keeps its own start", () => {
@@ -1468,6 +1509,50 @@ describe("permanent source audio", () => {
         }
     });
 
+    test("a link keeps the record's own copy of the transcript and marks a meeting someone else recorded", async () => {
+        const f = await fixture();
+        const config = new MeetingsConfigStore(new Storage(`source-copy-config-${process.pid}-${stores}`));
+        await config.update((raw) => {
+            raw.sources = { wisprflow: { preserveAudio: false } };
+        });
+        let imported = true;
+        const source = {
+            ...wisprflowSource,
+            load: async (sourceMeetingId: string): Promise<SourceMeeting> => ({
+                sourceMeetingId,
+                title: "Planning",
+                start: "2026-11-12T14:00:00.000Z",
+                participants: [{ name: "Alice Example", self: true, from: ["wisprflow"] }],
+                speakers: [],
+                transcript: [{ speaker: "Alice Example", startSec: 0, text: "Ahoj." }],
+                folders: [],
+                ...(imported ? { recordedBy: { owner: false as const, person: "Alice Example" } } : {}),
+            }),
+            liveRecording: async () => null,
+            recordingClock: async () => ({ startedAt: "2026-11-12T14:00:00.000Z" }),
+            evidence: async () => ({ selfName: "Alice Example", segments: [], speaking: [], files: [] }),
+        };
+        const pick = spyOn(sources, "meetingSource").mockResolvedValue(source);
+        const link = (sourceRef: string) =>
+            linkSource({ store: f.store, config, sourceRef, command: "test", createdBy: "link", quiet: true });
+
+        try {
+            const created = await link("wisprflow:source-two");
+            const folder = f.store.folder(created.record.id);
+            expect(created.record.recordedBy).toEqual({ owner: false, person: "Alice Example", from: "wisprflow" });
+            const ref = { sourceId: "wisprflow", sourceMeetingId: "source-two" };
+            expect(readSourceCopy(folder, "meeting", ref)?.value.transcript).toHaveLength(1);
+            expect(readSourceCopy(folder, "evidence", ref)?.value?.selfName).toBe("Alice Example");
+            expect(readSourceCopy(folder, "clock", ref)?.value?.startedAt).toBe("2026-11-12T14:00:00.000Z");
+
+            imported = false;
+            const refreshed = await link("wisprflow:source-two");
+            expect(refreshed.record.recordedBy).toBeUndefined();
+        } finally {
+            pick.mockRestore();
+        }
+    });
+
     test("a stopgap file is preserved without changing it when the provider has already deleted its copy", async () => {
         const f = await fixture();
         const sourceMeetingId = `legacy-${process.pid}-${stores}`;
@@ -1838,12 +1923,12 @@ describe("local source audio reconciliation", () => {
             Date.parse("2026-11-01T11:00:00Z"),
         ]);
         db.close();
-        const adapter = wisprAudioAccess(dir);
+        const adapter = wisprAudioAccess({ dir });
         const before = statSync(join(dir, "flow.sqlite")).mtimeMs;
         expect(await adapter.files()).toHaveLength(1);
         expect((await adapter.load("source-local"))?.transcript).toEqual([]);
         expect(statSync(join(dir, "flow.sqlite")).mtimeMs).toBe(before);
         // No Wispr database: the meeting is unknown, which plans as unmatched, never as a failed pass.
-        expect(await wisprAudioAccess(join(dir, "absent")).load("source-local")).toBeNull();
+        expect(await wisprAudioAccess({ dir: join(dir, "absent") }).load("source-local")).toBeNull();
     });
 });

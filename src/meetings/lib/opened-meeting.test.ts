@@ -18,7 +18,10 @@ import type { MicEnergy } from "./energy";
 import * as energyModule from "./energy";
 import { attendanceWarning, OpenedMeeting, openedMeetingLog } from "./opened-meeting";
 import { faceTimePlatform } from "./platforms/facetime";
+import { showText } from "./show-text";
 import { preserveSourceAudio } from "./source-audio";
+import { copyBackedSource, copyOnlySource, readSourceCopy } from "./source-copy";
+import { speakerStatsRead } from "./window-reads";
 
 let stores = 0;
 
@@ -1135,4 +1138,181 @@ test("a final call-channel goodbye uses a matched voice and later speech reopens
     expect(await collect()).toEqual(first);
     later = true;
     expect((await collect())[1]).toEqual({ fromSec: 10, source: "platform-roster", confidence: 1 });
+});
+
+describe("the record's own copy of its source", () => {
+    const ref = { sourceId: "wisprflow", sourceMeetingId: "abc" };
+
+    test("a read saves the copy, and a source that later fails answers from it", async () => {
+        const { store, record } = await newRecord();
+        const folder = store.folder(record.id);
+        const live = fakeSource();
+        const backed = copyBackedSource(live, folder);
+        const meeting = await backed.load("abc");
+        await backed.evidence("abc");
+        await backed.recordingClock("abc");
+        expect(readSourceCopy(folder, "meeting", ref)?.value.transcript).toHaveLength(2);
+        const savedAt = readSourceCopy(folder, "meeting", ref)?.savedAt;
+        await backed.load("abc");
+        // An unchanged answer leaves the file as it was.
+        expect(readSourceCopy(folder, "meeting", ref)?.savedAt).toBe(savedAt);
+
+        const gone: TranscriptSource = {
+            ...live,
+            load: async () => {
+                throw new Error("the import was removed");
+            },
+            revision: async () => {
+                throw new Error("the import was removed");
+            },
+            // Wispr answers null when the meeting's raw folder is gone.
+            evidence: async () => null,
+            recordingClock: async () => {
+                throw new Error("the import was removed");
+            },
+        };
+        const fallback = copyBackedSource(gone, folder);
+        expect(await fallback.load("abc")).toEqual(meeting);
+        expect((await fallback.evidence("abc"))?.selfName).toBe("Alice Example");
+        expect((await fallback.recordingClock("abc"))?.startedAt).toBe("2026-11-02T15:00:05.000Z");
+        expect(await fallback.revision("abc")).toStartWith("source-copy:");
+        // A copy of another meeting never answers.
+        await expect(fallback.load("other")).rejects.toThrow("the import was removed");
+
+        const opened = OpenedMeeting.of(store, record, { source: fallback, sourceMeetingId: "abc" });
+        expect((await opened.meeting()).transcript.map((entry) => entry.text)).toEqual(["Ahoj.", "Čau."]);
+    });
+
+    test("once the record keeps a copy, a read stays on this Mac and never asks a remote service", async () => {
+        const { store, record } = await newRecord();
+        const live = fakeSource();
+        const load = spyOn(live, "load");
+        const clock = spyOn(live, "recordingClock");
+        const backed = copyBackedSource(live, store.folder(record.id));
+        await backed.load("abc");
+        expect(load).toHaveBeenLastCalledWith("abc", {});
+        await backed.load("abc");
+        await backed.recordingClock("abc");
+        expect(load).toHaveBeenLastCalledWith("abc", { remote: false });
+        expect(clock).toHaveBeenLastCalledWith("abc", { remote: false });
+    });
+
+    test("the first read of an older record saves the evidence and the clock while the source may still go remote", async () => {
+        const { store, record } = await newRecord();
+        const folder = store.folder(record.id);
+        const live = fakeSource();
+        // Like an MCP-only Wispr meeting: a read limited to this Mac fails.
+        const remoteOnly: TranscriptSource = {
+            ...live,
+            load: async (id, options) => {
+                if (options?.remote === false) {
+                    throw new Error("not on this Mac");
+                }
+
+                return live.load(id);
+            },
+            recordingClock: async (id, options) => {
+                if (options?.remote === false) {
+                    throw new Error("not on this Mac");
+                }
+
+                return live.recordingClock(id);
+            },
+        };
+        const backed = copyBackedSource(remoteOnly, folder);
+        await backed.load("abc");
+        expect(readSourceCopy(folder, "evidence", ref)?.value?.selfName).toBe("Alice Example");
+        expect(readSourceCopy(folder, "clock", ref)?.value?.startedAt).toBe("2026-11-02T15:00:05.000Z");
+        expect((await backed.recordingClock("abc"))?.startedAt).toBe("2026-11-02T15:00:05.000Z");
+    });
+
+    test("a copy cut short is ignored, and the next answer replaces it", async () => {
+        const { store, record } = await newRecord();
+        const folder = store.folder(record.id);
+        const backed = copyBackedSource(fakeSource(), folder);
+        await backed.load("abc");
+        const path = join(folder, "source-copy", "meeting.json");
+        const text = readFileSync(path, "utf8");
+        writeFileSync(path, text.slice(0, text.length - 20));
+        expect(readSourceCopy(folder, "meeting", ref)).toBeUndefined();
+        await backed.load("abc");
+        expect(readSourceCopy(folder, "meeting", ref)?.value.transcript).toHaveLength(2);
+        writeFileSync(path, "{ not json");
+        expect(readSourceCopy(folder, "meeting", ref)).toBeUndefined();
+        await backed.load("abc");
+        expect(readSourceCopy(folder, "meeting", ref)?.value.title).toBe("Planning");
+    });
+
+    test("the copy's revision changes when only its clock changes", async () => {
+        const { store, record } = await newRecord();
+        const folder = store.folder(record.id);
+        const failing = (clock: string): TranscriptSource => ({
+            ...fakeSource({ clock }),
+            revision: async () => {
+                throw new Error("no revision");
+            },
+        });
+        await copyBackedSource(failing("2026-11-02T15:00:05.000Z"), folder).load("abc");
+        const before = await copyBackedSource(failing("2026-11-02T15:00:05.000Z"), folder).revision("abc");
+        expect(await copyBackedSource(failing("2026-11-02T15:00:05.000Z"), folder).revision("abc")).toBe(before);
+        await copyBackedSource(failing("2026-11-02T15:00:09.000Z"), folder).recordingClock("abc");
+        expect(await copyBackedSource(failing("2026-11-02T15:00:09.000Z"), folder).revision("abc")).not.toBe(before);
+    });
+
+    test("a source that must not write answers from the copy and leaves the record as it was", async () => {
+        const { store, record } = await newRecord();
+        const folder = store.folder(record.id);
+        await copyBackedSource(fakeSource(), folder, { save: false }).load("abc");
+        expect(existsSync(join(folder, "source-copy"))).toBe(false);
+        await copyBackedSource(fakeSource(), folder).load("abc");
+        const savedAt = readSourceCopy(folder, "meeting", ref)?.savedAt;
+        const changed: TranscriptSource = {
+            ...fakeSource(),
+            load: async () => ({ ...(await fakeSource().load("abc")), title: "Renamed" }),
+        };
+        expect((await copyBackedSource(changed, folder, { save: false }).load("abc")).title).toBe("Renamed");
+        expect(readSourceCopy(folder, "meeting", ref)?.savedAt).toBe(savedAt);
+        expect(readSourceCopy(folder, "meeting", ref)?.value.title).toBe("Planning");
+    });
+
+    test("a record whose source code cannot be opened reads its copy", async () => {
+        const { store, record } = await newRecord();
+        const folder = store.folder(record.id);
+        expect(copyOnlySource("wisprflow", folder, "abc")).toBeUndefined();
+        await copyBackedSource(fakeSource(), folder).load("abc");
+        const only = copyOnlySource("wisprflow", folder, "abc");
+        expect((await only?.load("abc"))?.title).toBe("Planning");
+        // The first read saved the evidence and the clock too.
+        expect((await only?.evidence("abc"))?.selfName).toBe("Alice Example");
+        expect(await only?.revision("abc")).toStartWith("source-copy:");
+    });
+
+    test("a meeting someone else recorded names its self as the recorder, not the user", async () => {
+        const { store, record } = await newRecord({
+            recordedBy: { owner: false, person: "Alice Example", from: "wisprflow" },
+        });
+        expect(showText(record)).toContain("people: Alice Example (recorded the call)");
+        const source = fakeSource();
+        const recorded: TranscriptSource = {
+            ...source,
+            load: async (id) => {
+                const meeting = await source.load(id);
+                return {
+                    ...meeting,
+                    transcript: meeting.transcript.map((entry, index) => ({ ...entry, speakerId: index + 1 })),
+                    speakers: [{ speakerId: 1, name: "Alice Example", origin: "self", isSelf: true }],
+                };
+            },
+        };
+        const stats = await speakerStatsRead({
+            store,
+            record,
+            gapSec: 120,
+            linked: { source: recorded, sourceMeetingId: "abc" },
+        });
+        expect(stats.speakers.find((stat) => stat.label === "Alice Example")?.origin).toBe("recorder");
+
+        const own = await newRecord();
+        expect(showText(own.record)).toContain("people: Alice Example (you)");
+    });
 });

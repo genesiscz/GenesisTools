@@ -157,6 +157,25 @@ describe("buildTeammateWrapperScript", () => {
         expect(script).toContain("export TOOLS_CLAUDE_ACCOUNT='max-primary'");
         expect(script).toContain("export TOOLS_CLAUDE_AUTH='token'");
         expect(script.trimEnd().endsWith(`exec '/Users/x/.bun/bin/claude' "$@"`)).toBe(true);
+        expect(script).not.toContain("CLAUDE_CODE_OAUTH_SCOPES");
+    });
+
+    test("passes the token's scopes on, so a teammate reads the organization policy as its lead does", () => {
+        const script = buildTeammateWrapperScript({
+            claudeBin: "/usr/local/bin/claude",
+            env: { ...AUTH, oauthScopes: "user:inference user:profile" },
+        });
+
+        expect(script).toContain("export CLAUDE_CODE_OAUTH_SCOPES='user:inference user:profile'");
+    });
+
+    test("exports no plan name when the lead has none, as for a token that reads the profile", () => {
+        const script = buildTeammateWrapperScript({
+            claudeBin: "/usr/local/bin/claude",
+            env: { ...AUTH, subscriptionType: undefined, oauthScopes: "user:inference user:profile" },
+        });
+
+        expect(script).not.toContain("CLAUDE_CODE_SUBSCRIPTION_TYPE");
     });
 
     /**

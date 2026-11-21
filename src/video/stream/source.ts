@@ -1,5 +1,6 @@
 import { type HlsMediaPlaylist, type HlsPlaylist, type HlsVariant, parsePlaylist } from "@genesiscz/utils/hls/playlist";
 import { logger } from "@genesiscz/utils/logger";
+import { chooseQuality } from "@genesiscz/utils/video/choose-quality";
 
 /** A browser user agent for a bare playlist URL: some CDNs refuse Bun's own. */
 const FALLBACK_USER_AGENT =
@@ -106,26 +107,12 @@ export function parseHeaderFlags(flags: string[]): Record<string, string> {
 
 /** `best` (highest bandwidth, the default), `worst`, or a height such as `720` or `720p`. */
 export function chooseVariant(variants: HlsVariant[], quality: string): HlsVariant {
-    const byBandwidth = [...variants].sort((a, b) => b.bandwidth - a.bandwidth);
-    const wanted = quality.toLowerCase();
-
-    if (wanted === "best") {
-        return byBandwidth[0];
-    }
-
-    if (wanted === "worst") {
-        return byBandwidth[byBandwidth.length - 1];
-    }
-
-    const height = Number(wanted.replace(/p$/, ""));
-    const match = byBandwidth.find((variant) => variant.height === height);
-
-    if (!match) {
-        const offered = byBandwidth.map((variant) => (variant.height ? `${variant.height}p` : variant.uri)).join(", ");
-        throw new Error(`--quality ${quality} matches no variant. Offered: best, worst, ${offered}`);
-    }
-
-    return match;
+    return chooseQuality({
+        options: [...variants].sort((a, b) => b.bandwidth - a.bandwidth),
+        quality,
+        names: (variant) => [variant.height ? `${variant.height}p` : variant.uri],
+        height: (variant) => variant.height,
+    });
 }
 
 export interface ResolvedMedia {

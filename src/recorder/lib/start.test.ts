@@ -16,6 +16,7 @@ import { listLiveRecordings, liveRecordingsDir, RecorderClient } from "@genesisc
 import { skip } from "@genesiscz/utils/test/skip";
 import { readMediaFacts } from "@genesiscz/utils/video/media-facts";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
+import { Command } from "commander";
 import { type CameraHost, startRecordingCamera, stopRecordingCamera } from "./camera-recorder";
 import { framesDoneLine } from "./frames-recording";
 import { alreadyInState, liveRecordingRef, markerLabelProblem } from "./library";
@@ -23,10 +24,12 @@ import {
     otherRecordingsWarning,
     parseStartFlags,
     readStartArgs,
+    recordOptionsSchema,
     refuseMissingWindowOrApp,
     refuseTargetOffScreen,
     startArgsOf,
     startAudioOf,
+    withStartOptions,
 } from "./start-options";
 import {
     announcedCountdown,
@@ -605,6 +608,20 @@ describe("a window or app movie", () => {
         await rm(empty, { recursive: true, force: true });
     });
 
+    it("--display follow names the following take, and a display index locks one display", () => {
+        expect(parseStartFlags({ display: "follow" }).target).toEqual({
+            kind: "display",
+            screenIndex: 0,
+            follow: true,
+        });
+        expect(parseStartFlags({ display: " Follow " }).target).toMatchObject({ follow: true });
+        expect(parseStartFlags({ display: "1" }).target).toEqual({ kind: "display", screenIndex: 1 });
+        expect(() => parseStartFlags({ display: "left" })).toThrow(/--display/);
+        expect(recordOptionsSchema.parse({ display: "follow" })).toEqual({ display: "follow" });
+        expect(startArgsOf({ display: "follow" })).toEqual(["--display", "follow"]);
+        expect(() => recordOptionsSchema.parse({ display: "left" })).toThrow();
+    });
+
     it("two target flags are refused, naming both, instead of one silently winning", () => {
         expect(() => parseStartFlags({ display: "0", window: "1" })).toThrow(/one target.*--display.*--window/);
         expect(() => parseStartFlags({ app: "Notes", region: "0,0,10,10" })).toThrow(/--region.*--app|--app.*--region/);
@@ -706,10 +723,26 @@ describe("a window or app movie", () => {
         expect(segmentRecorderOptions({ target: window, movieQuality: "high" }, folder).movieQuality).toBe("high");
     });
 
-    it("--audio with --window or --app is refused before anything starts", () => {
-        expect(() => parseStartFlags({ window: "83493", audio: "mic" })).toThrow(/--audio needs a display or an area/);
-        expect(() => parseStartFlags({ app: "Notes", audio: "system" })).toThrow(/--audio needs a display or an area/);
-        expect(parseStartFlags({ window: "83493" }).target).toEqual(window);
+    it("--audio records a window or an app too, and --system-audio-scope says whose system sound it keeps", () => {
+        expect(parseStartFlags({ window: "83493", audio: "mic" })).toMatchObject({ target: window, audio: ["mic"] });
+        expect(parseStartFlags({ app: "Notes", audio: "system" }).audio).toEqual(["system"]);
+        expect(parseStartFlags({ window: "83493", audio: "system" }).systemAudioScope).toBeUndefined();
+        expect(
+            parseStartFlags({ window: "83493", audio: "system,mic", systemAudioScope: "app" }).systemAudioScope
+        ).toBe("app");
+        expect(() => parseStartFlags({ window: "83493", audio: "mic", systemAudioScope: "app" })).toThrow(
+            /--system-audio-scope needs --audio system/
+        );
+        expect(() => parseStartFlags({ window: "83493", audio: "system", systemAudioScope: "window" })).toThrow(
+            /--system-audio-scope takes all or app/
+        );
+        // Registered once: a second declaration made commander refuse every `recorder start`.
+        const longs = withStartOptions(new Command("start")).options.map((option) => option.long);
+        expect(longs.filter((flag) => flag === "--system-audio-scope")).toHaveLength(1);
+        // The REPL door writes the same flag, so movies.record() and the CLI agree.
+        expect(startArgsOf({ window: [83493], audio: ["system"], systemAudioScope: "app" })).toEqual(
+            expect.arrayContaining(["--system-audio-scope", "app"])
+        );
     });
 
     it("--audio records the system sound first, then the mic, as recording.json lists the tracks", () => {

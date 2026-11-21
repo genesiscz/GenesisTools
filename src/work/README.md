@@ -73,3 +73,38 @@ MCP group `work` (enabled by default, `src/work/mcp/genesis-tools.ts`) serves `w
 - `reopen` moves the item, sends the reason to the last finisher (else the last claimer) with the key
   `work-reopen:<item>:<seq>`, and records the receipt: `delivered`, `queued`, `nobody-alive` or `unknown`. An unknown
   outcome is never sent again.
+
+## Connectors
+
+A project's `rules.connectors.<id>` section turns a connector on (`enabled`), gives its `settings`, the types it makes
+outside (`createTypes`; empty makes nothing, and `sync` says so) and who may push each type (`push`). `scope` limits
+which new items it makes: the tasks of a handoff only with `scope.handoffTasks: true`, and, when `scope.under` or
+`scope.tags` is set, only items under one of the listed ids or carrying one of the listed tags. A paired item always
+syncs. The tracker connector sends an item's parent as the outside task's parent, its links as task links, and cuts a
+title over `settings.titleLimit` (500) with the full title at the top of the body.
+
+- **Types.** `settings.types` maps a local type to the tracker's type (defaults: feature story, incident bug, test
+  qa, check qa, risk watch, epic, bug, task and todo as they are, the rest task). When the two differ, the task gets
+  the label `settings.typeLabel` (`type:{type}`; an empty string turns it off), and a pull reads the local type
+  back from it.
+- **Body.** An item without a body sends its fields (where, why, what a user sees, cost, measured), closed by a
+  comment with the hash of the text. A later push replaces the outside body only when it is empty or still that
+  untouched text, so a description written by hand outside stays. A pull does not count the untouched text as drift.
+- **No silent overwrite.** Before an update the tracker reads the task and compares, per fact (title, body, type,
+  parent, state), what it last wrote there, what the task holds now, and what this side holds. It writes a fact only
+  when the task still holds what it last wrote. A fact edited outside stays as it is: the pairing turns `drift`, the
+  pass prints both values, and every later pass lists the items that differ. Settle one with
+  `tools work sync --resolve <id> --take ours` (write this side outside) or `--take theirs` (copy the outside here),
+  `--facts title,body` to narrow it, or `--resolve all`. A pairing made before this check has no record of what was
+  written, so only an empty outside value is written for it until each fact once matches.
+- **Rate limits.** A door call refused with `rate_limited` waits and tries again in the same pass (the server's
+  Retry-After when it names one, else a pause that doubles from 1 s to 30 s, at most 8 tries), and the calls after it
+  start with that pause. A long pass renews the sync's lease as it goes.
+- **Who pushes.** By default anyone pushes a work item; an epic, a handoff and a note (idea, risk, limit) need the
+  session that made it, a lead or the owner, as their edits do. A move under another parent is a reference: any
+  session may write it (`tools work edit <id> --parent <epic>`), and its push is not held.
+
+`tools work sync` prints each held or failed item with its reason, and what it did not make and why. A held item
+comes back in every later pass until `sync --release <id>` pushes it. `--dry-run`
+lists the items a pass would make, update and hold, and sends nothing. `--all` pushes every paired item again, for
+example after a connector learns a new fact.

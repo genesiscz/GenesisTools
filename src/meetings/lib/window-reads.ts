@@ -11,11 +11,17 @@ import {
     type MeetingRecord,
     MeetingStore,
     MOMENTS_FOLDER,
+    SOURCE_COPY_FOLDER,
     type SpeakerAssignment,
 } from "@genesiscz/utils/meetings/record";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import type { TranscriptFormat } from "@genesiscz/utils/transcribe/render";
-import { type SpeakerStats, speakerStats } from "@genesiscz/utils/transcribe/speakers";
+import {
+    type SpeakerOrigin,
+    type SpeakerStat,
+    type SpeakerStats,
+    speakerStats,
+} from "@genesiscz/utils/transcribe/speakers";
 import { type AssignDeps, type AssignView, skipReason, viewProposals } from "./assign";
 import { captureCost } from "./capture-cost";
 import { configValueAt, parseConfigPath } from "./config-edit";
@@ -136,8 +142,11 @@ export async function revisionsRead(options: {
 
     // The timeline reads the frame index and ocr.jsonl and checks each frame file; a frame added or removed changes its
     // folder's identity.
-    // Cut Moment clips are no screen data: a play must not make the window read the Screen tab again.
-    const entries = readdirSync(folder, { withFileTypes: true }).filter((entry) => entry.name !== MOMENTS_FOLDER);
+    // Cut Moment clips are no screen data: a play must not make the window read the Screen tab again. The record's
+    // source copy is no screen data either; its changes follow the source's own revision.
+    const entries = readdirSync(folder, { withFileTypes: true }).filter(
+        (entry) => entry.name !== MOMENTS_FOLDER && entry.name !== SOURCE_COPY_FOLDER
+    );
     const screen = [
         fileIdentity(join(folder, "frames.jsonl")),
         fileIdentity(join(folder, "ocr.jsonl")),
@@ -224,7 +233,13 @@ export function dictionaryShowRead(config: MeetingsConfig, project?: string): Di
     return { project: project ?? null, abbrExpansion: merged.abbrExpansion, entries: rows };
 }
 
-export type SpeakerStatsView = { meeting: string; gapSec: number; assignments?: SpeakerAssignment[] } & SpeakerStats;
+/** A label's origin as a view shows it: `recorder` is the `self` label of a meeting someone else recorded. */
+export type SpeakerViewOrigin = SpeakerOrigin | "recorder";
+
+export type SpeakerStatsView = { meeting: string; gapSec: number; assignments?: SpeakerAssignment[] } & Omit<
+    SpeakerStats,
+    "speakers"
+> & { speakers: Array<Omit<SpeakerStat, "origin"> & { origin: SpeakerViewOrigin }> };
 
 /** `meetings speakers stats <id>`: per label its turns, spoken time and spans, on the stays the record keeps. */
 export async function speakerStatsRead(options: {
@@ -246,7 +261,11 @@ export async function speakerStatsRead(options: {
         presence: await opened.presence(options.attendance),
     });
     const assignments = record.speakers.assignments ?? [];
-    return { meeting: record.id, gapSec, ...stats, ...(assignments.length > 0 ? { assignments } : {}) };
+    // In a meeting someone else recorded, the `self` label is the person at that microphone, not the user.
+    const speakers = record.recordedBy
+        ? stats.speakers.map((stat) => (stat.origin === "self" ? { ...stat, origin: "recorder" as const } : stat))
+        : stats.speakers;
+    return { meeting: record.id, gapSec, ...stats, speakers, ...(assignments.length > 0 ? { assignments } : {}) };
 }
 
 /**

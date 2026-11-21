@@ -4,7 +4,7 @@
  */
 import type { ZodType } from "zod";
 import type { Item, ItemId } from "../model/item";
-import type { ItemState, ItemType, Severity } from "../model/vocab";
+import type { ItemState, ItemType, LinkKind, Severity } from "../model/vocab";
 
 export const SYNCED_FACTS = ["title", "body", "type", "parent", "tags", "state", "severity"] as const;
 export type SyncedFact = (typeof SYNCED_FACTS)[number];
@@ -29,7 +29,19 @@ export interface Pairing {
     state: PairingState;
     /** Why the pairing is held, drifted or failed. */
     note?: string;
+    /** What this side last wrote outside for each fact, the base of the check before the next push. */
+    sent?: SentFacts;
     updatedTs: string;
+}
+
+/** A fact's value as the connector writes it outside (its own words: the outside type, the cut title). */
+export type SentFacts = Partial<Record<SyncedFact, string>>;
+
+/** A fact that changed outside since this side last wrote it, so a push left it as it is. */
+export interface FactChangedOutside {
+    fact: SyncedFact;
+    outside: string;
+    here: string;
 }
 
 /** Who owns which fact, by the side that made the item (spec P5 decision 3). */
@@ -52,9 +64,24 @@ export interface PushIntent {
     pairing: Pairing | null;
     /** The labels the outside item carries: the local id and each container that holds it. */
     labels: string[];
+    /** The outside key of the item's parent on this connector; absent when it has none or the parent is not made yet. */
+    parentKey?: string;
+    /** The item's own links to items this connector already made outside. */
+    links?: { kind: LinkKind; remoteKey: string }[];
+    /** Facts to write even when they changed outside (`sync --resolve <id> --take ours`). */
+    force?: readonly SyncedFact[];
 }
 
-export type PushResult = { ok: true; remoteKey: string } | { ok: false; error: string; remoteKey?: string };
+export type PushResult =
+    | {
+          ok: true;
+          remoteKey: string;
+          /** The facts now equal on both sides, as written outside; absent from a connector that does not check. */
+          sent?: SentFacts;
+          /** Facts left as they are because they changed outside since the last push. */
+          changedOutside?: FactChangedOutside[];
+      }
+    | { ok: false; error: string; remoteKey?: string };
 
 /** One outside item as a connector reads it. */
 export interface RemoteItem {
@@ -75,12 +102,24 @@ export interface ConnectorContext<S = unknown> {
     project: string;
     /** The machine part of the label (`machine.prefix` of the config). */
     machinePrefix: string;
+    /**
+     * Renews the sync's lease during a long push (a connector that waits out a rate limit calls it before each
+     * wait); false when the lease is lost, so the connector stops waiting.
+     */
+    keepAlive?: () => boolean;
 }
 
 export interface Connector<S = unknown> {
     readonly id: string;
     readonly settings: ZodType<S>;
-    readonly can: { create: boolean; pull: boolean; labels: boolean; comments: boolean; parents: boolean };
+    readonly can: {
+        create: boolean;
+        pull: boolean;
+        labels: boolean;
+        comments: boolean;
+        parents: boolean;
+        links: boolean;
+    };
     status(ctx: ConnectorContext<S>): Promise<{ ok: boolean; detail: string }>;
     push(intents: readonly PushIntent[], ctx: ConnectorContext<S>): Promise<PushResult[]>;
     pull(ask: { remoteKeys: readonly string[] }, ctx: ConnectorContext<S>): Promise<RemoteItem[]>;

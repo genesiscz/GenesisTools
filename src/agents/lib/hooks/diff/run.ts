@@ -36,7 +36,7 @@ import {
 } from "../../changes/log";
 import { gitObjectSink } from "../../changes/objects";
 import { type DiffConfig, diffFor, type HooksConfig } from "../config";
-import { committedPaths, gitOut, lastHistoryMove, objectId, statusOf, untrackedFilesIn } from "../git";
+import { committedPaths, gitOut, lastHistoryMove, objectId, untrackedFilesIn } from "../git";
 import { hookDiag } from "../log";
 import { modsPluginDisabled } from "../mods";
 import { callDir, safeSegment } from "../paths";
@@ -79,6 +79,7 @@ import {
 } from "./mentions";
 import { namedChanges } from "./named";
 import { type DiffBlock, fitMessage, highlightRange, hunkRange, renderBlock, renderPatch, themedDress } from "./render";
+import { gitReads, type StatusReads } from "./status/prepare";
 import { terminalColumns } from "./terminal";
 import { type Palette, resolvePalette } from "./theme";
 import { writerChanges } from "./writers";
@@ -698,6 +699,38 @@ function inTempScratch(path: string): boolean {
     return true;
 }
 
+/**
+ * The roots of this call's post phase, read the way `runDiffPost` reads them (`roots.txt` and `heads.txt` of the call
+ * folder), so the status reads can be prepared before the body runs. Null when the pre phase left no capture.
+ */
+export function postRoots(
+    payload: HookPayload
+): { dir: string; roots: Array<{ root: string; head: string | null }>; background: boolean } | null {
+    const session = safeSegment(payload.sessionId);
+    const call = safeSegment(payload.toolUseId);
+
+    if (session === null || call === null) {
+        return null;
+    }
+
+    const dir = callDir(payload.harness, session, call);
+    const rootsFile = join(dir, "roots.txt");
+
+    if (!existsSync(rootsFile)) {
+        return null;
+    }
+
+    const headsPath = join(dir, "heads.txt");
+    const heads = existsSync(headsPath) ? readFileSync(headsPath, "utf8").split("\n") : [];
+    const roots = readFileSync(rootsFile, "utf8")
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((root, index) => ({ root, head: objectId(heads[index]?.trim()) }));
+    const background = backgroundTaskOf(payload) !== null && existsSync(join(dir, "call.json"));
+
+    return { dir, roots, background };
+}
+
 /** A call that went to the background, as its post phase left it in `background.json`. */
 interface DeferredCall {
     id: string;
@@ -902,10 +935,13 @@ export function composePostDiff({
     payload,
     config,
     record,
+    status,
 }: {
     payload: HookPayload;
     config: HooksConfig;
     record?: EditRecorder;
+    /** The prepared status reads of this call's own diff; a deferred diff always reads Git itself. */
+    status?: StatusReads;
 }): { flushed: DiffDecision[]; decision: DiffDecision; message: string } {
     const maxChars = diffFor(config, payload.harness).maxMessageChars;
     const flushed = flushDeferred({ payload, config, record, maxChars: Math.floor(maxChars / 2) });
@@ -915,7 +951,7 @@ export function composePostDiff({
     const heading = commandLines(payload.command, diffFor(config, payload.harness).commandLines);
     const room = Math.max(0, maxChars - flushedChars - (heading ? heading.length + 1 : 0));
     const drawnByMod = modDrawsDiffs({ config, harness: payload.harness, sessionId: payload.sessionId });
-    const decision = fitDecision(runDiffPost({ payload, config, record, maxChars: room, drawnByMod }), room);
+    const decision = fitDecision(runDiffPost({ payload, config, record, maxChars: room, drawnByMod, status }), room);
     const own = decision.message ? [heading ? `${heading}\n${decision.message}` : decision.message] : [];
     const message = [...own, ...flushedParts].join("\n\n");
 
@@ -1549,10 +1585,13 @@ export function runDiffPost({
     drawnByMod = false,
     deferred = false,
     changeLogs,
+    status,
 }: {
     payload: HookPayload;
     config: HooksConfig;
     record?: EditRecorder;
+    /** The prepared status reads of this boundary (`prepareStatus`); absent: one Git read per root, as before. */
+    status?: StatusReads;
     /** The folder of the session change logs that attribution reads as proof; a test passes its own. */
     changeLogs?: string;
     /** The message budget when it must share the hook's one message (`flushDeferred`); else `diff.maxMessageChars`. */
@@ -1604,6 +1643,7 @@ export function runDiffPost({
     const roots = readFileSync(rootsFile, "utf8")
         .split("\n")
         .filter((line) => line.length > 0);
+    const reads = status ?? gitReads("all");
     const headsPath = join(dir, "heads.txt");
     const heads = existsSync(headsPath) ? readFileSync(headsPath, "utf8").split("\n") : [];
     const stampPath = join(dir, "stamp");
@@ -1670,9 +1710,9 @@ export function runDiffPost({
         // ONE status read per root, reused for the entries AND the current HEAD: porcelain
         // v2's `--branch` header already carries the oid, so noticing a commit costs nothing
         // until one has actually happened.
-        const summary = statusOf(root);
+        const summary = reads.read(root);
         const startedOn = objectId(heads[index]?.trim());
-        const nowOn = objectId(summary.branch?.oid);
+        const nowOn = objectId(summary.head ?? undefined);
         const moved = startedOn !== null && nowOn !== null && startedOn !== nowOn;
         // A commit is the command's own edit; a rebase, pull, merge, checkout or reset is HEAD
         // walking through other people's work, so the files it brought are named in one line and

@@ -46,7 +46,7 @@ import { questionLabel, questionWarnings } from "../lib/questions";
 import { type ReviewRow, type RowPart, reviewRow } from "../lib/review-rows";
 import { withMeetingsClient } from "../lib/service/client";
 import { errorText, fail, formatFlag, hintIfSeatsUnset, resolveEnum, TOOL } from "../lib/shared";
-import { localMeetingTranscript, meetingTranscript } from "../lib/sources";
+import { linkedSource, localMeetingTranscript, meetingTranscript } from "../lib/sources";
 import { printSpeakerStats } from "../lib/speakers-view";
 import { isSuggestRule, SUGGEST_RULES } from "../lib/suggest";
 import { runSuggest } from "../lib/suggest-run";
@@ -761,6 +761,7 @@ async function speakersStats(ref: string, opts: { gap?: string; attendance?: str
         const platform = from && isMeetingPlatformId(from) ? MEETING_PLATFORMS[from].label : undefined;
         printSpeakerStats(stats, {
             renames: record.speakers.labels,
+            recorder: record.recordedBy !== undefined,
             ...(platform ? { attendance: `${platform} attendance` } : {}),
         });
     } catch (err) {
@@ -778,7 +779,7 @@ async function speakersRename(ref: string, label: string, name: string, opts: { 
 
     try {
         // A label the transcript does not have would rename nothing and say it did (MC11): name the labels instead.
-        const labels = [...new Set((await meetingTranscript(record)).map((entry) => entry.speaker))];
+        const labels = [...new Set((await meetingTranscript(record, store)).map((entry) => entry.speaker))];
 
         if (!labels.includes(label) && record.speakers.labels[label] === undefined) {
             fail(`${record.id} has no label "${label}". Its labels: ${labels.map((one) => `"${one}"`).join(", ")}`);
@@ -856,7 +857,9 @@ async function transcript(
             ui.warn(warning);
         }
         if (opts.probeThresholds !== undefined) {
-            const source = await OpenedMeeting.of(store, record).meeting();
+            // A probe writes nothing: the record's source copy answers when the source cannot, but is not refreshed.
+            const linked = await linkedSource(record, store, { saveCopy: false });
+            const source = await OpenedMeeting.of(store, record, linked).meeting();
             const levels =
                 typeof opts.probeThresholds === "string"
                     ? opts.probeThresholds.split(",").map(Number)

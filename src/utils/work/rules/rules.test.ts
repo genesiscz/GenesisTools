@@ -241,6 +241,23 @@ describe("the write rules", () => {
         ).toBe("ROLE_REFUSED");
     });
 
+    test("a parent move is a reference; the poster may edit its own epic and notes, another session may not", async () => {
+        const epic = await write(ctx("maker"), { verb: "add", type: "epic", title: "big" });
+        const epicId = epic.ok ? epic.data.items[0].id : "";
+        const risk = await write(ctx("finder"), { verb: "spot", type: "risk", title: "a risk", fields: {} });
+        const riskId = risk.ok ? risk.data.items[0].id : "";
+        expect((await write(ctx("maker"), { verb: "edit", ref: epicId, title: "bigger" })).ok).toBe(true);
+        expect((await write(ctx("other"), { verb: "edit", ref: riskId, parent: epicId })).ok).toBe(true);
+        expect((await write(ctx("other"), { verb: "edit", ref: epicId, title: "mine" })).diagnostics[0].code).toBe(
+            "ROLE_REFUSED"
+        );
+        expect(
+            (await write(ctx("other"), { verb: "edit", ref: riskId, parent: epicId, title: "renamed" })).diagnostics[0]
+                .code
+        ).toBe("ROLE_REFUSED");
+        expect((await write(ctx("finder"), { verb: "edit", ref: riskId, title: "renamed" })).ok).toBe(true);
+    });
+
     test("a released worker and a child with only its lead's session cannot edit", async () => {
         const made = await write(ctx("worker"), { verb: "add", type: "task", title: "work" });
         const id = made.ok ? made.data.items[0].id : "";

@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
@@ -13,9 +13,10 @@ import {
 } from "@genesiscz/utils/transcribe/render";
 import { type Command, Option } from "commander";
 import pc from "picocolors";
+import { ImportConflictError, importExport } from "../lib/imported";
 import { listLocalMeetings, localAvailable } from "../lib/local";
 import { listMcpMeetings, listMcpSeries } from "../lib/mcp";
-import { calendarFor } from "../lib/meeting-source";
+import { sourcedCalendar } from "../lib/meeting-source";
 import { writeGuarded } from "../lib/output";
 import { type RenderOptions, renderMarkdown, renderSrt, renderText, renderVtt, showMarkdown } from "../lib/render";
 import { loadMeeting, resolveMeetingRef } from "../lib/source";
@@ -279,7 +280,7 @@ async function show(ref: string, opts: Record<string, unknown>): Promise<void> {
                 )
             );
         } else {
-            out.print(showMarkdown(loaded.data, loaded.source, calendarFor(loaded.data)));
+            out.print(showMarkdown(loaded.data, loaded.source, sourcedCalendar(loaded)));
         }
     } catch (err) {
         fail(errorText(err));
@@ -306,6 +307,7 @@ async function exportMeetings(refs: string[], opts: Record<string, unknown>): Pr
             const loaded = await loadMeeting(id, { source, transcript: true });
             reportSource(loaded.source, loaded.notes);
             const meeting = loaded.data;
+            const calendar = sourcedCalendar(loaded);
             const folder = join(dir, exportDirName(meeting));
             const base: RenderOptions = {
                 source: loaded.source,
@@ -315,11 +317,11 @@ async function exportMeetings(refs: string[], opts: Record<string, unknown>): Pr
                 firstNames: opts.firstNames === true,
             };
             const files: Array<[string, string, boolean]> = [
-                ["Summary.md", showMarkdown(meeting, loaded.source, calendarFor(meeting)), true],
+                ["Summary.md", showMarkdown(meeting, loaded.source, calendar), true],
                 ["Transcript.md", renderMarkdown(meeting, base), true],
                 [
                     "meeting.json",
-                    `${SafeJSON.stringify({ source: loaded.source, meeting, calendar: calendarFor(meeting) ?? null }, null, 2)}\n`,
+                    `${SafeJSON.stringify({ source: loaded.source, meeting, calendar: calendar ?? null }, null, 2)}\n`,
                     false,
                 ],
             ];
@@ -329,6 +331,36 @@ async function exportMeetings(refs: string[], opts: Record<string, unknown>): Pr
             }
         } catch (err) {
             fail(`${ref}: ${errorText(err)}`);
+        }
+    }
+}
+
+async function importMeeting(folder: string, opts: { force?: boolean; json?: boolean }): Promise<void> {
+    try {
+        const result = await importExport({ folder: resolve(folder), force: opts.force === true });
+
+        if (opts.json) {
+            out.result(SafeJSON.stringify(result, null, 2));
+            return;
+        }
+
+        ui.ok(`${result.status}: ${result.title} (${result.meetingId})`);
+        ui.kv("folder", result.folder);
+
+        for (const file of result.copied) {
+            ui.dim(`  ${file.placement} ${file.name}  ← ${file.from}`);
+        }
+
+        if (result.missing.length) {
+            ui.warn(`not in the export: ${result.missing.join(", ")}`);
+        }
+
+        ui.dim(`Next: ${toolCommand("meetings", "new", "--source", `wisprflow:${result.meetingId}`)}`);
+    } catch (err) {
+        fail(errorText(err));
+
+        if (err instanceof ImportConflictError) {
+            ui.info(`To replace it: ${suggestCommand(TOOL, { add: ["--force"] })}`);
         }
     }
 }
@@ -434,6 +466,19 @@ export function registerMeetingsCommand(program: Command): void {
         .addOption(new Option("--no-terms", "no effect: the raw export has no term check").hideHelp())
         .option("--source [source]", "auto | local | mcp")
         .action(exportMeetings);
+
+    meetings
+        .command("import")
+        .argument(
+            "<folder>",
+            "a folder written by 'meetings export', with the raw Wispr files beside it or in wispr-raw/"
+        )
+        .description(
+            "Import a meeting exported on another Mac, so this tool and tools meetings read it as wisprflow:<id>"
+        )
+        .option("--force", "replace an earlier import of the same meeting that differs")
+        .option("--json", "print the result as JSON")
+        .action(importMeeting);
 
     meetings
         .command("series")
