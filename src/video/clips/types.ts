@@ -26,7 +26,7 @@ export interface Clip {
     mature: boolean;
     /** The stream the clip was cut from; the VOD of that stream carries the same `streamId`. */
     streamId: string | null;
-    /** The clip's start in its VOD when the site says it (Twitch); null when it must be measured (Kick). */
+    /** The clip's start in its VOD as the site says it (Twitch; Kick rounds down to a whole second); null when unsaid. */
     vodOffsetSec: number | null;
 }
 
@@ -53,9 +53,10 @@ export type ClipTarget =
     | { kind: "channel"; channel: string; sort?: string; range?: ClipRange };
 
 /**
- * How a clip's place in its VOD was found. `site`: the site names the offset (Twitch). `vod-playlist`: clip and VOD
- * playlists both carry stream time (Kick, public VOD), exact to the segment. `stream-start`: the VOD playlist is
- * closed, so the offset counts from the site's stream start, which the VOD's first frame follows by a few seconds.
+ * How a clip's place in its VOD was found. `site`: the site names the offset (Twitch; Kick in whole seconds, used only
+ * when the VOD playlist is closed). `vod-playlist`: clip and VOD playlists both carry stream time (Kick, public VOD),
+ * exact to the segment. `stream-start`: neither, so the offset counts from the site's stream start, which the VOD's
+ * first frame follows by a few seconds.
  */
 export type OffsetSource = "site" | "vod-playlist" | "stream-start";
 

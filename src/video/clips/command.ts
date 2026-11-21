@@ -268,8 +268,9 @@ async function updateManifest({
     const { sources, vods } = await provider.placeClips({ clips: rows.map((row) => row.clip), jobs, signal });
     const manifest = readManifest(dir);
     const section = providerSection(manifest, provider.id);
-    recordClips({ section, rows, sources });
+    // VODs first: a clip of a VOD whose playlist is closed now is placed from the playlist start recorded before.
     recordVods(section, vods);
+    recordClips({ section, rows, sources });
     writeManifest(dir, manifest);
     return manifest;
 }
