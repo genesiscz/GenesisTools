@@ -15,12 +15,14 @@ export const DEFAULT_PRAGMAS: Required<Pick<Pragmas, "journalMode" | "busyTimeou
 export function applyPragmas(db: BunDatabase, pragmas?: Pragmas, readonly = false): void {
     const merged: Pragmas = { ...DEFAULT_PRAGMAS, ...pragmas };
 
-    if (!readonly && merged.journalMode) {
-        db.exec(`PRAGMA journal_mode = ${merged.journalMode};`);
-    }
-
+    // The timeout goes first: `journal_mode` takes a lock, and without a busy handler it fails at once while
+    // another connection writes ("database is locked" on the second of six parallel `tools work edit` calls).
     if (typeof merged.busyTimeoutMs === "number") {
         db.exec(`PRAGMA busy_timeout = ${merged.busyTimeoutMs};`);
+    }
+
+    if (!readonly && merged.journalMode) {
+        db.exec(`PRAGMA journal_mode = ${merged.journalMode};`);
     }
 
     if (merged.foreignKeys !== undefined) {
