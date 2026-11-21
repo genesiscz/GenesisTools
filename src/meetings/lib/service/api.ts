@@ -692,7 +692,8 @@ const meetingSpeakers = defineMethod({
             z.object({
                 label: z.string(),
                 speakerId: z.number().optional(),
-                origin: z.enum(["platform", "llm", "self", "unknown"]),
+                /** `recorder`: the `self` label of a meeting someone else recorded (an imported export). */
+                origin: z.enum(["platform", "llm", "self", "recorder", "unknown"]),
                 turns: z.number(),
                 lines: z.number(),
                 words: z.number(),

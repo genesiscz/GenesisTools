@@ -3,7 +3,13 @@ import type { Dirent } from "node:fs";
 import { lstat, readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
-import type { LocalAudioFile, LocalAudioMeeting, LocalSourceAudio } from "@genesiscz/utils/meetings/sources";
+import type {
+    LocalAudioFile,
+    LocalAudioMeeting,
+    LocalSourceAudio,
+    SourceMeeting,
+} from "@genesiscz/utils/meetings/sources";
+import { importedRecordedBy, importedStoreRoot, readImportedExport } from "./imported";
 import { toIso, WISPR_DIR } from "./local";
 
 const { log } = logger.scoped("wisprflow-source-audio");
@@ -107,25 +113,64 @@ export function localAudioMeeting(dir: string, id: string): LocalAudioMeeting | 
     });
 }
 
-export function wisprAudioAccess(dir: string): LocalSourceAudio {
+function metadataOnly(meeting: LocalAudioMeeting): SourceMeeting {
+    return { ...meeting, participants: [], speakers: [], transcript: [], folders: [] };
+}
+
+/** One meeting's metadata from this Mac's Wispr database; null when the app is absent or does not know the id. */
+async function appMeeting(dir: string, id: string): Promise<SourceMeeting | null> {
+    try {
+        await lstat(join(dir, "flow.sqlite"));
+    } catch (error) {
+        // No Wispr on this machine (its audio folder can outlive the app): the file's meeting is unknown.
+        if (missing(error)) {
+            return null;
+        }
+        throw error;
+    }
+    const meeting = localAudioMeeting(dir, id);
+    return meeting ? metadataOnly(meeting) : null;
+}
+
+/**
+ * One meeting's metadata from its imported export's meeting.json, never from flow.sqlite. It names who recorded it,
+ * so a record the audio discovery makes first does not call that person "you".
+ */
+function importedMeeting(id: string, root: string): SourceMeeting | null {
+    const meeting = readImportedExport(id, root)?.meeting;
+
+    if (!meeting) {
+        return null;
+    }
+
     return {
-        id: "wisprflow",
-        files: () => audioFilesIn(join(dir, "meetings")),
-        legacyFiles: (meetingsRoot) => audioFilesIn(join(dirname(meetingsRoot), "meetings-audio-archive")),
-        load: async (id) => {
-            try {
-                await lstat(join(dir, "flow.sqlite"));
-            } catch (error) {
-                // No Wispr on this machine (its audio folder can outlive the app): the file's meeting is unknown.
-                if (missing(error)) {
-                    return null;
-                }
-                throw error;
-            }
-            const meeting = localAudioMeeting(dir, id);
-            return meeting ? { ...meeting, participants: [], speakers: [], transcript: [], folders: [] } : null;
-        },
+        ...metadataOnly({ sourceMeetingId: meeting.id, title: meeting.title, start: meeting.start, end: meeting.end }),
+        participants: meeting.participants.map((person) => ({
+            name: person.name,
+            ...(person.isSelf ? { self: true } : {}),
+            from: ["wisprflow"],
+        })),
+        recordedBy: importedRecordedBy(meeting),
     };
 }
 
-export const wisprLocalAudio = wisprAudioAccess(WISPR_DIR);
+/**
+ * The Wispr recordings on this Mac: the app's own meeting folders, and the exports imported with
+ * `tools wisprflow meetings import` (laid out the same way, one folder per meeting). A meeting in both is the app's.
+ */
+export function wisprAudioAccess(options: { dir: string; importedRoot?: () => string }): LocalSourceAudio {
+    const { dir, importedRoot = importedStoreRoot } = options;
+    return {
+        id: "wisprflow",
+        files: async () => {
+            const own = await audioFilesIn(join(dir, "meetings"));
+            const ids = new Set(own.map((file) => file.sourceMeetingId));
+            const imported = (await audioFilesIn(importedRoot())).filter((file) => !ids.has(file.sourceMeetingId));
+            return [...own, ...imported].sort((a, b) => a.sourceMeetingId.localeCompare(b.sourceMeetingId));
+        },
+        legacyFiles: (meetingsRoot) => audioFilesIn(join(dirname(meetingsRoot), "meetings-audio-archive")),
+        load: async (id) => (await appMeeting(dir, id)) ?? importedMeeting(id, importedRoot()),
+    };
+}
+
+export const wisprLocalAudio = wisprAudioAccess({ dir: WISPR_DIR });

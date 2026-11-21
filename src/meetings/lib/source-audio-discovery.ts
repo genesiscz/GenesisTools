@@ -95,6 +95,7 @@ export async function sourceAudioRecords(options: {
                     createdBy: "link",
                     sources: { [source.id]: { meetingId: sourceMeetingId } },
                     participants: meeting.participants,
+                    ...(meeting.recordedBy ? { recordedBy: { ...meeting.recordedBy, from: source.id } } : {}),
                     calendar: meeting.calendar,
                 },
                 { command: "audio discover", change: `created to preserve ${source.id} ${sourceMeetingId}` }
