@@ -5,12 +5,14 @@
 import { errorDiagnostic, failReply, infoDiagnostic, okReply, type Reply } from "@genesiscz/utils/output/reply";
 import { type WorkMethodName, type WorkParams, workMethods } from "./api";
 import {
+    noteStandingDrift,
     type PullReport,
     pairItem,
     previewSync,
     pullRemote,
     pushPairing,
     releaseHeld,
+    resolveDrift,
     runSyncOnce,
     type SyncDeps,
     type SyncReport,
@@ -54,6 +56,7 @@ import type { Resolved } from "./rules/resolve";
 import { randomItemSuffix, type WorkContext, type WriteData, write } from "./service";
 import type { WorkCommand } from "./store/decide";
 import { newItemId } from "./store/decide";
+import { selectPairings } from "./store/rows";
 import { selectItems } from "./store/view";
 
 export interface CallOptions {
@@ -724,11 +727,73 @@ export const workHandlers: WorkHandlers = {
                 { dryRun: true, diagnostics: [infoDiagnostic("PREVIEW", message)] }
             );
 
+        if (p.resolve !== undefined) {
+            if (p.take === undefined) {
+                return failReply("sync", [
+                    errorDiagnostic("TAKE_REQUIRED", "--resolve needs --take ours or --take theirs.", "take"),
+                ]);
+            }
+
+            if (p.resolve === "all") {
+                const drifted = selectPairings(sync.deps.db, { state: "drift" }).map((pairing) => pairing.item);
+
+                if (session.call.dryRun === true) {
+                    return preview(
+                        `Would keep ${p.take === "ours" ? "this side" : "the outside"} for ${drifted.length} item(s).`
+                    );
+                }
+
+                const total: SyncReport = { pushed: 0, held: 0, failed: 0, drift: 0, cursor: -1 };
+
+                for (const item of [...new Set(drifted)]) {
+                    try {
+                        const one = await resolveDrift(sync.deps, {
+                            item,
+                            take: p.take,
+                            ...(p.facts !== undefined ? { facts: p.facts } : {}),
+                        });
+                        total.pushed += one.pushed;
+                        total.failed += one.failed;
+                        total.drift += one.drift;
+                        total.problems = [...(total.problems ?? []), ...(one.problems ?? [])];
+                        total.notes = [...(total.notes ?? []), ...(one.notes ?? [])];
+                    } catch (error) {
+                        total.notes = [...(total.notes ?? []), `${item}: ${String(error)}`];
+                    }
+                }
+
+                return okReply("sync", noteStandingDrift(sync.deps.db, total));
+            }
+
+            const found = itemOf(session, "sync", p.resolve);
+
+            if ("refused" in found) {
+                return found.refused;
+            }
+
+            if (session.call.dryRun === true) {
+                return preview(`Would keep ${p.take === "ours" ? "this side" : "the outside"} for ${found.item.id}.`);
+            }
+
+            try {
+                const options = {
+                    item: found.item.id,
+                    take: p.take,
+                    ...(p.facts !== undefined ? { facts: p.facts } : {}),
+                };
+                return okReply("sync", noteStandingDrift(sync.deps.db, await resolveDrift(sync.deps, options)));
+            } catch (error) {
+                return failReply("sync", [errorDiagnostic("RESOLVE_FAILED", String(error), "resolve")]);
+            }
+        }
+
         if (p.release === undefined) {
             const options = p.all === true ? { all: true } : {};
             return session.call.dryRun === true
-                ? okReply("sync", await previewSync(sync.deps, options), { dryRun: true })
-                : okReply("sync", await runSyncOnce(sync.deps, options));
+                ? okReply("sync", noteStandingDrift(sync.deps.db, await previewSync(sync.deps, options)), {
+                      dryRun: true,
+                  })
+                : okReply("sync", noteStandingDrift(sync.deps.db, await runSyncOnce(sync.deps, options)));
         }
 
         const found = itemOf(session, "sync", p.release);

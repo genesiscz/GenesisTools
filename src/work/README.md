@@ -90,6 +90,13 @@ title over `settings.titleLimit` (500) with the full title at the top of the bod
 - **Body.** An item without a body sends its fields (where, why, what a user sees, cost, measured), closed by a
   comment with the hash of the text. A later push replaces the outside body only when it is empty or still that
   untouched text, so a description written by hand outside stays. A pull does not count the untouched text as drift.
+- **No silent overwrite.** Before an update the tracker reads the task and compares, per fact (title, body, type,
+  parent, state), what it last wrote there, what the task holds now, and what this side holds. It writes a fact only
+  when the task still holds what it last wrote. A fact edited outside stays as it is: the pairing turns `drift`, the
+  pass prints both values, and every later pass lists the items that differ. Settle one with
+  `tools work sync --resolve <id> --take ours` (write this side outside) or `--take theirs` (copy the outside here),
+  `--facts title,body` to narrow it, or `--resolve all`. A pairing made before this check has no record of what was
+  written, so only an empty outside value is written for it until each fact once matches.
 - **Rate limits.** A door call refused with `rate_limited` waits and tries again in the same pass (the server's
   Retry-After when it names one, else a pause that doubles from 1 s to 30 s, at most 8 tries), and the calls after it
   start with that pause. A long pass renews the sync's lease as it goes.
