@@ -107,9 +107,14 @@ export interface LinkedSource {
  * The first linked source that names a meeting of its own, with that meeting's id; on a joined record, the joined
  * source of all its recordings on one clock. Throws a message ready to print.
  * With the record's `store`, the source keeps the record's own copy of its answers (source-copy.ts) and answers from
- * that copy when it cannot read: its source code cannot be opened, or a read fails.
+ * that copy when it cannot read: its source code cannot be opened, or a read fails. `saveCopy: false` still answers from
+ * the copy but never writes it (a probe).
  */
-export async function linkedSource(record: MeetingRecord, store?: MeetingStore): Promise<LinkedSource> {
+export async function linkedSource(
+    record: MeetingRecord,
+    store?: MeetingStore,
+    options: { saveCopy?: boolean } = {}
+): Promise<LinkedSource> {
     if (record.join) {
         return {
             source: await joinedSource(record, meetingSource),
@@ -134,7 +139,7 @@ export async function linkedSource(record: MeetingRecord, store?: MeetingStore):
 
     try {
         return {
-            source: copyBackedSource(await meetingSource(ref.sourceId), folder),
+            source: copyBackedSource(await meetingSource(ref.sourceId), folder, { save: options.saveCopy }),
             sourceMeetingId: ref.sourceMeetingId,
         };
     } catch (error) {
