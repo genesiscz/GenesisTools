@@ -2,7 +2,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { chooseQuality } from "@genesiscz/utils/video/choose-quality";
 import { mapPool } from "../clips/download";
 import { readStreamSpan, readVodPlayback, type StreamSpan } from "../clips/hls";
-import type { Clip, ClipProvider, ClipSource, PlacedClips, Vod, VodPlayback } from "../clips/types";
+import type { Clip, ClipProvider, ClipSource, OffsetSource, PlacedClips, Vod, VodPlayback } from "../clips/types";
 import {
     fetchKickClip,
     fetchKickText,
@@ -34,22 +34,52 @@ function playlistOf(info: KickVodInfo): string {
 }
 
 /**
- * Kick's API gives no clip offset (`vod_starts_at` is always 0), but clip and VOD playlists both carry the stream
- * time of every segment, also for a clip cut from the VOD later. The offset is the difference; when the VOD playlist
- * is closed, the stream start stands in for it.
+ * The VOD's first stream time, fitted from Kick's `vod_starts_at` of its clips. That value is the exact offset rounded
+ * down to a whole second, so each clip puts the start inside a one-second window, and the clips of one VOD together
+ * narrow it: measured 2026-11-21 on three public VODs (66, 97 and 146 clips), the window was 0.07 to 0.15 s and its
+ * middle within 0.05 s of the playlist's own start. One clip alone is within 0.5 s. Null without a site offset; when
+ * the windows do not meet, the median of their middles.
  */
-function placeBySpan({
+export function fitVodStart(clips: Array<{ startAt: string; siteOffsetSec: number }>): string | null {
+    const latest = clips.map((clip) => Date.parse(clip.startAt) / 1000 - clip.siteOffsetSec);
+
+    if (latest.length === 0) {
+        return null;
+    }
+
+    const high = Math.min(...latest);
+    const low = Math.max(...latest) - 1;
+    const middles = latest.map((value) => value - 0.5).sort((a, b) => a - b);
+    const start = low <= high ? (low + high) / 2 : middles[Math.floor(middles.length / 2)];
+    return new Date(Math.round(start * 1000)).toISOString();
+}
+
+/**
+ * Clip and VOD playlists both carry the stream time of every segment, also for a clip cut from the VOD later, so the
+ * offset is their difference (`vod-playlist`). A subscriber-only VOD closes its playlist; then the start fitted from
+ * Kick's `vod_starts_at` stands in (`site`, see `fitVodStart`). Without either, the stream start does (`stream-start`),
+ * which put 80 clips 3.6 to 4.8 s early.
+ */
+export function placeBySpan({
     streamId,
     span,
+    fittedStartAt,
     vod,
     playback,
 }: {
     streamId: string;
     span: StreamSpan;
+    fittedStartAt: string | null;
     vod: Vod | null;
     playback: VodPlayback | null;
 }): ClipSource {
-    const origin = playback?.startAt ?? vod?.startedAt ?? null;
+    const [origin, offsetFrom]: [string | null, OffsetSource | null] = playback?.startAt
+        ? [playback.startAt, "vod-playlist"]
+        : fittedStartAt
+          ? [fittedStartAt, "site"]
+          : vod
+            ? [vod.startedAt, "stream-start"]
+            : [null, null];
     const offset = origin ? (Date.parse(span.startAt) - Date.parse(origin)) / 1000 : null;
     return {
         streamId,
@@ -60,7 +90,7 @@ function placeBySpan({
         endAt: span.endAt,
         vodOffsetSec: offset === null ? null : Math.round(offset * 1000) / 1000,
         vodEndOffsetSec: offset === null ? null : Math.round((offset + span.durationSec) * 1000) / 1000,
-        offsetFrom: playback?.startAt ? "vod-playlist" : vod ? "stream-start" : null,
+        offsetFrom,
     };
 }
 
@@ -115,31 +145,57 @@ async function placeKickClips({
         },
     });
     const playbackByStream = new Map(vods.map((entry) => [entry.vod.streamId, entry.playback]));
-    const sources = new Map<string, ClipSource | null>();
+    const spans = new Map<string, StreamSpan | null>();
 
     await mapPool({
-        items: clips,
+        items: clips.filter((clip) => clip.streamId !== null),
         jobs,
         signal,
         task: async (clip) => {
-            const streamId = clip.streamId;
-
-            if (!streamId) {
-                sources.set(clip.id, null);
-                return;
-            }
-
             try {
-                const span = await readStreamSpan({ url: clip.mediaUrl, fetchText: fetchKickText, signal });
-                const vod = infoByStream.get(streamId)?.vod ?? null;
-                const playback = playbackByStream.get(streamId) ?? null;
-                sources.set(clip.id, span ? placeBySpan({ streamId, span, vod, playback }) : null);
+                spans.set(clip.id, await readStreamSpan({ url: clip.mediaUrl, fetchText: fetchKickText, signal }));
             } catch (error) {
                 signal?.throwIfAborted();
                 logger.warn({ error, clip: clip.id }, "Kick clip playlist unreadable; the clip keeps no place");
             }
         },
     });
+
+    const fittedByStream = new Map<string, string | null>();
+
+    for (const [streamId, group] of Map.groupBy(clips, (clip) => clip.streamId)) {
+        if (streamId) {
+            const fitted = group.flatMap((clip) => {
+                const span = spans.get(clip.id);
+                return span && clip.vodOffsetSec !== null
+                    ? [{ startAt: span.startAt, siteOffsetSec: clip.vodOffsetSec }]
+                    : [];
+            });
+            fittedByStream.set(streamId, fitVodStart(fitted));
+        }
+    }
+
+    const sources = new Map<string, ClipSource | null>();
+
+    for (const clip of clips) {
+        const streamId = clip.streamId;
+        const span = spans.get(clip.id);
+
+        if (!streamId || span === null) {
+            sources.set(clip.id, null);
+        } else if (span) {
+            sources.set(
+                clip.id,
+                placeBySpan({
+                    streamId,
+                    span,
+                    fittedStartAt: fittedByStream.get(streamId) ?? null,
+                    vod: infoByStream.get(streamId)?.vod ?? null,
+                    playback: playbackByStream.get(streamId) ?? null,
+                })
+            );
+        }
+    }
 
     return { sources, vods };
 }

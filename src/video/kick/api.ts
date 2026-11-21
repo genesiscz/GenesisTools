@@ -41,6 +41,8 @@ const clipSchema = z.object({
     likes: z.number().nullish(),
     created_at: z.string(),
     livestream_id: z.string().nullish(),
+    /** Whole seconds into the VOD, rounded down; 0 until Kick has placed the clip (seen 2026-11-19 on fresh clips). */
+    vod_starts_at: z.number().nullish(),
     is_mature: z.boolean().nullish(),
     category: z.object({ name: z.string(), slug: z.string() }).nullish(),
     creator: z.object({ username: z.string(), slug: z.string() }).nullish(),
@@ -172,7 +174,7 @@ function toClip(raw: z.infer<typeof clipSchema>): Clip {
         channel: raw.channel.slug,
         channelName: raw.channel.username,
         streamId: raw.livestream_id ?? null,
-        vodOffsetSec: null,
+        vodOffsetSec: raw.vod_starts_at ? raw.vod_starts_at : null,
         creator: raw.creator?.username ?? null,
         category: raw.category?.name ?? null,
         mature: raw.is_mature ?? false,

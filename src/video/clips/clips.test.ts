@@ -1,8 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { chooseQuality } from "@genesiscz/utils/video/choose-quality";
 import { parseKickTarget } from "../kick/api";
+import { fitVodStart, placeBySpan } from "../kick/provider";
 import { parseTwitchTarget } from "../twitch/api";
-import { type ClipsManifest, findOverlaps, type ManifestClip } from "./manifest";
+import { type ClipsManifest, findOverlaps, type ManifestClip, providerSection, recordClips } from "./manifest";
+import type { Clip, ClipSource, Vod } from "./types";
 
 const CLIP = "clip_01M7RY9637GFHTX1SEQE9EWJ88";
 
@@ -160,5 +162,117 @@ describe("chooseQuality", () => {
 
     it("names the offered qualities when none matches", () => {
         expect(() => pick("480p")).toThrow("Offered: best, worst, 1080p60, 720p60, 720p, 360p");
+    });
+});
+
+describe("placeBySpan (Kick)", () => {
+    const span = { startAt: "2026-11-19T05:38:33.068Z", endAt: "2026-11-19T05:39:06.402Z", durationSec: 33.334 };
+    const vod: Vod = {
+        provider: "kick",
+        id: "a1c8e6f0-a768-4ef9-b7bb-c0de5c52d30e",
+        streamId: "100",
+        title: "stream",
+        channel: "somechannel",
+        startedAt: "2026-11-18T23:28:44.000Z",
+        durationSec: 30000,
+        live: false,
+        access: "subscriber_only",
+        pageUrl: null,
+    };
+    const playback = {
+        variantUrl: "https://example.com/1080p60/playlist.m3u8",
+        variantName: "1080p",
+        bandwidth: 1,
+        durationSec: 30000,
+        startAt: "2026-11-18T23:28:39.600Z",
+    };
+
+    it("prefers the VOD playlist, then the start fitted from site offsets, then the stream start", () => {
+        const fittedStartAt = "2026-11-18T23:28:39.500Z";
+        const both = placeBySpan({ streamId: "100", span, fittedStartAt, vod, playback });
+        expect([both.vodOffsetSec, both.offsetFrom]).toEqual([22193.468, "vod-playlist"]);
+
+        const closed = placeBySpan({ streamId: "100", span, fittedStartAt, vod, playback: null });
+        expect([closed.vodOffsetSec, closed.vodEndOffsetSec, closed.offsetFrom]).toEqual([
+            22193.568,
+            22226.902,
+            "site",
+        ]);
+
+        const unplaced = placeBySpan({ streamId: "100", span, fittedStartAt: null, vod, playback: null });
+        expect([unplaced.vodOffsetSec, unplaced.offsetFrom]).toEqual([22189.068, "stream-start"]);
+    });
+
+    it("fits the VOD start from whole-second offsets into the window every clip allows", () => {
+        // True start 00:00:00.300: offsets 10.5 and 20.95 round down to 10 and 20.
+        const fitted = fitVodStart([
+            { startAt: "2026-11-19T00:00:10.800Z", siteOffsetSec: 10 },
+            { startAt: "2026-11-19T00:00:21.250Z", siteOffsetSec: 20 },
+        ]);
+        // Window: after 00:00:00.250 (the second clip), up to 00:00:00.800 (the first).
+        expect(fitted).toBe("2026-11-19T00:00:00.525Z");
+        expect(fitVodStart([])).toBeNull();
+    });
+});
+
+describe("recordClips", () => {
+    it("places a clip from a VOD playlist start recorded before, once the playlist is closed", () => {
+        const manifest: ClipsManifest = { version: 1, updatedAt: "", providers: {} };
+        const section = providerSection(manifest, "kick");
+        section.vods["100"] = {
+            id: "vod-1",
+            streamId: "100",
+            title: "stream",
+            channel: "somechannel",
+            startedAt: "2026-11-18T23:28:44.000Z",
+            durationSec: 30000,
+            live: false,
+            access: "subscriber_only",
+            pageUrl: null,
+            playlistStartAt: "2026-11-18T23:28:39.600Z",
+            checkedAt: "",
+        };
+        const clip: Clip = {
+            provider: "kick",
+            id: "clip_1",
+            title: "a clip",
+            pageUrl: "https://kick.com/somechannel/clips/clip_1",
+            mediaUrl: "https://example.com/clip_1/playlist.m3u8",
+            thumbnailUrl: null,
+            durationSec: 33,
+            views: 0,
+            likes: 0,
+            createdAt: "2026-11-19T05:39:48.000Z",
+            channel: "somechannel",
+            channelName: "SomeChannel",
+            creator: null,
+            category: null,
+            mature: false,
+            streamId: "100",
+            vodOffsetSec: 22193,
+        };
+        const site: ClipSource = {
+            streamId: "100",
+            vodId: "vod-1",
+            vodPageUrl: null,
+            vodUrlAtClip: null,
+            startAt: "2026-11-19T05:38:33.068Z",
+            endAt: "2026-11-19T05:39:06.402Z",
+            vodOffsetSec: 22193,
+            vodEndOffsetSec: 22226.334,
+            offsetFrom: "site",
+        };
+        recordClips({
+            section,
+            rows: [{ clip, output: "/clips/a.mp4", status: "saved", bytes: 1, quality: "source" }],
+            sources: new Map([["clip_1", site]]),
+        });
+
+        const source = section.clips.clip_1.source;
+        expect([source?.vodOffsetSec, source?.vodEndOffsetSec, source?.offsetFrom]).toEqual([
+            22193.468,
+            22226.802,
+            "vod-playlist",
+        ]);
     });
 });

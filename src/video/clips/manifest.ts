@@ -146,6 +146,28 @@ export function providerSection(manifest: ClipsManifest, provider: ClipProviderI
 }
 
 /**
+ * A VOD playlist read once keeps its start in `vods` after the site closes it (Kick turned a public VOD
+ * subscriber-only within a day, seen 2026-11-21), so a clip of that stream placed a less exact way is placed from
+ * that start again, to the millisecond.
+ */
+function placeFromKnownPlaylist(section: ProviderSection, source: ClipSource | null): ClipSource | null {
+    const playlistStartAt = source ? section.vods[source.streamId]?.playlistStartAt : null;
+
+    if (!source?.startAt || !source.endAt || !playlistStartAt || source.offsetFrom === "vod-playlist") {
+        return source;
+    }
+
+    const offset = (Date.parse(source.startAt) - Date.parse(playlistStartAt)) / 1000;
+    const length = (Date.parse(source.endAt) - Date.parse(source.startAt)) / 1000;
+    return {
+        ...source,
+        vodOffsetSec: Math.round(offset * 1000) / 1000,
+        vodEndOffsetSec: Math.round((offset + length) * 1000) / 1000,
+        offsetFrom: "vod-playlist",
+    };
+}
+
+/**
  * Records each download row. A failed row refreshes the clip's metadata but keeps the file of an earlier
  * successful download; a source that could not be read keeps the one found before.
  */
@@ -185,7 +207,7 @@ export function recordClips({
             status: keepFile ? before.status : row.status,
             ...(row.error && !keepFile ? { error: row.error } : {}),
             recordedAt: now,
-            source: sources.get(clip.id) ?? before?.source ?? null,
+            source: placeFromKnownPlaylist(section, sources.get(clip.id) ?? before?.source ?? null),
         };
     }
 }
