@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { basename } from "node:path";
 
 /**
@@ -6,28 +7,26 @@ import { basename } from "node:path";
  * (each caller should give that context possibly)". WHO and WHICH SESSION the app reads from the kernel; WHY and WHAT
  * only the caller knows, so they live here.
  */
-let purpose: string | undefined;
+let processPurpose: string | undefined;
 let firstSecret: string | undefined;
+/**
+ * The purpose of each `withVaultPurpose` run, carried by its own async context: two runs that overlap (a service
+ * serving two reads) each keep theirs, and the first to finish neither clears nor restores the other's.
+ */
+const scopedPurpose = new AsyncLocalStorage<string | undefined>();
 
-/** One sentence a person can judge: "refresh the usage figures of 11 accounts for the statusline". */
+/** One sentence a person can judge, for the whole process: "refresh the usage figures of 11 accounts for the statusline". */
 export function setVaultPurpose(text: string | undefined): void {
-    purpose = text?.trim() || undefined;
+    processPurpose = text?.trim() || undefined;
 }
 
-/** The purpose for the duration of `fn`, then the one before it again. */
+/** The purpose for the duration of `fn` and the work it starts; an empty text keeps the one around it. */
 export async function withVaultPurpose<T>(text: string, fn: () => Promise<T>): Promise<T> {
-    const previous = purpose;
-    purpose = text.trim() || previous;
-
-    try {
-        return await fn();
-    } finally {
-        purpose = previous;
-    }
+    return scopedPurpose.run(text.trim() || vaultPurpose(), fn);
 }
 
 export function vaultPurpose(): string | undefined {
-    return purpose;
+    return scopedPurpose.getStore() ?? processPurpose;
 }
 
 /** The first secret this process read: what it was after when it needed the master key. */
@@ -41,7 +40,7 @@ export function vaultSecretAsked(): string | undefined {
 
 /** Test seam. */
 export function _resetVaultContextForTest(): void {
-    purpose = undefined;
+    processPurpose = undefined;
     firstSecret = undefined;
 }
 

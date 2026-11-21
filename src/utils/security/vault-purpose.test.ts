@@ -1,5 +1,68 @@
 import { describe, expect, test } from "bun:test";
-import { currentToolName, redactCredentialArgs, redactCredentialFields, redactCredentialText } from "./vault-purpose";
+import {
+    currentToolName,
+    redactCredentialArgs,
+    redactCredentialFields,
+    redactCredentialText,
+    vaultPurpose,
+    withVaultPurpose,
+} from "./vault-purpose";
+
+describe("the vault purpose of overlapping runs", () => {
+    /** Runs A and B overlap; `order` says which finishes first. Each reads its purpose after the other started. */
+    async function overlap(order: "a-first" | "b-first"): Promise<string[]> {
+        const seen: string[] = [];
+        let releaseA!: () => void;
+        let releaseB!: () => void;
+        const aWaits = new Promise<void>((resolve) => {
+            releaseA = resolve;
+        });
+        const bWaits = new Promise<void>((resolve) => {
+            releaseB = resolve;
+        });
+        const a = withVaultPurpose("read meeting A", async () => {
+            await aWaits;
+            seen.push(`a: ${vaultPurpose()}`);
+            await withVaultPurpose("", async () => {
+                seen.push(`a nested: ${vaultPurpose()}`);
+            });
+        });
+        const b = withVaultPurpose("read meeting B", async () => {
+            await bWaits;
+            seen.push(`b: ${vaultPurpose()}`);
+        });
+
+        if (order === "a-first") {
+            releaseA();
+            await a;
+            releaseB();
+            await b;
+        } else {
+            releaseB();
+            await b;
+            releaseA();
+            await a;
+        }
+
+        seen.push(`after: ${vaultPurpose()}`);
+        return seen.sort();
+    }
+
+    test("each run keeps its own purpose whichever finishes first, and none is left behind", async () => {
+        const expected = ["a nested: read meeting A", "a: read meeting A", "after: undefined", "b: read meeting B"];
+        expect(await overlap("a-first")).toEqual(expected);
+        expect(await overlap("b-first")).toEqual(expected);
+    });
+
+    test("a nested run with its own purpose shows it, then the outer one again", async () => {
+        await withVaultPurpose("outer", async () => {
+            await withVaultPurpose("inner", async () => {
+                expect(vaultPurpose()).toBe("inner");
+            });
+            expect(vaultPurpose()).toBe("outer");
+        });
+    });
+});
 
 describe("credential header boundaries", () => {
     const secret = "fixture-cookie-r5";
