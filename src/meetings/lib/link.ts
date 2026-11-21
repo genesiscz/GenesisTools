@@ -116,6 +116,17 @@ export function applySource(options: {
     }
 
     record.participants = mergeParticipants(record.participants, meeting.participants);
+    // One microphone per recording: when the source names who sat at it, nobody else keeps the mark (a relink to an
+    // export someone else recorded must not leave two people as the recorder). The people themselves stay.
+    const atMicrophone = new Set(meeting.participants.filter((person) => person.self).map((person) => person.name));
+    if (atMicrophone.size > 0) {
+        for (const person of record.participants) {
+            if (person.self && !atMicrophone.has(person.name)) {
+                delete person.self;
+            }
+        }
+    }
+
     if (meeting.recordedBy) {
         record.recordedBy = { ...meeting.recordedBy, from: options.sourceId };
     } else if (record.recordedBy?.from === options.sourceId) {
