@@ -24,7 +24,9 @@ import {
     linksOf,
     localTypeOf,
     outsideType,
+    pacedCall,
     patchOf,
+    rateLimitPause,
     typeLabels,
 } from "./connectors/tracker";
 
@@ -376,6 +378,51 @@ describe("the tracker connector", () => {
         expect(keepsOutsideBody(render, render)).toBe(true);
         expect(keepsOutsideBody(render, "written by hand")).toBe(true);
         expect(keepsOutsideBody(render, older.replace("older", "edited by hand"))).toBe(true);
+    });
+
+    test("a rate limit is waited out: Retry-After when named, else a doubling pause up to the cap", () => {
+        const limits = { baseMs: 1000, maxMs: 30_000 };
+        expect(rateLimitPause('{"code":"rate_limited"} Retry-After: 7', 0, limits)).toBe(7000);
+        expect(rateLimitPause("Wait for the Retry-After interval before retrying.", 0, limits)).toBe(1000);
+        expect(rateLimitPause("rate_limited", 4000, limits)).toBe(8000);
+        expect(rateLimitPause("rate_limited", 20_000, limits)).toBe(30_000);
+    });
+
+    test("a paced call retries a rate-limited door, answers its result, and stops when the lease is lost", async () => {
+        const refusal = new Error('Error POSTing to endpoint: {"code":"rate_limited","error":"rate limit exceeded"}');
+        let tries = 0;
+        const flaky = async () => {
+            tries++;
+
+            if (tries <= 2) {
+                throw refusal;
+            }
+
+            return { content: [{ type: "text", text: '{"id":1}' }] };
+        };
+        const call = pacedCall(flaky, { baseMs: 1, maxMs: 4 });
+        expect(await call("tracker", "update", {})).toEqual({ content: [{ type: "text", text: '{"id":1}' }] });
+        expect(tries).toBe(3);
+
+        let renewals = 0;
+        const always = async () => {
+            throw refusal;
+        };
+        const stopped = pacedCall(always, { baseMs: 1, maxMs: 4, keepAlive: () => ++renewals < 2 });
+        await expect(stopped("tracker", "update", {})).rejects.toThrow("rate_limited");
+        expect(renewals).toBe(2);
+
+        const other = pacedCall(async () => {
+            throw new Error("forbidden");
+        });
+        await expect(other("tracker", "update", {})).rejects.toThrow("forbidden");
+
+        const answered = pacedCall(async () => ({ isError: true, content: [{ type: "text", text: "rate_limited" }] }), {
+            baseMs: 1,
+            maxMs: 2,
+            maxAttempts: 3,
+        });
+        await expect(answered("tracker", "update", {})).rejects.toThrow("rate_limited");
     });
 
     test("links read back from either side; relates counts both ways, the others only from their own side", () => {

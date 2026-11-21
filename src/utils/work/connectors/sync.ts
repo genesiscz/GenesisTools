@@ -532,6 +532,7 @@ async function pushWave({
         settings: config.settings,
         project,
         machinePrefix: deps.machinePrefix,
+        ...(mode.kind === "sync" ? { keepAlive: () => renewLease(db, mode.lease, deps.now()) } : {}),
     };
     const results = await connector.push(intents, ctx).catch((error: unknown): PushResult[] => {
         logger.warn({ connector: id, project, err: error }, "work sync: connector push failed");

@@ -57,6 +57,7 @@ class FakeConnector implements Connector<unknown> {
     unavailable = false;
     failure = "temporarily unavailable";
     batches: { context: ConnectorContext; titles: string[] }[] = [];
+    keptAlive: (boolean | undefined)[] = [];
     pulls: ConnectorContext[] = [];
     remote = new Map<string, RemoteItem>();
 
@@ -66,6 +67,7 @@ class FakeConnector implements Connector<unknown> {
 
     async push(intents: readonly PushIntent[], context: ConnectorContext) {
         this.batches.push({ context, titles: intents.map(({ item }) => item.title) });
+        this.keptAlive.push(context.keepAlive?.());
         this.pushed.push(...intents);
 
         if (this.unavailable) {
@@ -176,12 +178,27 @@ describe("the sync consumer", () => {
         expect(report.pushed).toBe(3);
         expect(loads).toEqual(["App", "Other"]);
         expect(fake.batches).toEqual([
-            { context: { project: "App", settings: { target: "App" }, machinePrefix: "m-" }, titles: ["app bug"] },
             {
-                context: { project: "Other", settings: { target: "Other" }, machinePrefix: "m-" },
+                context: {
+                    project: "App",
+                    settings: { target: "App" },
+                    machinePrefix: "m-",
+                    keepAlive: expect.any(Function),
+                },
+                titles: ["app bug"],
+            },
+            {
+                context: {
+                    project: "Other",
+                    settings: { target: "Other" },
+                    machinePrefix: "m-",
+                    keepAlive: expect.any(Function),
+                },
                 titles: ["first task", "second task"],
             },
         ]);
+        // The lease is held during each push, so a connector that waits can renew it.
+        expect(fake.keptAlive).toEqual([true, true]);
         for (const { item, labels } of fake.pushed) {
             expect(labels).toEqual([`${item.project}/${item.id}`]);
         }
