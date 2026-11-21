@@ -1,7 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { SafeJSON } from "@genesiscz/utils/json";
-import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { type JsonDocument, jsonDocument, prettyJson } from "@genesiscz/utils/storage/locked-document";
 import { z } from "zod";
 import type { ClipDownloadRow } from "./download";
 import { CLIP_PROVIDER_IDS, type ClipProviderId, type ClipSource, type Vod, type VodPlayback } from "./types";
@@ -21,12 +19,21 @@ const clipSourceSchema = z.object({
     offsetFrom: z.enum(["site", "vod-playlist", "stream-start"]).nullable(),
 });
 
+/** One saved file of a clip; a clip may have several, one per quality. */
+const manifestFileSchema = z.object({
+    bytes: z.number(),
+    /** Null for a file only read by `--backfill`. */
+    quality: z.string().nullable(),
+    recordedAt: z.string(),
+});
+
 const manifestClipSchema = z.object({
     id: z.string(),
     title: z.string(),
     /** The clip's page on the site. */
     pageUrl: z.string(),
-    mediaUrl: z.string(),
+    /** Kick's HLS playlist; Twitch's MP4 without its token; null when the site names none. */
+    mediaUrl: z.string().nullable(),
     thumbnailUrl: z.string().nullable(),
     channel: z.string(),
     channelName: z.string(),
@@ -42,6 +49,8 @@ const manifestClipSchema = z.object({
     bytes: z.number(),
     /** The quality of `file` (`1080p60`, `source`); absent in records written before qualities were recorded. */
     quality: z.string().nullish(),
+    /** Every saved file of the clip by file name, each with its own quality; absent in records written before. */
+    files: z.record(z.string(), manifestFileSchema).default({}),
     status: z.enum(["saved", "exists", "failed"]),
     error: z.string().optional(),
     recordedAt: z.string(),
@@ -109,34 +118,60 @@ export interface ClipOverlap {
     duplicate: boolean;
     /** Not a duplicate, but the shorter clip lies (90% or more) inside the other one. */
     contained: boolean;
+    /** The clip that lies inside the other, measured on the same span as `contained`; null when not contained. */
+    containedId: string | null;
 }
 
 export function manifestPath(dir: string): string {
     return join(dir, CLIPS_MANIFEST_FILE);
 }
 
-/** The folder's manifest, or an empty one. A file that does not parse throws, so a write never replaces it. */
-export function readManifest(dir: string): ClipsManifest {
+/**
+ * The folder's manifest as a locked JSON document: every change reads the file again under its lock
+ * (`clips-manifest.json.lock`), so a Kick download, a Twitch download and a VOD cut into one folder at once keep each
+ * other's records. A file that does not parse is never replaced.
+ */
+function manifestDocument(dir: string): JsonDocument<ClipsManifest> {
     const path = manifestPath(dir);
-
-    if (!existsSync(path)) {
-        return { version: 1, updatedAt: new Date().toISOString(), providers: {} };
-    }
-
-    const parsed = manifestSchema.safeParse(SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }));
-
-    if (!parsed.success) {
-        throw new Error(`${path} is not a clips manifest (${parsed.error.issues[0]?.message}); move it away first`);
-    }
-
-    return parsed.data;
+    return jsonDocument({
+        path,
+        empty: () => ({ version: 1, updatedAt: new Date().toISOString(), providers: {} }),
+        decode: (raw) => manifestSchema.parse(raw),
+        encode: prettyJson,
+        strictJson: true,
+        onUnreadable: "refuse",
+        beforeWrite: (manifest) => {
+            manifest.updatedAt = new Date().toISOString();
+        },
+        unreadableError: (problem) => {
+            const reason = problem.cause instanceof z.ZodError ? problem.cause.issues[0]?.message : problem.kind;
+            return new Error(`${path} is not a clips manifest (${reason}); move it away first`, { cause: problem });
+        },
+    });
 }
 
-export function writeManifest(dir: string, manifest: ClipsManifest): string {
-    const path = manifestPath(dir);
-    manifest.updatedAt = new Date().toISOString();
-    atomicWriteFileSync(path, `${SafeJSON.stringify(manifest, null, 2)}\n`);
-    return path;
+/** The folder's manifest, or an empty one. A file that does not parse throws. */
+export function readManifest(dir: string): ClipsManifest {
+    return manifestDocument(dir).read();
+}
+
+/** Applies `change` to the folder's current manifest under its lock and writes it; returns the written manifest. */
+export function updateManifestFile({
+    dir,
+    change,
+    signal,
+}: {
+    dir: string;
+    change: (manifest: ClipsManifest) => void;
+    signal?: AbortSignal;
+}): Promise<ClipsManifest> {
+    return manifestDocument(dir).mutate(
+        (manifest) => {
+            change(manifest);
+            return manifest;
+        },
+        { signal }
+    );
 }
 
 export function providerSection(manifest: ClipsManifest, provider: ClipProviderId): ProviderSection {
@@ -169,7 +204,8 @@ function placeFromKnownPlaylist(section: ProviderSection, source: ClipSource | n
 
 /**
  * Records each download row. A failed row refreshes the clip's metadata but keeps the file of an earlier
- * successful download; a source that could not be read keeps the one found before.
+ * successful download; a source that could not be read keeps the one found before. Each saved file keeps its own
+ * quality in `files`, so a lower quality saved beside the best one never lends the best file its quality.
  */
 export function recordClips({
     section,
@@ -184,7 +220,26 @@ export function recordClips({
 
     for (const { clip, ...row } of rows) {
         const before = section.clips[clip.id];
+        const files = { ...(before?.files ?? {}) };
+
+        // A record written before `files` knows one file and its quality.
+        if (before?.file && !files[before.file]) {
+            files[before.file] = {
+                bytes: before.bytes,
+                quality: before.quality ?? null,
+                recordedAt: before.recordedAt,
+            };
+        }
+
+        const name = basename(row.output);
+
+        if (row.status !== "failed") {
+            // A skipped file was not read, so the quality recorded for that same file stays.
+            files[name] = { bytes: row.bytes, quality: row.quality ?? files[name]?.quality ?? null, recordedAt: now };
+        }
+
         const keepFile = row.status === "failed" && before !== undefined && before.status !== "failed";
+        const file = keepFile ? before.file : row.status === "failed" ? null : name;
         section.clips[clip.id] = {
             id: clip.id,
             title: clip.title,
@@ -200,10 +255,10 @@ export function recordClips({
             durationSec: clip.durationSec,
             views: clip.views,
             likes: clip.likes,
-            file: keepFile ? before.file : row.status === "failed" ? null : basename(row.output),
+            file,
             bytes: keepFile ? before.bytes : row.bytes,
-            // A skipped file was not read, so the quality recorded with it stays.
-            quality: (keepFile ? before.quality : row.quality) ?? before?.quality ?? null,
+            quality: file ? (files[file]?.quality ?? null) : null,
+            files,
             status: keepFile ? before.status : row.status,
             ...(row.error && !keepFile ? { error: row.error } : {}),
             recordedAt: now,
@@ -232,18 +287,76 @@ export function recordVods(section: ProviderSection, vods: Array<{ vod: Vod; pla
     }
 }
 
-/** Start and end on one axis for clips of one stream: VOD offsets when both have them, else stream time. */
-function interval(clip: ManifestClip, useOffsets: boolean): { start: number; end: number } {
-    const source = clip.source;
-
-    if (useOffsets && source?.vodOffsetSec != null && source.vodEndOffsetSec != null) {
-        return { start: source.vodOffsetSec, end: source.vodEndOffsetSec };
-    }
-
-    return { start: Date.parse(source?.startAt ?? "") / 1000, end: Date.parse(source?.endAt ?? "") / 1000 };
+interface Span {
+    start: number;
+    end: number;
 }
 
-/** Pairs of clips from one stream that overlap, by provider, stream and start. */
+interface PlacedEntry {
+    clip: ManifestClip;
+    span: Span;
+}
+
+function offsetSpan(clip: ManifestClip): Span | null {
+    const source = clip.source;
+    return source?.vodOffsetSec != null && source.vodEndOffsetSec != null
+        ? { start: source.vodOffsetSec, end: source.vodEndOffsetSec }
+        : null;
+}
+
+function wallSpan(clip: ManifestClip): Span | null {
+    const start = Date.parse(clip.source?.startAt ?? "") / 1000;
+    const end = Date.parse(clip.source?.endAt ?? "") / 1000;
+    return Number.isFinite(start) && Number.isFinite(end) ? { start, end } : null;
+}
+
+/** Calls `visit` for every pair of entries whose spans overlap; a sweep over the starts, no copy of the list. */
+function sweepOverlaps(entries: PlacedEntry[], visit: (first: PlacedEntry, second: PlacedEntry) => void): void {
+    const sorted = entries.toSorted((x, y) => x.span.start - y.span.start);
+
+    for (let i = 0; i < sorted.length; i++) {
+        for (let j = i + 1; j < sorted.length; j++) {
+            if (sorted[j].span.start >= sorted[i].span.end) {
+                break;
+            }
+
+            visit(sorted[i], sorted[j]);
+        }
+    }
+}
+
+function overlapOf({
+    provider,
+    streamId,
+    first,
+    second,
+}: {
+    provider: ClipProviderId;
+    streamId: string;
+    first: PlacedEntry;
+    second: PlacedEntry;
+}): ClipOverlap {
+    const overlapSec = Math.min(first.span.end, second.span.end) - second.span.start;
+    const firstLength = first.span.end - first.span.start;
+    const secondLength = second.span.end - second.span.start;
+    const duplicate = overlapSec >= Math.max(firstLength, secondLength) * 0.9;
+    const contained = !duplicate && overlapSec >= Math.min(firstLength, secondLength) * 0.9;
+    return {
+        provider,
+        streamId,
+        a: first.clip,
+        b: second.clip,
+        overlapSec: Math.round(overlapSec * 10) / 10,
+        duplicate,
+        contained,
+        containedId: contained ? (firstLength <= secondLength ? first.clip.id : second.clip.id) : null,
+    };
+}
+
+/**
+ * Pairs of clips from one stream that overlap. Each pair is compared on one axis: VOD offsets when both clips have
+ * them, else stream time when both have it; a clip with neither changes no other pair.
+ */
 export function findOverlaps(manifest: ClipsManifest): ClipOverlap[] {
     const overlaps: ClipOverlap[] = [];
 
@@ -252,32 +365,24 @@ export function findOverlaps(manifest: ClipsManifest): ClipOverlap[] {
         const byStream = Map.groupBy(clips, (clip) => clip.source?.streamId ?? "");
 
         for (const [streamId, group] of byStream) {
-            const useOffsets = group.every((clip) => clip.source?.vodOffsetSec != null);
-            const sorted = group
-                .map((clip) => ({ clip, ...interval(clip, useOffsets) }))
-                .filter((entry) => Number.isFinite(entry.start) && Number.isFinite(entry.end))
-                .sort((x, y) => x.start - y.start);
+            const byOffset = group.flatMap((clip) => {
+                const span = offsetSpan(clip);
+                return span ? [{ clip, span }] : [];
+            });
+            const withOffset = new Set(byOffset.map((entry) => entry.clip.id));
+            sweepOverlaps(byOffset, (first, second) => {
+                overlaps.push(overlapOf({ provider, streamId, first, second }));
+            });
 
-            for (const [index, first] of sorted.entries()) {
-                for (const second of sorted.slice(index + 1)) {
-                    if (second.start >= first.end) {
-                        break;
-                    }
-
-                    const overlapSec = Math.min(first.end, second.end) - second.start;
-                    const lengths = [first.end - first.start, second.end - second.start];
-                    const duplicate = overlapSec >= Math.max(...lengths) * 0.9;
-                    overlaps.push({
-                        provider,
-                        streamId,
-                        a: first.clip,
-                        b: second.clip,
-                        overlapSec: Math.round(overlapSec * 10) / 10,
-                        duplicate,
-                        contained: !duplicate && overlapSec >= Math.min(...lengths) * 0.9,
-                    });
+            const byWall = group.flatMap((clip) => {
+                const span = wallSpan(clip);
+                return span ? [{ clip, span }] : [];
+            });
+            sweepOverlaps(byWall, (first, second) => {
+                if (!withOffset.has(first.clip.id) || !withOffset.has(second.clip.id)) {
+                    overlaps.push(overlapOf({ provider, streamId, first, second }));
                 }
-            }
+            });
         }
     }
 
