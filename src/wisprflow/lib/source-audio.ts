@@ -9,7 +9,7 @@ import type {
     LocalSourceAudio,
     SourceMeeting,
 } from "@genesiscz/utils/meetings/sources";
-import { importedStoreRoot, readImportedExport } from "./imported";
+import { importedRecordedBy, importedStoreRoot, readImportedExport } from "./imported";
 import { toIso, WISPR_DIR } from "./local";
 
 const { log } = logger.scoped("wisprflow-source-audio");
@@ -132,12 +132,26 @@ async function appMeeting(dir: string, id: string): Promise<SourceMeeting | null
     return meeting ? metadataOnly(meeting) : null;
 }
 
-/** One meeting's metadata from its imported export's meeting.json, never from flow.sqlite. */
-function importedMeeting(id: string): SourceMeeting | null {
-    const meeting = readImportedExport(id)?.meeting;
-    return meeting
-        ? metadataOnly({ sourceMeetingId: meeting.id, title: meeting.title, start: meeting.start, end: meeting.end })
-        : null;
+/**
+ * One meeting's metadata from its imported export's meeting.json, never from flow.sqlite. It names who recorded it,
+ * so a record the audio discovery makes first does not call that person "you".
+ */
+function importedMeeting(id: string, root: string): SourceMeeting | null {
+    const meeting = readImportedExport(id, root)?.meeting;
+
+    if (!meeting) {
+        return null;
+    }
+
+    return {
+        ...metadataOnly({ sourceMeetingId: meeting.id, title: meeting.title, start: meeting.start, end: meeting.end }),
+        participants: meeting.participants.map((person) => ({
+            name: person.name,
+            ...(person.isSelf ? { self: true } : {}),
+            from: ["wisprflow"],
+        })),
+        recordedBy: importedRecordedBy(meeting),
+    };
 }
 
 /**
@@ -155,7 +169,7 @@ export function wisprAudioAccess(options: { dir: string; importedRoot?: () => st
             return [...own, ...imported].sort((a, b) => a.sourceMeetingId.localeCompare(b.sourceMeetingId));
         },
         legacyFiles: (meetingsRoot) => audioFilesIn(join(dirname(meetingsRoot), "meetings-audio-archive")),
-        load: async (id) => (await appMeeting(dir, id)) ?? importedMeeting(id),
+        load: async (id) => (await appMeeting(dir, id)) ?? importedMeeting(id, importedRoot()),
     };
 }
 

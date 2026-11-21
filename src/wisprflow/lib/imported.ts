@@ -1,12 +1,13 @@
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { cloneOrCopy, type Placement } from "@genesiscz/utils/fs/clone";
-import { fileIdentity } from "@genesiscz/utils/fs/identity-cache";
+import { sha256File } from "@genesiscz/utils/fs/hash";
+import { FileIdentityCache, fileIdentity } from "@genesiscz/utils/fs/identity-cache";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { calendarSchema, type MeetingCalendar } from "@genesiscz/utils/meetings/record";
 import { loadRmConfig, moveToTrash, resolveTarget, rmCallerFromRuntime } from "@genesiscz/utils/rm";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
 import type { Meeting } from "./types";
@@ -124,31 +125,57 @@ function parseExport(raw: string, path: string): ImportedExport {
     return parsed.data;
 }
 
-/** The imported meeting's folder, when the store holds it. */
-export function importedMeetingFolder(id: string): string | undefined {
+/** The imported meeting's folder, when the store (`root`, the default store when absent) holds it. */
+export function importedMeetingFolder(id: string, root: string = importedStoreRoot()): string | undefined {
     if (!MEETING_ID_RE.test(id)) {
         return undefined;
     }
 
-    const folder = join(importedStoreRoot(), id);
+    const folder = join(root, id);
     return existsSync(join(folder, MEETING_FILE)) ? folder : undefined;
 }
 
-/** The imported export of one meeting, or undefined when the store does not hold it. */
-export function readImportedExport(id: string): ImportedExport | undefined {
-    const folder = importedMeetingFolder(id);
+/**
+ * Parsed exports by the identity of their `meeting.json`: one open of an imported meeting asks for it several times
+ * (the meeting, its evidence, its calendar), and each ask would parse every transcript line again.
+ */
+const parsedExports = new FileIdentityCache<ImportedExport>({ limit: 32 });
+
+/** The imported export of one meeting, or undefined when the store (`root`, the default when absent) does not hold it. */
+export function readImportedExport(id: string, root: string = importedStoreRoot()): ImportedExport | undefined {
+    const folder = importedMeetingFolder(id, root);
 
     if (!folder) {
         return undefined;
     }
 
     const path = join(folder, MEETING_FILE);
-    return parseExport(readFileSync(path, "utf8"), path);
+    const identity = fileIdentity(path);
+    const cached = parsedExports.get(path, identity);
+
+    if (cached) {
+        // A copy: a caller may change what it was given, and the next caller must still get the file's content.
+        return structuredClone(cached);
+    }
+
+    const parsed = parseExport(readFileSync(path, "utf8"), path);
+
+    if (identity) {
+        parsedExports.set(path, identity, structuredClone(parsed));
+    }
+
+    return parsed;
 }
 
 /** The recording user of an imported meeting: its participant marked as self on the recording Mac. */
 export function importedSelfName(meeting: Meeting): string | undefined {
     return meeting.participants.find((person) => person.isSelf)?.name;
+}
+
+/** Who recorded an imported meeting: someone at another Mac, named when the export marks its self. */
+export function importedRecordedBy(meeting: Meeting): { owner: false; person?: string } {
+    const person = importedSelfName(meeting);
+    return { owner: false, ...(person ? { person } : {}) };
 }
 
 /** What an imported meeting is read from, as a token; undefined when the store does not hold the meeting. */
@@ -170,12 +197,8 @@ function findFile(folder: string, name: string): string | undefined {
     return candidates.find((path) => existsSync(path) && statSync(path).isFile());
 }
 
-function sha256(path: string): string {
-    return createHash("sha256").update(readFileSync(path)).digest("hex");
-}
-
 function sameFile(a: string, b: string): boolean {
-    return statSync(a).size === statSync(b).size && sha256(a) === sha256(b);
+    return statSync(a).size === statSync(b).size && sha256File(a) === sha256File(b);
 }
 
 /** The files that differ between a planned import and the stored one, by name. Empty when they hold the same. */
@@ -202,13 +225,36 @@ function trash(path: string, rule: string): void {
     }
 }
 
+/** A replaced import is moved here first and goes to the trash only once its replacement is in place. */
+function asidePrefix(id: string): string {
+    return `.${id}.replaced-`;
+}
+
+/** A replacement that was cut off between its two renames left the old import aside: it comes back. */
+function restoreInterrupted(root: string, id: string, target: string): void {
+    if (existsSync(target) || !existsSync(root)) {
+        return;
+    }
+
+    const aside = readdirSync(root)
+        .filter((name) => name.startsWith(asidePrefix(id)))
+        .sort()
+        .at(-1);
+
+    if (aside) {
+        renameSync(join(root, aside), target);
+        log.warn({ id, aside }, "an interrupted replacement left the previous import aside; it is restored");
+    }
+}
+
 /**
  * Copies an export folder of `tools wisprflow meetings export` (with the raw Wispr files beside it or in `wispr-raw/`)
  * into the import store, so a meeting recorded on another Mac and account reads like one of this Mac's. Each file is
  * an APFS clone where the volume allows it. The same content again changes nothing; different content is refused
- * unless `force`, and then the old import goes to the trash.
+ * unless `force`, and then the old import goes to the trash once the new one is in place. Imports of one meeting
+ * take turns (a lock per meeting id), and a replacement that cannot be published puts the old import back.
  */
-export function importExport(options: { folder: string; force?: boolean }): ImportResult {
+export async function importExport(options: { folder: string; force?: boolean }): Promise<ImportResult> {
     const metaPath = findFile(options.folder, MEETING_FILE);
 
     if (!metaPath) {
@@ -216,6 +262,14 @@ export function importExport(options: { folder: string; force?: boolean }): Impo
     }
 
     const exported = parseExport(readFileSync(metaPath, "utf8"), metaPath);
+    const root = importedStoreRoot();
+    mkdirSync(root, { recursive: true });
+    return withFileLock(join(root, `.${exported.meeting.id}.lock`), async () => importLocked(options, exported), {
+        timeoutMs: 60_000,
+    });
+}
+
+function importLocked(options: { folder: string; force?: boolean }, exported: ImportedExport): ImportResult {
     const id = exported.meeting.id;
     const sources = new Map<string, string>();
     const missing: string[] = [];
@@ -233,6 +287,7 @@ export function importExport(options: { folder: string; force?: boolean }): Impo
     const root = importedStoreRoot();
     const target = join(root, id);
     const base = { meetingId: id, title: exported.meeting.title, folder: target, missing };
+    restoreInterrupted(root, id, target);
     const existed = existsSync(target);
 
     if (existed) {
@@ -249,8 +304,9 @@ export function importExport(options: { folder: string; force?: boolean }): Impo
     }
 
     // Staged beside the target, then renamed into place: a failed copy never leaves a half import behind.
-    mkdirSync(root, { recursive: true });
-    const staging = join(root, `.${id}.staging-${process.pid}-${Date.now()}`);
+    const stamp = `${process.pid}-${Date.now()}`;
+    const staging = join(root, `.${id}.staging-${stamp}`);
+    const aside = existed ? join(root, `${asidePrefix(id)}${stamp}`) : undefined;
     mkdirSync(staging);
     const copied: ImportResult["copied"] = [];
 
@@ -265,17 +321,34 @@ export function importExport(options: { folder: string; force?: boolean }): Impo
             copied.push({ name, from, placement });
         }
 
-        if (existed) {
-            trash(target, "wisprflow-import-replaced");
+        if (aside) {
+            renameSync(target, aside);
         }
 
-        renameSync(staging, target);
+        try {
+            renameSync(staging, target);
+        } catch (error) {
+            if (aside) {
+                renameSync(aside, target);
+            }
+
+            throw error;
+        }
     } catch (error) {
         if (existsSync(staging)) {
             trash(staging, "wisprflow-import-unfinished");
         }
 
         throw error;
+    }
+
+    if (aside) {
+        try {
+            trash(aside, "wisprflow-import-replaced");
+        } catch (error) {
+            // The new import is in place; the old one stays aside, hidden, until it is moved by hand.
+            log.warn({ error, aside }, "the replaced import could not be moved to the trash");
+        }
     }
 
     log.debug({ id, target, copied: copied.length, missing }, "export imported");
