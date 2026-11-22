@@ -303,7 +303,7 @@ export async function openProject(value: string, options: { prepareAudio?: boole
     }
 
     const video = movieFor(resolved);
-    const info = await probeVideo({ input: video, limits: EDITOR_VIDEO_LIMITS });
+    const info = await probeVideo({ input: video, limits: EDITOR_VIDEO_LIMITS, hdr: "allow" });
     const folder = dirname(video);
     const manifest = readRecordingManifest(folder);
     const cursor = join(folder, "cursor.jsonl");
@@ -736,6 +736,7 @@ async function probeFacts({
             const info = await probeVideo({
                 input: resolve(dirname(project.source.video), op.file),
                 limits: EDITOR_VIDEO_LIMITS,
+                hdr: "allow",
             });
             facts.videoDurationUs = info.durationUs;
         }
@@ -1246,7 +1247,7 @@ export async function embedChapters({
         return 0;
     }
 
-    const info = await probeVideo({ input: movie, limits: EDITOR_VIDEO_LIMITS });
+    const info = await probeVideo({ input: movie, limits: EDITOR_VIDEO_LIMITS, hdr: "allow" });
     const scratch = await mkdtemp(join(tmpdir(), "recorder-chapters-"));
 
     try {
