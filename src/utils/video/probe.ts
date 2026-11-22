@@ -27,14 +27,25 @@ const probeSchema = z.object({
 export const VIDEO_PROBE_LIMITS = { maxBytes: 1024 * 1024 * 1024, maxDurationUs: 600_000_000, maxPixels: 48_000_000 };
 export type VideoProbeLimits = typeof VIDEO_PROBE_LIMITS;
 
+/** The transfers of HDR video (high dynamic range: more brightness and colour, not more pixels), by ffprobe's names. */
+export const HDR_TRANSFERS: Readonly<Record<string, "PQ" | "HLG">> = { smpte2084: "PQ", "arib-std-b67": "HLG" };
+
+/**
+ * `hdr`: an HDR movie (PQ or HLG) is refused by default, because the frames ffmpeg splits from it carry no tone
+ * mapping (a PQ frame comes out dark and grey). `"allow"` is for a reader that plays the movie through AVFoundation,
+ * which maps the tones itself: the movie editor (its H.264 export of an HDR movie is SDR, its HEVC export stays HDR;
+ * checked 2026-11-22 on PQ and HLG test movies).
+ */
 export async function probeVideo({
     input,
     signal,
     limits = VIDEO_PROBE_LIMITS,
+    hdr = "refuse",
 }: {
     input: string;
     signal?: AbortSignal;
     limits?: VideoProbeLimits;
+    hdr?: "refuse" | "allow";
 }): Promise<VideoInfo> {
     const path = resolve(input);
     const file = await stat(path);
@@ -90,7 +101,7 @@ export async function probeVideo({
         );
     }
 
-    if (video.color_transfer === "smpte2084" || video.color_transfer === "arib-std-b67") {
+    if (hdr === "refuse" && HDR_TRANSFERS[video.color_transfer ?? ""]) {
         throw new Error("HDR evidence needs an explicit SDR conversion; export an SDR copy before splitting");
     }
 

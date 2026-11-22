@@ -1,9 +1,8 @@
 import { constants } from "node:fs";
-import { copyFile, mkdir, rename, rm, stat } from "node:fs/promises";
+import { copyFile, mkdir, stat } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { type TimeValue, timeSchema, timeToUs } from "@genesiscz/utils/recording-editor/plan";
 import {
     newVideoRecordingId,
@@ -20,6 +19,7 @@ import {
     primaryVideo,
     readMediaFacts,
 } from "@genesiscz/utils/video/media-facts";
+import { HDR_TRANSFERS } from "@genesiscz/utils/video/probe";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { secondsToMicroseconds } from "@genesiscz/utils/video/sampling";
 import { z } from "zod";
@@ -59,15 +59,6 @@ const EDITOR_VIDEO_CODECS: ReadonlySet<string> = new Set([
     "v210",
 ]);
 
-/**
- * The transfers of an HDR movie (high dynamic range: a wider range of brightness and colour, not more pixels), by the
- * names people know them by. The editor's probe refuses them, so the import makes an SDR copy of such a movie.
- */
-const HDR_TRANSFERS: Readonly<Record<string, string>> = { smpte2084: "PQ", "arib-std-b67": "HLG" };
-
-/** avconvert's preset of the SDR copy: a largest size (it never enlarges), H.264 in BT.709. */
-const SDR_COPY_PRESET = "Preset3840x2160";
-
 /** A moment of the movie: `at` is SOURCE time (seconds, "m:ss" or "h:mm:ss" of the file as it plays). */
 export interface ImportMarker {
     at: TimeValue;
@@ -81,15 +72,13 @@ export interface ImportMovieOptions {
     markers?: readonly ImportMarker[];
     /** The clock of the id and the manifest's times; a test passes one. */
     now?: Date;
-    /** Told once before a slow step (the SDR copy of an HDR movie), so a door can say why it waits. */
-    onNote?: (text: string) => void;
 }
 
 export interface ImportedMovie {
     id: string;
     folder: string;
     title: string;
-    /** The library's copy: an APFS clone where the disk can make one, else a whole copy; an HDR movie's SDR copy. */
+    /** The library's copy: an APFS clone where the disk can make one, else a whole copy. */
     movie: string;
     /** The file it was copied from; nothing writes to it. */
     source: string;
@@ -100,8 +89,11 @@ export interface ImportedMovie {
     audioTracks: number;
     /** The markers in time order, at source seconds (`movie.markers()` lists them the same way). */
     markers: Array<{ at: number; label: string }>;
-    /** What the library's copy does not keep of the file (an HDR movie is an SDR copy); the manifest has the same. */
-    warnings: string[];
+    /**
+     * Set for an HDR movie (high dynamic range: more brightness and colour, not more pixels). The editor takes it as it
+     * is: an H.264 export of it is SDR (AVFoundation maps the tones), an HEVC export stays HDR.
+     */
+    hdr?: "PQ" | "HLG";
 }
 
 const seconds = (us: number) => Math.round(us / 100_000) / 10;
@@ -205,7 +197,6 @@ const videoStreamSchema = z.object({
                 codec_name: z.string().optional(),
                 codec_tag_string: z.string().optional(),
                 color_transfer: z.string().optional(),
-                pix_fmt: z.string().optional(),
                 duration: z.string().optional(),
                 side_data_list: z.array(z.object({ rotation: z.number().optional() })).optional(),
             })
@@ -220,18 +211,20 @@ function ffmpegHint(source: string, args: string, suffix: string): string {
     return `ffmpeg -i ${shellWord(source)} ${args} ${shellWord(copy)}`;
 }
 
-/**
- * The line a person runs to see why the import's SDR copy failed: the same `avconvert` call, beside the movie. The
- * preset is a largest size (it never enlarges), and its copy is H.264 in BT.709 (checked 2026-11-21 on an HLG movie
- * at 3840 x 2160 and at 1280 x 720, and 2026-11-22 on a PQ movie at 1280 x 720).
- */
-function sdrCopyHint(source: string): string {
-    const copy = join(dirname(source), `${basename(source, extname(source))}-sdr.mov`);
-    return `avconvert --source ${shellWord(source)} --preset ${SDR_COPY_PRESET} --output ${shellWord(copy)}`;
+/** The movie's video as the editor reads it: its length, and which HDR it is when it is one. */
+interface EditorVideo {
+    durationUs: number;
+    hdr?: "PQ" | "HLG";
 }
 
-/** ffprobe's read of the first video stream, the one the editor's probe reads, with the file's length. */
-async function firstVideoStream(path: string): Promise<z.infer<typeof videoStreamSchema>> {
+/**
+ * The movie's video as the editor reads it, or why the editor does not play the movie, in the import's words. It
+ * reads the stream the editor's probe reads (the first video stream) by the same rules: its length first, the file's
+ * when it has none, and a turn other than a quarter turn refused. The codec is the import's own check, because the
+ * editor's probe does not look at it and AVFoundation then shows nothing. An HDR movie (PQ or HLG) is taken as it is:
+ * the editor plays it, and its export decides (H.264 is SDR, HEVC stays HDR).
+ */
+async function editorVideo(source: string): Promise<EditorVideo> {
     const raw = await runVideoCommand({
         command: [
             "ffprobe",
@@ -240,31 +233,14 @@ async function firstVideoStream(path: string): Promise<z.infer<typeof videoStrea
             "-select_streams",
             "v:0",
             "-show_entries",
-            "stream=codec_name,codec_tag_string,color_transfer,pix_fmt,duration:stream_side_data=rotation:format=duration",
+            "stream=codec_name,codec_tag_string,color_transfer,duration:stream_side_data=rotation:format=duration",
             "-of",
             "json",
-            path,
+            source,
         ],
         timeoutMs: 30_000,
     });
-    return videoStreamSchema.parse(SafeJSON.parse(raw, { strict: true }));
-}
-
-/** The movie's video as the editor reads it: its length, and its HDR transfer (PQ or HLG) when it has one. */
-interface EditorVideo {
-    durationUs: number;
-    hdr?: string;
-}
-
-/**
- * The movie's video as the editor reads it, or why the editor does not play the movie, in the import's words. It
- * reads the stream the editor's probe reads (the first video stream) by the same rules: its length first, the file's
- * when it has none, and a turn other than a quarter turn refused. The codec is the import's own check, because the
- * editor's probe does not look at it and AVFoundation then shows nothing. An HDR movie is not refused: the import
- * makes its SDR copy. Only an 8-bit movie that is tagged HDR is, because avconvert keeps such a movie as it is.
- */
-async function editorVideo(source: string): Promise<EditorVideo> {
-    const data = await firstVideoStream(source);
+    const data = videoStreamSchema.parse(SafeJSON.parse(raw, { strict: true }));
     const video = data.streams[0];
 
     if (!video) {
@@ -272,10 +248,7 @@ async function editorVideo(source: string): Promise<EditorVideo> {
     }
 
     const codec = video.codec_name ?? "an unknown codec";
-    log.debug(
-        { source, codec, tag: video.codec_tag_string, transfer: video.color_transfer, pixels: video.pix_fmt },
-        "the movie's video"
-    );
+    log.debug({ source, codec, tag: video.codec_tag_string, transfer: video.color_transfer }, "the movie's video");
 
     if (codec === "hevc" && video.codec_tag_string === "hev1") {
         throw new Error(
@@ -286,15 +259,6 @@ async function editorVideo(source: string): Promise<EditorVideo> {
     if (!EDITOR_VIDEO_CODECS.has(codec)) {
         throw new Error(
             `${source} is not a movie the editor plays: its video is ${codec}, which the editor (AVFoundation) does not play. Convert it first: ${ffmpegHint(source, "-c:v libx264 -pix_fmt yuv420p -c:a aac", "h264")}`
-        );
-    }
-
-    const hdr = HDR_TRANSFERS[video.color_transfer ?? ""];
-
-    // HDR video has 10 bits or more a sample (yuv420p10le, p010le, yuv422p12le): ffprobe names the depth last.
-    if (hdr && !/1[0246](?:le|be)$/.test(video.pix_fmt ?? "")) {
-        throw new Error(
-            `${source} is tagged HDR (${hdr}), but its video is 8-bit (${video.pix_fmt ?? "an unknown pixel format"}), and avconvert, which makes the editor's SDR copy, keeps such a movie as it is. The editor takes SDR movies only: export an SDR copy from the app that made it`
         );
     }
 
@@ -314,115 +278,8 @@ async function editorVideo(source: string): Promise<EditorVideo> {
         throw new Error(`${source} is not a movie that plays: its video has no length`);
     }
 
+    const hdr = HDR_TRANSFERS[video.color_transfer ?? ""];
     return { durationUs, ...(hdr ? { hdr } : {}) };
-}
-
-/**
- * Writes the SDR copy of an HDR movie to `movie` with `avconvert`, which comes with macOS and maps the tones (ffmpeg
- * needs its zscale filter for that, and Homebrew's ffmpeg has none). The copy is H.264 in BT.709 with the movie's
- * frame rate and length, and a turned movie comes out upright. Measured 2026-11-22 on an M4 Mac: 20 s of 3840 x 2160
- * HLG at 30 fps took 7.5 s. avconvert keeps one audio track, so the movie's audio tracks go back in by stream copy
- * when it has more, and it makes a movie over 3840 x 2160 smaller. Returns the copy's facts and what the copy does
- * not keep, as sentences for the manifest's warnings.
- */
-async function writeSdrCopy({
-    source,
-    movie,
-    hdr,
-    facts,
-}: {
-    source: string;
-    movie: string;
-    hdr: string;
-    facts: MediaFacts;
-}): Promise<{ facts: MediaFacts; warnings: string[] }> {
-    const lengthMs = Math.round((facts.durationSec ?? 0) * 1000);
-    const command = ["avconvert", "--source", source, "--preset", SDR_COPY_PRESET, "--output", movie];
-    log.debug({ command, lengthMs }, "the SDR copy of an HDR movie starts");
-    // Six lengths of the movie and two minutes: the measured copy took about a third of the movie's length.
-    const result = await boundedCommand({ command, timeoutMs: 120_000 + lengthMs * 6, maxBufferBytes: 1024 * 1024 });
-
-    if (result.error || result.status !== 0) {
-        // avconvert prints its reason first ("avconvert:  invalid source file …"), then its whole usage.
-        const said = result.stderr
-            .split("\n")
-            .find((line) => line.startsWith("avconvert:"))
-            ?.replace(/^avconvert:\s*/, "");
-        log.warn(
-            { source, status: result.status, error: result.error, stderr: result.stderr.slice(0, 2000) },
-            "avconvert did not make the SDR copy"
-        );
-        throw new Error(
-            `${source} is an HDR movie (${hdr}), and avconvert did not make its SDR copy: ${said || result.error?.message || `it ended with status ${result.status}`}. Run it by hand to see why: ${sdrCopyHint(source)}`,
-            { cause: result.error }
-        );
-    }
-
-    const kept = HDR_TRANSFERS[(await firstVideoStream(movie)).streams[0]?.color_transfer ?? ""];
-
-    if (kept) {
-        throw new Error(
-            `${source} is an HDR movie (${hdr}), and avconvert kept its copy HDR (${kept}). The editor takes SDR movies only: export an SDR copy from the app that made it`
-        );
-    }
-
-    const warnings = [
-        `The movie is HDR (${hdr}): the library holds an SDR copy of it (H.264, BT.709) that avconvert made`,
-    ];
-    const tracks = audioStreamCount(facts);
-    let copy = await readMediaFacts({ input: movie });
-
-    if (audioStreamCount(copy) < tracks) {
-        const withTracks = join(dirname(movie), `.audio-tracks-${basename(movie)}`);
-
-        try {
-            await runVideoCommand({
-                command: [
-                    "ffmpeg",
-                    "-nostdin",
-                    "-v",
-                    "error",
-                    "-i",
-                    movie,
-                    "-i",
-                    source,
-                    "-map",
-                    "0:v:0",
-                    "-map",
-                    "1:a",
-                    "-c",
-                    "copy",
-                    withTracks,
-                ],
-                timeoutMs: 120_000 + lengthMs,
-            });
-            await rename(withTracks, movie);
-            copy = await readMediaFacts({ input: movie });
-        } catch (error) {
-            log.warn({ error, source, movie }, "the SDR copy does not take the movie's audio tracks");
-            await rm(withTracks, { force: true });
-            warnings.push(`The SDR copy keeps ${audioStreamCount(copy)} of the movie's ${tracks} audio tracks`);
-        }
-    }
-
-    const before = primaryVideo(facts);
-    const after = primaryVideo(copy);
-
-    // By the long side: a turned movie comes out upright, so its width and height change places.
-    if (
-        before?.width &&
-        before.height &&
-        after?.width &&
-        after.height &&
-        Math.max(after.width, after.height) < Math.max(before.width, before.height)
-    ) {
-        warnings.push(
-            `The SDR copy is ${after.width} x ${after.height}; the movie is ${before.width} x ${before.height} (avconvert makes no copy over 3840 x 2160)`
-        );
-    }
-
-    log.debug({ source, movie, warnings }, "the SDR copy of an HDR movie is made");
-    return { facts: copy, warnings };
 }
 
 const packetsSchema = z.object({ streams: z.array(z.object({ nb_read_packets: z.string().optional() })).default([]) });
@@ -466,11 +323,10 @@ function dropFolder(folder: string): void {
 
 /**
  * Imports a movie into the recordings library as a new recording. The file stays as it is: the library gets an APFS
- * clone where the disk can make one (no extra disk until one side changes), else a whole copy. An HDR movie (PQ or
- * HLG) gets an SDR copy instead (`writeSdrCopy`), because the editor takes SDR movies only; the manifest's warnings
- * say so. The file is read first as the editor reads it (its video codec, its turn, its video's length for the
- * markers), so a refusal copies nothing; then the editor's own probe of the copy (its size and length limits) decides
- * that it plays before the folder becomes a recording. The markers are movie time
+ * clone where the disk can make one (no extra disk until one side changes), else a whole copy. An HDR movie is taken
+ * as it is. The file is read first as the editor reads it (its video codec, its turn, its video's length for the
+ * markers), so a refusal copies nothing; then the editor's own probe of the copy (its size and length limits) decides that it plays before the
+ * folder becomes a recording. The markers are movie time
  * (`settings.markerClock` "movie"). A movie with sound keeps it: the manifest names the movie as its sound source, so
  * the editor plays, exports and transcribes it like a recording with system audio in its movie.
  */
@@ -481,35 +337,16 @@ export async function importMovie(input: string, options: ImportMovieOptions = {
     // A marker the movie's video does not reach is refused before anything is copied, and again below against the
     // editor's own length, the one the manifest keeps, so the two can never disagree.
     const video = await editorVideo(source);
-
-    // Before anything is made, as every refusal: without avconvert there is no SDR copy to make.
-    if (video.hdr && Bun.which("avconvert") === null) {
-        throw new Error(
-            `${source} is an HDR movie (${video.hdr}); the editor takes SDR movies only, and this machine has no avconvert (it comes with macOS) to make the SDR copy: export an SDR copy first`
-        );
-    }
-
     manifestMarkers(options.markers ?? [], video.durationUs);
     const now = options.now ?? new Date();
     const id = newVideoRecordingId(now);
     const folder = recordingsLibraryDir(id);
-    // avconvert writes a QuickTime movie, so an HDR movie's SDR copy is screen.mov whatever the file's extension.
-    const name = video.hdr ? "screen.mov" : (IMPORT_MOVIE_NAMES[extname(source).toLowerCase()] ?? "screen.mp4");
+    const name = IMPORT_MOVIE_NAMES[extname(source).toLowerCase()] ?? "screen.mp4";
     const movie = join(folder, name);
     await mkdir(folder, { recursive: true, mode: 0o700 });
 
     try {
-        let copied: { facts: MediaFacts; warnings: string[] } = { facts, warnings: [] };
-
-        if (video.hdr) {
-            options.onNote?.(
-                `${basename(source)} is an HDR movie (${video.hdr}): the import makes an SDR copy of it for the editor with avconvert, and a long movie takes a while`
-            );
-            copied = await writeSdrCopy({ source, movie, hdr: video.hdr, facts });
-        } else {
-            await copyFile(source, movie, constants.COPYFILE_FICLONE);
-        }
-
+        await copyFile(source, movie, constants.COPYFILE_FICLONE);
         const durationUs = await openProject(movie)
             .then((opened) => opened.project.source.durationUs)
             .catch((error: unknown) => {
@@ -523,7 +360,7 @@ export async function importMovie(input: string, options: ImportMovieOptions = {
         const durationMs = Math.round(durationUs / 1000);
         const averageFps = frames && durationMs > 0 ? Math.round((frames / (durationMs / 1000)) * 10) / 10 : undefined;
         const rate = primaryVideo(facts)?.frameRate ?? averageFps;
-        const audioTracks = audioStreamCount(copied.facts);
+        const audioTracks = audioStreamCount(facts);
         const manifest: RecordingManifest = {
             version: 1,
             id,
@@ -552,10 +389,13 @@ export async function importMovie(input: string, options: ImportMovieOptions = {
                 importedFrom: source,
             },
             frames: [],
-            warnings: copied.warnings,
+            warnings: [],
         };
         await writeRecordingManifest(folder, manifest);
-        log.debug({ id, folder, source, durationMs, frames, audioTracks, markers: markers.length }, "movie imported");
+        log.debug(
+            { id, folder, source, durationMs, frames, audioTracks, markers: markers.length, hdr: video.hdr },
+            "movie imported"
+        );
         return {
             id,
             folder,
@@ -567,7 +407,7 @@ export async function importMovie(input: string, options: ImportMovieOptions = {
             ...(averageFps === undefined ? {} : { averageFps }),
             audioTracks,
             markers: markers.map((marker) => ({ at: marker.atMs / 1000, label: marker.label })),
-            warnings: copied.warnings,
+            ...(video.hdr ? { hdr: video.hdr } : {}),
         };
     } catch (error) {
         log.debug({ error, source, folder }, "the movie import failed");
