@@ -578,6 +578,10 @@ func cmdAudioRecord() {
     guard #available(macOS 13.0, *) else { errorExit("audio-record needs macOS 13 or newer") }
     CaptureEvents.enabled = true
     let withoutScreen = CommandLine.arguments.contains("--without-screen")
+    // `--prefer-tap`: the Core Audio tap first, as `--without-screen` records, and the display stream when the tap
+    // cannot start. An open display stream slows the screen while a never-capture window is on its display
+    // (`NeverCaptureRule`); the tap opens no stream.
+    let preferTap = !withoutScreen && CommandLine.arguments.contains("--prefer-tap")
     if !withoutScreen {
         let warnings = runFromPrivateRecorderCopy()
         for warning in warnings { CaptureEvents.emit(["event": "warning", "message": warning]) }
@@ -605,6 +609,8 @@ func cmdAudioRecord() {
         muted = []
     }
     let paused = CommandLine.arguments.contains("--paused")
+    // The tap path opens the microphone by itself, so it takes the sources as asked.
+    let asked = sources
     if !withoutScreen && sources.contains(.mic) {
         if #unavailable(macOS 15.0) {
             sources.removeAll { $0 == .mic }
@@ -624,27 +630,37 @@ func cmdAudioRecord() {
         let audio = SegmentedAudio(directory: directory, seconds: seconds, muted: muted, paused: paused,
                                    monitorOnly: monitorOnly, metering: monitorOnly || CommandLine.arguments.contains("--levels"),
                                    micID: micID)
-        if withoutScreen {
+        var streamReason: String?
+        if withoutScreen || preferTap {
             let inputs = IndependentAudio(audio: audio)
             var started: [CaptureAudioSource] = []
             var failures: [String] = []
-            for source in sources {
+            // The system sound first: when its tap cannot start under --prefer-tap, nothing else has started yet.
+            for source in asked.sorted(by: { first, _ in first == .system }) {
                 do {
                     try inputs.start(source, micDevice: micID)
                     started.append(source)
                 } catch {
-                    let reason = "\(source.rawValue) audio omitted: \(error.localizedDescription)"
-                    failures.append(reason)
-                    CaptureEvents.emit(["event": "warning", "message": reason])
+                    failures.append("\(source.rawValue) audio omitted: \(error.localizedDescription)")
+                    if preferTap && source == .system { break }
                 }
             }
-            guard !started.isEmpty else { errorExit(failures.joined(separator: " "), code: "no-permission") }
-            emitStartTiming("capture-started")
-            let host = AudioSessionHost(audio: audio, sources: started, configuration: configuration, muted: muted, paused: paused)
-            host.independent = inputs
-            host.controls()
-            host.state()
-            dispatchMain()
+            let tapRecords = !started.isEmpty && (!asked.contains(.system) || started.contains(.system))
+            if withoutScreen || tapRecords {
+                for reason in failures { CaptureEvents.emit(["event": "warning", "message": reason]) }
+                guard !started.isEmpty else { errorExit(failures.joined(separator: " "), code: "no-permission") }
+                emitStartTiming("capture-started")
+                if preferTap { CaptureEvents.emit(["event": "audio-path", "path": "tap"]) }
+                let host = AudioSessionHost(audio: audio, sources: started, configuration: configuration, muted: muted, paused: paused)
+                host.independent = inputs
+                host.controls()
+                host.state()
+                dispatchMain()
+            }
+            inputs.stop()
+            streamReason = failures.first ?? "the tap opened no source"
+            CaptureEvents.emit(["event": "warning",
+                                "message": "the system sound tap did not start (\(streamReason ?? "")); the display stream records the sound"])
         }
         configuration.width = 2
         configuration.height = 2
@@ -670,6 +686,9 @@ func cmdAudioRecord() {
         }
         try awaitResult { try await stream.startCapture() }
         emitStartTiming("capture-started")
+        if preferTap {
+            CaptureEvents.emit(["event": "audio-path", "path": "stream", "reason": streamReason ?? ""])
+        }
         host.controls()
         host.state()
         dispatchMain()
