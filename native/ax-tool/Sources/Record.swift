@@ -62,6 +62,9 @@ struct RecordOptions {
     /// `--keep-overlays`: a display or area recording keeps the windows of screen dimmers (HazeOver and the like),
     /// which it leaves out by default (`DimmingOverlayRule`).
     let keepOverlays: Bool
+    /// `--frame-source`: the stream (the default), one screenshot per frame with no open stream, or `auto`, which
+    /// takes screenshots only where a never-capture window makes a stream costly (`NeverCaptureRule`).
+    let frameSource: FrameSourceRequest
     /// `--audio system,mic`: the audio sources, each its own track.
     let audioSources: [CaptureAudioSource]
     /// `--mic-device <uid>` from `ax-tool audio-devices`; nil is the default input.
@@ -116,6 +119,13 @@ private func recordOptions(startWarnings: [String]) -> RecordOptions {
         if #unavailable(macOS 14.0) {
             errorExit("--follow-focus needs macOS 14 or newer (SCStream.updateContentFilter)", code: "invalid-argument")
         }
+    }
+    var frameSource = FrameSourceRequest.stream
+    if let raw = argValue("--frame-source") {
+        guard let parsed = FrameSourceRequest(rawValue: raw) else {
+            errorExit("--frame-source must be stream, screenshot or auto", code: "invalid-argument")
+        }
+        frameSource = parsed
     }
     let controlStdin = CommandLine.arguments.contains("--control-stdin")
     if controlStdin && mode == "isolated" {
@@ -193,6 +203,7 @@ private func recordOptions(startWarnings: [String]) -> RecordOptions {
         maxMb: optionalNumber("--max-mb", min: 0.01, max: 1_000_000),
         controlStdin: controlStdin,
         keepOverlays: CommandLine.arguments.contains("--keep-overlays"),
+        frameSource: frameSource,
         audioSources: audioSources,
         micDevice: micDevice,
         audioSidecar: audioSidecar,
@@ -412,7 +423,7 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private var rate: FrameRatePolicy
     /// Set once the stream exists, so the recorder can ask it for a different rate. The stream
     /// owns the recorder as its delegate and its output, hence weak.
-    weak var stream: SCStream?
+    weak var stream: (any CaptureFeed)?
     var rateChanged: ((Double) -> Void)?
     private let configuration: SCStreamConfiguration
     private var firstTimestamp: CMTime?
@@ -872,6 +883,14 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         }
     }
 
+    /// A frame source with no delegate (`ScreenshotFeed`) reports its end here, as the stream does above.
+    func feedFailed(_ error: Error) {
+        queue.async { [self] in
+            streamError = error
+            stopped.signal()
+        }
+    }
+
     var failure: Error? {
         queue.sync {
             streamError ?? (writer?.status == .failed
@@ -1115,6 +1134,23 @@ func cmdCaptureScreen() {
     }
     guard let display else { errorExit("no display for the capture target", code: "display-missing") }
 
+    // A window marked never-capture on a display makes every open stream on it costly (`NeverCaptureRule`), so
+    // `--frame-source auto` takes screenshots there. A recording that follows the focus can show any display.
+    let neverCapture = options.mode == "screen" ? neverCaptureApps(on: options.followFocus ? nil : display.id) : []
+    var screenshotsAvailable = false
+    if #available(macOS 14.0, *) { screenshotsAvailable = true }
+    let frameSource: FrameSource
+    var frameSourceNote: String?
+    switch chooseFrameSource(options.frameSource, FrameSourceFacts(
+        screenMode: options.mode == "screen", movie: options.videoOut != nil, audio: !options.audioSources.isEmpty,
+        screenshotsAvailable: screenshotsAvailable, blocked: !neverCapture.isEmpty)) {
+    case .refuse(let reason):
+        errorExit(reason, code: "invalid-argument")
+    case .use(let source, let note):
+        frameSource = source
+        frameSourceNote = note.map { "\(neverCapture.map(\.name).joined(separator: ", ")): \($0)" }
+    }
+
     let indicator = RecordingIndicator(enabled: options.selection.indicator)
     indicator.update([windowTarget?.bounds ?? options.region ?? display.bounds])
     defer { indicator.close() }
@@ -1188,24 +1224,45 @@ func cmdCaptureScreen() {
         sources: options.audioSources, movieInputs: recorder.audioInputs,
         sidecarDirectory: options.audioSidecar ? URL(fileURLWithPath: options.outDir) : nil)
     recorder.audio = audio
-    let stream = SCStream(filter: filter, configuration: configuration, delegate: recorder)
-    recorder.stream = stream
-    do {
+    if let frameSourceNote {
+        recorder.warn(frameSourceNote)
+    }
+    // The start and a restart on another display make the same kind of feed.
+    let makeFeed: (SCContentFilter) throws -> any CaptureFeed = { filter in
+        if frameSource == .screenshot, #available(macOS 14.0, *) {
+            return ScreenshotFeed(filter: filter, configuration: configuration, recorder: recorder)
+        }
+        let stream = SCStream(filter: filter, configuration: configuration, delegate: recorder)
         try stream.addStreamOutput(recorder, type: .screen, sampleHandlerQueue: recorder.frameQueue)
         if let audio {
             try addAudioOutputs(audio, to: stream)
         }
+        return stream
+    }
+    let stream: any CaptureFeed
+    do {
+        stream = try makeFeed(filter)
+        recorder.stream = stream
         try awaitResult { try await stream.startCapture() }
     } catch {
         errorExit("recording never started: \(error.localizedDescription)", code: captureErrorCode(error))
     }
+    if frameSource == .screenshot, #available(macOS 14.0, *), options.activeFps > ScreenshotFeed.maxFps {
+        recorder.warn("frames come by screenshot, \(Int(ScreenshotFeed.maxFps)) a second at most (asked: \(options.activeFps))")
+    }
     recorder.startHeartbeat()
     let host = ScreenStreamHost(options: options, recorder: recorder, configuration: configuration, indicator: indicator,
-                                stream: stream, display: display, pointSize: pointSize, audio: audio)
+                                stream: stream, makeFeed: makeFeed, display: display, pointSize: pointSize, audio: audio)
+    // Only a caller that passed the flag knows these fields and this event.
+    let reportsFrameSource = argValue("--frame-source") != nil
     if options.controlStdin {
         CaptureEvents.enabled = true
         host.startControlChannel()
         CaptureEvents.emit(["event": "state", "state": "recording", "displayId": display.id])
+        if reportsFrameSource {
+            CaptureEvents.emit(["event": "frame-source", "source": frameSource.rawValue, "displayId": display.id,
+                                "neverCapture": neverCapture.map(\.row)])
+        }
     }
     if options.mode == "screen" {
         displayReconfigurationHandler = { changed, flags in
@@ -1345,6 +1402,12 @@ func cmdCaptureScreen() {
         "display": ["id": host.display.id],
         "displays": host.displaysUsed,
     ]
+    if reportsFrameSource {
+        data["frameSource"] = frameSource.rawValue
+        if !neverCapture.isEmpty {
+            data["neverCapture"] = neverCapture.map(\.row)
+        }
+    }
     if let audio {
         data["tracks"] = audio.summaries(origin: recorder.origin)
     }
@@ -1440,7 +1503,9 @@ private final class ScreenStreamHost {
     let recorder: NativeRecorder
     let configuration: SCStreamConfiguration
     let indicator: RecordingIndicator
-    private(set) var stream: SCStream
+    private(set) var stream: any CaptureFeed
+    /// Makes the feed of a restart on another display: the kind the recording started with.
+    private let makeFeed: (SCContentFilter) throws -> any CaptureFeed
     private(set) var display: DisplayGeometry
     private(set) var displaysUsed: [CGDirectDisplayID]
     /// The recorded display is gone and the recording ends with `display-removed`.
@@ -1469,8 +1534,11 @@ private final class ScreenStreamHost {
     private var micDevice: String?
 
     init(options: RecordOptions, recorder: NativeRecorder, configuration: SCStreamConfiguration,
-         indicator: RecordingIndicator, stream: SCStream, display: DisplayGeometry, pointSize: CGSize, audio: NativeAudio?) {
+         indicator: RecordingIndicator, stream: any CaptureFeed,
+         makeFeed: @escaping (SCContentFilter) throws -> any CaptureFeed, display: DisplayGeometry, pointSize: CGSize,
+         audio: NativeAudio?) {
         self.audio = audio
+        self.makeFeed = makeFeed
         self.maxLongSide = options.maxLongSide
         self.pointSize = pointSize
         self.micDevice = options.micDevice
@@ -1808,11 +1876,7 @@ private final class ScreenStreamHost {
             if let size = outputSize(for: geometry) {
                 _ = recorder.setOutputSize(width: Int(size.width), height: Int(size.height), for: target)
             }
-            let next = SCStream(filter: filter, configuration: configuration, delegate: recorder)
-            try next.addStreamOutput(recorder, type: .screen, sampleHandlerQueue: recorder.frameQueue)
-            if let audio {
-                try addAudioOutputs(audio, to: next)
-            }
+            let next = try makeFeed(filter)
             try awaitResult { try await next.startCapture() }
             stream = next
             recorder.stream = next

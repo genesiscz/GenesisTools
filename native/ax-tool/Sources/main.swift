@@ -81,6 +81,10 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
                       [--no-indicator] default pulsing border is excluded from capture
                       [--exclude-window-ids ID,ID] windows the movie never shows (a host's own controls)
                       [--keep-overlays] screen and region mode keep screen dimmers (HazeOver and the like), left out by default
+                      [--frame-source stream|screenshot|auto] screen mode: screenshot takes one screenshot per frame with no
+                      open stream (2 fps at most; no movie, no --audio); auto does so only while a window marked
+                      never-capture is on the recorded display, where an open stream slows the whole screen (default stream);
+                      the result then names frameSource and neverCapture
                       [--screen-index N] [--region x,y,w,h] --duration <seconds> [--active-fps 8] [--idle-fps 2]
                       [--threshold 2.5] [--video-out f.mp4] [--out DIR]   ScreenCaptureKit recording: change-sampled
                       [--movie-quality standard|high|small] an H.264 movie: high doubles the bit rate, small halves
@@ -104,8 +108,11 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
                       audio-<source>.m4a; the result lists tracks with durationMs, peakDbfs and mutedSpans
       ax-tool screens                                         Displays in NSScreen order: index, name, displayID, scale, position, resolution
       ax-tool audio-devices                                   Audio inputs and outputs: id (UID), name, channels, default
-      ax-tool audio-record --sources mic,system [--without-screen] [--mic-device UID] [--muted mic,system] [--paused] (--out DIR [--segment-sec 60] | --monitor) [--levels]
+      ax-tool capture-blockers                                The apps that keep a never-capture window on a display (pid, name, bundleId, displays)
+      ax-tool audio-record --sources mic,system [--without-screen | --prefer-tap] [--mic-device UID] [--muted mic,system] [--paused] (--out DIR [--segment-sec 60] | --monitor) [--levels]
                       --levels streams 100 ms RMS samples on stderr for audio-record and capture; --monitor saves no sound.
+                      --prefer-tap records the system sound through the Core Audio tap (no display stream) and uses the
+                      display stream only when the tap cannot start; an audio-path event on stderr says which.
                       One continuous audio stream; closed segments as JSON lines on stdout.
                       JSON-line controls on stdin: mute/unmute {"source":"mic"|"system"}, set-mic {"deviceId"},
                       pause, resume, status, stop; state/settings/error events on stderr; stdin EOF stops.
@@ -192,8 +199,9 @@ if command == "quit-app" {
 // of those need Accessibility. Without it the AX API answers every app with an empty window
 // list, which every command used to report as a fact about the target ("no windows for X").
 // The exceptions read no AX state: `screens` (NSScreen), `capture` (ScreenCaptureKit, gated
-// on Screen Recording inside Record.swift) and `ocr --image` (a file on disk).
-let axFreeCommands: Set<String> = ["screens", "capture", "audio-devices", "audio-record"]
+// on Screen Recording inside Record.swift), `capture-blockers` (the window list) and `ocr --image`
+// (a file on disk).
+let axFreeCommands: Set<String> = ["screens", "capture", "capture-blockers", "audio-devices", "audio-record"]
 if !axFreeCommands.contains(command) && !(command == "ocr" && argValue("--image") != nil) {
     // NSWorkspace answers without Accessibility, so a typo in --app is reported as a typo rather
     // than hidden behind the missing grant. `resolveAppPid` never touches the target.
@@ -244,6 +252,10 @@ if command == "screens" {
 }
 if command == "audio-devices" {
     cmdAudioDevices()
+    exit(0)
+}
+if command == "capture-blockers" {
+    cmdCaptureBlockers()
     exit(0)
 }
 if command == "audio-record" {
