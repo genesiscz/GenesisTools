@@ -14,6 +14,8 @@ import { markersOf } from "./moments";
 import { MoviesToolset } from "./toolset";
 
 const hasFfmpeg = Bun.which("ffmpeg") !== null;
+/** macOS's converter, which makes the SDR copy of an HDR movie. */
+const hasAvconvert = Bun.which("avconvert") !== null;
 const ctx: ToolsetContext = { scratchDir: tmpdir(), show: async () => {}, write: () => {} };
 
 interface ImportedMovie {
@@ -64,6 +66,44 @@ async function makeMovie(
             ...audio,
             ...(video ?? ["-c:v", "libx264", "-pix_fmt", "yuv420p", ...color]),
             ...audioCodec,
+            path,
+        ],
+    });
+    return path;
+}
+
+/** A 2 s HDR10 movie as a phone or an HDR export writes it (10-bit HEVC under hvc1, PQ), with two audio tracks. */
+async function makeHdrMovie(path: string): Promise<string> {
+    const tone = (hz: number) => ["-f", "lavfi", "-i", `sine=frequency=${hz}:duration=2`];
+    await runVideoCommand({
+        command: [
+            "ffmpeg",
+            "-nostdin",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=160x120:rate=10:duration=2",
+            ...tone(440),
+            ...tone(880),
+            "-map",
+            "0:v",
+            "-map",
+            "1:a",
+            "-map",
+            "2:a",
+            "-c:v",
+            "libx265",
+            "-tag:v",
+            "hvc1",
+            "-pix_fmt",
+            "yuv420p10le",
+            "-x265-params",
+            "log-level=error:transfer=smpte2084:colorprim=bt2020:colormatrix=bt2020nc",
+            "-c:a",
+            "aac",
+            "-shortest",
             path,
         ],
     });
@@ -184,6 +224,47 @@ describe.skipIf(!hasFfmpeg)("movies.import", () => {
         expect(fingerprint(withSound)).toEqual(before);
     });
 
+    test.skipIf(!hasAvconvert)(
+        "an HDR movie becomes an SDR copy with every audio track, and the warnings say so",
+        async () => {
+            const movies = await moviesToolset();
+            const bright = await makeHdrMovie(join(scratch, "bright.mp4"));
+            const before = fingerprint(bright);
+            const movie = await movies.import(bright, { markers: [{ at: 1, label: "Middle" }] });
+            const folder = movie.recording;
+            const copy = join(folder, "screen.mov");
+
+            const manifest = readRecordingManifest(folder);
+            expect(manifest?.settings).toMatchObject({
+                video: { file: "screen.mov", frames: 20 },
+                markerClock: "movie",
+            });
+            expect(manifest?.warnings).toEqual([
+                "The movie is HDR (PQ): the library holds an SDR copy of it (H.264, BT.709) that avconvert made",
+            ]);
+            const transfer = await runVideoCommand({
+                command: [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-select_streams",
+                    "v:0",
+                    "-show_entries",
+                    "stream=codec_name,color_transfer",
+                    "-of",
+                    "csv=p=0",
+                    copy,
+                ],
+            });
+            expect(transfer.trim()).toBe("h264,bt709");
+            // avconvert keeps one audio track; the import puts both of the movie's tracks back.
+            const facts = await readMediaFacts({ input: copy });
+            expect(facts.streams.filter((stream) => stream.type === "audio")).toHaveLength(2);
+            expect(markersOf(await openProject(folder))).toEqual([{ at: 1, plays: 1, label: "Middle" }]);
+            expect(fingerprint(bright)).toEqual(before);
+        }
+    );
+
     test("a movie without sound stays silent and takes its file's name as the title", async () => {
         const movies = await moviesToolset();
         const movie = await movies.import(silent);
@@ -246,9 +327,8 @@ describe.skipIf(!hasFfmpeg)("movies.import", () => {
             const tagged = await refusal(hev1);
             expect(tagged).toContain("its video is HEVC tagged hev1, which the editor (AVFoundation) does not play");
             expect(tagged).toContain("-c copy -tag:v hvc1");
-            const bright = await refusal(hdr);
-            expect(bright).toContain("is an HDR movie (PQ); the editor takes SDR movies only");
-            expect(bright).toContain("--preset Preset3840x2160 --output");
+            // 8-bit video that is only tagged PQ: avconvert would keep it as it is, so it is refused up front.
+            expect(await refusal(hdr)).toContain("is tagged HDR (PQ), but its video is 8-bit (yuv420p)");
             expect(await refusal(turned)).toContain(
                 "is turned 45°; the editor takes a movie turned 0°, 90°, 180° or 270° only"
             );

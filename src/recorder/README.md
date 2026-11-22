@@ -320,6 +320,15 @@ take it like a recording. It writes the folder the recorder writes (`src/recorde
   does a recording with system audio in its movie. A movie without an audio track lists no source, and `transcript()`
   refuses it.
 
+An HDR movie (PQ or HLG, such as an iPhone's HDR video) is imported as an SDR copy, because the editor takes SDR
+movies only. HDR is a wider range of brightness and colour, not more pixels: a 4K or 8K SDR movie is imported as it
+is. The import runs `avconvert` (it comes with macOS; Homebrew's ffmpeg has no zscale filter for the tone mapping)
+and writes `screen.mov`: H.264 in BT.709 with the movie's frame rate and length, and a turned movie comes out
+upright. Measured on an M4 Mac: 20 s of 3840 x 2160 HLG at 30 fps took 7.5 s. The CLI says on stderr that it makes
+the copy, and `warnings` (in `recording.json` and in the answer) says that the recording is an SDR copy and what
+else the copy does not keep: `avconvert` makes no copy over 3840 x 2160, and it keeps one audio track, so the
+import puts the movie's audio tracks back by stream copy when it has more. An export of such a recording is SDR.
+
 A marker is `--marker <time>=<label>` (`0:12=Login done`; `{ at, label }` in the REPL, `at` in source seconds or
 `m:ss`), with a label of 1 to 80 characters. A marker outside the movie's video is refused: when the sound runs on
 past the video, the editor plays only the video's length. A file that is not a movie the editor plays is refused too,
@@ -330,9 +339,8 @@ each with its reason, and the import reads the file the way the editor's probe d
   `AVURLAsset` on macOS 27), with an ffmpeg line that converts it to H.264;
 - HEVC tagged `hev1` (ffmpeg's libx265 default in an .mp4), with an ffmpeg line that puts it under `hvc1` without
   encoding it again;
-- an HDR movie (PQ or HLG, such as an iPhone's HDR video): the editor takes SDR movies only, and the refusal gives
-  the `avconvert` line that makes an SDR copy (`avconvert` comes with macOS; Homebrew's ffmpeg has no zscale filter
-  for the tone mapping);
+- an 8-bit movie that is tagged HDR (`avconvert` keeps such a movie as it is), and an HDR movie on a machine
+  without `avconvert`;
 - a movie turned by anything but 0, 90, 180 or 270 degrees.
 
 The editor's own probe then reads the copy and refuses a movie over its limits (12 hours, 48 megapixels, 64 GiB). A
@@ -340,7 +348,7 @@ refusal makes nothing; when the editor refuses the copy, its folder goes to the 
 
 `movies.import()` returns the recording as a `Movie`, as `movies.open()` does, because the next call is an edit; the
 CLI prints the folder on stdout and the id on stderr, and `--json` prints `{ id, folder, title, movie, source, seconds,
-frames, averageFps, audioTracks, markers }`. `tools recorder trash <id>` removes it again.
+frames, averageFps, audioTracks, markers, warnings }`. `tools recorder trash <id>` removes it again.
 
 ### Demo mode: one call, a finished demo
 
