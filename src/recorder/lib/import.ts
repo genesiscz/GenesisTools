@@ -19,6 +19,7 @@ import {
     primaryVideo,
     readMediaFacts,
 } from "@genesiscz/utils/video/media-facts";
+import { HDR_TRANSFERS } from "@genesiscz/utils/video/probe";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { secondsToMicroseconds } from "@genesiscz/utils/video/sampling";
 import { z } from "zod";
@@ -58,9 +59,6 @@ const EDITOR_VIDEO_CODECS: ReadonlySet<string> = new Set([
     "v210",
 ]);
 
-/** The transfers of an HDR movie, which the editor's probe refuses, by the names people know them by. */
-const HDR_TRANSFERS: Readonly<Record<string, string>> = { smpte2084: "PQ", "arib-std-b67": "HLG" };
-
 /** A moment of the movie: `at` is SOURCE time (seconds, "m:ss" or "h:mm:ss" of the file as it plays). */
 export interface ImportMarker {
     at: TimeValue;
@@ -91,6 +89,11 @@ export interface ImportedMovie {
     audioTracks: number;
     /** The markers in time order, at source seconds (`movie.markers()` lists them the same way). */
     markers: Array<{ at: number; label: string }>;
+    /**
+     * Set for an HDR movie (high dynamic range: more brightness and colour, not more pixels). The editor takes it as it
+     * is: an H.264 export of it is SDR (AVFoundation maps the tones), an HEVC export stays HDR.
+     */
+    hdr?: "PQ" | "HLG";
 }
 
 const seconds = (us: number) => Math.round(us / 100_000) / 10;
@@ -208,13 +211,20 @@ function ffmpegHint(source: string, args: string, suffix: string): string {
     return `ffmpeg -i ${shellWord(source)} ${args} ${shellWord(copy)}`;
 }
 
+/** The movie's video as the editor reads it: its length, and which HDR it is when it is one. */
+interface EditorVideo {
+    durationUs: number;
+    hdr?: "PQ" | "HLG";
+}
+
 /**
- * The length of the movie's video as the editor reads it, or why the editor does not play the movie, in the import's
- * words. It reads the stream the editor's probe reads (the first video stream) by the same rules: its length first,
- * the file's when it has none, and HDR and a turn other than a quarter turn refused. The codec is the import's own
- * check, because the editor's probe does not look at it and AVFoundation then shows nothing.
+ * The movie's video as the editor reads it, or why the editor does not play the movie, in the import's words. It
+ * reads the stream the editor's probe reads (the first video stream) by the same rules: its length first, the file's
+ * when it has none, and a turn other than a quarter turn refused. The codec is the import's own check, because the
+ * editor's probe does not look at it and AVFoundation then shows nothing. An HDR movie (PQ or HLG) is taken as it is:
+ * the editor plays it, and its export decides (H.264 is SDR, HEVC stays HDR).
  */
-async function editorVideoUs(source: string): Promise<number> {
+async function editorVideo(source: string): Promise<EditorVideo> {
     const raw = await runVideoCommand({
         command: [
             "ffprobe",
@@ -252,14 +262,6 @@ async function editorVideoUs(source: string): Promise<number> {
         );
     }
 
-    const hdr = HDR_TRANSFERS[video.color_transfer ?? ""];
-
-    if (hdr) {
-        throw new Error(
-            `${source} is an HDR movie (${hdr}); the editor takes SDR movies only: convert it to an SDR copy first (an app that exports SDR, or ffmpeg with its zscale and tonemap filters)`
-        );
-    }
-
     const rotation =
         (((video.side_data_list?.find((entry) => entry.rotation !== undefined)?.rotation ?? 0) % 360) + 360) % 360;
 
@@ -276,7 +278,8 @@ async function editorVideoUs(source: string): Promise<number> {
         throw new Error(`${source} is not a movie that plays: its video has no length`);
     }
 
-    return durationUs;
+    const hdr = HDR_TRANSFERS[video.color_transfer ?? ""];
+    return { durationUs, ...(hdr ? { hdr } : {}) };
 }
 
 const packetsSchema = z.object({ streams: z.array(z.object({ nb_read_packets: z.string().optional() })).default([]) });
@@ -320,9 +323,9 @@ function dropFolder(folder: string): void {
 
 /**
  * Imports a movie into the recordings library as a new recording. The file stays as it is: the library gets an APFS
- * clone where the disk can make one (no extra disk until one side changes), else a whole copy. The file is read first
- * as the editor reads it (its video codec, HDR, its turn, its video's length for the markers), so a refusal copies
- * nothing; then the editor's own probe of the copy (its size and length limits) decides that it plays before the
+ * clone where the disk can make one (no extra disk until one side changes), else a whole copy. An HDR movie is taken
+ * as it is. The file is read first as the editor reads it (its video codec, its turn, its video's length for the
+ * markers), so a refusal copies nothing; then the editor's own probe of the copy (its size and length limits) decides that it plays before the
  * folder becomes a recording. The markers are movie time
  * (`settings.markerClock` "movie"). A movie with sound keeps it: the manifest names the movie as its sound source, so
  * the editor plays, exports and transcribes it like a recording with system audio in its movie.
@@ -333,7 +336,8 @@ export async function importMovie(input: string, options: ImportMovieOptions = {
     const title = importTitle(options.title, source);
     // A marker the movie's video does not reach is refused before anything is copied, and again below against the
     // editor's own length, the one the manifest keeps, so the two can never disagree.
-    manifestMarkers(options.markers ?? [], await editorVideoUs(source));
+    const video = await editorVideo(source);
+    manifestMarkers(options.markers ?? [], video.durationUs);
     const now = options.now ?? new Date();
     const id = newVideoRecordingId(now);
     const folder = recordingsLibraryDir(id);
@@ -388,7 +392,10 @@ export async function importMovie(input: string, options: ImportMovieOptions = {
             warnings: [],
         };
         await writeRecordingManifest(folder, manifest);
-        log.debug({ id, folder, source, durationMs, frames, audioTracks, markers: markers.length }, "movie imported");
+        log.debug(
+            { id, folder, source, durationMs, frames, audioTracks, markers: markers.length, hdr: video.hdr },
+            "movie imported"
+        );
         return {
             id,
             folder,
@@ -400,6 +407,7 @@ export async function importMovie(input: string, options: ImportMovieOptions = {
             ...(averageFps === undefined ? {} : { averageFps }),
             audioTracks,
             markers: markers.map((marker) => ({ at: marker.atMs / 1000, label: marker.label })),
+            ...(video.hdr ? { hdr: video.hdr } : {}),
         };
     } catch (error) {
         log.debug({ error, source, folder }, "the movie import failed");

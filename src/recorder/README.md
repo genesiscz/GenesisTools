@@ -320,6 +320,14 @@ take it like a recording. It writes the folder the recorder writes (`src/recorde
   does a recording with system audio in its movie. A movie without an audio track lists no source, and `transcript()`
   refuses it.
 
+An HDR movie (PQ or HLG, such as an iPhone's HDR video) is imported as it is. HDR is a wider range of brightness and
+colour, not more pixels. The editor plays it through AVFoundation, and the export's codec decides the result: an H.264
+export is SDR (BT.709; AVFoundation maps the tones), an HEVC export (`{"op":"exportSettings","codec":"hevc"}`) stays
+HDR (10-bit, the movie's own PQ or HLG), also with cuts and zooms. Checked 2026-11-22 on PQ and HLG test movies up to
+3840 x 2160. The CLI and the REPL say that the movie is HDR (`hdr` in the answer). A GIF or WebM is made by ffmpeg
+from the rendered movie, so make it from an H.264 render (the default codec): from an HEVC render of an HDR movie it
+gets the colours without tone mapping.
+
 A marker is `--marker <time>=<label>` (`0:12=Login done`; `{ at, label }` in the REPL, `at` in source seconds or
 `m:ss`), with a label of 1 to 80 characters. A marker outside the movie's video is refused: when the sound runs on
 past the video, the editor plays only the video's length. A file that is not a movie the editor plays is refused too,
@@ -330,7 +338,6 @@ each with its reason, and the import reads the file the way the editor's probe d
   `AVURLAsset` on macOS 27), with an ffmpeg line that converts it to H.264;
 - HEVC tagged `hev1` (ffmpeg's libx265 default in an .mp4), with an ffmpeg line that puts it under `hvc1` without
   encoding it again;
-- an HDR movie (PQ or HLG, such as an iPhone's HDR video): the editor takes SDR movies only;
 - a movie turned by anything but 0, 90, 180 or 270 degrees.
 
 The editor's own probe then reads the copy and refuses a movie over its limits (12 hours, 48 megapixels, 64 GiB). A
@@ -338,7 +345,7 @@ refusal makes nothing; when the editor refuses the copy, its folder goes to the 
 
 `movies.import()` returns the recording as a `Movie`, as `movies.open()` does, because the next call is an edit; the
 CLI prints the folder on stdout and the id on stderr, and `--json` prints `{ id, folder, title, movie, source, seconds,
-frames, averageFps, audioTracks, markers }`. `tools recorder trash <id>` removes it again.
+frames, averageFps, audioTracks, markers, hdr? }`. `tools recorder trash <id>` removes it again.
 
 ### Demo mode: one call, a finished demo
 
@@ -948,6 +955,12 @@ again); the first run may ask for the AI vault key in GenesisTools.app. A movie 
 - **"GenesisTools.app has no recorder part yet: building it".** The installed app lacks the recorder part, and the
   CLI builds it (about a minute). From the REPL, run `tools macos permissions build --add-part recorder` in a shell
   first.
+- **The app build stops with "unable to type-check this expression in reasonable time".** Seen with the Command Line
+  Tools (no Xcode), which build against the 26.5 SDK: split the named expression into typed `let` steps. Find the next
+  ones before they fail with `-Xswiftc -Xfrontend -Xswiftc -warn-long-expression-type-checking=400`.
+- **A hand-written ffmpeg command fails with "Unrecognized option 'filter_complex_script'".** ffmpeg 9 removed that
+  option: read the graph from a file with `-/filter_complex <file>`. The recorder's own commands pass
+  `-filter_complex` and are not affected.
 - **A start fails with a permission error.** Grant Screen Recording (and Microphone or Camera when you record them)
   in System Settings. `tools macos permissions` exits 1 while a grant is missing.
 - **`--camera` is refused.** The menu bar recorder must run, because only it writes `camera.mov`. Start it with
