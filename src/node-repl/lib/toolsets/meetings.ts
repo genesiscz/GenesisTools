@@ -1,6 +1,5 @@
 import { prepareFindings } from "@app/meetings/lib/add-findings";
 import { type ByChannelOptions, byChannelOptionsSchema } from "@app/meetings/lib/by-channel";
-import { captureCost } from "@app/meetings/lib/capture-cost";
 import { attributeByChannel, channelEvidence, lineEligibilityFor } from "@app/meetings/lib/channel-operation";
 import { configValueAt, parseConfigPath, setConfigValue } from "@app/meetings/lib/config-edit";
 import { decideItems, reopenItems } from "@app/meetings/lib/decide";
@@ -9,6 +8,7 @@ import { liveMeetingLevels, savedMeetingLevels } from "@app/meetings/lib/levels"
 import { lookMeeting } from "@app/meetings/lib/look";
 import { matchPreview } from "@app/meetings/lib/match-preview";
 import { projectLabels, setMeetingFields } from "@app/meetings/lib/meeting-fields";
+import { captureBlockersRead, quitCaptureBlockersNow } from "@app/meetings/lib/never-capture";
 import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
 import { meetingsOverview } from "@app/meetings/lib/overview";
 import { startMeetingRecording } from "@app/meetings/lib/record-start";
@@ -88,7 +88,7 @@ import { correctTranscript, outcomeText } from "@app/meetings/lib/transcript-cor
 import { voiceReadiness as readVoiceReadiness } from "@app/meetings/lib/voice-readiness";
 import { watchOnce } from "@app/meetings/lib/watch";
 import { recordingAutostart } from "@app/meetings/lib/watcher";
-import { rowsRead } from "@app/meetings/lib/window-reads";
+import { captureCostRead, rowsRead } from "@app/meetings/lib/window-reads";
 import { assertReach } from "@genesiscz/utils/api-descriptor";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -300,8 +300,9 @@ export class MeetingsToolset extends ReplToolset {
                     },
                 },
                 watchOnce: () => watchOnce(store),
-                captureCost: async () =>
-                    captureCost({ store, records: store.list(), config: await new MeetingsConfigStore().read() }),
+                captureCost: () => captureCostRead({ store }),
+                captureBlockers: () => captureBlockersRead(),
+                quitCaptureBlockers: () => quitCaptureBlockersNow(),
                 projects: {
                     preview: async (input: z.input<typeof projectsPreview.params> = {}) => {
                         const parsed = projectsPreview.params.parse(input);

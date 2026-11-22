@@ -53,6 +53,8 @@ class GrantRecorder extends FrameRecorder {
         liveControl: false,
         parallelCaptures: true,
         audio: true,
+        frameSource: false,
+        captureBlockers: false,
     };
 
     constructor(private readonly stop: () => Promise<unknown>) {

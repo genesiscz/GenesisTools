@@ -39,7 +39,7 @@ if (args[0] === "--help") {
         "capture: [--display-id ID] [--follow-focus] [--max-long-side PX] [--control-stdin] mute/unmute | set-mic | set-fps | set-threshold | set-max-long-side\n  [--audio system,mic] [--mic-device UID] [--audio-sidecar]\n  ax-tool audio-devices\n" +
             (fixtureMode === "--fixture-no-audio-session"
                 ? ""
-                : "  ax-tool audio-record --sources mic,system --segment-sec 60 [--without-screen] [--monitor] [--levels]\n")
+                : "  ax-tool audio-record --sources mic,system --segment-sec 60 [--without-screen] [--prefer-tap] [--monitor] [--levels]\n")
     );
     process.exit(0);
 }
@@ -189,6 +189,13 @@ if (args[0] === "audio-record") {
         process.exit(1);
     }
 
+    // As the real tool: one event at the start says which way the system sound comes.
+    print(
+        args.includes("--prefer-tap")
+            ? { event: "audio-path", path: "tap" }
+            : { event: "audio-path", path: "stream", reason: "the tap was not asked for" },
+        "stderr"
+    );
     state();
     if (fixtureMode === "--fixture-audio-exit-open-pipes") {
         // A descendant can keep the pipes open after the process exits. Its lifetime is bounded, not polled.

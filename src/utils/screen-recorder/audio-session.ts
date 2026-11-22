@@ -263,11 +263,18 @@ const eventSchema = z.discriminatedUnion("event", [
     z.object({ event: z.literal("error"), message: z.string(), code: z.string().optional() }),
     /** How long after its spawn the native session reached a start step (launched, capture-started, first-buffer-mic). */
     z.object({ event: z.literal("timing"), step: z.string(), sinceSpawnMs: z.number().nullable() }),
+    /** Which way the system sound comes, said once at the start: the Core Audio tap, or the display stream and why. */
+    z.object({ event: z.literal("audio-path"), path: z.enum(["tap", "stream"]), reason: z.string().optional() }),
 ]);
 type AudioEvent = z.infer<typeof eventSchema>;
 
 export interface RecorderAudioOptions {
     withoutScreen?: boolean;
+    /**
+     * The system sound through the Core Audio tap first (`--prefer-tap`), so the session opens no display stream; the
+     * stream when the tap cannot start. A tool without the flag records as before.
+     */
+    preferTap?: boolean;
     folder: string;
     /** Under the piece folder, so P14's salvage sees any file a killed process left open. */
     outDir: string;
@@ -280,7 +287,11 @@ export interface RecorderAudioOptions {
     onWarning?: (warning: string) => void;
     onFailure?: (error: Error) => void;
     onLevels?: (block: AudioLevelBlock) => void;
+    /** The way the system sound comes, as the native session says at its start. */
+    onSystemPath?: (path: AudioSystemPath, reason?: string) => void;
 }
+
+export type AudioSystemPath = "tap" | "stream";
 
 type AudioMonitorOptions = Omit<RecorderAudioOptions, "folder" | "outDir"> & { monitorOnly: true };
 type SessionOptions = (RecorderAudioOptions | AudioMonitorOptions) & {
@@ -300,6 +311,10 @@ export function recordsAudioSession(recorder: FrameRecorder): recorder is FrameR
 export class AudioSession {
     readonly warnings: string[] = [];
     sources: AudioSource[] = [];
+    /** The way the system sound comes; unset until the native session says it (an older tool never does). */
+    systemPath?: AudioSystemPath;
+    /** Why the system sound comes through the display stream, when the session said. */
+    systemPathReason?: string;
     private readonly proc;
     private readonly ready = Promise.withResolvers<void>();
     /** When the native process was spawned (`Date.now()`), for the start steps it reports. */
@@ -325,6 +340,7 @@ export class AudioSession {
             ...options.argv,
             "audio-record",
             ...(options.withoutScreen ? ["--without-screen"] : []),
+            ...(options.preferTap ? ["--prefer-tap"] : []),
             "--sources",
             options.request.sources.join(","),
             ...(options.request.micDeviceId ? ["--mic-device", options.request.micDeviceId] : []),
@@ -460,6 +476,11 @@ export class AudioSession {
                 { step: event.step, sinceSpawnMs: event.sinceSpawnMs, sinceSpawnCallMs: Date.now() - this.spawnedAt },
                 "sound session start step"
             );
+        } else if (event.event === "audio-path") {
+            this.systemPath = event.path;
+            this.systemPathReason = event.reason;
+            log.info({ path: event.path, reason: event.reason }, "system sound path");
+            this.options.onSystemPath?.(event.path, event.reason);
         } else if (event.event === "warning") {
             this.warnings.push(event.message);
             this.options.onWarning?.(event.message);

@@ -149,6 +149,8 @@ class FakeRecorder extends FrameRecorder {
         liveControl: true,
         parallelCaptures: true,
         audio: false,
+        frameSource: false,
+        captureBlockers: false,
     };
     readonly calls: string[] = [];
 
@@ -348,6 +350,15 @@ describe("browser toolset", () => {
 });
 
 describe("toolset method names", () => {
+    test("captureBlockers and quitCaptureBlockers are meetings methods that name their CLI twins", () => {
+        const api = new MeetingsToolset().api;
+        expect(describeMethod([api], "meetings.captureBlockers")).toContain("meetings record blockers");
+        expect(describeMethod([api], "meetings.quitCaptureBlockers")).toContain("meetings record blockers --quit");
+        expect(describeMethod([api], "meetings.captureCost")).toContain("meetings record cost");
+        expect(api.methods.find((method) => method.name === "captureBlockers")?.effect).toBe("read");
+        expect(api.methods.find((method) => method.name === "quitCaptureBlockers")?.effect).toBe("reversible");
+    });
+
     test("P3 voice library REPL commands document their CLI twins and forward scoped requests", async () => {
         const api = new MeetingsToolset().api;
         const { voices } = await loadMeetings();

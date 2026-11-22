@@ -14,6 +14,7 @@ import {
     SOURCE_COPY_FOLDER,
     type SpeakerAssignment,
 } from "@genesiscz/utils/meetings/record";
+import type { FrameRecorder } from "@genesiscz/utils/screen-recorder/types";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import type { TranscriptFormat } from "@genesiscz/utils/transcribe/render";
 import {
@@ -28,6 +29,7 @@ import { configValueAt, parseConfigPath } from "./config-edit";
 import { transcriptMarkdown } from "./export";
 import { localSpeechDbPath } from "./local-speech";
 import { type MatchDraft, matchDraftSchema } from "./match-preview";
+import { type CaptureBlockersView, captureBlockersRead } from "./never-capture";
 import { OpenedMeeting } from "./opened-meeting";
 import { type MeetingsOverview, meetingsOverview } from "./overview";
 import type { ReviewRows } from "./review-row-schema";
@@ -176,10 +178,22 @@ export async function revisionsRead(options: {
     });
 }
 
-/** `meetings record cost`: what a kept frame and each capture choice cost, from the recordings so far. */
-export async function captureCostRead(): Promise<ReturnType<typeof captureCost>> {
-    const store = new MeetingStore();
-    return captureCost({ store, records: store.list(), config: await new MeetingsConfigStore().read() });
+/**
+ * `meetings record cost`: what a kept frame and each capture choice cost, from the recordings so far, and a fresh read
+ * of the never-capture windows (no recording needed).
+ */
+export async function captureCostRead(
+    options: { store?: MeetingStore; recorder?: FrameRecorder } = {}
+): Promise<ReturnType<typeof captureCost> & { neverCapture: CaptureBlockersView }> {
+    const store = options.store ?? new MeetingStore();
+    const config = await new MeetingsConfigStore().read();
+    return {
+        ...captureCost({ store, records: store.list(), config }),
+        neverCapture: await captureBlockersRead({
+            config,
+            ...(options.recorder ? { recorder: options.recorder } : {}),
+        }),
+    };
 }
 
 /** `meetings config show [path]`: the config file's path and the value at `path` (the whole config without one). */

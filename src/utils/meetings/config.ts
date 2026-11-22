@@ -3,6 +3,10 @@ import { isDeepStrictEqual } from "node:util";
 import { logger } from "@genesiscz/utils/logger";
 import { DEFAULT_OCR_TILE_PX, OCR_READS } from "@genesiscz/utils/macos/ocr";
 import { FILLER_WORDS, type FillerLists } from "@genesiscz/utils/recording-editor/transcript-cuts";
+import {
+    DEFAULT_NEVER_CAPTURE_QUIT_APPS,
+    NEVER_CAPTURE_ACTIONS,
+} from "@genesiscz/utils/screen-recorder/capture-blockers";
 import { AUDIO_SOURCES, OCR_REGIONS } from "@genesiscz/utils/screen-recorder/control";
 import { FRAME_RECORDER_IDS, type FrameRecorderId } from "@genesiscz/utils/screen-recorder/types";
 import { Storage } from "@genesiscz/utils/storage/storage";
@@ -100,7 +104,22 @@ const nativeRecorderSchema = z.object({
             micDevice: z.string().optional(),
         })
         .prefault({}),
+    /**
+     * A display with a never-capture window (HazeOver's dimmer): every capture stream there makes WindowServer draw
+     * every window again. `fallback` takes screenshots on such a display and the system sound through the audio tap;
+     * `quit` quits the apps of `quitApps` (bundle ids) at the start and, with `relaunch`, starts them again at the end,
+     * and the rest get the fallback; `ignore` streams as before and only names the apps.
+     */
+    neverCapture: z
+        .object({
+            action: z.enum(NEVER_CAPTURE_ACTIONS).default("fallback"),
+            quitApps: z.array(z.string().trim().min(1)).default([...DEFAULT_NEVER_CAPTURE_QUIT_APPS]),
+            relaunch: z.boolean().default(true),
+        })
+        .prefault({}),
 });
+
+export type NeverCaptureSettings = z.infer<typeof nativeRecorderSchema>["neverCapture"];
 
 /** Peekaboo reads only the shared capture policy. */
 const peekabooRecorderSchema = z.object({});

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { abortableSleep } from "@genesiscz/utils/async";
 import { type JobInfo, JobRegistry, type JobStep } from "@genesiscz/utils/jobs";
 import { logger } from "@genesiscz/utils/logger";
@@ -7,9 +8,11 @@ import {
     type AudioCaptureChange,
     type AudioSegment,
     type AudioSession,
+    type AudioSystemPath,
     type RecorderAudioOptions,
     recordsAudioSession,
 } from "./audio-session";
+import { type CaptureBlockersStatus, type NeverCaptureAction, usedFrameSource } from "./capture-blockers";
 import {
     type AudioDevices,
     type AudioSource,
@@ -44,7 +47,15 @@ import {
     type SettingsScope,
 } from "./session";
 import type { PieceTarget } from "./targets";
-import { CaptureError, type CaptureRequest, type FrameRecorder, MAX_CAPTURE_SECONDS } from "./types";
+import {
+    type CaptureBlocker,
+    CaptureError,
+    type CaptureRequest,
+    type FrameRecorder,
+    type FrameSource,
+    MAX_CAPTURE_SECONDS,
+    type UsedFrameSource,
+} from "./types";
 
 const { log } = logger.scoped("screen-recorder-recording");
 
@@ -204,6 +215,8 @@ export interface RecorderHooks {
     onAudioSegment?: (segment: AudioSegment) => void;
     onAudioLevels?: RecorderAudioOptions["onLevels"];
     onAudioWarning?: (warning: string) => void;
+    /** What the status says about never-capture windows changed (`RecorderConfig.neverCapture`). */
+    onCaptureBlockers?: (status: CaptureBlockersStatus) => void;
     /** Before the first piece, once the socket listens; a throw ends the recording (`onError`). */
     beforeLoop?: () => Promise<void> | void;
     /** After the last piece, before the finish. */
@@ -299,6 +312,11 @@ export interface RecorderConfig<S> {
     stopOnSignals?: boolean;
     /** Which displays it records, and what the display calls do. */
     displays: DisplayChoice;
+    /**
+     * Read after `hooks.beforeLoop`, where a kind can look for never-capture windows first: the frame source of each
+     * piece, the sound path of the sound session, and the status the pieces then keep up to date. Unset: the stream.
+     */
+    neverCapture?: () => NeverCaptureSetup | undefined;
     /** The frames the kind has kept so far; the live count adds those the running captures announced. */
     keptFrames: () => number;
     pieces: {
@@ -323,6 +341,17 @@ export interface RecorderConfig<S> {
  * reach the recording's jobs, events and display book. `new FrameRecording(definition)` runs it.
  */
 export type RecorderDefinition<S> = (recording: FrameRecording<S>) => RecorderConfig<S>;
+
+/** How a recording handles displays with a never-capture window, as its kind decided before the loop. */
+export interface NeverCaptureSetup {
+    action: NeverCaptureAction;
+    /** The frame source of every new piece. */
+    frameSource: FrameSource;
+    /** The sound session takes the system sound through the Core Audio tap first. */
+    preferTap: boolean;
+    /** What the status says at the start; unset while there is nothing to say (no blocker, nothing quit). */
+    status?: CaptureBlockersStatus;
+}
 
 /** Declares a recorder kind's configuration; the identity, so the config is typed where it is written. */
 export function defineRecorderConfig<S>(definition: RecorderDefinition<S>): RecorderDefinition<S> {
@@ -371,6 +400,11 @@ export class FrameRecording<S = unknown> extends RecorderControl {
     private readonly soundNotes: string[] = [];
     private currentSoundPath: RecordingSoundPath = { path: "pieces" };
     private readonly marked: RecordingMarker[] = [];
+    /** The never-capture handling the kind chose before the loop, read once after `beforeLoop`. */
+    private neverCaptureSetup?: NeverCaptureSetup;
+    private blockers?: CaptureBlockersStatus;
+    /** The frame source each display's newest capture reported. */
+    private readonly frameSources = new Map<number, UsedFrameSource>();
     protected readonly config: RecorderConfig<S>;
 
     /** A definition is called once, here; its hooks run only after `open()`. */
@@ -401,6 +435,7 @@ export class FrameRecording<S = unknown> extends RecorderControl {
                 thresholdPercent: this.current.threshold,
                 maxLongSidePx: this.current.maxLongSide,
                 ...config.pieces.request?.(this.current),
+                ...(this.neverCaptureSetup ? { frameSource: this.neverCaptureSetup.frameSource } : {}),
                 durationSec: this.pieceSec,
             }),
             // A muted source is left out of a new capture, so its start-up buffers never reach the file; unmuting
@@ -449,9 +484,23 @@ export class FrameRecording<S = unknown> extends RecorderControl {
                         channel.pause();
                     }
                 },
+                onFrameSource: (capture, event) =>
+                    this.noteNeverCapture({
+                        displayId: event.displayId ?? capture.target.displayId,
+                        frames: event.source,
+                        apps: event.neverCapture,
+                    }),
                 onResult: async (capture, result) => {
                     this.displayBook.align(capture, result);
                     this.closeDisplay(capture);
+
+                    if (result.frameSource) {
+                        this.noteNeverCapture({
+                            displayId: capture.target.displayId,
+                            frames: result.frameSource,
+                            apps: result.neverCapture ?? [],
+                        });
+                    }
 
                     try {
                         return await kind.onResult?.(capture, result);
@@ -612,7 +661,71 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             ...(entry.lastFrameAt ? { lastFrameAt: entry.lastFrameAt } : {}),
             ...(entry.warning ? { warning: entry.warning } : {}),
             ...(entry.folder ? { folder: entry.folder } : {}),
+            ...(this.blockers ? { captureBlockers: this.blockers } : {}),
         };
+    }
+
+    /** The never-capture status of the recording, kept up to date from its captures and its sound session. */
+    get captureBlockers(): CaptureBlockersStatus | undefined {
+        return this.blockers;
+    }
+
+    /**
+     * A capture or the sound session said which way it takes the frames or the sound, and which never-capture windows
+     * it saw. The status changes, and its kind hears of it, only when something in it changed.
+     */
+    private noteNeverCapture(change: {
+        displayId?: number;
+        frames?: UsedFrameSource;
+        apps?: readonly CaptureBlocker[];
+        sound?: AudioSystemPath;
+    }): void {
+        const setup = this.neverCaptureSetup;
+
+        if (!setup) {
+            return;
+        }
+
+        if (change.displayId !== undefined && change.frames) {
+            this.frameSources.set(change.displayId, change.frames);
+        }
+
+        const before = this.blockers;
+        const apps = [...(before?.apps ?? [])];
+
+        for (const app of change.apps ?? []) {
+            const known = apps.findIndex((one) => one.name === app.name && one.bundleId === app.bundleId);
+            const displays = [...new Set([...(known >= 0 ? apps[known].displays : []), ...app.displays])].sort(
+                (a, b) => a - b
+            );
+            const row = { name: app.name, ...(app.bundleId ? { bundleId: app.bundleId } : {}), displays };
+
+            if (known >= 0) {
+                apps[known] = row;
+            } else {
+                apps.push(row);
+            }
+        }
+
+        const next: CaptureBlockersStatus = {
+            apps,
+            action: setup.action,
+            frames:
+                this.frameSources.size > 0 ? usedFrameSource(this.frameSources.values()) : (before?.frames ?? "stream"),
+            sound: change.sound ?? before?.sound ?? "stream",
+            quit: before?.quit ?? [],
+        };
+
+        if (!before && next.apps.length === 0) {
+            return;
+        }
+
+        if (before && isDeepStrictEqual(before, next)) {
+            return;
+        }
+
+        this.blockers = next;
+        this.config.hooks.onCaptureBlockers?.(next);
     }
 
     async pause(): Promise<{ state: RecorderState }> {
@@ -958,6 +1071,12 @@ export class FrameRecording<S = unknown> extends RecorderControl {
                 outDir: join(this.config.pieces.dir, `audio-session-${randomUUID()}`),
                 request: { sources: this.sound.sources, micDeviceId: this.sound.micDevice },
                 withoutScreen: this.config.soundOnly,
+                preferTap: this.neverCaptureSetup?.preferTap === true,
+                onSystemPath: (path) => {
+                    if (!retired) {
+                        this.noteNeverCapture({ sound: path });
+                    }
+                },
                 muted: this.sound.sources.filter((source) => this.sound.muted[source]),
                 paused: this.paused,
                 signal: this.soundAbort.signal,
@@ -1072,6 +1191,8 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             this.captures.abortAll();
         }
         this.config.hooks.onSoundPath?.(this.currentSoundPath);
+        // The pieces take the system sound with their display stream.
+        this.noteNeverCapture({ sound: "stream" });
         // No fixed gap is promised: the sound between two pieces is missing, and how much depends on the pieces.
         this.soundWarning(
             this.soundSessionRan
@@ -1102,6 +1223,8 @@ export class FrameRecording<S = unknown> extends RecorderControl {
 
         try {
             await hooks.beforeLoop?.();
+            this.neverCaptureSetup = this.config.neverCapture?.();
+            this.blockers = this.neverCaptureSetup?.status;
             await this.managed().ready();
             this.startingSound = this.startSound();
             await this.startingSound;

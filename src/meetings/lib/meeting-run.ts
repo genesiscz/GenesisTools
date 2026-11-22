@@ -24,7 +24,7 @@ import {
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readJsonlRows } from "@genesiscz/utils/jsonl";
-import { type MeetingsConfig, recorderSettings } from "@genesiscz/utils/meetings/config";
+import { type MeetingsConfig, type NeverCaptureSettings, recorderSettings } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord, MeetingStore, RecordingBlock } from "@genesiscz/utils/meetings/record";
 import {
     type AudioCaptureChange,
@@ -33,15 +33,17 @@ import {
     finishAudioHandoffs,
     salvagedAudioTiming,
 } from "@genesiscz/utils/screen-recorder/audio-session";
+import type { CaptureBlockersStatus } from "@genesiscz/utils/screen-recorder/capture-blockers";
 import { AUDIO_SOURCES, type AudioState, type RecorderSettings } from "@genesiscz/utils/screen-recorder/control";
 import { PolicyDisplays } from "@genesiscz/utils/screen-recorder/display-choice";
 import type { FrameOutput, KeptFrame } from "@genesiscz/utils/screen-recorder/frame-output";
-import type { FrameRecording } from "@genesiscz/utils/screen-recorder/recording";
+import type { FrameRecording, NeverCaptureSetup } from "@genesiscz/utils/screen-recorder/recording";
 import type { PieceTarget } from "@genesiscz/utils/screen-recorder/targets";
-import type { CaptureResult } from "@genesiscz/utils/screen-recorder/types";
+import type { CaptureBlocker, CaptureResult } from "@genesiscz/utils/screen-recorder/types";
 import { z } from "zod";
 import { CallTimeline } from "./call-timeline";
 import { appendFrameIndex, readFrameIndex } from "./frame-index";
+import { appsOnDisplays, relaunchQuitApps, startNeverCapture } from "./never-capture";
 import { LiveOcrSettings, meetingOcrSettings, OCR_SETTINGS_FILE } from "./ocr-worker";
 import { type RecorderStateFile, RecordingRecord } from "./recorder-adapters";
 import { meetingMovieZeroMs } from "./recording-manifest";
@@ -99,6 +101,10 @@ export class MeetingRun {
     readonly audio: AudioState;
     readonly audioMode: "pieces" | "session";
     readonly nativeKeys: NativeKeys;
+    /** `capture.recorders.native.neverCapture`; unset for a recorder without that block. */
+    readonly neverCaptureSettings?: NeverCaptureSettings;
+    /** What the start decided about never-capture windows (`prepareNeverCapture`); unset: the stream. */
+    neverCaptureSetup?: NeverCaptureSetup;
     readonly state: RecorderState;
     readonly notes: string[] = [];
     readonly recordingRecord: RecordingRecord;
@@ -118,6 +124,8 @@ export class MeetingRun {
     private soundJournalReady = false;
     private zeroMs?: number;
     private microphoneDropped = false;
+    /** The apps this run quit at its start, started again at its end. */
+    private readonly quitForRecording: CaptureBlocker[] = [];
 
     constructor(
         options: RunRecorderOptions & {
@@ -152,8 +160,9 @@ export class MeetingRun {
         this.pieceDir = join(this.folder, ".piece");
         this.soundEventsFile = join(this.pieceDir, "sound-events.jsonl");
         this.ocrSettings = new LiveOcrSettings(join(this.folder, OCR_SETTINGS_FILE));
-        const { audio: audioConfig, ...nativeKeys } = recorderSettings(capture, deps.recorder.id);
+        const { audio: audioConfig, neverCapture, ...nativeKeys } = recorderSettings(capture, deps.recorder.id);
         this.nativeKeys = nativeKeys;
+        this.neverCaptureSettings = neverCapture;
         this.audioMode = options.withoutScreen ? "session" : (audioConfig?.mode ?? "pieces");
         this.settings = {
             activeFps: capture.activeFps,
@@ -304,6 +313,80 @@ export class MeetingRun {
                 { err, meeting: this.meetingId },
                 "the OCR worker could not be started; the watcher starts it later"
             );
+        }
+    }
+
+    /**
+     * Before the first piece: looks for never-capture windows, quits the allow-listed apps with action `quit`, and
+     * plans the frame source and the sound path. A sound-only run and a recorder that cannot list them skip it.
+     */
+    async prepareNeverCapture(): Promise<void> {
+        const settings = this.neverCaptureSettings;
+
+        if (this.state.withoutScreen || !settings) {
+            return;
+        }
+
+        const start = await startNeverCapture({
+            recorder: this.deps.recorder,
+            settings,
+            soundSession:
+                this.deps.recorder.supports.audio &&
+                this.audioMode === "session" &&
+                this.audio.sources.includes("system"),
+            onQuit: (apps) => this.quitForRecording.push(...apps),
+        });
+
+        if (!start) {
+            return;
+        }
+
+        this.neverCaptureSetup = start.setup;
+
+        if (start.setup.status) {
+            this.state.captureBlockers = start.setup.status;
+        }
+
+        if (start.note) {
+            this.note(start.note);
+            this.state.warning = this.notes.join("; ");
+        }
+
+        this.saveState();
+    }
+
+    /** The recording's never-capture status changed (a piece or the sound session said which way it went). */
+    noteCaptureBlockers(status: CaptureBlockersStatus): void {
+        this.state.captureBlockers = status;
+
+        // The plan was screenshots, and the captures streamed all the same: the user must hear why the screen is slow.
+        if (this.neverCaptureSetup?.frameSource === "auto" && status.apps.length > 0 && status.frames === "stream") {
+            this.note(
+                `Never-capture windows: ${appsOnDisplays(status.apps)}. The frames stay on the capture stream there, so the screen is slower while it records. The usual reason is sound recorded inside the screen pieces (capture.recorders.native.audio.mode pieces); with session the recorder takes screenshots`
+            );
+            this.state.warning = this.notes.join("; ");
+        }
+
+        this.saveState();
+    }
+
+    /** Starts the apps this run quit again, when the setting says so; an app that does not start is a note. */
+    async relaunchQuitApps(): Promise<void> {
+        const apps = this.quitForRecording.splice(0);
+
+        if (apps.length === 0 || this.neverCaptureSettings?.relaunch === false) {
+            return;
+        }
+
+        const failures = await relaunchQuitApps({ recorder: this.deps.recorder, apps });
+
+        for (const failure of failures) {
+            this.note(failure);
+        }
+
+        if (failures.length > 0) {
+            this.state.warning = this.notes.join("; ");
+            this.saveState();
         }
     }
 

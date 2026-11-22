@@ -2,6 +2,7 @@ import type { JobInfo } from "@genesiscz/utils/jobs";
 import { OCR_READS } from "@genesiscz/utils/macos/ocr";
 import { JSON_RPC_ERRORS, RPC_CANCELLED, RpcError } from "@genesiscz/utils/rpc/errors";
 import { z } from "zod";
+import type { CaptureBlockersStatus } from "./capture-blockers";
 import type { DisplayInfo } from "./types";
 
 /** Every method a recorder can serve, by its JSON-RPC name. A recorder lists the ones it implements in `methods`. */
@@ -78,6 +79,8 @@ export interface RecorderStatus {
     elapsedRunning?: boolean;
     limitMs?: number;
     segments?: number;
+    /** The never-capture windows on the recorded displays and the way frames and sound take because of them. */
+    captureBlockers?: CaptureBlockersStatus;
 }
 
 export type DisplayEntry = DisplayInfo & { recorded: boolean };

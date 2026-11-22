@@ -76,6 +76,39 @@ describe("continuous sound over the fake tool", () => {
             expect((await session.stop()).segments).toBe(0);
         }
     });
+    test("preferTap reaches audio-record when its help names it, and the session says which way the system sound came", async () => {
+        const dir = folder();
+        const recorder = new NativeFrameRecorder({
+            axTool: async () => [process.execPath, fake],
+            launch: (argv) => argv,
+        });
+        const paths: string[] = [];
+        const outDir = join(dir, ".piece", "sound");
+        const session = await recorder.startAudioSession({
+            folder: dir,
+            outDir,
+            request: { sources: ["system"] },
+            preferTap: true,
+            onSystemPath: (path) => paths.push(path),
+        });
+        try {
+            const argv = z.array(z.string()).parse(SafeJSON.parse(readFileSync(join(outDir, "argv.json"), "utf8")));
+            expect(argv).toContain("--prefer-tap");
+            expect(session?.systemPath).toBe("tap");
+            expect(paths).toEqual(["tap"]);
+        } finally {
+            await session?.stop();
+        }
+
+        const plain = await start(folder());
+        try {
+            expect(plain.systemPath).toBe("stream");
+            expect(plain.systemPathReason).toBe("the tap was not asked for");
+        } finally {
+            await plain.stop();
+        }
+    });
+
     test("muted and paused state reaches the process launch before its first samples", async () => {
         const dir = folder();
         const options = {

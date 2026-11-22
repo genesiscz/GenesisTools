@@ -576,9 +576,26 @@ export const captureCostMethod = defineMethod({
     name: "captureCost",
     params: z.object({}).strict(),
     result: z.unknown(),
-    resultName: "{ keptFrameCpuMs, observed?, displays, activeFps, idleFps, threshold }",
+    resultName: "{ keptFrameCpuMs, observed?, displays, activeFps, idleFps, threshold, neverCapture }",
     effect: "read",
-    doc: "The CPU each capture choice costs: the bench's cost per kept frame and the newest real recording's frame rate.",
+    doc: `The CPU each capture choice costs: the bench's cost per kept frame and the newest real recording's frame rate, and neverCapture: a fresh read of the never-capture windows (as captureBlockers()). CLI twin: ${toolCommand("meetings", "record", "cost")}.`,
+});
+export const captureBlockersMethod = defineMethod({
+    name: "captureBlockers",
+    params: z.object({}).strict(),
+    result: z.unknown(),
+    resultName:
+        "{ listed, reason?, apps?: { pid, name, bundleId?, windows, displays, allowListed }[], action, quitApps, relaunch }",
+    effect: "read",
+    doc: `The apps that keep a never-capture window on a display (each capture stream there slows the whole screen), read fresh, and the capture.recorders.native.neverCapture setting. listed false: the recorder cannot list them, which is not none. CLI twin: ${toolCommand("meetings", "record", "blockers")}.`,
+});
+export const quitCaptureBlockersMethod = defineMethod({
+    name: "quitCaptureBlockers",
+    params: z.object({}).strict(),
+    result: z.unknown(),
+    resultName: "{ listed, reason?, quit, stayed, outside, configKey }",
+    effect: "reversible",
+    doc: `Quits the never-capture apps of the allow list (capture.recorders.native.neverCapture.quitApps) now; an app outside it is never quit and comes back in outside, with configKey naming the list. CLI twin: ${toolCommand("meetings", "record", "blockers", "--quit")}.`,
 });
 export const screenTimelineMethod = defineMethod({
     name: "screenTimeline",
@@ -887,6 +904,8 @@ export const meetingsToolsetApi = defineApi({
         audioApply,
         configSet,
         captureCostMethod,
+        captureBlockersMethod,
+        quitCaptureBlockersMethod,
         recordStart,
         autostartMethod,
         watchOnceMethod,

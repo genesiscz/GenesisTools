@@ -92,6 +92,8 @@ export class PeekabooFrameRecorder extends FrameRecorder {
         // operation lock".
         parallelCaptures: false,
         audio: false,
+        frameSource: false,
+        captureBlockers: false,
     };
 
     async available(): Promise<{ ok: true } | { ok: false; reason: string }> {

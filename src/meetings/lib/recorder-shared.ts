@@ -18,6 +18,7 @@ import {
     recordingDisplaySpanSchema,
 } from "@genesiscz/utils/meetings/record";
 import { inspectPidFile } from "@genesiscz/utils/process/pidfile";
+import { captureBlockersStatusSchema } from "@genesiscz/utils/screen-recorder/capture-blockers";
 import type { AudioSource } from "@genesiscz/utils/screen-recorder/control";
 import { absoluteFrameName, type JpegConverter, sipsJpeg } from "@genesiscz/utils/screen-recorder/frame-output";
 import { liveRecordingId } from "@genesiscz/utils/screen-recorder/live";
@@ -95,6 +96,8 @@ const recorderStateSchema = z.object({
         ])
         .optional(),
     stopReason: z.enum(RECORDING_STOP_REASONS).optional(),
+    /** The never-capture windows the recording found, the path frames and sound take, and the apps it quit. */
+    captureBlockers: captureBlockersStatusSchema.optional(),
 });
 export type RecorderState = z.infer<typeof recorderStateSchema>;
 
@@ -220,9 +223,7 @@ export function defaultDeps(capture: MeetingsConfig["global"]["capture"]): Omit<
             const timer = setInterval(() => sample(Date.now()), intervalMs);
             return () => clearInterval(timer);
         },
-        recorder: FRAME_RECORDERS[capture.backend]({
-            axTool: async (options) => [await ensurePinnedBinaryAsync(options)],
-        }),
+        recorder: frameRecorderFor(capture),
         toJpeg: sipsJpeg,
         notify: async (note) => {
             await sendNotification({ ...note, group: "meetings" }).catch((err: unknown) =>
@@ -232,6 +233,13 @@ export function defaultDeps(capture: MeetingsConfig["global"]["capture"]): Omit<
         pieceSec: CHUNK_SEC,
         failurePauseMs: FAILURE_PAUSE_MS,
     };
+}
+
+/** The frame recorder the settings choose, with the pinned ax-tool. */
+export function frameRecorderFor(capture: MeetingsConfig["global"]["capture"]): FrameRecorder {
+    return FRAME_RECORDERS[capture.backend]({
+        axTool: async (options) => [await ensurePinnedBinaryAsync(options)],
+    });
 }
 
 export function errorText(err: unknown): string {
@@ -255,5 +263,5 @@ export interface RunRecorderOptions {
     deps?: Partial<RecorderDeps>;
 }
 
-/** The recorder's own keys of a capture request (`capture.recorders.<backend>`), without its sound. */
-export type NativeKeys = Omit<ReturnType<typeof recorderSettings>, "audio">;
+/** The recorder's own keys of a capture request (`capture.recorders.<backend>`), without its sound and never-capture handling. */
+export type NativeKeys = Omit<ReturnType<typeof recorderSettings>, "audio" | "neverCapture">;

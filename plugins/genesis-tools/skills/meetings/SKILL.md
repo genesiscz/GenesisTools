@@ -324,6 +324,12 @@ Set `global.capture.recorders.native.audio.mode` to `session` for continuous sou
 `pieces` records the sound inside the screen pieces, where sound between two pieces can be missing, and `record status`
 explains a fall back.
 
+A display with a never-capture window (HazeOver) slows the whole screen for every capture stream on it. `record status`
+names such apps and says whether the frames come by screenshot and the system sound through the audio tap; `record cost`
+lists them with the measured cost; `record blockers [--quit]` (REPL `meetings.captureBlockers()`,
+`meetings.quitCaptureBlockers()`) lists them or quits the allow-listed ones. The setting is
+`global.capture.recorders.native.neverCapture`: `action` `fallback` (default), `quit` or `ignore`, `quitApps`, `relaunch`.
+
 The recorded sound (`audio/`, `audio.jsonl` in each meeting folder) is kept for ever by default: the frames and OCR go
 after `global.capture.retentionDays` (30 days), but the sound goes only when `global.capture.audioRetentionDays` is set,
 that many days after the meeting's newest capture file. While it is unset, the `tools rm` cleanup presets also keep the

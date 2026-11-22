@@ -41,6 +41,7 @@ import {
     serializePidRecord,
     writePidFile,
 } from "@genesiscz/utils/process/pidfile";
+import type { LaunchFailure, LaunchTarget, QuitOutcome } from "@genesiscz/utils/screen-recorder/capture-blockers";
 import type { RecordingMarker } from "@genesiscz/utils/screen-recorder/control";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import {
@@ -53,11 +54,13 @@ import {
 import { NativeFrameRecorder } from "@genesiscz/utils/screen-recorder/native";
 import { pieceTargets } from "@genesiscz/utils/screen-recorder/targets";
 import {
+    type CaptureBlocker,
     CaptureError,
     type CaptureRequest,
     type CaptureResult,
     type DisplayInfo,
     FrameRecorder,
+    type UsedFrameSource,
 } from "@genesiscz/utils/screen-recorder/types";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { Storage } from "@genesiscz/utils/storage/storage";
@@ -4031,6 +4034,8 @@ describe("the meetings recorder loop", () => {
                 audio?: boolean;
                 /** Called as a `fail` or `timeout` step throws. */
                 onFail?: () => void;
+                /** Never-capture windows: each read takes the next list (the last one repeats); captures report the source. */
+                blockers?: { reads: CaptureBlocker[][]; frameSource?: UsedFrameSource };
             },
             private readonly whenDone: () => void
         ) {
@@ -4046,7 +4051,28 @@ describe("the meetings recorder loop", () => {
                 liveControl: this.script.liveControl === true,
                 parallelCaptures: this.script.parallel !== false,
                 audio: this.script.audio === true,
+                frameSource: this.script.blockers !== undefined,
+                captureBlockers: this.script.blockers !== undefined,
             };
+        }
+
+        /** The apps each quit was asked for, and each start again, by name. */
+        readonly quitCalls: string[][] = [];
+        readonly launchCalls: string[][] = [];
+
+        override async captureBlockers(): Promise<CaptureBlocker[] | undefined> {
+            const reads = this.script.blockers?.reads;
+            return reads ? (reads.length > 1 ? reads.shift() : reads[0]) : undefined;
+        }
+
+        override async quitApps(apps: CaptureBlocker[]): Promise<QuitOutcome> {
+            this.quitCalls.push(apps.map((app) => app.name));
+            return { gone: apps, stayed: [] };
+        }
+
+        override async launchApps(apps: LaunchTarget[]): Promise<LaunchFailure[]> {
+            this.launchCalls.push(apps.map((app) => app.name));
+            return [];
         }
 
         override async audioDevices() {
@@ -4085,6 +4111,11 @@ describe("the meetings recorder loop", () => {
             const startedAtMs = Date.now();
             let switchedAtMs = 0;
             let streamed: string | undefined;
+            const frameSource = this.script.blockers?.frameSource;
+
+            if (frameSource) {
+                request.hooks?.onFrameSource?.({ source: frameSource, displayId, neverCapture: [] });
+            }
 
             if (step === "hang" && this.script.liveControl) {
                 const path = join(request.outDir, "keep-0001.png");
@@ -4240,6 +4271,7 @@ describe("the meetings recorder loop", () => {
             return {
                 startedAtMs: Date.now() + this.piece * 1000,
                 frames: [{ path, atMs: 0, displayId, changePercent: 10, reason: "first" }],
+                ...(frameSource ? { frameSource } : {}),
             };
         }
     }
@@ -4265,6 +4297,9 @@ describe("the meetings recorder loop", () => {
         parallel?: boolean;
         /** The wait after a failed piece (0 by default). */
         failurePauseMs?: number;
+        blockers?: { reads: CaptureBlocker[][]; frameSource?: UsedFrameSource };
+        /** Overrides `capture.recorders.native.neverCapture`. */
+        neverCapture?: Partial<(typeof capture)["recorders"]["native"]["neverCapture"]>;
         /** What the test does over the socket as a capture fails. */
         onFail?: (call: (method: string, params?: unknown) => Promise<unknown>) => void;
         /** What the test does over the socket while the failure notice is sent (inside the finish); its answer is `notified`. */
@@ -4320,6 +4355,7 @@ describe("the meetings recorder loop", () => {
                 audio: options.audio || options.audioSources !== undefined,
                 parallel: options.parallel,
                 onFail: options.onFail ? () => options.onFail?.(call) : undefined,
+                blockers: options.blockers,
             },
             () => {
                 seenLive.push(...listLiveRecordings(liveDir).map((entry) => `${entry.kind} ${entry.state}`));
@@ -4338,10 +4374,19 @@ describe("the meetings recorder loop", () => {
                 });
             }
         );
+        const native = capture.recorders.native;
         const { state, rejected } = await runRecorder({
             store,
             meetingId: created.id,
-            capture,
+            capture: options.neverCapture
+                ? {
+                      ...capture,
+                      recorders: {
+                          ...capture.recorders,
+                          native: { ...native, neverCapture: { ...native.neverCapture, ...options.neverCapture } },
+                      },
+                  }
+                : capture,
             ...(options.lateSwitch ? { display: 1 } : {}),
             ...(options.audioSources
                 ? { audio: options.audioSources }
@@ -4395,6 +4440,109 @@ describe("the meetings recorder loop", () => {
             saved: store.read(created.id),
         };
     }
+
+    describe("never-capture windows at the start", () => {
+        const dimmer: CaptureBlocker = {
+            pid: 501,
+            name: "Dimmer",
+            bundleId: "com.example.dimmer",
+            path: "/Applications/Dimmer.app",
+            processLaunch: 785_000_000.5,
+            windows: 2,
+            displays: [1],
+        };
+        const shade: CaptureBlocker = {
+            pid: 502,
+            name: "Shade",
+            bundleId: "com.example.shade",
+            processLaunch: 785_000_001.5,
+            windows: 1,
+            displays: [1],
+        };
+
+        test("quit: the allow-listed app is quit, the rest gets screenshots, and the quit app starts again at the end", async () => {
+            const run = await recordWith({
+                displays: [[builtIn]],
+                steps: ["frames"],
+                blockers: { reads: [[dimmer, shade], [shade]], frameSource: "screenshot" },
+                neverCapture: { action: "quit", quitApps: ["com.example.dimmer"] },
+            });
+
+            expect(run.recorder.quitCalls).toEqual([["Dimmer"]]);
+            expect(run.recorder.launchCalls).toEqual([["Dimmer"]]);
+            expect(run.recorder.requests[0]?.frameSource).toBe("auto");
+            expect(run.state.captureBlockers).toEqual({
+                apps: [{ name: "Shade", bundleId: "com.example.shade", displays: [1] }],
+                action: "quit",
+                frames: "screenshot",
+                sound: "stream",
+                quit: [{ name: "Dimmer", bundleId: "com.example.dimmer", path: "/Applications/Dimmer.app" }],
+            });
+            expect(run.state.warning ?? "").not.toContain("Never-capture");
+        });
+
+        test("quit with relaunch off leaves the quit app closed; an app outside the list is never quit", async () => {
+            const run = await recordWith({
+                displays: [[builtIn]],
+                steps: ["frames"],
+                blockers: { reads: [[shade]] },
+                neverCapture: { action: "quit", quitApps: ["com.example.dimmer"], relaunch: false },
+            });
+
+            expect(run.recorder.quitCalls).toEqual([]);
+            expect(run.recorder.launchCalls).toEqual([]);
+            expect(run.state.captureBlockers?.quit).toEqual([]);
+        });
+
+        test("ignore: the stream stays and a note names the apps, their displays and the setting", async () => {
+            const run = await recordWith({
+                displays: [[builtIn]],
+                steps: ["frames"],
+                blockers: { reads: [[dimmer]] },
+                neverCapture: { action: "ignore" },
+            });
+
+            expect(run.recorder.requests[0]?.frameSource).toBe("stream");
+            expect(run.recorder.quitCalls).toEqual([]);
+            expect(run.state.captureBlockers).toMatchObject({ action: "ignore", frames: "stream" });
+            expect(run.state.warning).toContain("Never-capture windows: Dimmer on display 1.");
+            expect(run.state.warning).toContain("capture.recorders.native.neverCapture.action");
+        });
+
+        test("fallback (the default) plans screenshots without a note; no blocker leaves the status out", async () => {
+            const blocked = await recordWith({
+                displays: [[builtIn]],
+                steps: ["frames"],
+                blockers: { reads: [[dimmer]] },
+            });
+            expect(blocked.recorder.requests[0]?.frameSource).toBe("auto");
+            expect(blocked.state.captureBlockers).toMatchObject({ action: "fallback", frames: "screenshot", quit: [] });
+            expect(blocked.state.warning ?? "").not.toContain("Never-capture");
+
+            const clean = await recordWith({ displays: [[builtIn]], steps: ["frames"], blockers: { reads: [[]] } });
+            expect(clean.state.captureBlockers).toBeUndefined();
+        });
+
+        test("fallback whose captures stream all the same says so in a note", async () => {
+            const run = await recordWith({
+                displays: [[builtIn]],
+                steps: ["frames"],
+                blockers: { reads: [[dimmer]], frameSource: "stream" },
+            });
+
+            expect(run.recorder.requests[0]?.frameSource).toBe("auto");
+            expect(run.state.captureBlockers).toMatchObject({ action: "fallback", frames: "stream" });
+            expect(run.state.warning).toContain(
+                "Never-capture windows: Dimmer on display 1. The frames stay on the capture stream there"
+            );
+        });
+
+        test("a recorder that cannot list blockers keeps the stream and says nothing", async () => {
+            const run = await recordWith({ displays: [[builtIn]], steps: ["frames"] });
+            expect(run.recorder.requests[0]?.frameSource).toBeUndefined();
+            expect(run.state.captureBlockers).toBeUndefined();
+        });
+    });
 
     for (const keptFrame of [false, true]) {
         test(`a restarted recording closes the dead run at its own ${keptFrame ? "last indexed frame" : "start when no frame was kept"}`, async () => {

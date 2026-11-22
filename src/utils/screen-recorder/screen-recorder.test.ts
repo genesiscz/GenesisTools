@@ -23,6 +23,14 @@ import * as rm from "@genesiscz/utils/rm";
 import { z } from "zod";
 import { audioSegmentSchema } from "./audio-session";
 import {
+    type AxCommandResult,
+    type AxCommandRunner,
+    neverCapturePlan,
+    parseCaptureBlockers,
+    quitCaptureBlockers,
+    relaunchApps,
+} from "./capture-blockers";
+import {
     type DisplayEntry,
     OCR_READ_DEFAULTS,
     RECORDER_DISPATCH,
@@ -55,6 +63,7 @@ import {
     flagsInHelp,
     NativeFrameRecorder,
     NativeLiveCapture,
+    type NativeOptionalFlag,
     nativeArgv,
     parseNativeTrack,
 } from "./native";
@@ -64,6 +73,7 @@ import { type ScreenRect, type UnrecordableReason, unrecordableReason, type Wind
 import type { SessionCapture } from "./session";
 import { LibraryRecording, startRecording } from "./start";
 import {
+    type CaptureBlocker,
     type CapturedFrame,
     CaptureError,
     type CaptureRequest,
@@ -71,6 +81,7 @@ import {
     type DisplayInfo,
     FrameRecorder,
     type FrameRecorderSupport,
+    type FrameSourceEvent,
     type LiveCapture,
     type MotionBox,
 } from "./types";
@@ -218,6 +229,31 @@ describe("native capture argv", () => {
 
     test("the help text names a flag only as a whole word", () => {
         expect([...flagsInHelp("--max-mb-total <n>  --quiet-ms <ms>")]).toEqual(["--quiet-ms"]);
+        expect([
+            ...flagsInHelp("[--frame-source stream|screenshot|auto] [--prefer-tap] ax-tool capture-blockers"),
+        ]).toEqual(["--frame-source", "--prefer-tap", "capture-blockers"]);
+    });
+
+    test("the frame source: the stream needs no flag, auto is left out by an older ax-tool, screenshot needs the flag", () => {
+        const withFlag = flagsInHelp("--display-id --frame-source");
+        const without = flagsInHelp("--display-id");
+        const argvOf = (frameSource: CaptureRequest["frameSource"], flags: Set<NativeOptionalFlag>) =>
+            nativeArgv({ request: request({ frameSource }), flags, displays });
+
+        for (const flags of [withFlag, without]) {
+            expect(argvOf("stream", flags)).not.toContain("--frame-source");
+            expect(argvOf(undefined, flags)).not.toContain("--frame-source");
+        }
+
+        const auto = argvOf("auto", withFlag);
+        expect(auto.slice(auto.indexOf("--frame-source"), auto.indexOf("--frame-source") + 2)).toEqual([
+            "--frame-source",
+            "auto",
+        ]);
+        expect(argvOf("auto", without)).not.toContain("--frame-source");
+        const screenshot = argvOf("screenshot", withFlag);
+        expect(screenshot[screenshot.indexOf("--frame-source") + 1]).toBe("screenshot");
+        expect(captureKindOf(() => argvOf("screenshot", without))).toBe("unavailable");
     });
 
     test("error codes win over the message; old messages still map", () => {
@@ -311,6 +347,62 @@ describe("native capture over --control-stdin (a fake ax-tool)", () => {
         expect(parseNativeTrack(row)).not.toHaveProperty("startOffsetMs");
         expect(parseNativeTrack({ ...row, lostSpans: [[100, 1750]] })).toMatchObject({ lostSpans: [[100, 1750]] });
         expect(parseNativeTrack(row)).not.toHaveProperty("lostSpans");
+    });
+
+    test("a capture's frame source and its never-capture apps come back in the result", async () => {
+        const processes = await import("./process");
+        const dimmer = {
+            pid: 7,
+            name: "Dimmer",
+            bundleId: "com.example.dimmer",
+            processLaunch: 1.5,
+            windows: 1,
+            displays: [4],
+        };
+        const run = spyOn(processes, "runCaptureProcess").mockResolvedValue({
+            exitCode: 0,
+            stdout: SafeJSON.stringify({
+                ok: true,
+                data: {
+                    frames: [{ path: "/tmp/piece/keep-0001.png", timestampMs: 0 }],
+                    firstFrameEpochMs: 1_794_000_000_000,
+                    frameSource: "screenshot",
+                    neverCapture: [dimmer],
+                    warnings: ["a stream stayed on display 1 beside a never-capture window"],
+                },
+            }),
+            stderr: "",
+            timedOut: false,
+            aborted: false,
+        });
+        try {
+            const result = await recorder.capture(request({ outDir: mkdtempSync(join(tmpdir(), "frame-source-")) }));
+            expect(result.frameSource).toBe("screenshot");
+            expect(result.neverCapture).toEqual([dimmer]);
+        } finally {
+            run.mockRestore();
+        }
+    });
+
+    test("an ax-tool whose help names no capture-blockers answers undefined, not an empty list", async () => {
+        expect(await recorder.captureBlockers()).toBeUndefined();
+        expect(recorder.supports.captureBlockers).toBe(false);
+        expect(recorder.supports.frameSource).toBe(false);
+    });
+
+    test("a frame-source event reaches the hook with its apps; an unknown or malformed event changes nothing", () => {
+        const seen: FrameSourceEvent[] = [];
+        const channel = new NativeLiveCapture(() => undefined, 2, { onFrameSource: (event) => seen.push(event) });
+        const dimmer = { pid: 7, name: "Dimmer", bundleId: "com.example.dimmer", windows: 1, displays: [2] };
+        channel.receive(SafeJSON.stringify({ event: "frame-source", source: "screenshot", neverCapture: [dimmer] }));
+        channel.receive(SafeJSON.stringify({ event: "something-new", value: 1 }));
+        channel.receive(SafeJSON.stringify({ event: "frame-source", source: "a-new-source" }));
+        channel.receive(SafeJSON.stringify({ event: "frame-source", source: "stream", displayId: 4 }));
+
+        expect(seen).toEqual([
+            { source: "screenshot", displayId: 2, neverCapture: [dimmer] },
+            { source: "stream", displayId: 4, neverCapture: [] },
+        ]);
     });
 
     test("replacing a pending display switch clears its deadline and completes the replacement", async () => {
@@ -766,6 +858,8 @@ describe("library recording frames", () => {
             liveControl: false,
             parallelCaptures: true,
             audio: false,
+            frameSource: false,
+            captureBlockers: false,
         };
         readonly framesSeenAtCapture: number[] = [];
         folder = "";
@@ -1621,6 +1715,8 @@ describe("characterization: what a library recording asks its recorder for", () 
                 liveControl: true,
                 parallelCaptures: true,
                 audio: this.script.audio === true,
+                frameSource: false,
+                captureBlockers: false,
             };
         }
 
@@ -2802,5 +2898,143 @@ describe("unrecordableReason", () => {
         const dimmer = contract.cases.find((item) => item.reason === "overlay")?.window;
         expect(dimmer).toBeDefined();
         expect(unrecordableReason(dimmer as WindowFacts)).toBeUndefined();
+    });
+});
+
+describe("never-capture windows (capture-blockers)", () => {
+    const dimmer: CaptureBlocker = {
+        pid: 11,
+        name: "Dimmer",
+        bundleId: "com.example.dimmer",
+        path: "/Applications/Dimmer.app",
+        processLaunch: 785_432_123.5,
+        windows: 3,
+        displays: [1, 2, 4],
+    };
+    const shade: CaptureBlocker = {
+        pid: 12,
+        name: "Shade",
+        bundleId: "com.example.shade",
+        processLaunch: 9.5,
+        windows: 1,
+        displays: [2],
+    };
+    const unnamed: CaptureBlocker = { pid: 13, name: "Unnamed", windows: 1, displays: [1] };
+
+    /** A fake ax-tool runner: `capture-blockers` answers the pids still running, `quit-app` ends the pids that go. */
+    function fakeRunner(options: { running: CaptureBlocker[]; leaves: number[]; failLaunch?: string }) {
+        const calls: string[][] = [];
+        const running = [...options.running];
+        const run: AxCommandRunner = async (args): Promise<AxCommandResult> => {
+            calls.push(args);
+
+            if (args[0] === "capture-blockers") {
+                return { status: 0, stdout: SafeJSON.stringify({ ok: true, apps: running }), stderr: "" };
+            }
+
+            if (args[0] === "quit-app") {
+                const pid = Number(args[2]);
+
+                if (options.leaves.includes(pid)) {
+                    running.splice(
+                        running.findIndex((app) => app.pid === pid),
+                        1
+                    );
+                }
+
+                return { status: 0, stdout: SafeJSON.stringify({ ok: true, pid, requestAccepted: true }), stderr: "" };
+            }
+
+            if (args.includes(options.failLaunch ?? "\0")) {
+                return {
+                    status: 1,
+                    stdout: SafeJSON.stringify({ ok: false, error: "exact installed application was not found" }),
+                    stderr: "",
+                };
+            }
+
+            return { status: 0, stdout: SafeJSON.stringify({ ok: true }), stderr: "" };
+        };
+        return { run, calls };
+    }
+
+    test("the answer parses with its optional fields; another shape is refused", () => {
+        const answer = { ok: true, apps: [dimmer, { pid: 13, name: "Unnamed", windows: 1, displays: [1] }] };
+        expect(parseCaptureBlockers(answer)).toEqual([dimmer, unnamed]);
+        expect(() => parseCaptureBlockers({ ok: true, apps: [{ name: "no pid" }] })).toThrow();
+    });
+
+    test("the plan for each action", () => {
+        const quitApps = ["com.example.dimmer"];
+        expect(neverCapturePlan({ blockers: [dimmer], action: "ignore", quitApps })).toEqual({
+            quit: [],
+            frameSource: "stream",
+            preferTap: false,
+        });
+        expect(neverCapturePlan({ blockers: [dimmer], action: "fallback", quitApps })).toEqual({
+            quit: [],
+            frameSource: "auto",
+            preferTap: true,
+        });
+        expect(neverCapturePlan({ blockers: [], action: "fallback", quitApps })).toEqual({
+            quit: [],
+            frameSource: "auto",
+            preferTap: false,
+        });
+        // Only an allow-listed app with a launch time is quit; the rest gets the fallback.
+        expect(
+            neverCapturePlan({
+                blockers: [dimmer, shade, { ...dimmer, pid: 14, processLaunch: undefined }],
+                action: "quit",
+                quitApps,
+            })
+        ).toEqual({ quit: [dimmer], frameSource: "auto", preferTap: true });
+    });
+
+    test("a quit asks each app, waits for the ones that go, and names the one that stays", async () => {
+        const { run, calls } = fakeRunner({ running: [dimmer, shade, unnamed], leaves: [11] });
+        const outcome = await quitCaptureBlockers({ run, apps: [dimmer, shade, unnamed], pollMs: 1, deadlineMs: 30 });
+
+        expect(outcome.gone.map((app) => app.name)).toEqual(["Dimmer"]);
+        expect(outcome.stayed.map((app) => app.name)).toEqual(["Shade", "Unnamed"]);
+        expect(calls.filter((args) => args[0] === "quit-app")).toEqual([
+            ["quit-app", "--pid", "11", "--launch", "785432123.5"],
+            ["quit-app", "--pid", "12", "--launch", "9.5"],
+        ]);
+    });
+
+    test("an app outside the allow list is never asked to quit", async () => {
+        const { run, calls } = fakeRunner({ running: [dimmer, shade], leaves: [11, 12] });
+        const plan = neverCapturePlan({ blockers: [dimmer, shade], action: "quit", quitApps: ["com.example.dimmer"] });
+        const outcome = await quitCaptureBlockers({ run, apps: plan.quit, pollMs: 1, deadlineMs: 30 });
+
+        expect(outcome).toEqual({ gone: [dimmer], stayed: [] });
+        expect(calls.some((args) => args[0] === "quit-app" && args[2] === "12")).toBe(false);
+    });
+
+    test("a start again takes the bundle id, else the path, and names the apps that did not start", async () => {
+        const { run, calls } = fakeRunner({ running: [], leaves: [], failLaunch: "com.example.shade" });
+        const failures = await relaunchApps({
+            run,
+            apps: [
+                { name: "Dimmer", bundleId: "com.example.dimmer" },
+                { name: "Local", path: "/Applications/Local.app" },
+                { name: "Shade", bundleId: "com.example.shade" },
+                { name: "Nowhere" },
+            ],
+        });
+
+        expect(calls).toEqual([
+            ["launch-app", "--bundle-id", "com.example.dimmer", "--background"],
+            ["launch-app", "--path", "/Applications/Local.app", "--background"],
+            ["launch-app", "--bundle-id", "com.example.shade", "--background"],
+        ]);
+        expect(failures).toEqual([
+            {
+                app: { name: "Shade", bundleId: "com.example.shade" },
+                reason: "exact installed application was not found",
+            },
+            { app: { name: "Nowhere" }, reason: "it has no bundle id and no path" },
+        ]);
     });
 });
