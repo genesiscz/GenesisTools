@@ -1342,7 +1342,7 @@ export const moviesApi = defineApi({
             positional: ["path", "options"],
             result: z.unknown(),
             resultName: "Movie",
-            doc: `Makes a library recording of a movie file that exists already (a render, an export, a movie from another app: .mp4, .m4v or .mov) and returns it as a Movie to edit, as open() does: info() gives its title and folder, the folder's name is its library id. The library gets an APFS clone of the file where the disk can make one (no extra disk), else a whole copy; the file stays as it is. It is titled options.title or the file's name. options.markers ([{ at: SourceTime, label }]) are moments of the movie as it plays: movie.markers() lists them and the editor shows them; a marker outside the movie is refused. A movie with sound keeps it (the editor plays, exports and transcribes it). A file the editor does not play is refused with the reason (and a way to convert it where ffmpeg has one), and nothing is made: another extension, a video codec AVFoundation does not decode (vp9, or HEVC tagged hev1), HDR, a turn that is not a quarter turn, and a movie over the editor's limits. ${toolCommand("recorder trash")} <id> removes the recording again.`,
+            doc: `Makes a library recording of a movie file that exists already (a render, an export, a movie from another app: .mp4, .m4v or .mov) and returns it as a Movie to edit, as open() does: info() gives its title and folder, the folder's name is its library id. The library gets an APFS clone of the file where the disk can make one (no extra disk), else a whole copy; the file stays as it is. It is titled options.title or the file's name. options.markers ([{ at: SourceTime, label }]) are moments of the movie as it plays: movie.markers() lists them and the editor shows them; a marker outside the movie is refused. A movie with sound keeps it (the editor plays, exports and transcribes it). An HDR movie (PQ or HLG, such as an iPhone's HDR video; HDR is a wider range of brightness, not more pixels) becomes an SDR copy that avconvert makes (H.264, BT.709, at most 3840 x 2160), because the editor takes SDR movies only: the turn's text and the warnings of recording.json say so, and a long movie takes a while. A file the editor does not play is refused with the reason (and a way to convert it where ffmpeg has one), and nothing is made: another extension, a video codec AVFoundation does not decode (vp9, or HEVC tagged hev1), an 8-bit movie tagged HDR, a turn that is not a quarter turn, and a movie over the editor's limits. ${toolCommand("recorder trash")} <id> removes the recording again.`,
             effect: "reversible",
         }),
     ],
@@ -3287,7 +3287,12 @@ export class MoviesToolset extends ReplToolset {
                 demo: (options: z.input<typeof demoParamsSchema> & { steps: DemoStep[] }) => recordDemo(options, ctx),
                 // The recording the import made, as open() gives it: the next call is an edit.
                 import: async (path: string, options: ImportMovieOptions = {}) => {
-                    const imported = await importMovie(path, options);
+                    const imported = await importMovie(path, { ...options, onNote: (text) => ctx.write(text) });
+
+                    for (const warning of imported.warnings) {
+                        ctx.write(warning);
+                    }
+
                     return recordingMovie(imported.folder, ctx);
                 },
                 search: (text: string) => searchLibrary(text),
