@@ -9,6 +9,14 @@ import * as ocrBoxes from "@genesiscz/utils/macos/ocr-boxes";
 import { MeetingsConfigStore, meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { readCorrections } from "@genesiscz/utils/meetings/corrections";
 import { type MeetingRecord, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
+import type { QuitOutcome } from "@genesiscz/utils/screen-recorder/capture-blockers";
+import {
+    type CaptureBlocker,
+    type CaptureResult,
+    type DisplayInfo,
+    FrameRecorder,
+    type FrameRecorderSupport,
+} from "@genesiscz/utils/screen-recorder/types";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { createCanvas } from "@napi-rs/canvas";
 import type { z } from "zod";
@@ -30,6 +38,12 @@ import { appendFrameIndex } from "./frame-index";
 import { matchPreview } from "./match-preview";
 import { projectLabels, setMeetingFields } from "./meeting-fields";
 import { momentClipPath, planMoment } from "./moment";
+import {
+    captureBlockersRead,
+    captureBlockersStatusLines,
+    neverCaptureCostLines,
+    quitCaptureBlockersNow,
+} from "./never-capture";
 import { meetingBadges, meetingsOverview } from "./overview";
 import { removeProject, renameProject, restoreProject } from "./project-admin";
 import { displayFocusSpans, screenTimeline } from "./screen-timeline";
@@ -790,6 +804,157 @@ describe("capture cost", () => {
         expect(cost.displays.map((choice) => choice.maxCpuSecPerMin)).toEqual([44.2, 22.1, 22.1]);
         expect(cost.activeFps.map((choice) => choice.maxCpuSecPerMin)).toEqual([22.1, 44.2, 88.5]);
         expect(cost.thresholdNote).toContain("not measured");
+    });
+});
+
+describe("never-capture windows: status, cost, blockers and the setting", () => {
+    const dimmer: CaptureBlocker = {
+        pid: 21,
+        name: "Dimmer",
+        bundleId: "com.example.dimmer",
+        processLaunch: 5.5,
+        windows: 3,
+        displays: [4, 1, 2],
+    };
+    const shade: CaptureBlocker = {
+        pid: 22,
+        name: "Shade",
+        bundleId: "com.example.shade",
+        processLaunch: 6.5,
+        windows: 1,
+        displays: [3],
+    };
+
+    /** Lists the given blockers (undefined: it cannot list them); a quit takes the asked apps away. */
+    class BlockerRecorder extends FrameRecorder {
+        readonly id = "native" as const;
+        readonly supports: FrameRecorderSupport = {
+            followFocus: false,
+            displayId: true,
+            motionBoxes: false,
+            heartbeat: false,
+            liveControl: false,
+            parallelCaptures: true,
+            audio: false,
+            frameSource: true,
+            captureBlockers: true,
+        };
+        readonly asked: string[] = [];
+
+        constructor(private apps: CaptureBlocker[] | undefined) {
+            super();
+        }
+
+        async available(): Promise<{ ok: true }> {
+            return { ok: true };
+        }
+
+        async displays(): Promise<DisplayInfo[]> {
+            return [];
+        }
+
+        async capture(): Promise<CaptureResult> {
+            throw new Error("no capture in this test");
+        }
+
+        override async captureBlockers(): Promise<CaptureBlocker[] | undefined> {
+            return this.apps;
+        }
+
+        override async quitApps(apps: CaptureBlocker[]): Promise<QuitOutcome> {
+            this.asked.push(...apps.map((app) => app.name));
+            this.apps = this.apps?.filter((app) => !apps.includes(app));
+            return { gone: apps, stayed: [] };
+        }
+    }
+
+    test("the setting defaults to fallback with HazeOver in the allow list, and config set changes each key", async () => {
+        expect(meetingsConfigSchema.parse({}).global.capture.recorders.native.neverCapture).toEqual({
+            action: "fallback",
+            quitApps: ["com.pointum.hazeover", "com.pointum.hazeover-setapp"],
+            relaunch: true,
+        });
+        const { config } = stores();
+        const key = "global.capture.recorders.native.neverCapture";
+        await setConfigValue(config, `${key}.action`, "quit");
+        await setConfigValue(config, `${key}.relaunch`, false);
+        const saved = await setConfigValue(config, `${key}.quitApps`, ["com.example.dimmer"]);
+        expect(saved.global.capture.recorders.native.neverCapture).toEqual({
+            action: "quit",
+            quitApps: ["com.example.dimmer"],
+            relaunch: false,
+        });
+        await expect(setConfigValue(config, `${key}.action`, "kill")).rejects.toThrow();
+    });
+
+    test("the status line names the apps and displays, the frame and sound paths, and what was quit", () => {
+        expect(
+            captureBlockersStatusLines(
+                {
+                    apps: [{ name: "Dimmer", bundleId: "com.example.dimmer", displays: [1, 2, 4] }],
+                    action: "fallback",
+                    frames: "screenshot",
+                    sound: "tap",
+                    quit: [],
+                },
+                true
+            )
+        ).toEqual([
+            "Never-capture windows: Dimmer on displays 1, 2 and 4. Frames come by screenshot, the system sound through the audio tap.",
+        ]);
+        expect(
+            captureBlockersStatusLines(
+                { apps: [], action: "quit", frames: "stream", sound: "stream", quit: [{ name: "Dimmer" }] },
+                true
+            )
+        ).toEqual([
+            "Never-capture windows: none left on the displays. Frames come from the capture stream, the system sound through the display stream.",
+            "Dimmer was quit for this recording and starts again when it ends.",
+        ]);
+        expect(
+            captureBlockersStatusLines(
+                { apps: [], action: "quit", frames: "stream", sound: "stream", quit: [{ name: "Dimmer" }] },
+                false
+            )[1]
+        ).toBe("Dimmer was quit for this recording.");
+    });
+
+    test("the cost block names the apps, the measured cost and the action; it tells none from cannot list", async () => {
+        const config = meetingsConfigSchema.parse({});
+        const listed = await captureBlockersRead({ recorder: new BlockerRecorder([dimmer]), config });
+        const lines = neverCaptureCostLines(listed);
+        expect(lines[0]).toBe("Never-capture windows:");
+        expect(lines[1]).toBe("  Dimmer (com.example.dimmer) on displays 1, 2 and 4");
+        expect(lines[2]).toContain("13.5 to 18.3 ms");
+        expect(lines[2]).toContain("measured 2026-11-22 on one Mac");
+        expect(lines[3]).toContain("action is fallback");
+        expect(lines[3]).toContain("by screenshot");
+
+        const none = await captureBlockersRead({ recorder: new BlockerRecorder([]), config });
+        expect(neverCaptureCostLines(none)).toEqual(["Never-capture windows: none."]);
+
+        const unlisted = await captureBlockersRead({ recorder: new BlockerRecorder(undefined), config });
+        expect(unlisted.listed).toBe(false);
+        expect(unlisted.apps).toBeUndefined();
+        expect(neverCaptureCostLines(unlisted)[0]).toContain("the recorder cannot list them");
+    });
+
+    test("blockers --quit quits only the allow-listed app and names the config key for the others", async () => {
+        const config = meetingsConfigSchema.parse({
+            global: { capture: { recorders: { native: { neverCapture: { quitApps: ["com.example.dimmer"] } } } } },
+        });
+        const recorder = new BlockerRecorder([dimmer, shade]);
+        const view = await captureBlockersRead({ recorder, config });
+        expect(view.apps?.map((app) => [app.name, app.allowListed])).toEqual([
+            ["Dimmer", true],
+            ["Shade", false],
+        ]);
+
+        const result = await quitCaptureBlockersNow({ recorder, config });
+        expect(recorder.asked).toEqual(["Dimmer"]);
+        expect(result.quit.map((app) => app.name)).toEqual(["Dimmer"]);
+        expect(result.outside.map((app) => app.name)).toEqual(["Shade"]);
+        expect(result.configKey).toBe("global.capture.recorders.native.neverCapture.quitApps");
     });
 });
 

@@ -84,7 +84,8 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `projects preview [--draft <json>] [--limit 20] [--json]` | Which project each recent meeting matches by the saved rules, and with a draft (`{"work":{"titleWords":["sync"],"calendars":[],"folders":{"wisprflow":[]}}}`); reads only |
 | `screen <meeting> --timeline [--all] [--json]` | Every frame in time order with the OCR lines that changed since the display's earlier frame, in frame pixels |
 | `screen <meeting> --timeline --frame <file> [--json]` | One frame of that timeline (its file as the timeline names it), with its changed lines and every line |
-| `record cost [--json]` | The CPU each capture choice costs: 368.6 ms per kept frame (the meetings-ocr bench) and the newest recording's frame rate |
+| `record cost [--json]` | The CPU each capture choice costs: 368.6 ms per kept frame (the meetings-ocr bench) and the newest recording's frame rate; then the never-capture windows read now (no recording needed), what they cost the screen and what `capture.recorders.native.neverCapture.action` does about them |
+| `record blockers [--quit] [--json]` | The apps that keep a never-capture window on a display (name, bundle id, displays, whether the allow list holds it). `--quit` quits the allow-listed ones now and prints what it quit and what stayed; an app outside `capture.recorders.native.neverCapture.quitApps` is never quit. Exits 1 when the recorder cannot list them |
 | `export <meeting> [--to <folder>] [--dry-run] [--if-edited beside\|refuse\|replace] [--json]` | The polished transcript (md, play links, dictionary, confirmed items) as `<folder>/<meeting id>.md`; the folder is `projects.<p>.export.folder` unless `--to` names one; the same meeting again replaces its file. When the note holds edits that the last export did not write, `--if-edited` decides (default `global.export.ifEdited`, `beside`): `beside` writes the new note as `<meeting id>.export-<local time>.md` next to it, `refuse` writes nothing and exits 1 with `[export-edited]`, `replace` overwrites the edits |
 | `window [meeting] [--place needs\|all\|<project>] [--tab transcript\|screen\|items\|speakers\|context] [--no-focus] [--no-build]` | Open the Meetings window of GenesisTools.app (the `meetings` app part); Settings → Meetings holds its pages. When the installed app lacks the Meetings part, the command builds it first; `--no-build` fails instead and says how to build it |
 | `config show [path] [--json]` (alias `config get`), `config set <path> <json>`, `config unset <path>`, `config edit '[{"path": …, "value": …, "expect": …}, {"path": …, "unset": true}]'` | Read and write one setting; the path is dotted (`global.capture.activeFps`) or a JSON array of keys (`["projects","a.b","labels"]`); a write that would make the config invalid writes nothing. A path that names no setting (`global.capture.activFps`) is refused by `show` and `set` with the closest setting; `unset` still removes such a key. `config edit` makes several changes in one write: all of them, or none when one is refused |
@@ -249,6 +250,35 @@ In `audio.jsonl`, `mutedSpans` marks intentional mutes and `lostSpans` marks gap
 
 Peekaboo records one display at a time (its ScreenCaptureKit lock), so `displays: "all"` falls back to the main
 display with a warning.
+
+### Displays with a never-capture window
+
+Some apps keep a window that is never captured (`NSWindow.sharingType = .none`) on a display; HazeOver keeps an
+invisible 2 x 2 px one on every display. On such a display WindowServer draws every window again for each open
+capture stream at every screen update. Measured on one Mac on 2026-11-22 (the median WindowServer round trip): 2.3
+to 2.9 ms on a clean display with or without a stream, 4.8 to 5.6 ms with HazeOver and no stream, 8.5 to 8.9 ms with
+one stream, and 13.5 to 18.3 ms during a meeting recording of three displays. A screenshot per second per display
+with no open stream stayed at the base value, and so did the sound through the Core Audio tap. Real recordings of
+three displays with HazeOver running (2026-11-22, two interleaved rounds): 3.2 to 3.8 ms with the fallback, 8.3 to
+8.9 ms with streams, 3.6 to 3.8 ms with no recording.
+
+So the native recorder reads those apps at the start (`ax-tool capture-blockers`, no grant needed) and follows
+`capture.recorders.native.neverCapture.action`:
+
+- `fallback` (the default): on a display with such a window the frames come by screenshot (2 fps at most, no open
+  stream), and the system sound comes through the Core Audio tap when any display has one at the start. A clean
+  display keeps the stream.
+- `quit`: the recorder quits the apps whose bundle id is in `quitApps` (HazeOver from its site and from Setapp by
+  default) at the start and, with `relaunch` (default `true`), starts them again when the recording ends, a failed
+  start included. The apps left get the fallback.
+- `ignore`: the recorder streams as before; the recording's warning names the apps and their displays.
+
+`record status` prints one line about it, for example `Never-capture windows: Dimmer on displays 1, 2 and 4. Frames
+come by screenshot, the system sound through the audio tap.`, and a second line when it quit an app; `--json` carries
+it as `captureBlockers`. In the node REPL, `meetings.captureBlockers()` is `record blockers` and
+`meetings.quitCaptureBlockers()` is `record blockers --quit`. A sound-only recording and the peekaboo recorder skip all of this. Known limits: the sound
+path is chosen once at the start, a recorder that crashes after a quit does not start the app again, and a screenshot
+shows the screen about a quarter of a second before it arrives.
 
 The `recording` block of the record has a schema (`RecordingBlock` in `src/utils/meetings/record.ts`): `spans` (from,
 to and stop reason: `requested`, `paused`, `failed`, `error`), `frames` and `bytes` (every frame in `frames/`, also
@@ -729,6 +759,10 @@ files can be pinned with `context add <meeting> <file> --rev <commit>` or `--bef
   `--no-idle` keeps it running without an idle timeout.
 - If recording fails or gives only the desktop, check `tools meetings record status` and `tools control doctor`
   before changing capture settings. A missing privacy grant is not proof of an empty screen.
+- If the screen is slow while a recording runs, run `tools meetings record blockers`: an app with a never-capture
+  window (HazeOver) makes every capture stream on its display expensive. Keep
+  `capture.recorders.native.neverCapture.action` at `fallback` or set it to `quit`, and check the line in
+  `tools meetings record status`.
 - If frames have no text yet, use `tools meetings ocr <meeting> --follow`. Use `--retry-failed` for failed reads, or
   `--reread-empty-since 15:56` for empty reads since that local time on the meeting's day.
 - Inspect failed command records with `tools genesis-tools logs failures`. The failure's saved context belongs to

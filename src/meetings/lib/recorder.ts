@@ -84,6 +84,7 @@ function meetingRecorderConfig(run: MeetingRun, minSeparation?: number) {
             soundOnly: Boolean(state.withoutScreen),
             stopOnSignals: true,
             displays: run.displays,
+            neverCapture: () => run.neverCaptureSetup,
             keptFrames: () => state.frames,
             pieces: {
                 dir: run.pieceDir,
@@ -158,9 +159,11 @@ function meetingRecorderConfig(run: MeetingRun, minSeparation?: number) {
                     state.sound = sound;
                     run.saveState();
                 },
+                onCaptureBlockers: (status) => run.noteCaptureBlockers(status),
                 beforeLoop: async () => {
                     await run.begin(recording);
                     began = true;
+                    await run.prepareNeverCapture();
                     if (levels) {
                         stopLevels = deps.scheduleLevels((atMs) => {
                             try {
@@ -180,6 +183,8 @@ function meetingRecorderConfig(run: MeetingRun, minSeparation?: number) {
                 },
                 afterLoop: async () => {
                     stopLevels?.();
+                    // Every end, a failed start after the quit too, starts the quit apps again.
+                    await run.relaunchQuitApps();
                     if (!began) {
                         return; // Startup could not account for the earlier run. Its journal still belongs to it.
                     }

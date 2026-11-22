@@ -16,11 +16,19 @@ import {
     RpcError,
 } from "@genesiscz/utils/screen-recorder/control";
 import { callRecorder, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
+import { createBoxTable } from "@genesiscz/utils/table";
 import { formatClock, localTime, parseClock } from "@genesiscz/utils/transcribe/render";
 import { type Command, Option } from "commander";
 import { collectAndReport } from "../lib/collect";
 import { hasFrameIndex, ocrBacklog, ocrPendingNote } from "../lib/frame-index";
 import { askProjectAtEnd } from "../lib/meeting-end";
+import {
+    captureBlockersRead,
+    captureBlockersStatusLines,
+    NEVER_CAPTURE_KEY,
+    neverCaptureCostLines,
+    quitCaptureBlockersNow,
+} from "../lib/never-capture";
 import {
     parseAudioSources,
     parseDisplayPolicy,
@@ -352,6 +360,19 @@ async function status(opts: { json?: boolean }): Promise<void> {
         ui.dim("Sound: inside the screen pieces (the setting)");
     }
 
+    const blockers = live?.captureBlockers ?? state.captureBlockers;
+
+    if (blockers) {
+        const relaunch =
+            blockers.quit.length > 0
+                ? (await new MeetingsConfigStore().read()).global.capture.recorders.native.neverCapture.relaunch
+                : true;
+
+        for (const line of captureBlockersStatusLines(blockers, relaunch)) {
+            ui.dim(line);
+        }
+    }
+
     const framesDir = join(store.folder(state.meetingId), "frames");
 
     if (existsSync(framesDir)) {
@@ -485,6 +506,85 @@ async function cost(opts: { json?: boolean }): Promise<void> {
         if (view.thresholdNote) {
             out.println(`  threshold: ${view.thresholdNote}`);
         }
+
+        for (const line of neverCaptureCostLines(view.neverCapture)) {
+            out.println(line);
+        }
+    } catch (err) {
+        fail(err);
+    }
+}
+
+async function blockers(opts: { quit?: boolean; json?: boolean }): Promise<void> {
+    try {
+        if (opts.quit) {
+            const result = await quitCaptureBlockersNow();
+
+            if (opts.json) {
+                out.result(windowJson(result));
+            }
+
+            if (!result.listed) {
+                ui.warn(`The recorder cannot list never-capture windows: ${result.reason ?? "unknown reason"}`);
+                process.exitCode = 1;
+                return;
+            }
+
+            if (opts.json) {
+                return;
+            }
+
+            const names = (rows: typeof result.quit) => rows.map((app) => app.name).join(", ");
+
+            if (result.quit.length > 0) {
+                ui.ok(`Quit: ${names(result.quit)}`);
+            }
+
+            if (result.stayed.length > 0) {
+                ui.warn(`Still running: ${names(result.stayed)}`);
+            }
+
+            if (result.outside.length > 0) {
+                ui.info(
+                    `Not quit, not in the allow list: ${names(result.outside)}. Add a bundle id to ${result.configKey}: ${toolCommand("meetings", "config", "set", result.configKey, '["com.example.app"]')}`
+                );
+            }
+
+            if (result.quit.length + result.stayed.length + result.outside.length === 0) {
+                ui.info("No app keeps a never-capture window.");
+            }
+
+            return;
+        }
+
+        const view = await captureBlockersRead();
+
+        if (opts.json) {
+            out.result(windowJson(view));
+            return;
+        }
+
+        if (!view.listed || !view.apps) {
+            ui.warn(`The recorder cannot list never-capture windows: ${view.reason ?? "unknown reason"}`);
+            process.exitCode = 1;
+            return;
+        }
+
+        if (view.apps.length === 0) {
+            ui.info("No app keeps a never-capture window.");
+            return;
+        }
+
+        const table = createBoxTable(["APP", "BUNDLE ID", "DISPLAYS", "ALLOW LIST"]);
+
+        for (const app of view.apps) {
+            table.push([app.name, app.bundleId ?? "", app.displays.join(", "), app.allowListed ? "yes" : "no"]);
+        }
+
+        out.println(table.toString());
+        ui.dim(
+            `Action: ${view.action} (${NEVER_CAPTURE_KEY}.action). Quit the allow-listed ones now: ${toolCommand("meetings", "record", "blockers", "--quit")}`
+        );
     } catch (err) {
         fail(err);
     }
@@ -727,6 +827,14 @@ export function registerRecordCommands(program: Command): void {
         .description("What each capture choice costs in CPU: the bench's cost per kept frame and the last recording")
         .option("--json", "print JSON")
         .action(cost);
+    record
+        .command("blockers")
+        .description(
+            "The apps that keep a never-capture window on a display (each capture stream there slows the screen)"
+        )
+        .option("--quit", "quit the apps of the allow list now (capture.recorders.native.neverCapture.quitApps)")
+        .option("--json", "print JSON")
+        .action(blockers);
     record
         .command("run", { hidden: true })
         .argument("<meeting>", "the meeting id")

@@ -1,4 +1,5 @@
 import type { AudioLevelBlock } from "./audio-levels";
+import type { LaunchFailure, LaunchTarget, QuitOutcome } from "./capture-blockers";
 import type { AudioDevices, AudioSource } from "./control";
 
 export const FRAME_RECORDER_IDS = ["native", "peekaboo"] as const;
@@ -17,12 +18,47 @@ export interface DisplayInfo {
 
 export type CaptureTarget = { kind: "display"; displayId: number } | { kind: "follow-focus" };
 
+/**
+ * Where a capture takes its frames: the ScreenCaptureKit stream, a screenshot per frame (no open stream), or the
+ * recorder's choice (screenshots on a display with a never-capture window, the stream elsewhere).
+ */
+export const FRAME_SOURCES = ["stream", "screenshot", "auto"] as const;
+export type FrameSource = (typeof FRAME_SOURCES)[number];
+/** The source a capture really used. */
+export type UsedFrameSource = Exclude<FrameSource, "auto">;
+
+/**
+ * An app that keeps a never-capture window (`NSWindow.sharingType = .none`) on a display, as `ax-tool capture-blockers`
+ * lists it. Such a window makes WindowServer draw every window again for each open capture stream on that display.
+ */
+export interface CaptureBlocker {
+    pid: number;
+    name: string;
+    bundleId?: string;
+    path?: string;
+    /** The process launch time ax-tool reads, so a quit reaches this process and never a newer one with the same pid. */
+    processLaunch?: number;
+    windows: number;
+    /** The CGDirectDisplayIDs its never-capture windows are on. */
+    displays: number[];
+}
+
+/** The stderr event of a controlled capture at its start: the frame source it chose, and why. */
+export interface FrameSourceEvent {
+    source: UsedFrameSource;
+    displayId?: number;
+    /** The apps with a never-capture window on the display(s) the choice looked at; empty when there are none. */
+    neverCapture: CaptureBlocker[];
+}
+
 export interface CaptureRequest {
     target: CaptureTarget;
     /** CG window IDs the display filter must exclude. */
     excludeWindowIds?: number[];
     /** Keep the windows of screen dimmers (HazeOver and the like), which the display filter leaves out by default. */
     keepOverlays?: boolean;
+    /** Unset is the stream (`supports.frameSource`). */
+    frameSource?: FrameSource;
     /** At most 180. */
     durationSec: number;
     activeFps: number;
@@ -79,6 +115,8 @@ export interface CaptureHooks {
     onFrame?: (frame: CapturedFrame) => void;
     /** The capture accepts commands from now on. */
     onLive?: (capture: LiveCapture) => void;
+    /** The frame source the capture chose at its start (`supports.frameSource` with `supports.liveControl`). */
+    onFrameSource?: (event: FrameSourceEvent) => void;
 }
 
 export type MotionBox = [number, number, number, number];
@@ -105,6 +143,10 @@ export interface CaptureResult {
     endedEarly?: CaptureEnding;
     stats?: Record<string, number>;
     tracks?: AudioTrack[];
+    /** The source the frames came from; absent from a recorder or an ax-tool without `supports.frameSource`. */
+    frameSource?: UsedFrameSource;
+    /** The apps with a never-capture window on the display(s) the frame source choice looked at, when there are any. */
+    neverCapture?: CaptureBlocker[];
 }
 
 export const CAPTURE_ERROR_KINDS = ["display-missing", "no-permission", "unavailable", "timeout", "failed"] as const;
@@ -132,6 +174,10 @@ export interface FrameRecorderSupport {
     parallelCaptures: boolean;
     /** Sound beside the frames (`CaptureRequest.audio`) and the input device list. */
     audio: boolean;
+    /** `CaptureRequest.frameSource` other than the stream. */
+    frameSource: boolean;
+    /** `captureBlockers()`, `quitApps()` and `launchApps()`. */
+    captureBlockers: boolean;
 }
 
 /** A change-aware screen recorder: frames only when the screen changed, as image files. */
@@ -146,6 +192,24 @@ export abstract class FrameRecorder {
     /** The audio inputs and outputs, for a recorder with `supports.audio`. */
     async audioDevices(): Promise<AudioDevices> {
         throw new CaptureError("unavailable", `the ${this.id} recorder records no sound`);
+    }
+
+    /**
+     * The apps with a never-capture window on any display. Undefined when this recorder cannot list them, which is not
+     * the same as none; throws a CaptureError when the listing failed.
+     */
+    async captureBlockers(): Promise<CaptureBlocker[] | undefined> {
+        return undefined;
+    }
+
+    /** Asks each app to quit (`supports.captureBlockers`) and says which ones are gone after a short wait. */
+    async quitApps(_apps: CaptureBlocker[]): Promise<QuitOutcome> {
+        throw new CaptureError("unavailable", `the ${this.id} recorder cannot quit apps`);
+    }
+
+    /** Starts each app again in the background (`supports.captureBlockers`); answers the ones that did not start. */
+    async launchApps(_apps: LaunchTarget[]): Promise<LaunchFailure[]> {
+        throw new CaptureError("unavailable", `the ${this.id} recorder cannot start apps`);
     }
 }
 

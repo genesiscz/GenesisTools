@@ -6,6 +6,17 @@ import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { z } from "zod";
 import { audioLevelEvent } from "./audio-levels";
 import { AudioSession, type RecorderAudioOptions } from "./audio-session";
+import {
+    type AxCommandRunner,
+    captureBlockerOf,
+    captureBlockerSchema,
+    type LaunchFailure,
+    type LaunchTarget,
+    type QuitOutcome,
+    quitCaptureBlockers,
+    readCaptureBlockers,
+    relaunchApps,
+} from "./capture-blockers";
 import { AUDIO_SOURCES, type AudioDevices, type AudioSource } from "./control";
 import { mainDisplay, outputScaleFor, parseDisplayList } from "./displays";
 import { runCaptureProcess } from "./process";
@@ -13,6 +24,7 @@ import {
     type AudioTrack,
     CAPTURE_ENDINGS,
     CAPTURE_TIMEOUT_GRACE_MS,
+    type CaptureBlocker,
     type CapturedFrame,
     CaptureError,
     type CaptureErrorKind,
@@ -34,6 +46,7 @@ export const NATIVE_OPTIONAL_FLAGS = [
     "--display-id",
     "--exclude-window-ids",
     "--keep-overlays",
+    "--frame-source",
     "--follow-focus",
     "--max-long-side",
     "--quiet-ms",
@@ -46,8 +59,10 @@ export const NATIVE_OPTIONAL_FLAGS = [
     "audio-devices",
     "audio-record",
     "--without-screen",
+    "--prefer-tap",
     "--monitor",
     "--levels",
+    "capture-blockers",
     // `--control-stdin` commands, named in the same help text.
     "mute",
     "set-mic",
@@ -110,6 +125,11 @@ const nativeResult = z.object({
         cancelled: z.boolean().optional(),
         endedEarly: z.enum(CAPTURE_ENDINGS).optional(),
         stats: z.record(z.string(), z.number()).optional(),
+        /** Where the frames came from (`--frame-source`); an older ax-tool does not send it. */
+        frameSource: z.enum(["stream", "screenshot"]).optional(),
+        /** The apps with a never-capture window on the display(s) the frame source choice looked at. */
+        neverCapture: z.array(captureBlockerSchema).optional(),
+        warnings: z.array(z.string()).optional(),
     }),
 });
 const nativeError = z.object({ ok: z.literal(false), error: z.string(), code: z.string().optional() });
@@ -232,6 +252,20 @@ export function nativeArgv(options: {
         argv.push("--keep-overlays");
     }
 
+    // The stream is ax-tool's default, so it needs no flag; "auto" is best effort on a binary without the choice.
+    if (request.frameSource === "screenshot") {
+        if (!flags.has("--frame-source")) {
+            throw new CaptureError("unavailable", "this ax-tool has no --frame-source; rebuild it");
+        }
+        argv.push("--frame-source", "screenshot");
+    } else if (request.frameSource === "auto") {
+        if (flags.has("--frame-source")) {
+            argv.push("--frame-source", "auto");
+        } else {
+            log.debug("this ax-tool has no --frame-source; the capture streams");
+        }
+    }
+
     if (request.maxLongSidePx !== undefined) {
         if (flags.has("--max-long-side")) {
             argv.push("--max-long-side", String(request.maxLongSidePx));
@@ -339,6 +373,12 @@ const controlEvent = z.discriminatedUnion("event", [
         focusedDisplayId: z.number().optional(),
     }),
     z.object({ event: z.literal("display-switch"), from: z.number().optional(), to: z.number() }),
+    z.object({
+        event: z.literal("frame-source"),
+        source: z.enum(["stream", "screenshot"]),
+        displayId: z.number().optional(),
+        neverCapture: z.array(captureBlockerSchema).default([]),
+    }),
     z.object({ event: z.literal("error"), code: z.string().optional(), message: z.string() }),
     z.object({ event: z.literal("state") }).loose(),
     z.object({ event: z.literal("settings") }).loose(),
@@ -529,6 +569,16 @@ export class NativeLiveCapture implements LiveCapture {
             return;
         }
 
+        if (event.event === "frame-source") {
+            const displayId = event.displayId ?? this.displayId;
+            this.hooks.onFrameSource?.({
+                source: event.source,
+                ...(displayId !== undefined ? { displayId } : {}),
+                neverCapture: event.neverCapture.map(captureBlockerOf),
+            });
+            return;
+        }
+
         if (event.event === "settings" || (event.event === "state" && "muted" in event)) {
             const kind = event.event === "settings" ? "settings" : "muted";
             const index = this.pendingSettings.findIndex((entry) => entry.answer === kind);
@@ -591,7 +641,43 @@ export class NativeFrameRecorder extends FrameRecorder {
             liveControl: this.flags.has("--control-stdin"),
             parallelCaptures: true,
             audio: this.flags.has("--audio") && this.flags.has("--audio-sidecar"),
+            frameSource: this.flags.has("--frame-source"),
+            captureBlockers: this.flags.has("capture-blockers"),
         };
+    }
+
+    /** One ax-tool command run directly (no app launcher: listing windows and quitting or starting apps need no grant). */
+    private runner(axTool: string[]): AxCommandRunner {
+        return async (args, { timeoutMs }) => {
+            const result = await boundedCommand({ command: [...axTool, ...args], timeoutMs });
+            return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+        };
+    }
+
+    /** Undefined from an ax-tool without `capture-blockers`. */
+    override async captureBlockers(): Promise<CaptureBlocker[] | undefined> {
+        const axTool = await this.axTool();
+
+        if (!this.flags.has("capture-blockers")) {
+            log.debug("this ax-tool has no capture-blockers");
+            return undefined;
+        }
+
+        return readCaptureBlockers(this.runner(axTool));
+    }
+
+    override async quitApps(apps: CaptureBlocker[]): Promise<QuitOutcome> {
+        const axTool = await this.axTool();
+
+        if (!this.flags.has("capture-blockers")) {
+            throw new CaptureError("unavailable", "this ax-tool has no capture-blockers; rebuild it");
+        }
+
+        return quitCaptureBlockers({ run: this.runner(axTool), apps });
+    }
+
+    override async launchApps(apps: LaunchTarget[]): Promise<LaunchFailure[]> {
+        return relaunchApps({ run: this.runner(await this.axTool()), apps });
     }
 
     /**
@@ -671,8 +757,16 @@ export class NativeFrameRecorder extends FrameRecorder {
         if (options.withoutScreen && !this.flags.has("--without-screen")) {
             throw new CaptureError("unavailable", "Rebuild ax-tool for recording sound without Screen Recording.");
         }
+
+        const preferTap = options.preferTap === true && this.flags.has("--prefer-tap");
+
+        if (options.preferTap && !preferTap) {
+            log.debug("this ax-tool has no --prefer-tap; the system sound comes through the display stream");
+        }
+
         return AudioSession.start({
             ...options,
+            preferTap,
             onLevels: this.flags.has("--levels") ? options.onLevels : undefined,
             argv,
             launch: this.context.launch,
@@ -745,7 +839,22 @@ export class NativeFrameRecorder extends FrameRecorder {
 
         // A piece can cross its deadline while closing sound sidecars after its screen frames landed.
         if (run.exitCode === 0 && data && (!run.timedOut || data.frames.length > 0)) {
-            const { frames, cancelled, endedEarly, stats, tracks, firstFrameEpochMs } = data;
+            const {
+                frames,
+                cancelled,
+                endedEarly,
+                stats,
+                tracks,
+                firstFrameEpochMs,
+                frameSource,
+                neverCapture,
+                warnings,
+            } = data;
+
+            if (warnings?.length) {
+                log.warn({ warnings }, "native capture warnings");
+            }
+
             const first = frames[0];
             // The first PNG lands up to a second after its frame was captured, while markers use the true wall
             // clock, so its file time is only the fallback for an ax-tool that does not report the capture time.
@@ -775,6 +884,8 @@ export class NativeFrameRecorder extends FrameRecorder {
                 ...(ending ? { endedEarly: ending } : {}),
                 ...(stats ? { stats } : {}),
                 ...(tracks ? { tracks: tracks.map(audioTrackOf) } : {}),
+                ...(frameSource ? { frameSource } : {}),
+                ...(neverCapture?.length ? { neverCapture: neverCapture.map(captureBlockerOf) } : {}),
             };
         }
 
