@@ -1,9 +1,10 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { claudeSessionsDir } from "@genesiscz/utils/claude/peer-message";
 import type { PeerProcess } from "@genesiscz/utils/harness/parts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { readProcess } from "@genesiscz/utils/process/processes";
 
 const { log } = logger.scoped("agent-context");
 
@@ -84,4 +85,65 @@ export function claudePeerSession(process: PeerProcess, registryDir: string = cl
     }
 
     return parsed.sessionId;
+}
+
+/** The process a pid names now, with its start: null when nothing runs under that pid. */
+function runningProcess(pid: number): PeerProcess | null {
+    const entry = readProcess(pid);
+    return entry && !entry.zombie && entry.startMs !== null ? { pid, startSec: entry.startMs / 1000 } : null;
+}
+
+const REGISTRY_FILE = /^(\d+)\.json$/;
+
+/** A cheap first test before the process lookup; a file removed meanwhile (its process exited) names nothing. */
+function registryFileNames(path: string, sessionId: string): boolean {
+    try {
+        return readFileSync(path, "utf8").includes(sessionId);
+    } catch (error) {
+        log.debug({ error, path }, "a claude session file went away while the registry was read");
+        return false;
+    }
+}
+
+/**
+ * The running Claude Code processes that have this session open now. A registry file counts only when it names the
+ * session, its pid runs, and that process is the one the file was written for (`claudePeerSession`), so a stale file
+ * of a closed session is not a holder.
+ */
+export function claudeSessionHolders(
+    sessionId: string,
+    {
+        registryDir = claudeSessionsDir(),
+        processOf = runningProcess,
+    }: { registryDir?: string; processOf?: (pid: number) => PeerProcess | null } = {}
+): number[] {
+    let names: string[];
+
+    try {
+        names = readdirSync(registryDir);
+    } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+            return [];
+        }
+
+        throw error;
+    }
+
+    const holders: number[] = [];
+
+    for (const name of names) {
+        const pid = REGISTRY_FILE.exec(name)?.[1];
+
+        if (!pid || !registryFileNames(join(registryDir, name), sessionId)) {
+            continue;
+        }
+
+        const running = processOf(Number(pid));
+
+        if (running && claudePeerSession(running, registryDir) === sessionId) {
+            holders.push(running.pid);
+        }
+    }
+
+    return holders;
 }
