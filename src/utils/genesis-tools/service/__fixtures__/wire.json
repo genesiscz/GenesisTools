@@ -9677,6 +9677,10 @@
     "method": "work.sync",
     "params": {
       "release": "fixture",
+      "all": true,
+      "resolve": "fixture",
+      "take": "ours",
+      "facts": [],
       "call": {
         "request": "fixture",
         "dryRun": true,
@@ -9708,6 +9712,12 @@
     "method": "work.sync",
     "params": {
       "release": "fixture",
+      "all": true,
+      "resolve": "fixture",
+      "take": "ours",
+      "facts": [
+        "title"
+      ],
       "call": {
         "request": "fixture",
         "dryRun": true,
@@ -9767,6 +9777,10 @@
     "method": "work.sync",
     "params": {
       "release": "fixture",
+      "all": true,
+      "resolve": "fixture",
+      "take": "ours",
+      "facts": [],
       "call": {
         "request": "fixture",
         "dryRun": true,
@@ -9805,6 +9819,10 @@
     "method": "work.sync",
     "params": {
       "release": "fixture",
+      "all": true,
+      "resolve": "fixture",
+      "take": "ours",
+      "facts": [],
       "call": {
         "request": "fixture",
         "dryRun": true,
@@ -9822,6 +9840,10 @@
     "method": "work.sync",
     "params": {
       "release": "fixture",
+      "all": true,
+      "resolve": "fixture",
+      "take": "ours",
+      "facts": [],
       "call": {
         "request": "fixture",
         "dryRun": true,
@@ -9849,6 +9871,10 @@
     "method": "work.sync",
     "params": {
       "release": "fixture",
+      "all": true,
+      "resolve": "fixture",
+      "take": "ours",
+      "facts": [],
       "call": {
         "request": "fixture",
         "dryRun": true,
