@@ -182,6 +182,11 @@ describe("meetings config", () => {
         expect(languageSettings(config, "sk").render.readAloudLabel).toBe("číta z");
         expect(recorderSettings(config.global.capture)).toEqual({
             audio: { sources: ["mic", "system"], mode: "session" },
+            neverCapture: {
+                action: "fallback",
+                quitApps: ["com.pointum.hazeover", "com.pointum.hazeover-setapp"],
+                relaunch: true,
+            },
         });
     });
 
