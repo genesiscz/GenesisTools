@@ -67,7 +67,7 @@ Run `tools claude <command> --help` for the full flag list of any command below.
 | `history extract-shell-quirks` | Report zsh and bash quirk incidents from transcripts |
 | `history dashboard <action>` | The history web dashboard (`up`, `down`, `open`, ...) |
 | `resume [query]` | Resume a session by short id, name, or content search |
-| `fork-with-codemode <session>` | Copy a session that runs without Code Mode into one that resumes in Code Mode |
+| `fork-with-codemode <session>` | Move a session into Code Mode; a copy under a new id keeps it without |
 | `tail [query]` | Live-tail a session or a subagent |
 | `export <session-id>` | Export a session (`-f full\|mini\|raw`, `-o <path>`) |
 | `transcript <session-id>` | A session as JSON turns, for the Genesis Session Details window |
@@ -396,17 +396,18 @@ Searches stay scoped to Claude and the current project unless `-p`, `--cwd` or `
 - A non-interactive `resume` query with several matches fails instead of silently taking the first session.
 - **`resume [query]`** takes a short id, a name or a search term. `-l` lists recent sessions, `-a` searches every
   project, `-n` sets the count (default 20).
-- **`fork-with-codemode <session>`** (alias `fork-with-codemod`) gives an ordinary session a copy that resumes in
-  Code Mode. `<session>` is an id, an id prefix of eight characters or more, or the exact `/rename` title of a
-  session written in the last 14 days. Claude Code pins a session's mode when the session starts: a session started without Code Mode resumes
-  with the ordinary tools even when `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1` is set, and its own `--fork-session` keeps
-  that pin (measured on 2.1.328). The command writes a new session with the same conversation, the Code Mode marker
-  and the old title, then renames the old session to `<title>-without-fork` (`--old-suffix`, `--title` for the new
-  one). It refuses while a Claude Code process has the session open, a session that already runs in Code Mode, and a
-  session titled with the suffix (it was forked before). `--dry-run` writes nothing; `--json` prints the outcome.
-  Resume the new session in its working folder with `claude --resume <new id>` and Code Mode on. Its sub-agent
-  transcripts and file checkpoints stay with the old session, so `/rewind` in the new one does not reach the older
-  checkpoints.
+- **`fork-with-codemode <session>`** (alias `fork-with-codemod`) moves an ordinary session into Code Mode.
+  `<session>` is an id, an id prefix of eight characters or more, or the exact `/rename` title of a session written
+  in the last 14 days. Claude Code pins a session's mode when the session starts: a session started without Code Mode
+  resumes with the ordinary tools even when `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1` is set, and its own
+  `--fork-session` keeps that pin (measured on 2.1.328). The command first writes a copy of the conversation under a
+  new id, titled `<title>-without-codemode` (`--backup-suffix`), both in the resume list and beside the prompt, as
+  `/rename` writes them. Then it adds the Code Mode marker to the session itself, which keeps its id and title
+  (`--title` renames it). Links, cmux layouts and notes that name the id reach the Code Mode session, and its
+  sub-agents and `/rewind` checkpoints stay with it. It refuses while a Claude Code process has the session open, a
+  session that already runs in Code Mode, and the copy (its title ends with the suffix). In a terminal it then asks
+  which of the two sessions to resume; elsewhere it prints `claude --resume <id>`. `--dry-run` writes nothing;
+  `--json` prints the outcome.
 - **`tail [query]`** follows a session (`-a <id>` for a subagent). `--include` picks content: `thinking`, `tools`
   (`tools:in:500,tools:out:500`), `agents` (`agents:input,agents:tools,agents:result`), and the finer forms
   `tools:in[:<chars>]`, `agents:tools:out[:<N>]`, `agents:thinking`. A later specifier overrides an earlier one.

@@ -18,7 +18,7 @@ import { claudeHistoryReader, grokHistoryReader } from "../compact-readers";
 import { searchHistorySource } from "../search-source";
 import type { NativeSessionSource } from "../types";
 import { createClaudeHistoryOperations, readClaudeMetadata, readClaudeRecords, scanClaudeRecords } from "./claude";
-import { claudeCodeModePin, writeCodeModeFork } from "./claude-fork";
+import { appendClaudeCodeModePin, claudeCodeModePin, writeSessionCopy } from "./claude-fork";
 import { canonicalClaudeTranscript } from "./claude-locate";
 import { claudeSessionHolders } from "./claude-peer";
 import { appendClaudeTitle, lastClaudeAiTitleIn, lastClaudeTitleIn } from "./claude-title";
@@ -1004,14 +1004,15 @@ const FORK_SOURCE = "aaaaaaaa-1111-4222-8333-444444444444";
 const FORK_ID = "bbbbbbbb-1111-4222-8333-444444444444";
 const OTHER_SESSION = "cccccccc-1111-4222-8333-444444444444";
 
-test("a Code Mode fork gets the fork's id, one pin, one title, and the old session's other rows", async () => {
+test("moving a session into Code Mode: the session keeps its id and gets the pin, a copy keeps the rest", async () => {
     const directory = mkdtempSync(join(tmpdir(), "gt-claude-fork-"));
     const sourcePath = join(directory, `${FORK_SOURCE}.jsonl`);
-    const forkPath = join(directory, `${FORK_ID}.jsonl`);
+    const copyPath = join(directory, `${FORK_ID}.jsonl`);
     const rows = [
         { type: "user", sessionId: FORK_SOURCE, cwd: "/work/shop", message: { content: "fix the invoice" } },
         { type: "repl-mode", replMode: false, sessionId: FORK_SOURCE },
         { type: "custom-title", customTitle: "Invoice rounding", sessionId: FORK_SOURCE },
+        { type: "agent-name", agentName: "Invoice rounding", sessionId: FORK_SOURCE },
         { type: "ai-title", aiTitle: "Invoice fix", sessionId: FORK_SOURCE },
         { type: "user", sessionId: OTHER_SESSION, message: { content: "a teammate row" } },
     ];
@@ -1020,33 +1021,43 @@ test("a Code Mode fork gets the fork's id, one pin, one title, and the old sessi
     expect(claudeCodeModePin(sourcePath)).toBe(false);
     expect(lastClaudeAiTitleIn(sourcePath)).toBe("Invoice fix");
 
-    const scan = await writeCodeModeFork({
+    const scan = await writeSessionCopy({
         sourceId: FORK_SOURCE,
-        forkId: FORK_ID,
+        copyId: FORK_ID,
         sourcePath,
-        forkPath,
-        title: "Invoice rounding",
+        copyPath,
+        title: "Invoice rounding-without-codemode",
     });
-    appendClaudeTitle(sourcePath, FORK_SOURCE, "Invoice rounding-without-fork");
+    appendClaudeCodeModePin(sourcePath, FORK_SOURCE);
 
-    const forkLines = readFileSync(forkPath, "utf8").trimEnd().split("\n");
-    const parsed = forkLines
+    const copyLines = readFileSync(copyPath, "utf8").trimEnd().split("\n");
+    const parsed = copyLines
         .filter((line) => line !== "not json")
         .map((line) => SafeJSON.parse(line, { strict: true }));
-    expect(scan).toEqual({ rows: 4, droppedPins: 1, droppedTitles: 1, unreadableRows: 1, cwd: "/work/shop" });
-    expect(forkLines).toContain("not json");
+    expect(scan).toEqual({ rows: 4, droppedPins: 1, droppedTitles: 2, unreadableRows: 1, cwd: "/work/shop" });
+    expect(copyLines).toContain("not json");
     expect(parsed.filter((row) => row.sessionId === FORK_SOURCE)).toEqual([]);
     expect(parsed.filter((row) => row.sessionId === OTHER_SESSION)).toHaveLength(1);
-    expect(parsed.filter((row) => row.type === "repl-mode")).toEqual([
-        { type: "repl-mode", replMode: true, sessionId: FORK_ID },
+    expect(parsed.filter((row) => row.type === "repl-mode")).toEqual([]);
+    expect(claudeCodeModePin(copyPath)).toBeNull();
+    expect(parsed.filter((row) => row.type === "agent-name")).toEqual([
+        { type: "agent-name", agentName: "Invoice rounding-without-codemode", sessionId: FORK_ID },
     ]);
-    expect(claudeCodeModePin(forkPath)).toBe(true);
-    expect(lastClaudeTitleIn(forkPath)).toBe("Invoice rounding");
-    expect(lastClaudeTitleIn(sourcePath)).toBe("Invoice rounding-without-fork");
-    expect(claudeCodeModePin(sourcePath)).toBe(false);
-    expect(readFileSync(sourcePath, "utf8").split("\n").at(-2)).toContain(
-        '"customTitle":"Invoice rounding-without-fork"'
-    );
+    expect(lastClaudeTitleIn(copyPath)).toBe("Invoice rounding-without-codemode");
+
+    expect(claudeCodeModePin(sourcePath)).toBe(true);
+    expect(lastClaudeTitleIn(sourcePath)).toBe("Invoice rounding");
+    expect(readFileSync(sourcePath, "utf8").split("\n").slice(-3)).toEqual([
+        "not json",
+        `{"type":"repl-mode","replMode":true,"sessionId":"${FORK_SOURCE}"}`,
+        "",
+    ]);
+
+    appendClaudeTitle(sourcePath, FORK_SOURCE, "Invoice totals");
+    expect(readFileSync(sourcePath, "utf8").split("\n").slice(-3, -1)).toEqual([
+        `{"type":"custom-title","customTitle":"Invoice totals","sessionId":"${FORK_SOURCE}"}`,
+        `{"type":"agent-name","agentName":"Invoice totals","sessionId":"${FORK_SOURCE}"}`,
+    ]);
 });
 
 test("a session's holders are only the running processes its registry files were written for", () => {
