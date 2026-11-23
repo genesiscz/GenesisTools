@@ -18,6 +18,7 @@ import {
     readClaudeModules,
     readManagedTarget,
 } from "../lib/managed-patches";
+import { renderPatchPreview, renderRecoveryPreview } from "../lib/patch-preview";
 
 interface Options {
     binary?: string;
@@ -94,7 +95,7 @@ export function registerPatchCommands(code: Command): void {
         }
     );
 
-    withTarget(code.command("patch").description("Preview, apply, or revert patches"))
+    const patch = withTarget(code.command("patch").description("Preview, apply, or revert patches"))
         .argument("[output]", "Write a patched JavaScript module")
         .option("--patch <ids...>", "Patch IDs for JavaScript output")
         .option("--backup", "Save the pristine executable without applying patches")
@@ -125,6 +126,23 @@ export function registerPatchCommands(code: Command): void {
             const patched = applyPatches(source, patches, version);
             await atomicWriteFileStreamed(output, (write) => write(Buffer.from(patched)), { exclusive: true });
             out.println(resolve(output));
+        });
+
+    patch
+        .command("restore")
+        .description("Restore the pristine executable from its backup")
+        .option("--binary <file>", "Native Claude executable (default: Claude on PATH)")
+        .action(async (_options: Pick<Options, "binary">, command: Command) => {
+            const path = await resolvePatchBinary(command.optsWithGlobals<Pick<Options, "binary">>().binary);
+            const target = await readManagedTarget(path, { requireBackup: true });
+
+            if (target.currentHash === target.originalHash) {
+                out.println(`Already pristine: ${target.path}`);
+                return;
+            }
+
+            await applyManagedPlan(target, new Map());
+            out.println(`Restored ${target.path} from ${target.backup}`);
         });
 
     withPatches(code.command("repack").description("Write an executable containing the selected patches"))
@@ -185,7 +203,12 @@ async function managePatches(options: PickerOptions): Promise<void> {
     const { edits, problems } = listManagedPatches(target);
 
     if (options.backup) {
-        out.println(await backupManagedTarget(target));
+        const result = await backupManagedTarget(target);
+        out.println(
+            result === "created"
+                ? `Saved pristine backup: ${target.backup}`
+                : `Pristine backup already exists: ${target.backup}`
+        );
         return;
     }
 
@@ -195,12 +218,10 @@ async function managePatches(options: PickerOptions): Promise<void> {
         out.println(problem);
     }
 
-    if (!edits.length) {
-        throw new Error("No compatible patches found.");
-    }
-
     const applied = edits.filter((edit) => edit.applied).map(({ patch }) => patch.id);
+    out.println(`Installed patches recognized by this picker: ${applied.join(", ") || "none"}`);
     const current = planManagedPatches(edits, new Set(applied), target.version).modules;
+    const mismatches: string[] = [];
 
     for (const module of target.currentModules) {
         const expected =
@@ -211,37 +232,105 @@ async function managePatches(options: PickerOptions): Promise<void> {
                 expected
             )
         ) {
-            throw new Error(
-                `The current contents of ${module.name} differ from the known patch selection. Keep the pristine backup and use a fresh executable.`
-            );
+            mismatches.push(module.name);
         }
     }
 
-    const selected = await multiselect({
-        message: "Select the patches this executable should have",
-        options: edits.map(({ patch, applied }) => ({
-            value: patch.id,
-            label: patch.id,
-            hint: applied ? `Applied · ${patch.description}` : patch.description,
-        })),
-        initialValues: applied,
-        required: false,
-    });
+    const recovering = mismatches.length > 0;
 
-    if (isCancel(selected)) {
-        return;
+    if (recovering) {
+        out.println(`Installed edits differ from the current patch definitions in ${mismatches.join(", ")}.`);
+        const recover = await confirm({
+            message: "Rebuild from the pristine backup and choose which patches to reapply?",
+            initialValue: false,
+        });
+
+        if (recover !== true) {
+            return;
+        }
+    } else if (!edits.length) {
+        throw new Error("No compatible patches found.");
     }
 
-    const { modules, preview } = planManagedPatches(edits, new Set(selected), target.version);
+    let selected: string[] = [];
 
-    if (!preview.length) {
+    if (edits.length) {
+        const answer = await multiselect({
+            message: "Select the patches this executable should have",
+            options: edits.map(({ patch, applied }) => ({
+                value: patch.id,
+                label: patch.id,
+                hint: `${applied ? "Installed" : "Not installed"} · ${patch.description}`,
+            })),
+            initialValues: applied,
+            required: false,
+        });
+
+        if (isCancel(answer)) {
+            return;
+        }
+
+        selected = answer;
+    }
+
+    let plan: ReturnType<typeof planManagedPatches>;
+
+    try {
+        plan = planManagedPatches(edits, new Set(selected), target.version);
+    } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(
+            `No changes written. Could not prepare selected patches (${selected.join(", ") || "none"}). ${detail}`,
+            {
+                cause: error,
+            }
+        );
+    }
+
+    const { modules, preview } = plan;
+    const diffs = recovering
+        ? target.currentModules.flatMap((module) => {
+              const after =
+                  modules.get(module.name) ?? target.originalModules.find(({ name }) => name === module.name)?.contents;
+
+              if (!after) {
+                  throw new Error(`Cannot preview recovery for ${module.name}: module missing from backup.`);
+              }
+
+              const before = Buffer.from(
+                  module.contents.buffer,
+                  module.contents.byteOffset,
+                  module.contents.byteLength
+              );
+              return before.equals(after) ? [] : [renderRecoveryPreview(module.name, before, after)];
+          })
+        : preview.map(renderPatchPreview);
+
+    if (recovering) {
+        const rebuilt = target.originalModules.flatMap((module) => {
+            const after = modules.get(module.name);
+
+            if (!after) {
+                return [];
+            }
+
+            const before = Buffer.from(module.contents.buffer, module.contents.byteOffset, module.contents.byteLength);
+            return before.equals(after) ? [] : [renderRecoveryPreview(module.name, before, after)];
+        });
+        out.println(
+            `Rebuild from ${target.backup}\nPatches to reapply: ${selected.join(", ") || "none"}\n\nPristine backup → rebuilt executable\n${rebuilt.join("\n\n") || "No source changes from the backup."}\n\nInstalled executable → rebuilt executable`
+        );
+    }
+
+    if (!diffs.length) {
         out.println("The selected patches are already in effect.");
         return;
     }
 
-    out.println(preview.join("\n\n"));
+    out.println(diffs.join("\n\n"));
 
     if (options.diffPreview) {
+        out.println("Preview only. No patches were written.");
         return;
     }
 
@@ -255,7 +344,9 @@ async function managePatches(options: PickerOptions): Promise<void> {
     }
 
     await applyManagedPlan(target, modules);
-    out.println(`Updated ${target.path}\nPristine backup: ${target.backup}`);
+    out.println(
+        `Updated ${target.path}\nInstalled patches: ${selected.join(", ") || "none"}\nPristine backup: ${target.backup}`
+    );
 }
 
 async function resolvePatchBinary(explicit?: string): Promise<string> {

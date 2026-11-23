@@ -39,7 +39,7 @@ export function inspectPatch(source: string, patch: ClaudeCodePatch, version?: s
             return { state: "incompatible", reason: `JavaScript parse failed: ${parsed.errors[0].message}` };
         }
 
-        const matches = patch.ast(parsed.program);
+        const matches = patch.ast(parsed.program, source);
         const [edit] = matches;
 
         if (!edit || matches.length !== 1) {
