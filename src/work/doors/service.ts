@@ -25,6 +25,7 @@ export async function callWorkHere(
             ...(options.request !== undefined ? { request: options.request } : {}),
             ...(options.dryRun === true ? { dryRun: true } : {}),
             ...(options.ownerSaid !== undefined ? { ownerSaid: options.ownerSaid } : {}),
+            ...(options.override !== undefined ? { override: options.override } : {}),
         },
         // A read records no actor, so it skips the transcript read of the model facet (about 400 ms).
         {

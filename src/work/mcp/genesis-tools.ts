@@ -24,6 +24,10 @@ const ENVELOPE = {
     requestId: { type: "string", description: "a repeat with the same id answers the stored reply and writes nothing" },
     dryRun: { type: "boolean", description: "answer the changes, write nothing" },
     ownerSaid: { type: "string", description: "the owner's words when you act on them" },
+    override: {
+        type: "string",
+        description: "why this session does a write that a role rule refuses; the journal keeps who did it and why",
+    },
 };
 
 /** An MCP next action is the tool call that runs it. */
@@ -41,11 +45,12 @@ function envelopeOf(args: Record<string, unknown>): CallOptions {
         ...(typeof args.requestId === "string" ? { request: args.requestId } : {}),
         ...(args.dryRun === true ? { dryRun: true } : {}),
         ...(typeof args.ownerSaid === "string" ? { ownerSaid: args.ownerSaid } : {}),
+        ...(typeof args.override === "string" ? { override: args.override } : {}),
     };
 }
 
 function withoutEnvelope(args: Record<string, unknown>): Record<string, unknown> {
-    const { requestId: _r, dryRun: _d, ownerSaid: _o, ...rest } = args;
+    const { requestId: _r, dryRun: _d, ownerSaid: _o, override: _v, ...rest } = args;
     return rest;
 }
 

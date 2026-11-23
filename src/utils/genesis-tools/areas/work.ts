@@ -15,6 +15,10 @@ const callSchema = z
         request: z.string().optional().describe("a request id; a repeat with the same id returns the first reply"),
         dryRun: z.boolean().optional(),
         ownerSaid: z.string().optional().describe("the owner's words, when the owner asked for this write"),
+        override: z
+            .string()
+            .optional()
+            .describe("why this session does a write that a role rule refuses; the journal keeps it"),
         project: z.string().optional().describe("the project the calling surface shows; its rules apply"),
     })
     .optional();

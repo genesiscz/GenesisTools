@@ -63,6 +63,8 @@ export interface CallOptions {
     request?: string;
     dryRun?: boolean;
     ownerSaid?: string;
+    /** Why this session does a write that a role rule refuses; the journal keeps it with the rule it passed. */
+    override?: string;
 }
 
 /** What a door gives each call: the store context, the per-call options, and the tool-side lookups. */
@@ -115,6 +117,8 @@ export interface ConfigRow {
     type: ItemType;
     fields: { field: RuleField; resolved: Resolved<FieldRule> }[];
     writes: { verb: WriteVerb; resolved: Resolved<RoleRule> }[];
+    /** Who may override each refused write. */
+    overrides: { verb: WriteVerb; resolved: Resolved<RoleRule> }[];
     /** Who hears about each action on this type (P8 decision 4): the level of each layer and the one that decides. */
     notify: { action: NotifyAction; resolved: ResolvedNotify; editor: ConfigNotifyEditor }[];
 }
@@ -189,9 +193,17 @@ function strip<T extends Record<string, unknown>>(value: T): T {
     return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined)) as T;
 }
 
+/** The session's context with this call's owner words and override. */
+function callContext(session: WorkSession): WorkContext {
+    return {
+        ...session.ctx,
+        ...(session.call.ownerSaid !== undefined ? { ownerSaid: session.call.ownerSaid } : {}),
+        ...(session.call.override !== undefined ? { override: session.call.override } : {}),
+    };
+}
+
 function run(session: WorkSession, command: WorkCommand): Promise<Reply<WriteData>> {
-    const ctx: WorkContext =
-        session.call.ownerSaid !== undefined ? { ...session.ctx, ownerSaid: session.call.ownerSaid } : session.ctx;
+    const ctx = callContext(session);
     return write(ctx, command, strip({ request: session.call.request, dryRun: session.call.dryRun }));
 }
 
@@ -449,6 +461,7 @@ export const workHandlers: WorkHandlers = {
                 (entry) => entry.resolved.value.level !== "optional"
             ),
             writes: WRITE_VERBS.map((verb) => ({ verb, resolved: loaded.rules.mayWrite(type, verb) })),
+            overrides: WRITE_VERBS.map((verb) => ({ verb, resolved: loaded.rules.mayOverride(type, verb) })),
             notify: NOTIFY_ACTIONS.map((action) => ({
                 action,
                 resolved: resolveNotify(loaded.notifyLayers, { type, action }),
@@ -587,8 +600,7 @@ export const workHandlers: WorkHandlers = {
     },
 
     async reopen(p, session) {
-        const ctx: WorkContext =
-            session.call.ownerSaid !== undefined ? { ...session.ctx, ownerSaid: session.call.ownerSaid } : session.ctx;
+        const ctx = callContext(session);
         return reopen(
             ctx,
             strip({

@@ -55,6 +55,8 @@ const typeKey = z.union([z.enum(ITEM_TYPES), z.literal("*")]);
 const typeRulesSchema = z.object({
     fields: z.partialRecord(z.enum(RULE_FIELDS), fieldRuleSchema).optional(),
     writes: z.partialRecord(z.enum(WRITE_VERBS), roleRuleSchema).optional(),
+    /** Who may do a write that the `writes` rule of that verb refuses, with `--override "<why>"`. */
+    overrides: z.partialRecord(z.enum(WRITE_VERBS), roleRuleSchema).optional(),
 });
 
 const routingRuleSchema = z.object({
