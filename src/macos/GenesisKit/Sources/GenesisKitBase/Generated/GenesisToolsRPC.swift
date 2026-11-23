@@ -15852,6 +15852,21 @@ public enum WorkPullResult: Codable, Sendable {
     }
 }
 
+public enum WorkSyncParamsTake: String, Codable, Sendable {
+    case value0 = "ours"
+    case value1 = "theirs"
+}
+
+public enum WorkSyncParamsFactsItem: String, Codable, Sendable {
+    case value0 = "title"
+    case value1 = "body"
+    case value2 = "type"
+    case value3 = "parent"
+    case value4 = "tags"
+    case value5 = "state"
+    case value6 = "severity"
+}
+
 public struct WorkSyncParamsCall: Codable, Sendable {
     public var `request`: String?
     public var `dryRun`: Bool?
@@ -15886,20 +15901,36 @@ public struct WorkSyncParamsCall: Codable, Sendable {
 
 public struct WorkSyncParams: Codable, Sendable {
     public var `release`: String?
+    public var `all`: Bool?
+    public var `resolve`: String?
+    public var `take`: WorkSyncParamsTake?
+    public var `facts`: [WorkSyncParamsFactsItem]?
     public var `call`: WorkSyncParamsCall?
-    public init(`release`: String? = nil, `call`: WorkSyncParamsCall? = nil) {
+    public init(`release`: String? = nil, `all`: Bool? = nil, `resolve`: String? = nil, `take`: WorkSyncParamsTake? = nil, `facts`: [WorkSyncParamsFactsItem]? = nil, `call`: WorkSyncParamsCall? = nil) {
         self.`release` = `release`
+        self.`all` = `all`
+        self.`resolve` = `resolve`
+        self.`take` = `take`
+        self.`facts` = `facts`
         self.`call` = `call`
     }
-    private enum CodingKeys: String, CodingKey { case `release`; case `call` }
+    private enum CodingKeys: String, CodingKey { case `release`; case `all`; case `resolve`; case `take`; case `facts`; case `call` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`release` = try box.decodeIfPresent(String.self, forKey: .`release`)
+        self.`all` = try box.decodeIfPresent(Bool.self, forKey: .`all`)
+        self.`resolve` = try box.decodeIfPresent(String.self, forKey: .`resolve`)
+        self.`take` = try box.decodeIfPresent(WorkSyncParamsTake.self, forKey: .`take`)
+        self.`facts` = try box.decodeIfPresent([WorkSyncParamsFactsItem].self, forKey: .`facts`)
         self.`call` = try box.decodeIfPresent(WorkSyncParamsCall.self, forKey: .`call`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
         try box.encodeIfPresent(`release`, forKey: .`release`)
+        try box.encodeIfPresent(`all`, forKey: .`all`)
+        try box.encodeIfPresent(`resolve`, forKey: .`resolve`)
+        try box.encodeIfPresent(`take`, forKey: .`take`)
+        try box.encodeIfPresent(`facts`, forKey: .`facts`)
         try box.encodeIfPresent(`call`, forKey: .`call`)
     }
 }
