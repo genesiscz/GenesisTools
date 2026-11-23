@@ -1,6 +1,6 @@
 import { buildLaunchCommand, paneTitle } from "@app/claude/lib/cmux/command";
 import { findCandidate } from "@app/claude/lib/cmux/sessions";
-import type { PlannedSession } from "@app/claude/lib/cmux/types";
+import type { PlannedSession, RestoreCandidate } from "@app/claude/lib/cmux/types";
 import { type OpenSessionTarget, openCommandAt } from "@genesiscz/utils/cmux/open-command";
 import { profiler } from "@genesiscz/utils/profile";
 
@@ -10,6 +10,23 @@ export interface OpenSessionResult {
     workspaceId: string;
     surfaceId: string;
     target: OpenSessionTarget["kind"];
+}
+
+/**
+ * The command that resumes a session under the account and model it was pinned to, from the same builder restore
+ * uses. Throws when no local session matches.
+ */
+export async function sessionLaunch(
+    sessionId: string
+): Promise<{ candidate: RestoreCandidate; planned: PlannedSession; command: string }> {
+    const candidate = await findCandidate(sessionId);
+
+    if (!candidate) {
+        throw new Error(`No local session matches "${sessionId}" (need a full id or an 8+ char prefix)`);
+    }
+
+    const planned: PlannedSession = { candidate, account: candidate.account, model: candidate.model };
+    return { candidate, planned, command: buildLaunchCommand(planned) };
 }
 
 /**
@@ -23,14 +40,8 @@ export async function openSessionAt(
     opts: { enter?: boolean } = {}
 ): Promise<OpenSessionResult> {
     const prof = profiler.scope("claude-cmux-open");
-    const candidate = await prof.measureAsync("candidate", () => findCandidate(sessionId));
-
-    if (!candidate) {
-        throw new Error(`No local session matches "${sessionId}" (need a full id or an 8+ char prefix)`);
-    }
-
-    const planned: PlannedSession = { candidate, account: candidate.account, model: candidate.model };
-    const command = buildLaunchCommand(planned);
+    const launch = await prof.measureAsync("candidate", () => sessionLaunch(sessionId));
+    const { candidate, planned, command } = launch;
     const placed = await openCommandAt({
         command,
         target,

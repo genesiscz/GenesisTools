@@ -17,6 +17,11 @@ import {
     lastClaudeTitleIn,
 } from "@genesiscz/utils/agent-sessions/readers/claude-title";
 import { findSessionsByTitle } from "@genesiscz/utils/ai/transcripts/session-title";
+import { logger } from "@genesiscz/utils/logger";
+import { ancestry } from "@genesiscz/utils/process/processes";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
+
+const { log } = logger.scoped("claude-fork");
 
 export const DEFAULT_BACKUP_SUFFIX = "-without-codemode";
 
@@ -33,6 +38,8 @@ export interface CodeModeForkPlan {
 
 export type CodeModeForkOutcome =
     | { kind: "refused"; reason: string }
+    /** A Claude Code process has the session open; nothing was written. */
+    | { kind: "busy"; sessionId: string; holders: number[]; reason: string }
     | { kind: "planned"; plan: CodeModeForkPlan }
     | { kind: "forked"; plan: CodeModeForkPlan; backup: SessionCopyScan };
 
@@ -102,7 +109,9 @@ export async function forkSessionIntoCodeMode(options: CodeModeForkOptions): Pro
 
     if (holders.length > 0) {
         return {
-            kind: "refused",
+            kind: "busy",
+            sessionId,
+            holders,
             reason: `Session ${sessionId} is open in Claude Code (pid ${holders.join(", ")}). Exit it first.`,
         };
     }
@@ -160,4 +169,92 @@ export async function forkSessionIntoCodeMode(options: CodeModeForkOptions): Pro
     }
 
     return { kind: "forked", plan, backup };
+}
+
+const STOP_POLL_MS = 250;
+
+async function waitForExit(pids: readonly number[], timeoutMs: number): Promise<number[]> {
+    const deadline = Date.now() + timeoutMs;
+    let alive = pids.filter(isProcessAlive);
+
+    while (alive.length > 0 && Date.now() < deadline) {
+        await Bun.sleep(Math.min(STOP_POLL_MS, deadline - Date.now()));
+        alive = alive.filter(isProcessAlive);
+    }
+
+    return alive;
+}
+
+/** The shell a person typed the launch into, or what owns the terminal: it and everything above it survive. */
+const KEEP_FROM = /^-?(?:\S*\/)?(?:zsh|bash|fish|sh)(?:\s+(?:-l|--login|-i))*\s*$|\blogin\b|cmux|tmux/;
+
+/**
+ * A Claude Code process and the launchers above it, up to (not including) the shell of its tab: the GenesisTools
+ * launcher, its Bun wrapper and a `zsh -ic exec …` between them. Stopping only Claude Code left the launcher as a
+ * stopped job in the tab ("suspended (tty output)", 2026-11-23), because Claude Code runs in its own process group.
+ */
+function launchChain(pid: number): number[] {
+    const chain: number[] = [];
+
+    for (const entry of ancestry(pid)) {
+        if (entry.pid <= 1 || KEEP_FROM.test((entry.command ?? entry.name).trim())) {
+            break;
+        }
+
+        chain.push(entry.pid);
+    }
+
+    return chain.length > 0 ? chain : [pid];
+}
+
+/**
+ * Stops Claude Code processes: SIGTERM, then SIGKILL for any that still run after `termMs`. Returns the pids that
+ * still run after `killMs` more. Claude Code appends every row as it goes, so a stop loses at most the turn in flight.
+ */
+export async function stopClaudeProcesses(
+    pids: readonly number[],
+    { termMs = 10_000, killMs = 5_000 }: { termMs?: number; killMs?: number } = {}
+): Promise<number[]> {
+    const members = [...new Set(pids.flatMap(launchChain))];
+    const signal = (target: number, name: NodeJS.Signals) => {
+        try {
+            process.kill(target, name);
+        } catch (error) {
+            log.debug({ error, target, signal: name }, "a Claude Code process ended before the signal");
+        }
+    };
+
+    for (const pid of members) {
+        signal(pid, "SIGTERM");
+    }
+
+    const afterTerm = await waitForExit(members, termMs);
+
+    if (afterTerm.length === 0) {
+        log.info({ pids, stopped: members }, "stopped Claude Code and its launchers with SIGTERM");
+        return [];
+    }
+
+    for (const pid of afterTerm) {
+        signal(pid, "SIGKILL");
+    }
+
+    const left = await waitForExit(afterTerm, killMs);
+    log.warn({ pids, killed: afterTerm, left }, "Claude Code processes needed SIGKILL");
+    return left;
+}
+
+/** Waits until no Claude Code process has the session open; false when the deadline passed first. */
+export async function waitUntilSessionCloses(sessionId: string, timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+
+    while (claudeSessionHolders(sessionId).length > 0) {
+        if (Date.now() >= deadline) {
+            return false;
+        }
+
+        await Bun.sleep(1_000);
+    }
+
+    return true;
 }
