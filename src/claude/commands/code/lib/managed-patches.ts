@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { chmod, mkdtemp, realpath, rename, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { atomicWriteFileStreamed } from "@genesiscz/utils/storage/atomic-file";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { claudeCodePatches } from "../../../lib/patches";
@@ -50,13 +49,19 @@ export interface ManagedPatchTarget {
     version: string | undefined;
 }
 
-export async function readManagedTarget(path: string): Promise<ManagedPatchTarget> {
+export async function readManagedTarget(path: string, { requireBackup = false } = {}): Promise<ManagedPatchTarget> {
     const resolved = await realpath(path);
     const backup = `${resolved}.genesis-original`;
     const receipt = `${resolved}.genesis-patch-state`;
+    const hasBackup = existsSync(backup);
+
+    if (requireBackup && !hasBackup) {
+        throw new Error(`No pristine backup found at ${backup}.`);
+    }
+
     const current = await readBinary(resolved);
     const currentHash = digest(current);
-    const original = existsSync(backup) ? await readBinary(backup) : current;
+    const original = hasBackup ? await readBinary(backup) : current;
     const originalHash = original === current ? currentHash : digest(original);
 
     if (existsSync(receipt)) {
@@ -87,7 +92,7 @@ export async function readManagedTarget(path: string): Promise<ManagedPatchTarge
     };
 }
 
-interface ManagedEdit {
+export interface ManagedEdit {
     patch: ClaudeCodePatch;
     module: string;
     source: string;
@@ -163,7 +168,7 @@ export function listManagedPatches(target: ManagedPatchTarget): { edits: Managed
 
 export function planManagedPatches(edits: ManagedEdit[], selected: ReadonlySet<string>, version?: string) {
     const modules = new Map<string, Buffer>();
-    const preview: string[] = [];
+    const preview: ManagedEdit[] = [];
     const spans = new Map<string, AstPatchMatch[]>();
 
     for (const { patch, module, source, edit, applied } of edits) {
@@ -181,11 +186,7 @@ export function planManagedPatches(edits: ManagedEdit[], selected: ReadonlySet<s
         }
 
         if (enabled !== applied) {
-            const before = source.slice(edit.start, edit.end);
-            const after = edit.replacement;
-            preview.push(
-                `@@ ${module} · ${patch.id} · source offsets ${edit.start}–${edit.end} @@\n- ${SafeJSON.stringify(enabled ? before : after, { strict: true })}\n+ ${SafeJSON.stringify(enabled ? after : before, { strict: true })}`
-            );
+            preview.push({ patch, module, source, edit, applied });
         }
     }
 
@@ -224,13 +225,13 @@ async function assertCurrent(target: ManagedPatchTarget): Promise<void> {
     }
 }
 
-async function ensureBackup(target: ManagedPatchTarget, mode: number): Promise<void> {
+async function ensureBackup(target: ManagedPatchTarget, mode: number): Promise<"created" | "existing"> {
     if (existsSync(target.backup)) {
         if (digest(await readBinary(target.backup)) !== target.originalHash) {
             throw new Error("The pristine backup changed during the patch operation.");
         }
 
-        return;
+        return "existing";
     }
 
     if (target.currentHash !== target.originalHash) {
@@ -238,13 +239,13 @@ async function ensureBackup(target: ManagedPatchTarget, mode: number): Promise<v
     }
 
     await atomicWriteFileStreamed(target.backup, (write) => write(target.original), { mode, exclusive: true });
+    return "created";
 }
 
-export async function backupManagedTarget(target: ManagedPatchTarget): Promise<string> {
+export async function backupManagedTarget(target: ManagedPatchTarget): Promise<"created" | "existing"> {
     return withFileLock(`${target.receipt}.lock`, async () => {
         await assertCurrent(target);
-        await ensureBackup(target, (await stat(target.path)).mode & 0o777);
-        return target.backup;
+        return ensureBackup(target, (await stat(target.path)).mode & 0o777);
     });
 }
 

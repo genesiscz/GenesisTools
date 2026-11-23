@@ -18,7 +18,7 @@ export interface AstPatchMatch extends Span {
 }
 
 interface AstPatch extends PatchMetadata {
-    readonly ast: (program: Program) => readonly AstPatchMatch[];
+    readonly ast: (program: Program, source: string) => readonly AstPatchMatch[];
 }
 
 export type ClaudeCodePatch = LiteralPatch | AstPatch;

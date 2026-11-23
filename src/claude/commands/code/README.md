@@ -161,19 +161,27 @@ Pass `--binary <file>` to manage a different executable.
 tools claude code patch --backup
 tools claude code patch --diff-preview
 tools claude code patch --diff-apply
+tools claude code patch restore
 ```
 
 The picker finds each patch's module automatically and reports why any patch
 is unavailable. Previously applied patches start selected. Deselect one to
-revert it. The preview shows exact removed and inserted source spans as quoted
-strings, including padding. `--diff-preview` prints the diff and exits.
+revert it. The preview formats the surrounding JavaScript and shows a unified
+diff. When the surrounding code cannot be formatted, it shows the edited spans
+and summarizes trailing whitespace. `--diff-preview` prints the diff and exits.
 `--diff-apply` prints the same diff and asks before writing.
 
 The first confirmed update automatically saves a pristine
-`<executable>.genesis-original` backup. `--backup` saves it immediately.
-Each update rebuilds the selected set from that backup. Deselecting every
-patch restores the original executable byte for byte. If an external
-update replaces a managed executable, start from an unmodified executable at
+`<executable>.genesis-original` backup. `--backup` saves it immediately if
+absent. An existing pristine backup is reused without being overwritten.
+Each update rebuilds the selected set from that backup. Run `patch restore`
+to restore the original executable byte for byte without opening the picker.
+Deselecting every patch in the picker has the same effect. If a known patched
+executable differs from the current patch definitions, the picker offers to
+rebuild from the backup. The recovery preview shows the full set of selected
+edits against the pristine backup, followed by what will change compared
+with the installed executable. No file is replaced until you confirm the diff.
+If an external update replaces a managed executable, start from an unmodified executable at
 a fresh path so the old backup and patch state remain available.
 
 ### Inspect or create a separate executable
@@ -207,7 +215,7 @@ on macOS with Bun's 52-byte module records. The npm unpack, diff, and bisect
 commands retain their existing version-based workflow.
 
 For a structural match, register `definePatch({ id, description, ast })`.
-The `ast(program)` callback receives Oxc's parsed program and returns matching
+The `ast(program, source)` callback receives Oxc's parsed program and the original source, and returns matching
 source spans as `{ start, end, replacement }`. Return a match for the patched
 form too so `status` can recognize it. A unique match is required. Shorter
 replacements are padded with spaces to preserve the executable layout.
