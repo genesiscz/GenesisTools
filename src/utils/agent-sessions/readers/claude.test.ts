@@ -27,6 +27,7 @@ import {
 } from "./claude-fork";
 import { canonicalClaudeTranscript } from "./claude-locate";
 import { claudeSessionHolders } from "./claude-peer";
+import { claudeResumeModel } from "./claude-tail-usage";
 import { appendClaudeTitle, lastClaudeAiTitleIn, lastClaudeTitleIn } from "./claude-title";
 import { SESSION_MODEL_FIRST_TAIL_BYTES, SESSION_MODEL_TAIL_BYTES } from "./session-model";
 
@@ -1151,4 +1152,31 @@ test("a session's holders are only the running processes its registry files were
     expect(claudeSessionHolders(FORK_SOURCE, { registryDir, processOf })).toEqual([111]);
     expect(claudeSessionHolders(OTHER_SESSION, { registryDir, processOf })).toEqual([333]);
     expect(claudeSessionHolders(FORK_SOURCE, { registryDir: join(registryDir, "missing"), processOf })).toEqual([]);
+});
+
+test("a resume keeps the last real turn's model, with [1m] when that turn read more than 200k tokens", () => {
+    const directory = mkdtempSync(join(tmpdir(), "gt-claude-resume-model-"));
+    const transcript = (name: string, rows: object[]) => {
+        const path = join(directory, name);
+        writeFileSync(path, `${rows.map((row) => SafeJSON.stringify(row, { strict: true })).join("\n")}\n`);
+        return path;
+    };
+    const turn = (model: string, cacheRead: number) => ({
+        type: "assistant",
+        message: {
+            model,
+            usage: { input_tokens: 5, cache_read_input_tokens: cacheRead, cache_creation_input_tokens: 100 },
+        },
+    });
+    const notice = { type: "assistant", message: { model: "<synthetic>", usage: { input_tokens: 0 } } };
+
+    expect(claudeResumeModel(transcript("big.jsonl", [turn("claude-opus-5-5", 250_000), notice]))).toBe(
+        "claude-opus-5-5[1m]"
+    );
+    expect(
+        claudeResumeModel(
+            transcript("small.jsonl", [turn("claude-opus-5-5", 250_000), turn("claude-haiku-5-5", 40_000)])
+        )
+    ).toBe("claude-haiku-5-5");
+    expect(claudeResumeModel(transcript("none.jsonl", [{ type: "user", message: { content: "hi" } }]))).toBeNull();
 });
