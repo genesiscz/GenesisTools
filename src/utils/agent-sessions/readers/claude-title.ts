@@ -126,8 +126,24 @@ function endsWithNewline(path: string): boolean {
     }
 }
 
-/** Renames a session the way Claude Code's `/rename` does: one more `custom-title` row, and the newest one wins. */
+/**
+ * The rows Claude Code's `/rename` writes, in its order: `custom-title` names the session in the resume list, and
+ * `agent-name` is the name beside the prompt. A rename that wrote only the first left the old name beside the prompt
+ * (2026-11-23), because a resumed session takes that name from the newest `agent-name` row.
+ */
+export function claudeRenameRows(sessionId: string, title: string): string[] {
+    return [
+        { type: "custom-title", customTitle: title, sessionId },
+        { type: "agent-name", agentName: title, sessionId },
+    ].map((row) => SafeJSON.stringify(row, { strict: true }));
+}
+
+/** Renames a session the way Claude Code's `/rename` does; the newest rows win. */
 export function appendClaudeTitle(path: string, sessionId: string, title: string): void {
-    const row = SafeJSON.stringify({ type: "custom-title", customTitle: title, sessionId }, { strict: true });
-    appendFileSync(path, `${endsWithNewline(path) ? "" : "\n"}${row}\n`);
+    appendClaudeRows(path, claudeRenameRows(sessionId, title));
+}
+
+/** Appends whole rows to a transcript, each on its own line, also when the file's last line has no newline. */
+export function appendClaudeRows(path: string, rows: readonly string[]): void {
+    appendFileSync(path, `${endsWithNewline(path) ? "" : "\n"}${rows.join("\n")}\n`);
 }

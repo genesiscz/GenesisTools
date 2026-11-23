@@ -391,7 +391,7 @@ function runningClaudeSessions(): Promise<RunningCmuxSession[]> {
  * `ENOENT: no such file or directory, posix_spawn '/bin/zsh'`. Resume then looked like a broken
  * shell for more than a third of all sessions.
  */
-export function resumeDirectory(session: DisplaySession): { cwd: string; missing?: string } {
+export function resumeDirectory(session: Pick<DisplaySession, "cwd">): { cwd: string; missing?: string } {
     const recorded = session.cwd;
 
     if (recorded && existsSync(recorded)) {
@@ -401,7 +401,8 @@ export function resumeDirectory(session: DisplaySession): { cwd: string; missing
     return { cwd: process.cwd(), ...(recorded ? { missing: recorded } : {}) };
 }
 
-async function resumeSession(session: DisplaySession): Promise<never> {
+/** Starts Claude Code on the session in its recorded folder, and exits with Claude Code's exit code. */
+export async function resumeClaudeSession(session: Pick<DisplaySession, "sessionId" | "cwd">): Promise<never> {
     if (!/^[\w-]+$/.test(session.sessionId)) {
         throw new Error(`Invalid session ID: ${session.sessionId}`);
     }
@@ -575,7 +576,7 @@ async function main(query: string | undefined, opts: ResumeOptions) {
         allProjects: opts.allProjects,
         limit: parseInt(opts.limit, 10) || 20,
     });
-    await resumeSession(selected);
+    await resumeClaudeSession(selected);
 }
 
 // --- Command Registration ---
