@@ -21,6 +21,8 @@ import { getSharedAccountsUsage, peekSharedUsage } from "@app/claude/lib/usage/s
 import { isAutoAccount, pickSmart, type SmartAlias, smartAliasOf } from "@app/claude/lib/usage/smart-alias";
 import { tableSelectAccount } from "@app/claude/lib/usage/table-select";
 import { TIER_BADGE } from "@app/claude/lib/usage/usage-table";
+import { canonicalClaudeTranscriptSync } from "@genesiscz/utils/agent-sessions/readers/claude-locate";
+import { claudeResumeModel } from "@genesiscz/utils/agent-sessions/readers/claude-tail-usage";
 import { accountEnvVar } from "@genesiscz/utils/ai/account-env";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
@@ -651,6 +653,33 @@ export function stickyResumePick(scored: ScoredAccount[], previous: string | nul
     return entry;
 }
 
+/** True when the forwarded args already name a model, which then wins over the session's own. */
+export function namesModel(args: string[]): boolean {
+    return args.some((arg) => arg === "--model" || arg.startsWith("--model="));
+}
+
+/**
+ * The model a resume of a known session keeps, unless the args name one: the session's last turn, so the resumed
+ * session stays on the model its prompt cache was written with (Claude Code itself takes the default model).
+ */
+export function resumeModelOf(args: string[]): string | null {
+    const sessionId = resumedSessionIdOf(args);
+
+    if (!sessionId || namesModel(args)) {
+        return null;
+    }
+
+    try {
+        const path = canonicalClaudeTranscriptSync(sessionId);
+        const model = path ? claudeResumeModel(path) : null;
+        logger.info({ sessionId, model }, "[start] the model a resume keeps");
+        return model;
+    } catch (error) {
+        logger.warn({ error, sessionId }, "[start] the resumed session's model could not be read; the default applies");
+        return null;
+    }
+}
+
 /** The session id the passthrough resumes (`--resume <id>`, `--resume=<id>`, `-r <id>`), or null. */
 export function resumedSessionIdOf(passthrough: string[]): string | null {
     for (let i = 0; i < passthrough.length; i++) {
@@ -1089,6 +1118,14 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
 
     const resume = await resolveResumeArgs(opts, passthrough);
     const resumeArgs = resume.args;
+    const keptModel = modelId ? null : resumeModelOf([...resumeArgs, ...passthrough]);
+    const launchModelId = modelId ?? keptModel ?? undefined;
+
+    if (keptModel) {
+        out.printlnErr(
+            pc.dim(`Keeping the session's model ${keptModel} (its last turn), so its prompt cache still fits.`)
+        );
+    }
 
     await guardFableHeadroom(accountName, modelId, resumeArgs.length > 0);
 
@@ -1170,12 +1207,12 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
           ? await findCmuxTeamsCommand(shell)
           : await findClaudeCommand();
 
-    const extraArgs = buildLaunchArgs({ modelId, resumeArgs, passthrough, cmux: opts.cmux === true });
+    const extraArgs = buildLaunchArgs({ modelId: launchModelId, resumeArgs, passthrough, cmux: opts.cmux === true });
 
     const suffix = extraArgs.length > 0 ? ` ${extraArgs.map(shellQuote).join(" ")}` : "";
     const detail = [
         account.label ? `(${account.label})` : "",
-        modelId ? `model ${pc.magenta(modelId)}` : "",
+        launchModelId ? `model ${pc.magenta(launchModelId)}` : "",
         opts.cmux ? pc.cyan("via cmux claude-teams") : "",
         resumeArgs.length > 0 ? pc.dim(resumeArgs.join(" ")) : "",
     ]

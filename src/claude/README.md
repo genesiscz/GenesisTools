@@ -147,6 +147,10 @@ goes to `claude` unchanged.
 - **The resume picker is shared.** In a terminal, `tools claude resume`, `start|run --resume` (bare or with a
   query) and `tools claude codex --resume` use one picker. A session that already runs in a cmux tab is listed on
   top as live, and Enter on it focuses that tab instead of starting a second Claude process on it.
+- **A resume keeps the session's model.** On `--resume <id>` with no `--model`, `start` passes the model of the
+  session's last real turn, with `[1m]` when that turn read more than 200k tokens. Claude Code itself resumes on the
+  default model, and a different model starts the prompt cache from nothing. `--model` wins; `--continue` without an
+  id keeps the default.
 - **`--tmux`** works for Anthropic accounts. On `--resume <query>` the tmux session is named from the conversation
   title. Inside tmux already (a ttyd tab), it renames the current session and the bound ttyd tab instead of
   nesting. A slash target (`account/provider`) goes to `proxy` and ignores `--tmux`. `--tmux --keychain` cannot be
@@ -406,7 +410,7 @@ Searches stay scoped to Claude and the current project unless `-p`, `--cwd` or `
   (`--title` renames it). Links, cmux layouts and notes that name the id reach the Code Mode session, and its
   sub-agents and `/rewind` checkpoints stay with it. It refuses while a Claude Code process has the session open, a
   session that already runs in Code Mode, and the copy (its title ends with the suffix). In a terminal it then asks
-  which of the two sessions to resume, under the account the session ran on; elsewhere it prints that launch command.
+  which of the two sessions to resume, under the account and the model the session ran on; elsewhere it prints that launch command.
   When the session is open in Claude Code, a terminal asks what to do: stop it, move it and resume it in the same
   cmux tab (the default), focus its tab and move it once you close it (waits up to 15 minutes), or stop it and move
   it. A stop sends SIGTERM to Claude Code and the launchers above it, up to the tab's shell, then SIGKILL after 10
