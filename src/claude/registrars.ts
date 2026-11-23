@@ -19,6 +19,10 @@ export const CLAUDE_REGISTRARS: LazyRegistrar[] = [
     { names: ["doctor"], load: async () => (await import("./commands/doctor")).registerDoctorCommand },
     { names: ["exec"], load: async () => (await import("./commands/exec")).registerExecCommand },
     { names: ["resume"], load: async () => (await import("./commands/resume")).registerResumeCommand },
+    {
+        names: ["fork-with-codemode", "fork-with-codemod"],
+        load: async () => (await import("./commands/fork-with-codemode")).registerForkWithCodeModeCommand,
+    },
     { names: ["tail"], load: async () => (await import("./commands/tail")).registerTailCommand },
     { names: ["transcript"], load: async () => (await import("./commands/transcript")).registerTranscriptCommand },
     { names: ["desktop"], load: async () => (await import("./commands/desktop")).registerDesktopCommand },

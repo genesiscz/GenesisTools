@@ -18,7 +18,10 @@ import { claudeHistoryReader, grokHistoryReader } from "../compact-readers";
 import { searchHistorySource } from "../search-source";
 import type { NativeSessionSource } from "../types";
 import { createClaudeHistoryOperations, readClaudeMetadata, readClaudeRecords, scanClaudeRecords } from "./claude";
+import { claudeCodeModePin, writeCodeModeFork } from "./claude-fork";
 import { canonicalClaudeTranscript } from "./claude-locate";
+import { claudeSessionHolders } from "./claude-peer";
+import { appendClaudeTitle, lastClaudeAiTitleIn, lastClaudeTitleIn } from "./claude-title";
 import { SESSION_MODEL_FIRST_TAIL_BYTES, SESSION_MODEL_TAIL_BYTES } from "./session-model";
 
 const MAIN_ID = "11111111-2222-4333-8444-555555555555";
@@ -995,4 +998,80 @@ test("readToolCalls: a transcript that shrank is read from its start, its first 
     const after = claudeHistoryReader.readToolCalls(file, before.offset);
     expect(after.supported && after.calls.map((call) => call.input)).toEqual([{ file_path: "src/d.ts" }]);
     expect(after.supported && after.offset).toBe(readFileSync(file).length);
+});
+
+const FORK_SOURCE = "aaaaaaaa-1111-4222-8333-444444444444";
+const FORK_ID = "bbbbbbbb-1111-4222-8333-444444444444";
+const OTHER_SESSION = "cccccccc-1111-4222-8333-444444444444";
+
+test("a Code Mode fork gets the fork's id, one pin, one title, and the old session's other rows", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "gt-claude-fork-"));
+    const sourcePath = join(directory, `${FORK_SOURCE}.jsonl`);
+    const forkPath = join(directory, `${FORK_ID}.jsonl`);
+    const rows = [
+        { type: "user", sessionId: FORK_SOURCE, cwd: "/work/shop", message: { content: "fix the invoice" } },
+        { type: "repl-mode", replMode: false, sessionId: FORK_SOURCE },
+        { type: "custom-title", customTitle: "Invoice rounding", sessionId: FORK_SOURCE },
+        { type: "ai-title", aiTitle: "Invoice fix", sessionId: FORK_SOURCE },
+        { type: "user", sessionId: OTHER_SESSION, message: { content: "a teammate row" } },
+    ];
+    writeFileSync(sourcePath, `${rows.map((row) => SafeJSON.stringify(row, { strict: true })).join("\n")}\nnot json`);
+
+    expect(claudeCodeModePin(sourcePath)).toBe(false);
+    expect(lastClaudeAiTitleIn(sourcePath)).toBe("Invoice fix");
+
+    const scan = await writeCodeModeFork({
+        sourceId: FORK_SOURCE,
+        forkId: FORK_ID,
+        sourcePath,
+        forkPath,
+        title: "Invoice rounding",
+    });
+    appendClaudeTitle(sourcePath, FORK_SOURCE, "Invoice rounding-without-fork");
+
+    const forkLines = readFileSync(forkPath, "utf8").trimEnd().split("\n");
+    const parsed = forkLines
+        .filter((line) => line !== "not json")
+        .map((line) => SafeJSON.parse(line, { strict: true }));
+    expect(scan).toEqual({ rows: 4, droppedPins: 1, droppedTitles: 1, unreadableRows: 1, cwd: "/work/shop" });
+    expect(forkLines).toContain("not json");
+    expect(parsed.filter((row) => row.sessionId === FORK_SOURCE)).toEqual([]);
+    expect(parsed.filter((row) => row.sessionId === OTHER_SESSION)).toHaveLength(1);
+    expect(parsed.filter((row) => row.type === "repl-mode")).toEqual([
+        { type: "repl-mode", replMode: true, sessionId: FORK_ID },
+    ]);
+    expect(claudeCodeModePin(forkPath)).toBe(true);
+    expect(lastClaudeTitleIn(forkPath)).toBe("Invoice rounding");
+    expect(lastClaudeTitleIn(sourcePath)).toBe("Invoice rounding-without-fork");
+    expect(claudeCodeModePin(sourcePath)).toBe(false);
+    expect(readFileSync(sourcePath, "utf8").split("\n").at(-2)).toContain(
+        '"customTitle":"Invoice rounding-without-fork"'
+    );
+});
+
+test("a session's holders are only the running processes its registry files were written for", () => {
+    const registryDir = mkdtempSync(join(tmpdir(), "gt-claude-registry-"));
+    const procStart = "Mon Nov 23 11:27:09 2026";
+    const startSec = Date.parse(`${procStart} UTC`) / 1000;
+    const file = (pid: number, sessionId: string) =>
+        writeFileSync(
+            join(registryDir, `${pid}.json`),
+            SafeJSON.stringify({ pid, sessionId, procStart }, { strict: true })
+        );
+    file(111, FORK_SOURCE);
+    file(222, FORK_SOURCE);
+    file(333, OTHER_SESSION);
+    file(444, FORK_SOURCE);
+    writeFileSync(join(registryDir, "111.d3ce7c.key"), "");
+
+    const processes = new Map([
+        [111, { pid: 111, startSec }],
+        [333, { pid: 333, startSec }],
+        [444, { pid: 444, startSec: startSec + 3_600 }],
+    ]);
+    const processOf = (pid: number) => processes.get(pid) ?? null;
+
+    expect(claudeSessionHolders(FORK_SOURCE, { registryDir, processOf })).toEqual([111]);
+    expect(claudeSessionHolders(OTHER_SESSION, { registryDir, processOf })).toEqual([333]);
+    expect(claudeSessionHolders(FORK_SOURCE, { registryDir: join(registryDir, "missing"), processOf })).toEqual([]);
 });
