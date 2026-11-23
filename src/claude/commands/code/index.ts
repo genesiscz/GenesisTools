@@ -1,11 +1,14 @@
 import { type Command, Option } from "commander";
 import { bisectCommand } from "./commands/bisect";
 import { diffCommand } from "./commands/diff";
+import { registerPatchCommands } from "./commands/patch";
 import { unpackCommand } from "./commands/unpack";
 import { versionsCommand } from "./commands/versions";
 
 export function registerCodeCommand(program: Command): void {
-    const code = program.command("code").description("Unpack, diff, and bisect npm-published Claude Code CLI bundles");
+    const code = program.command("code").description("Inspect and patch Claude Code CLI bundles");
+
+    registerPatchCommands(code);
 
     code.command("versions")
         .description("List published @anthropic-ai/claude-code versions with publish dates")
