@@ -61,6 +61,7 @@ import {
     audioArgv,
     captureErrorKind,
     flagsInHelp,
+    followFocusSystem,
     NativeFrameRecorder,
     NativeLiveCapture,
     type NativeOptionalFlag,
@@ -224,6 +225,12 @@ describe("native capture argv", () => {
         expect(gone).toThrow(CaptureError);
         expect(captureKindOf(gone)).toBe("display-missing");
         expect(captureKindOf(focus)).toBe("unavailable");
+    });
+
+    test("follow-focus needs macOS 14: Darwin 23 and later follow, Darwin 22 does not", () => {
+        expect(followFocusSystem("darwin", "23.0.0")).toBe(true);
+        expect(followFocusSystem("darwin", "27.2.0")).toBe(true);
+        expect(followFocusSystem("darwin", "22.6.0")).toBe(false);
     });
 
     test("the help text names a flag only as a whole word", () => {

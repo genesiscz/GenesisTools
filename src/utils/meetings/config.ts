@@ -145,7 +145,11 @@ const captureSchema = z.object({
         .prefault({}),
     /** The frame recorder: GenesisTools' own ScreenCaptureKit recorder (`native`) or `peekaboo`. */
     backend: z.enum(FRAME_RECORDER_IDS).default("native"),
-    displays: displayPolicySchema.default("all"),
+    /**
+     * Which displays a recording records. `follow-focus` records one display, the one with the focused window, and
+     * moves with the focus; `all` records every connected display at once, one capture each.
+     */
+    displays: displayPolicySchema.default("follow-focus"),
     /** Frames per second while the screen changes. */
     activeFps: z.number().positive().default(1),
     /** Frames per second while it does not. */

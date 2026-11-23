@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
+import { release } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -622,6 +623,15 @@ export class NativeLiveCapture implements LiveCapture {
     }
 }
 
+/**
+ * `--follow-focus` moves a running stream to another display, which macOS has since 14 (Darwin 23); ax-tool refuses
+ * the flag on an older system, so the recorder says it cannot follow there and the main display is recorded. Only
+ * macOS runs ax-tool: another platform is a test with a stand-in binary, and that one follows.
+ */
+export function followFocusSystem(platform: string = process.platform, kernel: string = release()): boolean {
+    return platform !== "darwin" || Number.parseInt(kernel, 10) >= 23;
+}
+
 /** `ax-tool capture --mode screen`, GenesisTools' own ScreenCaptureKit recorder. */
 export class NativeFrameRecorder extends FrameRecorder {
     readonly id = "native" as const;
@@ -633,7 +643,7 @@ export class NativeFrameRecorder extends FrameRecorder {
 
     get supports(): FrameRecorderSupport {
         return {
-            followFocus: this.flags.has("--follow-focus"),
+            followFocus: this.flags.has("--follow-focus") && followFocusSystem(),
             displayId: true,
             // Motion boxes came with the same ax-tool release as --follow-focus.
             motionBoxes: this.flags.has("--follow-focus"),

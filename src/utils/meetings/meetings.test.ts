@@ -164,6 +164,7 @@ describe("meetings config", () => {
 
         expect(config.global.dictionary).toEqual({ entries: [] });
         expect(config.global.capture).toMatchObject({
+            displays: "follow-focus",
             activeFps: 1,
             idleFps: 0.1,
             retentionDays: 30,
