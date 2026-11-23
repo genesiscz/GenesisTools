@@ -15,6 +15,7 @@ import {
     lastClaudeAiTitleIn,
     lastClaudeTitleIn,
 } from "@genesiscz/utils/agent-sessions/readers/claude-title";
+import { findSessionsByTitle } from "@genesiscz/utils/ai/transcripts/session-title";
 
 export const DEFAULT_OLD_SUFFIX = "-without-fork";
 
@@ -35,7 +36,7 @@ export type CodeModeForkOutcome =
     | { kind: "forked"; plan: CodeModeForkPlan; fork: CodeModeForkScan };
 
 export interface CodeModeForkOptions {
-    /** A session id or a prefix of eight characters or more. */
+    /** A session id, a prefix of eight characters or more, or the session's exact `/rename` title. */
     session: string;
     /** The new session's title; default: the old session's own title. */
     title?: string;
@@ -43,11 +44,14 @@ export interface CodeModeForkOptions {
     dryRun?: boolean;
 }
 
+/** An id or an id prefix first, then a `/rename` title. Only an exact title counts: a fork of the wrong session is two sessions to undo. */
 async function findTranscript(session: string): Promise<string | CodeModeForkOutcome> {
     try {
-        return (
-            (await canonicalClaudeTranscript(session)) ?? { kind: "refused", reason: `No Claude session ${session}.` }
-        );
+        const byId = await canonicalClaudeTranscript(session);
+
+        if (byId) {
+            return byId;
+        }
     } catch (error) {
         if (error instanceof AmbiguousSessionIdError) {
             return { kind: "refused", reason: `${session} starts several sessions: ${error.ids.join(", ")}.` };
@@ -55,6 +59,27 @@ async function findTranscript(session: string): Promise<string | CodeModeForkOut
 
         throw error;
     }
+
+    const wanted = session.trim().toLowerCase();
+    const hits = findSessionsByTitle(session, { provider: "claude" });
+    const exact = hits.filter((hit) => hit.title.trim().toLowerCase() === wanted);
+    const ids = [...new Set(exact.map((hit) => hit.sessionId))];
+
+    if (ids.length > 1) {
+        return { kind: "refused", reason: `Several sessions are titled "${session}": ${ids.join(", ")}. Pass an id.` };
+    }
+
+    const [id] = ids;
+
+    if (id) {
+        return (await canonicalClaudeTranscript(id)) ?? { kind: "refused", reason: `No transcript for session ${id}.` };
+    }
+
+    const near = hits.map((hit) => `${hit.sessionId.slice(0, 8)} "${hit.title}"`).slice(0, 5);
+    return {
+        kind: "refused",
+        reason: `No Claude session with the id or title ${session}.${near.length > 0 ? ` Titles that contain it: ${near.join(", ")}.` : ""}`,
+    };
 }
 
 /**
