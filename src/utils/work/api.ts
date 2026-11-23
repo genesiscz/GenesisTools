@@ -97,7 +97,7 @@ export const workMethods = {
         name: "config",
         params: z.object({ project: z.string().optional(), type: z.array(type).optional() }),
         result: configResultSchema,
-        resultName: `${reply}, data: { project, rows: { type, fields, writes, notify }[] }`,
+        resultName: `${reply}, data: { project, rows: { type, fields, writes, overrides, notify }[] }`,
         effect: "read",
         doc: "The effective rules of a project; each value names the layer that set it.",
     }),

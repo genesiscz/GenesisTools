@@ -1,6 +1,6 @@
 import type { Diagnostic, NextAction } from "@genesiscz/utils/output/reply";
 import { errorDiagnostic, infoDiagnostic, warningDiagnostic } from "@genesiscz/utils/output/reply";
-import type { ContextStamp, NewChange } from "../model/change";
+import type { ContextStamp, ContextStampFact, NewChange } from "../model/change";
 import type { Actor, Item, ItemFields, ItemId } from "../model/item";
 import { asItemId } from "../model/item";
 import type { CreatedPayload, ItemPatch } from "../model/payloads";
@@ -76,6 +76,19 @@ export interface WriteEnv {
     /** The effective rules of the project (P3); the built-in defaults when absent. */
     rules?: ResolvedRules;
     rulesByProject?: ReadonlyMap<string, ResolvedRules>;
+    /** Why this session does a write that a role rule refuses (`--override`), trimmed; absent when not given. */
+    override?: string;
+    /** The role rules the override passed in this write; `decide` sets it from the guard, `base` stamps it. */
+    overrides?: readonly OverrideUse[];
+}
+
+/** One role rule that an override passed: the item, the verb, the roles the rule needs and the roles the caller held. */
+export interface OverrideUse {
+    item: ItemId;
+    verb: WriteVerb;
+    needs: Role[];
+    held: Role[];
+    why: string;
 }
 
 export type Decision =
@@ -121,6 +134,8 @@ function base(
     env: WriteEnv,
     item: ItemId
 ): Pick<NewChange, "v" | "ts" | "item" | "actor" | "origin" | "request" | "stamp"> {
+    const traced = overrideFacts(env.overrides ?? [], item);
+    const stamp = traced.length > 0 ? { facts: [...(env.stamp?.facts ?? []), ...traced] } : env.stamp;
     return {
         v: 1,
         ts: env.now,
@@ -128,8 +143,31 @@ function base(
         actor: env.actor,
         origin: { via: "local" },
         ...(env.request !== undefined ? { request: env.request } : {}),
-        ...(env.stamp !== undefined ? { stamp: env.stamp } : {}),
+        ...(stamp !== undefined ? { stamp } : {}),
     };
+}
+
+function overrideRuleText(use: OverrideUse): string {
+    return `${use.verb} needs ${use.needs.join(" or ")}; the session was ${use.held.length > 0 ? use.held.join(", ") : "none of these"}`;
+}
+
+/** The stamp facts of the overrides this write used on one item: the reason once, then each rule it passed. */
+function overrideFacts(uses: readonly OverrideUse[], item: ItemId): ContextStampFact[] {
+    const mine = uses.filter((use) => use.item === item);
+
+    if (mine.length === 0) {
+        return [];
+    }
+
+    return [
+        { path: "role-override", value: mine[0].why, method: "given", source: "--override" },
+        ...mine.map((use) => ({
+            path: "role-override.rule",
+            value: overrideRuleText(use),
+            method: "read" as const,
+            source: "rules",
+        })),
+    ];
 }
 
 /** The slots of the old log that hold an item: the one the ref named first, then the others. */
@@ -1183,9 +1221,59 @@ function decideHandoff(cmd: Extract<WorkCommand, { verb: "handoff" }>, view: Sto
     return { ok: true, changes, legacy, items, diagnostics: [], next: [] };
 }
 
-/** The role check of each write (P3): the rule of the item's type, against the roles the rows give the caller. */
-function guard(command: WorkCommand, view: StoreView, env: WriteEnv): Decision | null {
+type GuardResult = { refused: Decision } | { uses: OverrideUse[] };
+
+type OverrideVerdict = { kind: "use" } | { kind: "offer" } | { kind: "refuse"; reason: string } | { kind: "none" };
+
+/**
+ * Whether an override lets a refused write go on. It needs a reason, a rule that names someone (a rule of nobody is
+ * never overridden), an override rule that allows the caller, and an item outside the old handoff log, which has no
+ * place for the trace.
+ */
+function overrideVerdict(input: {
+    given: boolean;
+    rule: readonly Role[];
+    allowed: boolean;
+    inHandoff: boolean;
+    verb: WriteVerb;
+    type: ItemType;
+}): OverrideVerdict {
+    const reason =
+        input.rule.length === 0
+            ? "the rule names nobody"
+            : !input.allowed
+              ? `the project's rules allow no override of ${input.verb} for type ${input.type}`
+              : input.inHandoff
+                ? "the item is in a handoff slot"
+                : null;
+
+    if (reason !== null) {
+        return input.given ? { kind: "refuse", reason } : { kind: "none" };
+    }
+
+    return input.given ? { kind: "use" } : { kind: "offer" };
+}
+
+/** The role check of each write (P3), with the role rules an override passed. */
+function guard(command: WorkCommand, view: StoreView, env: WriteEnv): GuardResult {
+    const uses: OverrideUse[] = [];
+    const refused = guardRoles({ command, view, env, uses });
+    return refused !== null ? { refused } : { uses };
+}
+
+/**
+ * The rule of the item's type, against the roles the rows give the caller. A refused write that an override lets
+ * through adds its rule to `uses`.
+ */
+function guardRoles(input: {
+    command: WorkCommand;
+    view: StoreView;
+    env: WriteEnv;
+    uses: OverrideUse[];
+}): Decision | null {
+    const { command, view, env, uses } = input;
     const ask = { lineage: env.lineage, ownerKind: env.actor.kind === "owner", sessionId: env.actor.sessionId };
+    const why = env.override?.trim() ?? "";
     const check = (ref: string, verb: WriteVerb, workerMay = false): Decision | null => {
         const resolved = view.resolve(ref);
 
@@ -1207,16 +1295,37 @@ function guard(command: WorkCommand, view: StoreView, env: WriteEnv): Decision |
             return null;
         }
 
+        const verdict = overrideVerdict({
+            given: why !== "",
+            rule,
+            allowed: allows(rulesFor(env, item.project).mayOverride(item.type, verb).value, roles),
+            inHandoff: item.type === "handoff" || slotsOf(view, resolved).length > 0,
+            verb,
+            type: item.type,
+        });
+
+        if (verdict.kind === "use") {
+            uses.push({ item: item.id, verb, needs: [...rule], held: roles, why });
+            return null;
+        }
+
         const needs = rule.length === 0 ? "nobody" : rule.join(" or ");
+        const refusal = `${verb} of ${item.id} (type ${item.type}) needs ${needs}; this session is ${roles.length > 0 ? roles.join(", ") : "none of these"}.`;
+        const hint =
+            verdict.kind === "offer"
+                ? ` Repeat with --override "<why this session does it>" (MCP: override) to do it anyway; the journal keeps who did it and why.`
+                : verdict.kind === "refuse"
+                  ? ` The override cannot apply: ${verdict.reason}.`
+                  : "";
         return {
             ok: false,
-            diagnostics: [
-                errorDiagnostic(
-                    "ROLE_REFUSED",
-                    `${verb} of ${item.id} (type ${item.type}) needs ${needs}; this session is ${roles.length > 0 ? roles.join(", ") : "none of these"}.`
-                ),
+            diagnostics: [errorDiagnostic("ROLE_REFUSED", `${refusal}${hint}`)],
+            next: [
+                ...(verdict.kind === "offer"
+                    ? [{ do: `repeat the ${verb} with --override "<why this session does it>" (MCP: override)` }]
+                    : []),
+                { do: "ask the owner", ask: `May this session ${verb} ${item.id} (${item.title})?` },
             ],
-            next: [{ do: "ask the owner", ask: `May this session ${verb} ${item.id} (${item.title})?` }],
         };
     };
     const first = (checks: (Decision | null)[]): Decision | null => checks.find((c) => c !== null) ?? null;
@@ -1312,12 +1421,36 @@ function guard(command: WorkCommand, view: StoreView, env: WriteEnv): Decision |
 
 /** Pure. The one judge of every write: transitions, field rules, the parent rule, the routing to the old log. */
 export function decide(command: WorkCommand, view: StoreView, env: WriteEnv): Decision {
-    const refused = guard(command, view, env);
+    const guarded = guard(command, view, env);
 
-    if (refused !== null) {
-        return refused;
+    if ("refused" in guarded) {
+        return guarded.refused;
     }
 
+    const decision = decideVerb(command, view, { ...env, overrides: guarded.uses });
+
+    if (!decision.ok || decision.noop === true || env.override === undefined || env.override.trim() === "") {
+        return decision;
+    }
+
+    const notes =
+        guarded.uses.length > 0
+            ? guarded.uses.map((use) =>
+                  infoDiagnostic(
+                      "ROLE_OVERRIDE",
+                      `${use.verb} of ${use.item}: the role rule (${use.needs.join(" or ")}) was overridden; the journal keeps the reason.`
+                  )
+              )
+            : [
+                  infoDiagnostic(
+                      "OVERRIDE_NOT_NEEDED",
+                      `this session may ${command.verb} ${decision.items.join(", ")}; --override was not used.`
+                  ),
+              ];
+    return { ...decision, diagnostics: [...decision.diagnostics, ...notes] };
+}
+
+function decideVerb(command: WorkCommand, view: StoreView, env: WriteEnv): Decision {
     switch (command.verb) {
         case "spot":
             return decideSpot(command, view, env);

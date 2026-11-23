@@ -4,8 +4,11 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { makeTempDir } from "@genesiscz/utils/paths";
+import { workFormatters } from "../formatters";
 import { callWork } from "../handlers";
+import type { ContextStamp, ContextStampFact } from "../model/change";
 import { type Actor, asItemId } from "../model/item";
+import { showItem } from "../read";
 import { type WorkContext, write } from "../service";
 import { applyChange } from "../store/apply";
 import { openWorkDb } from "../store/db";
@@ -381,5 +384,124 @@ describe("the write rules", () => {
             fields: {},
         });
         expect(low.ok && low.data.items[0].state).toBe("spotted");
+    });
+});
+
+describe("the role override", () => {
+    async function spotIdea(session: string): Promise<string> {
+        const spotted = await write(ctx(session), { verb: "spot", title: "an idea", type: "idea", fields: {} });
+        return spotted.ok ? spotted.data.items[0].id : "";
+    }
+
+    function overrideFacts(id: string): ContextStampFact[] {
+        const row = db.query("SELECT stamp FROM changes WHERE item = ? AND kind = 'moved'").get(id) as {
+            stamp: string | null;
+        } | null;
+        const stamp = row?.stamp ? (SafeJSON.parse(row.stamp) as ContextStamp) : null;
+        return (stamp?.facts ?? []).filter((fact) => fact.path.startsWith("role-override"));
+    }
+
+    test("a poster finishes its idea only with a reason, and the journal and the log keep it", async () => {
+        const id = await spotIdea("finder");
+        const finish = { verb: "finish", ref: id, proof: "done" } as const;
+
+        const refused = await write(ctx("finder"), finish);
+        expect(refused.ok).toBe(false);
+        expect(refused.diagnostics[0].code).toBe("ROLE_REFUSED");
+        expect(refused.diagnostics[0].message).toContain("needs lead or owner; this session is poster.");
+        expect(refused.diagnostics[0].message).toContain('Repeat with --override "<why this session does it>"');
+        expect(refused.next[0].do).toContain("--override");
+        expect(refused.next.at(-1)?.do).toBe("ask the owner");
+
+        const blank = await write(ctx("finder", { override: "   " }), finish);
+        expect(blank.ok).toBe(false);
+        expect(blank.diagnostics[0].message).toContain("Repeat with --override");
+
+        const done = await write(ctx("finder", { override: "  the owner asked to close it  " }), finish);
+        expect(done.ok).toBe(true);
+        expect(done.diagnostics.find((d) => d.code === "ROLE_OVERRIDE")?.message).toBe(
+            `finish of ${id}: the role rule (lead or owner) was overridden; the journal keeps the reason.`
+        );
+        expect(overrideFacts(id)).toEqual([
+            { path: "role-override", value: "the owner asked to close it", method: "given", source: "--override" },
+            {
+                path: "role-override.rule",
+                value: "finish needs lead or owner; the session was poster",
+                method: "read",
+                source: "rules",
+            },
+        ]);
+        const moved = db.query("SELECT actor FROM changes WHERE item = ? AND kind = 'moved'").get(id) as {
+            actor: string;
+        };
+        expect(moved.actor).toContain('"sessionId":"finder"');
+
+        const shown = showItem(db, id);
+        const text = shown ? workFormatters({ section: "log" }).show.text(shown, { tty: false, width: 120 }) : [];
+        expect(text.join("\n")).toContain(
+            "[override: the owner asked to close it; finish needs lead or owner; the session was poster]"
+        );
+
+        const again = await write(ctx("finder", { override: "again" }), finish);
+        expect(again.ok && again.data.noop).toBe(true);
+        expect(again.diagnostics.some((d) => d.code === "ROLE_OVERRIDE" || d.code === "OVERRIDE_NOT_NEEDED")).toBe(
+            false
+        );
+    });
+
+    test("the built-in rules allow no override of accept, and a rule of nobody is never overridden", async () => {
+        const id = await spotIdea("finder");
+        const accept = await write(ctx("finder", { override: "I think it is good" }), { verb: "accept", refs: [id] });
+        expect(accept.ok).toBe(false);
+        expect(accept.diagnostics[0].code).toBe("ROLE_REFUSED");
+        expect(accept.diagnostics[0].message).toContain(
+            "The override cannot apply: the project's rules allow no override of accept for type idea."
+        );
+        expect(accept.next.map((step) => step.do)).toEqual(["ask the owner"]);
+
+        const claim = await write(ctx("finder", { override: "I want it" }), { verb: "claim", ref: id });
+        expect(claim.ok).toBe(false);
+        expect(claim.diagnostics[0].message).toContain("needs nobody");
+        expect(claim.diagnostics[0].message).toContain("The override cannot apply: the rule names nobody.");
+    });
+
+    test("project rules turn the override of a verb off or on", async () => {
+        const off = resolveWorkRules([
+            { layer: "config.project", rules: { types: { idea: { overrides: { finish: [] } } } } },
+        ]);
+        const first = await spotIdea("finder");
+        const refused = await write(ctx("finder", { rules: off, override: "the owner asked" }), {
+            verb: "finish",
+            ref: first,
+            proof: "done",
+        });
+        expect(refused.ok).toBe(false);
+        expect(refused.diagnostics[0].message).toContain("allow no override of finish for type idea");
+        expect(off.mayOverride("idea", "finish")).toMatchObject({ value: [], from: "config.project" });
+
+        const on = resolveWorkRules([
+            { layer: "config.project", rules: { types: { idea: { overrides: { accept: "anyone" } } } } },
+        ]);
+        const second = await spotIdea("finder");
+        const accepted = await write(ctx("finder", { rules: on, override: "the owner said yes in chat" }), {
+            verb: "accept",
+            refs: [second],
+        });
+        expect(accepted.ok).toBe(true);
+        expect(overrideFacts(second).map((fact) => fact.value)).toEqual([
+            "the owner said yes in chat",
+            "accept needs owner; the session was poster",
+        ]);
+    });
+
+    test("an override that was not needed writes no trace and says so", async () => {
+        const spotted = await write(ctx("finder"), { verb: "spot", title: "a bug", type: "bug", fields: {} });
+        const id = spotted.ok ? spotted.data.items[0].id : "";
+        const done = await write(ctx("finder", { override: "just in case" }), { verb: "finish", ref: id, proof: "ok" });
+        expect(done.ok).toBe(true);
+        expect(overrideFacts(id)).toEqual([]);
+        expect(done.diagnostics.find((d) => d.code === "OVERRIDE_NOT_NEEDED")?.message).toBe(
+            `this session may finish ${id}; --override was not used.`
+        );
     });
 });

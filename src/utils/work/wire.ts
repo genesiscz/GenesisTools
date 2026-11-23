@@ -135,6 +135,12 @@ export const configResultSchema = z.object({
                     resolved: z.object({ value: z.unknown(), from: z.string(), layers: layerTrail }),
                 })
             ),
+            overrides: z.array(
+                z.object({
+                    verb: z.string(),
+                    resolved: z.object({ value: z.unknown(), from: z.string(), layers: layerTrail }),
+                })
+            ),
             notify: z.array(
                 z.object({
                     action: z.enum(NOTIFY_ACTIONS),

@@ -41,6 +41,10 @@ const WRITE_OPTIONS = [
         flags: "--owner-said <words>",
         description: "record the owner's words in the journal",
     },
+    {
+        flags: "--override <why>",
+        description: "do a write that a role rule refuses; the journal keeps who did it and why",
+    },
 ];
 
 const VIEW_OPTIONS: Partial<Record<WorkMethodName, { flags: string; description: string }[]>> = {
@@ -102,6 +106,7 @@ export async function runMethod(
         ...(typeof extra.requestId === "string" ? { request: extra.requestId } : {}),
         ...(extra.dryRun === true ? { dryRun: true } : {}),
         ...(typeof extra.ownerSaid === "string" ? { ownerSaid: extra.ownerSaid } : {}),
+        ...(typeof extra.override === "string" ? { override: extra.override } : {}),
         quiet: false,
     });
     const formatters = workFormatters({
