@@ -397,7 +397,8 @@ Searches stay scoped to Claude and the current project unless `-p`, `--cwd` or `
 - **`resume [query]`** takes a short id, a name or a search term. `-l` lists recent sessions, `-a` searches every
   project, `-n` sets the count (default 20).
 - **`fork-with-codemode <session>`** (alias `fork-with-codemod`) gives an ordinary session a copy that resumes in
-  Code Mode. Claude Code pins a session's mode when the session starts: a session started without Code Mode resumes
+  Code Mode. `<session>` is an id, an id prefix of eight characters or more, or the exact `/rename` title of a
+  session written in the last 14 days. Claude Code pins a session's mode when the session starts: a session started without Code Mode resumes
   with the ordinary tools even when `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1` is set, and its own `--fork-session` keeps
   that pin (measured on 2.1.328). The command writes a new session with the same conversation, the Code Mode marker
   and the old title, then renames the old session to `<title>-without-fork` (`--old-suffix`, `--title` for the new
