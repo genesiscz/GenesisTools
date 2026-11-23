@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 import {
     appendClaudeCodeModePin,
+    checkCodeModePair,
     claudeCodeModePin,
+    copySourceOf,
+    type PairCheck,
     type SessionCopyScan,
     writeSessionCopy,
 } from "@genesiscz/utils/agent-sessions/readers/claude-fork";
@@ -257,4 +260,81 @@ export async function waitUntilSessionCloses(sessionId: string, timeoutMs: numbe
     }
 
     return true;
+}
+
+export type CodeModeCheckOutcome =
+    | { kind: "refused"; reason: string }
+    | { kind: "checked"; sessionId: string; copyId: string; checks: PairCheck[] };
+
+/** The copy of a Code Mode session: titled `<title><suffix>`, and its own `derived-from` row names the session. */
+async function findCopy(
+    sessionId: string,
+    title: string,
+    suffix: string
+): Promise<{ id: string; path: string } | null> {
+    const wanted = `${title}${suffix}`.toLowerCase();
+    const hits = findSessionsByTitle(`${title}${suffix}`, { provider: "claude" }).filter(
+        (hit) => hit.title.trim().toLowerCase() === wanted
+    );
+
+    for (const hit of hits) {
+        const path = await canonicalClaudeTranscript(hit.sessionId);
+
+        if (path && (await copySourceOf(path, hit.sessionId)) === sessionId) {
+            return { id: hit.sessionId, path };
+        }
+    }
+
+    return null;
+}
+
+/** Checks a session moved into Code Mode against its copy; either id of the pair finds the other. Reads only. */
+export async function checkSessionIntoCodeMode(options: {
+    session: string;
+    backupSuffix?: string;
+}): Promise<CodeModeCheckOutcome> {
+    const found = await findTranscript(options.session);
+
+    if (typeof found !== "string") {
+        return { kind: "refused", reason: found.kind === "refused" ? found.reason : `No session ${options.session}.` };
+    }
+
+    const suffix = options.backupSuffix ?? DEFAULT_BACKUP_SUFFIX;
+    const id = basename(found, ".jsonl");
+    const customTitle = lastClaudeTitleIn(found);
+
+    if (customTitle?.endsWith(suffix)) {
+        const sourceId = await copySourceOf(found, id);
+        const sessionPath = sourceId ? await canonicalClaudeTranscript(sourceId) : undefined;
+
+        if (!sourceId || !sessionPath) {
+            return { kind: "refused", reason: `Copy ${id} names no session it was made from that is still here.` };
+        }
+
+        const checks = await checkCodeModePair({
+            ids: { sourceId, copyId: id },
+            sessionPath,
+            copyPath: found,
+            suffix,
+        });
+        return { kind: "checked", sessionId: sourceId, copyId: id, checks };
+    }
+
+    const title = customTitle ?? lastClaudeAiTitleIn(found);
+    const copy = title ? await findCopy(id, title, suffix) : null;
+
+    if (!copy) {
+        return {
+            kind: "refused",
+            reason: `No copy titled "${title ?? "?"}${suffix}" names session ${id} (sessions written in the last 14 days).`,
+        };
+    }
+
+    const checks = await checkCodeModePair({
+        ids: { sourceId: id, copyId: copy.id },
+        sessionPath: found,
+        copyPath: copy.path,
+        suffix,
+    });
+    return { kind: "checked", sessionId: id, copyId: copy.id, checks };
 }

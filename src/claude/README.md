@@ -412,6 +412,10 @@ Searches stay scoped to Claude and the current project unless `-p`, `--cwd` or `
   it. A stop sends SIGTERM to Claude Code and the launchers above it, up to the tab's shell, then SIGKILL after 10
   seconds. A Code Mode session resumes only where Code Mode is available: on an account whose organization policy
   Claude Code cannot read, Claude Code refuses to resume it. `--dry-run` writes nothing; `--json` prints the outcome.
+  Only the main transcript is copied: sub-agent transcripts, tool results and file checkpoints stay with the session.
+  `--check` (either id of the pair, reads only, also while both are open) compares the copy with the session row by
+  row, checks the Code Mode marker and both names, and counts the REPL scripts each one ran after the move; it exits
+  1 when a check fails.
 - **`tail [query]`** follows a session (`-a <id>` for a subagent). `--include` picks content: `thinking`, `tools`
   (`tools:in:500,tools:out:500`), `agents` (`agents:input,agents:tools,agents:result`), and the finer forms
   `tools:in[:<chars>]`, `agents:tools:out[:<N>]`, `agents:thinking`. A later specifier overrides an earlier one.

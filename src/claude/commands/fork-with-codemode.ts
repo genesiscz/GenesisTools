@@ -5,11 +5,13 @@ import {
     type CodeModeForkOptions,
     type CodeModeForkOutcome,
     type CodeModeForkPlan,
+    checkSessionIntoCodeMode,
     DEFAULT_BACKUP_SUFFIX,
     forkSessionIntoCodeMode,
     stopClaudeProcesses,
     waitUntilSessionCloses,
 } from "@app/claude/lib/code-mode-fork";
+import type { PairCheck } from "@genesiscz/utils/agent-sessions/readers/claude-fork";
 import { listRunningCmuxSessions, type RunningCmuxSession } from "@genesiscz/utils/ai/active-sessions";
 import { isInteractive } from "@genesiscz/utils/cli";
 import type { OpenSessionTarget } from "@genesiscz/utils/cmux/open-command";
@@ -21,6 +23,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 
 interface ForkFlags {
+    check?: boolean;
     title?: string;
     backupSuffix: string;
     dryRun?: boolean;
@@ -196,6 +199,38 @@ async function resolveBusy(
     return { outcome, reopened: await reopenAt(outcome.plan.sessionId, places) };
 }
 
+const CHECK_MARK: Record<PairCheck["status"], string> = {
+    ok: pc.green("✔"),
+    fail: pc.red("✘"),
+    warn: pc.yellow("▲"),
+    info: pc.dim("·"),
+};
+
+async function runCheck(session: string, flags: ForkFlags): Promise<void> {
+    const outcome = await checkSessionIntoCodeMode({ session, backupSuffix: flags.backupSuffix });
+    const failed = outcome.kind === "refused" || outcome.checks.some((check) => check.status === "fail");
+
+    if (failed) {
+        process.exitCode = 1;
+    }
+
+    if (flags.json) {
+        out.result(outcome);
+        return;
+    }
+
+    if (outcome.kind === "refused") {
+        out.log.error(outcome.reason);
+        return;
+    }
+
+    out.println(`${pc.bold("session")} ${outcome.sessionId}  ${pc.bold("copy")} ${outcome.copyId}`);
+
+    for (const check of outcome.checks) {
+        out.println(`${CHECK_MARK[check.status]} ${check.name.padEnd(34)} ${pc.dim(check.detail)}`);
+    }
+}
+
 /** Claude Code pins a session's mode at its start, so an ordinary session resumes without Code Mode even when it is on. */
 export function registerForkWithCodeModeCommand(program: Command): void {
     program
@@ -207,8 +242,14 @@ export function registerForkWithCodeModeCommand(program: Command): void {
         .option("--title <title>", "New title of the Code Mode session (default: its own title)")
         .option("--backup-suffix <suffix>", "Added to the title of the copy without Code Mode", DEFAULT_BACKUP_SUFFIX)
         .option("--dry-run", "Print the plan and write nothing")
+        .option("--check", "Check a moved session against its copy (either id), row by row; writes nothing")
         .option("--json", "Print the outcome as JSON")
         .action(async (session: string, flags: ForkFlags) => {
+            if (flags.check) {
+                await runCheck(session, flags);
+                return;
+            }
+
             const options: CodeModeForkOptions = {
                 session,
                 title: flags.title,
