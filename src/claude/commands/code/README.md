@@ -211,6 +211,8 @@ The `ast(program)` callback receives Oxc's parsed program and returns matching
 source spans as `{ start, end, replacement }`. Return a match for the patched
 form too so `status` can recognize it. A unique match is required. Shorter
 replacements are padded with spaces to preserve the executable layout.
+`codemode-always-on` is an example that recognizes the restart branch
+without relying on minified identifier names.
 
 Both forms accept optional `versions`, for example
 `versions: [">=2.1.328 <2.2.0", "2.2.3"]`. The executable's entrypoint header

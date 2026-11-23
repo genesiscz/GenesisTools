@@ -1,4 +1,5 @@
 import { definePatch } from "./define-patch";
+import { restartWithoutModePatch } from "./restart-without-mode";
 
 export const claudeCodePatches = [
     definePatch({
@@ -7,4 +8,5 @@ export const claudeCodePatches = [
         find: " (Claude Code)${",
         replace: " (Claude Mod) ${",
     }),
+    restartWithoutModePatch,
 ];
