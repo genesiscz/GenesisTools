@@ -215,9 +215,10 @@ larger than 6000 pixels remains unchanged. `region: changed` still controls chan
 applies when a full-frame read is needed. The default and second-meeting measurements are recorded in
 `docs/benchmarks-cpu.md`.
 
-`capture.displays` picks what is recorded: `all` (default) records every connected display at once, one capture per
-display per piece; `main`; `follow-focus` (the display of the focused window, when the recorder supports it, else the
-main one); or a screen index. Each piece reads the display list again by id, so a display that is connected joins at
+`capture.displays` picks what is recorded: `follow-focus` (default) records one display, the one with the focused
+window, and moves to another display when the focus moves there (a recorder that cannot follow the focus records the
+main display and says so); `all` records every connected display at once, one capture per display per piece; `main`;
+or a screen index. One display costs one capture; `all` costs one for each display (`record cost` prints both). Each piece reads the display list again by id, so a display that is connected joins at
 the next piece and one that is removed leaves without an error. When an asked index is not connected, the main
 display stands in and the warning says since when.
 

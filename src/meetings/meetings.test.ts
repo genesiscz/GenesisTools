@@ -3971,7 +3971,8 @@ function shapeOf(value: unknown): unknown {
 }
 
 describe("the meetings recorder loop", () => {
-    const capture = meetingsConfigSchema.parse({}).global.capture;
+    // The loop's cases record every display; the default policy follows the focus on one.
+    const capture = meetingsConfigSchema.parse({ global: { capture: { displays: "all" } } }).global.capture;
     const builtIn: DisplayInfo = {
         id: 1,
         index: 0,

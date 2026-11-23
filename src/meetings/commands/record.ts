@@ -744,7 +744,7 @@ export function registerRecordCommands(program: Command): void {
         .option("--project <name>", "its project (a new name joins the known projects)")
         .option(
             "--display <which>",
-            "all, follow-focus, main or a screen index (default: the capture.displays setting, all)"
+            "all, follow-focus, main or a screen index (default: the capture.displays setting, follow-focus)"
         )
         .option("--audio <sources>", "also record sound beside the frames: mic, system or mic,system (.m4a in audio/)")
         .option("-y, --yes", "never prompt (project, permissions)")

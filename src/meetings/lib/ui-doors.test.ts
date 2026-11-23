@@ -782,7 +782,7 @@ describe("capture cost", () => {
 
     test("the maximum scales with fps and displays; the observed rate comes from the newest real recording", () => {
         const { meetings } = stores();
-        const config = meetingsConfigSchema.parse({});
+        const config = meetingsConfigSchema.parse({ global: { capture: { displays: "all" } } });
         const records = [
             record({
                 id: "rec",
@@ -804,6 +804,10 @@ describe("capture cost", () => {
         expect(cost.displays.map((choice) => choice.maxCpuSecPerMin)).toEqual([44.2, 22.1, 22.1]);
         expect(cost.activeFps.map((choice) => choice.maxCpuSecPerMin)).toEqual([22.1, 44.2, 88.5]);
         expect(cost.thresholdNote).toContain("not measured");
+
+        // The default policy records one display, so its frame rates cost half of what two displays cost.
+        const byDefault = captureCost({ store: meetings, records, config: meetingsConfigSchema.parse({}) });
+        expect(byDefault.activeFps.map((choice) => choice.maxCpuSecPerMin)).toEqual([11.1, 22.1, 44.2]);
     });
 });
 
