@@ -151,3 +151,70 @@ The `+` side shows `skipSlashCommands: true, modelScheduledOrigin: true` on the 
 - **Native-binary era (≥ ~2.1.6x):** main package is a ~19KB wrapper; real code lives in per-platform optionalDependencies (`@anthropic-ai/claude-code-darwin-arm64` etc.) as a Bun-compiled Mach-O/ELF binary with embedded JS module graph.
 - **Legacy era (e.g. 2.1.45):** `package/cli.js` ships directly in the main tarball — the tool handles both shapes automatically.
 - **Identifier churn:** naive line diffs of consecutive versions show ~60% changed lines (minifier name shifts). AST normalization + chunk hashing reduces noise to the actual logic changes.
+
+## Patch a local executable
+
+Use the interactive picker to review and update the Claude executable on PATH.
+Pass `--binary <file>` to manage a different executable.
+
+```sh
+tools claude code patch --backup
+tools claude code patch --diff-preview
+tools claude code patch --diff-apply
+```
+
+The picker finds each patch's module automatically and reports why any patch
+is unavailable. Previously applied patches start selected. Deselect one to
+revert it. The preview shows exact removed and inserted source spans as quoted
+strings, including padding. `--diff-preview` prints the diff and exits.
+`--diff-apply` prints the same diff and asks before writing.
+
+The first confirmed update automatically saves a pristine
+`<executable>.genesis-original` backup. `--backup` saves it immediately.
+Each update rebuilds the selected set from that backup. Deselecting every
+patch restores the original executable byte for byte. If an external
+update replaces a managed executable, start from an unmodified executable at
+a fresh path so the old backup and patch state remain available.
+
+### Inspect or create a separate executable
+
+The patch commands read the native executable found on PATH by default. Pass
+`--binary <file>` to inspect a different executable. The default target is the
+entrypoint. Use `--module <name>` to target a chunk by its full embedded name,
+as listed in the unpacked bundle metadata.
+
+```sh
+tools claude code status
+tools claude code check --patch version-label
+tools claude code patch ./patched-cli.js --patch version-label
+tools claude code repack ./claude.patched --patch version-label
+tools claude code install ./claude.patched ~/.local/bin/claude-patched
+~/.local/bin/claude-patched --version
+```
+
+`check` and `status` read the embedded source. `check` exits nonzero if the
+selected edits cannot be applied together. `patch` writes the edited source for
+inspection. `repack` applies the same definitions directly to the executable,
+clears the edited module's cached bytecode, and ad-hoc signs the new file.
+`install` verifies the signature and copies the executable to the specified
+destination. Output paths must be unused and their parent directories must exist.
+
+Register an opt-in `definePatch({ id, description, find, replace })` in
+`src/claude/lib/patches/`. Each edit needs a unique literal match in the target
+module and an equal-length UTF-8 replacement. The sample `version-label` patch
+changes the text printed by `--version`. Repack supports thin Mach-O executables
+on macOS with Bun's 52-byte module records. The npm unpack, diff, and bisect
+commands retain their existing version-based workflow.
+
+For a structural match, register `definePatch({ id, description, ast })`.
+The `ast(program)` callback receives Oxc's parsed program and returns matching
+source spans as `{ start, end, replacement }`. Return a match for the patched
+form too so `status` can recognize it. A unique match is required. Shorter
+replacements are padded with spaces to preserve the executable layout.
+
+Both forms accept optional `versions`, for example
+`versions: [">=2.1.328 <2.2.0", "2.2.3"]`. The executable's entrypoint header
+supplies the version without running the binary. At least one range must match
+before the source is checked. Omit `versions` to check source alone.
+`check` and `status` explain version mismatches, missing or ambiguous matches,
+and invalid AST edits.
