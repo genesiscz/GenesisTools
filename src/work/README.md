@@ -52,10 +52,32 @@ tools work comment <ref> "<text>"
 Also: `tree`, `context`, `config` (`config set <path> <json>`), `claim`, `release`, `comment`, `batch`, and the admin
 commands `dump`, `migrate backfill`, `doctor --parity`.
 
-Every write takes `--request-id <id>` (a repeat returns the stored reply), `--dry-run` (writes nothing) and
-`--owner-said "<words>"` (records the words in the journal). Every command takes
+Every write takes `--request-id <id>` (a repeat returns the stored reply), `--dry-run` (writes nothing),
+`--owner-said "<words>"` (records the words in the journal) and `--override "<why>"` (does a write that a role rule
+refuses, see below). Every command takes
 `--json` (the whole reply object), `--json-compact`, `--toon`, `--md` or `--format <f>`. Warnings and next actions go
 to stderr.
+
+## Role rules and the override
+
+Each write checks a role rule of the item's type. By default anyone may spot, comment, log, reference and reopen.
+Finish, edit and drop of an epic or a note (idea, risk, limit) need a lead or the owner, and nobody may claim a note.
+Accept needs the poster, a lead or the owner, and an idea needs the owner. A handoff has its own rules.
+
+A refused write answers `ROLE_REFUSED`. When an override is allowed, repeat it with `--override "<why>"` (MCP:
+`override`). By default anyone may override a refused `finish` or `drop`, and nobody may override any other verb.
+A rule that names nobody is never overridden, and neither is an item held in a handoff slot.
+
+```bash
+tools work finish w_ab12cd34 --proof "merged in owner/repo#42" --override "the owner asked me to close it"
+```
+
+Turn it off or on per type in the rules: `rules.types.<type>.overrides.<verb>` takes `"anyone"` or a list of roles
+(`[]` turns it off). `tools work config` prints the effective `override` line of each verb beside its `write` line.
+
+Each change of an overridden write carries two stamp facts: `role-override` (the reason) and `role-override.rule`
+(the rule and the roles the session held). The actor of the change says who did it. `tools work show <ref> --section
+log` ends that log line with `[override: <why>; <rule>]`, and `--section context` prints the stamp.
 
 ## One method table, four doors
 

@@ -4738,19 +4738,22 @@ public struct WorkListParamsCall: Codable, Sendable {
     public var `request`: String?
     public var `dryRun`: Bool?
     public var `ownerSaid`: String?
+    public var `override`: String?
     public var `project`: String?
-    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `project`: String? = nil) {
+    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `override`: String? = nil, `project`: String? = nil) {
         self.`request` = `request`
         self.`dryRun` = `dryRun`
         self.`ownerSaid` = `ownerSaid`
+        self.`override` = `override`
         self.`project` = `project`
     }
-    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `project` }
+    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `override`; case `project` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`request` = try box.decodeIfPresent(String.self, forKey: .`request`)
         self.`dryRun` = try box.decodeIfPresent(Bool.self, forKey: .`dryRun`)
         self.`ownerSaid` = try box.decodeIfPresent(String.self, forKey: .`ownerSaid`)
+        self.`override` = try box.decodeIfPresent(String.self, forKey: .`override`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -4758,6 +4761,7 @@ public struct WorkListParamsCall: Codable, Sendable {
         try box.encodeIfPresent(`request`, forKey: .`request`)
         try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
         try box.encodeIfPresent(`ownerSaid`, forKey: .`ownerSaid`)
+        try box.encodeIfPresent(`override`, forKey: .`override`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
     }
 }
@@ -5232,19 +5236,22 @@ public struct WorkProjectsParamsCall: Codable, Sendable {
     public var `request`: String?
     public var `dryRun`: Bool?
     public var `ownerSaid`: String?
+    public var `override`: String?
     public var `project`: String?
-    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `project`: String? = nil) {
+    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `override`: String? = nil, `project`: String? = nil) {
         self.`request` = `request`
         self.`dryRun` = `dryRun`
         self.`ownerSaid` = `ownerSaid`
+        self.`override` = `override`
         self.`project` = `project`
     }
-    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `project` }
+    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `override`; case `project` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`request` = try box.decodeIfPresent(String.self, forKey: .`request`)
         self.`dryRun` = try box.decodeIfPresent(Bool.self, forKey: .`dryRun`)
         self.`ownerSaid` = try box.decodeIfPresent(String.self, forKey: .`ownerSaid`)
+        self.`override` = try box.decodeIfPresent(String.self, forKey: .`override`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -5252,6 +5259,7 @@ public struct WorkProjectsParamsCall: Codable, Sendable {
         try box.encodeIfPresent(`request`, forKey: .`request`)
         try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
         try box.encodeIfPresent(`ownerSaid`, forKey: .`ownerSaid`)
+        try box.encodeIfPresent(`override`, forKey: .`override`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
     }
 }
@@ -5614,19 +5622,22 @@ public struct WorkShowParamsCall: Codable, Sendable {
     public var `request`: String?
     public var `dryRun`: Bool?
     public var `ownerSaid`: String?
+    public var `override`: String?
     public var `project`: String?
-    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `project`: String? = nil) {
+    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `override`: String? = nil, `project`: String? = nil) {
         self.`request` = `request`
         self.`dryRun` = `dryRun`
         self.`ownerSaid` = `ownerSaid`
+        self.`override` = `override`
         self.`project` = `project`
     }
-    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `project` }
+    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `override`; case `project` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`request` = try box.decodeIfPresent(String.self, forKey: .`request`)
         self.`dryRun` = try box.decodeIfPresent(Bool.self, forKey: .`dryRun`)
         self.`ownerSaid` = try box.decodeIfPresent(String.self, forKey: .`ownerSaid`)
+        self.`override` = try box.decodeIfPresent(String.self, forKey: .`override`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -5634,6 +5645,7 @@ public struct WorkShowParamsCall: Codable, Sendable {
         try box.encodeIfPresent(`request`, forKey: .`request`)
         try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
         try box.encodeIfPresent(`ownerSaid`, forKey: .`ownerSaid`)
+        try box.encodeIfPresent(`override`, forKey: .`override`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
     }
 }
@@ -5996,19 +6008,22 @@ public struct WorkTreeParamsCall: Codable, Sendable {
     public var `request`: String?
     public var `dryRun`: Bool?
     public var `ownerSaid`: String?
+    public var `override`: String?
     public var `project`: String?
-    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `project`: String? = nil) {
+    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `override`: String? = nil, `project`: String? = nil) {
         self.`request` = `request`
         self.`dryRun` = `dryRun`
         self.`ownerSaid` = `ownerSaid`
+        self.`override` = `override`
         self.`project` = `project`
     }
-    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `project` }
+    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `override`; case `project` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`request` = try box.decodeIfPresent(String.self, forKey: .`request`)
         self.`dryRun` = try box.decodeIfPresent(Bool.self, forKey: .`dryRun`)
         self.`ownerSaid` = try box.decodeIfPresent(String.self, forKey: .`ownerSaid`)
+        self.`override` = try box.decodeIfPresent(String.self, forKey: .`override`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -6016,6 +6031,7 @@ public struct WorkTreeParamsCall: Codable, Sendable {
         try box.encodeIfPresent(`request`, forKey: .`request`)
         try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
         try box.encodeIfPresent(`ownerSaid`, forKey: .`ownerSaid`)
+        try box.encodeIfPresent(`override`, forKey: .`override`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
     }
 }
@@ -6657,19 +6673,22 @@ public struct WorkTriageParamsCall: Codable, Sendable {
     public var `request`: String?
     public var `dryRun`: Bool?
     public var `ownerSaid`: String?
+    public var `override`: String?
     public var `project`: String?
-    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `project`: String? = nil) {
+    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `override`: String? = nil, `project`: String? = nil) {
         self.`request` = `request`
         self.`dryRun` = `dryRun`
         self.`ownerSaid` = `ownerSaid`
+        self.`override` = `override`
         self.`project` = `project`
     }
-    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `project` }
+    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `override`; case `project` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`request` = try box.decodeIfPresent(String.self, forKey: .`request`)
         self.`dryRun` = try box.decodeIfPresent(Bool.self, forKey: .`dryRun`)
         self.`ownerSaid` = try box.decodeIfPresent(String.self, forKey: .`ownerSaid`)
+        self.`override` = try box.decodeIfPresent(String.self, forKey: .`override`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -6677,6 +6696,7 @@ public struct WorkTriageParamsCall: Codable, Sendable {
         try box.encodeIfPresent(`request`, forKey: .`request`)
         try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
         try box.encodeIfPresent(`ownerSaid`, forKey: .`ownerSaid`)
+        try box.encodeIfPresent(`override`, forKey: .`override`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
     }
 }
@@ -7272,19 +7292,22 @@ public struct WorkContextParamsCall: Codable, Sendable {
     public var `request`: String?
     public var `dryRun`: Bool?
     public var `ownerSaid`: String?
+    public var `override`: String?
     public var `project`: String?
-    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `project`: String? = nil) {
+    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `override`: String? = nil, `project`: String? = nil) {
         self.`request` = `request`
         self.`dryRun` = `dryRun`
         self.`ownerSaid` = `ownerSaid`
+        self.`override` = `override`
         self.`project` = `project`
     }
-    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `project` }
+    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `override`; case `project` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`request` = try box.decodeIfPresent(String.self, forKey: .`request`)
         self.`dryRun` = try box.decodeIfPresent(Bool.self, forKey: .`dryRun`)
         self.`ownerSaid` = try box.decodeIfPresent(String.self, forKey: .`ownerSaid`)
+        self.`override` = try box.decodeIfPresent(String.self, forKey: .`override`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -7292,6 +7315,7 @@ public struct WorkContextParamsCall: Codable, Sendable {
         try box.encodeIfPresent(`request`, forKey: .`request`)
         try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
         try box.encodeIfPresent(`ownerSaid`, forKey: .`ownerSaid`)
+        try box.encodeIfPresent(`override`, forKey: .`override`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
     }
 }
@@ -7666,19 +7690,22 @@ public struct WorkConfigParamsCall: Codable, Sendable {
     public var `request`: String?
     public var `dryRun`: Bool?
     public var `ownerSaid`: String?
+    public var `override`: String?
     public var `project`: String?
-    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `project`: String? = nil) {
+    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `override`: String? = nil, `project`: String? = nil) {
         self.`request` = `request`
         self.`dryRun` = `dryRun`
         self.`ownerSaid` = `ownerSaid`
+        self.`override` = `override`
         self.`project` = `project`
     }
-    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `project` }
+    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `override`; case `project` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`request` = try box.decodeIfPresent(String.self, forKey: .`request`)
         self.`dryRun` = try box.decodeIfPresent(Bool.self, forKey: .`dryRun`)
         self.`ownerSaid` = try box.decodeIfPresent(String.self, forKey: .`ownerSaid`)
+        self.`override` = try box.decodeIfPresent(String.self, forKey: .`override`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -7686,6 +7713,7 @@ public struct WorkConfigParamsCall: Codable, Sendable {
         try box.encodeIfPresent(`request`, forKey: .`request`)
         try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
         try box.encodeIfPresent(`ownerSaid`, forKey: .`ownerSaid`)
+        try box.encodeIfPresent(`override`, forKey: .`override`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
     }
 }
@@ -7876,6 +7904,70 @@ public struct WorkConfigResultOption0ValueDataRowsItemWritesItem: Codable, Senda
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`verb` = try box.decode(String.self, forKey: .`verb`)
         self.`resolved` = try box.decode(WorkConfigResultOption0ValueDataRowsItemWritesItemResolved.self, forKey: .`resolved`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`verb`, forKey: .`verb`)
+        try box.encode(`resolved`, forKey: .`resolved`)
+    }
+}
+
+public struct WorkConfigResultOption0ValueDataRowsItemOverridesItemResolvedLayersItem: Codable, Sendable {
+    public var `layer`: String
+    public var `value`: GenesisToolsJSON?
+    public init(`layer`: String, `value`: GenesisToolsJSON? = nil) {
+        self.`layer` = `layer`
+        self.`value` = `value`
+    }
+    private enum CodingKeys: String, CodingKey { case `layer`; case `value` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`layer` = try box.decode(String.self, forKey: .`layer`)
+        self.`value` = try box.decodeIfPresent(GenesisToolsJSON.self, forKey: .`value`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`layer`, forKey: .`layer`)
+        try box.encodeIfPresent(`value`, forKey: .`value`)
+    }
+}
+
+public struct WorkConfigResultOption0ValueDataRowsItemOverridesItemResolved: Codable, Sendable {
+    public var `value`: GenesisToolsJSON
+    public var `from`: String
+    public var `layers`: [WorkConfigResultOption0ValueDataRowsItemOverridesItemResolvedLayersItem]
+    public init(`value`: GenesisToolsJSON, `from`: String, `layers`: [WorkConfigResultOption0ValueDataRowsItemOverridesItemResolvedLayersItem]) {
+        self.`value` = `value`
+        self.`from` = `from`
+        self.`layers` = `layers`
+    }
+    private enum CodingKeys: String, CodingKey { case `value`; case `from`; case `layers` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`value` = try box.decode(GenesisToolsJSON.self, forKey: .`value`)
+        self.`from` = try box.decode(String.self, forKey: .`from`)
+        self.`layers` = try box.decode([WorkConfigResultOption0ValueDataRowsItemOverridesItemResolvedLayersItem].self, forKey: .`layers`)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var box = encoder.container(keyedBy: CodingKeys.self)
+        try box.encode(`value`, forKey: .`value`)
+        try box.encode(`from`, forKey: .`from`)
+        try box.encode(`layers`, forKey: .`layers`)
+    }
+}
+
+public struct WorkConfigResultOption0ValueDataRowsItemOverridesItem: Codable, Sendable {
+    public var `verb`: String
+    public var `resolved`: WorkConfigResultOption0ValueDataRowsItemOverridesItemResolved
+    public init(`verb`: String, `resolved`: WorkConfigResultOption0ValueDataRowsItemOverridesItemResolved) {
+        self.`verb` = `verb`
+        self.`resolved` = `resolved`
+    }
+    private enum CodingKeys: String, CodingKey { case `verb`; case `resolved` }
+    public init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        self.`verb` = try box.decode(String.self, forKey: .`verb`)
+        self.`resolved` = try box.decode(WorkConfigResultOption0ValueDataRowsItemOverridesItemResolved.self, forKey: .`resolved`)
     }
     public func encode(to encoder: Encoder) throws {
         var box = encoder.container(keyedBy: CodingKeys.self)
@@ -8143,19 +8235,22 @@ public struct WorkConfigResultOption0ValueDataRowsItem: Codable, Sendable {
     public var `type`: WorkConfigResultOption0ValueDataRowsItemType
     public var `fields`: [WorkConfigResultOption0ValueDataRowsItemFieldsItem]
     public var `writes`: [WorkConfigResultOption0ValueDataRowsItemWritesItem]
+    public var `overrides`: [WorkConfigResultOption0ValueDataRowsItemOverridesItem]
     public var `notify`: [WorkConfigResultOption0ValueDataRowsItemNotifyItem]
-    public init(`type`: WorkConfigResultOption0ValueDataRowsItemType, `fields`: [WorkConfigResultOption0ValueDataRowsItemFieldsItem], `writes`: [WorkConfigResultOption0ValueDataRowsItemWritesItem], `notify`: [WorkConfigResultOption0ValueDataRowsItemNotifyItem]) {
+    public init(`type`: WorkConfigResultOption0ValueDataRowsItemType, `fields`: [WorkConfigResultOption0ValueDataRowsItemFieldsItem], `writes`: [WorkConfigResultOption0ValueDataRowsItemWritesItem], `overrides`: [WorkConfigResultOption0ValueDataRowsItemOverridesItem], `notify`: [WorkConfigResultOption0ValueDataRowsItemNotifyItem]) {
         self.`type` = `type`
         self.`fields` = `fields`
         self.`writes` = `writes`
+        self.`overrides` = `overrides`
         self.`notify` = `notify`
     }
-    private enum CodingKeys: String, CodingKey { case `type`; case `fields`; case `writes`; case `notify` }
+    private enum CodingKeys: String, CodingKey { case `type`; case `fields`; case `writes`; case `overrides`; case `notify` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`type` = try box.decode(WorkConfigResultOption0ValueDataRowsItemType.self, forKey: .`type`)
         self.`fields` = try box.decode([WorkConfigResultOption0ValueDataRowsItemFieldsItem].self, forKey: .`fields`)
         self.`writes` = try box.decode([WorkConfigResultOption0ValueDataRowsItemWritesItem].self, forKey: .`writes`)
+        self.`overrides` = try box.decode([WorkConfigResultOption0ValueDataRowsItemOverridesItem].self, forKey: .`overrides`)
         self.`notify` = try box.decode([WorkConfigResultOption0ValueDataRowsItemNotifyItem].self, forKey: .`notify`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -8163,6 +8258,7 @@ public struct WorkConfigResultOption0ValueDataRowsItem: Codable, Sendable {
         try box.encode(`type`, forKey: .`type`)
         try box.encode(`fields`, forKey: .`fields`)
         try box.encode(`writes`, forKey: .`writes`)
+        try box.encode(`overrides`, forKey: .`overrides`)
         try box.encode(`notify`, forKey: .`notify`)
     }
 }
@@ -8762,19 +8858,22 @@ public struct WorkConfigSetParamsCall: Codable, Sendable {
     public var `request`: String?
     public var `dryRun`: Bool?
     public var `ownerSaid`: String?
+    public var `override`: String?
     public var `project`: String?
-    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `project`: String? = nil) {
+    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `override`: String? = nil, `project`: String? = nil) {
         self.`request` = `request`
         self.`dryRun` = `dryRun`
         self.`ownerSaid` = `ownerSaid`
+        self.`override` = `override`
         self.`project` = `project`
     }
-    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `project` }
+    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `override`; case `project` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`request` = try box.decodeIfPresent(String.self, forKey: .`request`)
         self.`dryRun` = try box.decodeIfPresent(Bool.self, forKey: .`dryRun`)
         self.`ownerSaid` = try box.decodeIfPresent(String.self, forKey: .`ownerSaid`)
+        self.`override` = try box.decodeIfPresent(String.self, forKey: .`override`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -8782,6 +8881,7 @@ public struct WorkConfigSetParamsCall: Codable, Sendable {
         try box.encodeIfPresent(`request`, forKey: .`request`)
         try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
         try box.encodeIfPresent(`ownerSaid`, forKey: .`ownerSaid`)
+        try box.encodeIfPresent(`override`, forKey: .`override`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
     }
 }
@@ -9374,19 +9474,22 @@ public struct WorkSpotParamsCall: Codable, Sendable {
     public var `request`: String?
     public var `dryRun`: Bool?
     public var `ownerSaid`: String?
+    public var `override`: String?
     public var `project`: String?
-    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `project`: String? = nil) {
+    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `override`: String? = nil, `project`: String? = nil) {
         self.`request` = `request`
         self.`dryRun` = `dryRun`
         self.`ownerSaid` = `ownerSaid`
+        self.`override` = `override`
         self.`project` = `project`
     }
-    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `project` }
+    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `override`; case `project` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`request` = try box.decodeIfPresent(String.self, forKey: .`request`)
         self.`dryRun` = try box.decodeIfPresent(Bool.self, forKey: .`dryRun`)
         self.`ownerSaid` = try box.decodeIfPresent(String.self, forKey: .`ownerSaid`)
+        self.`override` = try box.decodeIfPresent(String.self, forKey: .`override`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -9394,6 +9497,7 @@ public struct WorkSpotParamsCall: Codable, Sendable {
         try box.encodeIfPresent(`request`, forKey: .`request`)
         try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
         try box.encodeIfPresent(`ownerSaid`, forKey: .`ownerSaid`)
+        try box.encodeIfPresent(`override`, forKey: .`override`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
     }
 }
@@ -9804,19 +9908,22 @@ public struct WorkAddParamsCall: Codable, Sendable {
     public var `request`: String?
     public var `dryRun`: Bool?
     public var `ownerSaid`: String?
+    public var `override`: String?
     public var `project`: String?
-    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `project`: String? = nil) {
+    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `override`: String? = nil, `project`: String? = nil) {
         self.`request` = `request`
         self.`dryRun` = `dryRun`
         self.`ownerSaid` = `ownerSaid`
+        self.`override` = `override`
         self.`project` = `project`
     }
-    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `project` }
+    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `override`; case `project` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`request` = try box.decodeIfPresent(String.self, forKey: .`request`)
         self.`dryRun` = try box.decodeIfPresent(Bool.self, forKey: .`dryRun`)
         self.`ownerSaid` = try box.decodeIfPresent(String.self, forKey: .`ownerSaid`)
+        self.`override` = try box.decodeIfPresent(String.self, forKey: .`override`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -9824,6 +9931,7 @@ public struct WorkAddParamsCall: Codable, Sendable {
         try box.encodeIfPresent(`request`, forKey: .`request`)
         try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
         try box.encodeIfPresent(`ownerSaid`, forKey: .`ownerSaid`)
+        try box.encodeIfPresent(`override`, forKey: .`override`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
     }
 }
@@ -10229,19 +10337,22 @@ public struct WorkEditParamsCall: Codable, Sendable {
     public var `request`: String?
     public var `dryRun`: Bool?
     public var `ownerSaid`: String?
+    public var `override`: String?
     public var `project`: String?
-    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `project`: String? = nil) {
+    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `override`: String? = nil, `project`: String? = nil) {
         self.`request` = `request`
         self.`dryRun` = `dryRun`
         self.`ownerSaid` = `ownerSaid`
+        self.`override` = `override`
         self.`project` = `project`
     }
-    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `project` }
+    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `override`; case `project` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`request` = try box.decodeIfPresent(String.self, forKey: .`request`)
         self.`dryRun` = try box.decodeIfPresent(Bool.self, forKey: .`dryRun`)
         self.`ownerSaid` = try box.decodeIfPresent(String.self, forKey: .`ownerSaid`)
+        self.`override` = try box.decodeIfPresent(String.self, forKey: .`override`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -10249,6 +10360,7 @@ public struct WorkEditParamsCall: Codable, Sendable {
         try box.encodeIfPresent(`request`, forKey: .`request`)
         try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
         try box.encodeIfPresent(`ownerSaid`, forKey: .`ownerSaid`)
+        try box.encodeIfPresent(`override`, forKey: .`override`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
     }
 }
@@ -10655,19 +10767,22 @@ public struct WorkLinkParamsCall: Codable, Sendable {
     public var `request`: String?
     public var `dryRun`: Bool?
     public var `ownerSaid`: String?
+    public var `override`: String?
     public var `project`: String?
-    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `project`: String? = nil) {
+    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `override`: String? = nil, `project`: String? = nil) {
         self.`request` = `request`
         self.`dryRun` = `dryRun`
         self.`ownerSaid` = `ownerSaid`
+        self.`override` = `override`
         self.`project` = `project`
     }
-    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `project` }
+    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `override`; case `project` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`request` = try box.decodeIfPresent(String.self, forKey: .`request`)
         self.`dryRun` = try box.decodeIfPresent(Bool.self, forKey: .`dryRun`)
         self.`ownerSaid` = try box.decodeIfPresent(String.self, forKey: .`ownerSaid`)
+        self.`override` = try box.decodeIfPresent(String.self, forKey: .`override`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -10675,6 +10790,7 @@ public struct WorkLinkParamsCall: Codable, Sendable {
         try box.encodeIfPresent(`request`, forKey: .`request`)
         try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
         try box.encodeIfPresent(`ownerSaid`, forKey: .`ownerSaid`)
+        try box.encodeIfPresent(`override`, forKey: .`override`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
     }
 }
@@ -11049,19 +11165,22 @@ public struct WorkUnlinkParamsCall: Codable, Sendable {
     public var `request`: String?
     public var `dryRun`: Bool?
     public var `ownerSaid`: String?
+    public var `override`: String?
     public var `project`: String?
-    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `project`: String? = nil) {
+    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `override`: String? = nil, `project`: String? = nil) {
         self.`request` = `request`
         self.`dryRun` = `dryRun`
         self.`ownerSaid` = `ownerSaid`
+        self.`override` = `override`
         self.`project` = `project`
     }
-    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `project` }
+    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `override`; case `project` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`request` = try box.decodeIfPresent(String.self, forKey: .`request`)
         self.`dryRun` = try box.decodeIfPresent(Bool.self, forKey: .`dryRun`)
         self.`ownerSaid` = try box.decodeIfPresent(String.self, forKey: .`ownerSaid`)
+        self.`override` = try box.decodeIfPresent(String.self, forKey: .`override`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -11069,6 +11188,7 @@ public struct WorkUnlinkParamsCall: Codable, Sendable {
         try box.encodeIfPresent(`request`, forKey: .`request`)
         try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
         try box.encodeIfPresent(`ownerSaid`, forKey: .`ownerSaid`)
+        try box.encodeIfPresent(`override`, forKey: .`override`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
     }
 }
@@ -11458,19 +11578,22 @@ public struct WorkAcceptParamsCall: Codable, Sendable {
     public var `request`: String?
     public var `dryRun`: Bool?
     public var `ownerSaid`: String?
+    public var `override`: String?
     public var `project`: String?
-    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `project`: String? = nil) {
+    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `override`: String? = nil, `project`: String? = nil) {
         self.`request` = `request`
         self.`dryRun` = `dryRun`
         self.`ownerSaid` = `ownerSaid`
+        self.`override` = `override`
         self.`project` = `project`
     }
-    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `project` }
+    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `override`; case `project` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`request` = try box.decodeIfPresent(String.self, forKey: .`request`)
         self.`dryRun` = try box.decodeIfPresent(Bool.self, forKey: .`dryRun`)
         self.`ownerSaid` = try box.decodeIfPresent(String.self, forKey: .`ownerSaid`)
+        self.`override` = try box.decodeIfPresent(String.self, forKey: .`override`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -11478,6 +11601,7 @@ public struct WorkAcceptParamsCall: Codable, Sendable {
         try box.encodeIfPresent(`request`, forKey: .`request`)
         try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
         try box.encodeIfPresent(`ownerSaid`, forKey: .`ownerSaid`)
+        try box.encodeIfPresent(`override`, forKey: .`override`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
     }
 }
@@ -11844,19 +11968,22 @@ public struct WorkClaimParamsCall: Codable, Sendable {
     public var `request`: String?
     public var `dryRun`: Bool?
     public var `ownerSaid`: String?
+    public var `override`: String?
     public var `project`: String?
-    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `project`: String? = nil) {
+    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `override`: String? = nil, `project`: String? = nil) {
         self.`request` = `request`
         self.`dryRun` = `dryRun`
         self.`ownerSaid` = `ownerSaid`
+        self.`override` = `override`
         self.`project` = `project`
     }
-    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `project` }
+    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `override`; case `project` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`request` = try box.decodeIfPresent(String.self, forKey: .`request`)
         self.`dryRun` = try box.decodeIfPresent(Bool.self, forKey: .`dryRun`)
         self.`ownerSaid` = try box.decodeIfPresent(String.self, forKey: .`ownerSaid`)
+        self.`override` = try box.decodeIfPresent(String.self, forKey: .`override`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -11864,6 +11991,7 @@ public struct WorkClaimParamsCall: Codable, Sendable {
         try box.encodeIfPresent(`request`, forKey: .`request`)
         try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
         try box.encodeIfPresent(`ownerSaid`, forKey: .`ownerSaid`)
+        try box.encodeIfPresent(`override`, forKey: .`override`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
     }
 }
@@ -12222,19 +12350,22 @@ public struct WorkReleaseParamsCall: Codable, Sendable {
     public var `request`: String?
     public var `dryRun`: Bool?
     public var `ownerSaid`: String?
+    public var `override`: String?
     public var `project`: String?
-    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `project`: String? = nil) {
+    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `override`: String? = nil, `project`: String? = nil) {
         self.`request` = `request`
         self.`dryRun` = `dryRun`
         self.`ownerSaid` = `ownerSaid`
+        self.`override` = `override`
         self.`project` = `project`
     }
-    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `project` }
+    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `override`; case `project` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`request` = try box.decodeIfPresent(String.self, forKey: .`request`)
         self.`dryRun` = try box.decodeIfPresent(Bool.self, forKey: .`dryRun`)
         self.`ownerSaid` = try box.decodeIfPresent(String.self, forKey: .`ownerSaid`)
+        self.`override` = try box.decodeIfPresent(String.self, forKey: .`override`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -12242,6 +12373,7 @@ public struct WorkReleaseParamsCall: Codable, Sendable {
         try box.encodeIfPresent(`request`, forKey: .`request`)
         try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
         try box.encodeIfPresent(`ownerSaid`, forKey: .`ownerSaid`)
+        try box.encodeIfPresent(`override`, forKey: .`override`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
     }
 }
@@ -12600,19 +12732,22 @@ public struct WorkFinishParamsCall: Codable, Sendable {
     public var `request`: String?
     public var `dryRun`: Bool?
     public var `ownerSaid`: String?
+    public var `override`: String?
     public var `project`: String?
-    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `project`: String? = nil) {
+    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `override`: String? = nil, `project`: String? = nil) {
         self.`request` = `request`
         self.`dryRun` = `dryRun`
         self.`ownerSaid` = `ownerSaid`
+        self.`override` = `override`
         self.`project` = `project`
     }
-    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `project` }
+    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `override`; case `project` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`request` = try box.decodeIfPresent(String.self, forKey: .`request`)
         self.`dryRun` = try box.decodeIfPresent(Bool.self, forKey: .`dryRun`)
         self.`ownerSaid` = try box.decodeIfPresent(String.self, forKey: .`ownerSaid`)
+        self.`override` = try box.decodeIfPresent(String.self, forKey: .`override`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -12620,6 +12755,7 @@ public struct WorkFinishParamsCall: Codable, Sendable {
         try box.encodeIfPresent(`request`, forKey: .`request`)
         try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
         try box.encodeIfPresent(`ownerSaid`, forKey: .`ownerSaid`)
+        try box.encodeIfPresent(`override`, forKey: .`override`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
     }
 }
@@ -12986,19 +13122,22 @@ public struct WorkDropParamsCall: Codable, Sendable {
     public var `request`: String?
     public var `dryRun`: Bool?
     public var `ownerSaid`: String?
+    public var `override`: String?
     public var `project`: String?
-    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `project`: String? = nil) {
+    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `override`: String? = nil, `project`: String? = nil) {
         self.`request` = `request`
         self.`dryRun` = `dryRun`
         self.`ownerSaid` = `ownerSaid`
+        self.`override` = `override`
         self.`project` = `project`
     }
-    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `project` }
+    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `override`; case `project` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`request` = try box.decodeIfPresent(String.self, forKey: .`request`)
         self.`dryRun` = try box.decodeIfPresent(Bool.self, forKey: .`dryRun`)
         self.`ownerSaid` = try box.decodeIfPresent(String.self, forKey: .`ownerSaid`)
+        self.`override` = try box.decodeIfPresent(String.self, forKey: .`override`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -13006,6 +13145,7 @@ public struct WorkDropParamsCall: Codable, Sendable {
         try box.encodeIfPresent(`request`, forKey: .`request`)
         try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
         try box.encodeIfPresent(`ownerSaid`, forKey: .`ownerSaid`)
+        try box.encodeIfPresent(`override`, forKey: .`override`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
     }
 }
@@ -13368,19 +13508,22 @@ public struct WorkCommentParamsCall: Codable, Sendable {
     public var `request`: String?
     public var `dryRun`: Bool?
     public var `ownerSaid`: String?
+    public var `override`: String?
     public var `project`: String?
-    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `project`: String? = nil) {
+    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `override`: String? = nil, `project`: String? = nil) {
         self.`request` = `request`
         self.`dryRun` = `dryRun`
         self.`ownerSaid` = `ownerSaid`
+        self.`override` = `override`
         self.`project` = `project`
     }
-    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `project` }
+    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `override`; case `project` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`request` = try box.decodeIfPresent(String.self, forKey: .`request`)
         self.`dryRun` = try box.decodeIfPresent(Bool.self, forKey: .`dryRun`)
         self.`ownerSaid` = try box.decodeIfPresent(String.self, forKey: .`ownerSaid`)
+        self.`override` = try box.decodeIfPresent(String.self, forKey: .`override`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -13388,6 +13531,7 @@ public struct WorkCommentParamsCall: Codable, Sendable {
         try box.encodeIfPresent(`request`, forKey: .`request`)
         try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
         try box.encodeIfPresent(`ownerSaid`, forKey: .`ownerSaid`)
+        try box.encodeIfPresent(`override`, forKey: .`override`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
     }
 }
@@ -13757,19 +13901,22 @@ public struct WorkLogParamsCall: Codable, Sendable {
     public var `request`: String?
     public var `dryRun`: Bool?
     public var `ownerSaid`: String?
+    public var `override`: String?
     public var `project`: String?
-    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `project`: String? = nil) {
+    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `override`: String? = nil, `project`: String? = nil) {
         self.`request` = `request`
         self.`dryRun` = `dryRun`
         self.`ownerSaid` = `ownerSaid`
+        self.`override` = `override`
         self.`project` = `project`
     }
-    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `project` }
+    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `override`; case `project` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`request` = try box.decodeIfPresent(String.self, forKey: .`request`)
         self.`dryRun` = try box.decodeIfPresent(Bool.self, forKey: .`dryRun`)
         self.`ownerSaid` = try box.decodeIfPresent(String.self, forKey: .`ownerSaid`)
+        self.`override` = try box.decodeIfPresent(String.self, forKey: .`override`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -13777,6 +13924,7 @@ public struct WorkLogParamsCall: Codable, Sendable {
         try box.encodeIfPresent(`request`, forKey: .`request`)
         try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
         try box.encodeIfPresent(`ownerSaid`, forKey: .`ownerSaid`)
+        try box.encodeIfPresent(`override`, forKey: .`override`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
     }
 }
@@ -14152,19 +14300,22 @@ public struct WorkReopenParamsCall: Codable, Sendable {
     public var `request`: String?
     public var `dryRun`: Bool?
     public var `ownerSaid`: String?
+    public var `override`: String?
     public var `project`: String?
-    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `project`: String? = nil) {
+    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `override`: String? = nil, `project`: String? = nil) {
         self.`request` = `request`
         self.`dryRun` = `dryRun`
         self.`ownerSaid` = `ownerSaid`
+        self.`override` = `override`
         self.`project` = `project`
     }
-    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `project` }
+    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `override`; case `project` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`request` = try box.decodeIfPresent(String.self, forKey: .`request`)
         self.`dryRun` = try box.decodeIfPresent(Bool.self, forKey: .`dryRun`)
         self.`ownerSaid` = try box.decodeIfPresent(String.self, forKey: .`ownerSaid`)
+        self.`override` = try box.decodeIfPresent(String.self, forKey: .`override`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -14172,6 +14323,7 @@ public struct WorkReopenParamsCall: Codable, Sendable {
         try box.encodeIfPresent(`request`, forKey: .`request`)
         try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
         try box.encodeIfPresent(`ownerSaid`, forKey: .`ownerSaid`)
+        try box.encodeIfPresent(`override`, forKey: .`override`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
     }
 }
@@ -14538,19 +14690,22 @@ public struct WorkPairParamsCall: Codable, Sendable {
     public var `request`: String?
     public var `dryRun`: Bool?
     public var `ownerSaid`: String?
+    public var `override`: String?
     public var `project`: String?
-    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `project`: String? = nil) {
+    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `override`: String? = nil, `project`: String? = nil) {
         self.`request` = `request`
         self.`dryRun` = `dryRun`
         self.`ownerSaid` = `ownerSaid`
+        self.`override` = `override`
         self.`project` = `project`
     }
-    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `project` }
+    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `override`; case `project` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`request` = try box.decodeIfPresent(String.self, forKey: .`request`)
         self.`dryRun` = try box.decodeIfPresent(Bool.self, forKey: .`dryRun`)
         self.`ownerSaid` = try box.decodeIfPresent(String.self, forKey: .`ownerSaid`)
+        self.`override` = try box.decodeIfPresent(String.self, forKey: .`override`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -14558,6 +14713,7 @@ public struct WorkPairParamsCall: Codable, Sendable {
         try box.encodeIfPresent(`request`, forKey: .`request`)
         try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
         try box.encodeIfPresent(`ownerSaid`, forKey: .`ownerSaid`)
+        try box.encodeIfPresent(`override`, forKey: .`override`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
     }
 }
@@ -14924,19 +15080,22 @@ public struct WorkUnpairParamsCall: Codable, Sendable {
     public var `request`: String?
     public var `dryRun`: Bool?
     public var `ownerSaid`: String?
+    public var `override`: String?
     public var `project`: String?
-    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `project`: String? = nil) {
+    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `override`: String? = nil, `project`: String? = nil) {
         self.`request` = `request`
         self.`dryRun` = `dryRun`
         self.`ownerSaid` = `ownerSaid`
+        self.`override` = `override`
         self.`project` = `project`
     }
-    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `project` }
+    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `override`; case `project` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`request` = try box.decodeIfPresent(String.self, forKey: .`request`)
         self.`dryRun` = try box.decodeIfPresent(Bool.self, forKey: .`dryRun`)
         self.`ownerSaid` = try box.decodeIfPresent(String.self, forKey: .`ownerSaid`)
+        self.`override` = try box.decodeIfPresent(String.self, forKey: .`override`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -14944,6 +15103,7 @@ public struct WorkUnpairParamsCall: Codable, Sendable {
         try box.encodeIfPresent(`request`, forKey: .`request`)
         try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
         try box.encodeIfPresent(`ownerSaid`, forKey: .`ownerSaid`)
+        try box.encodeIfPresent(`override`, forKey: .`override`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
     }
 }
@@ -15306,19 +15466,22 @@ public struct WorkPullParamsCall: Codable, Sendable {
     public var `request`: String?
     public var `dryRun`: Bool?
     public var `ownerSaid`: String?
+    public var `override`: String?
     public var `project`: String?
-    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `project`: String? = nil) {
+    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `override`: String? = nil, `project`: String? = nil) {
         self.`request` = `request`
         self.`dryRun` = `dryRun`
         self.`ownerSaid` = `ownerSaid`
+        self.`override` = `override`
         self.`project` = `project`
     }
-    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `project` }
+    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `override`; case `project` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`request` = try box.decodeIfPresent(String.self, forKey: .`request`)
         self.`dryRun` = try box.decodeIfPresent(Bool.self, forKey: .`dryRun`)
         self.`ownerSaid` = try box.decodeIfPresent(String.self, forKey: .`ownerSaid`)
+        self.`override` = try box.decodeIfPresent(String.self, forKey: .`override`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -15326,6 +15489,7 @@ public struct WorkPullParamsCall: Codable, Sendable {
         try box.encodeIfPresent(`request`, forKey: .`request`)
         try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
         try box.encodeIfPresent(`ownerSaid`, forKey: .`ownerSaid`)
+        try box.encodeIfPresent(`override`, forKey: .`override`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
     }
 }
@@ -15692,19 +15856,22 @@ public struct WorkSyncParamsCall: Codable, Sendable {
     public var `request`: String?
     public var `dryRun`: Bool?
     public var `ownerSaid`: String?
+    public var `override`: String?
     public var `project`: String?
-    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `project`: String? = nil) {
+    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `override`: String? = nil, `project`: String? = nil) {
         self.`request` = `request`
         self.`dryRun` = `dryRun`
         self.`ownerSaid` = `ownerSaid`
+        self.`override` = `override`
         self.`project` = `project`
     }
-    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `project` }
+    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `override`; case `project` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`request` = try box.decodeIfPresent(String.self, forKey: .`request`)
         self.`dryRun` = try box.decodeIfPresent(Bool.self, forKey: .`dryRun`)
         self.`ownerSaid` = try box.decodeIfPresent(String.self, forKey: .`ownerSaid`)
+        self.`override` = try box.decodeIfPresent(String.self, forKey: .`override`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -15712,6 +15879,7 @@ public struct WorkSyncParamsCall: Codable, Sendable {
         try box.encodeIfPresent(`request`, forKey: .`request`)
         try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
         try box.encodeIfPresent(`ownerSaid`, forKey: .`ownerSaid`)
+        try box.encodeIfPresent(`override`, forKey: .`override`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
     }
 }
@@ -16070,19 +16238,22 @@ public struct WorkAddMemberParamsCall: Codable, Sendable {
     public var `request`: String?
     public var `dryRun`: Bool?
     public var `ownerSaid`: String?
+    public var `override`: String?
     public var `project`: String?
-    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `project`: String? = nil) {
+    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `override`: String? = nil, `project`: String? = nil) {
         self.`request` = `request`
         self.`dryRun` = `dryRun`
         self.`ownerSaid` = `ownerSaid`
+        self.`override` = `override`
         self.`project` = `project`
     }
-    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `project` }
+    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `override`; case `project` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`request` = try box.decodeIfPresent(String.self, forKey: .`request`)
         self.`dryRun` = try box.decodeIfPresent(Bool.self, forKey: .`dryRun`)
         self.`ownerSaid` = try box.decodeIfPresent(String.self, forKey: .`ownerSaid`)
+        self.`override` = try box.decodeIfPresent(String.self, forKey: .`override`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -16090,6 +16261,7 @@ public struct WorkAddMemberParamsCall: Codable, Sendable {
         try box.encodeIfPresent(`request`, forKey: .`request`)
         try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
         try box.encodeIfPresent(`ownerSaid`, forKey: .`ownerSaid`)
+        try box.encodeIfPresent(`override`, forKey: .`override`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
     }
 }
@@ -16452,19 +16624,22 @@ public struct WorkHandoffParamsCall: Codable, Sendable {
     public var `request`: String?
     public var `dryRun`: Bool?
     public var `ownerSaid`: String?
+    public var `override`: String?
     public var `project`: String?
-    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `project`: String? = nil) {
+    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `override`: String? = nil, `project`: String? = nil) {
         self.`request` = `request`
         self.`dryRun` = `dryRun`
         self.`ownerSaid` = `ownerSaid`
+        self.`override` = `override`
         self.`project` = `project`
     }
-    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `project` }
+    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `override`; case `project` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`request` = try box.decodeIfPresent(String.self, forKey: .`request`)
         self.`dryRun` = try box.decodeIfPresent(Bool.self, forKey: .`dryRun`)
         self.`ownerSaid` = try box.decodeIfPresent(String.self, forKey: .`ownerSaid`)
+        self.`override` = try box.decodeIfPresent(String.self, forKey: .`override`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -16472,6 +16647,7 @@ public struct WorkHandoffParamsCall: Codable, Sendable {
         try box.encodeIfPresent(`request`, forKey: .`request`)
         try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
         try box.encodeIfPresent(`ownerSaid`, forKey: .`ownerSaid`)
+        try box.encodeIfPresent(`override`, forKey: .`override`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
     }
 }
@@ -16862,19 +17038,22 @@ public struct WorkBatchParamsCall: Codable, Sendable {
     public var `request`: String?
     public var `dryRun`: Bool?
     public var `ownerSaid`: String?
+    public var `override`: String?
     public var `project`: String?
-    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `project`: String? = nil) {
+    public init(`request`: String? = nil, `dryRun`: Bool? = nil, `ownerSaid`: String? = nil, `override`: String? = nil, `project`: String? = nil) {
         self.`request` = `request`
         self.`dryRun` = `dryRun`
         self.`ownerSaid` = `ownerSaid`
+        self.`override` = `override`
         self.`project` = `project`
     }
-    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `project` }
+    private enum CodingKeys: String, CodingKey { case `request`; case `dryRun`; case `ownerSaid`; case `override`; case `project` }
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         self.`request` = try box.decodeIfPresent(String.self, forKey: .`request`)
         self.`dryRun` = try box.decodeIfPresent(Bool.self, forKey: .`dryRun`)
         self.`ownerSaid` = try box.decodeIfPresent(String.self, forKey: .`ownerSaid`)
+        self.`override` = try box.decodeIfPresent(String.self, forKey: .`override`)
         self.`project` = try box.decodeIfPresent(String.self, forKey: .`project`)
     }
     public func encode(to encoder: Encoder) throws {
@@ -16882,6 +17061,7 @@ public struct WorkBatchParamsCall: Codable, Sendable {
         try box.encodeIfPresent(`request`, forKey: .`request`)
         try box.encodeIfPresent(`dryRun`, forKey: .`dryRun`)
         try box.encodeIfPresent(`ownerSaid`, forKey: .`ownerSaid`)
+        try box.encodeIfPresent(`override`, forKey: .`override`)
         try box.encodeIfPresent(`project`, forKey: .`project`)
     }
 }

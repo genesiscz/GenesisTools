@@ -50,6 +50,8 @@ export interface WorkContext {
     loadRules?: LoadProjectRules;
     /** The owner's words when an agent acts on them; the journal keeps them in the stamp. */
     ownerSaid?: string;
+    /** Why this session does a write that a role rule refuses (`--override`); blank counts as not given. */
+    override?: string;
 }
 
 export interface WriteData {
@@ -108,6 +110,7 @@ export async function envOf(ctx: WorkContext, request?: string): Promise<WriteEn
         ...(stampWithOwner(ctx) !== undefined ? { stamp: stampWithOwner(ctx) } : {}),
         ...(ctx.inferred !== undefined ? { inferred: ctx.inferred } : {}),
         ...(ctx.rules !== undefined ? { rules: ctx.rules } : {}),
+        ...(ctx.override !== undefined && ctx.override.trim() !== "" ? { override: ctx.override.trim() } : {}),
     };
 }
 

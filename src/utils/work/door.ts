@@ -12,6 +12,8 @@ export interface WorkDoorCall {
     request?: string;
     dryRun?: boolean;
     ownerSaid?: string;
+    /** Why this session does a write that a role rule refuses. */
+    override?: string;
     /**
      * Set by the `work` area when the call came through the actions service from a person at a surface (the hub):
      * the write is the owner's, in this project. Absent: the caller is this process, as for the CLI.

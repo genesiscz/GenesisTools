@@ -110,6 +110,19 @@ function summary(change: Change): string {
     return typeof title === "string" ? `  ${title}` : "";
 }
 
+/** The reason and the rule of a role override the change carries, for the end of its log line. */
+function overrideNote(change: ShowResult["log"][number]): string {
+    const facts = change.stamp?.facts ?? [];
+    const why = facts.find((fact) => fact.path === "role-override");
+
+    if (why === undefined) {
+        return "";
+    }
+
+    const rules = facts.filter((fact) => fact.path === "role-override.rule").map((fact) => fact.value);
+    return `  [override: ${why.value}${rules.length > 0 ? `; ${rules.join("; ")}` : ""}]`;
+}
+
 function showText(data: ShowResult, section: string | undefined): string[] {
     const { item } = data;
     const head = [
@@ -125,7 +138,7 @@ function showText(data: ShowResult, section: string | undefined): string[] {
     ];
     const log = data.log.map(
         (c) =>
-            `  ${c.ts.slice(0, 16)}  ${c.kind}  ${c.actor.sessionTitle ?? c.actor.sessionId ?? c.actor.harness}${summary(c)}`
+            `  ${c.ts.slice(0, 16)}  ${c.kind}  ${c.actor.sessionTitle ?? c.actor.sessionId ?? c.actor.harness}${summary(c)}${overrideNote(c)}`
     );
 
     switch (section) {
@@ -286,8 +299,13 @@ export function workFormatters(view: ViewOptions = {}): { [M in keyof WorkResult
                         }
                     }
 
-                    for (const { verb, resolved } of row.writes) {
-                        lines.push(`  write ${verb}: ${roleText(resolved.value)} (from ${resolved.from})`);
+                    const roleRules = [
+                        ...row.writes.map((entry) => ({ label: "write", ...entry })),
+                        ...row.overrides.map((entry) => ({ label: "override", ...entry })),
+                    ];
+
+                    for (const { label, verb, resolved } of roleRules) {
+                        lines.push(`  ${label} ${verb}: ${roleText(resolved.value)} (from ${resolved.from})`);
 
                         if (view.explain) {
                             lines.push(

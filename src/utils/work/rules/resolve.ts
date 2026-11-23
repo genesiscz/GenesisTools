@@ -63,6 +63,11 @@ function defaultWrite(type: ItemType, verb: WriteVerb): RoleRule {
     }
 }
 
+/** Who may override a refused write by default: finish and drop, by anyone; every other verb, nobody. */
+function defaultOverride(verb: WriteVerb): RoleRule {
+    return verb === "finish" || verb === "drop" ? ANYONE : [];
+}
+
 /** Built-in field rules: title and type are required by the store itself; a spotted item recommends these three. */
 const DEFAULT_FIELDS: Partial<Record<RuleField, FieldRule>> = {
     where: { level: "recommended", measure: "the file and line, or the screen, where you saw it (path:line)" },
@@ -106,6 +111,8 @@ function pickTyped<V>(
 export interface ResolvedRules {
     field(type: ItemType, field: RuleField): Resolved<FieldRule>;
     mayWrite(type: ItemType, verb: WriteVerb): Resolved<RoleRule>;
+    /** Who may do a write that `mayWrite` refuses, with an override and its reason. */
+    mayOverride(type: ItemType, verb: WriteVerb): Resolved<RoleRule>;
     /** The first routing rule of the strongest layer that has a list (a list replaces a weaker list as a whole). */
     routeSpotted(draft: {
         type: ItemType;
@@ -137,6 +144,14 @@ export function resolveWorkRules(layers: readonly RuleLayerInput[]): ResolvedRul
                 type,
                 (rules, key) => rules.types?.[key]?.writes?.[verb],
                 defaultWrite(type, verb)
+            );
+        },
+        mayOverride(type, verb) {
+            return pickTyped(
+                layers,
+                type,
+                (rules, key) => rules.types?.[key]?.overrides?.[verb],
+                defaultOverride(verb)
             );
         },
         routeSpotted(draft) {
