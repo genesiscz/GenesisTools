@@ -18,7 +18,13 @@ import { claudeHistoryReader, grokHistoryReader } from "../compact-readers";
 import { searchHistorySource } from "../search-source";
 import type { NativeSessionSource } from "../types";
 import { createClaudeHistoryOperations, readClaudeMetadata, readClaudeRecords, scanClaudeRecords } from "./claude";
-import { appendClaudeCodeModePin, claudeCodeModePin, writeSessionCopy } from "./claude-fork";
+import {
+    appendClaudeCodeModePin,
+    checkCodeModePair,
+    claudeCodeModePin,
+    copySourceOf,
+    writeSessionCopy,
+} from "./claude-fork";
 import { canonicalClaudeTranscript } from "./claude-locate";
 import { claudeSessionHolders } from "./claude-peer";
 import { appendClaudeTitle, lastClaudeAiTitleIn, lastClaudeTitleIn } from "./claude-title";
@@ -1058,6 +1064,63 @@ test("moving a session into Code Mode: the session keeps its id and gets the pin
         `{"type":"custom-title","customTitle":"Invoice totals","sessionId":"${FORK_SOURCE}"}`,
         `{"type":"agent-name","agentName":"Invoice totals","sessionId":"${FORK_SOURCE}"}`,
     ]);
+});
+
+test("the pair check passes a clean move and fails a changed row and REPL in the copy", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "gt-claude-pair-"));
+    const sessionPath = join(directory, `${FORK_SOURCE}.jsonl`);
+    const copyPath = join(directory, `${FORK_ID}.jsonl`);
+    const line = (row: object) => SafeJSON.stringify(row, { strict: true });
+    const tool = (name: string) => ({
+        type: "assistant",
+        sessionId: FORK_SOURCE,
+        message: { content: [{ type: "tool_use", name, input: {} }] },
+    });
+    writeFileSync(
+        sessionPath,
+        `${[
+            line({ type: "user", sessionId: FORK_SOURCE, cwd: "/work/shop", message: { content: "fix the invoice" } }),
+            line({ type: "custom-title", customTitle: "Invoice rounding", sessionId: FORK_SOURCE }),
+            line({ type: "agent-name", agentName: "Invoice rounding", sessionId: FORK_SOURCE }),
+            line(tool("Read")),
+        ].join("\n")}\n`
+    );
+    await writeSessionCopy({
+        sourceId: FORK_SOURCE,
+        copyId: FORK_ID,
+        sourcePath: sessionPath,
+        copyPath,
+        title: "Invoice rounding-without-codemode",
+    });
+    appendClaudeCodeModePin(sessionPath, FORK_SOURCE);
+    appendFileSync(sessionPath, `${line(tool("REPL"))}\n`);
+    const ids = { sourceId: FORK_SOURCE, copyId: FORK_ID };
+    const run = async () =>
+        Object.fromEntries(
+            (await checkCodeModePair({ ids, sessionPath, copyPath, suffix: "-without-codemode" })).map((c) => [
+                c.name,
+                c.status,
+            ])
+        );
+
+    expect(await copySourceOf(copyPath, FORK_ID)).toBe(FORK_SOURCE);
+    expect(await run()).toEqual({
+        "copy names the session": "ok",
+        "conversation copied whole": "ok",
+        "session has the Code Mode marker": "ok",
+        "copy has no Code Mode marker": "ok",
+        "session name": "ok",
+        "copy name": "ok",
+        "session runs in Code Mode": "ok",
+        "copy runs without Code Mode": "info",
+        "API errors after the move": "ok",
+    });
+
+    appendFileSync(copyPath, `${line({ ...tool("REPL"), sessionId: FORK_ID })}\n`);
+    expect((await run())["copy runs without Code Mode"]).toBe("fail");
+
+    writeFileSync(copyPath, readFileSync(copyPath, "utf8").replace("fix the invoice", "fix the receipt"));
+    expect((await run())["conversation copied whole"]).toBe("fail");
 });
 
 test("a session's holders are only the running processes its registry files were written for", () => {

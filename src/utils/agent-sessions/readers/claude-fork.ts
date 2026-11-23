@@ -13,6 +13,7 @@
 import { once } from "node:events";
 import { createReadStream, createWriteStream, renameSync } from "node:fs";
 import { createInterface } from "node:readline";
+import { isDeepStrictEqual } from "node:util";
 import { scanFileMatches } from "@genesiscz/utils/ai/transcripts/file-scan";
 import { isJsonObject, SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -173,4 +174,303 @@ export async function writeSessionCopy(input: SessionCopyWrite): Promise<Session
 export function appendClaudeCodeModePin(path: string, sessionId: string): void {
     appendClaudeRows(path, [SafeJSON.stringify({ type: "repl-mode", replMode: true, sessionId }, { strict: true })]);
     log.info({ sessionId, path }, "marked a Claude session as a Code Mode session");
+}
+
+export type PairCheckStatus = "ok" | "fail" | "warn" | "info";
+
+export interface PairCheck {
+    name: string;
+    status: PairCheckStatus;
+    detail: string;
+}
+
+interface AfterFork {
+    rows: number;
+    repl: number;
+    otherTools: number;
+    apiErrors: number;
+    notCodeMode: number;
+}
+
+const NOT_CODE_MODE = /isn't using it|can't be resumed|Code Mode is off/;
+
+function parsedRow(line: string): Record<string, unknown> | null {
+    try {
+        const row: unknown = SafeJSON.parse(line, { jsonl: true });
+        return isJsonObject(row) ? row : null;
+    } catch (error) {
+        log.debug({ error, length: line.length }, "a transcript line that is not JSON");
+        return null;
+    }
+}
+
+function countAfterFork(row: Record<string, unknown>, into: AfterFork): void {
+    into.rows++;
+
+    if (row.isApiErrorMessage === true) {
+        into.apiErrors++;
+    }
+
+    const message = isJsonObject(row.message) ? row.message : null;
+    const blocks = Array.isArray(message?.content) ? message.content : [];
+    const texts = [row.content, ...blocks.map((block) => (isJsonObject(block) ? block.text : undefined))];
+
+    if (texts.some((text) => typeof text === "string" && NOT_CODE_MODE.test(text))) {
+        into.notCodeMode++;
+    }
+
+    for (const block of blocks) {
+        if (isJsonObject(block) && block.type === "tool_use") {
+            if (block.name === "REPL") {
+                into.repl++;
+            } else {
+                into.otherTools++;
+            }
+        }
+    }
+}
+
+/** The fork's own `derived-from` row: the copy names the session it was made from. */
+function isCopyTail(row: Record<string, unknown>, ids: SessionCopyIds): boolean {
+    return (
+        row.type === "derived-from" &&
+        row.sessionId === ids.copyId &&
+        Array.isArray(row.sessions) &&
+        row.sessions.some((entry) => isJsonObject(entry) && entry.id === ids.sourceId && entry.via === "fork")
+    );
+}
+
+/** The session a copy was made from, from the copy's own `derived-from` row; null when it names none. */
+export async function copySourceOf(copyPath: string, copyId: string): Promise<string | null> {
+    let source: string | null = null;
+    const lines = createInterface({ input: createReadStream(copyPath), crlfDelay: Number.POSITIVE_INFINITY });
+
+    for await (const line of lines) {
+        if (!line.startsWith('{"type":"derived-from"')) {
+            continue;
+        }
+
+        const row = parsedRow(line);
+        const sessions = row && row.sessionId === copyId && Array.isArray(row.sessions) ? row.sessions : [];
+        const fork = sessions.find((entry) => isJsonObject(entry) && entry.via === "fork");
+
+        if (isJsonObject(fork) && typeof fork.id === "string") {
+            source = fork.id;
+        }
+    }
+
+    return source;
+}
+
+function lastName(names: { title: string | null; agent: string | null }, row: Record<string, unknown>): void {
+    if (row.type === "custom-title" && typeof row.customTitle === "string") {
+        names.title = row.customTitle;
+    }
+
+    if (row.type === "agent-name" && typeof row.agentName === "string") {
+        names.agent = row.agentName;
+    }
+}
+
+/**
+ * Checks a session moved into Code Mode against its copy, streaming both: the copy's rows up to its own `derived-from`
+ * row must equal the session's rows in order (ids mapped, name and pin rows aside), the session's newest pin must be
+ * Code Mode and the copy's must not, both names must match their titles, and the turns after the move must use REPL
+ * in the session and never in the copy. Reads only.
+ */
+export async function checkCodeModePair(input: {
+    ids: SessionCopyIds;
+    sessionPath: string;
+    copyPath: string;
+    suffix: string;
+}): Promise<PairCheck[]> {
+    const { ids } = input;
+    const sessionLines = createInterface({
+        input: createReadStream(input.sessionPath),
+        crlfDelay: Number.POSITIVE_INFINITY,
+    })[Symbol.asyncIterator]();
+    const sessionNames = { title: null as string | null, agent: null as string | null };
+    const copyNames = { title: null as string | null, agent: null as string | null };
+    let sessionPin: boolean | null = null;
+    let copyPin: boolean | null = null;
+    let sessionLine = 0;
+
+    /** The session's next row that the copy also has (its name and pin rows are not copied). */
+    const nextSessionRow = async (): Promise<{
+        line: number;
+        raw: string;
+        row: Record<string, unknown> | null;
+    } | null> => {
+        while (true) {
+            const next = await sessionLines.next();
+
+            if (next.done) {
+                return null;
+            }
+
+            sessionLine++;
+
+            if (next.value.trim() === "") {
+                continue;
+            }
+
+            const row = parsedRow(next.value);
+
+            if (row?.type === "repl-mode") {
+                sessionPin = row.replMode === true;
+                continue;
+            }
+
+            if (row?.type === "custom-title" || row?.type === "agent-name") {
+                lastName(sessionNames, row);
+                continue;
+            }
+
+            return { line: sessionLine, raw: next.value, row };
+        }
+    };
+
+    let compared = 0;
+    let mismatch: string | null = null;
+    let tailLine: number | null = null;
+    const copyAfter: AfterFork = { rows: 0, repl: 0, otherTools: 0, apiErrors: 0, notCodeMode: 0 };
+    let copyLine = 0;
+    const copyLines = createInterface({ input: createReadStream(input.copyPath), crlfDelay: Number.POSITIVE_INFINITY });
+
+    for await (const raw of copyLines) {
+        copyLine++;
+
+        if (raw.trim() === "") {
+            continue;
+        }
+
+        const row = parsedRow(raw);
+
+        if (row?.type === "repl-mode") {
+            copyPin = row.replMode === true;
+            continue;
+        }
+
+        if (row?.type === "custom-title" || row?.type === "agent-name") {
+            lastName(copyNames, row);
+            continue;
+        }
+
+        if (tailLine === null && row && isCopyTail(row, ids)) {
+            tailLine = copyLine;
+            continue;
+        }
+
+        if (tailLine !== null) {
+            if (row) {
+                countAfterFork(row, copyAfter);
+            }
+
+            continue;
+        }
+
+        if (mismatch !== null) {
+            continue;
+        }
+
+        const original = await nextSessionRow();
+
+        if (!original) {
+            mismatch = `the session ends before copy line ${copyLine}`;
+            continue;
+        }
+
+        const expected =
+            original.row && original.row.sessionId === ids.sourceId
+                ? { ...original.row, sessionId: ids.copyId }
+                : original.row;
+        const same = row && expected ? isDeepStrictEqual(row, expected) : raw === original.raw;
+
+        if (!same) {
+            mismatch = `copy line ${copyLine} differs from session line ${original.line}`;
+            continue;
+        }
+
+        compared++;
+    }
+
+    const sessionAfter: AfterFork = { rows: 0, repl: 0, otherTools: 0, apiErrors: 0, notCodeMode: 0 };
+
+    for (let next = await nextSessionRow(); next !== null; next = await nextSessionRow()) {
+        if (next.row) {
+            countAfterFork(next.row, sessionAfter);
+        }
+    }
+
+    const short = (id: string) => id.slice(0, 8);
+    const turns = (after: AfterFork) =>
+        `${after.rows} rows, ${after.repl} REPL scripts, ${after.otherTools} other tool calls, ${after.apiErrors} API errors`;
+    const named = (names: { title: string | null; agent: string | null }) =>
+        `list title "${names.title ?? "none"}", prompt name "${names.agent ?? "none"}"`;
+
+    const sessionMode: PairCheck =
+        sessionAfter.notCodeMode > 0 || (sessionAfter.otherTools > 0 && sessionAfter.repl === 0)
+            ? { name: "session runs in Code Mode", status: "fail", detail: turns(sessionAfter) }
+            : sessionAfter.repl > 0
+              ? { name: "session runs in Code Mode", status: "ok", detail: turns(sessionAfter) }
+              : {
+                    name: "session runs in Code Mode",
+                    status: "info",
+                    detail: `no tool call yet (${turns(sessionAfter)})`,
+                };
+
+    return [
+        tailLine === null
+            ? { name: "copy names the session", status: "fail", detail: `no derived-from row naming ${ids.sourceId}` }
+            : {
+                  name: "copy names the session",
+                  status: "ok",
+                  detail: `${short(ids.copyId)} came from ${short(ids.sourceId)} (copy line ${tailLine})`,
+              },
+        mismatch === null && tailLine !== null
+            ? {
+                  name: "conversation copied whole",
+                  status: "ok",
+                  detail: `${compared} rows match row by row, ids mapped`,
+              }
+            : { name: "conversation copied whole", status: "fail", detail: mismatch ?? `${compared} rows compared` },
+        {
+            name: "session has the Code Mode marker",
+            status: sessionPin === true ? "ok" : "fail",
+            detail: `newest repl-mode row: ${sessionPin ?? "none"}`,
+        },
+        {
+            name: "copy has no Code Mode marker",
+            status: copyPin === true ? "fail" : "ok",
+            detail: `newest repl-mode row: ${copyPin ?? "none"}`,
+        },
+        {
+            name: "session name",
+            status:
+                sessionNames.title !== null &&
+                sessionNames.title === sessionNames.agent &&
+                !sessionNames.title.endsWith(input.suffix)
+                    ? "ok"
+                    : "warn",
+            detail: named(sessionNames),
+        },
+        {
+            name: "copy name",
+            status: copyNames.title?.endsWith(input.suffix) && copyNames.agent?.endsWith(input.suffix) ? "ok" : "fail",
+            detail: named(copyNames),
+        },
+        sessionMode,
+        copyAfter.repl > 0 || copyAfter.notCodeMode > 0
+            ? { name: "copy runs without Code Mode", status: "fail", detail: turns(copyAfter) }
+            : {
+                  name: "copy runs without Code Mode",
+                  status: copyAfter.rows > 0 ? "ok" : "info",
+                  detail: copyAfter.rows > 0 ? turns(copyAfter) : "not resumed yet",
+              },
+        {
+            name: "API errors after the move",
+            status: sessionAfter.apiErrors + copyAfter.apiErrors > 0 ? "warn" : "ok",
+            detail: `session ${sessionAfter.apiErrors}, copy ${copyAfter.apiErrors}`,
+        },
+    ];
 }
