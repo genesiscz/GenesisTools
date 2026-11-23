@@ -307,7 +307,8 @@ if (args[0] === "audio-record") {
     process.on("SIGINT", stop);
     await new Promise(() => undefined);
 }
-let displayId = Number(value("--display-id"));
+// A capture that follows the focus names no display; ax-tool picks one itself, and this stand-in picks display 1.
+let displayId = Number(value("--display-id") ?? 1);
 const frames: Array<Record<string, unknown>> = [];
 let finished = false;
 const latePng = fixtureMode?.match(/^--fixture-late-png(-old)?=(\d+)$/);
