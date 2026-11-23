@@ -11,10 +11,10 @@
  * stay with it.
  */
 import { once } from "node:events";
-import { createReadStream, createWriteStream, renameSync } from "node:fs";
-import { createInterface } from "node:readline";
+import { createWriteStream, renameSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import { scanFileMatches } from "@genesiscz/utils/ai/transcripts/file-scan";
+import { readLines } from "@genesiscz/utils/fs/read-lines";
 import { isJsonObject, SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { appendClaudeRows, claudeRenameRows } from "./claude-title";
@@ -137,13 +137,15 @@ export interface SessionCopyWrite extends SessionCopyIds {
 
 /**
  * Writes the copy beside a temporary name and renames it into place, so a crash never leaves a half transcript that
- * Claude Code would list as a session. Streams the source: a 200 MB transcript is never one string.
+ * Claude Code would list as a session. Streams the source: a 200 MB transcript is never one string. Lines end at
+ * "\n" only: `node:readline` also ends them at U+2028 and U+2029, and on 2026-11-23 it cut 5 rows of an 860 MB
+ * transcript into 37 pieces that the copy wrote as broken lines.
  */
 export async function writeSessionCopy(input: SessionCopyWrite): Promise<SessionCopyScan> {
     const scan = emptyCopyScan();
     const temporary = `${input.copyPath}.${process.pid}.tmp`;
     const output = createWriteStream(temporary, { mode: 0o600 });
-    const lines = createInterface({ input: createReadStream(input.sourcePath), crlfDelay: Number.POSITIVE_INFINITY });
+    const lines = readLines(input.sourcePath);
 
     const write = async (text: string) => {
         if (!output.write(`${text}\n`)) {
@@ -243,7 +245,7 @@ function isCopyTail(row: Record<string, unknown>, ids: SessionCopyIds): boolean 
 /** The session a copy was made from, from the copy's own `derived-from` row; null when it names none. */
 export async function copySourceOf(copyPath: string, copyId: string): Promise<string | null> {
     let source: string | null = null;
-    const lines = createInterface({ input: createReadStream(copyPath), crlfDelay: Number.POSITIVE_INFINITY });
+    const lines = readLines(copyPath);
 
     for await (const line of lines) {
         if (!line.startsWith('{"type":"derived-from"')) {
@@ -285,15 +287,17 @@ export async function checkCodeModePair(input: {
     suffix: string;
 }): Promise<PairCheck[]> {
     const { ids } = input;
-    const sessionLines = createInterface({
-        input: createReadStream(input.sessionPath),
-        crlfDelay: Number.POSITIVE_INFINITY,
-    })[Symbol.asyncIterator]();
+    const sessionLines = readLines(input.sessionPath);
     const sessionNames = { title: null as string | null, agent: null as string | null };
     const copyNames = { title: null as string | null, agent: null as string | null };
     let sessionPin: boolean | null = null;
     let copyPin: boolean | null = null;
     let sessionLine = 0;
+    // The move appends a Code Mode pin to a session whose newest pin was not one, so its rows after the move start at
+    // the first pin of the session's last run of Code Mode pins. Counting from there works also when the rows before
+    // it do not line up with the copy.
+    const emptyAfter = (): AfterFork => ({ rows: 0, repl: 0, otherTools: 0, apiErrors: 0, notCodeMode: 0 });
+    let sessionAfter: AfterFork | null = null;
 
     /** The session's next row that the copy also has (its name and pin rows are not copied). */
     const nextSessionRow = async (): Promise<{
@@ -318,12 +322,23 @@ export async function checkCodeModePair(input: {
 
             if (row?.type === "repl-mode") {
                 sessionPin = row.replMode === true;
+
+                if (!sessionPin) {
+                    sessionAfter = null;
+                } else if (sessionAfter === null) {
+                    sessionAfter = emptyAfter();
+                }
+
                 continue;
             }
 
             if (row?.type === "custom-title" || row?.type === "agent-name") {
                 lastName(sessionNames, row);
                 continue;
+            }
+
+            if (row && sessionAfter !== null) {
+                countAfterFork(row, sessionAfter);
             }
 
             return { line: sessionLine, raw: next.value, row };
@@ -335,7 +350,7 @@ export async function checkCodeModePair(input: {
     let tailLine: number | null = null;
     const copyAfter: AfterFork = { rows: 0, repl: 0, otherTools: 0, apiErrors: 0, notCodeMode: 0 };
     let copyLine = 0;
-    const copyLines = createInterface({ input: createReadStream(input.copyPath), crlfDelay: Number.POSITIVE_INFINITY });
+    const copyLines = readLines(input.copyPath);
 
     for await (const raw of copyLines) {
         copyLine++;
@@ -394,13 +409,11 @@ export async function checkCodeModePair(input: {
         compared++;
     }
 
-    const sessionAfter: AfterFork = { rows: 0, repl: 0, otherTools: 0, apiErrors: 0, notCodeMode: 0 };
-
-    for (let next = await nextSessionRow(); next !== null; next = await nextSessionRow()) {
-        if (next.row) {
-            countAfterFork(next.row, sessionAfter);
-        }
+    while ((await nextSessionRow()) !== null) {
+        // Drains the session: nextSessionRow counts its rows after the move.
     }
+
+    const after: AfterFork = sessionAfter ?? emptyAfter();
 
     const short = (id: string) => id.slice(0, 8);
     const turns = (after: AfterFork) =>
@@ -409,14 +422,14 @@ export async function checkCodeModePair(input: {
         `list title "${names.title ?? "none"}", prompt name "${names.agent ?? "none"}"`;
 
     const sessionMode: PairCheck =
-        sessionAfter.notCodeMode > 0 || (sessionAfter.otherTools > 0 && sessionAfter.repl === 0)
-            ? { name: "session runs in Code Mode", status: "fail", detail: turns(sessionAfter) }
-            : sessionAfter.repl > 0
-              ? { name: "session runs in Code Mode", status: "ok", detail: turns(sessionAfter) }
+        after.notCodeMode > 0 || (after.otherTools > 0 && after.repl === 0)
+            ? { name: "session runs in Code Mode", status: "fail", detail: turns(after) }
+            : after.repl > 0
+              ? { name: "session runs in Code Mode", status: "ok", detail: turns(after) }
               : {
                     name: "session runs in Code Mode",
                     status: "info",
-                    detail: `no tool call yet (${turns(sessionAfter)})`,
+                    detail: `no tool call yet (${turns(after)})`,
                 };
 
     return [
@@ -460,7 +473,7 @@ export async function checkCodeModePair(input: {
             detail: named(copyNames),
         },
         sessionMode,
-        copyAfter.repl > 0 || copyAfter.notCodeMode > 0
+        copyAfter.repl > 0
             ? { name: "copy runs without Code Mode", status: "fail", detail: turns(copyAfter) }
             : {
                   name: "copy runs without Code Mode",
@@ -469,8 +482,8 @@ export async function checkCodeModePair(input: {
               },
         {
             name: "API errors after the move",
-            status: sessionAfter.apiErrors + copyAfter.apiErrors > 0 ? "warn" : "ok",
-            detail: `session ${sessionAfter.apiErrors}, copy ${copyAfter.apiErrors}`,
+            status: after.apiErrors + copyAfter.apiErrors > 0 ? "warn" : "ok",
+            detail: `session ${after.apiErrors}, copy ${copyAfter.apiErrors}`,
         },
     ];
 }

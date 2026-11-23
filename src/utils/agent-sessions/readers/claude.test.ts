@@ -1016,6 +1016,8 @@ test("moving a session into Code Mode: the session keeps its id and gets the pin
     const copyPath = join(directory, `${FORK_ID}.jsonl`);
     const rows = [
         { type: "user", sessionId: FORK_SOURCE, cwd: "/work/shop", message: { content: "fix the invoice" } },
+        // A JSON string carries U+2028 raw; node:readline ended the line there and broke the row (2026-11-23).
+        { type: "user", sessionId: FORK_SOURCE, message: { content: "first line\u2028second line" } },
         { type: "repl-mode", replMode: false, sessionId: FORK_SOURCE },
         { type: "custom-title", customTitle: "Invoice rounding", sessionId: FORK_SOURCE },
         { type: "agent-name", agentName: "Invoice rounding", sessionId: FORK_SOURCE },
@@ -1040,10 +1042,11 @@ test("moving a session into Code Mode: the session keeps its id and gets the pin
     const parsed = copyLines
         .filter((line) => line !== "not json")
         .map((line) => SafeJSON.parse(line, { strict: true }));
-    expect(scan).toEqual({ rows: 4, droppedPins: 1, droppedTitles: 2, unreadableRows: 1, cwd: "/work/shop" });
+    expect(scan).toEqual({ rows: 5, droppedPins: 1, droppedTitles: 2, unreadableRows: 1, cwd: "/work/shop" });
     expect(copyLines).toContain("not json");
     expect(parsed.filter((row) => row.sessionId === FORK_SOURCE)).toEqual([]);
     expect(parsed.filter((row) => row.sessionId === OTHER_SESSION)).toHaveLength(1);
+    expect(parsed.some((row) => row.message?.content === "first line\u2028second line")).toBe(true);
     expect(parsed.filter((row) => row.type === "repl-mode")).toEqual([]);
     expect(claudeCodeModePin(copyPath)).toBeNull();
     expect(parsed.filter((row) => row.type === "agent-name")).toEqual([
