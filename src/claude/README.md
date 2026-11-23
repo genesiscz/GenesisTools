@@ -137,9 +137,10 @@ goes to `claude` unchanged.
   that resets soonest. Neither blocks a launch: when nothing qualifies you get the normal picker, and an `opus`
   pick below the floor launches with a warning. A real account with that name wins. Each name also launches that
   model (the Opus or the Fable option); an explicit `--model` wins.
-- **An account with no weekly quota left is refused.** `start` exits 1 and names the accounts that still have
-  weekly headroom, because every model gets a 429 on such an account. The check reads the usage cache only, so a
-  cache miss lets the launch go.
+- **An account with no weekly quota left asks first.** `start` warns that every model gets a 429 on such an
+  account, names the accounts that still have weekly headroom, and asks "Still want to launch it?" (Yes is the
+  default, because the cache can be behind a reset; No exits without a launch). A non-interactive run exits 1
+  instead. The check reads the usage cache only, so a cache miss lets the launch go.
 - **The Fable-headroom guard.** When the account's Fable weekly bucket is spent (3% or less left), an interactive
   launch with no `--model` warns, names the accounts with Fable headroom, and asks "Launch anyway?" (No exits
   without a launch). An explicit Fable model (`--model fable` or `start fable`) only warns. Another model, a resume

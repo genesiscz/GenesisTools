@@ -504,7 +504,8 @@ function resetPhrase(resetsAt: string | null): string {
  * A weekly-dead account cannot serve ANY model: every turn 429s. This runs before the interactive and --model checks
  * on purpose. Both are escapes from a Fable question, and neither is an escape from an empty weekly bucket.
  *
- * A terminal launch is refused here. An embedding app (`--sdk`) is not: a refusal is only an early exit, which T3 Code
+ * A terminal launch asks "Still want to launch it?" (Yes launches); a non-interactive one is refused. An embedding
+ * app (`--sdk`) is not refused: a refusal is only an early exit, which T3 Code
  * reports as "The provider could not start this turn" and drops stderr. Claude Code itself then gets the 429 and sends
  * its own rate-limit frames, which the app classes as a usage limit with a reset time; the returned note is added to
  * the text of those frames (`annotateLimitLine`).
@@ -544,6 +545,26 @@ async function weeklyGate(accountName: string, sdk: boolean): Promise<string | n
             ? pc.dim(`  Accounts with headroom: ${withRoom.join(", ")}`)
             : pc.dim("  No other account has weekly headroom right now.")
     );
+
+    // The cache can be behind a reset or an extra-usage grant, so a person at a terminal decides, as for Fable.
+    if (isInteractive()) {
+        const proceed = await p.confirm({
+            message: "Still want to launch it? (No cancels so you can pick another account)",
+            initialValue: true,
+            cancel: "back",
+        });
+
+        if (p.isCancel(proceed) || !proceed) {
+            p.cancel("Cancelled — nothing launched.");
+            process.exit(0);
+        }
+
+        logger.info(
+            { account: accountName, resetsAt: hit.resetsAt },
+            "[start] weekly-dead account launched anyway after the confirm"
+        );
+        return null;
+    }
 
     await out.flush();
     process.exit(1);
