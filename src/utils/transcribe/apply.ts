@@ -20,6 +20,8 @@ export interface TranscriptCorrections {
         toSec: number;
         speaker: string;
         item?: string;
+        /** The source line's index when two lines of `label` start in the range's one second: only that line moves. */
+        line?: number;
         /** A direct assignment wins over a join's voice, matching any source line the join absorbed. */
         overrideJoin?: boolean;
     }>;
@@ -46,6 +48,8 @@ export interface UnclearPassage {
     fromSec: number;
     toSec: number;
     speaker?: string;
+    /** The source line's index when the passage is one line of two that start in its second. */
+    line?: number;
     heard?: string;
     readings: string[];
     /** A question-owned speaker proposal, shown as a guess while the question is open. */
@@ -296,6 +300,8 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
     // The time a range reads for a line: a line a join glued a word onto keeps the time of the line the word came
     // from, so the range that covers the following line's voice covers the joined line too.
     const attributionTime = new Map(lines.map((line) => [line, line.startSec]));
+    // The same for the source line a range addresses by its index.
+    const attributionLine = new Map(lines.map((line) => [line, indexOf.get(line)]));
     const joinedOrigins =
         corrections.joins?.length && corrections.ranges?.some((range) => range.overrideJoin)
             ? new Map(lines.map((line) => [line, [{ label: line.speaker, atSec: line.startSec }]]))
@@ -351,6 +357,7 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
         before.speaker = join.speaker ?? line.speaker;
         sourceLabel.set(before, sourceLabel.get(line) ?? line.speaker);
         attributionTime.set(before, attributionTime.get(line));
+        attributionLine.set(before, attributionLine.get(line));
         if (joinedOrigins) {
             joinedOrigins.set(before, [...(joinedOrigins.get(before) ?? []), ...(joinedOrigins.get(line) ?? [])]);
         }
@@ -384,7 +391,11 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
             }
             const sec = attributionTime.get(line);
             return (
-                sourceLabel.get(line) === range.label && sec !== undefined && sec >= range.fromSec && sec <= range.toSec
+                sourceLabel.get(line) === range.label &&
+                sec !== undefined &&
+                sec >= range.fromSec &&
+                sec <= range.toSec &&
+                (range.line === undefined || attributionLine.get(line) === range.line)
             );
         });
         const moved = labelled.filter((line) => range.overrideJoin || !voiced.has(line));
@@ -409,7 +420,7 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
                   : {
                         item: range.item,
                         status: "not-found",
-                        reason: `no line of "${range.label}" from ${at(range.fromSec)} to ${at(range.toSec)}`,
+                        reason: `no line ${range.line === undefined ? "" : `${range.line} `}of "${range.label}" from ${at(range.fromSec)} to ${at(range.toSec)}`,
                     }
         );
     }
@@ -446,7 +457,8 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
                 !ranged.has(line) &&
                 !voiced.has(line) &&
                 !speakerMarked.has(line) &&
-                inRange(line, passage);
+                inRange(line, passage) &&
+                (passage.line === undefined || indexOf.get(line) === passage.line);
 
             if (open) {
                 speakerMarked.add(line);
