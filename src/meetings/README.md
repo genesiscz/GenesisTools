@@ -279,7 +279,11 @@ So the native recorder reads those apps at the start (`ax-tool capture-blockers`
 
 `record status` prints one line about it, for example `Never-capture windows: Dimmer on displays 1, 2 and 4. Frames
 come by screenshot, the system sound through the audio tap.`, and a second line when it quit an app; `--json` carries
-it as `captureBlockers`. In the node REPL, `meetings.captureBlockers()` is `record blockers` and
+it as `captureBlockers`. Each capture (one per piece) looks for such windows again at its start, and the line lists
+every app seen since the recording started: when the newest capture found none on screen (an app's window that comes
+and goes, as Microsoft Teams' do), its frames come from the stream at no cost, and the line says so
+(`streamReason` `no-window`). A capture that keeps the stream beside such a window (sound recorded inside the screen
+pieces, or a reason ax-tool names in its own warning) adds a warning that names the reason. In the node REPL, `meetings.captureBlockers()` is `record blockers` and
 `meetings.quitCaptureBlockers()` is `record blockers --quit`. A sound-only recording and the peekaboo recorder skip all of this. Known limits: the sound
 path is chosen once at the start, a recorder that crashes after a quit does not start the app again, and a screenshot
 shows the screen about a quarter of a second before it arrives.
