@@ -695,7 +695,7 @@ export class PeopleDirectory {
         const second = await this.resolve(b);
 
         if (first.person.id === second.person.id) {
-            throw new Error(`"${a}" and "${b}" are one person already: ${first.person.name}`);
+            return this.planSpellingMerge({ a, b, name, found: first });
         }
 
         const meetings = new Map<string, MergeMeeting>();
@@ -731,6 +731,51 @@ export class PeopleDirectory {
             name: name?.trim() || first.person.name,
             meetings: [...meetings.values()].sort((x, y) => y.start.localeCompare(x.start)),
             labels,
+        };
+    }
+
+    /**
+     * Two spellings that the name key joins and no merge holds yet ("jana.novakova" and "Nováková Jana (XY)") merge as
+     * typed, under the name the person shows. The directory already shows them as one person, but the voice library
+     * keys an owner without an address by its exact name, so only a merge that holds both spellings joins their
+     * samples. Two equal spellings, or two that one merge holds, are one person already.
+     */
+    private planSpellingMerge(input: {
+        a: string;
+        b: string;
+        name?: string;
+        found: { person: KnownPerson; identity: Identity };
+    }): MergePlan {
+        const { a, b, name, found } = input;
+        const refs = [spellingOf(a, found.identity), spellingOf(b, found.identity)] as const;
+        const [first, second] = refs.map(refKey);
+        const held = this.options.book
+            .read()
+            .merges.some((merge) => [first, second].every((key) => merge.people.some((ref) => refKey(ref) === key)));
+
+        if (first === second || held) {
+            throw new Error(`"${a}" and "${b}" are one person already: ${found.person.name}`);
+        }
+
+        const { email: _email, ...person } = found.person;
+        const view = (ref: PersonRefValue): KnownPerson =>
+            ref.email ? { ...person, ...ref } : { ...person, name: ref.name };
+        const appearances = [...found.identity.appearances.values()];
+        return {
+            people: [view(refs[0]), view(refs[1])],
+            name: name?.trim() || found.person.name,
+            meetings: appearances
+                .map((appearance) => ({
+                    id: appearance.meeting,
+                    title: appearance.title,
+                    start: appearance.start,
+                    people: [0, 1] as Array<0 | 1>,
+                    as: [...appearance.as],
+                }))
+                .sort((x, y) => y.start.localeCompare(x.start)),
+            labels: appearances.flatMap((appearance) =>
+                appearance.labels.map((label) => ({ meeting: appearance.meeting, label, name: found.person.name }))
+            ),
         };
     }
 
@@ -905,6 +950,24 @@ function distinctPeople(answers: Array<Extract<SourceAnswer, { state: "ok" }>>):
             seen.add(key);
             return true;
         });
+}
+
+/** A typed reference as one spelling of `identity`: its email when it names one, else the text as typed. */
+function spellingOf(ref: string, identity: Identity): PersonRefValue {
+    const wanted = ref.trim().normalize("NFC");
+    const parsed = parsePersonRef(wanted);
+    const email = (parsed.kind === "email" ? parsed.value : wanted).toLowerCase();
+
+    if (identity.emails.has(email)) {
+        return { name: shownName(identity), email };
+    }
+
+    return { name: parsed.kind === "text" ? wanted : shownName(identity) };
+}
+
+/** One key per spelling: the address when there is one, else the exact name, as the voice library keys an owner. */
+function refKey(ref: PersonRefValue): string {
+    return ref.email ? `email:${ref.email.toLowerCase()}` : `name:${ref.name.trim().normalize("NFC")}`;
 }
 
 /** A reference split once: an `email:` id with its email, a `name:` id with its name key, or plain text. */
