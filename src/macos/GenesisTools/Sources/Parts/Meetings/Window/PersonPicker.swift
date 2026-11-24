@@ -27,7 +27,12 @@ enum PeopleText {
                 ?? KnownPerson(id: "choice:\(personKey(name))", name: name, sources: [.meetings], rank: .present)
         }
         preferred += people.filter { person in !preferred.contains { isExactMatch($0, person.name) } }
-        return hideAbsent ? preferred.filter { $0.rank == .present } : preferred
+        guard hideAbsent else { return preferred }
+        // A typed name is a search: everyone it matches shows, the people in the call at that time first. Only the
+        // untyped list leaves the others to "Show everybody" (X5). Hiding a typed match left "Dami" with only "Use
+        // 'Dami' as typed", while the directory knew Damián, absent from the call at that time (2026-11-24).
+        let present = preferred.filter { $0.rank == .present }
+        return words.isEmpty ? present : present + preferred.filter { $0.rank != .present }
     }
 
     /// Case and accents folded, spaces trimmed: how the directory compares names (`nameKey`).
@@ -133,7 +138,10 @@ struct PersonPicker: View {
     @State private var offeredName: String?
     var newName: String? { addNew == nil ? nil : PeopleText.newName(query, people: people, rule: addRule) }
     /// The rows Up and Down move through: the people, then the add row.
-    private var offersEverybody: Bool { restrictToPresent && !showEverybody }
+    /// With text typed, the list already holds everyone it matches (`questionPeople`).
+    private var offersEverybody: Bool {
+        restrictToPresent && !showEverybody && query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
     private var rowCount: Int { shownPeople.count + (offeredName == nil ? 0 : 1) + (offersEverybody ? 1 : 0) }
 
     var body: some View {
