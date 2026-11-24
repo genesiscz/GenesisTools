@@ -79,7 +79,8 @@ A missing meeting names only the store that was searched. To find which store ho
      has samples from at least one person on that side. Without seats or usable samples, voice naming is off and
      people in the room or on the call can stay unnamed.
    - Run `tools meetings voices backfill --project <p>` or `await meetings.backfillVoices({ project })` to recover samples from earlier speaker answers and names
-     proposed by voice that a person confirmed individually. To select meetings directly, pass their IDs in place of
+     proposed by voice that a person confirmed individually. An answer an agent relayed with `listen --answer` is not a
+     person's answer, so backfill skips it ("no human speaker decisions"). To select meetings directly, pass their IDs in place of
      `--project <p>`. Backfill can recover a line before seats are set, using the line's mic share. Add `--dry-run`
      to see counts per meeting and person. The matching REPL call is `await meetings.backfillVoices({ meetings: [meeting], dryRun: true })`. Repeating the command counts existing samples separately.
    - Run `tools meetings voices preview <meeting>`. Check proposed names, times and refusals. The pass can also
@@ -152,7 +153,12 @@ A missing meeting names only the store that was searched. To find which store ho
    person's answer when it covers every line, including answers on the source meeting of a copy. It asks about
    conflicting answers, partial coverage and lines the user has yet to decide. Use `--ask-known` to hear known
    questions again. Spot-check results report the reused and newly asked answers separately. To relay an answer the
-   user gives in chat: `tools meetings listen <meeting> --item Q12 --answer "<text>"`. At the same time run `tools meetings listen <meeting> --subscribe-answers` under your Monitor tool (or as a
+   user gives in chat: `tools meetings listen <meeting> --item Q12 --answer "<text>"`. A relayed answer names the
+   lines but teaches no voice: the decision journal records it as your answer, and voice learning and `voices backfill`
+   take only a person's answers. To have that person's voice learned, give the user a stretch where only that person
+   speaks and ask him to listen to it and run, in a terminal of his own:
+   `tools meetings voices add <meeting> --from <start> --to <end> --person "<name>" --confirmed`.
+   The command refuses an agent, so never run it yourself. At the same time run `tools meetings listen <meeting> --subscribe-answers` under your Monitor tool (or as a
    background command): it prints each answer as one JSON line the moment it is given and exits when the round ends,
    so you act on each answer while the user is still listening. Do not poll the record. When the user reviews in the
    Meetings window, add `--with-comments --follow`: the comments the user sends from a transcript selection arrive on
