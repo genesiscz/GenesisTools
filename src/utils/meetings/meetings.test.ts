@@ -27,8 +27,20 @@ import {
 } from "./config";
 import { collectEcho, correlateEcho, echoForRange, readEchoCache } from "./echo";
 import { calibrateChannels, channelEnergy, micShare } from "./energy";
-import { MEETING_UNCHANGED, MeetingStore, meetingRecordSchema, nextId, titleSlug } from "./record";
+import {
+    JOIN_PART_FILE,
+    JOINED_RECORD_VERSION,
+    joinAliases,
+    MEETING_UNCHANGED,
+    MeetingStore,
+    meetingAddress,
+    meetingRecordSchema,
+    nextId,
+    titleSlug,
+    toJoinedSec,
+} from "./record";
 import { readVoiceSamples, saveVoiceSample, scoreVoice } from "./voice";
+import { inScope } from "./voice-library";
 
 let stores = 0;
 
@@ -1700,4 +1712,45 @@ test("project person details are additive and survive a reopened config without 
     const bytes = fs.readFileSync(config.path, "utf8");
     await new MeetingsConfigStore(config.storage).read();
     expect(fs.readFileSync(config.path, "utf8")).toBe(bytes);
+});
+
+describe("a later recording's old id after a join", () => {
+    test("names the joined record and the offset its seconds move by, from the part folder's marker", async () => {
+        const store = new MeetingStore();
+        const later = "2026-11-01_10-11-later-fixture";
+        const part = (record: string, offsetMs: number) => ({
+            record,
+            title: "Fixture",
+            sourceId: "wisprflow",
+            sourceMeetingId: `m-${record}`,
+            zeroAt: new Date(Date.UTC(2026, 10, 1, 9) + offsetMs).toISOString(),
+            offsetMs,
+            endSec: 100,
+        });
+        const kept = await store.create(
+            { title: "Joined fixture", start: "2026-11-01T09:00:00Z", createdBy: "new" },
+            { command: "test", change: "fixture" }
+        );
+        const joined = await store.update(kept.id, { command: "test", change: "join fixture" }, (current) => {
+            current.version = JOINED_RECORD_VERSION;
+            current.join = {
+                version: 1,
+                at: "2026-11-01T12:00:00Z",
+                backup: "/backup",
+                parts: [part(kept.id, 0), part(later, 654273)],
+            };
+        });
+        mkdirSync(store.folder(later), { recursive: true });
+        writeFileSync(join(store.folder(later), JOIN_PART_FILE), SafeJSON.stringify({ joinedInto: kept.id }));
+
+        expect(store.resolve(later)).toBeUndefined();
+        const address = meetingAddress(store, later);
+        expect(address).toMatchObject({ record: { id: kept.id }, offsetMs: 654273, joinedFrom: later });
+        expect(toJoinedSec(2526, address!.offsetMs)).toBe(3180.273);
+        expect(meetingAddress(store, kept.id)).toMatchObject({ record: { id: kept.id }, offsetMs: 0 });
+        expect([...joinAliases(joined)]).toEqual([[later, 654273]]);
+        const sample = { meeting: later, project: "work" };
+        expect(inScope(sample, { kind: "meeting", meeting: kept.id })).toBe(false);
+        expect(inScope(sample, { kind: "meeting", meeting: kept.id, aliases: [later] })).toBe(true);
+    });
 });
