@@ -209,6 +209,37 @@ describe("a meeting read from the app or the MCP", () => {
     });
 });
 
+describe("searching the app's meetings", () => {
+    const names = (dir: string, query: string, limit?: number) =>
+        local.listLocalMeetings({ query, limit }, dir).map((row) => row.id);
+
+    test("a name inside a mention matches on what the user sees, and the limit counts only the matches", () => {
+        const dir = wisprFolder([
+            {
+                id: "m1",
+                createdAt: "2026-11-01 09:00:00",
+                summary: "<@person2:n=Ale%C5%A1%20Example> asked <@speaker:1> to review.",
+                notes: "Owner: <@person3:c=0f3a;n=B%C3%A1ra%20Nov%C3%A1>",
+                speakerMap: MENTION_SPEAKERS,
+            },
+            { id: "m2", createdAt: "2026-11-02 09:00:00", summary: "<@person1:n=Ale%C5%A1%20Example> joined." },
+            { id: "m3", createdAt: "2026-11-03 09:00:00", title: "Budget review", summary: "No names." },
+        ]);
+
+        try {
+            expect(names(dir, "Aleš")).toEqual(["m2", "m1"]);
+            expect(names(dir, "Aleš Example", 1)).toEqual(["m2"]);
+            expect(names(dir, "bára nová")).toEqual(["m1"]);
+            expect(names(dir, "Bob")).toEqual(["m1"]);
+            expect(names(dir, "BUDGET")).toEqual(["m3"]);
+            expect(names(dir, "nobody")).toEqual([]);
+            expect(local.listLocalMeetings({ limit: 2 }, dir).map((row) => row.id)).toEqual(["m3", "m2"]);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
+
 describe("MCP transcript pages", () => {
     test("a speaker label cut at a page boundary joins back into one line", () => {
         const first =
