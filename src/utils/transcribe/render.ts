@@ -1,8 +1,11 @@
 import { type Block, escapeUrl, json2md } from "@genesiscz/utils/json2md";
+import { formatClock } from "./clock";
 import { TranscriptLines } from "./lines";
 import { firstName } from "./speakers";
 import type { TermSuggestion } from "./terms";
 import type { TranscriptEntry } from "./types";
+
+export { formatClock };
 
 export const TRANSCRIPT_FORMATS = ["md", "txt", "json", "srt", "vtt"] as const;
 export type TranscriptFormat = (typeof TRANSCRIPT_FORMATS)[number];
@@ -125,16 +128,6 @@ export function voiceNameText(entry: Pick<TranscriptEntry, "nameSource" | "nameS
     return entry.nameSource === "voice"
         ? `by voice${entry.nameScore === undefined ? "" : ` ${entry.nameScore.toFixed(2)}`}`
         : "";
-}
-
-export function formatClock(totalSec: number): string {
-    const h = Math.floor(totalSec / 3600);
-    const m = Math.floor((totalSec % 3600) / 60);
-    const s = Math.floor(totalSec % 60);
-    const mm = String(m).padStart(2, "0");
-    const ss = String(s).padStart(2, "0");
-
-    return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
 /** `1:23:50`, `23:50` or `90` (seconds) to seconds; undefined for anything else. The inverse of `formatClock`. */
