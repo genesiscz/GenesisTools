@@ -34,6 +34,8 @@ export const savedFindingSchema = z.discriminatedUnion("kind", [
         label: text,
         /** Absent for a range a question in the batch decides (it names the range's ref in `decides`). */
         speaker: text.optional(),
+        /** With `from` and `to` in one second that two lines of `label` start in: the one line the range names. */
+        line,
         /** Explicit evidence identity and eligible answers for propagation across unasked ranges. */
         signature: text.optional(),
         candidates: z.array(text).optional(),
