@@ -1109,17 +1109,21 @@ export function changeVoiceLearning(options: {
                 library.receipts[priorIndex] = { ...priorReceipt, active: false, revision: library.revision + 1 };
             }
 
+            // A rename re-keys a sample but leaves it with its confirmation, whose receipt still names the old owner.
+            const ownedBy = (sample: VoiceSample) => {
+                const learned = latestReceipt.get(sample.id);
+                return (
+                    sameVoiceOwner(sample.owner, owned.owner) ||
+                    (learned !== undefined &&
+                        learned.token === owned.token &&
+                        sameVoiceOwner(learned.owner, owned.owner))
+                );
+            };
             const candidates = owned.id ? [owned.id] : (byPrint.get(printKey(owned.project, print)) ?? []);
             const matches = candidates.flatMap((id) => {
                 const row = remaining.get(id);
                 const sample = row?.sample;
-                if (
-                    !row ||
-                    !sample ||
-                    sample.transferred ||
-                    sample.project !== owned.project ||
-                    !sameVoiceOwner(sample.owner, owned.owner)
-                ) {
+                if (!row || !sample || sample.transferred || sample.project !== owned.project || !ownedBy(sample)) {
                     return [];
                 }
                 row.print ??= voicePrintSchema.parse(sample);
