@@ -331,6 +331,41 @@ test("simultaneous transcript entries can persist distinct samples and undo only
     expect(persisted().samples.map((row) => row.id)).toEqual([two.id]);
 });
 
+test("a confirmation withdrawn after a rename to another name key removes the renamed sample, and another confirmation's withdrawal does not", async () => {
+    const { changeVoiceLearning, correctVoiceSample, insertVoiceSample, sourceForVoicePrint } = await library();
+    const p = print(2);
+    const sample: ConfirmedSampleInput = {
+        project: "one",
+        owner: { name: "Speaker Example" },
+        print: p,
+        model,
+        source: sourceForVoicePrint(p, p.meeting, "line-a"),
+        origin: "answer",
+        acquiredBy: "live",
+        decision: { token: "first", item: "i1" },
+    };
+    const second = {
+        ...sample,
+        source: sourceForVoicePrint(p, p.meeting, "line-b"),
+        decision: { token: "second", item: "i2" },
+    };
+    const one = insertVoiceSample(sample);
+    const two = insertVoiceSample(second);
+    if (!("id" in one) || !("id" in two)) {
+        throw new Error("Expected two sample IDs");
+    }
+    correctVoiceSample({ kind: "rename", ids: [one.id, two.id], to: { name: "Finch Example" } });
+    expect(persisted().samples.map((row) => row.owner)).toEqual([{ name: "Finch Example" }, { name: "Finch Example" }]);
+
+    changeVoiceLearning({ add: [], remove: [{ ...sample, id: one.id, token: "second" }] });
+    expect(persisted().samples).toHaveLength(2);
+    // The confirmation still owns its renamed sample: by its ID, and by its print when the journal has no ID.
+    changeVoiceLearning({ add: [], remove: [{ ...sample, id: one.id, token: "first" }] });
+    expect(persisted().samples.map((row) => row.id)).toEqual([two.id]);
+    changeVoiceLearning({ add: [], remove: [{ ...second, id: undefined, token: "second" }] });
+    expect(persisted().samples).toEqual([]);
+});
+
 test("checked insertion reuses its persisted receipt and prediction holds out only related speech", async () => {
     const { insertVoiceSample, predictionPrints, sourceForVoicePrint, voicesIn, readVoiceLibrary } = await library();
     const p = print(2),
