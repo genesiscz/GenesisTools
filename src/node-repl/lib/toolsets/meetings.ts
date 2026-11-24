@@ -11,6 +11,7 @@ import { projectLabels, setMeetingFields } from "@app/meetings/lib/meeting-field
 import { captureBlockersRead, quitCaptureBlockersNow } from "@app/meetings/lib/never-capture";
 import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
 import { meetingsOverview } from "@app/meetings/lib/overview";
+import { confirmVoiceSample } from "@app/meetings/lib/person-door";
 import { rawEvidence } from "@app/meetings/lib/raw-evidence";
 import { startMeetingRecording } from "@app/meetings/lib/record-start";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
@@ -80,7 +81,7 @@ import {
     type thresholds,
     voiceEnroll,
     voiceFeatures,
-    type voiceLibraryMethods,
+    voiceLibraryMethods,
     type voiceReadiness,
     voiceScore,
     type voices,
@@ -95,6 +96,7 @@ import { voiceReadiness as readVoiceReadiness } from "@app/meetings/lib/voice-re
 import { watchOnce } from "@app/meetings/lib/watch";
 import { recordingAutostart } from "@app/meetings/lib/watcher";
 import { captureCostRead, rowsRead } from "@app/meetings/lib/window-reads";
+import { AgentInstructionsError } from "@genesiscz/utils/ai/agent-instructions";
 import { assertReach } from "@genesiscz/utils/api-descriptor";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -223,6 +225,39 @@ export class MeetingsToolset extends ReplToolset {
                         return listVoices({ scope, person: input.person });
                     },
                     {
+                        // The CLI's own core: tools meetings voices add, with the same confirmation by the user.
+                        add: async (input: z.input<typeof voiceLibraryMethods.add.params>) => {
+                            const { meeting, fromSec, toSec, person, confirmed } =
+                                voiceLibraryMethods.add.params.parse(input);
+                            const confirmation = await confirmVoiceSample({
+                                actor: callerActor(),
+                                confirmed: confirmed === true,
+                                ask: () => {
+                                    const record = recordOf(store, meeting);
+                                    const again = { meeting: record.id, fromSec, toSec, person, confirmed: true };
+                                    return {
+                                        record,
+                                        fromSec,
+                                        toSec,
+                                        person,
+                                        rerun: `meetings.voices.add(${SafeJSON.stringify(again)})`,
+                                    };
+                                },
+                            });
+                            if (!confirmation.confirmed) {
+                                throw new AgentInstructionsError(confirmation.instructions);
+                            }
+                            const { addVoiceSample } = await import("@app/meetings/lib/voices");
+                            const result = await addVoiceSample({
+                                store,
+                                meeting: confirmation.record?.id ?? meeting,
+                                fromSec,
+                                toSec,
+                                person,
+                                confirmed: true,
+                            });
+                            return { ...result, confirmedBy: confirmation.by };
+                        },
                         list: listVoices,
                         samples: listVoices,
                         play: async ({
@@ -539,10 +574,26 @@ export class MeetingsToolset extends ReplToolset {
                 ),
             voiceCollect: () =>
                 withMeetingsClient((client) => client.call("voice.collect", { meeting: id }, { timeoutMs: 3_600_000 })),
-            voiceEnroll: (params: z.input<typeof voiceEnroll.params>) =>
-                withMeetingsClient((client) =>
-                    client.call("voice.enroll", { meeting: id, ...voiceEnroll.params.parse(params) })
-                ),
+            // The CLI's own order: the user confirms an agent's enrolment in a window before the service saves it.
+            voiceEnroll: async (params: z.input<typeof voiceEnroll.params>) => {
+                const input = voiceEnroll.params.parse(params);
+                const confirmation = await confirmVoiceSample({
+                    actor: callerActor(),
+                    confirmed: input.confirmed,
+                    ask: () => ({
+                        record: current(),
+                        fromSec: input.fromSec,
+                        toSec: input.toSec,
+                        person: input.person,
+                        channel: input.channel,
+                        rerun: `the same voiceEnroll(${SafeJSON.stringify(input)}) call on meeting ${id}`,
+                    }),
+                });
+                if (!confirmation.confirmed) {
+                    throw new AgentInstructionsError(confirmation.instructions);
+                }
+                return withMeetingsClient((client) => client.call("voice.enroll", { meeting: id, ...input }));
+            },
             acousticInspect: (params: z.input<typeof acousticInspect.params>) =>
                 withMeetingsClient((client) =>
                     client.call("acoustic.inspect", { meeting: id, ...acousticInspect.params.parse(params) })

@@ -1,7 +1,11 @@
+import { outputAgentInstructions } from "@genesiscz/utils/ai/agent-instructions";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
+import { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { shellWord } from "@genesiscz/utils/shell/quote";
 import type { Command } from "commander";
 import { withMeetingsClient } from "../lib/service/client";
+import { TOOL } from "../lib/shared";
 
 export function registerAcousticCommands(program: Command): void {
     const acoustic = program
@@ -75,28 +79,78 @@ export function registerLegacyVoiceCommands(voice: Command): void {
         if (name === "enroll") {
             command
                 .requiredOption("--person <name>", "Confirmed speaker name")
-                .requiredOption("--confirmed", "Assert single-speaker identity was confirmed");
+                .option(
+                    "--confirmed",
+                    "Assert single-speaker identity was confirmed; for an agent, the user confirms it in a window"
+                );
         }
         command.action(
-            async (meeting: string, opts: { from: number; to: number; channel: number; person?: string }) => {
+            async (
+                meeting: string,
+                opts: {
+                    from: number;
+                    to: number;
+                    channel: number;
+                    person?: string;
+                    confirmed?: boolean;
+                    json?: boolean;
+                }
+            ) => {
                 const channel = opts.channel;
                 if (channel !== 0 && channel !== 1) {
                     throw new Error("Channel must be 0 or 1");
                 }
 
+                const person = opts.person;
+                if (!person) {
+                    out.result(
+                        SafeJSON.stringify(
+                            await withMeetingsClient((client) =>
+                                client.call("voice.score", { meeting, fromSec: opts.from, toSec: opts.to, channel })
+                            )
+                        )
+                    );
+                    return;
+                }
+
+                // The decision journal and the person door load only for an enrolment, not for every acoustic read.
+                const [{ callerActor }, { confirmVoiceSample }] = await Promise.all([
+                    import("../lib/decision-journal"),
+                    import("../lib/person-door"),
+                ]);
+                const confirmation = await confirmVoiceSample({
+                    actor: callerActor(),
+                    confirmed: opts.confirmed === true,
+                    ask: () => {
+                        const record = new MeetingStore().resolve(meeting);
+                        if (!record) {
+                            throw new Error(`No meeting "${meeting}".`);
+                        }
+                        const rerun = [
+                            `${TOOL} voices enroll ${shellWord(record.id)} --from ${opts.from} --to ${opts.to}`,
+                            `--channel ${channel} --person ${shellWord(person)} --confirmed`,
+                        ].join(" ");
+                        return { record, fromSec: opts.from, toSec: opts.to, person, channel, rerun };
+                    },
+                });
+                if (!confirmation.confirmed) {
+                    outputAgentInstructions(confirmation.instructions, { json: opts.json === true });
+                    process.exitCode = 1;
+                    return;
+                }
+
+                logger.debug({ meeting, person, confirmedBy: confirmation.by }, "voices enroll: confirmed sample");
                 out.result(
                     SafeJSON.stringify(
                         await withMeetingsClient((client) =>
-                            opts.person
-                                ? client.call("voice.enroll", {
-                                      meeting,
-                                      fromSec: opts.from,
-                                      toSec: opts.to,
-                                      channel,
-                                      person: opts.person,
-                                      confirmed: true,
-                                  })
-                                : client.call("voice.score", { meeting, fromSec: opts.from, toSec: opts.to, channel })
+                            client.call("voice.enroll", {
+                                meeting: confirmation.record?.id ?? meeting,
+                                fromSec: opts.from,
+                                toSec: opts.to,
+                                channel,
+                                person,
+                                confirmed: true,
+                            })
                         )
                     )
                 );
