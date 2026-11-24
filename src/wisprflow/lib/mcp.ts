@@ -220,7 +220,7 @@ export function parseMcpTranscript(raw: string): TranscriptEntry[] {
 export async function getMcpMeeting(
     id: string,
     options: { transcript: boolean },
-    open: <T>(fn: (kit: McpKit) => Promise<T>) => Promise<T> = withMcp
+    open: <T>(fn: (kit: McpKit) => Promise<T>, purpose?: string) => Promise<T> = withMcp
 ): Promise<Meeting> {
     return open(async (kit) => {
         const head = await call<RawMeeting>(kit, "get_meeting", { meeting_id: id });
