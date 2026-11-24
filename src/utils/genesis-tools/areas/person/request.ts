@@ -10,6 +10,7 @@ import { refuseHostEffectInTest } from "@genesiscz/utils/test-process";
 import { z } from "zod";
 import { Delivery, type DeliveryName, deliverySchema, personConfigSchema } from "./deliveries";
 import type { RequestJournal, RequestView } from "./journal";
+import { requestActionLine, requestActionSchema, requestButtonLabelSchema } from "./request-actions";
 
 /** A request id: the journal stores it whole in the posted event and names the file by its digest. */
 export const REQUEST_ID_PATTERN = /^[a-zA-Z0-9:._-]{1,500}$/;
@@ -26,8 +27,38 @@ export const noticeInputSchema = z.object({
             args: z.array(z.string().max(500)).max(20),
         })
         .optional(),
+    /**
+     * What the decision is about, as rows the window shows under the reason (Meeting, Time, Person); `help` is the
+     * row's tooltip. Absent, the reason alone says it, as before these fields.
+     */
+    fields: z
+        .array(
+            z.object({
+                label: z.string().trim().min(1).max(40),
+                value: z.string().min(1).max(500),
+                help: z.string().max(500).optional(),
+            })
+        )
+        .max(12)
+        .optional(),
+    /** Extra buttons that keep the window open and answer nothing (play the clip it asks about, open a page). */
+    actions: z.array(requestActionSchema).max(4).optional(),
+    /** The words on the answering buttons: `confirm` answers done, `decline` answers declined. */
+    buttons: z
+        .object({ confirm: requestButtonLabelSchema.optional(), decline: requestButtonLabelSchema.optional() })
+        .optional(),
 });
 export type NoticeInput = z.infer<typeof noticeInputSchema>;
+
+/**
+ * The request as plain text, for a surface that shows no rows and no buttons (the system dialog, a terminal): the
+ * reason, then each field as `Label: value`, then each action as the command or page a person can use instead.
+ */
+export function requestPlainText(request: Pick<NoticeInput, "reason" | "fields" | "actions">): string {
+    const fields = (request.fields ?? []).map((field) => `${field.label}: ${field.value}`);
+    const actions = (request.actions ?? []).map((action) => requestActionLine(action));
+    return [request.reason, ...(fields.length || actions.length ? ["", ...fields, ...actions] : [])].join("\n");
+}
 
 export const requestSchema = noticeInputSchema.extend({
     createdAt: z.string().datetime(),

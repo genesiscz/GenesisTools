@@ -39,12 +39,16 @@ import {
     stateOf,
 } from "./journal";
 import {
+    type NoticeInput,
+    noticeInputSchema,
     type PersonRequest,
     presentPostedRequest,
+    requestPlainText,
     requestSchema,
     requestWindowDeadline,
     WINDOW_REPLY_RESERVE_MS,
 } from "./request";
+import { requestActionLine } from "./request-actions";
 import {
     notifyRequest,
     notifyViaChannels,
@@ -1114,4 +1118,58 @@ test("a request no surface took is delivered again on a retry, and its delivery 
         type: "delivered",
         channel: "notification",
     });
+});
+
+test("a caller declares rows, extra buttons and answer words; a text-only request still parses as before", () => {
+    const plain = { kind: "notice", id: "notice:old", title: "Old notice", reason: "Text only." } as const;
+    expect(noticeInputSchema.parse(plain)).toEqual(plain);
+
+    const declared = {
+        ...plain,
+        fields: [{ label: "Meeting", value: "Planning", help: "2026-01-12_10-00-planning" }],
+        actions: [
+            {
+                kind: "play-meeting",
+                label: "Play clip",
+                meeting: "2026-01-12_10-00-planning",
+                fromSec: 75,
+                toSec: 89.2,
+            },
+            { kind: "open-link", label: "Open page", url: "https://example.com/x" },
+        ],
+        buttons: { confirm: "Confirm sample", decline: "Not now" },
+    } satisfies NoticeInput;
+    expect(noticeInputSchema.parse(declared)).toEqual(declared);
+    // A button is a typed action the app runs itself: never a command line, a local file or an unknown kind.
+    for (const action of [
+        { kind: "run-command", label: "Run", argv: ["rm", "-rf", "/"] },
+        { kind: "open-link", label: "File", url: "file:///etc/hosts" },
+        { kind: "play-meeting", label: "Play", meeting: "m", fromSec: -1, toSec: 2 },
+    ]) {
+        expect(noticeInputSchema.safeParse({ ...plain, actions: [action] }).success).toBe(false);
+    }
+    expect(noticeInputSchema.safeParse({ ...plain, buttons: { confirm: "" } }).success).toBe(false);
+});
+
+test("a surface without buttons shows the rows and each action as the command or page a person can use", () => {
+    expect(
+        requestActionLine({
+            kind: "play-meeting",
+            label: "Play clip",
+            meeting: "2026-01-12_10-00-planning",
+            fromSec: 75.4,
+            toSec: 89.2,
+        })
+    ).toBe("Play clip: tools meetings play 2026-01-12_10-00-planning --at 01:15 --to 01:30");
+    expect(requestActionLine({ kind: "open-link", label: "Open page", url: "https://example.com/x" })).toBe(
+        "Open page: https://example.com/x"
+    );
+    expect(requestPlainText({ reason: "Text only." })).toBe("Text only.");
+    expect(
+        requestPlainText({
+            reason: "An agent asks.",
+            fields: [{ label: "Person", value: "Alice Example" }],
+            actions: [{ kind: "open-link", label: "Open page", url: "https://example.com/x" }],
+        })
+    ).toBe("An agent asks.\n\nPerson: Alice Example\nOpen page: https://example.com/x");
 });

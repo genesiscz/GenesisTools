@@ -182,7 +182,13 @@ export function wireSamples(schema: WireSchema): unknown[] {
             ];
         }
         case "string":
-            return [schema.format === "date-time" ? "2026-11-17T12:00:00.000Z" : "fixture"];
+            return [
+                schema.format === "date-time"
+                    ? "2026-11-17T12:00:00.000Z"
+                    : schema.format === "uri"
+                      ? "https://example.com/fixture"
+                      : "fixture",
+            ];
         case "integer":
         case "number":
             return [schema.minimum ?? 1];

@@ -5,7 +5,13 @@ import { genesisToolsRequestOpenCommand } from "@genesiscz/utils/genesis-tools/t
 import { out } from "@genesiscz/utils/logger";
 import { refuseHostEffectInTest } from "@genesiscz/utils/test-process";
 import { personConfigSchema } from "./deliveries";
-import { type PersonRequest, type RequestOutcome, requestOutcomeSchema, requestWindowDeadline } from "./request";
+import {
+    type PersonRequest,
+    type RequestOutcome,
+    requestOutcomeSchema,
+    requestPlainText,
+    requestWindowDeadline,
+} from "./request";
 import { DIALOG_SYSTEM, dialogEnvironment, PERSON_DIALOGS } from "./system-dialog";
 
 export type RequestContext = ActionContext<PersonRequest, Record<string, unknown>>;
@@ -28,12 +34,14 @@ export async function presentInApp(ctx: RequestContext): Promise<RequestOutcome 
 export async function presentInSystemDialog(ctx: RequestContext): Promise<RequestOutcome | Pass> {
     refuseHostEffectInTest("request system dialog", "Inject a request surface in tests.");
     const dialog = PERSON_DIALOGS[ctx.facts.platform()];
-    const argv = dialog?.command({ title: ctx.args.title, body: ctx.args.reason }, DIALOG_SYSTEM);
+    // The dialog has no rows and no extra buttons: the fields and the actions become lines of its text.
+    const text = { title: ctx.args.title, body: requestPlainText(ctx.args) };
+    const argv = dialog?.command(text, DIALOG_SYSTEM);
     if (!dialog || !argv) {
         return ctx.pass("No trusted system dialog program is installed.");
     }
     const timeout = Math.max(1, Math.min(ctx.timeoutMs, (ctx.args.deadlineSeconds ?? ctx.timeoutMs / 1000) * 1000));
-    const input = dialog.input?.({ title: ctx.args.title, body: ctx.args.reason });
+    const input = dialog.input?.(text);
     const proc = Bun.spawn(argv, {
         env: dialogEnvironment(dialog.searchPath),
         stdin: input === undefined ? "ignore" : Buffer.from(input, "utf8"),
@@ -73,7 +81,7 @@ export async function presentInTerminal(ctx: RequestContext): Promise<RequestOut
     const signal = AbortSignal.timeout(
         Math.max(1, Math.min(ctx.timeoutMs, (ctx.args.deadlineSeconds ?? ctx.timeoutMs / 1000) * 1000))
     );
-    out.log.info(`${ctx.args.title}\n${ctx.args.reason}`);
+    out.log.info(`${ctx.args.title}\n${requestPlainText(ctx.args)}`);
     try {
         const answer = await terminal.question("Acknowledge? [y/N] ", { signal });
         return {
