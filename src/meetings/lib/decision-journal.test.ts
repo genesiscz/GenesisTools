@@ -86,6 +86,7 @@ import {
     type RelayedConfirmDoor,
     relayedActor,
     relayedGroups,
+    relayedQuote,
     relayedRowId,
 } from "./relayed";
 import { reviewRow } from "./review-rows";
@@ -4498,6 +4499,17 @@ describe("relayed answers: the user confirms what an agent relayed (D443)", () =
         // Undo of the user's entry brings the agent's decision back.
         await fx.journal.revert({ meeting: fx.meeting.id, token: adoption.token, actor: person });
         expect(fx.item("i7")?.decision?.actor).toEqual(relayer);
+    });
+
+    test("a quote keeps the user's words: a shell's backslashes before quote marks and backslashes go, once or several times", () => {
+        const quote = (reason: string) => relayedQuote({ reason, action: { kind: "confirm", items: ["i1"] } });
+
+        expect(quote('Alice in chat: "she said \\"Ada\\" twice"')).toBe('she said "Ada" twice');
+        expect(quote('Alice in chat: "she said \\\\\\"Ada\\\\\\" twice"')).toBe('she said "Ada" twice');
+        expect(quote('Alice in chat: "the folder is C:\\\\temp"')).toBe("the folder is C:\\temp");
+        expect(quote('Alice said \\"keep it\\"')).toBe("keep it");
+        // Outside quoted words nothing is unescaped: a reason without quote marks is shown as written.
+        expect(quote("Alice said C:\\\\temp")).toBe("Alice said C:\\\\temp");
     });
 
     test("the service names the user only for a done request with the row ticked and the agent's decision unchanged", async () => {
