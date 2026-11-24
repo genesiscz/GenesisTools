@@ -1527,7 +1527,7 @@ describe("a joined meeting is one record of sound (join --repair moves the later
      * A meeting joined the way the join wrote it before 2026-11-25: the earlier recording's sound in the joined folder,
      * the later recording (600 s on) still in its own folder with its recorder piece, rows, clock and source file.
      */
-    async function oldJoin(storage: string) {
+    async function oldJoin(storage: string, layouts: Array<"left-mic" | "right-mic" | undefined> = []) {
         const store = new MeetingStore(new Storage(storage));
         const created = await store.create(
             {
@@ -1568,7 +1568,8 @@ describe("a joined meeting is one record of sound (join --repair moves the later
         }
 
         writeFileSync(join(laterFolder, "joined-into.json"), SafeJSON.stringify({ joinedInto: created.id }));
-        const part = (record: string, offsetMs: number, endSec: number, audio: typeof earlier) => ({
+        const part = (record: string, offsetMs: number, endSec: number, audio: typeof earlier, index: number) => ({
+            ...(layouts[index] ? { channels: { layout: layouts[index], segments: { mic: 30, system: 30 } } } : {}),
             record,
             title: "Planning",
             sourceId: "wisprflow",
@@ -1584,7 +1585,7 @@ describe("a joined meeting is one record of sound (join --repair moves the later
                 version: 1,
                 at: now,
                 backup: "/fixture/backup",
-                parts: [part(created.id, 0, 65, earlier), part(LATER, 600_000, 665, later)],
+                parts: [part(created.id, 0, 65, earlier, 0), part(LATER, 600_000, 665, later, 1)],
             };
             next.audio = { sources: { wisprflow: earlier } };
         });
@@ -1648,6 +1649,43 @@ describe("a joined meeting is one record of sound (join --repair moves the later
             "s2-audio-000001-mic.m4a",
         ]);
         expect(readdirSync(join(done.backup!, "before")).sort()).toEqual([fx.record.id, LATER].sort());
+    });
+
+    test("each recording keeps its own channel layout: source-mic is the microphone side of both", async () => {
+        const fx = await oldJoin(`meetings-joined-layout-${process.pid}`, ["left-mic", "right-mic"]);
+        const done = await repairJoin({
+            store: fx.store,
+            ref: fx.record.id,
+            backupRoot: mkdtempSync(join(tmpdir(), "joined-layout-")),
+            encode,
+        });
+        const record = fx.store.read(fx.record.id)!;
+        const opened = OpenedMeeting.of(fx.store, record, {
+            source: fakeSource(done.joinedFile ?? "", transcript),
+            sourceMeetingId: "abc",
+        });
+        const tracks = (await opened.sound()).tracks;
+        const channels = (kind: string) =>
+            tracks.find((track) => track.kind === kind)?.pieces.map((piece) => piece.channel);
+
+        expect(record.audio?.sources.wisprflow?.pieces?.map((piece) => piece.layout)).toEqual([
+            "left-mic",
+            "right-mic",
+        ]);
+        expect(channels("source-mic")).toEqual([0, 1]);
+        expect(channels("source-call")).toEqual([1, 0]);
+        expect(
+            (await opened.sound()).slice({
+                seat: "mic",
+                fromSec: 620,
+                toSec: 630,
+                purpose: "listen",
+                track: "source-mic",
+            })
+        ).toMatchObject({
+            channel: 1,
+            fileFromSec: 20,
+        });
     });
 
     test("after the repair a range is cut from the recording that holds it, on its own seconds; one over the gap from the one file", async () => {
