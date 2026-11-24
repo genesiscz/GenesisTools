@@ -34,7 +34,7 @@ import { DecisionJournal, JOURNAL_FILE } from "./decision-journal";
 import { duplicateMeeting } from "./duplicate";
 import { FRAME_INDEX_FILE } from "./frame-index";
 import { meetingListRow, selectMeetings } from "./list-rows";
-import { planMoment } from "./moment";
+import { momentCacheDir, planMoment } from "./moment";
 import { OpenedMeeting } from "./opened-meeting";
 import { choosePlayer, PLAYERS, pastTheEnd, playbackPlan } from "./players";
 import { decisionReachSchema, voicesList, voicesMove, voicesRemove } from "./service/api";
@@ -45,7 +45,7 @@ import { meetingsToolsetApi } from "./service/toolset-api";
 import { enumHint, errorJSON, errorText, fail, formatFlag } from "./shared";
 import * as soundModule from "./sound";
 import { appendAudioRow, meetingSound } from "./sound";
-import { playbackSlice, playSoundSlice } from "./sound-playback";
+import { playbackSlice, playSoundSlice, slicePlaybackPlan } from "./sound-playback";
 import { preserveSourceAudio } from "./source-audio";
 import { linkedSource } from "./sources";
 import * as labelsModule from "./speaker-labels";
@@ -570,6 +570,7 @@ test("play's positional time and track reach the original track's file seconds w
         throw new Error("play must not load a voice model");
     });
     const embed = spyOn(voiceBackend, "embedVoiceLines").mockRejectedValue(new Error("play must not embed a meeting"));
+    const vlc = spyOn(PLAYERS.vlc, "available").mockReturnValue(true);
     try {
         const program = new Command().exitOverride();
         await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "play" });
@@ -583,6 +584,11 @@ test("play's positional time and track reach the original track's file seconds w
             fileFromSec: 5,
             fileToSec: 30,
             clock: "stamp",
+            audioPath: "/fixture/mic.m4a",
+            startSec: 5,
+            cut: false,
+            player: "vlc",
+            argv: PLAYERS.vlc.fromArgv("/fixture/mic.m4a", 5),
         });
         expect(spawn).not.toHaveBeenCalled();
         expect(model).not.toHaveBeenCalled();
@@ -593,6 +599,52 @@ test("play's positional time and track reach the original track's file seconds w
         spawn.mockRestore();
         model.mockRestore();
         embed.mockRestore();
+        vlc.mockRestore();
+        process.exitCode = 0;
+    }
+});
+
+test("open-ended play opens the recording itself at its second in the seeking player, never a pipe", async () => {
+    const store = new MeetingStore();
+    const record = await store.create(
+        { title: "Open ended", start: "2026-11-01T10:00:00Z", createdBy: "new" },
+        { command: "new", change: "fixture" }
+    );
+    const sound = meetingSound({
+        folder: "/fixture",
+        timelineZeroMs: 0,
+        tracks: "best",
+        rows: [{ file: "mic.m4a", source: "mic", at: "1970-01-01T00:00:10Z", durationMs: 30000, mutedSpans: [] }],
+    });
+    const opened = spyOn(OpenedMeeting.prototype, "sound").mockResolvedValue(sound);
+    const printed = spyOn(out, "result").mockImplementation(() => {});
+    const vlc = spyOn(PLAYERS.vlc, "available").mockReturnValue(true);
+    // Both ways a player could start are a process that exits at once, so no audio device opens on any code.
+    const seek = spyOn(PLAYERS.vlc, "fromArgv").mockReturnValue(["true"]);
+    const clip = spyOn(PLAYERS.vlc, "clipArgv").mockReturnValue(["true"]);
+    try {
+        const program = new Command().exitOverride();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "play" });
+        await program.parseAsync(["play", record.id, "15", "--track", "mic-raw", "--before", "0", "--json"], {
+            from: "user",
+        });
+        // The VLC app took /dev/stdin for an empty item named "stdin" and stayed silent; the real file plays.
+        expect(seek.mock.calls).toEqual([["/fixture/mic.m4a", 5]]);
+        expect(clip).not.toHaveBeenCalled();
+        expect(SafeJSON.parse(String(printed.mock.calls.at(-1)?.[0]), { strict: true })).toMatchObject({
+            audioPath: "/fixture/mic.m4a",
+            startSec: 5,
+            cut: false,
+            player: "vlc",
+            argv: ["true"],
+            pid: expect.any(Number),
+        });
+    } finally {
+        opened.mockRestore();
+        printed.mockRestore();
+        vlc.mockRestore();
+        seek.mockRestore();
+        clip.mockRestore();
         process.exitCode = 0;
     }
 });
@@ -656,14 +708,13 @@ test("default play chooses the line seat's best track and source setting is resp
     }
 });
 
-test("sample playback feeds the Moment player the selected channel and seconds at 48 kHz, never the model's 16 kHz", async () => {
+test("sample playback cuts the selected channel and seconds at 48 kHz into the clip cache, never the model's 16 kHz", async () => {
     const store = new MeetingStore();
     const record = await store.create(
         { title: "Native rate", start: "2026-11-01T10:00:00Z", createdBy: "new" },
         { command: "new", change: "fixture" }
     );
-    const audio = join(store.folder(record.id), "native.wav"),
-        captured = join(store.folder(record.id), "player.wav");
+    const audio = join(store.folder(record.id), "native.wav");
     const dataBytes = 48000 * 4 * 2;
     const wav = Buffer.alloc(44 + dataBytes);
     wav.write("RIFF");
@@ -687,19 +738,26 @@ test("sample playback feeds the Moment player the selected channel and seconds a
     }
     writeFileSync(audio, wav);
     const available = spyOn(PLAYERS.afplay, "available").mockReturnValue(true);
-    // The player is replaced by a stdin capture process. No audio device is opened.
-    const player = spyOn(PLAYERS.afplay, "clipArgv").mockReturnValue([
-        "bun",
-        "-e",
-        "await Bun.write(process.argv[1], await Bun.stdin.arrayBuffer())",
-        captured,
-    ]);
+    // The player is replaced by a process that exits at once. No audio device is opened.
+    const player = spyOn(PLAYERS.afplay, "clipArgv").mockReturnValue(["true"]);
     try {
         await playSoundSlice({
             player: "afplay",
-            slice: { track: "source-call", path: audio, channel: 1, fileFromSec: 0.5, fileToSec: 1.5, clock: "source" },
+            slice: {
+                meeting: record.id,
+                fromSec: 0.5,
+                track: "source-call",
+                path: audio,
+                channel: 1,
+                fileFromSec: 0.5,
+                fileToSec: 1.5,
+                clock: "source",
+            },
         });
-        const received = readFileSync(captured);
+        // The player opens a WAV cut into the clip cache, never a pipe it reads while ffmpeg writes.
+        const played = String(player.mock.calls[0]?.[0]);
+        expect(played).toStartWith(momentCacheDir(record.id));
+        const received = readFileSync(played);
         expect(received.readUInt32LE(24)).toBe(48000);
         expect(received.readUInt16LE(22)).toBe(1);
         const data = received.indexOf(Buffer.from("data")) + 8;
@@ -707,7 +765,7 @@ test("sample playback feeds the Moment player the selected channel and seconds a
         // 0.5 s to 1.5 s of the call channel: frames 24000 to 71999, nothing from before or after.
         expect(received.readInt16LE(data)).toBe(callAt(24000));
         expect(received.readInt16LE(received.length - 2)).toBe(callAt(71999));
-        expect(player).toHaveBeenCalledWith("/dev/stdin");
+        expect(player).toHaveBeenCalledTimes(1);
     } finally {
         available.mockRestore();
         player.mockRestore();
@@ -1746,6 +1804,42 @@ describe("play: the player and the plan", () => {
             argv: ["ffplay", "-ss", "25", "-nodisp", "-autoexit", "/a/upload.ogg"],
         });
         expect(playbackPlan({ audioPath: "/a/x.ogg", atSec: 2, beforeSec: 5, player: PLAYERS.vlc }).startSec).toBe(0);
+    });
+
+    test("open-ended play opens the recording at its second; a stereo channel or a range opens a cut WAV at 0", () => {
+        const path = join(mkdtempSync(join(tmpdir(), "play-plan-")), "piece.m4a");
+        writeFileSync(path, "fixture");
+        const slice = {
+            meeting: "2026-11-01_10-00-plan",
+            fromSec: 2590,
+            track: "mic-raw" as const,
+            path,
+            fileFromSec: 27.5,
+            fileToSec: 60,
+            clock: "measured" as const,
+        };
+
+        expect(slicePlaybackPlan({ slice, openEnded: true, player: PLAYERS.vlc })).toEqual({
+            audioPath: path,
+            startSec: 27.5,
+            cut: false,
+            player: "vlc",
+            argv: PLAYERS.vlc.fromArgv(path, 27.5),
+        });
+        const stereo = slicePlaybackPlan({
+            slice: { ...slice, track: "source-mic", channel: 0, clock: "source" },
+            openEnded: true,
+            player: PLAYERS.ffplay,
+        });
+        expect(stereo).toMatchObject({ startSec: 0, cut: true, player: "ffplay" });
+        expect(stereo.argv).toEqual(PLAYERS.ffplay.fromArgv(stereo.audioPath, 0));
+        expect(stereo.audioPath).toStartWith(join(momentCacheDir(slice.meeting), "43-10-source-mic-"));
+        // A plan cuts nothing: the WAV is written when the play starts.
+        expect(existsSync(stereo.audioPath)).toBe(false);
+        expect(slicePlaybackPlan({ slice, openEnded: false, player: PLAYERS.vlc })).toMatchObject({
+            startSec: 0,
+            cut: true,
+        });
     });
 });
 
