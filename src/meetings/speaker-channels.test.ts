@@ -6,6 +6,7 @@ import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import type { AcousticShare } from "@genesiscz/utils/meetings/echo";
 import { correlateEcho } from "@genesiscz/utils/meetings/echo";
 import { silentCallSpans } from "@genesiscz/utils/meetings/energy";
+import { PeopleBook } from "@genesiscz/utils/meetings/people-book";
 import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { editMeetingPerson, microphoneCandidates } from "@genesiscz/utils/meetings/room-people";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
@@ -36,8 +37,10 @@ import { answerQuestion } from "./lib/question-answers";
 import { compactEvidence, rawMeeting } from "./lib/raw";
 import { rejectFilterIds } from "./lib/reject-filter";
 import { decidedSeatRanges, suggestSeats } from "./lib/seat-suggest";
+import { seatSuggestion } from "./lib/service/seat-handlers";
 import { assessIndicator } from "./lib/speaker-indicator";
 import { proposeSpeakerLabels } from "./lib/speaker-labels";
+import { mergeMatcher } from "./lib/speaker-scores";
 import { suggestItems } from "./lib/suggest";
 import { correctTranscript } from "./lib/transcript-corrections";
 import { anchoredMeetingVoices, lineDeviceCandidates } from "./lib/voice";
@@ -108,6 +111,48 @@ function scene(slots: Slot[]): {
 const ranges = (items: ReturnType<typeof suggestItems>) => items.filter((item) => item.kind === "speaker-range");
 
 describe("seat suggestions", () => {
+    test("one person under a roster address and a typed name is one seat row once the people book merges them", async () => {
+        const address = "alice@example.com";
+        const name = "Alice Example";
+        const meeting = meetingRecordSchema.parse({
+            ...record,
+            participants: [
+                { name: address, self: true, from: ["platform-roster"] },
+                { name: "Bob Example", from: ["platform-roster"] },
+            ],
+        });
+        // With no merge the two names stay two people, as the roster and the typed name give them.
+        expect(suggestSeats({ record: meeting, ranges: [], lines: [], room: [name] }).seats.room).toEqual([
+            address,
+            name,
+        ]);
+
+        const storage = new Storage(`seats-merge-${process.pid}`);
+        const merge = await new PeopleBook({ storage }).merge({ people: [{ name: address }, { name }], name });
+        const samePerson = mergeMatcher([merge]);
+        const typed = suggestSeats({ record: meeting, ranges: [], lines: [], room: [name], samePerson });
+        expect(typed.seats.room).toEqual([name]);
+        expect(typed.people.map((row) => [row.name, row.seat, row.reason])).toEqual([
+            [name, "room", "Set by hand."],
+            ["Bob Example", "unsure", "Listed on the call. No explicit mute reads while present."],
+        ]);
+
+        // A seat saved before the fold holds the person twice; the suggestion shows them once.
+        const saved = meetingRecordSchema.parse({ ...meeting, seats: { room: [address, name], remote: [] } });
+        const again = suggestSeats({ record: saved, ranges: [], lines: [], samePerson });
+        expect(again.seats.room).toEqual([name]);
+        expect(again.people.map((row) => row.name)).toEqual([name, "Bob Example"]);
+
+        // The service's seat preview reads the merge from the people book.
+        const view = await seatSuggestion({
+            store: new MeetingStore(storage),
+            record: meeting,
+            config: meetingsConfigSchema.parse({}),
+            params: { room: [name] },
+        });
+        expect(view.suggestion.seats.room).toEqual([name]);
+    });
+
     test("timed seats keep the gap between two remote stays in a suggestion", () => {
         const name = "Fern Example";
         const stays = [

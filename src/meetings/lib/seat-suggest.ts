@@ -7,6 +7,7 @@ import {
     meetingSeatsSchema,
     microphoneSide,
     type RemoteSeat,
+    type SeatSpan,
     seatSpan,
 } from "@genesiscz/utils/meetings/seats";
 import type { LineEvidence } from "@genesiscz/utils/transcribe/evidence";
@@ -15,6 +16,7 @@ import { baselineStays } from "./person-stays";
 import type { SeatVoiceHint } from "./seat-voice";
 import type { MeetingsResult } from "./service/api";
 import type { MeetingsClient } from "./service/client";
+import type { SamePerson } from "./speaker-scores";
 
 export async function applySuggestedSeats(options: {
     client: MeetingsClient;
@@ -79,7 +81,12 @@ export function decidedSeatRanges(record: MeetingRecord): Range[] {
 }
 
 interface Facts {
+    /** The key the person's row is filed under: the name key of the first name seen for them. */
+    key: string;
+    /** The name the seat shows: a name typed for the seat, else the first name that is not an email address. */
     name: string;
+    /** Every name the meeting gives this person: a roster address, a typed seat name, a decided speaker. */
+    names: string[];
     self: boolean;
     roster: boolean;
     hasRange: boolean;
@@ -125,7 +132,7 @@ function infer(facts: Facts, reads: readonly RosterRead[]): Omit<SeatPerson, "na
         };
     }
     if (facts.roster) {
-        const key = nameKey(facts.name);
+        const key = facts.key;
         const explicit = reads.filter((read) => read.muted !== undefined);
         const muted = explicit.filter((read) => read.muted?.has(key)).length;
         const spoke = reads.some((read) => read.speaking.has(key) && !read.muted?.has(key));
@@ -178,18 +185,58 @@ export function suggestSeats(options: {
     lines: readonly ChannelLine[];
     room?: Readonly<MeetingSeats["room"]>;
     remote?: ReadonlyArray<string | RemoteSeat>;
+    /** One person under two names (a people-book merge): their names make one seat row. */
+    samePerson?: SamePerson;
 }): { seats: MeetingSeats; people: SeatPerson[] } {
-    const { record, ranges, lines } = options;
+    const { record, ranges, lines, samePerson } = options;
     const devices = roomDeviceAccountKeys(options.devices);
     const human = (name: string) => !devices.has(rosterAccountKey(name));
     const facts = new Map<string, Facts>();
-    function person(name: string): Facts {
-        const key = nameKey(name);
+    // The row a name belongs to: its own name key, or the row that already holds another name of this person.
+    function keyOf(name: string): string {
+        const own = nameKey(name);
+        if (facts.has(own) || !samePerson) {
+            return own;
+        }
+
+        for (const row of facts.values()) {
+            if (row.names.some((known) => nameKey(known) === own || samePerson(known, name))) {
+                return row.key;
+            }
+        }
+
+        return own;
+    }
+    function person(name: string, byHand = false): Facts {
+        const key = keyOf(name);
+        const trimmed = name.trim();
         const known = facts.get(key);
         if (known) {
+            if (!known.names.includes(trimmed)) {
+                known.names.push(trimmed);
+            }
+
+            // Another name of the person: the one typed for the seat wins, and a name wins over an address.
+            if (
+                nameKey(trimmed) !== nameKey(known.name) &&
+                (byHand || (isAddress(known.name) && !isAddress(trimmed)))
+            ) {
+                known.name = trimmed;
+            }
+
             return known;
         }
-        const row = { name: name.trim(), self: false, roster: false, hasRange: false, lines: 0, mic: 0, call: 0 };
+        const row = {
+            key,
+            name: trimmed,
+            names: [trimmed],
+            self: false,
+            roster: false,
+            hasRange: false,
+            lines: 0,
+            mic: 0,
+            call: 0,
+        };
         facts.set(key, row);
         return row;
     }
@@ -255,21 +302,26 @@ export function suggestSeats(options: {
     const manual = new Map<string, "room" | "remote">();
     const roomStays = (options.room ?? []).filter((row) => typeof row !== "string");
     const remoteStays = (options.remote ?? []).filter((row) => typeof row !== "string");
-    const explicitStays = new Set([...roomStays, ...remoteStays].map((row) => nameKey(row.name)));
-    if (explicitStays.size) {
+    if (roomStays.length || remoteStays.length) {
         meetingSeatsSchema.parse({ room: roomStays, remote: remoteStays });
     }
+    // Every hand-given name first, so two names of one person given together find the same row.
     for (const seat of ["room", "remote"] as const) {
         for (const entry of options[seat] ?? []) {
             const { name } = seatSpan(entry);
             if (!human(name)) {
                 throw new Error(`${name} is a mapped room device. Unmap the account before seating it as a person.`);
             }
-            person(name);
+            person(name, true);
+        }
+    }
+    const explicitStays = new Set([...roomStays, ...remoteStays].map((row) => keyOf(row.name)));
+    for (const seat of ["room", "remote"] as const) {
+        for (const entry of options[seat] ?? []) {
             if (typeof entry !== "string") {
                 continue;
             }
-            const key = nameKey(name);
+            const key = keyOf(entry);
             if (explicitStays.has(key)) {
                 throw new Error("Give a person's stays as intervals or choose a seat by name.");
             }
@@ -278,6 +330,51 @@ export function suggestSeats(options: {
             }
             manual.set(key, seat);
         }
+    }
+    // A fresh hand choice can move one person. Keep everyone else's rows, including gaps, labels and devices.
+    const keep = (name: string, side: "room" | "remote") => {
+        if (!human(name)) {
+            return false;
+        }
+        const { key } = person(name);
+        const override = manual.get(key);
+        return !explicitStays.has(key) && (override === undefined || override === side);
+    };
+    const saved = withoutEmptyRemoteSeats(record.seats);
+    const seats: MeetingSeats = oneRowPerStretch(
+        {
+            room: [...(saved?.room ?? []).filter((row) => keep(seatSpan(row).name, "room")), ...roomStays],
+            remote: [...(saved?.remote ?? []).filter((row) => keep(row.name, "remote")), ...remoteStays],
+        },
+        (name) => facts.get(keyOf(name))
+    );
+    const roomNames = new Set(seats.room.map((row) => keyOf(seatSpan(row).name)));
+    const remoteNames = new Set(seats.remote.map((row) => keyOf(row.name)));
+    if (saved?.microphones) {
+        // A member shows the name its seat row shows, so one person is one member.
+        const rowNames = (side: "room" | "remote") =>
+            new Map(
+                [...seats[side]]
+                    .reverse()
+                    .map((row): [string, string] => [keyOf(seatSpan(row).name), seatSpan(row).name])
+            );
+        const shown = { room: rowNames("room"), remote: rowNames("remote") };
+        seats.microphones = saved.microphones.flatMap((group) => {
+            const side = microphoneSide(saved, group) === "room" ? "room" : "remote";
+            const members = [
+                ...new Set(
+                    group.people.flatMap((name) => {
+                        const row = human(name) ? shown[side].get(keyOf(name)) : undefined;
+                        if (row === undefined) {
+                            return [];
+                        }
+
+                        return [nameKey(row) === nameKey(name) ? name : row];
+                    })
+                ),
+            ];
+            return members.length ? [{ ...group, people: members }] : [];
+        });
     }
     const observations: RosterRead[] = (record.evidence?.indicator ?? [])
         .filter(
@@ -289,33 +386,9 @@ export function suggestSeats(options: {
         )
         .map((read) => ({
             at: read.tSec,
-            muted: read.muted && new Set(read.muted.filter(human).map(nameKey)),
-            speaking: new Set(read.speakingUnknown ? [] : read.speaking.filter(human).map(nameKey)),
+            muted: read.muted && new Set(read.muted.filter(human).map(keyOf)),
+            speaking: new Set(read.speakingUnknown ? [] : read.speaking.filter(human).map(keyOf)),
         }));
-    // A fresh hand choice can move one person. Keep everyone else's rows, including gaps, labels and devices.
-    const keep = (name: string, side: "room" | "remote") => {
-        if (!human(name)) {
-            return false;
-        }
-        person(name);
-        const key = nameKey(name);
-        const override = manual.get(key);
-        return !explicitStays.has(key) && (override === undefined || override === side);
-    };
-    const saved = withoutEmptyRemoteSeats(record.seats);
-    const seats: MeetingSeats = {
-        room: [...(saved?.room ?? []).filter((row) => keep(seatSpan(row).name, "room")), ...roomStays],
-        remote: [...(saved?.remote ?? []).filter((row) => keep(row.name, "remote")), ...remoteStays],
-    };
-    const roomNames = new Set(seats.room.map((row) => nameKey(seatSpan(row).name)));
-    const remoteNames = new Set(seats.remote.map((row) => nameKey(row.name)));
-    if (saved?.microphones) {
-        seats.microphones = saved.microphones.flatMap((group) => {
-            const names = microphoneSide(saved, group) === "room" ? roomNames : remoteNames;
-            const members = group.people.filter((name) => human(name) && names.has(nameKey(name)));
-            return members.length ? [{ ...group, people: members }] : [];
-        });
-    }
     const people: SeatPerson[] = [];
     for (const [key, row] of facts) {
         const inRoom = roomNames.has(key);
@@ -333,7 +406,11 @@ export function suggestSeats(options: {
             });
             continue;
         }
-        const stays = baselineStays(record, row.name)?.map(({ stay }) => stay);
+        // The stays are filed under whichever of the person's names the roster used.
+        const stays = [row.name, ...row.names]
+            .map((name) => baselineStays(record, name))
+            .find((found) => found !== undefined)
+            ?.map(({ stay }) => stay);
         const reads = observations.filter(
             ({ at }) =>
                 !stays || stays.some((stay) => at >= stay.fromSec && (stay.toSec === undefined || at < stay.toSec))
@@ -348,6 +425,51 @@ export function suggestSeats(options: {
         }
     }
     return { seats, people };
+}
+
+/** A roster account that is an email address: the seat shows a person's name over it. */
+function isAddress(name: string): boolean {
+    return name.includes("@");
+}
+
+/**
+ * One row per person and stretch. A seat row under another name of a person shows the person's seat name, a row a
+ * stretch of theirs on the same side already holds is dropped, and a row that would overlap one of theirs keeps its own
+ * name, as it did, so the seats still save.
+ */
+function oneRowPerStretch(seats: MeetingSeats, personOf: (name: string) => Facts | undefined): MeetingSeats {
+    const held = new Map<string, Array<{ side: "room" | "remote"; fromSec: number; toSec: number }>>();
+    const place = (side: "room" | "remote", span: SeatSpan): string | undefined => {
+        const row = personOf(span.name);
+        if (!row) {
+            return span.name;
+        }
+
+        const fromSec = span.fromSec ?? 0;
+        const toSec = span.toSec ?? Infinity;
+        const prior = held.get(row.key) ?? [];
+        if (prior.some((other) => other.side === side && other.fromSec <= fromSec && toSec <= other.toSec)) {
+            return undefined;
+        }
+
+        if (prior.some((other) => other.fromSec < toSec && other.toSec > fromSec)) {
+            return span.name;
+        }
+
+        held.set(row.key, [...prior, { side, fromSec, toSec }]);
+        return nameKey(span.name) === nameKey(row.name) ? span.name : row.name;
+    };
+    return {
+        ...seats,
+        room: seats.room.flatMap((row) => {
+            const name = place("room", seatSpan(row));
+            return name === undefined ? [] : [typeof row === "string" ? name : { ...row, name }];
+        }),
+        remote: seats.remote.flatMap((row) => {
+            const name = place("remote", row);
+            return name === undefined ? [] : [{ ...row, name }];
+        }),
+    };
 }
 
 /** Add sound only where a saved seat, a hand choice and the decided-line rule left the preview open. */

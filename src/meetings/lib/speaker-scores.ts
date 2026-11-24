@@ -1,3 +1,4 @@
+import type { PeopleMerge } from "@genesiscz/utils/meetings/people-book";
 import type { MeetingItem } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { LineEvidence } from "@genesiscz/utils/transcribe/evidence";
@@ -127,6 +128,16 @@ export function directoryMatcher(people: Array<{ name: string; email?: string; a
         const right = b.toLowerCase();
         return groups.some((names) => names.includes(left) && names.includes(right));
     };
+}
+
+/** Two names are one person when one people-book merge holds both: its shown name, or a side's name or email. */
+export function mergeMatcher(merges: readonly PeopleMerge[]): SamePerson {
+    return directoryMatcher(
+        merges.map((merge) => ({
+            name: merge.name,
+            aliases: merge.people.flatMap((person) => [person.name, ...(person.email ? [person.email] : [])]),
+        }))
+    );
 }
 
 /** What the lines of one range say for one candidate. */
