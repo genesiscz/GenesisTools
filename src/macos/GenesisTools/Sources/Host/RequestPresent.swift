@@ -10,24 +10,40 @@ enum RequestWindowContent {
     /// `deadline` is when the caller stops waiting; nil counts the request's own seconds from now. The caller declares
     /// what the window shows: its `fields` as rows, its `actions` as buttons that answer nothing, its `buttons` as the
     /// words on the answers. The request id is for a reader of the journal, so it sits folded under Details.
-    static func build(_ params: RequestPresentParams, deadline: Date? = nil, actions: [RequestActionButton] = []) -> ApprovalDialogModel {
+    /// `rowButtons` are the rows' own buttons by row id (`RequestActions.rowButtons`): each row of `rows` becomes a check,
+    /// ticked at first, with its button.
+    static func build(_ params: RequestPresentParams, deadline: Date? = nil, actions: [RequestActionButton] = [],
+                      rowButtons: [String: RequestActionButton] = [:]) -> ApprovalDialogModel {
         let allow = params.buttons?.confirm ?? "Acknowledge"
         let deny = params.buttons?.decline ?? "Not now"
+        let checks = Self.checks(params, rowButtons: rowButtons)
         return ApprovalDialogModel(
             title: params.title, purpose: params.reason, symbol: "info.circle",
             facts: (params.fields ?? []).map { ApprovalFact($0.label, $0.value, help: $0.help) },
             details: [ApprovalFact("Request", params.id, monospaced: true)],
-            warning: nil, footnote: footnote(allow: allow, deny: deny, declared: params.buttons != nil, actions: actions),
+            warning: nil,
+            footnote: footnote(allow: allow, deny: deny, declared: params.buttons != nil,
+                               actions: actions + rowButtons.values.prefix(1), rows: !checks.isEmpty),
             rememberChoices: [], rememberNote: nil, allowTitle: allow,
             deadline: deadline ?? Date().addingTimeInterval(params.deadlineSeconds ?? 120), identifier: "request-present",
-            links: actions.map(\.link), deadlineLabel: "Stops waiting in ", denyTitle: deny)
+            links: actions.map(\.link), selectable: !checks.isEmpty, deadlineLabel: "Stops waiting in ", denyTitle: deny,
+            checks: checks)
+    }
+
+    /// The request's rows as checks, each with its button's current words.
+    static func checks(_ params: RequestPresentParams, rowButtons: [String: RequestActionButton]) -> [ApprovalCheck] {
+        (params.rows ?? []).map { row in
+            ApprovalCheck(id: row.id, title: row.title, quote: row.quote, detail: row.detail, link: rowButtons[row.id]?.link)
+        }
     }
 
     /// What the window can do, all of it true: each extra button's sentence, then that the answers change nothing here
     /// (the asking tool acts on the answer).
-    static func footnote(allow: String, deny: String, declared: Bool, actions: [RequestActionButton]) -> String {
-        guard declared || !actions.isEmpty else { return plainNoticeFootnote }
-        let answers = "\(allow) and \(deny) answer the request; the window itself saves and runs nothing else."
+    static func footnote(allow: String, deny: String, declared: Bool, actions: [RequestActionButton], rows: Bool = false) -> String {
+        guard declared || !actions.isEmpty || rows else { return plainNoticeFootnote }
+        let answers = rows
+            ? "\(allow) answers for the ticked rows and \(deny) for none; the window itself saves and runs nothing else."
+            : "\(allow) and \(deny) answer the request; the window itself saves and runs nothing else."
         return (actions.map(\.footnote) + [answers]).joined(separator: " ")
     }
 }
@@ -140,38 +156,49 @@ final class RequestPresenter {
         let params = entry.params
         active = params.id
         let actions = RequestActions.buttons(for: params, context: actionContext)
-        let model = RequestWindowContent.build(params, deadline: entry.deadline, actions: actions)
+        let rowButtons = RequestActions.rowButtons(for: params, context: actionContext)
+        let model = RequestWindowContent.build(params, deadline: entry.deadline, actions: actions, rowButtons: rowButtons)
         let requestRow = model.details
-        for action in actions {
+        let every = actions + (params.rows ?? []).compactMap { rowButtons[$0.id] }
+        for action in every {
             // A button that cannot run says why in one sentence under the rows; the CLI's own words fold under Details.
             action.changed = { [weak model] in
                 model?.refresh(links: actions.map(\.link))
-                model?.refresh(items: [], summary: actions.compactMap(\.problem?.sentence).first)
-                model?.refresh(details: requestRow + actions.compactMap { action in
+                if !rowButtons.isEmpty {
+                    model?.refresh(checks: RequestWindowContent.checks(params, rowButtons: rowButtons))
+                }
+                model?.refresh(items: [], summary: every.compactMap(\.problem?.sentence).first)
+                model?.refresh(details: requestRow + every.compactMap { action in
                     action.problem.map { ApprovalFact(action.link.title, $0.detail, monospaced: true) }
                 })
             }
             action.prepare()
         }
         var answered = false
-        let finish: (RequestPresentResultStatus, String?) -> Void = { [weak self] status, reason in
+        let finish: (RequestPresentResultStatus, String?, [String]?) -> Void = { [weak self] status, reason, picked in
             guard !answered, let self else { return }
             answered = true
             // A clip still playing stops with the window.
-            actions.forEach { $0.close() }
+            every.forEach { $0.close() }
             cancelTimeout?()
             cancelTimeout = nil
             panel.close()
             active = nil
-            entry.completion(RequestPresentResult(id: params.id, status: status, reason: reason))
+            entry.completion(RequestPresentResult(id: params.id, status: status, reason: reason, picked: picked))
             showNext()
         }
-        model.onAllow = { _ in finish(.value0, nil) }
+        // A request with rows answers done with the rows still ticked, in their order; none ticked cannot confirm.
+        model.onAllow = { [weak model] _ in
+            guard let rows = params.rows else { return finish(.value0, nil, nil) }
+            let picked = rows.map(\.id).filter { model?.selected.contains($0) ?? false }
+            guard !picked.isEmpty else { return }
+            finish(.value0, nil, picked)
+        }
         model.onDeny = { [weak model] in
             let note = model?.denyNote ?? ""
-            finish(.value2, note.isEmpty ? nil : note)
+            finish(.value2, note.isEmpty ? nil : note, nil)
         }
-        cancelTimeout = clock.after(remaining) { finish(.value4, "The window wait ended; the request stays open.") }
+        cancelTimeout = clock.after(remaining) { finish(.value4, "The window wait ended; the request stays open.", nil) }
         // The person area owns notice sound/repetition; generic approval reminders would post a second notice.
         panel.present(model, reminders: false)
         if params.takesFocus ?? true { activate() }

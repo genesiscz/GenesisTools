@@ -45,6 +45,7 @@ final class RequestPresentTests: XCTestCase {
         request.fields = nil
         request.actions = nil
         request.buttons = nil
+        request.rows = nil
         let model = RequestWindowContent.build(request)
         XCTAssertEqual(model.title, request.title)
         XCTAssertEqual(model.purpose, request.reason)
@@ -295,6 +296,53 @@ final class RequestPresentTests: XCTestCase {
         XCTAssertEqual(model.details.map(\.label), ["Request", "Play clip"])
         XCTAssertEqual(model.details.last?.value, "m has no source with a transcript.")
         XCTAssertEqual(model.links.first?.enabled, false)
+    }
+
+    // MARK: Rows ticked on their own (relayed answers, one window for several)
+
+    private static func relayed() throws -> RequestPresentParams {
+        let json = """
+        {"kind":"notice","id":"relayed:fixture","title":"Confirm 2 answers you gave in chat",
+         "reason":"An agent relayed these answers from your chat.","createdAt":"2026-11-24T21:00:00.000Z",
+         "buttons":{"confirm":"Confirm as mine","decline":"Not now"},
+         "rows":[
+          {"id":"m1:i3","title":"Q1 · Alice Example","quote":"that was Alice","detail":"Planning · 00:10",
+           "action":{"kind":"play-meeting","label":"Play clip","meeting":"m1","fromSec":10,"toSec":14}},
+          {"id":"m2:i7","title":"Q2 · Bob Example","quote":"Bob, yes",
+           "action":{"kind":"play-meeting","label":"Play clip","meeting":"m2","fromSec":20,"toSec":25}}]}
+        """
+        return try JSONDecoder().decode(RequestPresentParams.self, from: Data(json.utf8))
+    }
+
+    func testRelayedRowsAreTickedOnTheirOwnAndConfirmAnswersOnlyTheTickedOnes() throws {
+        let fake = FakeActions()
+        let panel = FakeRequestPanel()
+        let clock = ManualClock()
+        let presenter = RequestPresenter(panel: panel, clock: clock.clock, activate: {}, actionContext: fake.context)
+        var results: [RequestPresentResult] = []
+        presenter.enqueue(try Self.relayed()) { results.append($0) }
+        let model = try XCTUnwrap(panel.shown.last)
+        XCTAssertEqual(model.checks.map(\.id), ["m1:i3", "m2:i7"])
+        XCTAssertEqual(model.checks.map(\.quote), ["that was Alice", "Bob, yes"])
+        XCTAssertEqual(model.selected, ["m1:i3", "m2:i7"], "every row starts ticked")
+        XCTAssertTrue(model.selectable)
+        XCTAssertEqual(model.checks.compactMap(\.link?.title), ["Play clip", "Play clip"])
+        XCTAssertEqual(fake.runs.filter { $0.last == "--no-start" }.count, 2, "each row checks its own clip")
+        XCTAssertTrue(model.footnote.contains("Confirm as mine answers for the ticked rows"))
+        fake.replies.removeFirst()(0, "{}", "")
+        fake.replies.removeFirst()(0, "{}", "")
+
+        // The second row plays its own range, and its button turns to Stop.
+        model.checks[1].link?.action()
+        XCTAssertEqual(fake.runs.last, ["meetings", "play", "m2", "--at", "20", "--to", "25", "--json"])
+        fake.replies.removeFirst()(0, #"{"pid":6161}"#, "")
+        XCTAssertEqual(model.checks.map { $0.link?.title }, ["Play clip", "Stop"])
+
+        model.setSelected(id: "m1:i3", false)
+        model.allow()
+        XCTAssertEqual(results.map(\.status), [.value0])
+        XCTAssertEqual(results.first?.picked, ["m2:i7"], "only the ticked row is confirmed")
+        XCTAssertEqual(fake.stopped, [6161], "the answer stops the row's clip")
     }
 }
 
