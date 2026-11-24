@@ -15,7 +15,12 @@ import type { CalendarEvent, Folder, Meeting, MeetingSummary, ScratchpadNote } f
 const { log } = logger.scoped("wisprflow-local");
 
 export const WISPR_DIR = join(homedir(), "Library", "Application Support", "Wispr Flow");
-const DB_PATH = join(WISPR_DIR, "flow.sqlite");
+
+/** The app's database inside its folder. A test points `dir` at a fixture folder. */
+function dbPath(dir: string): string {
+    return join(dir, "flow.sqlite");
+}
+
 const SHARE_BASE = "https://notes.wisprflow.ai/shared/";
 
 export interface ListFilter {
@@ -48,19 +53,20 @@ interface RefinedLine {
 }
 
 export function localAvailable(): boolean {
-    return existsSync(DB_PATH);
+    return existsSync(dbPath(WISPR_DIR));
 }
 
 /** Read-only: the app keeps the database open and writes to it while we read. */
-function openDb(): Database {
-    log.debug({ path: DB_PATH }, "opening Wispr Flow database read-only");
+function openDb(dir: string): Database {
+    const path = dbPath(dir);
+    log.debug({ path }, "opening Wispr Flow database read-only");
     // A plain path with `readonly`: a `file:…?mode=ro` URI is a literal file name to the SQLite Bun bundles on Linux
     // (src/utils/database/attach.ts), and `readonly` refuses a missing file just as `mode=ro` does.
-    return new Database(DB_PATH, { readonly: true });
+    return new Database(path, { readonly: true });
 }
 
-function withDb<T>(fn: (db: Database) => T): T {
-    const db = openDb();
+function withDb<T>(fn: (db: Database) => T, dir = WISPR_DIR): T {
+    const db = openDb(dir);
 
     try {
         return fn(db);
@@ -83,21 +89,21 @@ function foldersFor(db: Database, meetingId: string): Folder[] {
         .all(meetingId);
 }
 
-function toSummary(db: Database, row: MeetingRow): MeetingSummary {
+function toSummary(db: Database, row: MeetingRow, dir: string): MeetingSummary {
     return {
         id: row.id,
         title: row.title,
         start: toIso(row.createdAt),
         end: row.endedAt ? new Date(row.endedAt).toISOString() : undefined,
         modifiedAt: toIso(row.modifiedAt),
-        hasTranscript: existsSync(join(WISPR_DIR, "meetings", row.id, "refined.ndjson")),
+        hasTranscript: existsSync(join(dir, "meetings", row.id, "refined.ndjson")),
         shareLink: row.shareSlug ? `${SHARE_BASE}${row.shareSlug}` : undefined,
         folders: foldersFor(db, row.id),
         excerpt: row.summary ? fillMentions(row.summary, resolveSpeakers(row.speakerMap)).slice(0, 280) : undefined,
     };
 }
 
-export function listLocalMeetings(filter: ListFilter): MeetingSummary[] {
+export function listLocalMeetings(filter: ListFilter, dir = WISPR_DIR): MeetingSummary[] {
     return withDb((db) => {
         const where = ["isDeleted = 0"];
         const params: string[] = [];
@@ -129,8 +135,8 @@ export function listLocalMeetings(filter: ListFilter): MeetingSummary[] {
         const rows = db.query<MeetingRow, (string | number)[]>(sql).all(...params, rowLimit(filter.limit));
         log.debug({ count: rows.length, filter }, "listed local meetings");
 
-        return rows.map((row) => toSummary(db, row));
-    });
+        return rows.map((row) => toSummary(db, row, dir));
+    }, dir);
 }
 
 /** The database compares times as text in its own format, so a filter must be written the same way. */
@@ -159,8 +165,8 @@ export function parseTimestamp(value: string | undefined): number | undefined {
     return parts.reduce((total, part) => total * 60 + part, 0);
 }
 
-function readRefined(meetingId: string): RefinedLine[] {
-    const path = join(WISPR_DIR, "meetings", meetingId, "refined.ndjson");
+function readRefined(meetingId: string, dir: string): RefinedLine[] {
+    const path = join(dir, "meetings", meetingId, "refined.ndjson");
 
     if (!existsSync(path)) {
         log.debug({ path }, "no refined transcript on disk");
@@ -171,8 +177,8 @@ function readRefined(meetingId: string): RefinedLine[] {
     return lines.map((line) => SafeJSON.parse(line, { strict: true }) as RefinedLine).filter((line) => line.text);
 }
 
-function readLive(meetingId: string): LiveLine[] {
-    const path = join(WISPR_DIR, "meetings", meetingId, "live.ndjson");
+function readLive(meetingId: string, dir: string): LiveLine[] {
+    const path = join(dir, "meetings", meetingId, "live.ndjson");
 
     if (!existsSync(path)) {
         return [];
@@ -235,7 +241,7 @@ export function localMeetingRevision(id: string): string | undefined {
     });
 }
 
-export function getLocalMeeting(id: string): Meeting | undefined {
+export function getLocalMeeting(id: string, dir = WISPR_DIR): Meeting | undefined {
     return withDb((db) => {
         const row = db.query<MeetingRow, [string]>("SELECT * FROM Meetings WHERE id = ?").get(id);
 
@@ -245,21 +251,21 @@ export function getLocalMeeting(id: string): Meeting | undefined {
 
         const participants = resolveSpeakers(row.speakerMap);
         const edits = corrections(db, id);
-        const refined: TranscriptEntry[] = readRefined(id).map((line) => ({
+        const refined: TranscriptEntry[] = readRefined(id, dir).map((line) => ({
             id: line.id,
             startSec: parseTimestamp(line.timestamp),
             speakerId: line.speaker?.id,
             speaker: speakerLabel(participants, line.speaker?.id),
             text: (line.id ? edits.get(line.id) : undefined) ?? line.text!.trim(),
         }));
-        const { transcript, gap } = completeTranscript(refined, readLive(id), participants);
+        const { transcript, gap } = completeTranscript(refined, readLive(id, dir), participants);
         log.debug(
             { id, entries: transcript.length, corrections: edits.size, speakers: participants.length, gap },
             "read local meeting"
         );
 
         return {
-            ...toSummary(db, row),
+            ...toSummary(db, row, dir),
             summary: fillMentions(row.summary ?? "", participants),
             notes: fillMentions(row.notes ?? "", participants),
             participants,
@@ -267,7 +273,7 @@ export function getLocalMeeting(id: string): Meeting | undefined {
             speakerRenamePending: row.speakerMapPendingPush === 1,
             transcriptGap: gap,
         };
-    });
+    }, dir);
 }
 
 export function localMeetingIdForShareSlug(slug: string): string | undefined {

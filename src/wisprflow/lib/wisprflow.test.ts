@@ -99,6 +99,116 @@ describe("fillMentions", () => {
     });
 });
 
+interface FixtureMeeting {
+    id: string;
+    title?: string;
+    createdAt?: string;
+    summary?: string;
+    notes?: string;
+    speakerMap?: string;
+}
+
+/** A Wispr Flow app folder as the app lays it out: the database, with invented meetings in it. */
+function wisprFolder(meetings: FixtureMeeting[]): string {
+    const dir = mkdtempSync(join(tmpdir(), "wispr-app-"));
+    const db = new Database(join(dir, "flow.sqlite"));
+    db.run(
+        "CREATE TABLE Meetings (id TEXT, title TEXT, createdAt TEXT, modifiedAt TEXT, endedAt INTEGER, summary TEXT, notes TEXT, speakerMap TEXT, speakerMapPendingPush INTEGER, shareSlug TEXT, isDeleted INTEGER)"
+    );
+    db.run("CREATE TABLE Folders (id TEXT, name TEXT)");
+    db.run("CREATE TABLE FolderMeetings (meetingId TEXT, folderId TEXT)");
+    db.run("CREATE TABLE TranscriptCorrections (meetingId TEXT, entryId TEXT, editedText TEXT, updatedAt TEXT)");
+
+    for (const meeting of meetings) {
+        const createdAt = meeting.createdAt ?? "2026-11-02 09:00:00";
+        db.run("INSERT INTO Meetings VALUES (?, ?, ?, ?, NULL, ?, ?, ?, 0, NULL, 0)", [
+            meeting.id,
+            meeting.title ?? `Fixture ${meeting.id}`,
+            createdAt,
+            createdAt,
+            meeting.summary ?? null,
+            meeting.notes ?? null,
+            meeting.speakerMap ?? null,
+        ]);
+    }
+
+    db.close();
+    return dir;
+}
+
+const MENTION_SPEAKERS = SafeJSON.stringify({
+    people: { a: { name: "Bob Example", origin: "user" } },
+    assignments: { "1": { consensus: "a" } },
+});
+
+describe("a meeting read from the app or the MCP", () => {
+    test("the app reader turns every mention in the summary, the notes and the list excerpt into a name", () => {
+        const dir = wisprFolder([
+            {
+                id: "m1",
+                summary: "<@person2:n=Ale%C5%A1%20Example> asked <@speaker:1> to review.",
+                notes: "Owner: <@person3:c=0f3a;n=B%C3%A1ra%20Nov%C3%A1>",
+                speakerMap: MENTION_SPEAKERS,
+            },
+        ]);
+        mkdirSync(join(dir, "meetings", "m1"), { recursive: true });
+        writeFileSync(
+            join(dir, "meetings", "m1", "refined.ndjson"),
+            `${SafeJSON.stringify({ id: "e1", timestamp: "0:05", text: "Hello.", speaker: { id: 1 } })}\n`
+        );
+
+        try {
+            const meeting = local.getLocalMeeting("m1", dir);
+
+            expect(meeting).toMatchObject({
+                summary: "Aleš Example asked Bob Example to review.",
+                notes: "Owner: Bára Nová",
+                excerpt: "Aleš Example asked Bob Example to review.",
+                hasTranscript: true,
+                transcript: [{ speaker: "Bob Example", startSec: 5, text: "Hello." }],
+            });
+            expect(local.listLocalMeetings({}, dir).map((row) => row.excerpt)).toEqual([
+                "Aleš Example asked Bob Example to review.",
+            ]);
+            expect(local.getLocalMeeting("nosuch", dir)).toBeUndefined();
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    test("the MCP reader turns every mention in the summary, the notes and the excerpt into a name", async () => {
+        const reply = (value: unknown) => ({ content: [{ type: "text", text: SafeJSON.stringify(value) }] });
+        const meeting = await mcp.getMcpMeeting("m1", { transcript: false }, (run) =>
+            run({
+                call: async (_server, tool, args) => {
+                    if (tool === "get_meeting_participants_enriched") {
+                        return reply({ participants: [{ name: "Bob Example" }] });
+                    }
+
+                    if (args?.view_content) {
+                        return reply({ id: "m1", content: "Owner: <@person3:c=0f3a;n=B%C3%A1ra%20Nov%C3%A1>" });
+                    }
+
+                    return reply({
+                        id: "m1",
+                        title: "Fixture sync",
+                        start: "2026-11-02T09:00:00.000Z",
+                        has_transcript: false,
+                        summary: "<@person2:n=Ale%C5%A1%20Example> asked <@speaker:1> to review.",
+                        content_excerpt: "<@person2:n=Ale%C5%A1%20Example> opened.",
+                    });
+                },
+            })
+        );
+
+        expect(meeting).toMatchObject({
+            summary: "Aleš Example asked Speaker 1 to review.",
+            notes: "Owner: Bára Nová",
+            excerpt: "Aleš Example opened.",
+        });
+    });
+});
+
 describe("MCP transcript pages", () => {
     test("a speaker label cut at a page boundary joins back into one line", () => {
         const first =
