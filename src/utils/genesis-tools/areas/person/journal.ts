@@ -39,6 +39,8 @@ export const requestEventSchema = z.discriminatedUnion("type", [
         via,
         elevation: z.string().nullable(),
         method: z.enum(["click", "touch-id", "password", "terminal"]),
+        /** The rows the person left ticked (a request with `rows`); absent covers every row. */
+        picked: z.array(z.string()).optional(),
     }),
     // `reason`: why a surface settled it (not a person's note, not command output); missing in older journals.
     z.object({
@@ -120,7 +122,13 @@ function step(fold: Fold, entry: RequestEvent): void {
             break;
         case "accepted":
             fold.state = "accepted";
-            fold.outcome = { ...fold.outcome, via: entry.via, elevation: entry.elevation, method: entry.method };
+            fold.outcome = {
+                ...fold.outcome,
+                via: entry.via,
+                elevation: entry.elevation,
+                method: entry.method,
+                ...(entry.picked ? { picked: entry.picked } : {}),
+            };
             break;
         case "started":
             fold.state = "running";
@@ -249,7 +257,7 @@ export interface RequestJournal {
         id: string,
         status: "done" | "failed" | "declined" | "obsolete" | "unreachable",
         reason?: string | null,
-        detail?: { via?: string; method?: "click" | "terminal" | "touch-id" | "password" }
+        detail?: { via?: string; method?: "click" | "terminal" | "touch-id" | "password"; picked?: string[] }
     ): Promise<RequestOutcome>;
     withdraw(id: string): Promise<RequestOutcome>;
     /**
@@ -635,6 +643,7 @@ export function createRequestJournal(
                         via: detail.via ?? "notice",
                         elevation: null,
                         method: detail.method ?? "click",
+                        ...(detail.picked ? { picked: detail.picked } : {}),
                     };
                     // An acceptance whose finish was lost is completed, never accepted a second time.
                     writeEvents(id, [
