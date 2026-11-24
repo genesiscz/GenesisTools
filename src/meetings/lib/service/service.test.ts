@@ -24,7 +24,13 @@ import { ContactsPeopleSource } from "@genesiscz/utils/meetings/people-contacts"
 import { MEETING_FILE, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
-import { readVoiceLibrary, type VoicePrint } from "@genesiscz/utils/meetings/voice-library";
+import {
+    insertVoiceSample,
+    type LibraryV2,
+    readVoiceLibrary,
+    sourceForVoicePrint,
+    type VoicePrint,
+} from "@genesiscz/utils/meetings/voice-library";
 import { addVoicePrint, readVoiceStore } from "@genesiscz/utils/meetings/voice-store";
 import { WordTimingCache, wordTimingFile } from "@genesiscz/utils/meetings/word-timing-cache";
 import * as serviceHost from "@genesiscz/utils/rpc/service-host";
@@ -67,6 +73,7 @@ import {
     subscribeResultSchema,
     UNSUBSCRIBE,
     VOICES_METHODS,
+    voicesDedupe,
 } from "./api";
 import {
     InProcessMeetingsClient,
@@ -995,6 +1002,74 @@ test("voice descriptors validate the shared handlers: lists and removal previews
     expect(readVoiceStore(record.project!).people["Alice Example"]).toBeUndefined();
     for (const name of ["voices.list", "voices.preview", "voices.sample"]) {
         expect(VOICES_METHODS.find((method) => method.name === name)?.effect).toBe("read");
+    }
+});
+
+test("voices.dedupe lists a repeated line on a dry run, and its removal tells an open Voices pane to refresh", async () => {
+    const home = env.tools.getHome();
+    env.testing.set("GENESIS_TOOLS_HOME", mkdtempSync(join(tmpdir(), "voices-dedupe-")));
+    try {
+        const { store, linkedSource } = scratchStore();
+        const table = toRpcTable({ methods: VOICES_METHODS }, voicesHandlers(store, { linkedSource }));
+        const heard: string[] = [];
+        const context = {
+            hello: () => ({
+                protocol: MEETINGS_PROTOCOL,
+                code: "fixture",
+                methods: [],
+                events: [],
+                version: "fixture",
+            }),
+            emit: (event: string) => {
+                heard.push(event);
+            },
+        };
+        const print: VoicePrint = {
+            meeting: REVIEW.id,
+            sourceSha: "fixture",
+            seat: "mic",
+            track: "source-mic",
+            fromSec: 1,
+            toSec: 4,
+            embedding: [1, 0],
+            confirmedAt: "2026-11-01T10:00:00Z",
+        };
+        const lineKey = SafeJSON.stringify(["entry-v1", "fixture-source", "line-1"]);
+        const kept = insertVoiceSample({
+            project: "spring",
+            owner: { name: "Alice Example" },
+            print,
+            model: "fixture-model",
+            source: sourceForVoicePrint(print, REVIEW.id, lineKey),
+            origin: "answer",
+            acquiredBy: "live",
+        });
+        if (!("id" in kept)) {
+            throw new Error("the fixture answer must add a sample");
+        }
+        // The same line saved a second time, as a backfill after a join did before the fix.
+        const file = toolDataDir("meetings", "voice-library", "library.json");
+        const library = SafeJSON.parse(readFileSync(file, "utf8"), { strict: true }) as LibraryV2;
+        library.samples.push({ ...library.samples[0]!, id: "vs_repeat-fixture", acquiredBy: "backfill" });
+        writeFileSync(file, SafeJSON.stringify(library));
+        const bytes = readFileSync(file);
+
+        const plan = await table.call("voices.dedupe", { dryRun: true }, context);
+        expect(plan).toMatchObject({
+            dryRun: true,
+            rows: [{ id: "vs_repeat-fixture", keeps: kept.id, meeting: REVIEW.id }],
+        });
+        expect(readFileSync(file)).toEqual(bytes);
+        expect(heard).toEqual([]);
+
+        const removed = voicesDedupe.result.parse(await table.call("voices.dedupe", {}, context));
+        expect(removed.rows.map((row) => row.id)).toEqual(["vs_repeat-fixture"]);
+        expect(removed.token).toBeString();
+        expect(heard).toEqual(["people.changed", "meeting.changed"]);
+        expect(readVoiceLibrary().library.samples.map((s) => s.id)).toEqual([kept.id]);
+        expect(VOICES_METHODS.find((method) => method.name === "voices.dedupe")?.effect).toBe("destructive");
+    } finally {
+        env.testing.set("GENESIS_TOOLS_HOME", home);
     }
 });
 
@@ -3938,6 +4013,19 @@ async function captureExamples(): Promise<Example[]> {
     await ask(window, "voices.move", { id: "vs_missing", to: { name: "Reed Example" } });
     await ask(window, "voices.reject", { id: "vs_missing", reason: "bad-audio" });
     await ask(window, "voices.undo", { token: "missing" });
+    // The voice library is shared by this file's tests: an empty home keeps this reply the same in every run.
+    const home = env.tools.getHome();
+    env.testing.set("GENESIS_TOOLS_HOME", mkdtempSync(join(tmpdir(), "protocol-dedupe-")));
+    try {
+        await ask(
+            window,
+            "voices.dedupe",
+            { dryRun: true },
+            "dryRun: read only; a library with no repeated line lists none."
+        );
+    } finally {
+        env.testing.set("GENESIS_TOOLS_HOME", home);
+    }
     await ask(
         window,
         "voices.rename",

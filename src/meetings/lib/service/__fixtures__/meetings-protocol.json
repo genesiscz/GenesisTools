@@ -108,6 +108,7 @@
             "voices.rename",
             "voices.quality",
             "voice.backfill",
+            "voices.dedupe",
             "voices.jobs",
             "voices.jobs.cancel",
             "subscribe",
@@ -123,7 +124,7 @@
             "people.changed",
             "voices.job"
           ],
-          "version": "90bb11896606"
+          "version": "f4f90608b655"
         }
       }
     },
@@ -1502,6 +1503,7 @@
             "voices.rename",
             "voices.quality",
             "voice.backfill",
+            "voices.dedupe",
             "voices.jobs",
             "voices.jobs.cancel",
             "subscribe",
@@ -1517,7 +1519,7 @@
             "people.changed",
             "voices.job"
           ],
-          "version": "90bb11896606"
+          "version": "f4f90608b655"
         }
       }
     },
@@ -6190,6 +6192,7 @@
             "voices.rename",
             "voices.quality",
             "voice.backfill",
+            "voices.dedupe",
             "voices.jobs",
             "voices.jobs.cancel",
             "subscribe",
@@ -6205,7 +6208,7 @@
             "people.changed",
             "voices.job"
           ],
-          "version": "90bb11896606"
+          "version": "f4f90608b655"
         }
       }
     },
@@ -7215,12 +7218,34 @@
       }
     },
     {
+      "method": "voices.dedupe",
+      "direction": "client→service",
+      "note": "dryRun: read only; a library with no repeated line lists none.",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 125,
+        "method": "voices.dedupe",
+        "params": {
+          "dryRun": true
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 125,
+        "result": {
+          "dryRun": true,
+          "rows": [],
+          "revision": 0
+        }
+      }
+    },
+    {
       "method": "voices.rename",
       "direction": "client→service",
       "note": "preview: read only. A target the people list knows becomes a people merge (undo people.unmerge); a new name re-keys the samples (undo voices.undo).",
       "request": {
         "jsonrpc": "2.0",
-        "id": 125,
+        "id": 126,
         "method": "voices.rename",
         "params": {
           "from": {
@@ -7234,7 +7259,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 125,
+        "id": 126,
         "result": {
           "status": "preview",
           "mechanism": "merge",
@@ -7255,7 +7280,7 @@
       "direction": "client→service",
       "request": {
         "jsonrpc": "2.0",
-        "id": 126,
+        "id": 127,
         "method": "voices.quality",
         "params": {
           "project": "Atlas"
@@ -7263,7 +7288,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 126,
+        "id": 127,
         "result": {
           "learnt": []
         }
@@ -7274,7 +7299,7 @@
       "direction": "client→service",
       "request": {
         "jsonrpc": "2.0",
-        "id": 128,
+        "id": 129,
         "method": "voices.jobs",
         "params": {
           "project": "Empty-fixture"
@@ -7282,7 +7307,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 128,
+        "id": 129,
         "result": []
       }
     },
@@ -7291,7 +7316,7 @@
       "direction": "client→service",
       "request": {
         "jsonrpc": "2.0",
-        "id": 129,
+        "id": 130,
         "method": "voices.jobs.cancel",
         "params": {
           "id": "missing"
@@ -7299,7 +7324,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 129,
+        "id": 130,
         "result": null
       }
     },
@@ -7330,7 +7355,7 @@
       "direction": "client→service",
       "request": {
         "jsonrpc": "2.0",
-        "id": 130,
+        "id": 131,
         "method": "people.devices.decide",
         "params": {
           "action": "map",
@@ -7340,7 +7365,7 @@
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 130,
+        "id": 131,
         "result": {
           "changed": true,
           "device": {
@@ -7356,13 +7381,13 @@
       "direction": "client→service",
       "request": {
         "jsonrpc": "2.0",
-        "id": 131,
+        "id": 132,
         "method": "people.devices.list",
         "params": {}
       },
       "reply": {
         "jsonrpc": "2.0",
-        "id": 131,
+        "id": 132,
         "result": {
           "devices": [
             {

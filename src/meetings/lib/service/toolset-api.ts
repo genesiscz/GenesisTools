@@ -26,6 +26,7 @@ import {
     momentSave,
     voiceBackfill,
     voiceEnrol,
+    voicesDedupe,
     voicesJobs,
     voicesJobsCancel,
     voicesList,
@@ -803,15 +804,9 @@ export const backfillVoices = defineMethod({
     doc: `Return added, already-present and skipped counts for human-confirmed samples, by meeting and person. dryRun counts without saving. CLI: ${toolCommand("meetings", "voices", "backfill")} [meetings...] [--project <p>] [--dry-run] --json.`,
 });
 export const dedupeVoices = defineMethod({
+    ...voicesDedupe,
     name: "dedupeVoices",
-    params: z.object({
-        /** true: list the repeated samples; nothing is saved. */
-        dryRun: z.boolean().optional(),
-    }),
-    result: z.unknown(),
-    resultName: "{ dryRun, rows: [{ id, keeps, owner, project, meeting, fromSec, toSec }], revision, token? }",
-    effect: "reversible",
-    doc: `Remove the voice samples that repeat a line the same person already holds (a backfill after a join learned it again under the joined record's id); the first saved sample of each line stays. Returns the rows, each with the id it keeps, and the token of the correction receipt that keeps the removed rows. dryRun lists them and saves nothing. CLI twin: ${toolCommand("meetings", "voices", "dedupe")} [--dry-run] --json.`,
+    doc: `Remove the voice samples that repeat a line the same person already holds (a backfill after a join learned it again under the joined record's id); the first saved sample of each line stays. Returns the rows, each with the id it keeps, and the token of the correction receipt that keeps the removed rows; undo is refused while the kept sample holds the line. dryRun lists them and saves nothing. The meetings service writes it, so an open Voices pane refreshes. CLI twin: ${toolCommand("meetings", "voices", "dedupe")} [--dry-run] --json.`,
 });
 export const seats = defineMethod({
     ...seatsRpc,

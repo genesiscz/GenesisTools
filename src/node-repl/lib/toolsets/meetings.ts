@@ -40,7 +40,6 @@ import {
     configSet,
     confirm,
     confirmRelayed,
-    dedupeVoices,
     dictionaryTest,
     editorProject,
     editPerson,
@@ -110,7 +109,6 @@ import {
     MeetingStore,
     missingMeetingText,
 } from "@genesiscz/utils/meetings/record";
-import { dedupeVoiceLines } from "@genesiscz/utils/meetings/voice-library";
 import { ReplToolset } from "@genesiscz/utils/repl/toolset";
 import { type recorderSetSchema, settingsPatchOf } from "@genesiscz/utils/repl/toolsets/recorder";
 import { callRecorder, readLiveRecording } from "@genesiscz/utils/screen-recorder/live";
@@ -184,11 +182,9 @@ export class MeetingsToolset extends ReplToolset {
                     }),
                 backfillVoices: async (params: z.input<typeof backfillVoices.params>) =>
                     withMeetingsClient((client) => client.call("voice.backfill", params, { timeoutMs: 3_600_000 })),
-                // The CLI's own core: tools meetings voices dedupe [--dry-run].
-                dedupeVoices: async (input: z.input<typeof dedupeVoices.params> = {}) => {
-                    const { dryRun } = dedupeVoices.params.parse(input);
-                    return dedupeVoiceLines(dryRun ? { dryRun } : {});
-                },
+                // The CLI's own call: tools meetings voices dedupe [--dry-run].
+                dedupeVoices: async (params: MeetingsParams<"voices.dedupe"> = {}) =>
+                    withMeetingsClient((client) => client.call("voices.dedupe", params)),
                 voiceJobs: serviceCall("voices.jobs"),
                 cancelVoiceJob: (id: string) =>
                     withMeetingsClient((client) => client.call("voices.jobs.cancel", { id })),
