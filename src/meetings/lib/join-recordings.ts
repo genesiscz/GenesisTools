@@ -6,6 +6,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { nameKey } from "@genesiscz/utils/meetings/people";
 import {
     JOIN_PART_FILE,
+    JOIN_SOUND_MERGED,
     JOINED_RECORD_VERSION,
     JOURNAL_FILE,
     type JoinPart,
@@ -27,6 +28,15 @@ import { CallTimeline } from "./call-timeline";
 import { journalEntrySchema } from "./decision-actions";
 import { movedValue, type PartMove, toJoinedSec } from "./join-clock";
 import {
+    applyJoinSound,
+    buildJoinedSourceFile,
+    type JoinedSoundEncoder,
+    type JoinSoundSummary,
+    joinSoundSummary,
+    planJoinSound,
+    repairReadme,
+} from "./join-sound";
+import {
     cloneTree,
     DERIVED_FILES,
     GENERATED_TITLE,
@@ -38,10 +48,18 @@ import {
 } from "./merge";
 import { readRecorderState } from "./recorder-shared";
 import { localStamp } from "./shared";
-import { preservedSourceAudio } from "./source-audio";
+import { preservedSourceAudio, syncSourceAudio } from "./source-audio";
 import { meetingSource, sourceRefOf } from "./sources";
 
 const { log } = logger.scoped("meetings-join");
+
+/** The parts with each moved recording at its new path in the joined record's `source-audio/`. */
+function withMovedRecordings(parts: readonly JoinPart[], moved: ReadonlyMap<string, string>): JoinPart[] {
+    return parts.map((part) => {
+        const path = moved.get(part.record);
+        return path && part.audio ? { ...part, audio: { ...part.audio, path } } : part;
+    });
+}
 
 /** The joined record that holds `id` as a recording it absorbed (the shared resolver, `joinedAway`). */
 export function joinedInto(store: MeetingStore, id: string): { record: MeetingRecord; part: JoinPart } | undefined {
@@ -103,6 +121,8 @@ export interface JoinRequest {
     backupRoot?: string;
     inbox?: AssignInbox;
     now?: Date;
+    /** Puts the recordings into one file (tests pass a fake); ffmpeg by default. */
+    encode?: JoinedSoundEncoder;
 }
 
 export interface JoinedPartPlan {
@@ -127,6 +147,8 @@ export interface JoinResult {
     gaps: Array<{ fromSec: number; toSec: number; from: string; to: string }>;
     /** Seconds the move rounded to the microsecond because they held more digits; 0 for millisecond data. */
     rounded: number;
+    /** The later recordings' sound that moves into the joined record's folder (`join-sound.ts`). */
+    sound: JoinSoundSummary;
     backup?: string;
     withdrawn?: string;
 }
@@ -373,6 +395,22 @@ export async function joinMeetings(request: JoinRequest): Promise<JoinResult> {
         return joinLocked({ request, records, update: store.update.bind(store) });
     }
 
+    // Each recording's source sound is kept in its folder first, so the join moves files it owns.
+    for (const record of records) {
+        const ref = sourceRefOf(record);
+
+        if (ref && !preservedSourceAudio(record)) {
+            await syncSourceAudio({
+                store,
+                record,
+                source: await meetingSource(ref.sourceId),
+                sourceMeetingId: ref.sourceMeetingId,
+            }).catch((error: unknown) =>
+                log.warn({ error, meeting: record.id }, "join: the source sound could not be kept")
+            );
+        }
+    }
+
     return store.withRecords({
         ids: records.map((record) => record.id),
         fn: async (current, update) =>
@@ -486,12 +524,43 @@ async function joinLocked({
         to: after.record.id,
     }));
     const pending = later.record.assign?.ask?.outcome === "pending" ? later.record.assign.ask.formId : undefined;
+    const parts: JoinPart[] = loaded.map((part, index) => {
+        const preserved = preservedSourceAudio(part.record);
+        const audio = preserved && {
+            sourceMeetingId: preserved.sourceMeetingId,
+            path: preserved.path,
+            sha256: preserved.sha256,
+            bytes: preserved.bytes,
+            savedAt: preserved.savedAt,
+        };
+        const channels = part.record.evidence?.channels;
+        return {
+            record: part.record.id,
+            title: part.record.title,
+            sourceId: part.sourceId,
+            sourceMeetingId: part.sourceMeetingId,
+            zeroAt: new Date(part.zeroMs).toISOString(),
+            offsetMs: offsets[index]!,
+            endSec: endSec(part, index),
+            ...(audio ? { audio } : {}),
+            ...(channels ? { channels } : {}),
+            ...(part.record.seats ? { seats: part.record.seats } : {}),
+        };
+    });
+    const keptSource = sourceRefOf(kept.record);
+    const sound = planJoinSound({
+        store,
+        keptId: kept.record.id,
+        parts,
+        ...(keptSource ? { source: keptSource } : {}),
+    });
     const result: JoinResult = {
         into: kept.record.id,
         dryRun: Boolean(request.dryRun),
         parts: plans,
         gaps,
         rounded: rounded.count,
+        sound: joinSoundSummary(sound),
         ...(pending ? { withdrawn: pending } : {}),
     };
 
@@ -500,6 +569,11 @@ async function joinLocked({
     }
 
     const at = request.now ?? new Date();
+    // The one source file is written before anything moves: a failed encode leaves both records as they were.
+    const joinedFile = await buildJoinedSourceFile(sound, {
+        ...(request.encode ? { encode: request.encode } : {}),
+        now: at,
+    });
     const backup = join(
         request.backupRoot ?? genesisToolsDir("backups", "meetings"),
         `${localStamp(at)}-join-${kept.record.id}`
@@ -589,22 +663,12 @@ async function joinLocked({
         `${SafeJSON.stringify({ joinedInto: kept.record.id, at: at.toISOString(), backup }, null, 2)}\n`,
         { mode: 0o600 }
     );
-    const parts: JoinPart[] = loaded.map((part, index) => {
-        const audio = preservedSourceAudio(part.record);
-        const channels = part.record.evidence?.channels;
-        return {
-            record: part.record.id,
-            title: part.record.title,
-            sourceId: part.sourceId,
-            sourceMeetingId: part.sourceMeetingId,
-            zeroAt: new Date(part.zeroMs).toISOString(),
-            offsetMs: offsets[index]!,
-            endSec: endSec(part, index),
-            ...(audio ? { audio } : {}),
-            ...(channels ? { channels } : {}),
-            ...(part.record.seats ? { seats: part.record.seats } : {}),
-        };
+    const soundMoved = applyJoinSound(sound, {
+        backup,
+        keptId: kept.record.id,
+        ...(joinedFile ? { joined: joinedFile } : {}),
     });
+    const joinedParts = withMovedRecordings(parts, soundMoved.moved);
     const movedOf = (part: LoadedPart) => moved.find((one) => one.part === part)!;
     const laterMove = moves.get(later)!;
     const keptMove = moves.get(kept)!;
@@ -617,7 +681,11 @@ async function joinLocked({
         },
         (current) => {
             current.version = JOINED_RECORD_VERSION;
-            current.join = { version: 1, at: at.toISOString(), backup, parts };
+            current.join = { version: JOIN_SOUND_MERGED, at: at.toISOString(), backup, parts: joinedParts };
+
+            if (soundMoved.audio && sound.sourceId) {
+                current.audio = { sources: { ...current.audio?.sources, [sound.sourceId]: soundMoved.audio } };
+            }
             const end = [current.end, later.record.end]
                 .filter((one): one is string => Boolean(one))
                 .sort()
@@ -734,4 +802,148 @@ async function joinLocked({
 
     log.info({ into: kept.record.id, parts: ids2, backup, rounded: rounded.count }, "join done");
     return { ...result, backup };
+}
+
+export interface JoinRepairRequest {
+    store: MeetingStore;
+    /** The joined record: an id, a unique prefix or last. */
+    ref: string;
+    dryRun?: boolean;
+    backupRoot?: string;
+    now?: Date;
+    /** Puts the recordings into one file (tests pass a fake); ffmpeg by default. */
+    encode?: JoinedSoundEncoder;
+}
+
+export interface JoinRepairResult {
+    meeting: string;
+    dryRun: boolean;
+    /** False when there was nothing to move: the record's sound is in its own folder already. */
+    repaired: boolean;
+    reason?: string;
+    sound?: JoinSoundSummary;
+    /** The one source file of the whole meeting the readers of one file read. */
+    joinedFile?: string;
+    backup?: string;
+}
+
+/**
+ * A record joined before 2026-11-25 kept its later recording's sound in that recording's folder; this moves it into the
+ * joined record's folder, as `join` does now (`join-sound.ts`), after cloning every folder it touches into a backup.
+ * Runs once: a second run finds the sound moved and changes nothing.
+ */
+export async function repairJoin(request: JoinRepairRequest): Promise<JoinRepairResult> {
+    const { store } = request;
+    const dryRun = Boolean(request.dryRun);
+    const found = store.resolve(request.ref);
+
+    if (!found) {
+        throw new Error(`No meeting "${request.ref}".`);
+    }
+
+    if (!found.join) {
+        throw new Error(`${found.id} is not a joined meeting; there is nothing to repair.`);
+    }
+
+    const planOf = (record: MeetingRecord) => {
+        const source = sourceRefOf(record);
+        return planJoinSound({
+            store,
+            keptId: record.id,
+            parts: record.join?.parts ?? [],
+            ...(source ? { source } : {}),
+        });
+    };
+    const done = (record: MeetingRecord): JoinRepairResult | undefined =>
+        record.join && record.join.version >= JOIN_SOUND_MERGED
+            ? { meeting: record.id, dryRun, repaired: false, reason: "its sound is in its own folder already" }
+            : undefined;
+
+    if (done(found)) {
+        return done(found)!;
+    }
+
+    if (dryRun) {
+        return { meeting: found.id, dryRun, repaired: false, sound: joinSoundSummary(planOf(found)) };
+    }
+
+    return store.withRecords({
+        ids: [found.id],
+        fn: async (current, update) => {
+            const record = current.get(found.id);
+
+            if (!record?.join) {
+                throw new Error(`${found.id} changed before the repair acquired its lock; run it again.`);
+            }
+
+            if (done(record)) {
+                return done(record)!;
+            }
+
+            const plan = planOf(record);
+            const at = request.now ?? new Date();
+            const backup = join(
+                request.backupRoot ?? genesisToolsDir("backups", "meetings"),
+                `${localStamp(at)}-join-repair-${record.id}`
+            );
+
+            if (existsSync(backup)) {
+                throw new Error(`The backup folder ${backup} exists already; wait a minute and run the repair again.`);
+            }
+
+            const ids = [record.id, ...record.join.parts.map((part) => part.record).filter((id) => id !== record.id)];
+            mkdirSync(backup, { recursive: true, mode: 0o700 });
+            chmodSync(backup, 0o700);
+
+            for (const folder of ["before", "moved", "derived"]) {
+                mkdirSync(join(backup, folder), { mode: 0o700 });
+            }
+
+            for (const id of ids) {
+                cloneTree(store.folder(id), join(backup, "before", id));
+            }
+
+            writeFileSync(join(backup, "README.md"), repairReadme({ ids, root: store.root, at }), { mode: 0o600 });
+            const joinedFile = await buildJoinedSourceFile(plan, {
+                ...(request.encode ? { encode: request.encode } : {}),
+                now: at,
+            });
+            const moved = applyJoinSound(plan, {
+                backup,
+                keptId: record.id,
+                ...(joinedFile ? { joined: joinedFile } : {}),
+            });
+            const sound = joinSoundSummary(plan);
+            await update(
+                record.id,
+                {
+                    command: "join",
+                    change: `repair: the later recordings' sound moved into this folder (${sound.pieces} recorder files, ${sound.recordings.length} source recordings); backup ${backup}`,
+                },
+                (next) => {
+                    if (!next.join) {
+                        return;
+                    }
+
+                    next.join = {
+                        ...next.join,
+                        version: JOIN_SOUND_MERGED,
+                        parts: withMovedRecordings(next.join.parts, moved.moved),
+                    };
+
+                    if (moved.audio && plan.sourceId) {
+                        next.audio = { sources: { ...next.audio?.sources, [plan.sourceId]: moved.audio } };
+                    }
+                }
+            );
+            return {
+                meeting: record.id,
+                dryRun,
+                repaired: true,
+                sound,
+                ...(joinedFile ? { joinedFile: joinedFile.path } : {}),
+                backup,
+            };
+        },
+    });
 }

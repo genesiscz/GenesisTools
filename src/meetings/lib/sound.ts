@@ -11,7 +11,6 @@ import { AUDIO_SOURCES, type AudioSource } from "@genesiscz/utils/screen-recorde
 import { z } from "zod";
 import { probeAudio } from "./audio";
 import { CallTimeline } from "./call-timeline";
-import { toJoinedSec, toPartSec } from "./join-clock";
 import type { OpenedMeeting } from "./opened-meeting";
 import { ALIGN_MATCH_SEC, ALIGN_SEARCH_SEC, alignPiece, alignReferenceFromSec } from "./sound-align";
 import { preservedSourceAudio } from "./source-audio";
@@ -206,6 +205,21 @@ export const soundClockSchema = z.object({
             clear: z.number(),
         })
     ),
+    /**
+     * A joined record's later recordings, each measured on its own before the join (`meetings join`): a recorder piece
+     * whose second 0 is at or after `from` (wall time) takes the corrections of the last entry it reaches.
+     */
+    later: z
+        .array(
+            z.object({
+                from: z.string(),
+                sources: z.partialRecord(
+                    z.enum(AUDIO_SOURCES),
+                    z.object({ correctionSec: z.number(), pieces: z.number(), clear: z.number() })
+                ),
+            })
+        )
+        .optional(),
 });
 export type SoundClock = z.infer<typeof soundClockSchema>;
 
@@ -215,8 +229,17 @@ export interface SoundInputs {
     /** The wall time of transcript second 0. */
     timelineZeroMs: number;
     rows: readonly AudioRow[];
-    /** The source's recording: its file, its id, which channel is the microphone, its length. */
-    source?: { path: string; source: MeetingSourceId; layout: ChannelLayout; durationSec: number };
+    /**
+     * The source's recording: its file, its id, which channel is the microphone, its length; `pieces` when the file
+     * was put together from several recordings (`meetings join`), each at its second 0 on the transcript clock.
+     */
+    source?: {
+        path: string;
+        source: MeetingSourceId;
+        layout: ChannelLayout;
+        durationSec: number;
+        pieces?: ReadonlyArray<{ path: string; zeroSec: number; durationSec: number }>;
+    };
     clock?: SoundClock;
     /** `source`: the recorder tracks are never chosen by preference (an explicit `track` still is). */
     tracks: MeetingsConfig["global"]["playback"]["tracks"];
@@ -227,32 +250,40 @@ function sourceChannels(layout: ChannelLayout): Record<Seat, 0 | 1> {
     return layout === "right-mic" ? { mic: 1, call: 0 } : { mic: 0, call: 1 };
 }
 
+/** The measured correction of one recorder piece: its recording's entry of the clock, undefined when not measured. */
+function correctionOf(clock: SoundClock | undefined, row: AudioRow): number | undefined {
+    const zeroMs = audioRowZeroMs(row);
+    const recording = (clock?.later ?? []).filter((entry) => Date.parse(entry.from) <= zeroMs).at(-1);
+    const measured = (recording ?? clock)?.sources[row.source];
+    return measured && measured.clear > 0 ? measured.correctionSec : undefined;
+}
+
 function recorderTrackRows(inputs: Pick<SoundInputs, "rows" | "clock">) {
     return AUDIO_SOURCES.flatMap((source) => {
-        const rows = inputs.rows.filter((row) => row.source === source);
+        const rows = inputs.rows
+            .filter((row) => row.source === source)
+            .map((row) => ({ row, correctionSec: correctionOf(inputs.clock, row) }));
 
         if (rows.length === 0) {
             return [];
         }
 
-        const measured = inputs.clock?.sources[source];
-        const correction = measured && measured.clear > 0 ? measured.correctionSec : undefined;
-        const clock: SoundTrack["clock"] = correction === undefined ? "stamp" : "measured";
-        return [{ kind: RECORDER_KIND[source], source, rows, clock, correctionSec: correction ?? 0 }];
+        const clock: SoundTrack["clock"] = rows.every((one) => one.correctionSec !== undefined) ? "measured" : "stamp";
+        return [{ kind: RECORDER_KIND[source], source, rows, clock }];
     });
 }
 
 /** The recorder tracks per source, each piece on the transcript clock, corrected when its source was measured. */
 function recorderTracks(inputs: SoundInputs): SoundTrack[] {
-    return recorderTrackRows(inputs).map(({ kind, source, rows, clock, correctionSec }) => {
+    return recorderTrackRows(inputs).map(({ kind, source, rows, clock }) => {
         const pieces = rows
-            .map((row): SoundPiece => {
+            .map(({ row, correctionSec }): SoundPiece => {
                 const unheard = [...row.mutedSpans, ...(row.lostSpans ?? [])].map(
                     ([fromMs, toMs]) => [fromMs / 1000, toMs / 1000] as const
                 );
                 return {
                     path: join(inputs.folder, row.file),
-                    zeroSec: (audioRowZeroMs(row) - inputs.timelineZeroMs) / 1000 + correctionSec,
+                    zeroSec: (audioRowZeroMs(row) - inputs.timelineZeroMs) / 1000 + (correctionSec ?? 0),
                     durationSec: row.durationMs / 1000,
                     ...(unheard.length > 0 ? { unheard } : {}),
                 };
@@ -270,14 +301,16 @@ function recorderTracks(inputs: SoundInputs): SoundTrack[] {
     });
 }
 
+/** The source's two channels, each a piece per recording: the recordings themselves, never a file put together from them. */
 function sourceTracks(source: NonNullable<SoundInputs["source"]>): SoundTrack[] {
     const channels = sourceChannels(source.layout);
+    const recordings = source.pieces ?? [{ path: source.path, zeroSec: 0, durationSec: source.durationSec }];
     return SOURCE_TRACK_KINDS.map((kind) => ({
         kind,
         seat: SEAT_OF[kind],
         processing: "unknown",
         from: { kind: "source", source: source.source },
-        pieces: [{ path: source.path, channel: channels[SEAT_OF[kind]], zeroSec: 0, durationSec: source.durationSec }],
+        pieces: recordings.map((one) => ({ ...one, channel: channels[SEAT_OF[kind]] })),
         clock: "source",
     }));
 }
@@ -381,74 +414,6 @@ export function soundRun(track: SoundTrack, span: { fromSec: number; toSec?: num
     return parts;
 }
 
-/** One recording's sound in a joined meeting: its place on the joined clock and its window (to the next one's start). */
-export interface JoinedSoundPart {
-    offsetMs: number;
-    fromSec: number;
-    untilSec: number;
-    sound: MeetingSound;
-}
-
-/**
- * The sound of a meeting joined from several recordings. A slice or a play goes to the recording whose window holds
- * it, on that recording's own seconds, so it is the slice that recording gave before the join; a span over the gap
- * between two recordings has no slice, and a play stops where its recording's window ends. `tracks` lists each kind
- * once, its pieces from every recording on the joined clock (a mixed clock reads as the weaker one, `stamp`).
- */
-export function joinedSound(parts: readonly JoinedSoundPart[]): MeetingSound {
-    const at = (fromSec: number, toSec: number) =>
-        parts.find((part) => fromSec >= part.fromSec && fromSec < part.untilSec && toSec <= part.untilSec);
-    const tracks = TRACK_KINDS.flatMap((kind): SoundTrack[] => {
-        const own = parts.flatMap((part) => {
-            const track = part.sound.tracks.find((one) => one.kind === kind);
-            return track ? [{ part, track }] : [];
-        });
-        const first = own[0]?.track;
-
-        if (!first) {
-            return [];
-        }
-
-        const clocks = new Set(own.map(({ track }) => track.clock));
-        return [
-            {
-                ...first,
-                pieces: own
-                    .flatMap(({ part, track }) =>
-                        track.pieces.map((piece) => ({ ...piece, zeroSec: toJoinedSec(piece.zeroSec, part.offsetMs) }))
-                    )
-                    .sort((a, b) => a.zeroSec - b.zeroSec),
-                clock: clocks.size === 1 ? first.clock : clocks.has("stamp") ? "stamp" : first.clock,
-            },
-        ];
-    });
-
-    return {
-        tracks,
-        slice(request) {
-            const part = at(request.fromSec, request.toSec);
-            return part?.sound.slice({
-                ...request,
-                fromSec: toPartSec(request.fromSec, part.offsetMs),
-                toSec: toPartSec(request.toSec, part.offsetMs),
-            });
-        },
-        run(kind, span) {
-            const part = at(span.fromSec, span.fromSec);
-
-            if (!part) {
-                return [];
-            }
-
-            const toSec = Math.min(span.toSec ?? part.untilSec, part.untilSec);
-            return soundRunOf(part.sound, kind, {
-                fromSec: toPartSec(span.fromSec, part.offsetMs),
-                ...(Number.isFinite(toSec) ? { toSec: toPartSec(toSec, part.offsetMs) } : {}),
-            });
-        },
-    };
-}
-
 /** A play from `span.fromSec` on through the sound's track of `kind`: its own `run`, else `soundRun` over the track. */
 export function soundRunOf(
     sound: MeetingSound,
@@ -514,24 +479,38 @@ async function sourceSoundFile(opened: OpenedMeeting): Promise<{ path: string; s
     }
 }
 
+/** A file's length; one that does not read counts as covering every span. */
+async function soundLength(path: string): Promise<number> {
+    try {
+        return (await probeAudio(path)).durationSec;
+    } catch (err) {
+        log.debug({ err, path }, "the source sound's length is unknown; it counts as covering every span");
+        return Number.POSITIVE_INFINITY;
+    }
+}
+
 async function soundSource(opened: OpenedMeeting): Promise<SoundInputs["source"]> {
     const file = await sourceSoundFile(opened);
     if (!file) {
         return undefined;
     }
 
-    let durationSec = Number.POSITIVE_INFINITY;
-
-    try {
-        durationSec = (await probeAudio(file.path)).durationSec;
-    } catch (err) {
-        log.debug({ err, path: file.path }, "the source sound's length is unknown; it counts as covering every span");
-    }
-
+    const pieces = preservedSourceAudio(opened.record)?.pieces;
     return {
         ...file,
         layout: opened.record.evidence?.channels?.layout ?? "unknown",
-        durationSec,
+        durationSec: await soundLength(file.path),
+        ...(pieces
+            ? {
+                  pieces: await Promise.all(
+                      pieces.map(async (piece) => ({
+                          path: piece.path,
+                          zeroSec: piece.offsetMs / 1000,
+                          durationSec: await soundLength(piece.path),
+                      }))
+                  ),
+              }
+            : {}),
     };
 }
 

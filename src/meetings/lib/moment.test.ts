@@ -17,7 +17,12 @@ import { registerRequestedTrees } from "@genesiscz/utils/cli/lazy-registrars";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { meetingsConfigSchema, TONE_MAX_SEC } from "@genesiscz/utils/meetings/config";
-import { type MeetingRecord, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
+import {
+    JOINED_RECORD_VERSION,
+    type MeetingRecord,
+    MeetingStore,
+    meetingRecordSchema,
+} from "@genesiscz/utils/meetings/record";
 import type { MeetingEvidence, SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
 import { makeWordTimingArtifact, wordTimingFile } from "@genesiscz/utils/meetings/word-timing-cache";
 import { Storage } from "@genesiscz/utils/storage/storage";
@@ -25,6 +30,7 @@ import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { Command } from "commander";
 import { MEETINGS_REGISTRARS } from "../registrars";
 import { type cutClip, playClip } from "./audio";
+import { repairJoin } from "./join-recordings";
 import { questionClip, refineSplitClip, writeQuestionClips } from "./listen-clips";
 import {
     clipMoment,
@@ -717,7 +723,7 @@ describe("cutting a Moment", () => {
             transcript,
             listen,
             pads: { beforeSec: 5, afterSec: 5 },
-            audioPath: "/clips/call.ogg",
+            audioAt: async () => ({ path: "/clips/call.ogg", offsetMs: 0 }),
             dir: "/clips/out",
             cut: async () => {},
         });
@@ -728,7 +734,7 @@ describe("cutting a Moment", () => {
             transcript,
             listen: silent.global.playback.listen,
             pads: { beforeSec: 5, afterSec: 5 },
-            audioPath: "/clips/call.ogg",
+            audioAt: async () => ({ path: "/clips/call.ogg", offsetMs: 0 }),
             dir: "/clips/out",
             cut: async () => {},
         });
@@ -754,7 +760,7 @@ describe("cutting a Moment", () => {
             transcript,
             listen,
             pads: { beforeSec: 2, afterSec: 6 },
-            audioPath: "/clips/call.ogg",
+            audioAt: async () => ({ path: "/clips/call.ogg", offsetMs: 0 }),
             dir: "/clips/out",
             cut: async () => {},
         });
@@ -942,7 +948,7 @@ describe("a Moment of a saved meeting", () => {
             transcript: turns,
             listen,
             pads: { beforeSec: 0, afterSec: 0 },
-            audioPath,
+            audioAt: async () => ({ path: audioPath, offsetMs: 0 }),
             dir: dirname(audioPath),
             cut,
         });
@@ -1500,4 +1506,205 @@ test("manual clip pause holds its position and resumes the same process without 
         spawn.mockRestore();
         now.mockRestore();
     }
+});
+
+describe("a joined meeting is one record of sound (join --repair moves the later recording in)", () => {
+    const LATER = "2026-11-09_10-10-later";
+    const at = (sec: number) => new Date(Date.parse(now) + sec * 1000).toISOString();
+    const row = (file: string, sec: number) =>
+        SafeJSON.stringify({
+            file: `audio/${file}`,
+            source: "mic",
+            at: at(sec),
+            zeroAt: at(sec),
+            durationMs: 60_000,
+            mutedSpans: [],
+        });
+    const clock = (correctionSec: number) =>
+        SafeJSON.stringify({ version: 1, sources: { mic: { correctionSec, pieces: 4, clear: 3 } } });
+
+    /**
+     * A meeting joined the way the join wrote it before 2026-11-25: the earlier recording's sound in the joined folder,
+     * the later recording (600 s on) still in its own folder with its recorder piece, rows, clock and source file.
+     */
+    async function oldJoin(storage: string) {
+        const store = new MeetingStore(new Storage(storage));
+        const created = await store.create(
+            {
+                title: "Planning",
+                start: now,
+                createdBy: "new",
+                sources: { wisprflow: { meetingId: "abc" } },
+                items: meeting.items,
+            },
+            { command: "new", change: "test" }
+        );
+        const keptFolder = store.folder(created.id);
+        const laterFolder = store.folder(LATER);
+        const sound = (folder: string, name: string, body: string) => {
+            mkdirSync(join(folder, "source-audio"), { recursive: true });
+            const path = join(folder, "source-audio", `${name}.ogg`);
+            writeFileSync(path, body);
+            return {
+                sourceMeetingId: name === "a".repeat(64) ? "abc" : "def",
+                path,
+                sha256: name,
+                bytes: Buffer.byteLength(body),
+                savedAt: now,
+            };
+        };
+        const earlier = sound(keptFolder, "a".repeat(64), "the earlier recording");
+        const later = sound(laterFolder, "b".repeat(64), "the later recording, a longer file");
+
+        for (const [folder, file, sec, correction] of [
+            [keptFolder, "s1-audio-000001-mic.m4a", 2, -0.48],
+            [laterFolder, "s2-audio-000001-mic.m4a", 603, -0.11],
+        ] as const) {
+            mkdirSync(join(folder, "audio"), { recursive: true });
+            mkdirSync(join(folder, "evidence"), { recursive: true });
+            writeFileSync(join(folder, "audio", file), "recorder piece");
+            writeFileSync(join(folder, "audio.jsonl"), `${row(file, sec)}\n`);
+            writeFileSync(join(folder, "evidence", "sound-clock.json"), clock(correction));
+        }
+
+        writeFileSync(join(laterFolder, "joined-into.json"), SafeJSON.stringify({ joinedInto: created.id }));
+        const part = (record: string, offsetMs: number, endSec: number, audio: typeof earlier) => ({
+            record,
+            title: "Planning",
+            sourceId: "wisprflow",
+            sourceMeetingId: audio.sourceMeetingId,
+            zeroAt: at(offsetMs / 1000),
+            offsetMs,
+            endSec,
+            audio,
+        });
+        const record = await store.update(created.id, { command: "join", change: "test" }, (next) => {
+            next.version = JOINED_RECORD_VERSION;
+            next.join = {
+                version: 1,
+                at: now,
+                backup: "/fixture/backup",
+                parts: [part(created.id, 0, 65, earlier), part(LATER, 600_000, 665, later)],
+            };
+            next.audio = { sources: { wisprflow: earlier } };
+        });
+        const listing = () =>
+            [keptFolder, laterFolder].flatMap((folder) =>
+                readdirSync(folder, { recursive: true }).map((name) => join(folder, String(name)))
+            );
+        return { store, record, keptFolder, laterFolder, files: { earlier: earlier.path, later: later.path }, listing };
+    }
+
+    const encodes: Array<{ inputs: ReadonlyArray<{ path: string; offsetMs: number }> }> = [];
+    const encode = async (options: { inputs: ReadonlyArray<{ path: string; offsetMs: number }>; outPath: string }) => {
+        encodes.push({ inputs: options.inputs });
+        writeFileSync(options.outPath, "the whole meeting");
+    };
+
+    test("before the repair no reader takes its sound; a dry run moves nothing; the repair runs once", async () => {
+        const fx = await oldJoin(`meetings-joined-repair-${process.pid}`);
+        const backupRoot = mkdtempSync(join(tmpdir(), "joined-repair-"));
+        const before = fx.listing();
+
+        await expect(OpenedMeeting.of(fx.store, fx.record).audioPath()).rejects.toThrow(
+            `join ${fx.record.id} --repair`
+        );
+        const dry = await repairJoin({ store: fx.store, ref: fx.record.id, dryRun: true });
+        expect(dry).toMatchObject({
+            repaired: false,
+            sound: { pieces: 1, rows: 1, recordings: [{ offsetMs: 0 }, { record: LATER, offsetMs: 600_000 }] },
+        });
+        expect(fx.listing()).toEqual(before);
+
+        const done = await repairJoin({ store: fx.store, ref: fx.record.id, backupRoot, encode });
+        const again = await repairJoin({ store: fx.store, ref: fx.record.id, backupRoot, encode });
+        const record = fx.store.read(fx.record.id)!;
+        const moved = (name: string) => join(fx.keptFolder, "source-audio", `${name.repeat(64)}.ogg`);
+
+        expect(done).toMatchObject({ repaired: true, sound: { pieces: 1, rows: 1 } });
+        expect(again).toEqual({
+            meeting: fx.record.id,
+            dryRun: false,
+            repaired: false,
+            reason: "its sound is in its own folder already",
+        });
+        expect(encodes.at(-1)?.inputs).toEqual([
+            { path: fx.files.earlier, offsetMs: 0 },
+            { path: fx.files.later, offsetMs: 600_000 },
+        ]);
+        expect(record.join?.version).toBe(2);
+        expect(record.audio?.sources.wisprflow).toMatchObject({
+            sourceMeetingId: "abc",
+            path: done.joinedFile,
+            pieces: [
+                { path: moved("a"), offsetMs: 0 },
+                { path: moved("b"), offsetMs: 600_000 },
+            ],
+        });
+        // The later folder keeps only the marker that resolves its old id; everything else is in the backup.
+        expect(readdirSync(fx.laterFolder)).toEqual(["joined-into.json"]);
+        expect(readdirSync(join(fx.keptFolder, "audio")).sort()).toEqual([
+            "s1-audio-000001-mic.m4a",
+            "s2-audio-000001-mic.m4a",
+        ]);
+        expect(readdirSync(join(done.backup!, "before")).sort()).toEqual([fx.record.id, LATER].sort());
+    });
+
+    test("after the repair a range is cut from the recording that holds it, on its own seconds; one over the gap from the one file", async () => {
+        const fx = await oldJoin(`meetings-joined-clip-${process.pid}`);
+        const backupRoot = mkdtempSync(join(tmpdir(), "joined-clip-"));
+        const done = await repairJoin({ store: fx.store, ref: fx.record.id, backupRoot, encode });
+        const record = fx.store.read(fx.record.id)!;
+        const joined = [
+            ...transcript,
+            ...transcript.map((entry) => ({ ...entry, startSec: (entry.startSec ?? 0) + 600 })),
+        ];
+        const joinedFile = done.joinedFile ?? "";
+        const opened = () =>
+            OpenedMeeting.of(fx.store, record, { source: fakeSource(joinedFile, joined), sourceMeetingId: "abc" });
+        const laterFile = join(fx.keptFolder, "source-audio", `${"b".repeat(64)}.ogg`);
+        const earlierFile = join(fx.keptFolder, "source-audio", `${"a".repeat(64)}.ogg`);
+        const cuts: Array<Parameters<typeof cutClip>[0]> = [];
+        const cut = async (options: Parameters<typeof cutClip>[0]) => {
+            cuts.push(options);
+            writeFileSync(options.outPath, "RIFF");
+        };
+        const range = (fromSec: number, toSec: number) => ({ kind: "range" as const, fromSec, toSec });
+        const clip = (target: MomentTarget) =>
+            clipMoment({
+                store: fx.store,
+                record,
+                target,
+                opened: opened(),
+                cut,
+                probe: oneTrack,
+                screen: false,
+                tone: false,
+            });
+
+        expect(await opened().audioAt(620, 630)).toEqual({ path: laterFile, offsetMs: 600_000 });
+        expect(await opened().audioAt(20, 30)).toEqual({ path: earlierFile, offsetMs: 0 });
+        expect(await opened().audioAt(50, 620)).toEqual({ path: joinedFile, offsetMs: 0 });
+        expect(await opened().audioPath()).toBe(joinedFile);
+
+        const later = await clip(range(620, 630));
+        await clip(range(20, 30));
+        await clip(range(50, 620));
+        expect(later).toMatchObject({ meeting: record.id, fromSec: 620, toSec: 630 });
+        expect(cuts.map((one) => [one.audioPath, one.fromSec, one.toSec])).toEqual([
+            [laterFile, 20, 30],
+            [earlierFile, 20, 30],
+            [joinedFile, 50, 620],
+        ]);
+
+        // Each recording keeps its own measured clock: the earlier piece moves by -0.48 s, the later one by -0.11 s.
+        const mic = (await opened().sound()).tracks.find((track) => track.kind === "mic-raw");
+        expect(mic?.clock).toBe("measured");
+        expect(mic?.pieces.map((piece) => Math.round(piece.zeroSec * 1000) / 1000)).toEqual([1.52, 602.89]);
+        const source = (await opened().sound()).tracks.find((track) => track.kind === "source-mic");
+        expect(source?.pieces.map((piece) => [piece.path, piece.zeroSec])).toEqual([
+            [earlierFile, 0],
+            [laterFile, 600],
+        ]);
+    });
 });

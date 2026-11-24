@@ -35,7 +35,6 @@ import { MeetingComments } from "../lib/comments";
 import type { JournalEntry } from "../lib/decision-actions";
 import { callerActor } from "../lib/decision-journal";
 import type { Finding } from "../lib/findings";
-import { clockMove, movedValue } from "../lib/join-clock";
 import { personKey, personPresent } from "../lib/listen-answers";
 import {
     type ClipSettings,
@@ -56,7 +55,7 @@ import {
     type SessionNote,
 } from "../lib/listen-session";
 import { GivenAnswerAdapter } from "../lib/listen-session-answer";
-import { OpenedMeeting } from "../lib/opened-meeting";
+import { type AudioSpan, OpenedMeeting, onFileClock, onRecordClock } from "../lib/opened-meeting";
 import { answerVocabulary, DICTIONARY_CHOICES } from "../lib/question-answers";
 import {
     type HeardContext,
@@ -91,92 +90,25 @@ const SAID_MAX_CHARS = 240;
  */
 
 /**
- * A question's clip plan and the recording to cut it from. On a joined meeting the plan is made on the recording that
- * holds the question, on its own clock, so the clip is the one it gave before the join; `shown` is the plan on the
- * joined clock, for what the screen says.
+ * A question's clip plan and the file to cut it from: the plan on the record's clock (`shown`, for what the screen says)
+ * and the same plan on the seconds of the recording that holds the question (`OpenedMeeting.audioAt`), which the cut takes.
  */
 async function questionCut(options: {
-    store: MeetingStore;
     record: MeetingRecord;
     question: QuestionItem;
     transcript: TranscriptLines;
     clips: ClipSettings;
-    audioPath?: string;
+    audioAt: (fromSec: number, toSec: number) => Promise<AudioSpan>;
 }): Promise<{ plan: ReturnType<typeof questionClip>; audioPath: string; shown: ReturnType<typeof questionClip> }> {
-    const { store, record, question, transcript, clips } = options;
-    const reading = record.join
-        ? await OpenedMeeting.of(store, record).partReading(question.fromSec, question.toSec)
-        : undefined;
-
-    if (!reading) {
-        if (!options.audioPath) {
-            throw new Error(`No recording to cut ${question.id} from.`);
-        }
-
-        const plan = await refineSplitClip({
-            plan: questionClip({ record, question, transcript, ...clips }),
-            question,
-            audioPath: options.audioPath,
-        });
-        return { plan, audioPath: options.audioPath, shown: plan };
-    }
-
-    const own = movedValue(question, clockMove(-reading.offsetMs));
-    const { wordTimedLines: _joined, ...settings } = clips;
-    const audioPath = await reading.opened.audioPath();
+    const { record, question, transcript, clips } = options;
+    const shown = questionClip({ record, question, transcript, ...clips });
+    const file = await options.audioAt(shown.fromSec, shown.toSec);
     const plan = await refineSplitClip({
-        plan: questionClip({
-            record: reading.opened.record,
-            question: own,
-            transcript: new TranscriptLines((await reading.opened.meeting()).transcript),
-            ...settings,
-            ...(await wordTimedClips({
-                store: reading.opened.store,
-                record: reading.opened.record,
-                opened: reading.opened,
-            })),
-        }),
-        question: own,
-        audioPath,
+        plan: onFileClock(shown, file),
+        question: onFileClock(question, file),
+        audioPath: file.path,
     });
-    return { plan, audioPath, shown: movedValue(plan, clockMove(reading.offsetMs)) };
-}
-
-/** `writeQuestionClips` on a joined meeting: each question cut from the recording that holds it, told on the joined clock. */
-async function joinedQuestionClips(options: {
-    store: MeetingStore;
-    meeting: MeetingRecord;
-    opened: OpenedMeeting;
-    questions: QuestionItem[];
-    settings: Awaited<ReturnType<typeof clipSettings>>;
-    dir: string;
-}): ReturnType<typeof writeQuestionClips> {
-    const written: Awaited<ReturnType<typeof writeQuestionClips>> = [];
-
-    for (const question of options.questions) {
-        const reading = await options.opened.partReading(question.fromSec, question.toSec);
-
-        if (!reading) {
-            continue;
-        }
-
-        const rows = await writeQuestionClips({
-            record: reading.opened.record,
-            questions: [movedValue(question, clockMove(-reading.offsetMs))],
-            transcript: new TranscriptLines((await reading.opened.meeting()).transcript),
-            ...options.settings,
-            ...(await wordTimedClips({
-                store: reading.opened.store,
-                record: reading.opened.record,
-                opened: reading.opened,
-            })),
-            audioPath: await reading.opened.audioPath(),
-            dir: options.dir,
-        });
-        written.push(...rows.map((row) => movedValue(row, clockMove(reading.offsetMs))));
-    }
-
-    return written;
+    return { plan, audioPath: file.path, shown: onRecordClock(plan, file) };
 }
 
 async function askedPads(config: MeetingsConfigStore): Promise<ListenPads | undefined> {
@@ -568,24 +500,15 @@ async function clipsOut(options: {
     const opened = OpenedMeeting.of(store, meeting);
     // A file needs no prompt: the saved pads, else the smaller choice the first listen offers.
     const pads = listenPads(listen) ?? { beforeSec: PAD_CHOICES[0], afterSec: PAD_CHOICES[0] };
-    const written = meeting.join
-        ? await joinedQuestionClips({
-              store,
-              meeting,
-              opened,
-              questions: options.questions,
-              settings: await clipSettings(listen, pads),
-              dir: resolve(options.dir),
-          })
-        : await writeQuestionClips({
-              record: meeting,
-              questions: options.questions,
-              transcript: new TranscriptLines((await opened.meeting()).transcript),
-              ...(await clipSettings(listen, pads)),
-              ...(await wordTimedClips({ store, record: meeting, opened })),
-              audioPath: await opened.audioPath(),
-              dir: resolve(options.dir),
-          });
+    const written = await writeQuestionClips({
+        record: meeting,
+        questions: options.questions,
+        transcript: new TranscriptLines((await opened.meeting()).transcript),
+        ...(await clipSettings(listen, pads)),
+        ...(await wordTimedClips({ store, record: meeting, opened })),
+        audioAt: (fromSec, toSec) => opened.audioAt(fromSec, toSec),
+        dir: resolve(options.dir),
+    });
 
     if (options.json) {
         out.result(SafeJSON.stringify(written, null, 2));
@@ -610,8 +533,8 @@ class TerminalAdapter implements ListenAdapter {
             listen: ListenSettings;
             playback: () => Promise<
                 | {
-                      /** Absent on a joined meeting: each question is cut from the recording that holds it. */
-                      audioPath?: string;
+                      /** The file each question is cut from: the recording that holds it (`OpenedMeeting.audioAt`). */
+                      audioAt: (fromSec: number, toSec: number) => Promise<AudioSpan>;
                       player: (typeof LISTEN_PLAYERS)[number];
                       vocabulary: string[];
                       transcript: TranscriptLines;
@@ -700,7 +623,7 @@ class TerminalAdapter implements ListenAdapter {
         if (!playback) {
             return "stop";
         }
-        const { transcript, clips, audioPath, player, vocabulary } = playback;
+        const { transcript, clips, audioAt, player, vocabulary } = playback;
         const deviceAccounts =
             asked.question.about === "speaker"
                 ? roomDeviceAccountKeys(OpenedMeeting.of(store, asked.record).roomDevices)
@@ -717,14 +640,7 @@ class TerminalAdapter implements ListenAdapter {
                 : asked.question;
         const view = questionView(asked.record, question, transcript, SAID_MAX_CHARS);
         const clip = join(store.folder(meeting.id), "listen", `${question.id}.wav`);
-        const cut = await questionCut({
-            store,
-            record: asked.record,
-            question,
-            transcript,
-            clips,
-            ...(audioPath ? { audioPath } : {}),
-        });
+        const cut = await questionCut({ record: asked.record, question, transcript, clips, audioAt });
         await cutClip({
             audioPath: cut.audioPath,
             outPath: clip,
@@ -897,7 +813,7 @@ const ADAPTERS: Record<"terminal" | "answer", (context: AdapterContext) => Promi
                     meeting: meeting.dictionary,
                 });
                 return {
-                    ...(meeting.join ? {} : { audioPath: await opened.audioPath() }),
+                    audioAt: (fromSec: number, toSec: number) => opened.audioAt(fromSec, toSec),
                     player,
                     vocabulary: answerVocabulary(
                         meeting,

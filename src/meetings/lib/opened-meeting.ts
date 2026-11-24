@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type MeetingsConfig, MeetingsConfigStore, resolveDictionary } from "@genesiscz/utils/meetings/config";
 import { collectEcho } from "@genesiscz/utils/meetings/echo";
@@ -10,11 +10,11 @@ import { type DeviceDecision, mappedRoomDevices, type RoomDevice } from "@genesi
 import { PeopleBook, type PeopleBookData, type PeopleMerge } from "@genesiscz/utils/meetings/people-book";
 import { AttendanceUnavailableError } from "@genesiscz/utils/meetings/platform";
 import {
+    JOIN_SOUND_MERGED,
     type JoinPart,
     MEETING_UNCHANGED,
     type MeetingRecord,
     MeetingStore,
-    type StoredChannelCalibration,
 } from "@genesiscz/utils/meetings/record";
 import { wholeMeetingRoomPeople } from "@genesiscz/utils/meetings/seats";
 import type { DictionaryCandidate, MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
@@ -28,11 +28,11 @@ import { loadPresence } from "./attendance";
 import { CallTimeline } from "./call-timeline";
 import { identifiedDepartures, matchedCallVoices } from "./departure";
 import { callSilentSpans, energyMicShareFor, type MicEnergy, storeCalibration } from "./energy";
-import { clockMove, gapSentence, joinGapAt, movedValue, toJoinedSec, toPartSec } from "./join-clock";
+import { clockMove, movedValue, toJoinedSec, toPartSec } from "./join-clock";
 import { personStays, presenceOf, rosterPresence, speechAfter } from "./person-stays";
 import { MEETING_PLATFORMS, platformOfSourceName, speakingEvidence } from "./platforms";
 import { missingProjectWarning } from "./project";
-import { joinedSound, loadMeetingSound, type MeetingSound, readSoundInputs, type SoundInputs } from "./sound";
+import { loadMeetingSound, type MeetingSound, readSoundInputs, type SoundInputs } from "./sound";
 import { preservedSourceAudio, withPreservedSourceAudio } from "./source-audio";
 import { type LinkedSource, linkedSource, type SourceRef, sourceRefOf } from "./sources";
 import { assessIndicator } from "./speaker-indicator";
@@ -87,8 +87,8 @@ export function attendanceIdRefusal(spec: string | undefined, attendanceId: stri
     return undefined;
 }
 
-/** One recording of a joined record, opened on its own clock and folder: every sound read of that recording. */
-export interface JoinedPartView {
+/** One recording of a joined record, opened on its own clock and folder, for a reading of it as it was (polish). */
+interface JoinedPartView {
     part: JoinPart;
     /** The part's second 0 on the joined clock, and the next part's (Infinity for the last): the part's window. */
     fromSec: number;
@@ -96,7 +96,7 @@ export interface JoinedPartView {
     opened: OpenedMeeting;
 }
 
-/** A span of a joined record on the recording that holds it (`OpenedMeeting.partReading`). */
+/** One recording of a joined record as it was before the join (`OpenedMeeting.recordingReading`). */
 export interface PartReading {
     /** That recording on its own clock, with the joined record's items of it moved back onto that clock. */
     opened: OpenedMeeting;
@@ -105,13 +105,23 @@ export interface PartReading {
     toPartSec: (sec: number) => number;
 }
 
-/** The recording file that holds a span, and that span's seconds in the file. */
+/**
+ * The file a span is cut from and where that file's second 0 sits on the record's clock: a plan moved by
+ * `clockMove(-offsetMs)` is the same plan on the file's own seconds.
+ */
 export interface AudioSpan {
     path: string;
-    /** A second of the record's transcript clock as a second of `path`. */
-    fileSec: (sec: number) => number;
-    /** The opened recording that holds the span: the meeting itself, or one part of a joined meeting. */
-    opened: OpenedMeeting;
+    offsetMs: number;
+}
+
+/** A plan or an item on the seconds of the file `file` names (`OpenedMeeting.audioAt`); the same value for a file at 0. */
+export function onFileClock<T>(value: T, file: AudioSpan): T {
+    return file.offsetMs === 0 ? value : movedValue(value, clockMove(-file.offsetMs));
+}
+
+/** A plan on a file's seconds back on the record's clock (`onFileClock` the other way). */
+export function onRecordClock<T>(value: T, file: AudioSpan): T {
+    return file.offsetMs === 0 ? value : movedValue(value, clockMove(file.offsetMs));
 }
 
 const PART_READ_ONLY = "A recording of a joined meeting is read only here; change the joined record instead.";
@@ -165,57 +175,6 @@ function partRecord(joined: MeetingRecord, part: JoinPart): MeetingRecord {
     };
 }
 
-/** The part view whose window holds the span (no clamping): the one every sound and energy read of a span goes to. */
-function viewAt(parts: readonly JoinedPartView[], fromSec: number, toSec: number): JoinedPartView | undefined {
-    return parts.find((view) => fromSec >= view.fromSec && fromSec < view.untilSec && toSec <= view.untilSec);
-}
-
-/** The parts' energy on the joined clock: a range inside one recording reads that recording's energy, on its seconds. */
-function joinedEnergy(parts: readonly JoinedPartView[], energies: readonly MicEnergy[]): MicEnergy {
-    const shared = parts.flatMap((view, index) => {
-        const share = energies[index]?.share;
-        return share ? [{ view, share }] : [];
-    });
-    const calibration = energies.find((energy) => energy.share)?.calibration ?? energies[0]?.calibration;
-
-    if (shared.length === 0) {
-        return calibration ? { calibration } : {};
-    }
-
-    const at = (fromSec: number, toSec: number) => {
-        const view = viewAt(parts, fromSec, toSec);
-        const found = view && shared.find((one) => one.view === view);
-        return found
-            ? {
-                  share: found.share,
-                  from: toPartSec(fromSec, view.part.offsetMs),
-                  to: toPartSec(toSec, view.part.offsetMs),
-              }
-            : undefined;
-    };
-    const share: NonNullable<MicEnergy["share"]> = Object.assign(
-        (fromSec: number, toSec: number) => {
-            const one = at(fromSec, toSec);
-            return one ? one.share(one.from, one.to) : undefined;
-        },
-        {
-            raw: (fromSec: number, toSec: number) => {
-                const one = at(fromSec, toSec);
-                return one?.share.raw?.(one.from, one.to);
-            },
-            acoustic: (fromSec: number, toSec: number) => {
-                const one = at(fromSec, toSec);
-                return one?.share.acoustic?.(one.from, one.to);
-            },
-            voice: (fromSec: number, toSec: number) => {
-                const one = at(fromSec, toSec);
-                return one?.share.voice?.(one.from, one.to);
-            },
-        }
-    );
-    return { share, ...(calibration ? { calibration } : {}) };
-}
-
 /**
  * One meeting, opened once: its record and, read lazily and once, the linked source's meeting, the evidence (filtered
  * by the platform), the call timeline with presence, the calibrated energy share, the silent call stretches, the
@@ -234,7 +193,6 @@ export class OpenedMeeting {
     private configOnce?: Promise<MeetingsConfig>;
     private soundOnce?: Promise<MeetingSound>;
     private soundInputsOnce?: Promise<SoundInputs>;
-    private partsOnce?: JoinedPartView[];
     /** A platform's attendance per choice (spec and id): one read serves the statistics and the evidence alike. */
     private readonly attendanceOnce = new Map<string, ReturnType<typeof loadPresence>>();
 
@@ -294,32 +252,16 @@ export class OpenedMeeting {
     }
 
     /**
-     * On a joined record (`meetings join`), one read-only view per recording, each on its own clock and folder: the
-     * sound, the energy and the clip cuts of a span go to the recording that holds it. Undefined on a single recording.
+     * The sound refusal of a record joined before its sound moved into its folder (`JOIN_SOUND_MERGED`): its later
+     * recording still sits in that recording's own folder, so no reader may take this record's sound for the meeting's.
      */
-    joinedParts(): JoinedPartView[] | undefined {
+    private unmergedSound(): Error | undefined {
         const join = this.current.join;
-
-        if (!join) {
-            return undefined;
-        }
-
-        this.partsOnce ??= join.parts.map((part, index) => {
-            const opened = new OpenedMeeting(
-                new JoinedPartStore(this.store),
-                partRecord(this.current, part),
-                undefined
-            );
-            opened.configOnce = this.config();
-            const next = join.parts[index + 1];
-            return {
-                part,
-                fromSec: part.offsetMs / 1000,
-                untilSec: next ? next.offsetMs / 1000 : Number.POSITIVE_INFINITY,
-                opened,
-            };
-        });
-        return this.partsOnce;
+        return join && join.version < JOIN_SOUND_MERGED
+            ? new Error(
+                  `${this.current.id} was joined by an older version, which left the later recording's sound in its own folder; move it in once: ${toolCommand("meetings", "join", this.current.id, "--repair")}`
+              )
+            : undefined;
     }
 
     /** The linked source and its meeting id. Throws a message ready to print when none is linked. */
@@ -339,12 +281,6 @@ export class OpenedMeeting {
 
     /** The source's speaker evidence as it keeps it, every reading included. */
     sourceEvidence(): Promise<MeetingEvidence | null> {
-        if (this.current.join) {
-            // A joined record's evidence names no one recording file: each part's sound is read through its part.
-            this.evidenceOnce ??= this.linked().then(({ source, sourceMeetingId }) => source.evidence(sourceMeetingId));
-            return this.evidenceOnce;
-        }
-
         this.evidenceOnce ??= this.linked().then(async ({ source, sourceMeetingId }) =>
             withPreservedSourceAudio(
                 this.current,
@@ -597,13 +533,10 @@ export class OpenedMeeting {
 
     /** The microphone's energy share per time range, with the calibration it was read with. Writes nothing. */
     energy(): Promise<MicEnergy> {
-        const parts = this.joinedParts();
+        const unmerged = this.unmergedSound();
 
-        if (parts) {
-            this.energyOnce ??= Promise.all(parts.map((view) => view.opened.energy())).then((energies) =>
-                joinedEnergy(parts, energies)
-            );
-            return this.energyOnce;
+        if (unmerged) {
+            return Promise.reject(unmerged);
         }
 
         this.energyOnce ??= this.sourceEvidence().then(async (evidence) => {
@@ -622,19 +555,6 @@ export class OpenedMeeting {
 
     /** The stretches where the call's channel stayed silent (the call played through the room); E1 says nothing there. */
     async silentCallSpans(): Promise<SilentCallSpan[]> {
-        const parts = this.joinedParts();
-
-        if (parts) {
-            const spans = await Promise.all(parts.map((view) => view.opened.silentCallSpans()));
-            return spans.flatMap((list, index) =>
-                list.map((span) => ({
-                    ...span,
-                    fromSec: toJoinedSec(span.fromSec, parts[index]!.part.offsetMs),
-                    toSec: toJoinedSec(span.toSec, parts[index]!.part.offsetMs),
-                }))
-            );
-        }
-
         const stored = this.current.evidence?.channels;
         const energy = await this.energy();
         if (energy.share && stored?.callSilent && stored.layout === energy.calibration?.layout) {
@@ -686,10 +606,10 @@ export class OpenedMeeting {
 
     /** The recording the source keeps on this Mac. Throws a message ready to print. */
     async audioPath(): Promise<string> {
-        if (this.current.join) {
-            throw new Error(
-                `${this.current.id} is joined from ${this.current.join.parts.length} recordings, so no one file holds its sound; this step reads one recording and does not run on a joined meeting yet.`
-            );
+        const unmerged = this.unmergedSound();
+
+        if (unmerged) {
+            throw unmerged;
         }
 
         const owned = preservedSourceAudio(this.current);
@@ -706,64 +626,50 @@ export class OpenedMeeting {
     }
 
     /**
-     * The recording file that holds the span from `fromSec` to `toSec` and the span's seconds in it: the record's own
-     * file, or on a joined record the recording the span belongs to. A span that starts in the gap before a recording
-     * starts at that recording's second 0 (as a span before second 0 does); one in a gap, or one that runs from one
-     * recording into the next, is refused with the gap's times.
+     * The file a span from `fromSec` to `toSec` is cut from: when the record's sound was put together from several
+     * recordings (`meetings join`), the recording that holds the whole span, so a clip is that recording's own sound to
+     * the sample; else (a span over the time between recordings, or one recording) the record's one file.
      */
     async audioAt(fromSec: number, toSec = fromSec): Promise<AudioSpan> {
-        const parts = this.joinedParts();
-
-        if (!parts) {
-            return { path: await this.audioPath(), fileSec: (sec) => sec, opened: this };
+        if (!preservedSourceAudio(this.current)?.pieces) {
+            return { path: await this.audioPath(), offsetMs: 0 };
         }
 
-        // The span belongs to the first recording whose window holds its end and that it starts before the end of.
-        const index = parts.findIndex((view) => toSec <= view.untilSec && fromSec < view.untilSec);
-        const view = parts[index];
-        const before = parts[index - 1];
-
-        if (
-            !view ||
-            fromSec >= view.part.endSec ||
-            (before && fromSec < before.part.endSec && fromSec < view.fromSec)
-        ) {
-            const gap = joinGapAt(this.current, Math.min(fromSec, toSec), Math.max(fromSec, toSec));
-            throw new Error(gap ? gapSentence(gap) : `No recording of ${this.current.id} holds ${fromSec} s.`);
-        }
-
-        const offsetMs = view.part.offsetMs;
-        return {
-            path: await view.opened.audioPath(),
-            fileSec: (sec) => Math.max(0, toPartSec(sec, offsetMs)),
-            opened: view.opened,
-        };
+        // A recording holds the time from its second 0 to its end, and never past the next recording's second 0.
+        const pieces = (await this.soundInputs()).source?.pieces ?? [];
+        const holder = pieces.find((piece, index) => {
+            const next = pieces[index + 1]?.zeroSec ?? Number.POSITIVE_INFINITY;
+            return piece.zeroSec <= fromSec && toSec <= Math.min(piece.zeroSec + piece.durationSec, next);
+        });
+        return holder
+            ? { path: holder.path, offsetMs: Math.round(holder.zeroSec * 1000) }
+            : { path: await this.audioPath(), offsetMs: 0 };
     }
 
     /**
-     * A span of a joined record as the recording that holds it saw it before the join: that recording opened on its own
-     * clock, with the joined record's items, assignments, participants and seats moved back onto that clock. A clip or
-     * a Moment planned there is the one planned before the join, to the sample. Undefined on a single recording; a span
-     * in a gap or across one is refused as `audioAt` refuses it.
+     * One recording of a joined record as it was before the join, for a file written then that names each recording
+     * (a polished file): its own source meeting and clock, with the joined record's items, assignments, participants and
+     * seats moved back onto that clock. `recordId` is the id the recording had. Undefined on a single recording or for
+     * an id that is not one of its recordings.
      */
-    async partReading(fromSec: number, toSec = fromSec): Promise<PartReading | undefined> {
-        const parts = this.joinedParts();
+    recordingReading(recordId: string): PartReading | undefined {
+        const parts = this.current.join?.parts ?? [];
+        const index = parts.findIndex((one) => one.record === recordId);
+        const part = parts[index];
 
-        if (!parts) {
+        if (!part) {
             return undefined;
         }
 
-        const span = await this.audioAt(fromSec, toSec);
-        return this.readingOf(parts.find((one) => one.opened === span.opened)!);
-    }
-
-    /**
-     * One recording of a joined record as it was before the join (`partReading` over its whole window): `recordId` is
-     * the id the recording had. Undefined on a single recording or for an id that is not one of its recordings.
-     */
-    recordingReading(recordId: string): PartReading | undefined {
-        const view = this.joinedParts()?.find((one) => one.part.record === recordId);
-        return view ? this.readingOf(view) : undefined;
+        const opened = new OpenedMeeting(new JoinedPartStore(this.store), partRecord(this.current, part), undefined);
+        opened.configOnce = this.config();
+        const next = parts[index + 1];
+        return this.readingOf({
+            part,
+            fromSec: part.offsetMs / 1000,
+            untilSec: next ? next.offsetMs / 1000 : Number.POSITIVE_INFINITY,
+            opened,
+        });
     }
 
     private readingOf(view: JoinedPartView): PartReading {
@@ -790,8 +696,6 @@ export class OpenedMeeting {
         const opened = new OpenedMeeting(view.opened.store, record, undefined);
         opened.configOnce = this.config();
         opened.linkedOnce = view.opened.linked();
-        opened.soundOnce = view.opened.sound();
-        opened.energyOnce = view.opened.energy();
         return {
             opened,
             offsetMs,
@@ -802,12 +706,10 @@ export class OpenedMeeting {
 
     /** The source probe and recorder rows used to construct this meeting's sound. */
     soundInputs(): Promise<SoundInputs> {
-        if (this.current.join) {
-            return Promise.reject(
-                new Error(
-                    `${this.current.id} is joined: its sound is read per recording (joinedParts), not as one input.`
-                )
-            );
+        const unmerged = this.unmergedSound();
+
+        if (unmerged) {
+            return Promise.reject(unmerged);
         }
 
         this.soundInputsOnce ??= readSoundInputs(this);
@@ -816,22 +718,6 @@ export class OpenedMeeting {
 
     /** The meeting's sound: the source's channels and the recorder's tracks, each on the transcript clock. */
     sound(): Promise<MeetingSound> {
-        const parts = this.joinedParts();
-
-        if (parts) {
-            this.soundOnce ??= Promise.all(parts.map((view) => view.opened.sound())).then((sounds) =>
-                joinedSound(
-                    parts.map((view, index) => ({
-                        offsetMs: view.part.offsetMs,
-                        fromSec: view.fromSec,
-                        untilSec: view.untilSec,
-                        sound: sounds[index]!,
-                    }))
-                )
-            );
-            return this.soundOnce;
-        }
-
         this.soundOnce ??= loadMeetingSound(this);
         return this.soundOnce;
     }
@@ -842,17 +728,10 @@ export class OpenedMeeting {
     }
 
     /**
-     * Stores the channel layout and the silent call stretches as `evidence.channels` when they changed; on a joined
-     * record, each recording's own in its part (`join.parts[].channels`). Undefined when the source keeps no audio or
-     * ffmpeg is missing.
+     * Stores the channel layout and the silent call stretches as `evidence.channels` when they changed. Undefined when
+     * the source keeps no audio or ffmpeg is missing.
      */
     async calibrate(): Promise<ChannelCalibration | undefined> {
-        const parts = this.joinedParts();
-
-        if (parts) {
-            return this.calibrateParts(parts);
-        }
-
         const measured = await this.measureCalibration();
 
         if (!measured) {
@@ -894,46 +773,6 @@ export class OpenedMeeting {
         }
 
         return { calibration, callSilent: callSilentSpans(energy, await this.transcriptEndSec()) };
-    }
-
-    /** Each recording of a joined record measured on its own, and stored in its part; the first also as the record's. */
-    private async calibrateParts(parts: JoinedPartView[]): Promise<ChannelCalibration | undefined> {
-        const measured = await Promise.all(parts.map((view) => view.opened.measureCalibration()));
-        const stored = (index: number): StoredChannelCalibration | undefined => {
-            const one = measured[index];
-            return one ? { ...one.calibration, callSilent: one.callSilent } : undefined;
-        };
-        this.current = await this.store.update(
-            this.current.id,
-            {
-                command: "calibrate",
-                change: `channels per recording: ${parts.map((_, index) => stored(index)?.layout ?? "none").join(", ")}`,
-            },
-            (next) => {
-                let changed = false;
-
-                for (const [index, part] of (next.join?.parts ?? []).entries()) {
-                    const channels = stored(index);
-
-                    if (channels && SafeJSON.stringify(part.channels) !== SafeJSON.stringify(channels)) {
-                        part.channels = channels;
-                        changed = true;
-
-                        if (part.record === next.id) {
-                            next.evidence = { ...next.evidence, channels };
-                        }
-                    }
-                }
-
-                if (!changed) {
-                    return MEETING_UNCHANGED;
-                }
-            }
-        );
-        this.partsOnce = undefined;
-        this.energyOnce = undefined;
-        this.soundOnce = undefined;
-        return measured.find((one) => one)?.calibration;
     }
 
     /**

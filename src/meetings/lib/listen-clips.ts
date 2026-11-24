@@ -8,6 +8,7 @@ import { TranscriptLines as Lines } from "@genesiscz/utils/transcribe/lines";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { type ClipPlan, cutClip, probeAudio } from "./audio";
 import { clipPlan, itemMoment, type ListenSettings, meetingWordTimedLines } from "./moment";
+import { type AudioSpan, onFileClock, onRecordClock } from "./opened-meeting";
 import { type QuestionItem, questionLabel } from "./questions";
 import { resolveToneSound, type ToneSound } from "./tone-sound";
 
@@ -159,7 +160,8 @@ export async function writeQuestionClips(
         record: MeetingRecord;
         questions: QuestionItem[];
         transcript: readonly TranscriptEntry[] | TranscriptLines;
-        audioPath: string;
+        /** The file a span is cut from (`OpenedMeeting.audioAt`): the recording that holds it, on its own seconds. */
+        audioAt: (fromSec: number, toSec: number) => Promise<AudioSpan>;
         dir: string;
         cut?: typeof cutClip;
     } & ClipSettings
@@ -169,13 +171,16 @@ export async function writeQuestionClips(
 
     for (const question of options.questions) {
         const label = questionLabel(options.record, question.id);
-        const plan = await refineSplitClip({
-            plan: questionClip({ ...options, question }),
-            question,
-            audioPath: options.audioPath,
+        const shown = questionClip({ ...options, question });
+        const file = await options.audioAt(shown.fromSec, shown.toSec);
+        const onFile = await refineSplitClip({
+            plan: onFileClock(shown, file),
+            question: onFileClock(question, file),
+            audioPath: file.path,
         });
+        const plan = onRecordClock(onFile, file);
         const clip = join(options.dir, `${label}.wav`);
-        await cut({ audioPath: options.audioPath, outPath: clip, ...plan });
+        await cut({ audioPath: file.path, outPath: clip, ...onFile });
         written.push({
             question: label,
             id: question.id,

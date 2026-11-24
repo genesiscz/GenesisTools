@@ -909,6 +909,21 @@ export const join = defineMethod({
     doc: `Join two recordings of one meeting into one record: the earlier one's id and clock, the later one's lines, items and journal at their own wall time, the gap between them kept empty, both folders cloned into a backup first (its README restores them). Returns the parts, their place on the joined clock and the gaps. CLI twin: ${toolCommand("meetings", "join")} <meeting> <other> [--dry-run] --json.`,
 });
 
+export const joinRepair = defineMethod({
+    name: "joinRepair",
+    params: z.object({
+        /** A meeting joined before 2026-11-25 (its later recording's sound still in that recording's folder). */
+        meeting: z.string().min(1),
+        /** true: say what would move; nothing changes. */
+        dryRun: z.boolean().optional(),
+    }),
+    result: z.unknown(),
+    resultName:
+        "{ meeting, dryRun, repaired, reason?, sound?: { pieces, rows, levels, recordings: [{ record, offsetMs }] }, joinedFile?, backup? }",
+    effect: "reversible",
+    doc: `Move the later recording's sound of a meeting joined before 2026-11-25 into the joined record's folder, as join does now: its recorder files and rows, its measured clock as its own entry, its source recording as a piece of one source file of the whole meeting (the gap silence). Every folder it touches is cloned into a backup first; a second run changes nothing (repaired: false). CLI twin: ${toolCommand("meetings", "join")} <meeting> --repair [--dry-run] --json.`,
+});
+
 export const confirmRelayed = defineMethod({
     name: "confirmRelayed",
     params: z
@@ -1017,6 +1032,7 @@ export const meetingsToolsetApi = defineApi({
         lineEligibility,
         play,
         join,
+        joinRepair,
         confirmRelayed,
         ...Object.values(voiceLibraryMethods),
         list,

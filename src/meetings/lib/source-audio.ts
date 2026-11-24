@@ -41,14 +41,7 @@ export function preservedSourceAudio(
     if (!ref) {
         return undefined;
     }
-    const own = record.audio?.sources[ref.sourceId];
-    // A joined record keeps each later recording's preserved sound in its part.
-    const audio =
-        own?.sourceMeetingId === ref.sourceMeetingId
-            ? own
-            : record.join?.parts.find(
-                  (part) => part.sourceId === ref.sourceId && part.sourceMeetingId === ref.sourceMeetingId
-              )?.audio;
+    const audio = record.audio?.sources[ref.sourceId];
     if (!audio || audio.sourceMeetingId !== ref.sourceMeetingId) {
         return undefined;
     }

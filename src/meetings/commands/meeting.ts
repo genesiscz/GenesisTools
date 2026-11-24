@@ -13,7 +13,7 @@ import pc from "picocolors";
 import { collectAndReport } from "../lib/collect";
 import { contextFileRevision } from "../lib/context-file";
 import { duplicateMeeting } from "../lib/duplicate";
-import { joinMeetings } from "../lib/join-recordings";
+import { joinMeetings, repairJoin } from "../lib/join-recordings";
 import { linkSource } from "../lib/link";
 import { askProjectAtEnd } from "../lib/meeting-end";
 import { setMeetingFields } from "../lib/meeting-fields";
@@ -354,8 +354,58 @@ async function merge(fromRef: string, opts: { into: string; dryRun?: boolean; js
     }
 }
 
-async function joinCommand(first: string, second: string, opts: { dryRun?: boolean; json?: boolean }): Promise<void> {
+async function joinRepairCommand(ref: string, opts: { dryRun?: boolean; json?: boolean }): Promise<void> {
+    const result = await repairJoin({ store: new MeetingStore(), ref, dryRun: opts.dryRun });
+
+    if (opts.json) {
+        out.result(SafeJSON.stringify(result, null, 2));
+        return;
+    }
+
+    if (!result.repaired && !result.dryRun) {
+        ui.ok(`${result.meeting}: nothing to repair; ${result.reason}.`);
+        return;
+    }
+
+    const sound = result.sound;
+    ui.ok(
+        `${result.dryRun ? "Would move" : "Moved"} the later recordings' sound into ${result.meeting}: ${sound?.pieces ?? 0} recorder files, ${sound?.rows ?? 0} index lines, ${sound?.levels ?? 0} level rows.`
+    );
+
+    for (const recording of sound?.recordings ?? []) {
+        ui.dim(`  source recording of ${recording.record} at ${formatClock(recording.offsetMs / 1000)}`);
+    }
+
+    if (result.joinedFile) {
+        ui.dim(`  the whole meeting as one file: ${result.joinedFile}`);
+    }
+
+    if (result.backup) {
+        ui.dim(`  backup and restore steps: ${result.backup}/README.md`);
+    }
+}
+
+async function joinCommand(
+    first: string,
+    second: string | undefined,
+    opts: { dryRun?: boolean; json?: boolean; repair?: boolean }
+): Promise<void> {
     try {
+        if (opts.repair) {
+            if (second) {
+                fail(`--repair takes the joined meeting alone: ${TOOL} join <meeting> --repair`);
+                return;
+            }
+
+            await joinRepairCommand(first, opts);
+            return;
+        }
+
+        if (!second) {
+            fail(`Name the other recording of the meeting: ${TOOL} join <meeting> <other>`);
+            return;
+        }
+
         const result = await joinMeetings({ store: new MeetingStore(), ids: [first, second], dryRun: opts.dryRun });
 
         if (opts.json) {
@@ -614,11 +664,15 @@ export function registerMeetingCommands(program: Command): void {
     program
         .command("join")
         .argument("<meeting>", "one recording of the meeting: an id, a unique prefix or last")
-        .argument("<other>", "the other recording of the same meeting")
+        .argument("[other]", "the other recording of the same meeting")
         .description(
-            "Make two recordings of one meeting (a source split it) one record: the earlier one's id and clock, the later one's lines at their own wall time, the gap between them empty, a backup first"
+            "Make two recordings of one meeting (a source split it) one record: the earlier one's id and clock, the later one's lines and sound at their own wall time, the gap between them silence, a backup first"
         )
-        .option("--dry-run", "say what would join, change nothing")
+        .option(
+            "--repair",
+            "on a meeting joined before 2026-11-25: move the later recording's sound into the joined record's folder, once"
+        )
+        .option("--dry-run", "say what would join or move, change nothing")
         .option("--json", "print the result as JSON")
         .action(joinCommand);
 

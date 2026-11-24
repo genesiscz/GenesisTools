@@ -110,9 +110,9 @@ export function joinedMeeting(
 }
 
 /**
- * The parts' evidence as one: segments and speaking readings on the joined clock, and no `audioPath`, because no one
- * file holds the joined sound (each part's sound is read through its own part, `OpenedMeeting.joinedParts`). Null when
- * no part has evidence.
+ * The parts' evidence as one: segments and speaking readings on the joined clock, and no `audioPath`: the joined
+ * record's own source file (`audio.sources`, put together by the join) is the one a reader gets. Null when no part has
+ * evidence.
  */
 export function joinedEvidence(
     parts: readonly JoinPart[],

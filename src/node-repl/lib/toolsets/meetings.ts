@@ -48,6 +48,7 @@ import {
     itemsList,
     itemsRows,
     join,
+    joinRepair,
     levels,
     type lineEligibility,
     lines,
@@ -194,6 +195,12 @@ export class MeetingsToolset extends ReplToolset {
                     const { meetings, dryRun } = join.params.parse(input);
                     const { joinMeetings } = await import("@app/meetings/lib/join-recordings");
                     return joinMeetings({ store, ids: [meetings[0]!, meetings[1]!], ...(dryRun ? { dryRun } : {}) });
+                },
+                // The CLI's own core: tools meetings join <meeting> --repair [--dry-run].
+                joinRepair: async (input: z.input<typeof joinRepair.params>) => {
+                    const { meeting, dryRun } = joinRepair.params.parse(input);
+                    const { repairJoin } = await import("@app/meetings/lib/join-recordings");
+                    return repairJoin({ store, ref: meeting, ...(dryRun ? { dryRun } : {}) });
                 },
                 // The CLI's own core: tools meetings play <meeting> <time> [--to --track] [--no-start].
                 play: async (input: z.input<typeof play.params>) => {

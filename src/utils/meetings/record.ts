@@ -479,13 +479,30 @@ const assignSchema = z.object({
 });
 export type MeetingAssign = z.infer<typeof assignSchema>;
 
-/** Source audio kept independently of expiring screen captures. Stored paths are repointed with meeting copies. */
-export const preservedSourceAudioSchema = z.object({
+/** One source audio file kept in the meeting's folder: its source meeting, where it is, and what it holds. */
+const sourceAudioFileSchema = z.object({
     sourceMeetingId: z.string().min(1),
     path: z.string().min(1),
     sha256: z.string().regex(/^[a-f0-9]{64}$/),
     bytes: z.number().int().nonnegative(),
     savedAt: isoTime,
+});
+
+/** One recording a joined record's source sound was put together from, at its place on the record's clock. */
+export const sourceAudioPieceSchema = sourceAudioFileSchema.extend({
+    /** Where the recording's second 0 sits on the record's clock, in whole milliseconds. */
+    offsetMs: z.number().int().nonnegative(),
+});
+export type SourceAudioPiece = z.infer<typeof sourceAudioPieceSchema>;
+
+/** Source audio kept independently of expiring screen captures. Stored paths are repointed with meeting copies. */
+export const preservedSourceAudioSchema = sourceAudioFileSchema.extend({
+    /**
+     * The recordings this file was put together from (`meetings join`), in time order: the file is all of them on the
+     * record's clock, the time between them silence. Listening and clips cut the recording that holds a span; a reader
+     * of one whole file reads this file. Absent: the file is the recording.
+     */
+    pieces: z.array(sourceAudioPieceSchema).min(1).optional(),
 });
 export type PreservedSourceAudio = z.infer<typeof preservedSourceAudioSchema>;
 
@@ -526,8 +543,8 @@ export const joinPartSchema = z.object({
     offsetMs: z.number().int().nonnegative(),
     /** The end of the part's last line on the joined clock: the gap to the next part starts here. */
     endSec: z.number().nonnegative(),
-    /** The part's preserved source audio. `audio.sources` keeps one per source, the `--into` part's. */
-    audio: preservedSourceAudioSchema.optional(),
+    /** The part's preserved source audio as the part kept it; since `JOIN_SOUND_MERGED`, a piece of `audio.sources`. */
+    audio: sourceAudioFileSchema.optional(),
     /** The part's own channel calibration, as the record it was stored it. */
     channels: channelCalibrationSchema.optional(),
     /** The seats of the record it was, on its own clock: a reading of this recording alone sees them as they were. */
@@ -535,8 +552,15 @@ export const joinPartSchema = z.object({
 });
 export type JoinPart = z.infer<typeof joinPartSchema>;
 
+/**
+ * The join version whose record holds the sound of every recording in its own folder (2026-11-25): the recorder pieces
+ * and rows, the source recordings as pieces of one source file, one sound clock. A version-1 join left the later
+ * recording's sound in that recording's folder; `meetings join <id> --repair` moves it.
+ */
+export const JOIN_SOUND_MERGED = 2;
+
 export const meetingJoinSchema = z.object({
-    version: z.literal(1),
+    version: z.union([z.literal(1), z.literal(JOIN_SOUND_MERGED)]),
     at: isoTime,
     /** The folder that holds both records as they were before the join, with the restore steps. */
     backup: z.string().min(1),

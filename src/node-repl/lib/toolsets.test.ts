@@ -305,6 +305,7 @@ interface MeetingsHandle {
     voices: ((input: unknown) => Promise<MeetingsResult<"voices.list">>) & VoiceDoors;
     lineEligibility(input: { meeting: string; line: number }): Promise<unknown>;
     join(input: { meetings: string[]; dryRun?: boolean }): Promise<unknown>;
+    joinRepair(input: { meeting: string; dryRun?: boolean }): Promise<unknown>;
     play(input: {
         meeting: string;
         atSec: number;
@@ -520,6 +521,16 @@ describe("toolset method names", () => {
         const meetings = await loadMeetings();
         await expect(meetings.join({ meetings: ["no-such-a", "no-such-b"], dryRun: true })).rejects.toThrow(
             'No meeting "no-such-a".'
+        );
+    });
+
+    test("meetings.joinRepair names its CLI twin and repairs through the same core as tools meetings join --repair", async () => {
+        const api = new MeetingsToolset().api;
+        expect(describeMethod([api], "meetings.joinRepair")).toContain("meetings join");
+        expect(describeMethod([api], "meetings.joinRepair")).toContain("--repair");
+        const meetings = await loadMeetings();
+        await expect(meetings.joinRepair({ meeting: "no-such-meeting", dryRun: true })).rejects.toThrow(
+            'No meeting "no-such-meeting".'
         );
     });
 

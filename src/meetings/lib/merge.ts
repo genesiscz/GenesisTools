@@ -562,9 +562,15 @@ async function mergeLockedMeetings({
                     continue;
                 }
 
-                const path = dirname(audio.path) === fromAudio ? join(intoAudio, basename(audio.path)) : audio.path;
+                const moved = (path: string) => (dirname(path) === fromAudio ? join(intoAudio, basename(path)) : path);
                 current.audio ??= { sources: {} };
-                current.audio.sources[sourceId] = { ...audio, path };
+                current.audio.sources[sourceId] = {
+                    ...audio,
+                    path: moved(audio.path),
+                    ...(audio.pieces
+                        ? { pieces: audio.pieces.map((piece) => ({ ...piece, path: moved(piece.path) })) }
+                        : {}),
+                };
             }
 
             for (const person of from.participants) {
