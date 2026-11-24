@@ -39,6 +39,26 @@ enum WidgetTestPreferences {
 /// sent out, with no `WidgetModel`.
 @MainActor
 final class WidgetPreferencesStoreTests: XCTestCase {
+    /// The Widgets page's "Show the top notch" and "Show the side widget" are General's "Show the widget" and
+    /// "Visible edges"; both off turns the widget off and keeps the edges that were visible last.
+    @MainActor
+    func testTheTwoEdgeSwitchesWriteShowWidgetAndVisibleEdges() {
+        var prefs = WidgetPreferences.hubDefaults
+        prefs.showWidget = true
+        prefs.placement = "both"
+        XCTAssertTrue(prefs.shownEdges.top && prefs.shownEdges.side)
+        prefs.showEdges(top: true, side: false)
+        XCTAssertEqual([String(prefs.showWidget), prefs.placement], ["true", "top"])
+        XCTAssertFalse(prefs.shownEdges.side)
+        prefs.showEdges(top: false, side: false)
+        XCTAssertEqual([String(prefs.showWidget), prefs.placement], ["false", "top"])
+        XCTAssertFalse(prefs.shownEdges.top || prefs.shownEdges.side)
+        prefs.showEdges(top: false, side: true)
+        XCTAssertEqual([String(prefs.showWidget), prefs.placement], ["true", "side"])
+        prefs.showEdges(top: true, side: true)
+        XCTAssertEqual([String(prefs.showWidget), prefs.placement], ["true", "both"])
+    }
+
     /// A store over a fake model: `shown` is the screen, `sent` every patch, `reports` every error it reported.
     @MainActor private final class Harness {
         var shown: WidgetPreferences?
