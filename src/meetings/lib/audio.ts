@@ -52,11 +52,16 @@ export async function meetingAudio(record: MeetingRecord): Promise<MeetingAudio>
         throw new Error(`The source keeps no audio for ${record.id} on this Mac.`);
     }
 
-    const lastSpeechSec = evidence.segments.reduce<number | undefined>(
+    const lastSpeechSec = segmentsEndSec(evidence.segments);
+    return { audioPath: evidence.audioPath, ...(lastSpeechSec === undefined ? {} : { lastSpeechSec }) };
+}
+
+/** The end of the last speech segment; undefined for no segments. */
+export function segmentsEndSec(segments: ReadonlyArray<{ endSec: number }>): number | undefined {
+    return segments.reduce<number | undefined>(
         (last, segment) => (last === undefined || segment.endSec > last ? segment.endSec : last),
         undefined
     );
-    return { audioPath: evidence.audioPath, ...(lastSpeechSec === undefined ? {} : { lastSpeechSec }) };
 }
 
 /** The source's evidence; with preserved audio, a source that no longer reads is logged and gives no evidence. */

@@ -203,7 +203,7 @@ export const PAST_END_GRACE_SEC = 30;
 
 /**
  * Why `play --at` refuses a time after the meeting's end, or undefined. The bound is the last speech segment the source
- * keeps, which `play` reads anyway; without segments there is no bound (R2-MC5).
+ * keeps, for a native recording too; without segments there is no bound (R2-MC5).
  */
 export function pastTheEnd(atSec: number, lastSpeechSec: number | undefined): string | undefined {
     return lastSpeechSec !== undefined && atSec > lastSpeechSec + PAST_END_GRACE_SEC

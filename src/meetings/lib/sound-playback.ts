@@ -7,10 +7,20 @@ import { LISTEN_PLAYERS, MeetingsConfigStore } from "@genesiscz/utils/meetings/c
 import { lineEvidence } from "@genesiscz/utils/transcribe/evidence";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
+import { segmentsEndSec } from "./audio";
 import { momentCacheDir, trimMomentCache } from "./moment";
 import type { OpenedMeeting } from "./opened-meeting";
-import { channelFilter, PLAYERS, type PlaybackPlan, type PlayerList, pickPlayer, type SeekingPlayer } from "./players";
+import {
+    channelFilter,
+    PLAYERS,
+    type PlaybackPlan,
+    type PlayerList,
+    pastTheEnd,
+    pickPlayer,
+    type SeekingPlayer,
+} from "./players";
 import { type MeetingSound, type Seat, type SoundSlice, soundRun, type TrackKind } from "./sound";
+import { sourceRefOf } from "./sources";
 
 const { log } = logger.scoped("meetings-playback");
 
@@ -252,13 +262,41 @@ export async function playSoundSlice(options: {
     return { pid: child.pid, player: player.id };
 }
 
-/** The seat heard at `atSec`, and the slice of the track that plays it there: `track`, else the seat's best one. */
+/**
+ * The end of the last speech the source keeps (its speech segments), which bounds a play. A native recording takes it
+ * from the source too: the recorder's pieces hold sound, not speech, and run on as long as the recorder did. Undefined
+ * when the meeting has no source or the source keeps no segments; a source that cannot be read is logged and sets no
+ * bound, so a recorder track still plays.
+ */
+async function lastSpeechSec(opened: OpenedMeeting): Promise<number | undefined> {
+    if (!sourceRefOf(opened.record)) {
+        return undefined;
+    }
+
+    try {
+        return segmentsEndSec((await opened.evidence())?.segments ?? []);
+    } catch (error) {
+        log.debug({ error, meeting: opened.record.id }, "source evidence unreadable; no speech end");
+        return undefined;
+    }
+}
+
+/**
+ * The seat heard at `atSec`, and the slice of the track that plays it there: `track`, else the seat's best one. A time
+ * more than `PAST_END_GRACE_SEC` after the last speech is refused first.
+ */
 async function listenAt(options: {
     opened: OpenedMeeting;
     atSec: number;
     track?: TrackKind;
 }): Promise<{ sound: MeetingSound; seat: Seat; at?: SoundSlice }> {
     const { opened, atSec, track } = options;
+    const late = pastTheEnd(atSec, await lastSpeechSec(opened));
+
+    if (late) {
+        throw new Error(late);
+    }
+
     const sound = await opened.sound();
     let seat: Seat | undefined = track ? sound.tracks.find((one) => one.kind === track)?.seat : undefined;
     if (!seat && !track) {
