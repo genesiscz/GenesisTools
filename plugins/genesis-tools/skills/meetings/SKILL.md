@@ -126,6 +126,8 @@ A missing meeting names only the store that was searched. To find which store ho
      keep a `speaker-range` for each line you can.
    - Two lines can start in the same second. `items add` then warns and names both lines by index; reject
      that item and add the finding again with `"line": <index>`, or it does not apply.
+   - A `"line"` narrows a `speaker-range` only when its `from` and `to` are that one second. On a wider range it changes
+     nothing (the range takes every line of its label inside it), and `items add` warns about it.
    - Store only re-attributions: a line that stays with its own label needs no range. Group consecutive lines of one
      label that go to the same person on the same evidence into one range, with the lowest confidence of its lines;
      start a new range where the evidence changes.
