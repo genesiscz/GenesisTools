@@ -500,6 +500,37 @@ describe("the people book and its merges", () => {
         await expect(directory.unmerge(merge.token)).rejects.toMatchObject({ code: "unknown-merge" });
     });
 
+    test("two spellings the name key joins merge as typed, under the shown name, and a second merge of them is refused", async () => {
+        const { store, book } = scratch([
+            meeting("m1", "2026-11-08T10:00:00Z", { participants: [{ name: "Example Nora (QT)" }] }),
+            meeting("m2", "2026-11-09T10:00:00Z", {
+                participants: [{ name: "nora.example" }, { name: "Example Nora (QT)" }],
+            }),
+        ]);
+        const directory = peopleDirectory({ store, config: meetingsConfigSchema.parse({}), book });
+        expect((await directory.known("nora")).people.map((person) => person.name)).toEqual(["Example Nora (QT)"]);
+
+        const plan = await directory.planMerge("nora.example", "Example Nora (QT)");
+        expect([plan.people.map((person) => person.name), plan.name]).toEqual([
+            ["nora.example", "Example Nora (QT)"],
+            "Example Nora (QT)",
+        ]);
+        expect(plan.meetings.map((one) => [one.id, one.people])).toEqual([
+            ["m2", [0, 1]],
+            ["m1", [0, 1]],
+        ]);
+
+        const { merge } = await directory.merge("nora.example", "Example Nora (QT)");
+        // The voice library keys an owner without an address by its exact name, so the merge keeps both spellings.
+        expect(merge.people).toEqual([{ name: "nora.example" }, { name: "Example Nora (QT)" }]);
+        expect(merge.name).toBe("Example Nora (QT)");
+        await expect(directory.planMerge("Example Nora (QT)", "nora.example")).rejects.toThrow("one person already");
+        await expect(directory.planMerge("nora.example", " nora.example ")).rejects.toThrow("one person already");
+        expect((await directory.known("nora")).people.map((person) => [person.name, person.merge])).toEqual([
+            ["Example Nora (QT)", merge.token],
+        ]);
+    });
+
     test("add, hide and show again; an unknown or shared name is refused with its code", async () => {
         const { store, book } = scratch([
             meeting("m1", "2026-11-08T10:00:00Z", {
