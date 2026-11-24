@@ -208,6 +208,13 @@ What the local reader does for you:
 - **Speaker names.** Each speaker number gets the person the app assigned. The app can assign a person in five ways,
   and the first that names one wins: your manual pick in the app (`user`), then `consensus`, `mic`, `dom` and `llm`.
   A speaker nobody named stays "Speaker N". `<@speaker:N>` mentions in the summary and notes become names.
+- **Person mentions.** The summary also names people the app does not count as speakers, as
+  `<@person3:n=Ale%C5%A1%20Example>` (the name is URL-encoded, and a `c=` contact id can come before it). The reader turns
+  each one into the decoded name, for example "Aleš Example". The number is the app's own index inside that text, and one
+  summary can give the same number to different people, so it never picks a speaker. A mention with no usable name
+  (no `n=`, or an empty one) reads `(unnamed person)`, and a bad percent escape keeps its raw bytes. The decode runs
+  once, where the reader builds the meeting, so `show`, `export` (including `meeting.json`), `transcript` and the
+  `tools meetings` views read the same text. The app's database keeps the raw tokens.
 - **Your edits.** Your corrections of transcript lines replace the recognised text; the newest edit of a line wins.
 - **A cut-off refined transcript.** The app sometimes stops refining a long meeting part-way and never resumes (seen:
   the refined text ended at 13:18 of a 189 minute recording). When the live lines run more than 30 seconds past the
