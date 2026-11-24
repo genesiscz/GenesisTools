@@ -11,6 +11,7 @@ import { projectLabels, setMeetingFields } from "@app/meetings/lib/meeting-field
 import { captureBlockersRead, quitCaptureBlockersNow } from "@app/meetings/lib/never-capture";
 import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
 import { meetingsOverview } from "@app/meetings/lib/overview";
+import { rawEvidence } from "@app/meetings/lib/raw-evidence";
 import { startMeetingRecording } from "@app/meetings/lib/record-start";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
 import { rejectFilterIds } from "@app/meetings/lib/reject-filter";
@@ -502,9 +503,16 @@ export class MeetingsToolset extends ReplToolset {
                 withMeetingsClient((client) => client.call("meeting.voice", { meeting: id, ...options })),
             evidence: async (input: z.input<typeof evidenceMethod.params> = {}) => {
                 const options = evidenceMethod.params.parse(input);
+                const windowed = options.from !== undefined || options.to !== undefined;
+                if (options.raw && !windowed) {
+                    // The CLI's evidence --raw, through the same function: terms, screen lines near each lead, the screen record.
+                    return rawEvidence(opened(), {
+                        ...(options.wordCheck ? { wordCheck: options.wordCheck } : {}),
+                        ...(options.screenLines !== undefined ? { screenLines: options.screenLines } : {}),
+                    });
+                }
                 if (options.raw || options.table) {
                     // The window reaches the measurement, as `evidence --table --from/--to` does, not a filter after it.
-                    const windowed = options.from !== undefined || options.to !== undefined;
                     const raw = await channelEvidence(
                         opened(),
                         windowed ? { fromSec: options.from ?? 0, toSec: options.to ?? Infinity } : undefined
