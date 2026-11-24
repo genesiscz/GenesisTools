@@ -1,6 +1,7 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { languageSettings, type MeetingsConfig, resolveDictionary } from "@genesiscz/utils/meetings/config";
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
+import { strongestFirst, strongestRange, weakestFirst } from "@genesiscz/utils/meetings/range-strength";
 import type { MeetingItem, MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import {
@@ -66,12 +67,12 @@ function unclearPassages(
     );
     // A range with candidates and no speaker says only that the label is wrong; it is marked at any confidence, and
     // its confidence is that the label is wrong, so no candidate carries it. A line marks once, so a range that names
-    // someone goes first.
+    // someone goes first, the strongest of them first (a stated guess before a rule's).
     const ranges = record.items.filter(
         (item): item is Extract<MeetingItem, { kind: "speaker-range" }> => item.kind === "speaker-range"
     );
     const unaskedRanges = opts.applied
-        ? [...ranges.filter((item) => item.speaker), ...ranges.filter((item) => !item.speaker)].flatMap(
+        ? [...strongestFirst(ranges.filter((item) => item.speaker)), ...ranges.filter((item) => !item.speaker)].flatMap(
               (item): UnclearPassage[] => {
                   const nobody = !item.speaker && item.status === "suggested" && !asked.has(item.id);
 
@@ -251,9 +252,11 @@ export function correctionsOf(
         return line === undefined ? {} : { line };
     };
     // A person's own assignments (`assign`) come after the items' ranges, so they win over a rule's or an answer's;
-    // among them the latest act wins (`at`), since a stretch given again keeps its place and id in the list.
+    // among them the latest act wins (`at`), since a stretch given again keeps its place and id in the list. The items'
+    // ranges go weakest first: a confirmed range wins over a stated one, and a stated one over a rule's, whatever their
+    // age; among equals the latest wins.
     const assignments = [...(record.speakers.assignments ?? [])].sort((a, b) => a.at.localeCompare(b.at));
-    const itemRanges = used.flatMap((item) =>
+    const itemRanges = weakestFirst(used).flatMap((item) =>
         item.kind === "speaker-range" && item.speaker
             ? [
                   {
@@ -451,7 +454,7 @@ export function correctTranscript(options: {
             const proposals = speakerRanges.filter(
                 (item) => item.status !== "rejected" && covers(item, { atSec, sourceIndex })
             );
-            const proposal = proposals.findLast((item) => item.status === "confirmed") ?? proposals.at(-1);
+            const proposal = strongestRange(proposals);
             const confidence = proposal?.confidence;
             const assigned = record.speakers.assignments?.some((assignment) =>
                 covers(

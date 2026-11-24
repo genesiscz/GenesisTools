@@ -13,6 +13,7 @@ import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { z } from "zod";
 import { prepareFindings } from "./add-findings";
 import { findingSchema } from "./findings";
+import { lineSpeakerFacts } from "./look";
 import { answerQuestion } from "./question-answers";
 import { composedMeeting } from "./sources";
 import { checkAnchors, correctionsOf, correctTranscript, ledgerEntryFor, outcomeText } from "./transcript-corrections";
@@ -564,6 +565,64 @@ describe("a label that tracks no one person", () => {
         ]);
         // The last line is past the label's stretch and no correction named it: it keeps the source's label.
         expect(result.unattributed).toEqual([{ name: "Bob Example", lines: 1 }]);
+    });
+});
+
+test("a range a person or an agent stated names its line over a newer rule's range; a confirmed one over both", () => {
+    const stated = item({
+        id: "i1",
+        kind: "speaker-range",
+        status: "suggested",
+        label: "Speaker 2",
+        fromSec: 30,
+        toSec: 30,
+        speaker: "Alice Example",
+    });
+    // A voice pass that agreed with an agent elsewhere keeps the agent's rule after its own: still the pass's name.
+    const automatic = item({
+        id: "i2",
+        kind: "speaker-range",
+        status: "suggested",
+        label: "Speaker 2",
+        fromSec: 30,
+        toSec: 30,
+        speaker: "Bob Example",
+        confidence: 0.9,
+        rules: [MeetingRule.VoiceEmbedding, MeetingRule.Agent],
+        evidence: { labeler: "voice", reason: "named", transcriptLine: 3 },
+        suggestedAt: "2026-11-02T16:00:00.000Z",
+    });
+    const shown = (items: ReturnType<typeof item>[]) => {
+        const record = { ...base, items };
+        const corrected = correctTranscript({ record, transcript, config, format: "json", withSuggested: true });
+        const facts = lineSpeakerFacts(record, { fromSec: 0, toSec: 40 })({
+            index: 3,
+            label: "Speaker 2",
+            startSec: 30,
+        });
+        return {
+            speaker: corrected.entries[3]?.speaker,
+            suggested: corrected.entries[3]?.suggestedSpeaker,
+            look: facts.suggested?.speaker,
+        };
+    };
+
+    expect(shown([stated, automatic])).toEqual({
+        speaker: "Alice Example",
+        suggested: "Alice Example",
+        look: "Alice Example",
+    });
+    const confirmed = item({
+        id: "i0",
+        kind: "speaker-range",
+        label: "Speaker 2",
+        fromSec: 30,
+        toSec: 30,
+        speaker: "Carol Example",
+    });
+    expect(shown([confirmed, stated, automatic])).toMatchObject({
+        speaker: "Carol Example",
+        suggested: "Carol Example",
     });
 });
 

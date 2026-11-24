@@ -963,6 +963,49 @@ test("a human-confirmed range seeds a line only when it spans the whole line", a
     expect((await preview())[1]?.person).toBe(alice.person);
 });
 
+test("a voice name never replaces a line a person or an agent named, whatever its age; it may agree with it", async () => {
+    const { record, opened } = await sampledMeeting("stated-line-fixture");
+    record.seats = { room: [alice.person, bob.person], remote: [] };
+    const meeting = await opened.meeting();
+    const stated = (id: string, fromSec: number) => ({
+        id,
+        kind: "speaker-range" as const,
+        status: "suggested" as const,
+        suggestedAt: record.start!,
+        label: "Speaker 1",
+        fromSec,
+        toSec: fromSec,
+        speaker: alice.person,
+        rules: [MeetingRule.Agent],
+        evidence: { reason: "Alice answers her own question." },
+    });
+    record.items.push(stated("i1", 0), stated("i2", 5));
+    const labels: ReturnType<typeof nameByVoice> = [bob.person, alice.person, bob.person].map((person, index) => ({
+        labeler: "voice",
+        index,
+        seat: "mic",
+        person,
+        reason: "named",
+        score: 0.8,
+    }));
+    const fresh = suggestItems({
+        record,
+        meeting,
+        labels,
+        rules: ["speakers"],
+        dictionary: { abbrExpansion: "every", entries: [] },
+        sourceWords: [],
+        questionBudget: 0,
+        now: record.start!,
+    });
+    const named = fresh.flatMap((item) =>
+        item.kind === "speaker-range" && item.speaker ? [[item.evidence?.transcriptLine, item.speaker]] : []
+    );
+    // Line 0: the agent's Alice stands. Line 1: the voice agrees with the agent. Line 2: nobody named it, so it fills.
+    expect(named.filter(([line]) => line === 0)).toEqual([]);
+    expect(named.filter(([, speaker]) => speaker === bob.person)).toEqual([[2, bob.person]]);
+});
+
 test("exclusion survives the preview contract and creates a question even for short lines and a zero question budget", async () => {
     const { record, opened, store } = await sampledMeeting("exclusion-question-fixture");
     const meeting = await opened.meeting();

@@ -27,6 +27,7 @@ import {
 } from "./config";
 import { collectEcho, correlateEcho, echoForRange, readEchoCache } from "./echo";
 import { calibrateChannels, channelEnergy, micShare } from "./energy";
+import { RangeStrength, rangeStrength, strongestRange } from "./range-strength";
 import {
     JOIN_PART_FILE,
     JOINED_RECORD_VERSION,
@@ -1752,5 +1753,24 @@ describe("a later recording's old id after a join", () => {
         const sample = { meeting: later, project: "work" };
         expect(inScope(sample, { kind: "meeting", meeting: kept.id })).toBe(false);
         expect(inScope(sample, { kind: "meeting", meeting: kept.id, aliases: [later] })).toBe(true);
+    });
+});
+
+describe("speaker range strength", () => {
+    test("the rule that made a range says who named it; rules a pass or a carried answer appended do not", () => {
+        const range = (status: "suggested" | "confirmed", rules: string[]) => ({ status, rules });
+        expect(rangeStrength(range("suggested", ["agent"]))).toBe(RangeStrength.Stated);
+        expect(rangeStrength(range("suggested", ["agent", "user"]))).toBe(RangeStrength.Stated);
+        expect(rangeStrength(range("suggested", ["user"]))).toBe(RangeStrength.Stated);
+        expect(rangeStrength(range("suggested", ["voice-embedding", "agent", "user"]))).toBe(RangeStrength.Automatic);
+        expect(rangeStrength(range("suggested", ["RA"]))).toBe(RangeStrength.Automatic);
+        expect(rangeStrength(range("confirmed", ["RA", "agent"]))).toBe(RangeStrength.Confirmed);
+
+        const older = { id: "stated", ...range("suggested", ["agent"]) };
+        const newer = { id: "voice", ...range("suggested", ["voice-embedding"]) };
+        const later = { id: "agent again", ...range("suggested", ["agent"]) };
+        expect(strongestRange([older, newer])?.id).toBe("stated");
+        expect(strongestRange([older, newer, later])?.id).toBe("agent again");
+        expect(strongestRange([])).toBeUndefined();
     });
 });

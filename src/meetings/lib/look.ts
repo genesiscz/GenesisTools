@@ -1,3 +1,4 @@
+import { strongestRange } from "@genesiscz/utils/meetings/range-strength";
 import type { MeetingItem, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { VoiceMatch } from "@genesiscz/utils/meetings/voice";
@@ -48,8 +49,8 @@ function voicePrediction(match: VoiceMatch | undefined, covering: SpeakerRange[]
 }
 
 /**
- * The decisions that name each line's speaker, as `look` reads them: the last suggested and the last confirmed range
- * of the line's label that covers it, a person assignment, and the label's rename. The polished file's speaker diff
+ * The decisions that name each line's speaker, as `look` reads them: the strongest suggested range (a stated one before
+ * a rule's, the latest of equals) and the last confirmed range of the line's label that covers it, a person assignment, and the label's rename. The polished file's speaker diff
  * reads the same facts, so both name a line alike.
  */
 export function lineSpeakerFacts(record: MeetingRecord, window: { fromSec: number; toSec: number }) {
@@ -76,7 +77,7 @@ export function lineSpeakerFacts(record: MeetingRecord, window: { fromSec: numbe
         const confirmed = covering.findLast((item) => item.status === "confirmed");
         return {
             covering,
-            suggested: covering.findLast((item) => item.status === "suggested" && item.speaker),
+            suggested: strongestRange(covering.filter((item) => item.status === "suggested" && item.speaker)),
             confirmed,
             assigned: assignments.findLast(
                 (assignment) =>
