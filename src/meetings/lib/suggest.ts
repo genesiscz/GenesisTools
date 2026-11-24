@@ -1578,7 +1578,26 @@ export function planSuggestions(inputs: SuggestInputs): SuggestChanges {
     };
 }
 
-/** Check every precondition before the first write, including IDs allocated for question targets. */
+/**
+ * The record changed between the snapshot a plan read and the write under the record's lock: an answer, an Undo or
+ * another pass landed meanwhile. Nothing was written; plan again from the record as it is now.
+ */
+export class StaleSuggestionError extends Error {
+    constructor(readonly meeting: string) {
+        super("Meeting changed since suggestion planning. Run suggest again.");
+        this.name = "StaleSuggestionError";
+    }
+}
+
+/** A plan that changes nothing: no new item, no changed item and no changed stay. */
+export function suggestionChangesEmpty(changes: SuggestChanges): boolean {
+    return changes.fresh.length === 0 && changes.updated.length === 0 && changes.stays.length === 0;
+}
+
+/**
+ * Check every precondition before the first write, including IDs allocated for question targets. The record must be
+ * the one the plan read (its hash without the history), or this throws `StaleSuggestionError` and changes nothing.
+ */
 export function applySuggestionChanges(current: MeetingRecord, changes: SuggestChanges): void {
     const indices = new Map(current.items.map((item, index) => [item.id, index]));
     const people = new Map(current.participants.map((person) => [person.name, person]));
@@ -1589,7 +1608,7 @@ export function applySuggestionChanges(current: MeetingRecord, changes: SuggestC
         changes.updated.some(({ id, before }) => !Bun.deepEquals(current.items[indices.get(id) ?? -1], before)) ||
         changes.stays.some(({ name, before }) => !people.has(name) || !Bun.deepEquals(people.get(name)?.stays, before))
     ) {
-        throw new Error("Meeting changed since suggestion planning. Run suggest again.");
+        throw new StaleSuggestionError(changes.meeting);
     }
     for (const { id, after } of changes.updated) {
         current.items[indices.get(id)!] = structuredClone(after);
