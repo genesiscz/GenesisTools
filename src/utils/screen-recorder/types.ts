@@ -51,6 +51,14 @@ export interface FrameSourceEvent {
     neverCapture: CaptureBlocker[];
 }
 
+/** The stderr event of a capture that takes its frames by screenshot: how long one takes, and how far that stretched the interval. */
+export interface ScreenshotPaceEvent {
+    /** One screenshot every this many seconds; absent while the asked frame rate holds. */
+    everySec?: number;
+    /** How long the newest screenshot took. */
+    screenshotSec: number;
+}
+
 export interface CaptureRequest {
     target: CaptureTarget;
     /** CG window IDs the display filter must exclude. */
@@ -117,6 +125,8 @@ export interface CaptureHooks {
     onLive?: (capture: LiveCapture) => void;
     /** The frame source the capture chose at its start (`supports.frameSource` with `supports.liveControl`). */
     onFrameSource?: (event: FrameSourceEvent) => void;
+    /** The pace of a capture that takes screenshots, after its first one and when its whole seconds change. */
+    onScreenshotPace?: (event: ScreenshotPaceEvent) => void;
 }
 
 export type MotionBox = [number, number, number, number];

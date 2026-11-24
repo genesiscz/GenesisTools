@@ -268,7 +268,10 @@ So the native recorder reads those apps at the start (`ax-tool capture-blockers`
 
 - `fallback` (the default): on a display with such a window the frames come by screenshot (2 fps at most, no open
   stream), and the system sound comes through the Core Audio tap when any display has one at the start. A clean
-  display keeps the stream.
+  display keeps the stream. Each screenshot passes through systemstatusd (the privacy-indicator daemon), which can
+  answer slowly: on 2026-11-23 one Mac took 0.5 to 0.8 s per screenshot, and while its queue was full another app
+  could not start a screen share. So ax-tool times each screenshot and stretches the interval to ten times that time
+  (one every 30 s at most), and `record status` then says so in a line of its own.
 - `quit`: the recorder quits the apps whose bundle id is in `quitApps` (HazeOver from its site and from Setapp by
   default) at the start and, with `relaunch` (default `true`), starts them again when the recording ends, a failed
   start included. The apps left get the fallback.

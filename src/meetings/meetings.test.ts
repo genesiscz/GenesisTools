@@ -60,6 +60,7 @@ import {
     type CaptureResult,
     type DisplayInfo,
     FrameRecorder,
+    type ScreenshotPaceEvent,
     type UsedFrameSource,
 } from "@genesiscz/utils/screen-recorder/types";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
@@ -4036,7 +4037,7 @@ describe("the meetings recorder loop", () => {
                 /** Called as a `fail` or `timeout` step throws. */
                 onFail?: () => void;
                 /** Never-capture windows: each read takes the next list (the last one repeats); captures report the source. */
-                blockers?: { reads: CaptureBlocker[][]; frameSource?: UsedFrameSource };
+                blockers?: { reads: CaptureBlocker[][]; frameSource?: UsedFrameSource; pace?: ScreenshotPaceEvent };
             },
             private readonly whenDone: () => void
         ) {
@@ -4116,6 +4117,10 @@ describe("the meetings recorder loop", () => {
 
             if (frameSource) {
                 request.hooks?.onFrameSource?.({ source: frameSource, displayId, neverCapture: [] });
+            }
+
+            if (this.script.blockers?.pace) {
+                request.hooks?.onScreenshotPace?.(this.script.blockers.pace);
             }
 
             if (step === "hang" && this.script.liveControl) {
@@ -4298,7 +4303,7 @@ describe("the meetings recorder loop", () => {
         parallel?: boolean;
         /** The wait after a failed piece (0 by default). */
         failurePauseMs?: number;
-        blockers?: { reads: CaptureBlocker[][]; frameSource?: UsedFrameSource };
+        blockers?: { reads: CaptureBlocker[][]; frameSource?: UsedFrameSource; pace?: ScreenshotPaceEvent };
         /** Overrides `capture.recorders.native.neverCapture`. */
         neverCapture?: Partial<(typeof capture)["recorders"]["native"]["neverCapture"]>;
         /** What the test does over the socket as a capture fails. */
@@ -4522,6 +4527,19 @@ describe("the meetings recorder loop", () => {
 
             const clean = await recordWith({ displays: [[builtIn]], steps: ["frames"], blockers: { reads: [[]] } });
             expect(clean.state.captureBlockers).toBeUndefined();
+        });
+
+        test("slow screenshots stretch the pace, and the status names it", async () => {
+            const run = await recordWith({
+                displays: [[builtIn]],
+                steps: ["frames"],
+                blockers: { reads: [[dimmer]], frameSource: "screenshot", pace: { everySec: 8, screenshotSec: 0.8 } },
+            });
+
+            expect(run.state.captureBlockers).toMatchObject({
+                frames: "screenshot",
+                screenshotPace: { everySec: 8, screenshotSec: 0.8 },
+            });
         });
 
         test("fallback whose captures stream all the same says so in a note", async () => {

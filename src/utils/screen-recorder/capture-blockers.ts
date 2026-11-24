@@ -64,6 +64,8 @@ export const captureBlockersStatusSchema = z.object({
     frames: z.enum(["screenshot", "stream"]),
     sound: z.enum(["tap", "stream"]),
     quit: z.array(z.object({ name: z.string(), bundleId: z.string().optional(), path: z.string().optional() })),
+    /** While slow screenshots stretch the interval (ax-tool `ScreenshotPace`): one every `everySec`, as one takes `screenshotSec`. */
+    screenshotPace: z.object({ everySec: z.number(), screenshotSec: z.number() }).optional(),
 });
 export type CaptureBlockersStatus = z.infer<typeof captureBlockersStatusSchema>;
 

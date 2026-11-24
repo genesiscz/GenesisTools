@@ -54,6 +54,7 @@ import {
     type FrameRecorder,
     type FrameSource,
     MAX_CAPTURE_SECONDS,
+    type ScreenshotPaceEvent,
     type UsedFrameSource,
 } from "./types";
 
@@ -405,6 +406,8 @@ export class FrameRecording<S = unknown> extends RecorderControl {
     private blockers?: CaptureBlockersStatus;
     /** The frame source each display's newest capture reported. */
     private readonly frameSources = new Map<number, UsedFrameSource>();
+    /** The screenshot pace each display's running capture reported last. */
+    private readonly screenshotPaces = new Map<number, ScreenshotPaceEvent>();
     protected readonly config: RecorderConfig<S>;
 
     /** A definition is called once, here; its hooks run only after `open()`. */
@@ -484,12 +487,22 @@ export class FrameRecording<S = unknown> extends RecorderControl {
                         channel.pause();
                     }
                 },
-                onFrameSource: (capture, event) =>
+                onFrameSource: (capture, event) => {
+                    // A capture that streams has no pace; one that takes screenshots reports its own next.
+                    if (event.source === "stream") {
+                        this.screenshotPaces.delete(capture.target.displayId);
+                    }
+
                     this.noteNeverCapture({
                         displayId: event.displayId ?? capture.target.displayId,
                         frames: event.source,
                         apps: event.neverCapture,
-                    }),
+                    });
+                },
+                onScreenshotPace: (capture, event) => {
+                    this.screenshotPaces.set(capture.target.displayId, event);
+                    this.noteNeverCapture({});
+                },
                 onResult: async (capture, result) => {
                     this.displayBook.align(capture, result);
                     this.closeDisplay(capture);
@@ -512,6 +525,11 @@ export class FrameRecording<S = unknown> extends RecorderControl {
                 },
                 onError: (capture, error, outcome) => {
                     this.closeDisplay(capture);
+
+                    if (this.screenshotPaces.delete(capture.target.displayId)) {
+                        this.noteNeverCapture({});
+                    }
+
                     // A soundless process interrupted before its first frame can exit without a result.
                     if (!this.capturesReplacedForSound?.has(capture)) {
                         kind.onError?.(capture, error, outcome);
@@ -707,6 +725,11 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             }
         }
 
+        // The slowest screenshot pace of the running captures, while slow screenshots stretch one.
+        const paced = [...this.screenshotPaces.values()].reduce<ScreenshotPaceEvent | undefined>(
+            (slowest, one) => (one.everySec !== undefined && one.everySec > (slowest?.everySec ?? 0) ? one : slowest),
+            undefined
+        );
         const next: CaptureBlockersStatus = {
             apps,
             action: setup.action,
@@ -714,6 +737,9 @@ export class FrameRecording<S = unknown> extends RecorderControl {
                 this.frameSources.size > 0 ? usedFrameSource(this.frameSources.values()) : (before?.frames ?? "stream"),
             sound: change.sound ?? before?.sound ?? "stream",
             quit: before?.quit ?? [],
+            ...(paced?.everySec !== undefined
+                ? { screenshotPace: { everySec: paced.everySec, screenshotSec: paced.screenshotSec } }
+                : {}),
         };
 
         if (!before && next.apps.length === 0) {
