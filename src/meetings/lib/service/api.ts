@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { callerRecordSchema } from "@genesiscz/utils/agent/identity/caller-record";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { genesisToolsSourceRoot as meetingsSourceRoot } from "@genesiscz/utils/genesis-tools/service/clients";
 import { TONE_PRESET_NAMES, toneSoundSettingSchema } from "@genesiscz/utils/meetings/config";
@@ -92,6 +93,8 @@ export const helloParamsSchema = z.object({
     harness: z.string().min(1).optional(),
     /** The caller's agent session id, when it runs in one. */
     session: z.string().min(1).optional(),
+    /** An agent caller's record (model, account, checkout, terminal, host thread), kept on each decision it makes. */
+    caller: callerRecordSchema.optional().catch(undefined),
     protocol: z.number().int(),
     /**
      * The caller's code stamp (`meetingsCodeStamp()`): the checkout its code runs from. A service of another checkout,

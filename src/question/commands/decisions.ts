@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { agentRecordHere } from "@genesiscz/utils/agent/caller-identity";
 import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -186,6 +187,7 @@ export function registerDecisionCommands(program: Command): void {
             const input = asBatch(readStdinJson());
             const updated = await updateDecisions(file, events, input, undefined, {
                 actor: "agent",
+                answeredBy: agentRecordHere,
             });
             out.result(updateResult(updated, input, events));
         });

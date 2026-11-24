@@ -1667,7 +1667,12 @@ describe("decision journal", () => {
 
     test("an agent caller is recorded with its harness and session, and a person at a command as cli", async () => {
         const agent = callerActor({ agent: "codex", sessionId: "1234abcd-5678", isInAgent: true });
-        expect(agent).toEqual({ kind: "agent", harness: "codex", session: "1234abcd-5678" });
+        expect(agent).toEqual({
+            kind: "agent",
+            harness: "codex",
+            session: "1234abcd-5678",
+            caller: { harness: "codex", session: "1234abcd-5678" },
+        });
         expect(callerActor({ agent: "unknown", sessionId: null, isInAgent: false })).toEqual({ kind: "cli" });
 
         const fx = await fixture([term("i1", 10, { proposed: "wiki" })]);

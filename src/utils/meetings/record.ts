@@ -1,5 +1,6 @@
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { callerRecordSchema } from "@genesiscz/utils/agent/identity/caller-record";
 import { env } from "@genesiscz/utils/env";
 import { parseJSON, SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -146,22 +147,44 @@ export type QuestionGroup = (typeof QUESTION_GROUPS)[number];
 const itemIdSchema = z.string().regex(/^i\d+$/);
 
 /**
+ * An agent as a decider: its harness and session, and since 2026-11-24 the whole record of the call (`caller`: model,
+ * account, checkout, terminal, host thread). A malformed `caller` reads as none, so the decision keeps its actor.
+ */
+export const agentActorSchema = z.object({
+    kind: z.literal("agent"),
+    harness: z.string().min(1),
+    session: z.string().nullable(),
+    caller: callerRecordSchema.optional().catch(undefined),
+});
+export type AgentActor = z.infer<typeof agentActorSchema>;
+
+/**
  * Who made a decision, one variant per kind of decider: a person in the Meetings window, in a `listen` round or at a
- * `tools meetings` command; an agent with its harness and session; a rule of the suggest pipeline. `unknown` is a
- * decision made before decisions kept their actor.
+ * `tools meetings` command; a person who confirmed in a confirmation request what an agent relayed (`request`: the
+ * request's id, how the person answered, and the relaying agent); an agent with its harness and session; a rule of the
+ * suggest pipeline. `unknown` is a decision made before decisions kept their actor.
  */
 export const decisionActorSchema = z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("window") }),
     z.object({ kind: z.literal("listen") }),
     z.object({ kind: z.literal("cli") }),
-    z.object({ kind: z.literal("agent"), harness: z.string().min(1), session: z.string().nullable() }),
+    z.object({
+        kind: z.literal("request"),
+        request: z.string().min(1),
+        via: z.string().nullable().optional(),
+        relayedBy: agentActorSchema.optional(),
+    }),
+    agentActorSchema,
     z.object({ kind: z.literal("rule"), rule: z.string().min(1) }),
     z.object({ kind: z.literal("unknown") }),
 ]);
 export type DecisionActor = z.infer<typeof decisionActorSchema>;
 
-/** The actors that are a person: the window, the terminal listening session and the command line. */
-const PERSON_ACTORS: ReadonlySet<string> = new Set<DecisionActor["kind"]>(["window", "listen", "cli"]);
+/**
+ * The actors that are a person: the window, the terminal listening session, the command line, and a confirmation
+ * request the person answered.
+ */
+const PERSON_ACTORS: ReadonlySet<string> = new Set<DecisionActor["kind"]>(["window", "listen", "cli", "request"]);
 
 /** Whether a decision came from a person; an agent, a rule and an unrecorded actor (`unknown`) are not one. */
 export function isPersonActor(kind: string | undefined): boolean {

@@ -190,7 +190,12 @@ export function actorOfCall(context: Pick<MeetingsCallContext, "caller" | "local
     const hello = context.caller;
 
     if (hello?.harness) {
-        return { kind: "agent", harness: hello.harness, session: hello.session ?? null };
+        return {
+            kind: "agent",
+            harness: hello.harness,
+            session: hello.session ?? null,
+            ...(hello.caller ? { caller: hello.caller } : {}),
+        };
     }
 
     if (hello?.role === "window" || hello?.role === "listen") {

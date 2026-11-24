@@ -15,6 +15,7 @@ import type { AskAnswer, AskChoice, AskForm } from "@app/question/lib/pending/ty
 import { DEFAULT_WAIT_BUDGET_MS, MAX_MEDIA_CONTEXT_CHARS } from "@app/question/lib/pending/types";
 import { questionTokenRegistry } from "@app/question/lib/transclude";
 import { pollQuestions, postQuestion, type QuestionVerbDeps } from "@app/question/lib/verbs";
+import { agentRecordHere } from "@genesiscz/utils/agent/caller-identity";
 import { callerCwd } from "@genesiscz/utils/agent/runtime";
 import { SOURCE_MESSAGE_INPUT_SCHEMA, type SourceMessage } from "@genesiscz/utils/agent/source-anchor";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -202,7 +203,7 @@ export function handleQuestionPoll(args: QuestionPollArgs, deps: QuestionDeps = 
 }
 
 export async function handleQuestionRespond(args: QuestionRespondArgs, deps: AskDeps = {}): Promise<string> {
-    const outcome = await answerAskForm(args.id, args.answers ?? [], deps);
+    const outcome = await answerAskForm(args.id, args.answers ?? [], { answeredBy: agentRecordHere, ...deps });
 
     if (!outcome.ok) {
         return `${outcome.code}: ${outcome.error}${outcome.missing?.length ? ` (missing: ${outcome.missing.join(", ")})` : ""}`;

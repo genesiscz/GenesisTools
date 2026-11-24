@@ -2,6 +2,7 @@ import { decisionFiles } from "@app/question/lib/decisions/read";
 import { DECISION_RECORD_RULE, TODO_RECORD_RULE } from "@app/question/lib/decisions/schema";
 import { updateDecisions } from "@app/question/lib/decisions/store";
 import { decisionBatchUpdateRequestSchema, updateResult } from "@app/question/lib/decisions/update-result";
+import { agentRecordHere } from "@genesiscz/utils/agent/caller-identity";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { z } from "zod";
 
@@ -27,6 +28,9 @@ export async function handleQuestionUpdate(
 ): Promise<string> {
     const { file, events } = deps.decisionLog ?? decisionFiles();
     // An agent's door: its answered or sent is recorded as acknowledged (`DecisionActor`).
-    const updated = await updateDecisions(file, events, args, undefined, { actor: "agent" });
+    const updated = await updateDecisions(file, events, args, undefined, {
+        actor: "agent",
+        answeredBy: agentRecordHere,
+    });
     return SafeJSON.stringify(updateResult(updated, args, events));
 }

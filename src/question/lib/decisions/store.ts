@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { STAMP_FACETS, whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import { toRuntimeContext } from "@genesiscz/utils/agent/identity";
+import type { CallerRecord } from "@genesiscz/utils/agent/identity/caller-record";
 import type { CallerHost } from "@genesiscz/utils/agent/identity/types";
 import { canonicalAgent, runtimeAgentName } from "@genesiscz/utils/agent/recipient";
 import { type AgentRuntimeContext, callerCwd } from "@genesiscz/utils/agent/runtime";
@@ -72,6 +73,9 @@ export interface DecisionHost {
     parent?: { threadId: string; title?: string; relationship?: string };
 }
 
+/** Reads the agent that stores an answer (`agentRecordHere`); undefined when a person does. */
+export type AnsweredByReader = () => CallerRecord | undefined;
+
 export interface DecisionRecord {
     transcriptAnchor?: TranscriptAnchor;
     worktreePath?: string | null;
@@ -139,6 +143,12 @@ export interface DecisionRecord {
     answeredVia?: AnsweredVia;
     /** When the answer was stored: the move that set `answeredVia`. Later updates move `updatedTs`, not this. */
     answeredTs?: string;
+    /**
+     * The agent that stored the answer, when an agent did (a chat answer it recorded, an answer it relayed through
+     * `tools question answer`): its harness, session, model, checkout, terminal and host thread, read when it stored
+     * it. Absent for the user's own answer in the inbox and on rows answered before 2026-11-24.
+     */
+    answeredBy?: CallerRecord;
     /** The decision that replaced this one (`superseded`); it exists in the store, in any session. */
     supersededBy?: string;
     commitRefs?: string[];
@@ -1122,10 +1132,10 @@ export async function updateDecision(
     id: string,
     payload: unknown,
     now = () => new Date().toISOString(),
-    { actor = "user" }: { actor?: DecisionActor } = {}
+    { actor = "user", answeredBy }: { actor?: DecisionActor; answeredBy?: AnsweredByReader } = {}
 ): Promise<DecisionRecord> {
     const patch = parseDecisionInput(decisionPatchSchema, payload, "decision update");
-    const [row] = await applyUpdates({ file, events, updates: [{ ...patch, id }], now, actor });
+    const [row] = await applyUpdates({ file, events, updates: [{ ...patch, id }], now, actor, answeredBy });
 
     if (!row) {
         throw new Error(`no decision ${id}`);
@@ -1143,10 +1153,10 @@ export async function updateDecisions(
     events: string,
     payload: unknown,
     now = () => new Date().toISOString(),
-    { actor = "user" }: { actor?: DecisionActor } = {}
+    { actor = "user", answeredBy }: { actor?: DecisionActor; answeredBy?: AnsweredByReader } = {}
 ): Promise<DecisionRecord[]> {
     const { updates } = parseDecisionInput(decisionBatchUpdateSchema, payload, "question update");
-    return applyUpdates({ file, events, updates, now, actor });
+    return applyUpdates({ file, events, updates, now, actor, answeredBy });
 }
 
 export interface TodoUpdateSnapshot {
@@ -1423,6 +1433,7 @@ function applyUpdates({
     beforeUpdate,
     answeredVia,
     actor = "user",
+    answeredBy,
 }: {
     file: string;
     events: string;
@@ -1434,7 +1445,11 @@ function applyUpdates({
     answeredVia?: AnsweredVia;
     /** `agent` updates never queue or send an answer (`agentPatch`); see `DecisionActor`. */
     actor?: DecisionActor;
+    /** Reads the agent that stores an answer in this write, once and only when one does (`answeredBy`). */
+    answeredBy?: AnsweredByReader;
 }): Promise<DecisionRecord[]> {
+    let answerer: CallerRecord | undefined;
+    let answererRead = false;
     signal?.throwIfAborted();
     // Decisions this write moved out of waiting: their notices go once the write is done (`closeNoticeItems`).
     let closed: string[] = [];
@@ -1457,6 +1472,20 @@ function applyUpdates({
 
             if (answeredVia && next.answeredVia === "agent") {
                 next.answeredVia = answeredVia;
+            }
+
+            // An answer stored by this write names who stored it; an earlier answerer never stays on a new answer.
+            if (next.answeredTs === ts && row.answeredTs !== ts) {
+                if (!answererRead) {
+                    answerer = answeredBy?.();
+                    answererRead = true;
+                }
+
+                if (answerer) {
+                    next.answeredBy = answerer;
+                } else {
+                    delete next.answeredBy;
+                }
             }
 
             byId.set(id, next);
@@ -1807,6 +1836,7 @@ export async function reconcileQueuedDecision({
             delete row.answer;
             delete row.option;
             delete row.answeredVia;
+            delete row.answeredBy;
             delete row.answeredTs;
         }
         rewrite(file, rows);
